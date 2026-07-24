@@ -197,14 +197,14 @@ test("does not create a default workspace when desktop state is absent", async (
 
     const state = await store.readWorkspaceState();
     assert.equal(state.workspaces.length, 0);
-    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "OpenWork", ".opencode", "openwork.json"), "utf8"));
+    await assert.rejects(readFile(path.join(userData, "openwork-dev-data", "home", "JuggleWork", ".opencode", "openwork.json"), "utf8"));
   } finally {
     restoreEnv("OPENWORK_DEV_MODE", previousDevMode);
     restoreEnv("OPENWORK_SERVER_CONFIG", previousServerConfig);
   }
 });
 
-test("normalizes recovered remote OpenWork entries before persisting", async () => {
+test("normalizes recovered remote JuggleWork entries before persisting", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");
   const serverConfig = path.join(root, "server.json");
@@ -499,7 +499,7 @@ test("desktop bootstrap writes include a fresh writtenAt stamp", async () => {
 
 test("imports the newest organization bootstrap beside a Windows installer when config is absent", async () => {
   await withIsolatedBootstrapStore(async ({ store, canonicalPath, root }) => {
-    const bundleDir = path.join(root, "downloads", "OpenWork-example-org");
+    const bundleDir = path.join(root, "downloads", "JuggleWork-example-org");
     const olderBundleDir = path.join(bundleDir, "older");
     const newerBundleDir = path.join(bundleDir, "latest");
     process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR = bundleDir;

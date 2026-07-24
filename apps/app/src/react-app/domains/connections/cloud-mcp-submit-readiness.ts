@@ -107,7 +107,7 @@ function genericSubmissionIssue(input?: {
     stage: input?.stage ?? "engine_delivery",
     retryable: input?.retryable ?? true,
     recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
-    message: input?.message ?? "OpenWork could not verify connected service tools for the selected model.",
+    message: input?.message ?? "JuggleWork could not verify connected service tools for the selected model.",
   };
 }
 
@@ -170,8 +170,8 @@ function authResolutionIssue(input?: { timedOut?: boolean }): CloudMcpSubmission
       ? "cloud_mcp_auth_resolution_timeout"
       : "cloud_mcp_auth_resolution_failed",
     message: input?.timedOut
-      ? "OpenWork timed out while restoring connected service access."
-      : "OpenWork could not finish restoring connected service access.",
+      ? "JuggleWork timed out while restoring connected service access."
+      : "JuggleWork could not finish restoring connected service access.",
     recommendedAction: "Retry or open Settings → Connect.",
   });
 }
@@ -232,7 +232,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
       issue: genericSubmissionIssue({
         code: "cloud_mcp_direct_tools_unverified",
         stage: "tool_registration",
-        message: "OpenWork Cloud did not prove that search_capabilities and execute_capability are available.",
+        message: "JuggleWork Cloud did not prove that search_capabilities and execute_capability are available.",
       }),
     };
   }
@@ -261,7 +261,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         stage: "provider_projection",
         retryable: false,
         message: "The current engine cannot prove that connected service tools were injected into the selected model.",
-        recommendedAction: "Update or restart OpenWork, then Retry. Open Connect for detailed diagnostics.",
+        recommendedAction: "Update or restart JuggleWork, then Retry. Open Connect for detailed diagnostics.",
       }),
     };
   }
@@ -288,7 +288,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
 function timeoutIssue(): CloudMcpSubmissionIssue {
   return genericSubmissionIssue({
     code: "cloud_mcp_submission_timeout",
-    message: "OpenWork timed out while preparing connected service tools.",
+    message: "JuggleWork timed out while preparing connected service tools.",
   });
 }
 
@@ -314,7 +314,7 @@ function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment 
       ? timeoutIssue()
       : genericSubmissionIssue({
           code: "cloud_mcp_submission_check_failed",
-          message: "OpenWork could not check connected service tools before sending.",
+          message: "JuggleWork could not check connected service tools before sending.",
         }),
   };
 }

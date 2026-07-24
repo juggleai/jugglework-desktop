@@ -69,7 +69,7 @@ export function mcpAuthorizationPendingDocument(): string {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Connecting — OpenWork</title>
+    <title>Connecting — JuggleWork</title>
     <style>
 ${authorizationDocumentStyles}
       .loading-card { padding: 40px 40px 34px; text-align: center; }
@@ -89,10 +89,10 @@ ${authorizationDocumentStyles}
   </head>
   <body>
     <main class="card loading-card" role="status" aria-live="polite">
-      <div class="brand"><span class="brand-mark">OW</span>OpenWork Connect</div>
+      <div class="brand"><span class="brand-mark">OW</span>JuggleWork Connect</div>
       <div class="mark" aria-hidden="true"><div class="orbit"></div><div class="core">OW</div></div>
       <h1>Preparing your connection</h1>
-      <p>OpenWork is securely checking the provider and preparing your sign-in.</p>
+      <p>JuggleWork is securely checking the provider and preparing your sign-in.</p>
       <div class="progress" aria-hidden="true"><span></span></div>
       <div class="footnote"><span class="footnote-dot" aria-hidden="true"></span>Keep this window open</div>
     </main>
@@ -153,7 +153,7 @@ export function mcpAuthorizationErrorDocument(input: {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>Connection failed — OpenWork</title>
+    <title>Connection failed — JuggleWork</title>
     <style>
 ${authorizationDocumentStyles}
       body { align-items: start; }
@@ -192,12 +192,12 @@ ${authorizationDocumentStyles}
   <body>
     <main class="card error-card" role="alert" aria-live="assertive">
       <div class="error-header">
-        <div class="brand"><span class="brand-mark">OW</span>OpenWork Connect</div>
+        <div class="brand"><span class="brand-mark">OW</span>JuggleWork Connect</div>
         <div class="status">
           <div class="error-mark" aria-hidden="true">!</div>
           <div>
             <h1>Connection failed</h1>
-            <p>OpenWork couldn’t start the provider sign-in.</p>
+            <p>JuggleWork couldn’t start the provider sign-in.</p>
           </div>
         </div>
         <div class="message">${escapeHtml(input.message)}</div>
@@ -228,7 +228,7 @@ export function openMcpAuthorizationWindow(): Window {
   const popupName = `openwork-mcp-authorization-${crypto.randomUUID()}`
   const popup = window.open("", popupName, "popup,width=600,height=760")
   if (!popup) {
-    throw new Error("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.")
+    throw new Error("JuggleWork could not open the sign-in window. Allow popups for JuggleWork, then try again.")
   }
   try {
     popup.opener = null

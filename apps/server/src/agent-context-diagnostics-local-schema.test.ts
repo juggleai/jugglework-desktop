@@ -39,7 +39,7 @@ const validRequest: AgentContextDiagnosticsRequest = {
 
 const workspace: WorkspaceInfo = {
   id: "remote_openwork_schema_parity",
-  name: "Remote OpenWork schema parity",
+  name: "Remote JuggleWork schema parity",
   path: "",
   preset: "starter",
   workspaceType: "remote",

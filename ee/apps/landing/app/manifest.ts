@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "OpenWork",
-    short_name: "OpenWork",
+    name: "JuggleWork",
+    short_name: "JuggleWork",
     description:
       "Open source Claude Cowork alternative. Bring your own model, wire in your tools, and ship reusable agent setups across your org.",
     start_url: "/",

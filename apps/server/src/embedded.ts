@@ -1,5 +1,5 @@
 /**
- * Single entry point for embedding the OpenWork server in-process.
+ * Single entry point for embedding the JuggleWork server in-process.
  *
  * Handles config resolution, managed OpenCode spawn, and server start
  * in one call -- mirrors what cli.ts does but returns a handle instead

@@ -287,7 +287,7 @@ export function BillingDashboardScreen() {
       <DashboardPageTemplate
         icon={CreditCard}
         title="Stripe"
-        description="Manage workspace subscriptions, seats, and OpenWork Models in one place."
+        description="Manage workspace subscriptions, seats, and JuggleWork Models in one place."
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
       {stripeError && stripeBilling ? (
@@ -354,7 +354,7 @@ export function BillingDashboardScreen() {
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
-            <h2 className="text-[20px] font-medium text-gray-950">OpenWork Users</h2>
+            <h2 className="text-[20px] font-medium text-gray-950">JuggleWork Users</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
               The first {seatBilling?.freeSeatCount} users in your organization are included. Additional users are {seatPrice} per user per {seatBilling?.interval}.
             </p>
@@ -410,7 +410,7 @@ export function BillingDashboardScreen() {
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="mb-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-500">Stripe</p>
-            <h2 className="text-[20px] font-medium text-gray-950">OpenWork Models</h2>
+            <h2 className="text-[20px] font-medium text-gray-950">JuggleWork Models</h2>
             <p className="mt-2 max-w-[620px] text-[14px] leading-6 text-gray-500">
               Model access is billed at {stripePrice} per user per {stripeBilling.interval}.
             </p>
@@ -445,11 +445,11 @@ export function BillingDashboardScreen() {
             <div>
               <p className="text-[15px] font-medium text-blue-950">Not subscribed yet</p>
               <p className="mt-1 text-[13px] leading-5 text-blue-900/70">
-                See the model lineup and subscribe from the OpenWork Models page.
+                See the model lineup and subscribe from the JuggleWork Models page.
               </p>
             </div>
             <DenButton onClick={() => router.push(getInferenceRoute(activeOrg?.slug))}>
-              View OpenWork Models
+              View JuggleWork Models
             </DenButton>
           </div>
         )}

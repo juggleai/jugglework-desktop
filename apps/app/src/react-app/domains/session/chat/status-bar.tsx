@@ -84,7 +84,7 @@ function OpenWorkConnectIndicator(props: {
             ? "loading"
             : "disconnected"}
       />
-      <span>OpenWork Connect: {props.status.label}</span>
+      <span>JuggleWork Connect: {props.status.label}</span>
     </span>
   );
 
@@ -113,7 +113,7 @@ function OpenWorkConnectIndicator(props: {
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-80 gap-3 rounded-xl">
         <PopoverHeader>
-          <PopoverTitle>OpenWork Connect needs attention</PopoverTitle>
+          <PopoverTitle>JuggleWork Connect needs attention</PopoverTitle>
           <PopoverDescription>{props.status.description}</PopoverDescription>
         </PopoverHeader>
         <Button size="sm" onClick={props.onRunDiagnostics}>Run diagnostics</Button>
@@ -336,7 +336,7 @@ export function StatusBar(props: StatusBarProps) {
 
   const docsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.docs.open",
-    label: "Open OpenWork docs",
+    label: "Open JuggleWork docs",
     description: "Open the documentation from the status bar.",
     sideEffect: "external",
     targetRef: docsButtonRef,
@@ -347,7 +347,7 @@ export function StatusBar(props: StatusBarProps) {
   const feedbackControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.feedback.open",
     label: "Send feedback",
-    description: "Open the OpenWork feedback surface from the status bar.",
+    description: "Open the JuggleWork feedback surface from the status bar.",
     sideEffect: "external",
     targetRef: feedbackButtonRef,
     execute: props.onSendFeedback,
@@ -400,7 +400,7 @@ export function StatusBar(props: StatusBarProps) {
                 onClick={openOpenWorkModels}
               >
                 <Sparkles className="size-3.5 text-blue-11" />
-                <span className="whitespace-nowrap">OpenWork Models</span>
+                <span className="whitespace-nowrap">JuggleWork Models</span>
                 <span className="hidden whitespace-nowrap font-normal text-blue-11/75 lg:inline">
                   hosted frontier models
                 </span>
@@ -410,7 +410,7 @@ export function StatusBar(props: StatusBarProps) {
                 type="button"
                 className="flex size-6 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
                 onClick={hideOpenWorkModels}
-                aria-label="Hide OpenWork Models hint"
+                aria-label="Hide JuggleWork Models hint"
               >
                 <X className="size-3" />
               </button>

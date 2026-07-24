@@ -19,7 +19,7 @@ function openworkProvider(models, api) {
       id: "openwork",
       env: ["OPENWORK_API_KEY"],
       npm: "@openrouter/ai-sdk-provider",
-      name: "OpenWork Models",
+      name: "JuggleWork Models",
       api,
       models,
     },

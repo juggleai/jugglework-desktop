@@ -82,7 +82,7 @@ IP.1 = 127.0.0.1
 `,
   );
 
-  runOpenSsl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=OpenWork Test MySQL CA", "-keyout", caKey, "-out", caCert]);
+  runOpenSsl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=JuggleWork Test MySQL CA", "-keyout", caKey, "-out", caCert]);
   runOpenSsl(["req", "-newkey", "rsa:2048", "-nodes", "-keyout", serverKey, "-out", serverCsr, "-config", opensslConfig]);
   runOpenSsl(["x509", "-req", "-in", serverCsr, "-CA", caCert, "-CAkey", caKey, "-CAcreateserial", "-out", serverCert, "-days", "1", "-extensions", "v3_req", "-extfile", opensslConfig]);
   chmodSync(serverKey, 0o644);
@@ -239,18 +239,18 @@ try {
 
   const withoutCa = runOpenWorkMysqlQuery(databaseUrl, "select 1 as ok");
   if (withoutCa.status === 0) {
-    throw new Error("Strict OpenWork/mysql2 unexpectedly connected without NODE_EXTRA_CA_CERTS");
+    throw new Error("Strict JuggleWork/mysql2 unexpectedly connected without NODE_EXTRA_CA_CERTS");
   }
   const withoutCaError = `${withoutCa.stdout}\n${withoutCa.stderr}`.trim();
   if (!/certificate|verify|self-signed|unable/i.test(withoutCaError)) {
-    throw new Error(`Strict OpenWork/mysql2 failed for a non-certificate reason:\n${withoutCaError}`);
+    throw new Error(`Strict JuggleWork/mysql2 failed for a non-certificate reason:\n${withoutCaError}`);
   }
   const certificateError = withoutCaError.split("\n").find((line) => /certificate|verify|self-signed|unable/i.test(line)) ?? withoutCaError.split("\n").find(Boolean);
-  console.log(`Strict OpenWork/mysql2 without custom CA: rejected (${certificateError})`);
+  console.log(`Strict JuggleWork/mysql2 without custom CA: rejected (${certificateError})`);
 
   const bootstrap = runBootstrap(databaseUrl);
-  ensureSuccess(bootstrap, "OpenWork migration bootstrap with NODE_EXTRA_CA_CERTS");
-  console.log("OpenWork migration bootstrap completed with NODE_EXTRA_CA_CERTS and strict DATABASE_URL");
+  ensureSuccess(bootstrap, "JuggleWork migration bootstrap with NODE_EXTRA_CA_CERTS");
+  console.log("JuggleWork migration bootstrap completed with NODE_EXTRA_CA_CERTS and strict DATABASE_URL");
   console.log(bootstrap.stdout.trim());
 
   const query = runOpenWorkMysqlQuery(
@@ -258,14 +258,14 @@ try {
     "select (select count(*) from information_schema.tables where table_schema = database()) as table_count, (select count(*) from `__drizzle_migrations`) as migration_count",
     { NODE_EXTRA_CA_CERTS: caCert },
   );
-  ensureSuccess(query, "OpenWork/mysql2 strict post-migration query with NODE_EXTRA_CA_CERTS");
+  ensureSuccess(query, "JuggleWork/mysql2 strict post-migration query with NODE_EXTRA_CA_CERTS");
   const rows = JSON.parse(query.stdout.trim());
   const tableCount = Number(rows[0]?.table_count ?? 0);
   const migrationCount = Number(rows[0]?.migration_count ?? 0);
   if (tableCount <= 0 || migrationCount <= 0) {
-    throw new Error(`Expected migrated OpenWork tables and migration ledger rows, got ${query.stdout}`);
+    throw new Error(`Expected migrated JuggleWork tables and migration ledger rows, got ${query.stdout}`);
   }
-  console.log(`OpenWork/mysql2 strict query succeeded after migration: tables=${tableCount}, migrations=${migrationCount}`);
+  console.log(`JuggleWork/mysql2 strict query succeeded after migration: tables=${tableCount}, migrations=${migrationCount}`);
 } finally {
   cleanup();
 }

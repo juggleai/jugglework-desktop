@@ -2,24 +2,24 @@
 
 [English](../README.md) | 日本語 | [他の翻訳README](./README.md)
 
-# OpenWork
-> OpenWorkは、Claude Cowork/Codex（デスクトップアプリ）のオープンソース代替です。
+# JuggleWork
+> JuggleWorkは、Claude Cowork/Codex（デスクトップアプリ）のオープンソース代替です。
 
 ## 基本理念
 
-- ローカルファースト、クラウド対応: OpenWorkはワンクリックであなたのマシン上で動作します。メッセージを即座に送信できます。
+- ローカルファースト、クラウド対応: JuggleWorkはワンクリックであなたのマシン上で動作します。メッセージを即座に送信できます。
 - コンポーザブル: デスクトップアプリ、WhatsApp/Slack/Telegramコネクタ、またはサーバー。用途に合ったものを使えます。ロックインなし。
-- エジェクタブル: OpenWorkはOpenCodeで動いているため、OpenCodeでできることはすべてOpenWorkでも動作します（UIがなくても）。
+- エジェクタブル: JuggleWorkはOpenCodeで動いているため、OpenCodeでできることはすべてJuggleWorkでも動作します（UIがなくても）。
 - シェアリング・イズ・ケアリング: localhostでソロ作業を始め、必要に応じてリモート共有を明示的にオプトインできます。
 
 <p align="center">
-  <img src="../app-demo.gif" alt="OpenWork デモ" width="800" />
+  <img src="../app-demo.gif" alt="JuggleWork デモ" width="800" />
 </p>
 
-OpenWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
+JuggleWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
 
 ## 代替UI
-- **OpenWork Orchestrator（CLIホスト）**: デスクトップUIなしでOpenCode + OpenWorkサーバーを実行します。
+- **JuggleWork Orchestrator（CLIホスト）**: デスクトップUIなしでOpenCode + JuggleWorkサーバーを実行します。
   - インストール: `npm install -g openwork-orchestrator`
   - 実行: `openwork start --workspace /path/to/workspace --approval auto`
   - ドキュメント: [apps/orchestrator/README.md](../apps/orchestrator/README.md)
@@ -30,18 +30,18 @@ OpenWorkは、エージェントワークフローを再現可能なプロダク
 
 - macOSおよびLinux向けのダウンロードが直接利用可能です。
 - Windowsへのアクセスは現在、[openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support)の有料サポートプランで提供されています。
-- ホステッドOpenWork Cloudワーカーは、チェックアウト後にWebアプリから起動し、デスクトップアプリから`Add a worker` -> `Connect remote`で接続します。
+- ホステッドJuggleWork Cloudワーカーは、チェックアウト後にWebアプリから起動し、デスクトップアプリから`Add a worker` -> `Connect remote`で接続します。
 
-## なぜOpenWorkか
+## なぜJuggleWorkか
 
 現在のOpenCode向けCLIやGUIは開発者を中心に設計されています。つまり、ファイルの差分、ツール名、そしてCLIを公開しなければ拡張が難しい機能に焦点が当てられています。
 
-OpenWorkは以下を目指して設計されています:
+JuggleWorkは以下を目指して設計されています:
 
 - **拡張可能**: スキルとOpenCodeプラグインはインストール可能なモジュールです。
 - **監査可能**: 何が、いつ、なぜ起きたかを表示します。
 - **権限管理**: 特権フローへのアクセスを制御します。
-- **ローカル/リモート**: OpenWorkはローカルでもリモートサーバーへの接続でも動作します。
+- **ローカル/リモート**: JuggleWorkはローカルでもリモートサーバーへの接続でも動作します。
 
 ## 含まれる機能
 
@@ -104,7 +104,7 @@ pnpm --filter @openwork/desktop exec tauri --version
 pnpm install
 ```
 
-OpenWorkは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシェル）に配置されています。
+JuggleWorkは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシェル）に配置されています。
 
 ### 実行（デスクトップ）
 
@@ -120,7 +120,7 @@ pnpm dev
 pnpm dev:ui
 ```
 
-リポジトリのすべての `dev` エントリポイントは同じ開発モード分離にオプトインするため、ローカルテストでは一貫してOpenWork管理のOpenCode状態を使用します。
+リポジトリのすべての `dev` エントリポイントは同じ開発モード分離にオプトインするため、ローカルテストでは一貫してJuggleWork管理のOpenCode状態を使用します。
 
 ### Archユーザー向け:
 
@@ -131,11 +131,11 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## アーキテクチャ（概要）
 
-- **ホストモード**では、OpenWorkはローカルホストスタックを実行し、UIをそれに接続します。
+- **ホストモード**では、JuggleWorkはローカルホストスタックを実行し、UIをそれに接続します。
   - デフォルトランタイム: `openwork`（`openwork-orchestrator` からインストール）。`opencode` と `openwork-server` をオーケストレーションします。
   - フォールバックランタイム: `direct`。デスクトップアプリが直接 `opencode serve --hostname 127.0.0.1 --port <free-port>` を起動します。
 
-プロジェクトフォルダを選択すると、OpenWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
+プロジェクトフォルダを選択すると、JuggleWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
 これにより、リモートサーバーなしで完全にマシン上でエージェントワークフローの実行、プロンプトの送信、進捗の確認が可能です。
 
 - UIは `@opencode-ai/sdk/v2/client` を使用して:
@@ -154,12 +154,12 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## OpenCodeプラグイン
 
-プラグインはOpenCodeを拡張する**ネイティブ**な方法です。OpenWorkはスキルタブから `opencode.json` を読み書きして管理します。
+プラグインはOpenCodeを拡張する**ネイティブ**な方法です。JuggleWorkはスキルタブから `opencode.json` を読み書きして管理します。
 
 - **プロジェクトスコープ**: `<workspace>/opencode.json`
 - **グローバルスコープ**: `~/.config/opencode/opencode.json`（または `$XDG_CONFIG_HOME/opencode/opencode.json`）
 
-`opencode.json` を手動で編集することもできます。OpenWorkはOpenCode CLIと同じ形式を使用します:
+`opencode.json` を手動で編集することもできます。JuggleWorkはOpenCode CLIと同じ形式を使用します:
 
 ```json
 {
@@ -185,7 +185,7 @@ pnpm test:e2e
 
 ### Linux / Wayland（Hyprland）
 
-OpenWorkがWebKitGTKエラー（`Failed to create GBM buffer` など）で起動時にクラッシュする場合は、起動前にdmabufまたはコンポジティングを無効にしてください。以下のいずれかの環境変数フラグを試してください。
+JuggleWorkがWebKitGTKエラー（`Failed to create GBM buffer` など）で起動時にクラッシュする場合は、起動前にdmabufまたはコンポジティングを無効にしてください。以下のいずれかの環境変数フラグを試してください。
 
 ```bash
 WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
@@ -197,7 +197,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## セキュリティに関する注意
 
-- OpenWorkはデフォルトでモデルの推論と機密ツールメタデータを非表示にします。
+- JuggleWorkはデフォルトでモデルの推論と機密ツールメタデータを非表示にします。
 - ホストモードはデフォルトで `127.0.0.1` にバインドします。
 
 ## コントリビューション
@@ -226,7 +226,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## チーム・企業向け
 
-組織でのOpenWork利用に興味がありますか？ぜひお聞かせください — [ben@openworklabs.com](mailto:ben@openworklabs.com) までユースケースについてご連絡ください。
+組織でのJuggleWork利用に興味がありますか？ぜひお聞かせください — [ben@openworklabs.com](mailto:ben@openworklabs.com) までユースケースについてご連絡ください。
 
 ## ライセンス
 

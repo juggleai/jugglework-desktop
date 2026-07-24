@@ -175,7 +175,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain("config.remote");
     expect(html).toContain("Registration record: Connected");
     expect(html).toContain("Configured default-agent intent");
-    expect(html).toContain("Configured OpenWork agent");
+    expect(html).toContain("Configured JuggleWork agent");
     expect(html).toContain("Configured enabled");
     expect(html).toContain("Configured headers present · values redacted");
     expect(html).toContain("Live connection status not queried");
@@ -239,7 +239,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     );
 
     expect(html).toContain("Effective default agent");
-    expect(html).toContain("Effective OpenWork agent");
+    expect(html).toContain("Effective JuggleWork agent");
     expect(html).toContain("Effective plugin labels");
     expect(html).toContain("Effective configuration observed");
     expect(html).toContain("Disabled by tool policy");

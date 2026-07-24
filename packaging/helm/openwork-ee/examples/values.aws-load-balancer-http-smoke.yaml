@@ -1,4 +1,4 @@
-# AWS EKS Auto Mode HTTP smoke-test values for a first OpenWork EE install when
+# AWS EKS Auto Mode HTTP smoke-test values for a first JuggleWork EE install when
 # DNS and ACM TLS are not ready yet.
 #
 # Copy this file, replace every REPLACE_* value, and install with:

@@ -9,7 +9,7 @@ function CompleteFallback() {
       <div className="den-frame grid w-full max-w-[520px] gap-3 p-6 text-center md:p-8">
         <p className="den-eyebrow">Security check</p>
         <h1 className="den-title-lg">You&apos;re verified.</h1>
-        <p className="den-copy">You can close this window and return to OpenWork.</p>
+        <p className="den-copy">You can close this window and return to JuggleWork.</p>
       </div>
     </main>
   );

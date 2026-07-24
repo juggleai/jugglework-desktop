@@ -232,7 +232,7 @@ const issuerReviewResponseSchema = z.object({
 
 const clientMetadataResponseSchema = z.object({
   client_id: z.string(),
-  client_name: z.literal("OpenWork"),
+  client_name: z.literal("JuggleWork"),
   application_type: z.literal("web"),
   redirect_uris: z.array(z.string()).length(1),
   grant_types: z.tuple([z.literal("authorization_code"), z.literal("refresh_token")]),
@@ -1251,7 +1251,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/oauth/client-metadata.json",
     describeRoute({
       tags: ["Authentication"],
-      summary: "OpenWork external MCP OAuth client metadata",
+      summary: "JuggleWork external MCP OAuth client metadata",
       description: "Public client metadata document for URL-based OAuth client registration. It contains no deployment secrets.",
       responses: {
         200: jsonResponse("Client metadata.", clientMetadataResponseSchema),
@@ -1263,7 +1263,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       const clientId = externalMcpClientMetadataUrl()
       return c.json({
         client_id: clientId,
-        client_name: "OpenWork" as const,
+        client_name: "JuggleWork" as const,
         application_type: "web" as const,
         redirect_uris: [externalMcpSharedCallbackUrl()],
         grant_types: ["authorization_code", "refresh_token"] as const,
@@ -1794,10 +1794,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       // Secrets must not travel through chat transcripts: when the caller is
       // the agent (internal MCP principal), refuse API-key connections.
       if (isAgentOAuthClientConnection({ oauthClient: body.oauthClient, sessionId })) {
-        return c.json({ error: "invalid_request", message: "OAuth client credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Extensions." }, 400)
+        return c.json({ error: "invalid_request", message: "OAuth client credentials cannot be set from the agent. Add them in the JuggleWork Cloud dashboard under Extensions." }, 400)
       }
       if (isAgentApiKeyConnection({ authType: body.authType, sessionId })) {
-        return c.json({ error: "invalid_request", message: "API-key connections cannot be created from the agent. Add them in the OpenWork Cloud dashboard under Extensions." }, 400)
+        return c.json({ error: "invalid_request", message: "API-key connections cannot be created from the agent. Add them in the JuggleWork Cloud dashboard under Extensions." }, 400)
       }
       if (body.oauthClient && body.authType !== "oauth") {
         return c.json({ error: "invalid_request", message: "oauthClient is only allowed when authType is oauth." }, 400)
@@ -1983,7 +1983,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       if (sessionId === "mcp_internal" && (body.apiKey !== undefined || body.oauthClient !== undefined)) {
         return c.json({
           error: "invalid_request",
-          message: "Connection credentials cannot be edited from the agent. Use the OpenWork Cloud dashboard under Connections.",
+          message: "Connection credentials cannot be edited from the agent. Use the JuggleWork Cloud dashboard under Connections.",
         }, 400)
       }
       if (body.apiKey !== undefined && body.authType !== "apikey") {
@@ -2495,13 +2495,13 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (diagnostic.code === "MCP_OAUTH_CONFIGURATION_REQUIRED") {
           return c.json({
             error: "mcp_oauth_configuration_required",
-            message: "This authorization server requires a pre-registered OAuth client before OpenWork can connect.",
+            message: "This authorization server requires a pre-registered OAuth client before JuggleWork can connect.",
             callbackUrl: callbackRedirectUri(connection),
             clientMetadataUrl: externalMcpClientMetadataUrl(),
             manualRequirements: [
               "Create an OAuth application in the external provider.",
-              "Allowlist the callback URL shown by OpenWork.",
-              "Save the client ID and optional client secret in OpenWork.",
+              "Allowlist the callback URL shown by JuggleWork.",
+              "Save the client ID and optional client secret in JuggleWork.",
             ],
           }, 409)
         }
@@ -2510,7 +2510,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             error: "mcp_oauth_issuer_mismatch",
             message: issuerRepairRequiresAdmin
               ? "This connection's OAuth issuer changed and existing credentials must be cleared. Ask a workspace admin to reconnect it."
-              : "OpenWork could not safely verify the authorization server selected for this MCP connection. Ask a workspace admin to review its OAuth setup.",
+              : "JuggleWork could not safely verify the authorization server selected for this MCP connection. Ask a workspace admin to review its OAuth setup.",
           }, 409)
         }
         return c.json({

@@ -127,7 +127,7 @@ export const INTEGRATION_PROVIDERS: Record<IntegrationProvider, IntegrationProvi
   github: {
     provider: "github",
     name: "GitHub",
-    description: "Install the OpenWork GitHub App, then pick a repository to turn into a connector instance.",
+    description: "Install the JuggleWork GitHub App, then pick a repository to turn into a connector instance.",
     docsHref: "https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps",
     scopes: ["metadata:read", "contents:read", "webhooks"],
   },
@@ -163,7 +163,7 @@ export function getMockReposFor(provider: IntegrationProvider, accountId: string
       id: `${tag}:openwork`,
       name: "openwork",
       fullName: `${accountToLabel(accountId)}/openwork`,
-      description: "Core OpenWork monorepo — desktop, server, and orchestrator.",
+      description: "Core JuggleWork monorepo — desktop, server, and orchestrator.",
       hasPlugins: true,
     },
     {

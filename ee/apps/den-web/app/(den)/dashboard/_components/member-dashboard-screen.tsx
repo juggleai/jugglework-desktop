@@ -53,12 +53,12 @@ function parseInferenceStatus(payload: unknown): MemberInferenceStatus | null {
 async function fetchInferenceStatus() {
   const { response, payload } = await requestJson("/v1/inference", { method: "GET" }, 12000);
   if (!response.ok) {
-    throw new Error(getErrorMessage(payload, `Failed to load OpenWork Models status (${response.status}).`));
+    throw new Error(getErrorMessage(payload, `Failed to load JuggleWork Models status (${response.status}).`));
   }
 
   const parsed = parseInferenceStatus(payload);
   if (!parsed) {
-    throw new Error("OpenWork Models status response was incomplete.");
+    throw new Error("JuggleWork Models status response was incomplete.");
   }
 
   return parsed;
@@ -151,7 +151,7 @@ export function MemberDashboardScreen() {
     <div className="mx-auto max-w-[1100px] px-4 pb-10 pt-4 sm:px-6 md:px-8" data-testid="member-dashboard">
       <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
         <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">
-          {activeOrg?.name ?? "OpenWork Cloud"}
+          {activeOrg?.name ?? "JuggleWork Cloud"}
         </span>
         <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" aria-hidden="true" />
         <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Dashboard</span>
@@ -161,7 +161,7 @@ export function MemberDashboardScreen() {
         <div>
           <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">Your workspace</h1>
           <p className="mt-1 max-w-[680px] text-[14px] leading-6 text-[#5A6886]">
-            The models, marketplaces, and plugins available to you in OpenWork.
+            The models, marketplaces, and plugins available to you in JuggleWork.
           </p>
         </div>
         <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3">
@@ -191,7 +191,7 @@ export function MemberDashboardScreen() {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
             icon={Sparkles}
-            title="OpenWork Models"
+            title="JuggleWork Models"
             value={inferenceLabel}
             detail={inference?.enabled ? `${openWorkProviders.length} model key group${openWorkProviders.length === 1 ? "" : "s"} visible to you.` : "Ask an admin to enable org-provided models."}
             tone={inference?.enabled ? "emerald" : "amber"}
@@ -225,7 +225,7 @@ export function MemberDashboardScreen() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">LLM providers</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Custom providers you can use from OpenWork.</p>
+              <p className="mt-1 text-[13px] text-gray-500">Custom providers you can use from JuggleWork.</p>
             </div>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
               {customProviders.length} available
@@ -265,7 +265,7 @@ export function MemberDashboardScreen() {
         <section className="rounded-2xl border border-gray-100 bg-white p-5">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">OpenWork Models</h2>
+              <h2 className="text-[18px] font-semibold tracking-[-0.03em] text-gray-950">JuggleWork Models</h2>
               <p className="mt-1 text-[13px] text-gray-500">Org-provided inference status.</p>
             </div>
             <span className={`rounded-full px-3 py-1 text-[12px] font-medium ${inference?.enabled ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
@@ -283,7 +283,7 @@ export function MemberDashboardScreen() {
                     {inference?.enabled ? "Enabled for this workspace" : "Not enabled for this workspace"}
                   </p>
                   <p className="mt-1 text-[12px] text-gray-500">
-                    {inference?.subscribed === false ? "The workspace needs an active subscription before members can use OpenWork Models." : `${inference?.memberCount ?? 0} member${inference?.memberCount === 1 ? "" : "s"} included in usage limits.`}
+                    {inference?.subscribed === false ? "The workspace needs an active subscription before members can use JuggleWork Models." : `${inference?.memberCount ?? 0} member${inference?.memberCount === 1 ? "" : "s"} included in usage limits.`}
                   </p>
                 </div>
               </div>

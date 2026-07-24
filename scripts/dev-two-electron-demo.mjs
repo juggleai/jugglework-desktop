@@ -21,7 +21,7 @@ const demoRoot = resolveDemoRoot();
 const appProfiles = {
   admin: {
     appIdentifier: "com.differentai.openwork.demo.admin",
-    appName: "OpenWork Demo A",
+    appName: "JuggleWork Demo A",
     bootstrapName: "admin-bootstrap.json",
     cdpFlag: "--admin-cdp",
     cdpPort: "9923",
@@ -32,7 +32,7 @@ const appProfiles = {
   },
   consumer: {
     appIdentifier: "com.differentai.openwork.demo.consumer",
-    appName: "OpenWork Demo B",
+    appName: "JuggleWork Demo B",
     bootstrapName: "consumer-bootstrap.json",
     cdpFlag: "--consumer-cdp",
     cdpPort: "9924",
@@ -532,10 +532,10 @@ async function main() {
   console.log(`Demo B CDP:    http://127.0.0.1:${consumerCdp}`);
   console.log(`Demo A folder: ${demoRun.admin.root}`);
   console.log(`  Electron:    ${demoRun.admin.userDataDir}`);
-  console.log(`  OpenWork:    ${demoRun.admin.dataDir}`);
+  console.log(`  JuggleWork:    ${demoRun.admin.dataDir}`);
   console.log(`Demo B folder: ${demoRun.consumer.root}`);
   console.log(`  Electron:    ${demoRun.consumer.userDataDir}`);
-  console.log(`  OpenWork:    ${demoRun.consumer.dataDir}`);
+  console.log(`  JuggleWork:    ${demoRun.consumer.dataDir}`);
   const denStartup =
     adminPort === appProfiles.admin.port && consumerPort === appProfiles.consumer.port
       ? "pnpm demo:den"

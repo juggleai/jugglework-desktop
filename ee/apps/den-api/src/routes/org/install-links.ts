@@ -119,7 +119,7 @@ function organizationMetadataInput(value: unknown): Record<string, unknown> | st
 function buildInstallConfig(input: { organization: { name: string; logo: string | null; metadata: unknown }; request: Request }) {
   const metadata = normalizeOrganizationMetadata(organizationMetadataInput(input.organization.metadata)).metadata
   return installConfigSchema.parse({
-    appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "OpenWork",
+    appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "JuggleWork",
     clientName: input.organization.name,
     webUrl: env.betterAuthUrl,
     apiUrl: resolvePublicOrigin(input.request, env.apiPublicUrl),
@@ -217,7 +217,7 @@ function clampInstallerReleaseTag(releaseTag: string) {
   if (env.installerReleaseRepo === DEFAULT_INSTALLER_RELEASE_REPO && comparison !== null && comparison < 0) {
     // The generic installer is version-agnostic: it installs /v1/app-version,
     // so allowedDesktopVersions still governs app updates. This only selects
-    // an installer binary release that actually has OpenWork-Installer-* assets.
+    // an installer binary release that actually has JuggleWork-Installer-* assets.
     return `v${FIRST_GENERIC_INSTALLER_RELEASE}`
   }
   return releaseTag
@@ -294,9 +294,9 @@ function installConfigEndpoint(apiUrl: string, token: string) {
 function linuxInstallScript(input: { token: string; config: z.infer<typeof installConfigSchema> }) {
   const configUrl = installConfigEndpoint(input.config.apiUrl, input.token)
   return `#!/usr/bin/env sh
-# OpenWork Linux setup for ${input.config.clientName}.
+# JuggleWork Linux setup for ${input.config.clientName}.
 # Downloads no code. It writes the desktop bootstrap config, then tells you
-# where to download the current OpenWork AppImage.
+# where to download the current JuggleWork AppImage.
 set -eu
 
 CONFIG_URL=${shellQuote(configUrl)}
@@ -310,11 +310,11 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
   FETCH="wget -qO-"
 else
-  echo "OpenWork setup requires curl or wget." >&2
+  echo "JuggleWork setup requires curl or wget." >&2
   exit 1
 fi
 
-echo "Checking your OpenWork install link..."
+echo "Checking your JuggleWork install link..."
 # shellcheck disable=SC2086
 $FETCH "$CONFIG_URL" >/dev/null
 
@@ -332,10 +332,10 @@ cat > "$BOOTSTRAP_PATH" <<EOF
 EOF
 
 echo
-echo "This sets up OpenWork for $CLIENT_NAME."
+echo "This sets up JuggleWork for $CLIENT_NAME."
 echo "Wrote $BOOTSTRAP_PATH"
 echo
-echo "Download the OpenWork AppImage here:"
+echo "Download the JuggleWork AppImage here:"
 echo "  $DOWNLOAD_URL"
 echo
 echo "Run the AppImage, then sign in — your team's workspace is preconfigured."
@@ -362,7 +362,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       summary: "Create organization install link",
-      description: "Mints a shareable OpenWork desktop install link for a signed-in organization member. Older active links remain valid unless an owner or admin explicitly requests rotation.",
+      description: "Mints a shareable JuggleWork desktop install link for a signed-in organization member. Older active links remain valid unless an owner or admin explicitly requests rotation.",
       responses: {
         200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
@@ -522,11 +522,11 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Download OpenWork installer",
-      description: "Always serves the OpenWork installer for the requested platform. By default Den redirects to the public release asset; unrestricted official-repo organizations follow the latest published release. Operators can optionally mount installer artifacts for an air-gapped mirror.",
+      summary: "Download JuggleWork installer",
+      description: "Always serves the JuggleWork installer for the requested platform. By default Den redirects to the public release asset; unrestricted official-repo organizations follow the latest published release. Operators can optionally mount installer artifacts for an air-gapped mirror.",
       responses: {
         200: textResponse("Installer artifact returned successfully."),
-        302: emptyResponse("Den redirected the browser to the public OpenWork installer release asset."),
+        302: emptyResponse("Den redirected the browser to the public JuggleWork installer release asset."),
         400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
         404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
         429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),

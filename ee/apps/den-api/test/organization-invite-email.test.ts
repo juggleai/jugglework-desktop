@@ -18,7 +18,7 @@ test("organization invitation HTML focuses on joining without desktop download p
   expect(text).toContain("Accept invite")
   expect(html).toContain(inviteLink)
   expect(html).not.toContain("Download the desktop app")
-  expect(html).not.toContain("OpenWork desktop app")
+  expect(html).not.toContain("JuggleWork desktop app")
   expect(html).not.toContain(downloadUrl)
 })
 

@@ -648,7 +648,7 @@ function safeBaseMessageFor(input: {
   providerErrorMessage?: string
 }): string {
   if (input.code === "MCP_LIFECYCLE_DEADLINE") {
-    return "The MCP lifecycle exceeded OpenWork's bounded diagnostic deadline."
+    return "The MCP lifecycle exceeded JuggleWork's bounded diagnostic deadline."
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
@@ -661,17 +661,17 @@ function safeBaseMessageFor(input: {
   }
   if (input.code === "MCP_PROVIDER_DECLARED_ERROR") {
     const message = input.jsonRpcCode === undefined
-      ? "The provider answered with a JSON-RPC error OpenWork does not recognize."
-      : `The provider answered with a JSON-RPC error OpenWork does not recognize (code ${input.jsonRpcCode}).`
+      ? "The provider answered with a JSON-RPC error JuggleWork does not recognize."
+      : `The provider answered with a JSON-RPC error JuggleWork does not recognize (code ${input.jsonRpcCode}).`
     return input.providerErrorMessage
       ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
       : message
   }
   if (input.code === "MCP_RESPONSE_BODY_LIMIT") {
-    return "The MCP server returned a response body larger than OpenWork can safely process."
+    return "The MCP server returned a response body larger than JuggleWork can safely process."
   }
   if (input.highestPassed && HEALTH_RANK[input.highestPassed] >= HEALTH_RANK.protocol_ready && isUninformativeClassification(input)) {
-    return "The MCP server answered, but OpenWork could not interpret its response for the current request."
+    return "The MCP server answered, but JuggleWork could not interpret its response for the current request."
   }
   if (input.category === "security_blocked") {
     return "Den blocked the MCP URL because it violates the outbound network safety policy."
@@ -695,7 +695,7 @@ function safeBaseMessageFor(input: {
     return "The authorization server did not provide usable OAuth metadata."
   }
   if (input.phase === "AUTH_CLIENT_REGISTRATION") {
-    return "OpenWork could not register or identify its OAuth client with the authorization server."
+    return "JuggleWork could not register or identify its OAuth client with the authorization server."
   }
   if (input.phase === "AUTH_TOKEN_ACQUISITION" || input.phase === "CONTINUITY_REFRESH") {
     return "The authorization server rejected the code or token refresh exchange."
@@ -716,8 +716,8 @@ function safeBaseMessageFor(input: {
   }
   if (input.phase === "MCP_TOOL_DISCOVERY") {
     return input.code === "MCP_CATALOG_CURSOR_LOOP"
-      ? "The MCP server repeated a tool-catalog cursor, so OpenWork stopped safely."
-      : "OpenWork could not retrieve a complete, valid MCP tool catalog."
+      ? "The MCP server repeated a tool-catalog cursor, so JuggleWork stopped safely."
+      : "JuggleWork could not retrieve a complete, valid MCP tool catalog."
   }
   if (input.phase === "MCP_TOOL_EXECUTION" || input.phase === "PROVIDER_EXECUTION") {
     return "The MCP connection is established, but the requested provider operation failed."
@@ -731,7 +731,7 @@ function safeBaseMessageFor(input: {
   if (input.phase === "HTTP_ROUTING") {
     return "Den reached the host, but the configured path did not behave like the intended MCP endpoint."
   }
-  return "The MCP connection failed before OpenWork could complete the protocol lifecycle."
+  return "The MCP connection failed before JuggleWork could complete the protocol lifecycle."
 }
 
 type Classification = Omit<ExternalMcpDiagnostic, "referenceId" | "highestPassed" | "message">
@@ -1250,7 +1250,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       code: "MCP_UNSUPPORTED_VERSION",
       retryable: false,
       actionOwner: "provider_admin",
-      operatorAction: "Configure the provider to support an MCP protocol version compatible with OpenWork.",
+      operatorAction: "Configure the provider to support an MCP protocol version compatible with JuggleWork.",
     }
   }
 

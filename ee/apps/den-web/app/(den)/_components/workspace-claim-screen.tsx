@@ -17,7 +17,7 @@ function LoadingCard({ title, body }: { title: string; body: string }) {
   return (
     <section className="den-page py-4 lg:py-6">
       <div className="den-frame grid max-w-[44rem] gap-4 p-6 md:p-7">
-        <p className="den-eyebrow">OpenWork Cloud</p>
+        <p className="den-eyebrow">JuggleWork Cloud</p>
         <div className="grid gap-2">
           <h1 className="den-title-lg">{title}</h1>
           <p className="den-copy">{body}</p>
@@ -228,7 +228,7 @@ export function WorkspaceClaimScreen({
     try {
       window.location.assign(await createDesktopHandoff());
     } catch (error) {
-      setHandoffError(error instanceof Error ? error.message : "Could not open OpenWork.");
+      setHandoffError(error instanceof Error ? error.message : "Could not open JuggleWork.");
     } finally {
       setHandoffBusy(false);
     }
@@ -268,13 +268,13 @@ export function WorkspaceClaimScreen({
       <section className="den-page py-4 lg:py-6">
         <div className="den-frame grid max-w-[44rem] gap-6 p-6 md:p-8">
           <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Cloud</p>
+            <p className="den-eyebrow">JuggleWork Cloud</p>
             <h1 className="den-title-lg">This claim link can&apos;t be opened.</h1>
             <p className="den-copy">The link is missing its claim token. Re-open the link from your setup, or ask for a new one.</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <Link href="/" className="den-button-primary w-full sm:w-auto">
-              Back to OpenWork Cloud
+              Back to JuggleWork Cloud
             </Link>
           </div>
         </div>
@@ -292,7 +292,7 @@ export function WorkspaceClaimScreen({
       <section className="den-page py-6 lg:py-10">
         <div className="mx-auto grid w-full max-w-[32rem] gap-5">
           <div className="grid gap-2 text-center">
-            <p className="den-eyebrow">OpenWork Cloud</p>
+            <p className="den-eyebrow">JuggleWork Cloud</p>
             <h1 className="den-title-lg">Claim your workspace</h1>
             <p className="den-copy">
               Sign in or create an account to become the owner. Your workspace is already set up.
@@ -340,7 +340,7 @@ export function WorkspaceClaimScreen({
             <h1 className="den-title-lg max-w-[22ch]">{claimedOrg.organizationName} is yours.</h1>
             <p className="den-copy max-w-[46ch]">
               {isLoopback
-                ? "Copy the one-time code, then paste it into OpenWork to finish signing in."
+                ? "Copy the one-time code, then paste it into JuggleWork to finish signing in."
                 : "Open the desktop app to finish signing in. You will not need to enter your password again."}
             </p>
           </div>
@@ -363,7 +363,7 @@ export function WorkspaceClaimScreen({
                 onClick={() => void handleOpenDesktop()}
                 disabled={handoffBusy || copyBusy}
               >
-                {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                {handoffBusy ? "Opening JuggleWork..." : "Open JuggleWork"}
               </button>
             )}
 
@@ -376,7 +376,7 @@ export function WorkspaceClaimScreen({
                   disabled={handoffBusy || copyBusy}
                 >
                   <ExternalLink className="size-3.5" aria-hidden />
-                  {handoffBusy ? "Opening OpenWork..." : "Open OpenWork"}
+                  {handoffBusy ? "Opening JuggleWork..." : "Open JuggleWork"}
                 </button>
               ) : (
                 <button
@@ -403,13 +403,13 @@ export function WorkspaceClaimScreen({
 
           {codeCopied ? (
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-              In OpenWork, choose &quot;Paste sign-in code&quot; and paste it once.
+              In JuggleWork, choose &quot;Paste sign-in code&quot; and paste it once.
             </div>
           ) : null}
 
           {handoffAttempted && !handoffError ? (
             <p className="den-copy text-sm">
-              Opening OpenWork now. If nothing happens (for example, the app isn&apos;t installed on this machine), use &quot;Continue in browser instead&quot;.
+              Opening JuggleWork now. If nothing happens (for example, the app isn&apos;t installed on this machine), use &quot;Continue in browser instead&quot;.
             </p>
           ) : null}
           {handoffError ? <div className="den-notice is-error">{handoffError}</div> : null}
@@ -423,7 +423,7 @@ export function WorkspaceClaimScreen({
     <section className="den-page py-6 lg:py-10">
       <div className="den-frame mx-auto grid max-w-[34rem] gap-6 p-6 md:p-8">
         <div className="grid gap-2">
-          <p className="den-eyebrow">OpenWork Cloud</p>
+          <p className="den-eyebrow">JuggleWork Cloud</p>
           <h1 className="den-title-lg">Claim your workspace</h1>
           <p className="den-copy">Confirm this account to become the owner.</p>
         </div>

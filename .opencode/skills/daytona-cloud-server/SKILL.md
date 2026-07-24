@@ -5,7 +5,7 @@ description: Daytona cloud server, Den sandbox, desktop plus cloud e2e, marketpl
 
 # Daytona Cloud Server
 
-Use this skill when the user needs the hosted/server side of OpenWork running in
+Use this skill when the user needs the hosted/server side of JuggleWork running in
 Daytona. This is separate from the Electron desktop sandbox.
 
 ## What This Covers

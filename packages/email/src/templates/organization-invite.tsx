@@ -21,10 +21,10 @@ export function OrganizationInviteEmail({
   return (
     <Html>
       <Head />
-      <Preview>{invitedByName} invited you to join {organizationName} on OpenWork</Preview>
+      <Preview>{invitedByName} invited you to join {organizationName} on JuggleWork</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
-          <Text style={styles.eyebrow}>OpenWork invite</Text>
+          <Text style={styles.eyebrow}>JuggleWork invite</Text>
           <Heading style={styles.heading}>Join {organizationName}</Heading>
           <Text style={styles.text}>{inviter} invited you to join {organizationName} as {articleFor(role)} {role}.</Text>
           <Button href={inviteLink} style={styles.button}>Accept invite</Button>

@@ -128,7 +128,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(missingScopeResponse.status).toBe(409)
     expect(await missingScopeResponse.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read permission. An admin can enable it on the Microsoft 365 connector in JuggleWork Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
 
@@ -181,7 +181,7 @@ describe("Microsoft 365 injected routes", () => {
           end: { dateTime: "2026-07-13T10:30:00Z", timeZone: "UTC" },
         }, { status: 201 })
       }
-      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/OpenWork/notes.txt:/content")) {
+      if (decodeURIComponent(url.pathname).endsWith("/me/drive/root:/JuggleWork/notes.txt:/content")) {
         return Response.json({ id: "file_1", name: "notes.txt", file: { mimeType: "text/plain" } }, { status: 201 })
       }
       if (url.pathname.endsWith("/me/chats")) {
@@ -233,7 +233,7 @@ describe("Microsoft 365 injected routes", () => {
     const fileResponse = await app.request("http://den-api.local/v1/capabilities/microsoft-365/drive-files", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: "OpenWork/notes.txt", content: "Notes" }),
+      body: JSON.stringify({ path: "JuggleWork/notes.txt", content: "Notes" }),
     })
     expect(fileResponse.status).toBe(200)
     expect(await fileResponse.json()).toMatchObject({ file: { id: "file_1" } })
@@ -295,7 +295,7 @@ describe("Microsoft 365 injected routes", () => {
     expect(denied.status).toBe(409)
     expect(await denied.json()).toEqual({
       error: "needs_connection",
-      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in OpenWork Cloud -> Connectors; then reconnect your account.",
+      message: "Your connected Microsoft account is missing the Outlook mail read/write permission. An admin can enable it on the Microsoft 365 connector in JuggleWork Cloud -> Connectors; then reconnect your account.",
     })
     expect(graphCalls).toBe(1)
   })

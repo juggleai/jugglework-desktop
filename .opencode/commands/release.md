@@ -1,8 +1,8 @@
 ---
-description: Run the OpenWork release flow
+description: Run the JuggleWork release flow
 ---
 
-You are running the OpenWork release flow in this repo.
+You are running the JuggleWork release flow in this repo.
 
 Arguments: `$ARGUMENTS`
 - If empty, default to a patch release.

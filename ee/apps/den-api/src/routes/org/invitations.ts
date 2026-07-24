@@ -282,7 +282,7 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         template: "organizationInvite",
         props: {
           inviteLink: buildInvitationLink(inviteToken),
-          invitedByName: user.name ?? user.email ?? "OpenWork",
+          invitedByName: user.name ?? user.email ?? "JuggleWork",
           invitedByEmail: user.email ?? "",
           organizationName: payload.organization.name,
           role: assignedRole,

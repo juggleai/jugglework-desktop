@@ -99,7 +99,7 @@ function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
 }
 
 function diagnosisLayerLabel(layer: ExternalMcpToolCallInspection["diagnosis"]["layer"]): string {
-  if (layer === "openwork") return "OpenWork before send";
+  if (layer === "openwork") return "JuggleWork before send";
   if (layer === "network") return "Network / no response";
   if (layer === "mcp_connection") return "MCP connection / setup";
   if (layer === "remote_http") return "Remote MCP HTTP";
@@ -161,7 +161,7 @@ function McpToolCallInspector({
   failureAttribution: ExternalMcpFailureAttribution | null;
 }) {
   const succeeded = inspection.diagnosis.status === "succeeded";
-  // A captured request can still have been blocked inside OpenWork (for
+  // A captured request can still have been blocked inside JuggleWork (for
   // example by the outbound SSRF policy); the diagnosis layer decides
   // between "never sent" and "sent but unanswered".
   const transportChip = inspection.response
@@ -176,7 +176,7 @@ function McpToolCallInspector({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[12px] font-semibold text-emerald-800">Remote MCP completed the call</p>
             <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-600">
-              <span>OpenWork</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
+              <span>JuggleWork</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
               <span>{transportChip}</span><ArrowRight className="h-3 w-3" aria-hidden="true" />
               <span>Tool result</span>
             </div>
@@ -202,7 +202,7 @@ function McpToolCallInspector({
         </summary>
 
         <div className="border-t border-amber-100 bg-amber-50/70 px-4 py-2 text-[10px] leading-4 text-amber-800">
-          Credential and session headers are redacted. Request and response bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in OpenWork logs.
+          Credential and session headers are redacted. Request and response bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in JuggleWork logs.
         </div>
 
         <div className="grid gap-0 border-t border-gray-200 xl:grid-cols-2 xl:divide-x xl:divide-gray-200">
@@ -214,7 +214,7 @@ function McpToolCallInspector({
                   <span className="font-semibold text-blue-300">{inspection.request.method}</span> <span className="break-all">{inspection.request.url}</span>
                 </div>
               ) : (
-                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left OpenWork.</p>
+                <p className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">No tools/call request left JuggleWork.</p>
               )}
             </div>
             {inspection.request ? (
@@ -331,7 +331,7 @@ export function McpToolRunner({ connection }: { connection: ExternalMcpConnectio
             <p className="text-[13px] font-semibold text-gray-900">Run a tool manually</p>
           </div>
           <p className="mt-1 max-w-2xl text-[12px] leading-5 text-gray-500">
-            This runs through OpenWork with your available connection credential. Arguments and results are not written to OpenWork logs.
+            This runs through JuggleWork with your available connection credential. Arguments and results are not written to JuggleWork logs.
           </p>
         </div>
         <DenButton className="shrink-0 whitespace-nowrap" variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>

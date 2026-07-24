@@ -79,7 +79,7 @@ export async function GET() {
       openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),
       orgMode,
-      singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "OpenWork",
+      singleOrgName: readPublicRuntimeEnv("DEN_SINGLE_ORG_NAME") || "JuggleWork",
       singleOrgSlug: readPublicRuntimeEnv("DEN_SINGLE_ORG_SLUG") || "default",
       singleOrgAllowPublicSignup: readBooleanEnv("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP", orgMode === "multi_org"),
       singleOrgSsoConfigured

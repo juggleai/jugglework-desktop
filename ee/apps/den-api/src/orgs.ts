@@ -785,7 +785,7 @@ export async function getInvitationPreview(invitationIdRaw: string): Promise<Inv
       slug: row.organization.slug,
       allowedEmailDomains: normalizeStoredAllowedEmailDomains(row.organization.allowedEmailDomains),
       branding: {
-        appName: typeof organizationMetadata.brandAppName === "string" ? organizationMetadata.brandAppName : "OpenWork",
+        appName: typeof organizationMetadata.brandAppName === "string" ? organizationMetadata.brandAppName : "JuggleWork",
         logoUrl: typeof organizationMetadata.brandLogoUrl === "string" ? organizationMetadata.brandLogoUrl : row.organization.logo,
         iconUrl: typeof organizationMetadata.brandIconUrl === "string" ? organizationMetadata.brandIconUrl : null,
       },

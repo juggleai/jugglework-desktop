@@ -1,6 +1,6 @@
-# OpenWork — Agent Onboarding (start.md)
+# JuggleWork — Agent Onboarding (start.md)
 
-This is the cold-start contract for an **agent** onboarding a user into OpenWork
+This is the cold-start contract for an **agent** onboarding a user into JuggleWork
 Cloud (Den) with no human in the loop. Every step below is a plain REST call
 against the Den API. Read this file, then drive the calls in order.
 

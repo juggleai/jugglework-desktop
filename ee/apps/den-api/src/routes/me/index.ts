@@ -210,8 +210,8 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     "/v1/me/send-download-link",
     describeRoute({
       tags: ["Users"],
-      summary: "Send current user the OpenWork desktop download link",
-      description: "Emails the authenticated user a link to download the OpenWork desktop app.",
+      summary: "Send current user the JuggleWork desktop download link",
+      description: "Emails the authenticated user a link to download the JuggleWork desktop app.",
       responses: {
         200: jsonResponse("Download link email sent successfully.", sendDownloadLinkResponseSchema),
         400: jsonResponse("The signed-in account is missing an email address.", invalidRequestSchema),

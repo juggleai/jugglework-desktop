@@ -27,7 +27,7 @@ describe("Den auth landing contract", () => {
     const source = readFileSync(authScreenPath, "utf8");
 
     expect(source).not.toContain("openwork-logo-transparent.svg");
-    expect(source).not.toContain("OpenWork Cloud");
+    expect(source).not.toContain("JuggleWork Cloud");
     expect(source).not.toContain("One setup, every seat.");
     expect(source).not.toContain("Configure once. Your whole team gets the same tools, agents, and providers.");
     expect(source).not.toContain("Shared config");
@@ -47,9 +47,9 @@ describe("Den auth landing contract", () => {
   test("starts the email-first panel with the approved heading", () => {
     const source = readFileSync(authPanelPath, "utf8");
 
-    expect(source).toContain('title: "Start using OpenWork"');
+    expect(source).toContain('title: "Start using JuggleWork"');
     expect(source).toContain("Enter your email and we'll send you to the right sign-in step.");
-    expect(source).not.toContain("Continue to OpenWork.");
+    expect(source).not.toContain("Continue to JuggleWork.");
   });
 
   test("signed-in desktop handoff shows account email and a pasteable link by default", () => {

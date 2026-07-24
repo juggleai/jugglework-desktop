@@ -246,7 +246,7 @@ function hintFor(vendor: ProbeVendor, status: number | null): string {
   if (status !== null) {
     return `The endpoint answered /models with HTTP ${status}.`
   }
-  return "Could not reach the endpoint. Check the URL, network access, and that the endpoint allows requests from OpenWork Cloud."
+  return "Could not reach the endpoint. Check the URL, network access, and that the endpoint allows requests from JuggleWork Cloud."
 }
 
 /**

@@ -215,14 +215,14 @@ export function MarketplaceOnboardingScreen() {
     <div className="mx-auto max-w-2xl px-4 pb-12 pt-6 sm:px-6">
       {/* Header */}
       <header className="text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6C7890]">OpenWork Cloud</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6C7890]">JuggleWork Cloud</p>
         <h1 className="mt-3 text-[28px] font-semibold leading-[1.05] tracking-[-0.04em] text-[#07192C] sm:text-[34px]">
           {requiredDone ? `You're all set, ${orgName}.` : `Let's finish setting up ${orgName}.`}
         </h1>
         <p className="mx-auto mt-3 max-w-md text-[14px] leading-6 text-[#5A6886]">
           {requiredDone
             ? "Models are on and the app is ready. Jump in, or finish the optional steps below."
-            : "OpenWork runs on the desktop app. Download it, enable models, then add anything else you need."}
+            : "JuggleWork runs on the desktop app. Download it, enable models, then add anything else you need."}
         </p>
 
         {/* Download CTA */}
@@ -306,7 +306,7 @@ export function MarketplaceOnboardingScreen() {
             done={modelsEnabled}
             required
             icon={<Sparkles className="h-4 w-4" />}
-            title="Turn on OpenWork Models"
+            title="Turn on JuggleWork Models"
             helper="Best open-source and frontier models, ready to go. No API keys needed. Prefer your own provider? Use your own keys."
           >
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -330,13 +330,13 @@ export function MarketplaceOnboardingScreen() {
             done={mcpAdded}
             required={false}
             icon={<Plug className="h-4 w-4" />}
-            title="Use OpenWork in OpenCode, Codex, or any MCP app"
-            helper="Copy the public OpenWork Connect endpoint. OpenCode is verified; Codex, Cursor Web/Agents, ChatGPT Desktop, Claude Code, VS Code, and other clients have setup guides."
+            title="Use JuggleWork in OpenCode, Codex, or any MCP app"
+            helper="Copy the public JuggleWork Connect endpoint. OpenCode is verified; Codex, Cursor Web/Agents, ChatGPT Desktop, Claude Code, VS Code, and other clients have setup guides."
           >
             <div className="space-y-2.5">
               <button
                 type="button"
-                aria-label={`Copy OpenWork MCP endpoint ${OPENWORK_MCP_ENDPOINT}`}
+                aria-label={`Copy JuggleWork MCP endpoint ${OPENWORK_MCP_ENDPOINT}`}
                 onClick={copyMcpEndpoint}
                 className="inline-flex max-w-full items-center justify-between gap-2 whitespace-normal rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left text-[12px] font-mono text-[#07192C] transition hover:bg-gray-100"
               >
@@ -344,7 +344,7 @@ export function MarketplaceOnboardingScreen() {
                 {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />}
               </button>
               <p aria-live="polite" className="min-h-5 text-[12px] font-medium text-emerald-600">
-                {copied ? "OpenWork MCP endpoint copied." : ""}
+                {copied ? "JuggleWork MCP endpoint copied." : ""}
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <a

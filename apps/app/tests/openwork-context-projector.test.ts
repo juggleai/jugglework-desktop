@@ -39,7 +39,7 @@ const baseInput: ContextProjectorInput = {
   availableAffordances: [],
 };
 
-describe("OpenWork context projector", () => {
+describe("JuggleWork context projector", () => {
   test("projects the focused split session and its panel state", () => {
     const context = buildOpenworkContext(baseInput);
 
@@ -106,7 +106,7 @@ function contextForRoute(route: string) {
         tabs: [{
           id: "browser-one",
           type: "browser",
-          label: "OpenWork docs",
+          label: "JuggleWork docs",
           url: "https://docs.openwork.so",
           favicon: null,
           status: "ready",
@@ -120,7 +120,7 @@ function contextForRoute(route: string) {
   });
 }
 
-describe("OpenWork context projector", () => {
+describe("JuggleWork context projector", () => {
   test("represents all open tabs and both visible split sessions", () => {
     const context = contextForRoute("/workspace/workspace-a/session/session-a");
 

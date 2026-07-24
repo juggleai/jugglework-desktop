@@ -20,7 +20,7 @@ import {
 } from "./llm-provider-data";
 
 function getProviderSourceLabel(source: DenLlmProviderSource) {
-  if (source === "openwork") return "OpenWork";
+  if (source === "openwork") return "JuggleWork";
   return source === "custom" ? "Custom" : "Catalog";
 }
 
@@ -113,8 +113,8 @@ export function LlmProvidersScreen() {
         {openWorkKeyRows.length > 0 ? (
           <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
             <div className="border-b border-gray-100 px-6 py-4">
-              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">OpenWork Model Keys</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Members in this organization with an OpenWork Models key.</p>
+              <h2 className="text-[16px] font-medium tracking-[-0.02em] text-gray-950">JuggleWork Model Keys</h2>
+              <p className="mt-1 text-[13px] text-gray-500">Members in this organization with a JuggleWork Models key.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-[14px]">

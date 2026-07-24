@@ -95,7 +95,7 @@ describe("github connector app helpers", () => {
       config: { appId: "123456", privateKey: privateKeyPem },
       fetchFn: async () => new Response(JSON.stringify({
         html_url: "https://github.com/apps/openwork-test",
-        name: "OpenWork Test",
+        name: "JuggleWork Test",
         slug: "openwork-test",
       }), { status: 200 }),
     })

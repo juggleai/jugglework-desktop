@@ -1,4 +1,4 @@
-# OpenWork Landing (Next.js)
+# JuggleWork Landing (Next.js)
 
 ## Local dev
 
@@ -10,7 +10,7 @@
 ### Optional env vars
 
 - `NEXT_PUBLIC_CAL_URL` - enterprise booking link
-- `EMAIL_FROM` - sender for feedback emails (for example `OpenWork <team@openworklabs.com>`)
+- `EMAIL_FROM` - sender for feedback emails (for example `JuggleWork <team@openworklabs.com>`)
 - `RESEND_API_KEY` - Resend API key for feedback emails
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` - SMTP fallback for feedback emails when Resend is not configured
 - `OPENWORK_FEEDBACK_EMAIL` - optional override for the internal feedback recipient (defaults to `team@openworklabs.com`)

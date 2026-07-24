@@ -29,7 +29,7 @@ export function resolveOpenWorkConnectStatus(
       state: "needs_attention",
       label: "Needs attention",
       description: maintenance.issue?.message
-        ?? "OpenWork Connect could not verify connected service tools. Run diagnostics for details.",
+        ?? "JuggleWork Connect could not verify connected service tools. Run diagnostics for details.",
     };
   }
 

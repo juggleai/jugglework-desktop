@@ -114,7 +114,7 @@ class RecordingOAuthProvider implements OAuthClientProvider {
   get clientMetadata() {
     return {
       redirect_uris: [this.redirectUrl],
-      client_name: "OpenWork deadline test",
+      client_name: "JuggleWork deadline test",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
@@ -836,7 +836,7 @@ describe("external MCP diagnostics", () => {
       retryable: false,
       actionOwner: "provider_admin",
     })
-    expect(diagnostic.message).toBe("The MCP server answered, but OpenWork could not interpret its response for the current request.")
+    expect(diagnostic.message).toBe("The MCP server answered, but JuggleWork could not interpret its response for the current request.")
   })
 
   test("classifies unknown correlated JSON-RPC errors as provider-declared while preserving the code", () => {
@@ -1138,11 +1138,11 @@ describe("external MCP diagnostics", () => {
     const html = connectCallbackPage({ ok: true, name: "Enterprise MCP <test>" })
 
     expect(html).toContain("You're connected")
-    expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
+    expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to JuggleWork.")
     expect(html).toContain("window.close()")
     expect(html).toContain("Close window")
     expect(html).not.toContain("openwork://")
-    expect(html).not.toContain("Open OpenWork")
+    expect(html).not.toContain("Open JuggleWork")
   })
 
   test("exhausts paginated tool catalogs exactly once", async () => {

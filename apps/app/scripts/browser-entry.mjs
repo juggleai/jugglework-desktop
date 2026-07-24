@@ -171,7 +171,7 @@ try {
           writeSse(
             res,
             createTextStream(
-              "Using the built-in OpenWork Browser to open example.com and read the page title.",
+              "Using the built-in JuggleWork Browser to open example.com and read the page title.",
             ),
           );
         } else {
@@ -230,7 +230,7 @@ try {
   let sessionId;
 
   await step("session.create", async () => {
-    const session = await client.session.create({ title: "OpenWork browser-entry test" });
+    const session = await client.session.create({ title: "JuggleWork browser-entry test" });
     sessionId = session.id;
     assert.ok(sessionId);
     return { id: session.id };
@@ -247,7 +247,7 @@ try {
   });
 
   await step("assert.built-in-browser-quickstart", async () => {
-    assert.equal(sawBuiltInBrowserPrompt, true, "Expected browser quickstart prompt to use the built-in OpenWork Browser");
+    assert.equal(sawBuiltInBrowserPrompt, true, "Expected browser quickstart prompt to use the built-in JuggleWork Browser");
     return { sawBuiltInBrowserPrompt };
   });
 

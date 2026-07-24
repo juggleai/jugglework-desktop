@@ -20,5 +20,5 @@ export const DEN_MCP_ACCESS_TOKEN_EXPIRES_IN_SECONDS = accessTokenExpiresInSecon
 export const DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60
 // The first-party Cloud Control token is a bearer access token, not a rotating
 // refresh grant. Keep its exposure window bounded; the desktop maintenance
-// loop replaces it silently before expiry while OpenWork is in normal use.
+// loop replaces it silently before expiry while JuggleWork is in normal use.
 export const DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000

@@ -23,10 +23,10 @@ beforeAll(async () => {
 })
 
 test("builds the installer asset URL for the configured release", () => {
-  expect(installerReleaseAssetUrl("OpenWork-Installer-mac-arm64.dmg", {
+  expect(installerReleaseAssetUrl("JuggleWork-Installer-mac-arm64.dmg", {
     releaseTag: "v9.9.9+build 2",
     releaseRepo: "different-ai/openwork",
-  })).toBe("https://github.com/different-ai/openwork/releases/download/v9.9.9%2Bbuild%202/OpenWork-Installer-mac-arm64.dmg")
+  })).toBe("https://github.com/different-ai/openwork/releases/download/v9.9.9%2Bbuild%202/JuggleWork-Installer-mac-arm64.dmg")
 })
 
 test.each([
@@ -40,9 +40,9 @@ test.each([
 })
 
 test.each([
-  ["mac-arm64", "OpenWork-Installer-mac-arm64.dmg"],
-  ["mac-x64", "OpenWork-Installer-mac-x64.dmg"],
-  ["win-x64", "OpenWork-Installer-win-x64.exe"],
+  ["mac-arm64", "JuggleWork-Installer-mac-arm64.dmg"],
+  ["mac-x64", "JuggleWork-Installer-mac-x64.dmg"],
+  ["win-x64", "JuggleWork-Installer-win-x64.exe"],
   ["linux-x64", null],
   ["linux-arm64", null],
 ])("maps %s to the installer release artifact", (platform, expected) => {
@@ -51,7 +51,7 @@ test.each([
 
 test("resolves only a mounted installer asset and reports its size", async () => {
   const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "ow-installer-artifacts-"))
-  const fileName = "OpenWork-Installer-win-x64.exe"
+  const fileName = "JuggleWork-Installer-win-x64.exe"
   writeFileSync(path.join(artifactsDir, fileName), "installer-asset")
   envModule.env.installerArtifactsDir = artifactsDir
 
@@ -68,7 +68,7 @@ test("resolves only a mounted installer asset and reports its size", async () =>
 
 test("ignores a directory with the expected filename", async () => {
   const artifactsDir = mkdtempSync(path.join(os.tmpdir(), "ow-installer-artifacts-"))
-  const fileName = "OpenWork-Installer-win-x64.exe"
+  const fileName = "JuggleWork-Installer-win-x64.exe"
   mkdirSync(path.join(artifactsDir, fileName))
   envModule.env.installerArtifactsDir = artifactsDir
 

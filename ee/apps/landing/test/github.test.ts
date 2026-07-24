@@ -86,9 +86,9 @@ describe("getGithubData", () => {
     const winX64 = asset("openwork-win-x64-0.17.38.exe");
     const linuxX64 = asset("openwork-linux-x86_64-0.17.38.AppImage");
     const release = releaseWithAssets([
-      asset("OpenWork-Installer-mac-arm64.dmg"),
-      asset("OpenWork-Installer-mac-x64.dmg"),
-      asset("OpenWork-Installer-win-x64.exe"),
+      asset("JuggleWork-Installer-mac-arm64.dmg"),
+      asset("JuggleWork-Installer-mac-x64.dmg"),
+      asset("JuggleWork-Installer-win-x64.exe"),
       macArm64,
       macX64,
       winArm64,
@@ -112,9 +112,9 @@ describe("getGithubData", () => {
 
   test("falls back to release pages when a release contains only installer assets", async () => {
     const release = releaseWithAssets([
-      asset("OpenWork-Installer-mac-arm64.dmg"),
-      asset("OpenWork-Installer-mac-x64.dmg"),
-      asset("OpenWork-Installer-win-x64.exe")
+      asset("JuggleWork-Installer-mac-arm64.dmg"),
+      asset("JuggleWork-Installer-mac-x64.dmg"),
+      asset("JuggleWork-Installer-win-x64.exe")
     ]);
 
     installGithubFetch({ latestRelease: release, releases: [release] });

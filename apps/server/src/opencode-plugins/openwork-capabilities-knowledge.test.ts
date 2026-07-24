@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { OpenWorkCapabilitiesKnowledge } from "./openwork-capabilities-knowledge.js";
 
-describe("OpenWork capabilities knowledge plugin", () => {
-  test("injects current OpenWork Connect guidance", async () => {
+describe("JuggleWork capabilities knowledge plugin", () => {
+  test("injects current JuggleWork Connect guidance", async () => {
     const plugin = await OpenWorkCapabilitiesKnowledge();
     const output = { system: [] };
 
@@ -27,9 +27,9 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(knowledge).toContain("JWTs signed and validated with EdDSA");
     expect(knowledge).toContain("30-day inactivity window");
     expect(knowledge).toContain("reference_id");
-    expect(knowledge).toContain("OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
-    expect(knowledge).toContain("require the user to sign in to OpenWork first");
-    expect(knowledge).toContain("Runtime steering from the OpenWork extensions plugin is the source of truth");
+    expect(knowledge).toContain("JuggleWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
+    expect(knowledge).toContain("require the user to sign in to JuggleWork first");
+    expect(knowledge).toContain("Runtime steering from the JuggleWork extensions plugin is the source of truth");
     expect(knowledge).toContain("retrieve the listed remote `create-skill` skill with its exact capability");
     expect(knowledge).toContain("Follow the separate runtime `Skill creation:` instruction");
     expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");

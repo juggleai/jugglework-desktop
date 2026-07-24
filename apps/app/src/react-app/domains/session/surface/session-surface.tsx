@@ -105,11 +105,11 @@ import {
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
-const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next OpenWork task.";
+const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next JuggleWork task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
 
-This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [OpenWork link](https://openworklabs.com) readable in one message.
+This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [JuggleWork link](https://openworklabs.com) readable in one message.
 
 \`\`\`ts
 const pipeline = "shared markdown primitive";
@@ -163,7 +163,7 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   selectedModel: ModelRef;
-  /** Den/import includes OpenWork Models for this org member (not just local sync). */
+  /** Den/import includes JuggleWork Models for this org member (not just local sync). */
   openWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -206,7 +206,7 @@ export type SessionSurfaceProps = {
 };
 
 function messageToReadableText(message: UIMessage) {
-  const header = message.role === "user" ? "You" : message.role === "assistant" ? "OpenWork" : message.role;
+  const header = message.role === "user" ? "You" : message.role === "assistant" ? "JuggleWork" : message.role;
   const body = message.parts
     .flatMap((part) => {
       if (part.type === "text") return [part.text];
@@ -1480,7 +1480,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const organizationId = settings.activeOrgId?.trim() ?? "";
     if (!token || !organizationId) {
       props.onOpenConnect();
-      throw new Error("Sign in to OpenWork Cloud, then try reconnecting again.");
+      throw new Error("Sign in to JuggleWork Cloud, then try reconnecting again.");
     }
 
     const scope: ChatMcpReconnectScope = {

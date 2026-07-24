@@ -18,7 +18,7 @@ afterEach(async () => {
   await setDenBootstrapConfig({ baseUrl: DEFAULT_DEN_BASE_URL, requireSignin: false });
 });
 
-describe("OpenWork Models promo eligibility", () => {
+describe("JuggleWork Models promo eligibility", () => {
   test("allows promotions on the default Den URL after normalization", () => {
     expect(isOpenWorkModelsPromoEligibleForDenBaseUrl(`${HOSTED_DEFAULT_DEN_BASE_URL}/api/den/`)).toBe(true);
   });

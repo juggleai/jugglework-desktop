@@ -42,7 +42,7 @@ const STARTER_SKILL_OUTPUT = "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED"
 
 const bootstrapWorkspaceSchema = z.object({
   workspaceName: z.string().trim().min(2).max(120),
-  skillName: z.string().trim().min(1).max(120).default("First OpenWork Skill"),
+  skillName: z.string().trim().min(1).max(120).default("First JuggleWork Skill"),
   devicePublicKey: z.string().trim().min(16).max(4096).optional(),
   claimRoles: z.array(z.enum(["owner", "admin", "member"])).min(1).max(3).default(["owner"]),
   // Optional. Not persisted and not a security boundary - the claim token is
@@ -121,7 +121,7 @@ function claimUrl(token: string, options?: { prefillEmail?: string | null; invit
 }
 
 function starterSkillText(name: string) {
-  return `---\nname: ${name}\ndescription: Starter skill created by OpenWork agent bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(STARTER_SKILL_OUTPUT)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${STARTER_SKILL_OUTPUT}\`\n`
+  return `---\nname: ${name}\ndescription: Starter skill created by JuggleWork agent bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(STARTER_SKILL_OUTPUT)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${STARTER_SKILL_OUTPUT}\`\n`
 }
 
 function skillMetadata(skillText: string) {
@@ -129,7 +129,7 @@ function skillMetadata(skillText: string) {
   if (parsed.hasFrontmatter) {
     return {
       title: (parsed.name.trim() || "Untitled skill").slice(0, 255),
-      description: (parsed.description.trim() || "Starter skill created by OpenWork agent bootstrap.").slice(0, 65535),
+      description: (parsed.description.trim() || "Starter skill created by JuggleWork agent bootstrap.").slice(0, 65535),
     }
   }
   return { title: "Untitled skill", description: null }

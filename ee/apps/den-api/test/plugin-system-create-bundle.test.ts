@@ -423,7 +423,7 @@ test("createPluginBundle composes component creation, org-wide grants, and marke
   const marketplace = {
     id: createDenTypeId("marketplace"),
     organizationId,
-    name: "OpenWork Marketplace",
+    name: "JuggleWork Marketplace",
     description: "Company extensions",
     logoUrl: null,
     status: "active",

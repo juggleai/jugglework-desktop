@@ -96,10 +96,10 @@ function currentWindow(input: { anchorAt: Date | null; currentEnd: Date | null; 
 function buildOpenWorkProviderConfig() {
   return {
     id: OPENWORK_PROVIDER_ID,
-    name: "OpenWork",
+    name: "JuggleWork",
     npm: "@openrouter/ai-sdk-provider",
     env: ["OPENWORK_API_KEY"],
-    doc: "OpenWork-managed inference proxy for organization models.",
+    doc: "JuggleWork-managed inference proxy for organization models.",
     api: `${env.inferenceProxyBaseUrl.replace(/\/+$/, "")}/api/v1`,
     options: {
       baseURL: `${env.inferenceProxyBaseUrl.replace(/\/+$/, "")}/api/v1`,
@@ -147,7 +147,7 @@ async function createMemberInferenceKey(input: { organizationId: OrgId; memberId
     id: createDenTypeId("inferenceKey"),
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
-    name: "OpenWork Models",
+    name: "JuggleWork Models",
     key_hash: sha256(key),
     key_prefix: keyPrefix(key),
     status: "active",
@@ -175,7 +175,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
     if (providerRows[0]) {
       await tx
         .update(LlmProviderTable)
-        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey, updatedAt: now })
+        .set({ name: "JuggleWork Models", providerConfig, apiKey: input.inferenceKey, updatedAt: now })
         .where(eq(LlmProviderTable.id, providerId))
       await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, providerId))
       await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, providerId))
@@ -186,7 +186,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
         createdByOrgMembershipId: input.memberId,
         source: "openwork",
         providerId: OPENWORK_PROVIDER_ID,
-        name: "OpenWork Models",
+        name: "JuggleWork Models",
         providerConfig,
         apiKey: input.inferenceKey,
         createdAt: now,
@@ -234,7 +234,7 @@ async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; 
 }
 
 /**
- * Re-provision this member's OpenWork Models key + LLM provider when the org
+ * Re-provision this member's JuggleWork Models key + LLM provider when the org
  * has inference enabled but the member row was deleted or never created.
  * Safe to call from member-facing list endpoints (self-heal).
  */
@@ -403,7 +403,7 @@ async function createOpenRouterOrgApiKey(input: { organizationId: OrgId }) {
   }
 
   const body: Record<string, unknown> = {
-    name: `OpenWork org ${input.organizationId}`,
+    name: `JuggleWork org ${input.organizationId}`,
     include_byok_in_limit: false,
   }
   if (env.openRouterWorkspaceId) {

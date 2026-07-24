@@ -13,7 +13,7 @@ export function connectCallbackPage(input:
   const title = input.ok ? "You're connected" : "Connection failed"
   const closeButton = `<button type="button" onclick="window.close()" style="margin-top:16px; border:0; border-radius:10px; background:#0f172a; color:white; padding:10px 14px; font:inherit; font-weight:600; cursor:pointer;">Close window</button>`
   const body = input.ok
-    ? `<p>${escapeHtml(input.name)} is connected to OpenWork.</p>
+    ? `<p>${escapeHtml(input.name)} is connected to JuggleWork.</p>
       <p>You can close this window.</p>
       ${closeButton}`
     : `<p>Could not connect ${escapeHtml(input.name)}: ${escapeHtml(input.message)}</p>
@@ -21,7 +21,7 @@ export function connectCallbackPage(input:
       ${closeButton}`
   return `<!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>${title} — OpenWork</title></head>
+  <head><meta charset="utf-8"><title>${title} — JuggleWork</title></head>
   <body style="font-family: system-ui, sans-serif; max-width: 480px; margin: 64px auto; text-align: center; color: #0f172a;">
     <h1 style="font-size: 20px;">${title}</h1>
     ${body}

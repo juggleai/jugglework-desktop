@@ -198,7 +198,7 @@ interface ModelSelectProps {
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
-  /** Den/import includes OpenWork Models — never show Subscribe while true. */
+  /** Den/import includes JuggleWork Models — never show Subscribe while true. */
   openWorkModelsEntitled?: boolean;
 }
 

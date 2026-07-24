@@ -183,7 +183,7 @@ function httpFailure(status: number, category: EgressDiagnosticCategory): Diagno
   }
   if (status >= 500) {
     return new DiagnosticFailure({
-      action: "Give OpenWork support the run ID and diagnostic reference so the Diagnostics deployment can be inspected.",
+      action: "Give JuggleWork support the run ID and diagnostic reference so the Diagnostics deployment can be inspected.",
       category,
       code: `http_${status}`,
       message: `The Diagnostics service returned HTTP ${status}.`,
@@ -191,7 +191,7 @@ function httpFailure(status: number, category: EgressDiagnosticCategory): Diagno
     })
   }
   return new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and response status, then compare the matching remote trace.",
+    action: "Give JuggleWork support the run ID and response status, then compare the matching remote trace.",
     category,
     code: `http_${status}`,
     message: `The diagnostic request returned unexpected HTTP ${status}.`,
@@ -203,7 +203,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   const maximumBytes = 64 * 1024
   const reader = response.body?.getReader()
   if (!reader) throw new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference.",
+    action: "Give JuggleWork support the run ID and diagnostic reference.",
     category: "http",
     code: "empty_response_body",
     message: "Diagnostics returned an empty response where JSON was required.",
@@ -222,7 +222,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     if (bytes > maximumBytes) {
       await reader.cancel()
       throw new DiagnosticFailure({
-        action: "Give OpenWork support the run ID; the diagnostic response exceeded its declared safety bound.",
+        action: "Give JuggleWork support the run ID; the diagnostic response exceeded its declared safety bound.",
         category: "http",
         code: "response_too_large",
         message: "Diagnostics returned more than 64 KiB of response data.",
@@ -239,7 +239,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     // Report a stable safe error below.
   }
   throw new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference.",
+    action: "Give JuggleWork support the run ID and diagnostic reference.",
     category: "http",
     code: "invalid_json_response",
     message: "Diagnostics returned a malformed JSON response.",
@@ -304,7 +304,7 @@ async function sendRequest(input: {
 
 function protocolFailure(category: EgressDiagnosticCategory, code: string, message: string): DiagnosticFailure {
   return new DiagnosticFailure({
-    action: "Give OpenWork support the run ID and diagnostic reference so the response contract can be compared with the remote trace.",
+    action: "Give JuggleWork support the run ID and diagnostic reference so the response contract can be compared with the remote trace.",
     category,
     code,
     message,
@@ -352,7 +352,7 @@ export async function runEgressDiagnostic(input: {
       })
       const body = await readJson(response)
       requireValue(body.ok === true, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give JuggleWork support the run ID and diagnostic reference.",
         category: "connectivity", code: "invalid_reachability_response",
         message: "The reachability endpoint returned an unexpected response.", owner: "openwork-support",
       })
@@ -394,7 +394,7 @@ export async function runEgressDiagnostic(input: {
       const location = first.headers.get("location") ?? ""
       const redirectUrl = new URL(location, origin)
       requireValue(redirectUrl.origin === origin && redirectUrl.pathname === "/diagnostics/egress", {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give JuggleWork support the run ID and diagnostic reference.",
         category: "http", code: "unsafe_redirect_target",
         message: "The controlled redirect did not remain on the Diagnostics origin.", owner: "openwork-support",
       })
@@ -416,7 +416,7 @@ export async function runEgressDiagnostic(input: {
         ? protectedMetadata.authorization_servers
         : []
       requireValue(protectedMetadata.resource === `${origin}/mcp` && authorizationServers.includes(origin), {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give JuggleWork support the run ID and diagnostic reference.",
         category: "oauth", code: "protected_resource_metadata_mismatch",
         message: "OAuth protected-resource metadata did not describe the expected MCP resource.", owner: "openwork-support",
       })
@@ -427,7 +427,7 @@ export async function runEgressDiagnostic(input: {
       })
       const authorizationMetadata = await readJson(authorizationResponse)
       requireValue(authorizationMetadata.issuer === origin && authorizationMetadata.token_endpoint === `${origin}/oauth/token`, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give JuggleWork support the run ID and diagnostic reference.",
         category: "oauth", code: "authorization_server_metadata_mismatch",
         message: "OAuth authorization-server metadata did not describe the expected token endpoint.", owner: "openwork-support",
       })
@@ -452,7 +452,7 @@ export async function runEgressDiagnostic(input: {
       })
       const body = await readJson(response)
       requireValue(body.token_type === "Bearer" && typeof body.access_token === "string" && body.access_token.length > 20, {
-        action: "Give OpenWork support the run ID and diagnostic reference.",
+        action: "Give JuggleWork support the run ID and diagnostic reference.",
         category: "oauth", code: "invalid_token_response",
         message: "The OAuth-shaped token response did not contain a usable synthetic Bearer token.", owner: "openwork-support",
       })
@@ -480,7 +480,7 @@ export async function runEgressDiagnostic(input: {
       const session = initialized.headers.get("mcp-session-id") ?? ""
       const version = initialized.headers.get("mcp-protocol-version") ?? ""
       requireValue(result !== null && result.protocolVersion === "2025-11-25" && session.length > 20 && version === "2025-11-25", {
-        action: "Give OpenWork support the run ID and initialize diagnostic reference.",
+        action: "Give JuggleWork support the run ID and initialize diagnostic reference.",
         category: "mcp", code: "mcp_initialize_contract_mismatch",
         message: "MCP initialization did not return the expected protocol version and session.", owner: "openwork-support",
       })
@@ -498,13 +498,13 @@ export async function runEgressDiagnostic(input: {
       const catalogBody = await readJson(catalogResponse)
       const catalogResult = asRecord(catalogBody.result)
       requireValue(catalogResult !== null && Array.isArray(catalogResult.tools) && catalogResult.tools.length === 1, {
-        action: "Give OpenWork support the run ID and catalog diagnostic reference.",
+        action: "Give JuggleWork support the run ID and catalog diagnostic reference.",
         category: "mcp", code: "mcp_catalog_contract_mismatch",
         message: "MCP tool discovery did not return the single synthetic diagnostic tool.", owner: "openwork-support",
       })
       const tool = asRecord(catalogResult.tools[0])
       requireValue(tool !== null && typeof tool.name === "string" && tool.name.length > 0, {
-        action: "Give OpenWork support the run ID and catalog diagnostic reference.",
+        action: "Give JuggleWork support the run ID and catalog diagnostic reference.",
         category: "mcp", code: "mcp_tool_name_missing",
         message: "MCP tool discovery returned a tool without a usable name.", owner: "openwork-support",
       })
@@ -519,7 +519,7 @@ export async function runEgressDiagnostic(input: {
       const toolBody = await readJson(toolResponse)
       const toolResult = asRecord(toolBody.result)
       requireValue(toolResult !== null && toolResult.isError === false, {
-        action: "Give OpenWork support the run ID and tool-call diagnostic reference.",
+        action: "Give JuggleWork support the run ID and tool-call diagnostic reference.",
         category: "mcp", code: "mcp_tool_contract_mismatch",
         message: "The synthetic MCP tool call was not reported as successful.", owner: "openwork-support",
       })

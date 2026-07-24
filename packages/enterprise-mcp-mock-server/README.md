@@ -2,7 +2,7 @@
 
 A reusable, deterministic TypeScript package for developing and testing enterprise OAuth and remote MCP integrations without customer tenants, provider credentials, or outbound provider calls.
 
-This package owns the mock **data plane**. It deliberately does not import Den, an OpenWork client, or the Enterprise Mock Lab. The lab consumes this public API and supplies the protected control plane.
+This package owns the mock **data plane**. It deliberately does not import Den, a JuggleWork client, or the Enterprise Mock Lab. The lab consumes this public API and supplies the protected control plane.
 
 ## Design boundaries
 

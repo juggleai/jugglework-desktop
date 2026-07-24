@@ -56,7 +56,7 @@ function withAttachmentRecoveryHint(text: string) {
 
 /**
  * OpenCode Codex/ChatGPT OAuth refresh failures surface as a raw engine string.
- * Narrowly rewrite the 401 case so users reconnect OpenAI — not OpenWork Cloud.
+ * Narrowly rewrite the 401 case so users reconnect OpenAI — not JuggleWork Cloud.
  */
 function withOpenAiTokenRefreshHint(text: string) {
   if (!/Token refresh failed:\s*401/i.test(text)) return text;

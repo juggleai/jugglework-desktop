@@ -365,7 +365,7 @@ describe("runtime MCP engine sync", () => {
     }
   });
 
-  test("scopes registration evidence to the concrete OpenWork server instance", async () => {
+  test("scopes registration evidence to the concrete JuggleWork server instance", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const previousDb = process.env.OPENWORK_RUNTIME_DB;
     process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");

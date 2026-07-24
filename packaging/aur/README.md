@@ -1,13 +1,13 @@
 # Arch Linux package
 
-Use this directory to build and install the OpenWork package locally on Arch Linux without Docker.
+Use this directory to build and install the JuggleWork package locally on Arch Linux without Docker.
 
 ## What this packaging does
 
 - Targets `x86_64` and `aarch64` Arch Linux.
 - Downloads the published Electron GitHub release asset for the current architecture.
 - Installs the Electron bundle under `/opt/openwork`.
-- Adds `/usr/bin/openwork`, a desktop entry, and the OpenWork icon.
+- Adds `/usr/bin/openwork`, a desktop entry, and the JuggleWork icon.
 
 ## Prerequisites
 

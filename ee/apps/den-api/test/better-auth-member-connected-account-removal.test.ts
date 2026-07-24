@@ -51,7 +51,7 @@ test("Better Auth's native remove and leave routes delete the member's connected
   const { db } = dbModule
   const suffix = crypto.randomUUID()
   const ownerEmail = `native-removal-owner+${suffix}@test.local`
-  const password = "OpenWork-test-password-123!"
+  const password = "JuggleWork-test-password-123!"
 
   const signup = await auth.api.signUpEmail({
     body: { email: ownerEmail, name: "Native Removal Owner", password },

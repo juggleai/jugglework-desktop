@@ -1,11 +1,11 @@
 ---
 name: daytona-windows-cert
-description: "test on Windows, enterprise CA, corporate certificate, GPO cert, TLS fetch failed, Windows sandbox, daytona windows, self-hosted cert. Use when validating OpenWork Windows enterprise TLS/OS-trust fixes in a Daytona Windows sandbox."
+description: "test on Windows, enterprise CA, corporate certificate, GPO cert, TLS fetch failed, Windows sandbox, daytona windows, self-hosted cert. Use when validating JuggleWork Windows enterprise TLS/OS-trust fixes in a Daytona Windows sandbox."
 ---
 
 # Skill: Daytona Windows Enterprise Certificate Test
 
-Run the verified Windows repro for OpenWork enterprise TLS behavior: install a
+Run the verified Windows repro for JuggleWork enterprise TLS behavior: install a
 fake corporate CA into the Windows machine store, serve healthy and broken HTTPS
 control planes, install a Windows build, and prove the desktop app and spawned
 runtimes use the operating system trust path.
@@ -21,7 +21,7 @@ repo support assets instead of copying their logic: `scripts/support/setup-openw
 - User is validating an enterprise CA, corporate certificate, GPO cert, or
   self-hosted cert path on Windows.
 - User reports `TLS fetch failed`, `fetch failed`, or a certificate-specific
-  failure when connecting OpenWork to a self-hosted control plane.
+  failure when connecting JuggleWork to a self-hosted control plane.
 - User needs to prove the Windows app uses OS trust and spawned runtimes receive
   the OS trust bundle via `NODE_EXTRA_CA_CERTS`.
 
@@ -37,7 +37,7 @@ daytona version
 
 - `gh` must be authenticated to `different-ai/openwork` and able to create/delete
   temporary public prereleases.
-- Have a Windows OpenWork build or installer ready. Keep secrets and customer
+- Have a Windows JuggleWork build or installer ready. Keep secrets and customer
   materials out of the temporary release asset.
 
 ## 1. Create the Windows sandbox
@@ -91,7 +91,7 @@ Do not inspect app UI state, userData, or installed app settings through SYSTEM
 profile paths.
 
 Human GUI access is: Daytona Dashboard -> sandbox -> ⋮ menu -> **VNC** ->
-Connect. Use `exec` for setup and logs; use VNC to drive the installed OpenWork
+Connect. Use `exec` for setup and logs; use VNC to drive the installed JuggleWork
 app and observe the user-visible result.
 
 ## 3. Get the app build in
@@ -192,7 +192,7 @@ daytona exec "$SANDBOX_ID" -- cmd /c 'netstat -ano | findstr :8443'
 Optional diagnostic output from the checked-in doctor script:
 
 ```bash
-daytona exec "$SANDBOX_ID" -- powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\ow\openwork\scripts\support\openwork-doctor.ps1' -WebUrl https://poc.openwork.test:8443 -ApiUrl https://poc.openwork.test:9443 -ExpectedIssuerMatch "OpenWork TLS Repro"
+daytona exec "$SANDBOX_ID" -- powershell -NoProfile -ExecutionPolicy Bypass -File 'C:\ow\openwork\scripts\support\openwork-doctor.ps1' -WebUrl https://poc.openwork.test:8443 -ApiUrl https://poc.openwork.test:9443 -ExpectedIssuerMatch "JuggleWork TLS Repro"
 ```
 
 ## 5. Verify the fix
@@ -210,7 +210,7 @@ daytona exec "$SANDBOX_ID" -- cmd /c 'copy C:\ow\openwork\ca-probe.js C:\ow\ca-p
 const { X509Certificate } = require("node:crypto");
 const tls = require("node:tls");
 
-const needle = (process.env.OPENWORK_TLS_REPRO_CA_MATCH || "OpenWork TLS Repro").toLowerCase();
+const needle = (process.env.OPENWORK_TLS_REPRO_CA_MATCH || "JuggleWork TLS Repro").toLowerCase();
 
 function countMatchingSubjects(certificates) {
   let count = 0;
@@ -246,7 +246,7 @@ Run Electron in node mode. Adjust the executable path for your unpacked build or
 installed app:
 
 ```bash
-daytona exec "$SANDBOX_ID" -- cmd /c 'set ELECTRON_RUN_AS_NODE=1 && "C:\ow\openwork\app\OpenWork.exe" C:\ow\ca-probe.js'
+daytona exec "$SANDBOX_ID" -- cmd /c 'set ELECTRON_RUN_AS_NODE=1 && "C:\ow\openwork\app\JuggleWork.exe" C:\ow\ca-probe.js'
 ```
 
 The verified result was:
@@ -261,10 +261,10 @@ the bundled Mozilla roots do not.
 
 ### Verify the installed app via VNC
 
-Drive the installed OpenWork Windows app through VNC, not `daytona exec`.
+Drive the installed JuggleWork Windows app through VNC, not `daytona exec`.
 
 1. Open Daytona Dashboard -> sandbox -> ⋮ menu -> **VNC** -> Connect.
-2. Launch or install OpenWork as the interactive user.
+2. Launch or install JuggleWork as the interactive user.
 3. Point the self-hosted/control-plane URL at `https://poc.openwork.test:8443`.
    The request should succeed.
 4. Repeat against `https://poc.openwork.test:9443`. The request should fail with
@@ -281,12 +281,12 @@ The real Windows userData folder is:
 C:\Users\<User>\AppData\Roaming\com.differentai.openwork
 ```
 
-It is **not** `C:\Users\<User>\AppData\Roaming\OpenWork`. Because `exec` runs as
+It is **not** `C:\Users\<User>\AppData\Roaming\JuggleWork`. Because `exec` runs as
 SYSTEM, inspect the interactive user path explicitly:
 
 ```bash
 daytona exec "$SANDBOX_ID" -- cmd /c 'dir "C:\Users\Administrator\AppData\Roaming\com.differentai.openwork\system-ca-bundle.pem"'
-daytona exec "$SANDBOX_ID" -- cmd /c 'findstr /c:"OpenWork TLS Repro" "C:\Users\Administrator\AppData\Roaming\com.differentai.openwork\system-ca-bundle.pem"'
+daytona exec "$SANDBOX_ID" -- cmd /c 'findstr /c:"JuggleWork TLS Repro" "C:\Users\Administrator\AppData\Roaming\com.differentai.openwork\system-ca-bundle.pem"'
 ```
 
 Known gotcha: `system-ca-bundle.pem` is written once at first launch and then
@@ -310,7 +310,7 @@ daytona exec "$SANDBOX_ID" -- cmd /c 'dir "C:\Users\Administrator\AppData\Roamin
 ```bash
 ENCODED=$(python3 - <<'PY'
 import base64
-command = r'Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like "*OpenWork TLS Repro*"'
+command = r'Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like "*JuggleWork TLS Repro*"'
 print(base64.b64encode(command.encode("utf-16le")).decode())
 PY
 )

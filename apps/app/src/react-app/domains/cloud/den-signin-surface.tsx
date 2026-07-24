@@ -161,7 +161,7 @@ function ShowcasePanel() {
  */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
-  const appName = props.appName?.trim() || "OpenWork";
+  const appName = props.appName?.trim() || "JuggleWork";
 
   /* -- Panel content (reused by both variants) -- */
   const panelContent = (

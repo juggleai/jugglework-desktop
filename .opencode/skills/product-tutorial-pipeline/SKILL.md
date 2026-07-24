@@ -1,6 +1,6 @@
 ---
 name: product-tutorial-pipeline
-description: Reproduce or refresh a product tutorial with polished screenshots end-to-end — cloud dashboard flows, desktop app flows, Screen.Studio-style framing, tutorial doc, PR. Use when asked to "redo the tutorial", "refresh tutorial screenshots", "make a tutorial/walkthrough with screenshots", or to document a cloud + desktop flow like the OpenWork Cloud team quickstart.
+description: Reproduce or refresh a product tutorial with polished screenshots end-to-end — cloud dashboard flows, desktop app flows, Screen.Studio-style framing, tutorial doc, PR. Use when asked to "redo the tutorial", "refresh tutorial screenshots", "make a tutorial/walkthrough with screenshots", or to document a cloud + desktop flow like the JuggleWork Cloud team quickstart.
 ---
 
 # Product Tutorial Pipeline
@@ -67,7 +67,7 @@ node beautify.mjs raw/NN.png out/NN.png \
 
 # desktop shots — macOS chrome, contrasting background
 node beautify.mjs raw/NN.png out/NN.png \
-  --chrome mac --title OpenWork --bg indigo --width 1600
+  --chrome mac --title JuggleWork --bg indigo --width 1600
 ```
 
 Run from a repo root that has `node_modules` (the script resolves `sharp`

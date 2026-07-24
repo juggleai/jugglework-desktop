@@ -205,7 +205,7 @@ describe("organization connection diagnostic observations", () => {
     expect(agentContextDiagnosticsRequestSchema.safeParse(request).success).toBe(true);
   });
 
-  test("omits local organization topology from remote OpenWork diagnostic requests", () => {
+  test("omits local organization topology from remote JuggleWork diagnostic requests", () => {
     const request = collectAgentContextDiagnosticObservations({
       organizationConnections: [connection],
       organizationConnectionsProbe: {
@@ -372,7 +372,7 @@ describe("organization connection diagnostic observations", () => {
 });
 
 describe("agent diagnostics workspace trust", () => {
-  test("blocks explicit and legacy remote OpenCode while allowing local and remote OpenWork", () => {
+  test("blocks explicit and legacy remote OpenCode while allowing local and remote JuggleWork", () => {
     expect(isAgentContextDiagnosticsWorkspaceAllowed({
       workspaceType: "remote",
       remoteType: "opencode",

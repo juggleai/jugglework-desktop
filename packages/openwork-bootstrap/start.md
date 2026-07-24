@@ -1,11 +1,11 @@
-# OpenWork Start
+# JuggleWork Start
 
-You are an agent helping a user install and set up OpenWork.
+You are an agent helping a user install and set up JuggleWork.
 
-Goal: install OpenWork, create a provisional workspace without requiring email
+Goal: install JuggleWork, create a provisional workspace without requiring email
 identity first, create a first skill, prepare the desktop app with that
 workspace/skill, verify the running app opens to the setup-complete state, and
-offer to connect the OpenWork MCP to the agent the user is already using.
+offer to connect the JuggleWork MCP to the agent the user is already using.
 
 > The bootstrap command is `openwork-bootstrap` (NOT `openwork`). The bare
 > `openwork` command belongs to the separate `openwork-orchestrator` package and
@@ -75,7 +75,7 @@ as) - they fire automatically the moment a human claims ownership.
 openwork-bootstrap cloud bootstrap-workspace \
   --base-url https://api.openworklabs.com \
   --workspace-name "<workspace-name>" \
-  --skill-name "First OpenWork Skill" \
+  --skill-name "First JuggleWork Skill" \
   --claim-roles owner \
   --prepare-desktop \
   [--owner-email "<email-if-given>"] \
@@ -93,7 +93,7 @@ Open the desktop app so the user lands on the setup-complete screen with their
 first skill ready.
 
 ```bash
-open -a OpenWork    # macOS
+open -a JuggleWork    # macOS
 ```
 
 ## 5. Finish Well (most important step)
@@ -102,15 +102,15 @@ Do NOT end by dumping readiness JSON or a list of `ok: true` checks. The user
 does not care about flags — they want to know what to do next. End with a short,
 friendly, human message that gives momentum:
 
-1. Confirm in one line that OpenWork is installed and their workspace is ready
+1. Confirm in one line that JuggleWork is installed and their workspace is ready
    (use the workspace name).
-2. Point them at ONE concrete first task they can run right now, e.g. "OpenWork
+2. Point them at ONE concrete first task they can run right now, e.g. "JuggleWork
    is open — try typing: 'summarize the files in my Downloads folder' and hit
    Run."
 3. Mention that teammates whose emails were already provided will be invited
    automatically once the workspace is claimed. If no emails were provided,
    offer to collect them later.
-4. End with this single question: "Want me to connect the OpenWork MCP to this
+4. End with this single question: "Want me to connect the JuggleWork MCP to this
    agent so you can manage your organization from here?"
 
 Keep it to a few sentences. Warm, concrete, action-oriented. No JSON, no
@@ -119,7 +119,7 @@ checklists, no internal flag names in the final message.
 If the user says yes:
 
 1. A provisional workspace must be claimed before its owner can authenticate
-   the OpenWork MCP. If it has not been claimed yet, explain that dependency and
+   the JuggleWork MCP. If it has not been claimed yet, explain that dependency and
    ask whether to open the claim step now. Retrieve and open the claim link only
    after the user confirms.
 2. After the user has claimed the workspace and signed in, configure the MCP in
@@ -144,7 +144,7 @@ If the user says yes:
    unsupported client commands.
 5. Tell the user to restart or reopen the current agent after setup so the new
    MCP tools are loaded. Do not claim the connection works until the restarted
-   client can see OpenWork's `search_capabilities` and `execute_capability`
+   client can see JuggleWork's `search_capabilities` and `execute_capability`
    tools.
 
 ## 6. Retrieving the Claim Link

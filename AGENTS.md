@@ -1,23 +1,23 @@
 # AGENTS.md
 
-OpenWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
+JuggleWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
 
-## What OpenWork Is
+## What JuggleWork Is
 
-OpenWork is a practical control surface for agentic work:
+JuggleWork is a practical control surface for agentic work:
 
 * Run local and remote agent workflows from one place.
-* Use OpenCode capabilities directly through OpenWork.
+* Use OpenCode capabilities directly through JuggleWork.
 * Compose desktop app, server, and messaging connectors without lock-in.
-* Treat the OpenWork app as a client of the OpenWork server API surface.
+* Treat the JuggleWork app as a client of the JuggleWork server API surface.
 * Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
 
 ## Core Philosophy
 
-* **Local-first, cloud-ready**: OpenWork runs on your machine in one click and can connect to cloud workflows when needed.
-* **Server-consumption first**: the app should consume OpenWork server surfaces (self-hosted or hosted), not invent parallel behavior.
+* **Local-first, cloud-ready**: JuggleWork runs on your machine in one click and can connect to cloud workflows when needed.
+* **Server-consumption first**: the app should consume JuggleWork server surfaces (self-hosted or hosted), not invent parallel behavior.
 * **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
-* **Ejectable**: OpenWork is powered by OpenCode, so anything OpenCode can do is available in OpenWork, even before a dedicated UI exists.
+* **Ejectable**: JuggleWork is powered by OpenCode, so anything OpenCode can do is available in JuggleWork, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
 
 
@@ -82,7 +82,7 @@ Feature work starts with the demo, not a PRD:
 
 - Use components from @/components when possible.
 - When creating new components, we prefer using shadcn/ui with (Base UI).
-- Assume most end users of OpenWork are non-technical.
+- Assume most end users of JuggleWork are non-technical.
 
 ### Tech Stack Preferences
 

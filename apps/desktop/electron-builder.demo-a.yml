@@ -1,6 +1,6 @@
 extends: electron-builder.yml
 appId: com.differentai.openwork.demo.admin
-productName: OpenWork Demo A
+productName: JuggleWork Demo A
 protocols: []
 directories:
   output: dist-electron-demo-a

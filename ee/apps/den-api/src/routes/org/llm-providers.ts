@@ -681,7 +681,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const memberTeams = c.get("memberTeams") ?? []
 
       // Desktop entitlement is based on this list. If org inference is enabled
-      // but this member's OpenWork provider/key was deleted, re-provision before
+      // but this member's JuggleWork provider/key was deleted, re-provision before
       // listing so Subscribe CTAs don't lie about an already-enabled org.
       if (query.scope === "usable") {
         try {
@@ -690,7 +690,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             memberId: payload.currentMember.id,
           })
         } catch {
-          // Keep listing other providers even if OpenWork re-provision fails.
+          // Keep listing other providers even if JuggleWork re-provision fails.
         }
       }
 

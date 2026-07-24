@@ -242,7 +242,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     describeRoute({
       tags: ["Telemetry"],
       summary: "Ingest telemetry events",
-      description: "Receives a batch of telemetry events from the OpenWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.",
+      description: "Receives a batch of telemetry events from the JuggleWork app or workers. Auth provides org and member identity. Unknown event types and disallowed fields are dropped. Always returns 204.",
       responses: {
         204: emptyResponse("Events accepted."),
         400: jsonResponse("Invalid event payload.", invalidRequestSchema),

@@ -97,7 +97,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores MCP changes in the OpenWork runtime DB without rewriting workspace files", async () => {
+  test("stores MCP changes in the JuggleWork runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       const opencode = '{\n  "mcp": {\n    "project": { "type": "remote", "url": "https://project.example/mcp" }\n  }\n}\n';
@@ -116,7 +116,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores plugin changes in the OpenWork runtime DB without rewriting workspace files", async () => {
+  test("stores plugin changes in the JuggleWork runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       const opencode = '{\n  "plugin": ["project-plugin"]\n}\n';
@@ -157,7 +157,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("stores OpenWork-owned workspace config in the runtime DB without writing legacy files", async () => {
+  test("stores JuggleWork-owned workspace config in the runtime DB without writing legacy files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const server = await startServer(config) as Served;
       try {
@@ -205,7 +205,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("explicitly migrates legacy OpenWork runtime config into the runtime DB", async () => {
+  test("explicitly migrates legacy JuggleWork runtime config into the runtime DB", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
       const openworkPath = join(root, ".opencode", "openwork.json");
@@ -276,7 +276,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("runtime config status tolerates malformed legacy OpenWork metadata", async () => {
+  test("runtime config status tolerates malformed legacy JuggleWork metadata", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
       await writeFile(join(root, ".opencode", "openwork.json"), "{ invalid\n", "utf8");
@@ -298,7 +298,7 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("explicitly migrates safe OpenWork-managed keys from user opencode config", async () => {
+  test("explicitly migrates safe JuggleWork-managed keys from user opencode config", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");
       await writeFile(opencodePath, JSON.stringify({

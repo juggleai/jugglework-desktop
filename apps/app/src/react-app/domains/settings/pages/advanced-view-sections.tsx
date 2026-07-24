@@ -392,13 +392,13 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
       <LayoutSectionHeader>
         <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+          Technical details for JuggleWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>JuggleWork Cloud MCP health</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
             Use this when support needs exact runtime state. The main Connect card stays user-facing.
           </LayoutSectionItemDescription>
@@ -449,7 +449,7 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
               <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
               {compatibility ? (
                 <>
-                  <DiagnosticRow label="OpenWork versions" value={`server ${formatMaybe(compatibility.openwork.serverVersion)}; app ${formatMetadataRecord(compatibility.openwork.app)}`} />
+                  <DiagnosticRow label="JuggleWork versions" value={`server ${formatMaybe(compatibility.openwork.serverVersion)}; app ${formatMetadataRecord(compatibility.openwork.app)}`} />
                   <DiagnosticRow label="OpenCode compatibility" value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
                   <DiagnosticRow label="Feature probes" value={formatSupportedFeatures(compatibility.supportedFeatures)} />
                   <DiagnosticRow label="Experimental tool IDs" value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
@@ -592,15 +592,15 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
       <LayoutSectionHeader>
         <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Inspect what OpenWork controls at runtime versus what belongs to your workspace config. This works through the OpenWork server and does not require the OpenCode engine to be healthy.
+          Inspect what JuggleWork controls at runtime versus what belongs to your workspace config. This works through the JuggleWork server and does not require the OpenCode engine to be healthy.
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Move OpenWork-managed config</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>Move JuggleWork-managed config</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Moves older OpenWork-owned runtime keys from `.opencode/openwork.json` and safe OpenWork-managed keys from `opencode.jsonc` into the runtime database.
+            Moves older JuggleWork-owned runtime keys from `.opencode/openwork.json` and safe JuggleWork-managed keys from `opencode.jsonc` into the runtime database.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button
@@ -630,9 +630,9 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Desired OpenWork runtime config</div>
+              <div className="font-medium text-gray-12">Desired JuggleWork runtime config</div>
               <div className="text-[11px] text-gray-9">
-                This is the OpenWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
+                This is the JuggleWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
               </div>
               <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
@@ -647,7 +647,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
                 <div>
                   <div className="font-medium text-gray-12">OpenCode source breakdown</div>
                   <div className="text-[11px] text-gray-9">
-                    OpenCode also reads its own project and global config files. OpenWork injects the runtime config separately; for OpenWork-managed keys, the injected config is the source to inspect.
+                    OpenCode also reads its own project and global config files. JuggleWork injects the runtime config separately; for JuggleWork-managed keys, the injected config is the source to inspect.
                   </div>
                 </div>
                 <RuntimeConfigSourceBlock
@@ -667,14 +667,14 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
                   config={props.configStatus.sources.globalOpencode.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="OpenWork runtime DB"
-                  description="OpenWork-managed runtime values stored outside workspace files."
+                  title="JuggleWork runtime DB"
+                  description="JuggleWork-managed runtime values stored outside workspace files."
                   keys={props.configStatus.sources.runtimeDatabase.keys}
                   config={props.configStatus.sources.runtimeDatabase.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="OpenWork injected config"
-                  description="The object OpenWork injects into OpenCode at runtime."
+                  title="JuggleWork injected config"
+                  description="The object JuggleWork injects into OpenCode at runtime."
                   keys={props.configStatus.sources.injected.keys}
                   config={props.configStatus.sources.injected.config}
                 />
@@ -685,7 +685,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               <div>Stored keys: {formatKeys(props.configStatus.runtimeKeys)}</div>
             </div>
             <div>
-              <div className="font-medium text-gray-12">Legacy OpenWork metadata</div>
+              <div className="font-medium text-gray-12">Legacy JuggleWork metadata</div>
               <div className="break-all">{props.configStatus.legacyOpenwork.path}</div>
               {props.configStatus.legacyOpenwork.error ? (
                 <div className="text-amber-11">{props.configStatus.legacyOpenwork.error}; fix this file before moving legacy config.</div>

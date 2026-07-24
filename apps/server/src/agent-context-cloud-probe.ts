@@ -615,7 +615,7 @@ async function performProbe(
 
 /**
  * Performs one credential-safe direct catalog observation for the exact
- * runtime-managed OpenWork Cloud entry supplied by the caller. This function
+ * runtime-managed JuggleWork Cloud entry supplied by the caller. This function
  * never discovers another MCP, follows redirects, calls a tool, or returns
  * endpoint, credential, header, response-body, or caught-error values.
  */

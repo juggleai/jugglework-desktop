@@ -93,7 +93,7 @@ describe("buildCloudProviderConfig", () => {
       id: "lpr_openwork",
       source: "openwork",
       providerId: "openwork",
-      name: "OpenWork Models",
+      name: "JuggleWork Models",
       providerConfig: {
         npm: "@openrouter/ai-sdk-provider",
         api: "https://inference.openworklabs.com/api/v1",
@@ -109,7 +109,7 @@ describe("buildCloudProviderConfig", () => {
 
     const config = buildCloudProviderConfig(provider);
     expect(config.models).toBe(undefined);
-    expect(config.name).toBe("OpenWork Models");
+    expect(config.name).toBe("JuggleWork Models");
   });
 
   test("keeps an empty models map for non-openwork cloud providers", () => {

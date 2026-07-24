@@ -14,7 +14,7 @@ export const BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY = "skill:add-user-to-mar
 const CREATE_SKILL_SOURCE = `---
 name: create-skill
 description: |
-  Create a new OpenWork Cloud skill as a plugin with one skill component.
+  Create a new JuggleWork Cloud skill as a plugin with one skill component.
 
   Triggers when user mentions:
   - "create a skill"
@@ -160,7 +160,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     descriptor: {
       name: "create-skill",
       title: "Create Skill",
-      description: "Create a new OpenWork Cloud skill as a private plugin with one skill component.",
+      description: "Create a new JuggleWork Cloud skill as a private plugin with one skill component.",
       capability: BUILTIN_CREATE_SKILL_CAPABILITY,
       location: "skill://create-skill/SKILL.md",
     },
@@ -251,7 +251,7 @@ export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecute
     kind: "skill",
     name: skill.descriptor.title,
     description: skill.descriptor.description,
-    provenance: "Built into OpenWork Cloud.",
+    provenance: "Built into JuggleWork Cloud.",
     content: skill.source,
   }
 }

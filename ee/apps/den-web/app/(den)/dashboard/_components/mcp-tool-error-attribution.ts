@@ -144,12 +144,12 @@ function unknownOutcomeGuidance(mayHaveSideEffects: boolean): string {
 }
 
 function lastBoundaryFromDiagnostic(diagnostic: ExternalMcpDiagnostic | null): string | undefined {
-  if (diagnostic?.highestPassed === "operation_ready") return "OpenWork started remote tool execution";
-  if (diagnostic?.highestPassed === "catalog_ready") return "OpenWork loaded the remote MCP tool catalog";
-  if (diagnostic?.highestPassed === "protocol_ready") return "OpenWork initialized the remote MCP session";
+  if (diagnostic?.highestPassed === "operation_ready") return "JuggleWork started remote tool execution";
+  if (diagnostic?.highestPassed === "catalog_ready") return "JuggleWork loaded the remote MCP tool catalog";
+  if (diagnostic?.highestPassed === "protocol_ready") return "JuggleWork initialized the remote MCP session";
   if (diagnostic?.highestPassed === "authorized") return "Remote MCP accepted the connection credential";
-  if (diagnostic?.highestPassed === "reachable") return "OpenWork reached the remote MCP endpoint";
-  if (diagnostic?.highestPassed === "configured") return "OpenWork loaded the MCP connection configuration";
+  if (diagnostic?.highestPassed === "reachable") return "JuggleWork reached the remote MCP endpoint";
+  if (diagnostic?.highestPassed === "configured") return "JuggleWork loaded the MCP connection configuration";
   return undefined;
 }
 
@@ -177,9 +177,9 @@ export function attributeExternalMcpToolFailure(input: {
     const seconds = browserTimeout.timeoutMs / 1000;
     const duration = Number.isInteger(seconds) ? `${seconds}` : seconds.toFixed(1);
     return {
-      summary: `OpenWork stopped waiting after ${duration} seconds. The operation’s outcome is unknown.`,
-      lastConfirmedBoundary: "OpenWork dashboard sent the request",
-      likelySource: "Source unclear after OpenWork timeout",
+      summary: `JuggleWork stopped waiting after ${duration} seconds. The operation’s outcome is unknown.`,
+      lastConfirmedBoundary: "JuggleWork dashboard sent the request",
+      likelySource: "Source unclear after JuggleWork timeout",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
       outcome: "unknown",
@@ -192,11 +192,11 @@ export function attributeExternalMcpToolFailure(input: {
     || diagnostic?.code === "MCP_FETCH_FORBIDDEN_PORT";
   if (blockedBeforeSend) {
     return {
-      summary: "OpenWork blocked the request before it was sent.",
-      lastConfirmedBoundary: "OpenWork evaluated the outbound request",
-      likelySource: "OpenWork",
+      summary: "JuggleWork blocked the request before it was sent.",
+      lastConfirmedBoundary: "JuggleWork evaluated the outbound request",
+      likelySource: "JuggleWork",
       confidence: "Confirmed",
-      retryGuidance: diagnostic?.operatorAction ?? "Resolve the OpenWork policy or connection configuration, then run the tool again.",
+      retryGuidance: diagnostic?.operatorAction ?? "Resolve the JuggleWork policy or connection configuration, then run the tool again.",
       outcome: "failed",
       ...details,
     };
@@ -260,8 +260,8 @@ export function attributeExternalMcpToolFailure(input: {
     && (diagnostic?.code === "MCP_LIFECYCLE_DEADLINE" || diagnostic?.code === "MCP_REQUEST_TIMEOUT");
   if (deadlineAfterSend) {
     return {
-      summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
-      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      summary: "JuggleWork sent the request, but the remote MCP did not respond before JuggleWork’s deadline.",
+      lastConfirmedBoundary: "JuggleWork started the outbound tools/call",
       likelySource: "Network or remote MCP",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
@@ -272,8 +272,8 @@ export function attributeExternalMcpToolFailure(input: {
 
   if (inspection?.request && !inspection.response) {
     return {
-      summary: "OpenWork started the outbound request, but no HTTP response was captured. This does not prove the remote MCP caused the failure.",
-      lastConfirmedBoundary: "OpenWork started the outbound tools/call",
+      summary: "JuggleWork started the outbound request, but no HTTP response was captured. This does not prove the remote MCP caused the failure.",
+      lastConfirmedBoundary: "JuggleWork started the outbound tools/call",
       likelySource: "Source unclear after send",
       confidence: "Inferred",
       retryGuidance: unknownOutcomeGuidance(mayHaveSideEffects),
@@ -298,12 +298,12 @@ export function attributeExternalMcpToolFailure(input: {
   return {
     summary: inspection?.diagnosis?.summary
       ?? diagnostic?.message
-      ?? "The request failed before OpenWork received a tool result.",
+      ?? "The request failed before JuggleWork received a tool result.",
     lastConfirmedBoundary: lastBoundaryFromDiagnostic(diagnostic)
-      ?? (diagnostic ? "OpenWork returned a structured diagnostic" : "OpenWork dashboard sent the request"),
-    likelySource: networkSetup ? "Connection path or remote MCP" : "OpenWork or MCP setup",
+      ?? (diagnostic ? "JuggleWork returned a structured diagnostic" : "JuggleWork dashboard sent the request"),
+    likelySource: networkSetup ? "Connection path or remote MCP" : "JuggleWork or MCP setup",
     confidence: "Inferred",
-    retryGuidance: diagnostic?.operatorAction ?? "Use the diagnostic reference to inspect OpenWork and MCP connection health before retrying.",
+    retryGuidance: diagnostic?.operatorAction ?? "Use the diagnostic reference to inspect JuggleWork and MCP connection health before retrying.",
     outcome: "failed",
     ...details,
   };

@@ -75,7 +75,7 @@ async function runPreflight(client) {
   };
 
   if (!result.electron) throw new Error("Target is not Electron.");
-  if (!controlReady) throw new Error("OpenWork control API is not available.");
+  if (!controlReady) throw new Error("JuggleWork control API is not available.");
   if (requireAudioPermission && !media.audio.ok) {
     throw new Error(`Audio getUserMedia failed: ${media.audio.name} ${media.audio.message}`);
   }
@@ -194,7 +194,7 @@ async function pickTarget(baseUrl) {
   if (!response.ok) throw new Error(`Could not list CDP targets: ${response.status}`);
   const targets = await response.json();
   const pages = targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
-  const target = pages.find((page) => page.title === "OpenWork") ??
+  const target = pages.find((page) => page.title === "JuggleWork") ??
     pages.find((page) => page.url.includes("localhost") || page.url.includes("127.0.0.1") || page.url.includes("[::1]")) ??
     pages[0];
   if (!target) throw new Error("No CDP page target found.");

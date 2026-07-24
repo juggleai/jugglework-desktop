@@ -107,7 +107,7 @@ IP.1 = 127.0.0.1
 `,
   );
 
-  runOpenSsl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=OpenWork Test CA", "-keyout", caKey, "-out", caCert]);
+  runOpenSsl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=JuggleWork Test CA", "-keyout", caKey, "-out", caCert]);
   runOpenSsl(["req", "-newkey", "rsa:2048", "-nodes", "-keyout", serverKey, "-out", serverCsr, "-config", opensslConfig]);
   runOpenSsl(["x509", "-req", "-in", serverCsr, "-CA", caCert, "-CAkey", caKey, "-CAcreateserial", "-out", serverCert, "-days", "1", "-extensions", "v3_req", "-extfile", opensslConfig]);
 

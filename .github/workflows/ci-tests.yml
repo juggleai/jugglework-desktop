@@ -1,4 +1,4 @@
-name: OpenWork Tests
+name: JuggleWork Tests
 
 on:
   pull_request:

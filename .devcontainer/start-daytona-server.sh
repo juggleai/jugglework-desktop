@@ -207,7 +207,7 @@ EOF
 
 echo ""
 echo "============================================"
-echo "  OpenWork Daytona server stack ready"
+echo "  JuggleWork Daytona server stack ready"
 echo ""
 echo "  Den Web:       $DEN_WEB_PUBLIC_URL"
 echo "  Den API:       $DEN_API_PUBLIC_URL"

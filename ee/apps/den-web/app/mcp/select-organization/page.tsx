@@ -252,11 +252,11 @@ export default function McpSelectOrganizationPage() {
               <div className="flex items-center gap-3">
                 <img
                   src="/openwork-logo-transparent.svg"
-                  alt="OpenWork"
+                  alt="JuggleWork"
                   className="h-9 w-auto"
                 />
                 <span className="text-[13px] font-medium text-white/80">
-                  OpenWork Cloud
+                  JuggleWork Cloud
                 </span>
               </div>
               <div className="grid gap-4">

@@ -74,7 +74,7 @@ export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
 ): ChatToolReconnectAction | null {
-  // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
+  // Tool output is otherwise untrusted. Only the two canonical JuggleWork Cloud
   // capability tools may turn a structured Den response into a UI action.
   // Discovery is included because it performs a live connection probe before
   // the agent can safely proceed to execution.
@@ -121,15 +121,15 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
   const providerCode = stringValue(diagnostic, "providerCode")
 
   if (
-    errorText.includes("OpenWork stopped waiting after")
+    errorText.includes("JuggleWork stopped waiting after")
     || /The capability call exceeded \d+(?:\.\d+)?s\b/.test(errorText)
     || code === "MCP_LIFECYCLE_DEADLINE"
     || code === "MCP_REQUEST_TIMEOUT"
     || category === "lifecycle_deadline"
   ) {
     return confirmed(
-      "OpenWork timeout",
-      "OpenWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
+      "JuggleWork timeout",
+      "JuggleWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
     )
   }
 
@@ -138,7 +138,7 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
     || code === "MCP_URL_BLOCKED"
     || code === "MCP_FETCH_FORBIDDEN_PORT"
   ) {
-    return confirmed("Blocked by OpenWork", "OpenWork blocked the request before it was sent.")
+    return confirmed("Blocked by JuggleWork", "JuggleWork blocked the request before it was sent.")
   }
 
   if (httpStatus !== undefined && (httpStatus < 200 || httpStatus >= 300)) {

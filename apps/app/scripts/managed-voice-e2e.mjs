@@ -206,7 +206,7 @@ async function waitForServerHealthy(baseUrl) {
     }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 250));
   }
-  throw new Error(`Timed out waiting for OpenWork server health: ${lastError}`);
+  throw new Error(`Timed out waiting for JuggleWork server health: ${lastError}`);
 }
 
 await rm(outDir, { recursive: true, force: true });

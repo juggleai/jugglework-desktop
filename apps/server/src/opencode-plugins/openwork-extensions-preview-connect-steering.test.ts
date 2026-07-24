@@ -23,7 +23,7 @@ const originalServerUrl = process.env.OPENWORK_SERVER_URL;
 const originalServerToken = process.env.OPENWORK_SERVER_TOKEN;
 
 const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+  "If the user asks for something you cannot do with obvious built-in tools, check JuggleWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
 
 beforeEach(() => {
   resetOpenWorkExtensionDiscoveryInstructionCacheForTests();
@@ -61,7 +61,7 @@ function failure(code: string, overrides: Partial<CloudFailure> = {}): CloudFail
 function expectNoDegradedSteering(instruction: string): void {
   expect(instruction).not.toMatch(/not ready/i);
   expect(instruction).not.toContain("Repair and test");
-  expect(instruction).not.toContain("Do not use OpenWork documentation tools");
+  expect(instruction).not.toContain("Do not use JuggleWork documentation tools");
   expect(instruction).not.toContain("Do not substitute docs");
   expect(instruction).not.toContain("as a substitute for performing an action against a connected service");
   expect(instruction).not.toMatch(/do NOT use/i);
@@ -136,7 +136,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("retrieve and follow the listed create-skill remote skill");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("openwork-cloud_execute_capability");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact <capability>");
-    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("OpenWork Cloud as a private plugin");
+    expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("JuggleWork Cloud as a private plugin");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-to-marketplace");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-user-to-marketplace");
     expect(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
@@ -167,7 +167,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       firstFailure: {
         code: "provider_tool_projection_missing",
         stage: "provider_projection",
-        recommendedAction: "Update OpenWork",
+        recommendedAction: "Update JuggleWork",
         message: "missing",
       },
     })));
@@ -195,7 +195,7 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
       firstFailure: {
         code: "cloud_mcp_missing",
         stage: "desired_config",
-        recommendedAction: "Connect OpenWork Cloud",
+        recommendedAction: "Connect JuggleWork Cloud",
         message: "missing",
       },
     })), connectCatalogEnabled: false })).toBe(OPENWORK_CONNECT_SIGN_IN_INSTRUCTION);

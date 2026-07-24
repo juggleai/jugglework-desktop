@@ -1,6 +1,6 @@
-# OpenWork Server
+# JuggleWork Server
 
-Filesystem-backed API for OpenWork remote clients. This package provides the OpenWork server layer described in `apps/app/pr/openwork-server.md` and is intentionally independent from the desktop app.
+Filesystem-backed API for JuggleWork remote clients. This package provides the JuggleWork server layer described in `apps/app/pr/openwork-server.md` and is intentionally independent from the desktop app.
 
 ## Quick start
 

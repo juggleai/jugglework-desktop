@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "OpenWork desktop installer: resolves an install-link config, writes desktop bootstrap config, then downloads and installs the newest supported desktop app.",
+  "description": "JuggleWork desktop installer: resolves an install-link config, writes desktop bootstrap config, then downloads and installs the newest supported desktop app.",
   "workspaces": [
     "../../packages/install-config"
   ],

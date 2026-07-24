@@ -73,7 +73,7 @@ afterEach(async () => {
 });
 
 describe("legacy OpenCode config sweep", () => {
-  test("removes only OpenWork-managed legacy keys and preserves user content", async () => {
+  test("removes only JuggleWork-managed legacy keys and preserves user content", async () => {
     const root = await createRoot();
     const config = configFor(root);
     const original = `{
@@ -141,7 +141,7 @@ describe("legacy OpenCode config sweep", () => {
     expect(await readFile(legacySweepStatePath(config), "utf8")).toBe(stateAfterFirstRun);
   });
 
-  test("leaves files without OpenWork-managed keys untouched", async () => {
+  test("leaves files without JuggleWork-managed keys untouched", async () => {
     const root = await createRoot();
     const config = configFor(root);
     const original = `{

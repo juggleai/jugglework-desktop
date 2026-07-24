@@ -891,7 +891,7 @@ export const pluginArchEndpointContracts: Record<string, EndpointContract> = {
   },
   applyGithubConnectorDiscovery: {
     audience: "admin",
-    description: "Create OpenWork plugins and connector mappings from selected GitHub discovery candidates.",
+    description: "Create JuggleWork plugins and connector mappings from selected GitHub discovery candidates.",
     method: "POST",
     path: pluginArchRoutePaths.connectorInstanceDiscoveryApply,
     request: { body: githubDiscoveryApplySchema, params: connectorInstanceParamsSchema },

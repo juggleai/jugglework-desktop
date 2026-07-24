@@ -104,7 +104,7 @@ function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
 }
 
 function remoteSupportMessage(message: string) {
-  return `${message} Upgrade the OpenWork host and try again. If this continues, contact team@openworklabs.com.`;
+  return `${message} Upgrade the JuggleWork host and try again. If this continues, contact team@openworklabs.com.`;
 }
 
 export function redactRemoteDiagnosticText(value: string): string {
@@ -165,7 +165,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
       ok: false,
       state: {
         status: "error",
-        message: "Connection diagnostics are only available for OpenWork remote workers.",
+        message: "Connection diagnostics are only available for JuggleWork remote workers.",
         checkedAt: Date.now(),
       },
     };
@@ -254,7 +254,7 @@ export async function testRemoteWorkspaceConnection(
 
   if (!target.token) {
     return fail(
-      remoteSupportMessage(`Token is missing for ${target.endpointLabel}. Edit connection and paste a valid OpenWork token.`),
+      remoteSupportMessage(`Token is missing for ${target.endpointLabel}. Edit connection and paste a valid JuggleWork token.`),
       checkedAt,
     );
   }

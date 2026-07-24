@@ -1,9 +1,9 @@
-# Deploy OpenWork EE on AWS with EKS and Helm
+# Deploy JuggleWork EE on AWS with EKS and Helm
 
 Status: self-host operator guide
 Related: `packaging/helm/openwork-ee`, `packaging/helm/openwork-ee/examples/values.aws-load-balancer.yaml`, `packaging/helm/openwork-ee/examples/values.aws-load-balancer-http-smoke.yaml`
 
-This is the recommended AWS path for a first production-like OpenWork EE
+This is the recommended AWS path for a first production-like JuggleWork EE
 self-host install. Use Helm on Amazon EKS with Amazon RDS for MySQL. For the
 simplest customer deployment, use EKS Auto Mode and Kubernetes
 `LoadBalancer` Services so AWS provisions Network Load Balancers directly from
@@ -16,18 +16,18 @@ HTTP routing, WAF rules, or an existing ingress platform.
 - Den Web on port `3005`
 - optional inference service, disabled by default
 - one RDS MySQL database
-- one single-org OpenWork deployment
+- one single-org JuggleWork deployment
 - two public AWS Network Load Balancers by default: one for web and one for API
 
 AWS owns the EKS cluster, node lifecycle, VPC networking, load balancers, RDS,
-DNS, TLS certificates, IAM, and security groups. The OpenWork Helm chart owns
-OpenWork Deployments, Services, ConfigMaps, Secrets, health probes, and the
+DNS, TLS certificates, IAM, and security groups. The JuggleWork Helm chart owns
+JuggleWork Deployments, Services, ConfigMaps, Secrets, health probes, and the
 database migration Job.
 
 ## Use Helm or something else?
 
 Use Helm on EKS for AWS unless the customer explicitly cannot run Kubernetes.
-The OpenWork EE release artifact is already a Helm chart, the service split maps
+The JuggleWork EE release artifact is already a Helm chart, the service split maps
 cleanly to Kubernetes, and EKS Auto Mode removes most node and load balancer
 setup from the customer path. A VM or ECS guide can be useful later, but it
 would be a separate packaging surface to maintain. The practical gap found by
@@ -134,7 +134,7 @@ mysql://openwork:<password>@<rds-endpoint>:3306/openwork_den?sslaccept=accept
 ```
 
 Use `?sslaccept=accept` for the simple private-RDS smoke path. This keeps TLS on
-but does not require the RDS CA bundle to be mounted into the OpenWork image.
+but does not require the RDS CA bundle to be mounted into the JuggleWork image.
 Use strict certificate verification later, after you provide the RDS CA bundle,
 with a hardened value such as `sslmode=verify-ca` or `sslmode=verify-full`.
 
@@ -170,7 +170,7 @@ aws ec2 authorize-security-group-ingress \
   --source-group "$NODE_SG_ID"
 ```
 
-Before installing OpenWork, verify network access from the cluster. One simple
+Before installing JuggleWork, verify network access from the cluster. One simple
 way is to run a temporary MySQL client pod:
 
 ```bash
@@ -220,7 +220,7 @@ To send transactional email, configure SMTP in the same values file:
 ```yaml
 secret:
   values:
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "JuggleWork <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
     smtpUser: "openwork@example.com"
@@ -235,7 +235,7 @@ add those keys to the existing Kubernetes Secret referenced by
 `SMTP_HOST`; leave `smtpHost` blank only when SMTP-backed transactional email
 should be disabled.
 
-Use a values file, not a long list of `--set` flags. Several OpenWork values are
+Use a values file, not a long list of `--set` flags. Several JuggleWork values are
 comma-separated strings, such as `config.public.corsOrigins`, and plain
 `--set` parsing commonly breaks them.
 
@@ -258,7 +258,7 @@ grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|E
 
 Redact secrets before sharing rendered manifests or terminal output.
 
-## 4. Install OpenWork
+## 4. Install JuggleWork
 
 Published chart releases live in GHCR:
 
@@ -444,7 +444,7 @@ config:
     bootstrapAdminEmails: "admin@acme.com"
 ```
 
-Open `https://openwork.example.com` and sign up with the owner email. OpenWork
+Open `https://openwork.example.com` and sign up with the owner email. JuggleWork
 creates the singleton organization and makes that user the owner. Later users
 join the same organization. If `ownerEmails` is blank, the first user to reach
 the deployment can claim ownership, which is not recommended for production.
@@ -465,16 +465,16 @@ Configure the IdP application with these callback URLs:
 https://openwork.example.com/api/auth/sso/callback/openwork-sso-<org-id>
 ```
 
-In OpenWork, sign in as the owner, open the organization SSO settings, and enter
+In JuggleWork, sign in as the owner, open the organization SSO settings, and enter
 the IdP issuer/client details. After saving, the organization sign-in path is:
 
 ```text
 https://openwork.example.com/sso/<singleOrgSlug>
 ```
 
-For SAML, OpenWork shows the generated ACS URL and metadata URL after the SAML
+For SAML, JuggleWork shows the generated ACS URL and metadata URL after the SAML
 connection is registered. Use those values in the IdP rather than guessing.
-OpenWork rejects unsigned or weak SAML responses, so configure the IdP to sign
+JuggleWork rejects unsigned or weak SAML responses, so configure the IdP to sign
 assertions.
 
 After SSO is configured, root sign-in shows the SSO-only experience for the
@@ -494,7 +494,7 @@ single organization. Password sign-in for that organization is rejected.
 | Runtime is ready but migration failed | Helm hook did not complete | Check `kubectl get jobs` and the migration Job logs before testing web |
 | `ImagePullBackOff` from GHCR | Private image or missing pull token | Add `imagePullSecrets` |
 | Browser auth loops or CORS errors | Public origins do not match DNS/TLS | Set `webOrigin`, `apiOrigin`, `corsOrigins`, `betterAuthTrustedOrigins`, and `authCallbackUrl` to the final HTTPS domains |
-| SSO callback rejected | IdP callback URL does not match OpenWork | Use the callback/ACS URL shown by OpenWork for that org/provider |
+| SSO callback rejected | IdP callback URL does not match JuggleWork | Use the callback/ACS URL shown by JuggleWork for that org/provider |
 | SSO settings show Enterprise gating | `DEN_PLAN_GATING_ENABLED=true` or org is not entitled | Leave plan gating off for self-host smoke tests, or grant enterprise entitlement |
 
 ## 11. Cleanup

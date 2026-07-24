@@ -26,15 +26,15 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
 }
 
 describe("chat tool error attribution", () => {
-  test("identifies an OpenWork-created capability deadline", () => {
+  test("identifies a JuggleWork-created capability deadline", () => {
     expect(attributeChatToolError("The capability call exceeded 180s. Retry once.")).toEqual({
-      label: "OpenWork timeout",
+      label: "JuggleWork timeout",
       confidence: "Confirmed",
-      description: "OpenWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
+      description: "JuggleWork created this deadline. The external operation may still have completed, so verify its state before retrying.",
     })
   })
 
-  test("identifies a structured OpenWork lifecycle deadline", () => {
+  test("identifies a structured JuggleWork lifecycle deadline", () => {
     expect(attributeChatToolError(JSON.stringify({
       error: "connection_failed",
       diagnostic: {
@@ -43,16 +43,16 @@ describe("chat tool error attribution", () => {
         phase: "MCP_TOOL_EXECUTION",
       },
     }))).toMatchObject({
-      label: "OpenWork timeout",
+      label: "JuggleWork timeout",
       confidence: "Confirmed",
     })
   })
 
-  test("identifies an OpenWork block before send", () => {
+  test("identifies a JuggleWork block before send", () => {
     expect(attributeChatToolError(JSON.stringify({
       diagnostic: { code: "MCP_URL_BLOCKED", category: "security_blocked" },
     }))).toMatchObject({
-      label: "Blocked by OpenWork",
+      label: "Blocked by JuggleWork",
       confidence: "Confirmed",
     })
   })

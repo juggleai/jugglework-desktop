@@ -35,7 +35,7 @@ function StatusIcon({ status }: { status: EgressDiagnosticStep["status"] }) {
 
 function ownerLabel(owner: EgressDiagnosticStep["owner"]) {
   if (owner === "network-administrator") return "Network administrator";
-  if (owner === "openwork-support") return "OpenWork support";
+  if (owner === "openwork-support") return "JuggleWork support";
   return "Den operator";
 }
 

@@ -324,7 +324,7 @@ export function DownloadOpenWorkCard({
       <div className="bg-gradient-to-b from-[#FAFBFE] to-white px-6 py-5">
         <div className="flex items-center gap-2.5">
           <DownloadIcon className="h-5 w-5 text-[#07192C]/70" />
-          <span className="text-[16px] font-semibold text-[#07192C]">Download OpenWork</span>
+          <span className="text-[16px] font-semibold text-[#07192C]">Download JuggleWork</span>
           {tag ? (
             <span className="rounded-full bg-[#F1F4F9] px-2 py-0.5 text-[11px] font-medium text-[#5A6886]">{tag}</span>
           ) : null}

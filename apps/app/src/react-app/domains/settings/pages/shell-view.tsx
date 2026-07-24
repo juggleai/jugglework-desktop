@@ -270,7 +270,7 @@ export function ShellCustomizationView() {
                   id="shell-app-name"
                   className="h-8 text-xs"
                   value={brandAppName}
-                  placeholder="OpenWork"
+                  placeholder="JuggleWork"
                   disabled
                   onChange={(event) => update({ appName: event.currentTarget.value || DEFAULT_SHELL_CONFIG.appName })}
                 />
@@ -280,7 +280,7 @@ export function ShellCustomizationView() {
           <Alert>
             <Info />
             <AlertDescription>
-              {brandAppName === "OpenWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
+              {brandAppName === "JuggleWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
             </AlertDescription>
           </Alert>
         </LayoutSectionItem>
@@ -347,7 +347,7 @@ export function ShellCustomizationView() {
 
         <ToggleRow
           label="Display notifications"
-          description="A bell in the header collecting updates from OpenWork Cloud and your workspaces."
+          description="A bell in the header collecting updates from JuggleWork Cloud and your workspaces."
           checked={config.notifications}
           onChange={(v) => update({ notifications: v })}
         />
@@ -402,7 +402,7 @@ export function ShellCustomizationView() {
         <LayoutSectionHeader>
           <LayoutSectionTitle>Organization-wide settings</LayoutSectionTitle>
           <LayoutSectionDescription>
-            These settings are managed by your organization via OpenWork Cloud.
+            These settings are managed by your organization via JuggleWork Cloud.
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 

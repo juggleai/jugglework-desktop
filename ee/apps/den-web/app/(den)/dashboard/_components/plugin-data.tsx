@@ -320,12 +320,12 @@ const MOCK_PLUGINS: DenPlugin[] = [
   },
   {
     id: "plg_openwork_release",
-    name: "OpenWork Release Kit",
+    name: "JuggleWork Release Kit",
     slug: "openwork-release-kit",
     description:
-      "Internal plugin that automates OpenWork release prep, orchestrator sidecar builds, and changelog generation. Shipped by OpenWork infra.",
+      "Internal plugin that automates JuggleWork release prep, orchestrator sidecar builds, and changelog generation. Shipped by JuggleWork infra.",
     version: "2.3.1",
-    author: "OpenWork",
+    author: "JuggleWork",
     category: "workflows",
     installed: true,
     source: { type: "github", repo: "different-ai/openwork-plugins" },

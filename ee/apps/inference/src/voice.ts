@@ -20,19 +20,19 @@ const OPENWORK_VOICE_REALTIME_TOOLS = [
   {
     type: "function",
     name: "openwork_snapshot",
-    description: "Read the current OpenWork UI control snapshot: route, status, narration, and visible action metadata.",
+    description: "Read the current JuggleWork UI control snapshot: route, status, narration, and visible action metadata.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "openwork_list_actions",
-    description: "List semantic OpenWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
+    description: "List semantic JuggleWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "openwork_execute_action",
-    description: "Execute a semantic OpenWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
+    description: "Execute a semantic JuggleWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
     parameters: {
       type: "object",
       properties: {
@@ -95,8 +95,8 @@ function formatResetMessage(windowEndAt: Date): string {
 function openworkVoiceRealtimeInstructions() {
   return `# Role and Objective
 
-You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
-Help the user control OpenWork by using the semantic OpenWork UI tools.
+You are JuggleWork Voice Mode, a voice-first control layer inside JuggleWork.
+Help the user control JuggleWork by using the semantic JuggleWork UI tools.
 
 # Tool Policy
 
@@ -111,7 +111,7 @@ Help the user control OpenWork by using the semantic OpenWork UI tools.
 
 - Be concise, calm, and direct.
 - If audio is unclear, ask the user to repeat it instead of guessing.
-- Ignore background speech that is not addressed to OpenWork.
+- Ignore background speech that is not addressed to JuggleWork.
 - Summarize tool results briefly and offer the next useful step.`
 }
 
@@ -228,12 +228,12 @@ export function registerVoiceRoutes(app: Hono) {
   app.post("/voice/realtime/session", async (c) => {
     const rawKey = readApiKey(c.req.raw)
     if (!rawKey) {
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
+      return c.json({ error: { message: "Missing JuggleWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
     const inferenceKey = await findActiveInferenceKey(rawKey)
     if (!inferenceKey) {
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+      return c.json({ error: { message: "Invalid JuggleWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
 
     const limits = await ensureUsableBuckets(inferenceKey.organization_id)

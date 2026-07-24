@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Start the OpenWork desktop dev stack inside a Daytona/devcontainer sandbox.
+# Start the JuggleWork desktop dev stack inside a Daytona/devcontainer sandbox.
 # This is the sandbox equivalent of `pnpm dev`: it prepares the virtual display
 # and launches the desktop dev runner in the background with CDP enabled.
 
@@ -9,7 +9,7 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   printf '%s\n' \
     "Usage: pnpm dev:sandbox" \
     "" \
-    "Starts the OpenWork desktop dev stack inside a Daytona/devcontainer sandbox." \
+    "Starts the JuggleWork desktop dev stack inside a Daytona/devcontainer sandbox." \
     "Use .devcontainer/test-on-daytona.sh [branch-or-commit] to provision a new Daytona sandbox."
   exit 0
 fi
@@ -43,13 +43,13 @@ ELECTRON_SCRIPT="$REPO_DIR/.devcontainer/start-daytona-electron.sh"
 echo "==> Starting Daytona display stack..."
 bash "$VNC_SCRIPT"
 
-echo "==> Starting OpenWork dev stack in background..."
+echo "==> Starting JuggleWork dev stack in background..."
 bash "$ELECTRON_SCRIPT" --detach
 
 echo "==> Waiting for Electron CDP on :$OPENWORK_ELECTRON_REMOTE_DEBUG_PORT..."
 for _ in $(seq 1 30); do
   if curl -sf "http://127.0.0.1:$OPENWORK_ELECTRON_REMOTE_DEBUG_PORT/json/list" >/dev/null 2>&1; then
-    echo "OpenWork sandbox dev stack is ready."
+    echo "JuggleWork sandbox dev stack is ready."
     echo "Electron log: /tmp/electron.log"
     exit 0
   fi

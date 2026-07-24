@@ -47,7 +47,7 @@ export const CONNECT_CLIENT_SUPPORT: Record<OpenWorkConnectClientId, OpenWorkCon
   },
   "codex": {
     status: "Setup only",
-    explanation: "Setup guide only: add OpenWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch."
+    explanation: "Setup guide only: add JuggleWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch."
   },
   "chatgpt-desktop": {
     status: "Setup only",

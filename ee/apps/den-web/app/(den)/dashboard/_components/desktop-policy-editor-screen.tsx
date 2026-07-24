@@ -166,8 +166,8 @@ function getPromptDescriptionErrorId(index: number) {
 
 function getDisabledPromptCopy(isDefault: boolean) {
   return isDefault
-    ? "When organization prompts are off, OpenWork defaults are used."
-    : "When organization prompts are off, members inherit prompts from another matching policy or the default policy; if none apply, OpenWork defaults are used.";
+    ? "When organization prompts are off, JuggleWork defaults are used."
+    : "When organization prompts are off, members inherit prompts from another matching policy or the default policy; if none apply, JuggleWork defaults are used.";
 }
 
 function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite {

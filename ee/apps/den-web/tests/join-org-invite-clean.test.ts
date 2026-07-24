@@ -154,7 +154,7 @@ describe("join organization invite clean layout contract", () => {
     });
 
     expect(legacyPreview?.organization.branding).toEqual({
-      appName: "OpenWork",
+      appName: "JuggleWork",
       logoUrl: null,
       iconUrl: null,
     });
@@ -166,16 +166,16 @@ describe("join organization invite clean layout contract", () => {
     const identitySource = readFileSync(brandIdentityPath, "utf8");
 
     expect(successSource).toContain("Get the desktop app");
-    expect(successSource).toContain("Return to OpenWork");
+    expect(successSource).toContain("Return to JuggleWork");
     expect(successSource).toContain("desktopAuthRequested");
     expect(successSource).toContain("Continue in the browser");
     expect(successSource).toContain("Email me the download link");
     expect(successSource).not.toContain("capabilities");
-    expect(successSource).not.toContain("Open OpenWork");
+    expect(successSource).not.toContain("Open JuggleWork");
     expect(successSource).toContain("<span>You&apos;re in, welcome to</span>");
     expect(successSource).toContain('className="whitespace-nowrap">&apos;s {brand.appName}</span>');
     expect(installSource).toContain("DownloadPlatformGrid");
-    expect(installSource).toContain("<span>Download OpenWork</span>");
+    expect(installSource).toContain("<span>Download JuggleWork</span>");
     expect(installSource).toContain("<span>for</span>");
     expect(installSource).toContain("Setup script (ARM64)");
     expect(identitySource).toContain("failedLogoUrl");

@@ -1,6 +1,6 @@
-# OpenWork Installer
+# JuggleWork Installer
 
-OpenWork desktop installer for custom deployments. Release builds are generic
+JuggleWork desktop installer for custom deployments. Release builds are generic
 signed files that do not embed organization config. Config is resolved only from
 local development env overrides, per-client build constants, or an install link
 the user pastes into the installer UI (also accepted via `--install-link`). When
@@ -23,9 +23,9 @@ is unavailable, the same UI opens in the default browser.
 ## Paste-gated generic artifacts
 
 There is no artifact stamping, sidecar config, or filename tagging. macOS ships as
-a DMG containing the generic `OpenWork Installer.app`; Windows ships as the bare
-generic `OpenWork-Installer-win-x64.exe`. A generic UI build gates on the paste
-screen until the user provides their OpenWork install link.
+a DMG containing the generic `JuggleWork Installer.app`; Windows ships as the bare
+generic `JuggleWork-Installer-win-x64.exe`. A generic UI build gates on the paste
+screen until the user provides their JuggleWork install link.
 
 ## Local development
 

@@ -167,7 +167,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     }
   }, [props.query, providerGroups]);
 
-  // Expand current + OpenWork groups once they appear (options often load async).
+  // Expand current + JuggleWork groups once they appear (options often load async).
   const autoExpandedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!props.open) {
@@ -320,7 +320,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                 type="button"
                 className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
                 onClick={hideOpenWorkModels}
-                aria-label="Hide OpenWork Models"
+                aria-label="Hide JuggleWork Models"
               >
                 <X className="size-3.5" />
               </button>

@@ -41,7 +41,7 @@ export function FeedbackEmail({
     ["Entrypoint", entrypoint],
     ["Deployment", deployment],
     ["App version", appVersion],
-    ["OpenWork server", openworkServerVersion],
+    ["JuggleWork server", openworkServerVersion],
     ["OpenCode", opencodeVersion],
     ["Orchestrator", orchestratorVersion],
     ["OS", osLabel],
@@ -52,10 +52,10 @@ export function FeedbackEmail({
   return (
     <Html>
       <Head />
-      <Preview>{name} sent OpenWork feedback from {entrypoint || source || "unknown"}</Preview>
+      <Preview>{name} sent JuggleWork feedback from {entrypoint || source || "unknown"}</Preview>
       <Body style={styles.body}>
         <Container style={styles.container}>
-          <Text style={styles.eyebrow}>OpenWork feedback</Text>
+          <Text style={styles.eyebrow}>JuggleWork feedback</Text>
           <Heading style={styles.heading}>Feedback from {name}</Heading>
           <Text style={styles.contact}>{email}</Text>
 

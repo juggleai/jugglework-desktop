@@ -1,7 +1,7 @@
 {
   "name": "openwork-bootstrap",
   "version": "0.1.0",
-  "description": "Script-installable OpenWork bootstrap CLI for agents",
+  "description": "Script-installable JuggleWork bootstrap CLI for agents",
   "private": true,
   "type": "module",
   "bin": {

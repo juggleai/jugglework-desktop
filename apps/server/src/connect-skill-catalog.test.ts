@@ -84,7 +84,7 @@ async function serverConfig(): Promise<ServerConfig> {
   };
 }
 
-describe("OpenWork Connect skill catalog", () => {
+describe("JuggleWork Connect skill catalog", () => {
   test("renders discovery metadata and capability retrieval guidance", () => {
     const instruction = renderOpenWorkConnectSkillInstruction([{
       name: "customer-briefing",

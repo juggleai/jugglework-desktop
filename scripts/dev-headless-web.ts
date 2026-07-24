@@ -137,7 +137,7 @@ const ensureOpenworkServer = async () => {
   } catch {
     if (!autoBuildEnabled) {
       logLine(
-        `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+        `[dev:headless-web] Missing JuggleWork server binary at ${openworkServerBin}`,
       );
       logLine(
         "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
@@ -152,7 +152,7 @@ const ensureOpenworkServer = async () => {
     }
 
     logLine(
-      `[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`,
+      `[dev:headless-web] Missing JuggleWork server binary at ${openworkServerBin}`,
     );
     logLine(
       "[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin",
@@ -195,7 +195,7 @@ await ensureOpenworkServer();
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
-logLine(`[dev:headless-web] OpenWork server: ${openworkUrl}`);
+logLine(`[dev:headless-web] JuggleWork server: ${openworkUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);

@@ -254,7 +254,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                   <p className="text-[16px] leading-relaxed text-[var(--dls-text-secondary)] md:text-[17px]">
                     {isReady
                       ? "Open the worker in web or desktop, or copy the live credentials below."
-                      : "We are allocating resources and preparing the OpenWork connection before unlocking the rest of the controls."}
+                      : "We are allocating resources and preparing the JuggleWork connection before unlocking the rest of the controls."}
                   </p>
 
                   <ProvisioningGraphic ready={isReady} />
@@ -301,7 +301,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                       <MonitorIcon className="h-4 w-4" />
                       {desktopDisabled ? "Preparing desktop launch" : "Open in Desktop"}
                     </button>
-                    <span className="mt-2 text-[11px] font-medium text-[var(--dls-text-secondary)]">requires the OpenWork desktop app</span>
+                    <span className="mt-2 text-[11px] font-medium text-[var(--dls-text-secondary)]">requires the JuggleWork desktop app</span>
                   </div>
                 </div>
               </div>
@@ -594,7 +594,7 @@ export function DashboardScreen({ showSidebar = true }: { showSidebar?: boolean 
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[var(--dls-text-primary)]">
                   <CubeIcon className="h-4 w-4" />
                 </div>
-                <span className="text-lg font-semibold tracking-tight text-[var(--dls-text-primary)]">OpenWork</span>
+                <span className="text-lg font-semibold tracking-tight text-[var(--dls-text-primary)]">JuggleWork</span>
               </div>
               <button
                 type="button"

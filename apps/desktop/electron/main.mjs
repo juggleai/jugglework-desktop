@@ -87,7 +87,7 @@ const DESKTOP_PROTOCOL_SCHEME = "openwork";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 const APP_NAME =
   process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
-  (isDevMode ? "OpenWork - Dev" : "OpenWork");
+  (isDevMode ? "JuggleWork - Dev" : "JuggleWork");
 let currentDisplayAppName = APP_NAME;
 const APP_IDENTIFIER =
   process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
@@ -1128,7 +1128,7 @@ function showShutdownScreen() {
   <body>
     <main>
       <div class="spinner" aria-hidden="true"></div>
-      <div class="title">Stopping OpenWork services</div>
+      <div class="title">Stopping JuggleWork services</div>
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
@@ -1151,13 +1151,13 @@ async function disposeRuntimeBeforeQuit() {
 
 function assertOpenworkServerReady(info) {
   if (!info?.running) {
-    throw new Error("OpenWork server did not stay running after startup.");
+    throw new Error("JuggleWork server did not stay running after startup.");
   }
   if (!info.baseUrl) {
-    throw new Error("OpenWork server did not report a base URL after startup.");
+    throw new Error("JuggleWork server did not report a base URL after startup.");
   }
   if (!info.ownerToken && !info.clientToken) {
-    throw new Error("OpenWork server did not report an access token after startup.");
+    throw new Error("JuggleWork server did not report an access token after startup.");
   }
   return info;
 }

@@ -10,7 +10,7 @@
 
 ## 1. Goal & principles
 
-A per-user **memory bank** inside OpenWork. The user opts in by chatting (e.g.
+A per-user **memory bank** inside JuggleWork. The user opts in by chatting (e.g.
 "save this memory to the memory bank"); the agent drafts a memory + relevant context,
 a human verifies it, and it's persisted **server-side**. Later the user can **explicitly
 search** their memories with natural-language phrasing, and **view/delete** them from a

@@ -604,7 +604,7 @@ export async function listMcpFromRuntimeSnapshot(
 /**
  * Diagnostics-only passive inventory. It returns every configured layer and
  * collision metadata without claiming which entry is effective: OpenCode's
- * static config merge and OpenWork's later dynamic MCP registration can make
+ * static config merge and JuggleWork's later dynamic MCP registration can make
  * that answer lifecycle-dependent, and observing it would wake a cold engine.
  */
 export async function inspectMcpLayersFromRuntimeSnapshot(

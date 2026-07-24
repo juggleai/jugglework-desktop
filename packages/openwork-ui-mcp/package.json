@@ -1,8 +1,8 @@
 {
   "name": "openwork-ui-mcp",
   "version": "0.2.0",
-  "description": "MCP server for OpenWork app context and semantic UI control",
-  "author": "OpenWork <support@openworklabs.com>",
+  "description": "MCP server for JuggleWork app context and semantic UI control",
+  "author": "JuggleWork <support@openworklabs.com>",
   "license": "MIT",
   "type": "module",
   "bin": {

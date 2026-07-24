@@ -56,12 +56,12 @@ function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
 /**
  * On desktop (Tauri) startup:
  *   1) bootstrap the workspace list
- *   2) if a local workspace is selected, restart the embedded OpenWork server
+ *   2) if a local workspace is selected, restart the embedded JuggleWork server
  *   3) start the OpenCode engine pointed at the workspace
- *   4) activate the workspace on the running OpenWork server
+ *   4) activate the workspace on the running JuggleWork server
  *   5) notify React routes that fresh desktop runtime info is available. Electron
  *      routes read live runtime info directly instead of persisting ephemeral
- *      localhost ports/tokens into OpenWork settings.
+ *      localhost ports/tokens into JuggleWork settings.
  *
  * Safe to call multiple times — gated by a `didBoot` ref so it runs once per mount.
  */
@@ -115,13 +115,13 @@ export function useDesktopRuntimeBoot() {
         };
 
         const startServerWithoutDesktopWorkspace = async () => {
-          setPhase("starting-engine", "Starting OpenWork server");
+          setPhase("starting-engine", "Starting JuggleWork server");
           const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
             return null;
           });
           if (!isOpenworkServerInfoLike(serverInfo) || !isOpenworkServerReady(serverInfo)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+            setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
             return;
           }
           publishOpenworkServerInfo(serverInfo);
@@ -164,12 +164,12 @@ export function useDesktopRuntimeBoot() {
           };
 
           if (boot.ok === false) {
-            setError(boot.error || "Failed to start OpenWork runtime");
+            setError(boot.error || "Failed to start JuggleWork runtime");
             return;
           }
 
           if (!boot.skipped && !isOpenworkServerReady(boot.openworkServer)) {
-            setError("OpenWork server did not finish starting. Please restart OpenWork.");
+            setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
             return;
           }
 

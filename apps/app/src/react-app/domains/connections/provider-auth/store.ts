@@ -435,7 +435,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error(
-        "OpenWork server unavailable. Connect to manage imported cloud providers.",
+        "JuggleWork server unavailable. Connect to manage imported cloud providers.",
       );
     }
     setStateField("importedCloudProviders", nextProviders);
@@ -453,7 +453,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (hasOpenworkTarget) {
-      throw new Error("OpenWork server config API is unavailable for this workspace.");
+      throw new Error("JuggleWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -483,7 +483,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (hasOpenworkTarget) {
-      throw new Error("OpenWork server config API is unavailable for this workspace.");
+      throw new Error("JuggleWork server config API is unavailable for this workspace.");
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
@@ -507,7 +507,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
       await resolveOpenworkConfigTarget("write");
     if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
-      throw new Error("OpenWork server unavailable. Connect to manage cloud providers.");
+      throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
     }
     await openworkClient.patchConfig(openworkWorkspaceId, {
       opencode: { provider: update },
@@ -1190,7 +1190,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!c) return null;
 
     if (optionsArg?.dispose) {
-      // Prefer the OpenWork server engine reload: it disposes the engine AND
+      // Prefer the JuggleWork server engine reload: it disposes the engine AND
       // re-registers runtime-DB MCPs, so non-primary workspaces and pending
       // changes are picked up instead of silently dropping (toggles "turn
       // off").
@@ -1395,7 +1395,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const token = settings.authToken?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!token || !orgId) {
-      throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
+      throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
     }
 
     try {
@@ -1421,7 +1421,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           throw new Error(
             `${provider.name} needs environment variables (${envEntries
               .map((entry) => entry.key)
-              .join(", ")}) but the OpenWork server is not available.`,
+              .join(", ")}) but the JuggleWork server is not available.`,
           );
         }
         await openworkClient.upsertUserEnv(envEntries);
@@ -1578,7 +1578,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return;
     }
 
-    // Imports, baseline reads, and persistence all go through the OpenWork
+    // Imports, baseline reads, and persistence all go through the JuggleWork
     // server target (patchRuntimeProviders throws without it). Running before
     // the target resolves made the baseline read fall back to an empty source
     // and re-import every org provider — engine dispose churn on settings open.

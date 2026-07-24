@@ -98,7 +98,7 @@ const departments: Department[] = [
 
 const toolRows: ToolRow[] = [
   {
-    tool: "OpenWork",
+    tool: "JuggleWork",
     penetration: "41%",
     topDepartment: "Customer Support",
     topUsers: ["AL", "AC", "WB"],
@@ -183,7 +183,7 @@ const powerUsers: PowerUser[] = [
     name: "Marie Curie",
     initials: "MC",
     department: "Engineering",
-    topTool: "OpenWork",
+    topTool: "JuggleWork",
     trend: [30, 70, 120, 180, 250, 330, 420, 520, 615, 680],
     trendNote: "Learning curve — compounding every week",
     requests: "680",
@@ -195,7 +195,7 @@ const powerUsers: PowerUser[] = [
     name: "Andrew Carnegie",
     initials: "AC",
     department: "Sales",
-    topTool: "OpenWork",
+    topTool: "JuggleWork",
     trend: [15, 35, 60, 90, 130, 190, 265, 345, 430, 510],
     trendNote: "Late adopter — just caught the wave",
     requests: "510",
@@ -207,7 +207,7 @@ const powerUsers: PowerUser[] = [
     name: "Warren Buffett",
     initials: "WB",
     department: "Sales",
-    topTool: "OpenWork",
+    topTool: "JuggleWork",
     trend: [40, 82, 125, 168, 210, 253, 297, 341, 386, 430],
     trendNote: "Patient, near-identical daily habit",
     requests: "430",
@@ -305,7 +305,7 @@ export function LandingEnterpriseHero({ standalone = false }: Props) {
             icon={<Gauge className="h-5 w-5 text-[#1D63FF]" />}
             title="Top-tool penetration"
             value="41%"
-            subvalue="OpenWork · 54 users"
+            subvalue="JuggleWork · 54 users"
             tone="blue"
           />
         </div>
@@ -710,7 +710,7 @@ function ToolGlyph({ tool, small = false }: { tool: string; small?: boolean }) {
     ? "h-5 w-5 rounded-[6px]"
     : "h-6 w-6 rounded-[7px] md:h-7 md:w-7 md:rounded-[8px]";
 
-  if (tool === "OpenWork") {
+  if (tool === "JuggleWork") {
     return (
       <div
         title={tool}

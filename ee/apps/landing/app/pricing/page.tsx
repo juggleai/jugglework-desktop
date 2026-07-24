@@ -8,10 +8,10 @@ import { baseOpenGraph } from "../../lib/seo";
 const pricingSchema = {
   "@context": "https://schema.org",
   "@type": "Product",
-  name: "OpenWork",
+  name: "JuggleWork",
   description:
-    "OpenWork is an open source Claude Cowork alternative — a desktop app for teams to use 50+ LLMs, bring their own keys, and share reusable agent setups with guardrails.",
-  brand: { "@type": "Brand", name: "OpenWork" },
+    "JuggleWork is an open source Claude Cowork alternative — a desktop app for teams to use 50+ LLMs, bring their own keys, and share reusable agent setups with guardrails.",
+  brand: { "@type": "Brand", name: "JuggleWork" },
   offers: [
     {
       "@type": "Offer",
@@ -49,9 +49,9 @@ const pricingSchema = {
 };
 
 export const metadata = {
-  title: "OpenWork Pricing — Free desktop, $10/seat teams, enterprise",
+  title: "JuggleWork Pricing — Free desktop, $10/seat teams, enterprise",
   description:
-    "OpenWork is free forever for solo use with bring-your-own-keys. Teams get their first 5 seats free, then $10 per seat per month, plus custom enterprise plans with SSO and bring-your-own inference.",
+    "JuggleWork is free forever for solo use with bring-your-own-keys. Teams get their first 5 seats free, then $10 per seat per month, plus custom enterprise plans with SSO and bring-your-own inference.",
   alternates: {
     canonical: "/pricing"
   },
@@ -81,7 +81,7 @@ export default async function PricingPage() {
         <main className="mx-auto flex w-full max-w-6xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <section className="max-w-4xl pt-6 md:pt-10">
             <h1 className="mb-6 text-4xl font-medium leading-[1.05] tracking-tight md:text-5xl lg:text-6xl">
-              OpenWork pricing — free, team, and enterprise
+              JuggleWork pricing — free, team, and enterprise
             </h1>
           </section>
 

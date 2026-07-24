@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             ["-lc", "/usr/local/bin/microsandbox-entrypoint.sh"],
         )
         .await
-        .context("failed to start the OpenWork microsandbox entrypoint inside the VM")?;
+        .context("failed to start the JuggleWork microsandbox entrypoint inside the VM")?;
 
     let log_task = tokio::spawn(async move {
         let mut server = server;

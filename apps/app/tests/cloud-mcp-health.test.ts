@@ -132,7 +132,7 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
   };
 }
 
-describe("OpenWork Cloud MCP reconciler", () => {
+describe("JuggleWork Cloud MCP reconciler", () => {
   beforeEach(() => installStorageStub());
 
   test("uses the minted web proxy resource instead of a stale direct API fallback", () => {
@@ -435,7 +435,7 @@ describe("OpenWork Cloud MCP reconciler", () => {
     const canonicalProjectionFailure = {
       ...failure("provider_tool_projection_missing"),
       stage: "provider_projection" as const,
-      recommendedAction: "Choose a model that can use OpenWork Cloud tools",
+      recommendedAction: "Choose a model that can use JuggleWork Cloud tools",
     };
     expect(cloudMcpFailureStageLabel({
       signedIn: true,
@@ -450,7 +450,7 @@ describe("OpenWork Cloud MCP reconciler", () => {
     })).toMatchObject({
       statusLabel: "Degraded",
       stageLabel: "Current model can’t use Cloud tools",
-      recommendedAction: "Choose a model that can use OpenWork Cloud tools.",
+      recommendedAction: "Choose a model that can use JuggleWork Cloud tools.",
     });
 
     const summary = cloudMcpDisplaySummary({

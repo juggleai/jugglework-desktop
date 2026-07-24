@@ -1,18 +1,18 @@
 ---
 name: openwork-models
-description: Manage OpenWork inference model aliases, openwork model overlays, discounts, validation, and automated base model refreshes from models.dev. Use when adding, removing, discounting, auditing, or updating OpenWork models, including requests like "update the models" that should trigger the GitHub update-models workflow and report when its PR merges.
+description: Manage JuggleWork inference model aliases, openwork model overlays, discounts, validation, and automated base model refreshes from models.dev. Use when adding, removing, discounting, auditing, or updating JuggleWork models, including requests like "update the models" that should trigger the GitHub update-models workflow and report when its PR merges.
 ---
 
-# OpenWork Models
+# JuggleWork Models
 
-Use this skill for OpenWork inference model changes. The source of truth for
+Use this skill for JuggleWork inference model changes. The source of truth for
 available upstream models is:
 
 - `ee/apps/inference/src/models/base.json`
 - provider key: `openrouter`
 - model map: `openrouter.models`
 
-The editable OpenWork model list is:
+The editable JuggleWork model list is:
 
 - `ee/apps/inference/src/models/openwork-models.json`
 
@@ -21,7 +21,7 @@ Managed file:
 - `packages/types/src/den/inference.ts`
 
 `ee/apps/inference/scripts/build-models.mjs` reads `openwork-models.json` and
-generates the OpenWork provider overlay in memory. It selects the API URL from
+generates the JuggleWork provider overlay in memory. It selects the API URL from
 `OPENWORK_DEV_MODE`: dev uses `http://127.0.0.1:8791/api/v1`, otherwise prod
 uses `https://inference.openworklabs.com/api/v1`.
 
@@ -37,7 +37,7 @@ node .opencode/skills/openwork-models/scripts/extract-source-models.mjs
 node .opencode/skills/openwork-models/scripts/extract-source-models.mjs --query "zai 5.1"
 ```
 
-Manage OpenWork models:
+Manage JuggleWork models:
 
 ```bash
 node .opencode/skills/openwork-models/scripts/openwork-models.mjs search "zai 5.1"
@@ -87,7 +87,7 @@ New aliases use:
 ```ts
 "model/id": {
   upstreamModel: "model/id",
-  displayName: "OpenWork: " + model.name,
+  displayName: "JuggleWork: " + model.name,
   enabled: true,
   usageFactor: 1,
 }
@@ -125,5 +125,5 @@ node .opencode/skills/openwork-models/scripts/openwork-models.mjs validate
 node ee/apps/inference/scripts/build-models.mjs
 ```
 
-Validation checks JSON validity, OpenWork model ID consistency, and alias
+Validation checks JSON validity, JuggleWork model ID consistency, and alias
 coverage in `INFERENCE_MODEL_ALIASES`.

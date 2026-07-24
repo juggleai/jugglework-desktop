@@ -1,5 +1,5 @@
 /**
- * OpenWork Anthropic Tool Schema Plugin
+ * JuggleWork Anthropic Tool Schema Plugin
  *
  * The Anthropic Messages API rejects tool input schemas that use `anyOf`,
  * `oneOf`, or `allOf` at the top level:

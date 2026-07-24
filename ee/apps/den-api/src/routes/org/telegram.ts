@@ -211,7 +211,7 @@ export function registerTelegramOrgRoutes<T extends { Variables: OrgRouteVariabl
       if (c.get("session")?.id === "mcp_internal") {
         return c.json({
           error: "invalid_request",
-          message: "Telegram bot tokens cannot be set from an agent. Add the token in OpenWork Cloud Connect.",
+          message: "Telegram bot tokens cannot be set from an agent. Add the token in JuggleWork Cloud Connect.",
         }, 400)
       }
 
@@ -220,7 +220,7 @@ export function registerTelegramOrgRoutes<T extends { Variables: OrgRouteVariabl
       try {
         workerId = normalizeDenTypeId("worker", body.workerId)
       } catch {
-        return c.json({ error: "invalid_request", message: "Select a valid OpenWork worker." }, 400)
+        return c.json({ error: "invalid_request", message: "Select a valid JuggleWork worker." }, 400)
       }
 
       const access = await loadTelegramWorkerAccess({
@@ -280,7 +280,7 @@ export function registerTelegramOrgRoutes<T extends { Variables: OrgRouteVariabl
         if (isDuplicateDatabaseEntry(error)) {
           return c.json({
             error: "telegram_bot_in_use",
-            message: "This Telegram bot is already connected to another OpenWork workspace.",
+            message: "This Telegram bot is already connected to another JuggleWork workspace.",
           }, 409)
         }
         return c.json({ error: "telegram_webhook_failed", message: errorMessage(error) }, 502)

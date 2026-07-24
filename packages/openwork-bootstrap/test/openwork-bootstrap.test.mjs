@@ -132,7 +132,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First JuggleWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -161,7 +161,7 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First JuggleWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl, getRequestBody) => {
@@ -193,14 +193,14 @@ try {
       ok: true,
       organization: { id: "org_test", name: "Stub Org", slug: "org_test", status: "provisional" },
       setup: { id: "wbt_test", expiresAt: "2030-01-01T00:00:00.000Z" },
-      skill: { id: "cob_test", title: "First OpenWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
+      skill: { id: "cob_test", title: "First JuggleWork Skill", output: "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED" },
       claimLinks: [{ id: "wcl_test", role: "owner", token: "stub-token", url: "https://example.test/workspace-claim?token=stub-token", expiresAt: "2030-01-01T00:00:00.000Z" }],
     }),
     async (baseUrl) => {
       const explicitWebBaseUrlPath = join(temp, "desktop-bootstrap-explicit-web.json")
       writeFileSync(
         explicitWebBaseUrlPath,
-        `${JSON.stringify({ brandAppName: "OpenWork Demo A" })}\n`,
+        `${JSON.stringify({ brandAppName: "JuggleWork Demo A" })}\n`,
         "utf8",
       )
       const withExplicitWebBaseUrl = await spawnAsync(
@@ -222,7 +222,7 @@ try {
       assert.equal(writtenExplicit.baseUrl, "https://app.example.test", "an explicit --web-base-url must be written as baseUrl")
       assert.equal(writtenExplicit.apiBaseUrl, baseUrl, "apiBaseUrl must stay the real API origin, independent of the web base URL")
       assert.notEqual(writtenExplicit.baseUrl, writtenExplicit.apiBaseUrl, "baseUrl and apiBaseUrl must not collapse into the same value")
-      assert.equal(writtenExplicit.brandAppName, "OpenWork Demo A", "prepared desktop setup must preserve its profile identity")
+      assert.equal(writtenExplicit.brandAppName, "JuggleWork Demo A", "prepared desktop setup must preserve its profile identity")
     },
   )
 

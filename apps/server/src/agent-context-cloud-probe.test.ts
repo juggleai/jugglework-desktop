@@ -113,7 +113,7 @@ afterEach(() => {
   delete process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS;
 });
 
-describe("OpenWork Cloud catalog probe", () => {
+describe("JuggleWork Cloud catalog probe", () => {
   test("performs initialize, initialized notification, and bounded tools/list with allowlisted headers", async () => {
     let calls = 0;
     let sharedSignal: AbortSignal | null = null;

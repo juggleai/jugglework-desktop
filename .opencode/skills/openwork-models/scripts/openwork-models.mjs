@@ -123,7 +123,7 @@ function resolveExactOpenworkIds(openworkModels, ids) {
     }
 
     const matches = findMatches(openworkModels, id)
-    console.error(`OpenWork model "${id}" was not exact. Please clarify with exact id:`)
+    console.error(`JuggleWork model "${id}" was not exact. Please clarify with exact id:`)
     displayMatches(matches)
     process.exitCode = 2
     return null
@@ -150,7 +150,7 @@ async function syncAliases(models, usageOverrides = new Map()) {
   const existingFactors = await readUsageFactors()
   const entries = Object.entries(models).map(([id, model]) => {
     const usageFactor = usageOverrides.get(id) ?? existingFactors.get(id) ?? 1
-    const displayName = `OpenWork: ${model.name}`
+    const displayName = `JuggleWork: ${model.name}`
     return `  ${escapeTsString(id)}: {
     upstreamModel: ${escapeTsString(id)},
     displayName: ${escapeTsString(displayName)},
@@ -206,7 +206,7 @@ async function validate() {
     }
   }
 
-  console.log(`validated ${Object.keys(models).length} OpenWork model(s)`)
+  console.log(`validated ${Object.keys(models).length} JuggleWork model(s)`)
 }
 
 async function search(query) {

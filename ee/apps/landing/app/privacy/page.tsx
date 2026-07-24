@@ -1,8 +1,8 @@
 import { LegalPage } from "../../components/legal-page";
 
 export const metadata = {
-  title: "OpenWork — Privacy Policy",
-  description: "Privacy policy for Different AI, doing business as OpenWork.",
+  title: "JuggleWork — Privacy Policy",
+  description: "Privacy policy for Different AI, doing business as JuggleWork.",
   alternates: {
     canonical: "/privacy"
   }

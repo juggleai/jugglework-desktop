@@ -59,7 +59,7 @@ function InvitationDetails({
 }
 
 function InvitationHeading({
-  eyebrow = "OpenWork Cloud",
+  eyebrow = "JuggleWork Cloud",
   title,
   copy,
 }: {
@@ -325,7 +325,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           <InvitationHeading title="This invite can't be opened." copy={previewError ?? "This invite could not be loaded."} />
           <ActionGroup>
             <button type="button" className="den-button-primary w-full focus:outline-none focus:ring-4 focus:ring-slate-950/10 sm:w-auto" onClick={handleNotNow}>
-              Back to OpenWork Cloud
+              Back to JuggleWork Cloud
             </button>
           </ActionGroup>
         </div>
@@ -347,7 +347,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
           <InvitationDetails preview={preview} account={account} roleLabel={roleLabel} />
           <ActionGroup>
             <button type="button" className="den-button-primary w-full focus:outline-none focus:ring-4 focus:ring-slate-950/10 sm:w-auto" onClick={handleNotNow}>
-              Back to OpenWork Cloud
+              Back to JuggleWork Cloud
             </button>
           </ActionGroup>
         </div>
@@ -421,7 +421,7 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
                 className="den-button-primary w-full focus:outline-none focus:ring-4 focus:ring-slate-950/10 sm:w-auto"
                 onClick={clearPendingInvitation}
               >
-                {user && invitedEmailMatches ? "Open team" : "Back to OpenWork Cloud"}
+                {user && invitedEmailMatches ? "Open team" : "Back to JuggleWork Cloud"}
               </Link>
               <NotNowButton onClick={handleNotNow} />
             </ActionGroup>

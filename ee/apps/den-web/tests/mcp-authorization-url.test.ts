@@ -33,7 +33,7 @@ describe("mcpAuthorizationPendingDocument", () => {
     expect(document).toContain("Preparing your connection")
     expect(document).toContain("securely checking the provider")
     expect(document).toContain("Keep this window open")
-    expect(document).toContain("OpenWork Connect")
+    expect(document).toContain("JuggleWork Connect")
     expect(document).toContain('role="status"')
     expect(document).toContain('aria-live="polite"')
     expect(document).toContain("prefers-reduced-motion: reduce")

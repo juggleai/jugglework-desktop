@@ -338,7 +338,7 @@ export async function buildWorkspaceImportPreview(
     changes.push({
       kind: "openwork",
       action: actionForTarget(existsBefore, !sameJson(before, after), input.modes.openwork),
-      label: "OpenWork config",
+      label: "JuggleWork config",
       path: rel(workspaceRoot, path),
       absolutePath: path,
       beforeDigest: existsBefore ? jsonDigest(before) : textDigest(null),

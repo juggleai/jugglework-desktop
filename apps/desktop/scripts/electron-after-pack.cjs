@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const computerUseHelperAppName = "OpenWork Computer Use.app";
+const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
 const sidecarBases = [
   "opencode",

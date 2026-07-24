@@ -59,7 +59,7 @@ export const MICROSOFT_365_PERMISSION_GROUPS: readonly Microsoft365PermissionGro
         key: "teamsChatSend",
         label: "Send Teams chat messages",
         scope: "Chat.Read + ChatMessage.Send",
-        detail: "Includes chat read access so OpenWork can find an existing chat; it cannot create a new chat.",
+        detail: "Includes chat read access so JuggleWork can find an existing chat; it cannot create a new chat.",
       },
     ],
   },

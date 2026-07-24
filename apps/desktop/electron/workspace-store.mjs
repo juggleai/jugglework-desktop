@@ -795,7 +795,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
         cache: "no-store",
       });
       if (!response.ok) {
-        throw new Error(`OpenWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
+        throw new Error(`JuggleWork workspace discovery failed (${response.status} ${response.statusText || "HTTP error"})`);
       }
       return await response.json();
     } finally {
@@ -890,7 +890,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
-        console.info("[migration] recovered desktop workspaces from persisted OpenWork state", {
+        console.info("[migration] recovered desktop workspaces from persisted JuggleWork state", {
           count: recoveredWorkspaces.length,
           selectedWorkspaceId: selectedWorkspace.id,
         });
@@ -926,7 +926,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       }
       return nextWorkspace;
     });
-    // Older desktop state can contain multiple OpenWork remote entries that
+    // Older desktop state can contain multiple JuggleWork remote entries that
     // normalize to the same rem_<workspaceId> after stripping worker mounts.
     // Collapse them here so React never receives duplicate workspace keys.
     const workspaceIndexById = new Map();
@@ -1061,8 +1061,8 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       if (!discovered?.id) {
         throw new Error(
           directory
-            ? `OpenWork server has no workspace matching ${directory}.`
-            : "OpenWork server returned no workspaces.",
+            ? `JuggleWork server has no workspace matching ${directory}.`
+            : "JuggleWork server returned no workspaces.",
         );
       }
       resolvedOpenworkWorkspaceId = String(discovered.id).trim();
@@ -1136,8 +1136,8 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
           if (!discovered?.id) {
             throw new Error(
               directory
-                ? `OpenWork server has no workspace matching ${directory}.`
-                : "OpenWork server returned no workspaces.",
+                ? `JuggleWork server has no workspace matching ${directory}.`
+                : "JuggleWork server returned no workspaces.",
             );
           }
           remoteWorkspaceId = String(discovered.id).trim();

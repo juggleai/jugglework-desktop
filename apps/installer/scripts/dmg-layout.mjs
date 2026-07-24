@@ -3,7 +3,7 @@ export const dmgLayout = {
   backgroundFileName: "bg.tiff",
   iconPosition: { x: 330, y: 180 },
   iconSize: 128,
-  volumeName: "Install OpenWork",
+  volumeName: "Install JuggleWork",
   window: { left: 100, top: 100, width: 660, height: 400 },
 }
 

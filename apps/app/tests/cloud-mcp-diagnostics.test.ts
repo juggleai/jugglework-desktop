@@ -73,7 +73,7 @@ function baseHealth(overrides?: Partial<OpenworkCloudMcpHealth>): OpenworkCloudM
       code: "opencode_mcp_sync_failed",
       stage: "engine_delivery",
       retryable: true,
-      recommendedAction: "Retry reconcile or reconnect OpenWork Cloud",
+      recommendedAction: "Retry reconcile or reconnect JuggleWork Cloud",
       message: "openwork-cloud MCP connection failed.",
       details: { error: "fetch failed" },
     },
@@ -128,7 +128,7 @@ describe("cloud MCP advanced diagnostics", () => {
             stage: "tool_registration",
             retryable: true,
             recommendedAction: "Check the network path",
-            message: "The OpenWork server could not reach the Cloud MCP endpoint.",
+            message: "The JuggleWork server could not reach the Cloud MCP endpoint.",
             details: {
               transport: {
                 message: "fetch failed",
@@ -199,7 +199,7 @@ describe("cloud MCP advanced diagnostics", () => {
           code: "invalid_mcp_token",
           stage: "transport_auth",
           retryable: false,
-          recommendedAction: "Reconnect OpenWork Cloud",
+          recommendedAction: "Reconnect JuggleWork Cloud",
           message: "rejected",
           details: { header: "Bearer owt_super_secret_token_value" },
         },

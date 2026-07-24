@@ -26,7 +26,7 @@ export default function StripeCheckingPage() {
   const [failed, setFailed] = useState(false);
   const attemptsRef = useRef(0);
   const intervalRef = useRef<number | null>(null);
-  // Inference checkouts started from the OpenWork Models page carry
+  // Inference checkouts started from the JuggleWork Models page carry
   // `return=models` so the user lands back where they subscribed from and
   // sees the value unlocked, not the billing status page. Read from
   // window.location instead of useSearchParams to avoid the Suspense

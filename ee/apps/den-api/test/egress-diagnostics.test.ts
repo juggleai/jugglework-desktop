@@ -92,7 +92,7 @@ function healthyDiagnosticFetch(seen: Request[]): typeof fetch {
 }
 
 describe("Den private-cloud egress diagnostic", () => {
-  test("defaults to the OpenWork Labs diagnostic host and accepts an operator override", () => {
+  test("defaults to the JuggleWork Labs diagnostic host and accepts an operator override", () => {
     expectConfiguredOrigin("https://diagnostic.openworklabs.com")
     expectConfiguredOrigin("https://diagnostic.customer.example", "https://diagnostic.customer.example/")
   })
@@ -150,7 +150,7 @@ describe("Den private-cloud egress diagnostic", () => {
     expect(seen.some((request) => new URL(request.url).pathname === "/mcp")).toBe(false)
   })
 
-  test("identifies DNS failure before HTTP reaches OpenWork", async () => {
+  test("identifies DNS failure before HTTP reaches JuggleWork", async () => {
     const cause = Object.assign(new Error("lookup failed"), { code: "ENOTFOUND" })
     const result = await runEgressDiagnostic({
       bearerToken: "synthetic-diagnostics-secret",
@@ -170,7 +170,7 @@ describe("Den private-cloud egress diagnostic", () => {
     expect(result.steps.slice(1).every((step) => step.status === "skipped")).toBe(true)
   })
 
-  test("identifies a proxy-replaced response that lacks OpenWork receipt proof", async () => {
+  test("identifies a proxy-replaced response that lacks JuggleWork receipt proof", async () => {
     const result = await runEgressDiagnostic({
       bearerToken: "synthetic-diagnostics-secret",
       fetchImpl: async () => Response.json({ ok: true }),

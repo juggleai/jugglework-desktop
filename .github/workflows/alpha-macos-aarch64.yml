@@ -1,6 +1,6 @@
 name: Alpha Channel (macOS arm64)
 
-# Every merge to `dev` publishes a fresh macOS arm64 build to the OpenWork
+# Every merge to `dev` publishes a fresh macOS arm64 build to the JuggleWork
 # alpha release channel.
 #
 # The alpha channel is macOS-only today. It lives as a rolling GitHub
@@ -39,7 +39,7 @@ jobs:
 
     env:
       ALPHA_RELEASE_TAG: alpha-macos-latest
-      ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
+      ALPHA_RELEASE_NAME: JuggleWork Alpha (macOS arm64)
       # Apple signing + notarization are required so alpha bundles install
       # and launch without Gatekeeper friction. Alpha builds are served
       # from GitHub Releases like stable, just from a different tag.
@@ -184,14 +184,14 @@ jobs:
           ALPHA_RUN_RELEASE_TAG: ${{ steps.alpha-version.outputs.release_tag }}
         run: |
           set -euo pipefail
-          body="Rolling alpha build for OpenWork (macOS arm64) from ${GITHUB_SHA}."
+          body="Rolling alpha build for JuggleWork (macOS arm64) from ${GITHUB_SHA}."
           if gh release view "$ALPHA_RUN_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Alpha prerelease $ALPHA_RUN_RELEASE_TAG already exists; reusing it."
             exit 0
           fi
           gh release create "$ALPHA_RUN_RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "OpenWork Alpha ${ALPHA_VERSION}" \
+            --title "JuggleWork Alpha ${ALPHA_VERSION}" \
             --notes "$body" \
             --target "$GITHUB_SHA" \
             --prerelease

@@ -14,7 +14,7 @@ config:
   denApiNodeOptions: ""
   tenancy:
     mode: single_org
-    singleOrgName: OpenWork
+    singleOrgName: JuggleWork
     singleOrgSlug: default
     ownerEmails: ""
     allowPublicSignup: "false"

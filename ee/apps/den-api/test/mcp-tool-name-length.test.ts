@@ -9,7 +9,7 @@ import {
 
 // AWS Bedrock's Converse API rejects toolConfig.tools.*.member.toolSpec.name
 // longer than 64 chars. MCP clients namespace tools as `<serverName>_<name>`;
-// the OpenWork Cloud client uses the `openwork-cloud_` prefix (15 chars), so
+// the JuggleWork Cloud client uses the `openwork-cloud_` prefix (15 chars), so
 // the registered name must stay <= 49 so the prefixed name validates.
 const CLIENT_PREFIX = "openwork-cloud_"
 

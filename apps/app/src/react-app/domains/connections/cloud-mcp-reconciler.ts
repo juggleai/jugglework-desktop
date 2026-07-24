@@ -91,7 +91,7 @@ type CloudMcpReconcilerInput = {
   now?: number;
   configuredEnabled?: boolean | null;
   /**
-   * Ask the OpenWork server to also verify the Cloud endpoint directly
+   * Ask the JuggleWork server to also verify the Cloud endpoint directly
    * (initialize + tools/list outside the engine). Only meaningful for
    * mode "health"; repair reconciles always probe on the server.
    */
@@ -433,7 +433,7 @@ export function cloudMcpFailureStageLabel(input: {
   if (code === "cloud_tools_missing") return "Cloud endpoint tools are missing";
   if (code === "cloud_status_missing" || code === "cloud_registration_failed") return "Cloud tools weren’t registered";
   if (isProviderProjectionFailure(input.health?.firstFailure)) return "Current model can’t use Cloud tools";
-  if (code.includes("tool_ids") || code.includes("client_registration")) return "OpenWork components need updating";
+  if (code.includes("tool_ids") || code.includes("client_registration")) return "JuggleWork components need updating";
   if (code === "extensions_plugin_missing") return "Agent instructions are out of date";
   if (code.includes("unreachable") || code.includes("connection") || code.includes("status_missing")) return "Cloud connection unavailable";
   return "Couldn’t apply Cloud access to this workspace";
@@ -445,7 +445,7 @@ export function cloudMcpRecommendedAction(input: {
   userState?: CloudMcpUserState | null;
   health?: OpenworkCloudMcpHealth | null;
 }): string {
-  if (!input.signedIn) return "Sign in to OpenWork Cloud.";
+  if (!input.signedIn) return "Sign in to JuggleWork Cloud.";
   if (!input.orgSelected) return "Choose the organization agents should use.";
   if (input.userState) return "Enable Agent access or use Repair and test when you want agents to use connected services.";
   const code = normalizeCode(input.health?.firstFailure?.code);
@@ -457,12 +457,12 @@ export function cloudMcpRecommendedAction(input: {
   if (code === "cloud_desired_missing" || code === "cloud_mcp_missing") return "Use Repair and test to apply agent access for this workspace.";
   if (code.includes("auth") || code.includes("token") || code.includes("unauthorized")) return "Use Repair and test to refresh Cloud authentication.";
   if (code.includes("membership")) return "Ask an organization admin to grant access.";
-  if (code.includes("scope")) return "Reconnect OpenWork Cloud with the required permissions.";
+  if (code.includes("scope")) return "Reconnect JuggleWork Cloud with the required permissions.";
   if (code.includes("policy") || code.includes("forbidden") || code.includes("resource")) return "Check organization policy and resource access.";
-  if (isProviderProjectionFailure(input.health?.firstFailure)) return "Choose a model that can use OpenWork Cloud tools.";
-  if (code.includes("tool_ids") || code.includes("client_registration")) return "Update OpenWork, then retry.";
-  if (code === "extensions_plugin_missing") return "Reload the agent so OpenWork instructions are current.";
-  if (code === "cloud_tools_missing") return "Reconnect OpenWork Cloud so the endpoint exposes search_capabilities and execute_capability.";
+  if (isProviderProjectionFailure(input.health?.firstFailure)) return "Choose a model that can use JuggleWork Cloud tools.";
+  if (code.includes("tool_ids") || code.includes("client_registration")) return "Update JuggleWork, then retry.";
+  if (code === "extensions_plugin_missing") return "Reload the agent so JuggleWork instructions are current.";
+  if (code === "cloud_tools_missing") return "Reconnect JuggleWork Cloud so the endpoint exposes search_capabilities and execute_capability.";
   if (code === "cloud_status_missing" || code === "cloud_registration_failed") return "Use Repair and test to register the Cloud tools.";
   return input.health?.firstFailure?.recommendedAction || "Use Repair and test, then check Advanced Settings if it still fails.";
 }

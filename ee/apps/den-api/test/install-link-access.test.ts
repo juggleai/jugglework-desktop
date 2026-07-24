@@ -22,8 +22,8 @@ const organizationId = createDenTypeId("organization")
 const installLinkId = createDenTypeId("installLink")
 const insertedRows: unknown[] = []
 const revokedRows: unknown[] = []
-const officialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/OpenWork-Installer-win-x64.exe"
-const latestOfficialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/latest/download/OpenWork-Installer-win-x64.exe"
+const officialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/download/v9.9.9/JuggleWork-Installer-win-x64.exe"
+const latestOfficialWindowsInstallerUrl = "https://github.com/different-ai/openwork/releases/latest/download/JuggleWork-Installer-win-x64.exe"
 const connectKeyPair = generateConnectLinkKeyPair()
 const connectKeyId = "owc-route-test"
 
@@ -224,9 +224,9 @@ function mint(app: Hono, input: { rotate?: boolean } = {}) {
 
 function expectedLinuxInstallScript() {
   return `#!/usr/bin/env sh
-# OpenWork Linux setup for Acme Robotics.
+# JuggleWork Linux setup for Acme Robotics.
 # Downloads no code. It writes the desktop bootstrap config, then tells you
-# where to download the current OpenWork AppImage.
+# where to download the current JuggleWork AppImage.
 set -eu
 
 CONFIG_URL='http://den.local/v1/install-config?token=opaque-token'
@@ -240,11 +240,11 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
   FETCH="wget -qO-"
 else
-  echo "OpenWork setup requires curl or wget." >&2
+  echo "JuggleWork setup requires curl or wget." >&2
   exit 1
 fi
 
-echo "Checking your OpenWork install link..."
+echo "Checking your JuggleWork install link..."
 # shellcheck disable=SC2086
 $FETCH "$CONFIG_URL" >/dev/null
 
@@ -262,10 +262,10 @@ cat > "$BOOTSTRAP_PATH" <<EOF
 EOF
 
 echo
-echo "This sets up OpenWork for $CLIENT_NAME."
+echo "This sets up JuggleWork for $CLIENT_NAME."
 echo "Wrote $BOOTSTRAP_PATH"
 echo
-echo "Download the OpenWork AppImage here:"
+echo "Download the JuggleWork AppImage here:"
 echo "  $DOWNLOAD_URL"
 echo
 echo "Run the AppImage, then sign in — your team's workspace is preconfigured."
@@ -413,7 +413,7 @@ test("unordered organization allowed desktop versions select the maximum direct 
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("v9.9.9")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -429,7 +429,7 @@ test("below-floor allowed desktop versions serve the first installer release tha
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("v0.17.27")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -450,9 +450,9 @@ test("mounted artifact lookup uses the exact Windows installer filename", async 
   }).request("http://den.local/v1/install/win-x64?token=opaque-token")
 
   expect(response.status).toBe(200)
-  expect(artifactFileNames).toEqual(["OpenWork-Installer-win-x64.exe"])
+  expect(artifactFileNames).toEqual(["JuggleWork-Installer-win-x64.exe"])
   expect(response.headers.get("content-type")).toBe("application/vnd.microsoft.portable-executable")
-  expect(response.headers.get("content-disposition")).toContain("OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("content-disposition")).toContain("JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
@@ -501,7 +501,7 @@ test("organization version pins stay tag-pinned even without an explicit install
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("/releases/latest/")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -519,7 +519,7 @@ test("custom release repos never use the latest-release URL", async () => {
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v9.9.9/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v9.9.9/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("/releases/latest/")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -529,7 +529,7 @@ test("install token organization policy applies to member and admin downloads", 
     ...defaultOrganizationMetadata(),
     allowedDesktopVersions: ["0.17.37", "0.17.39"],
   }
-  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe"
+  const expectedUrl = "https://github.com/different-ai/openwork/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe"
 
   for (const nextRole of ["member", "admin"]) {
     role = nextRole
@@ -555,7 +555,7 @@ test("below-floor configured installer release tags are clamped for unrestricted
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/different-ai/openwork/releases/download/v0.17.37/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("v0.17.27")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
@@ -572,14 +572,14 @@ test("custom installer release repos are not clamped", async () => {
   })
 
   expect(response.status).toBe(302)
-  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v0.17.27/OpenWork-Installer-win-x64.exe")
+  expect(response.headers.get("location")).toBe("https://github.com/acme/openwork/releases/download/v0.17.27/JuggleWork-Installer-win-x64.exe")
   expect(response.headers.get("location")).not.toContain("opaque-token")
 })
 
 test.each([
-  { platform: "mac-arm64", assetName: "OpenWork-Installer-mac-arm64.dmg" },
-  { platform: "mac-x64", assetName: "OpenWork-Installer-mac-x64.dmg" },
-  { platform: "win-x64", assetName: "OpenWork-Installer-win-x64.exe" },
+  { platform: "mac-arm64", assetName: "JuggleWork-Installer-mac-arm64.dmg" },
+  { platform: "mac-x64", assetName: "JuggleWork-Installer-mac-x64.dmg" },
+  { platform: "win-x64", assetName: "JuggleWork-Installer-win-x64.exe" },
 ])(
   "zero-config $platform downloads redirect immediately to the installer release asset without forwarding the token",
   async ({ platform, assetName }) => {
@@ -619,7 +619,7 @@ test("guided semi-air-gapped mac downloads return a provisioned DMG without ZIP 
 
   expect(response.status).toBe(200)
   expect(response.headers.get("content-type")).toBe("application/x-apple-diskimage")
-  expect(response.headers.get("content-disposition")).toContain("OpenWork-Installer-mac-arm64.dmg")
+  expect(response.headers.get("content-disposition")).toContain("JuggleWork-Installer-mac-arm64.dmg")
   expect(response.headers.get("content-disposition")).not.toContain("opaque-token")
   expect(Buffer.from(await response.arrayBuffer())).toEqual(installer)
 })
@@ -667,7 +667,7 @@ test("keyless preview is read-only and exchange consumes the grant once", async 
     jti: "grant-jti-123456",
     v: 1,
     org: { name: "Acme Robotics" },
-    brand: { appName: "OpenWork", logoUrl: null, iconUrl: null },
+    brand: { appName: "JuggleWork", logoUrl: null, iconUrl: null },
     den: { baseUrl: "http://127.0.0.1:8790", apiBaseUrl: "http://127.0.0.1:8790" },
     requireSignin: true,
   }

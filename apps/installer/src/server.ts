@@ -52,7 +52,7 @@ export function startInstallerServer(initialResolution: InstallerConfigResolutio
         if (request.method === "POST" && url.pathname === "/api/resolve-link") {
           const installLink = installLinkFromPayload(await request.json().catch(() => null))
           if (!installLink) {
-            return Response.json({ error: "missing_install_link", message: "Paste an OpenWork install link." }, { status: 400 })
+            return Response.json({ error: "missing_install_link", message: "Paste a JuggleWork install link." }, { status: 400 })
           }
           const result = await resolveInstallLinkConfig(installLink)
           if (result.status !== "resolved") {
