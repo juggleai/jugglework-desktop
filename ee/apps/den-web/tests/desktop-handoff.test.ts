@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { getDesktopGrant } from "../app/(den)/_lib/desktop-handoff";
 
-test("extracts a one-time grant from an OpenWork desktop handoff", () => {
+test("extracts a one-time grant from a JuggleWork desktop handoff", () => {
   expect(
     getDesktopGrant(
       "openwork://den-auth?grant=one-time-code&baseUrl=https%3A%2F%2Fapi.example.test"

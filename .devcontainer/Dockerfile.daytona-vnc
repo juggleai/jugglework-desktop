@@ -1,4 +1,4 @@
-# Daytona VNC/Computer Use image with OpenWork preinstalled.
+# Daytona VNC/Computer Use image with JuggleWork preinstalled.
 #
 # Use this for Electron/noVNC tests instead of the generic devcontainer image.
 # The base image already contains the desktop stack Daytona expects:

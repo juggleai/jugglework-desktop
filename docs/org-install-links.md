@@ -9,8 +9,8 @@ Related: `ee/apps/den-api/src/install-links.ts`, `ee/apps/den-api/src/routes/org
 
 An organization install link opens a three-step Den page:
 
-1. Download and run the standard OpenWork installer.
-2. Return to Den and click **Open OpenWork**.
+1. Download and run the standard JuggleWork installer.
+2. Return to Den and click **Open JuggleWork**.
 3. Confirm the exact organization and server in the app, then complete normal
    organization sign-in.
 
@@ -91,7 +91,7 @@ read-only PVC on every replica.
 ## Default connection handoff (no key)
 
 `DEN_CONNECT_LINK_MODE=exchange` is the default. When the user clicks **Open
-OpenWork**, Den mints a fresh five-minute bearer code and stores only its
+JuggleWork**, Den mints a fresh five-minute bearer code and stores only its
 SHA-256 hash. The app:
 
 1. posts the code back to the exact HTTPS API origin carried in the deep link
@@ -185,7 +185,7 @@ compatibility. When both files exist, the valid configuration with the newest
 | Download redirects to GitHub | Expected for internet-connected deployments. Allow `github.com` and its release-asset redirect/CDN host on the user's network. |
 | Download returns `404` | The install token is invalid, expired, or revoked. Ask an org member for the current install page link. |
 | Mounted download fails | Verify the filename exactly matches the configured release tag and every Den replica mounts the same readable PVC path. |
-| **Open OpenWork** cannot prepare a connection | Verify the browser can reach Den API and `DEN_API_PUBLIC_URL` is the correct public HTTPS origin. |
-| The app refuses an expired or used link | Return to the same Den install page and click **Open OpenWork** again to mint a fresh code. |
+| **Open JuggleWork** cannot prepare a connection | Verify the browser can reach Den API and `DEN_API_PUBLIC_URL` is the correct public HTTPS origin. |
+| The app refuses an expired or used link | Return to the same Den install page and click **Open JuggleWork** again to mint a fresh code. |
 | Signed mode reports an unknown key | Return to `exchange` mode, or ship a desktop build containing the matching public key before re-enabling `signed`. |
 | Install links point at the wrong web host | Correct `BETTER_AUTH_URL` and `DEN_BETTER_AUTH_TRUSTED_ORIGINS`, then restart Den. |

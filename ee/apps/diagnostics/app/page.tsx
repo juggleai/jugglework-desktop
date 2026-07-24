@@ -54,7 +54,7 @@ export default async function DiagnosticsPage({ searchParams }: { searchParams: 
   return <main>
     <meta httpEquiv="refresh" content="5" />
     <header className="hero">
-      <div><p className="eyebrow">OpenWork Enterprise</p><h1>Diagnostics</h1><p>Prove that an enterprise allowlist reaches us, then inspect the client handshake request by request.</p></div>
+      <div><p className="eyebrow">JuggleWork Enterprise</p><h1>Diagnostics</h1><p>Prove that an enterprise allowlist reaches us, then inspect the client handshake request by request.</p></div>
       <div className="hero-actions">
         <div className="endpoint"><span>Active {config.profile} MCP endpoint</span><code>{origin}/mcp</code></div>
         <form action="/api/dashboard-session" method="post"><input name="intent" type="hidden" value="logout" /><button className="logout-button" type="submit">Sign out</button></form>

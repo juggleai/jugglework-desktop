@@ -58,7 +58,7 @@ export function SiteNav(props: Props) {
           >
             <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
             <span className="text-[1.2rem] font-semibold tracking-tight text-[#011627] md:text-[1.3rem]">
-              OpenWork
+              JuggleWork
             </span>
           </Link>
 
@@ -81,7 +81,7 @@ export function SiteNav(props: Props) {
               className="hidden items-center gap-2 rounded-full border border-gray-100 bg-white px-3.5 py-2 text-sm font-medium text-gray-500 shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition-colors hover:text-[#011627] sm:flex"
               rel="noreferrer"
               target="_blank"
-              aria-label="OpenWork GitHub stars"
+              aria-label="JuggleWork GitHub stars"
             >
               <svg
                 className="h-4 w-4"

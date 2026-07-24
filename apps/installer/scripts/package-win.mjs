@@ -16,7 +16,7 @@ function argValue(name) {
 
 const arch = argValue("--arch") || process.env.OPENWORK_INSTALLER_ARCH || process.env.TARGET_ARCH || "x64"
 const inputPath = path.resolve(argValue("--input") || path.join("dist", "openwork-installer.exe"))
-const outputPath = path.resolve(argValue("--output") || path.join("dist", `OpenWork-Installer-win-${arch}.exe`))
+const outputPath = path.resolve(argValue("--output") || path.join("dist", `JuggleWork-Installer-win-${arch}.exe`))
 
 if (!existsSync(inputPath)) fail(`Input not found: ${inputPath}`)
 mkdirSync(path.dirname(outputPath), { recursive: true })

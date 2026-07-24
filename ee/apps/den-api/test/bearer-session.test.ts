@@ -97,7 +97,7 @@ function makeStoredSession(input: { now: Date; updatedAt: Date; expiresAt: Date 
       createdAt: input.now,
       updatedAt: input.updatedAt,
       ipAddress: null,
-      userAgent: "OpenWork desktop",
+      userAgent: "JuggleWork desktop",
     },
     user: {
       id: userId,

@@ -1,14 +1,14 @@
 name: Release Installer Assets
 
-# Reusable publisher for the GENERIC (unbranded) OpenWork installer. App
+# Reusable publisher for the GENERIC (unbranded) JuggleWork installer. App
 # releases call this workflow so the committed apps/installer build-config
 # placeholder stays empty and the binary resolves its config at run time (pasted
 # install link, filename tag, or sidecar stamped by den-api).
 #
 # Asset names are a contract with den-api's genericInstallerArtifactName():
-#   OpenWork-Installer-mac-arm64.dmg   (signed+notarized)
-#   OpenWork-Installer-mac-x64.dmg     (signed+notarized)
-#   OpenWork-Installer-win-x64.exe
+#   JuggleWork-Installer-mac-arm64.dmg   (signed+notarized)
+#   JuggleWork-Installer-mac-x64.dmg     (signed+notarized)
+#   JuggleWork-Installer-win-x64.exe
 
 on:
   workflow_call:
@@ -78,9 +78,9 @@ jobs:
           fi
 
           ALL='[
-            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"OpenWork-Installer-mac-arm64.dmg"},
-            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"OpenWork-Installer-mac-x64.dmg"},
-            {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"OpenWork-Installer-win-x64.exe"}
+            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"JuggleWork-Installer-mac-arm64.dmg"},
+            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"JuggleWork-Installer-mac-x64.dmg"},
+            {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"JuggleWork-Installer-win-x64.exe"}
           ]'
           MATRIX=$(jq -cn --arg csv "$PLATFORMS" --argjson all "$ALL" \
             '$all | map(select(.platform_id as $id | ($csv | split(",") | map(gsub("\\s";"")) | index($id)) != null))')
@@ -187,7 +187,7 @@ jobs:
             exit 1
           fi
           case "$output" in
-            *"Paste an OpenWork install link"*) ;;
+            *"Paste a JuggleWork install link"*) ;;
             *) echo "Generic installer did not ask for an install link" >&2; exit 1 ;;
           esac
 
@@ -198,7 +198,7 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/installer
-          APP="dist/Install OpenWork.app"
+          APP="dist/Install JuggleWork.app"
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS"
           cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
@@ -207,8 +207,8 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>Install OpenWork</string>
-            <key>CFBundleDisplayName</key><string>Install OpenWork</string>
+            <key>CFBundleName</key><string>Install JuggleWork</string>
+            <key>CFBundleDisplayName</key><string>Install JuggleWork</string>
             <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
             <key>CFBundleExecutable</key><string>openwork-installer</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -256,7 +256,7 @@ jobs:
           fi
 
           cd apps/installer
-          APP="dist/Install OpenWork.app"
+          APP="dist/Install JuggleWork.app"
 
           KEYCHAIN="$RUNNER_TEMP/installer.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 16)

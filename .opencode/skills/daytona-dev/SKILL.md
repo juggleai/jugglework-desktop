@@ -5,7 +5,7 @@ description: Daytona development environment overview. Use when the user asks ab
 
 # Skill: Daytona Dev Environment
 
-Launch the OpenWork Electron app in a Daytona cloud sandbox. The real desktop
+Launch the JuggleWork Electron app in a Daytona cloud sandbox. The real desktop
 app runs on Daytona's XFCE/noVNC desktop stack and is accessible through your
 browser.
 
@@ -61,7 +61,7 @@ cd /workspace
 daytona preview-url openwork-dev -p 6080
 ```
 
-Open that URL in your browser. You'll see the real Electron OpenWork app.
+Open that URL in your browser. You'll see the real Electron JuggleWork app.
 
 ### 4. Get other URLs
 
@@ -162,7 +162,7 @@ bash /opt/openwork-daytona/start-daytona-vnc.sh
 
 **"no space left on device" when creating sandbox:**
 Use `--disk 10`. The default Daytona disk can be 3 GB, which is not enough for
-OpenWork dependencies and sidecar prep. Also don't use `--context .` — it
+JuggleWork dependencies and sidecar prep. Also don't use `--context .` — it
 uploads the entire repo (with worktrees, node_modules). Use individual
 `--context` flags for just the files needed.
 

@@ -58,7 +58,7 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   }
 
   const clientName = typeof value.clientName === "string" ? value.clientName.trim() : "";
-  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "OpenWork";
+  const appName = typeof value.appName === "string" && value.appName.trim() ? value.appName.trim() : "JuggleWork";
   const webUrl = typeof value.webUrl === "string" ? value.webUrl.trim() : "";
   const apiUrl = typeof value.apiUrl === "string" ? value.apiUrl.trim() : "";
   const requireSignin = value.requireSignin;
@@ -251,9 +251,9 @@ export function InstallScreen() {
     return (
       <OnboardingShell state="install-loading" width="wide">
         <section className="grid gap-4 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
-          <p className="den-eyebrow">OpenWork Desktop</p>
+          <p className="den-eyebrow">JuggleWork Desktop</p>
           <h1 className="den-title-lg">Loading your install link.</h1>
-          <p className="den-copy">Checking your team's OpenWork setup...</p>
+          <p className="den-copy">Checking your team's JuggleWork setup...</p>
         </section>
       </OnboardingShell>
     );
@@ -264,7 +264,7 @@ export function InstallScreen() {
       <OnboardingShell state="install-error" width="wide">
         <section className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
           <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Desktop</p>
+            <p className="den-eyebrow">JuggleWork Desktop</p>
             <h1 className="den-title-lg">This install link can't be opened.</h1>
             <p className="den-copy">{error ?? "Ask your workspace admin for a fresh install link."}</p>
           </div>
@@ -283,7 +283,7 @@ export function InstallScreen() {
         <div className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
           <div className="grid justify-items-center gap-3">
             <h1 className="m-0 grid max-w-[22ch] gap-1 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-              <span>Download OpenWork</span>
+              <span>Download JuggleWork</span>
               <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-[0.18em] gap-y-1">
                 <span>for</span>
                 <OrganizationBrandIdentity
@@ -316,7 +316,7 @@ export function InstallScreen() {
               </span>
               <div className="grid gap-3">
                 <div>
-                  <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Download the OpenWork installer</p>
+                  <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Download the JuggleWork installer</p>
                   <p className="den-copy">It&apos;s a small setup app. When the download finishes, open it and keep this page open.</p>
                 </div>
                 <div className="grid gap-3">
@@ -378,7 +378,7 @@ export function InstallScreen() {
                 <p className="m-0 font-semibold text-[var(--dls-text-primary)]">Sign in — this page will confirm when you&apos;re connected.</p>
                 <div className="den-frame-inset grid gap-2 rounded-[1rem] p-3" aria-live="polite">
                   {handoffStatus.status === "consumed" ? (
-                    <p className="m-0 text-sm font-medium text-emerald-700" data-testid="install-connected">✓ Connected — OpenWork is set up for {config.clientName}</p>
+                    <p className="m-0 text-sm font-medium text-emerald-700" data-testid="install-connected">✓ Connected — JuggleWork is set up for {config.clientName}</p>
                   ) : (
                     <p className="m-0 text-sm text-[var(--dls-text-secondary)]">Waiting for sign-in…</p>
                   )}

@@ -171,19 +171,19 @@ const OPENWORK_VOICE_REALTIME_TOOLS = [
   {
     type: "function",
     name: "openwork_snapshot",
-    description: "Read the current OpenWork UI control snapshot: route, status, narration, and visible action metadata.",
+    description: "Read the current JuggleWork UI control snapshot: route, status, narration, and visible action metadata.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "openwork_list_actions",
-    description: "List semantic OpenWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
+    description: "List semantic JuggleWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
     name: "openwork_execute_action",
-    description: "Execute a semantic OpenWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
+    description: "Execute a semantic JuggleWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
     parameters: {
       type: "object",
       properties: {
@@ -460,8 +460,8 @@ ${trimmedContext}`
     : "";
   return `# Role and Objective
 
-You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
-Help the user control OpenWork by using the semantic OpenWork UI tools.
+You are JuggleWork Voice Mode, a voice-first control layer inside JuggleWork.
+Help the user control JuggleWork by using the semantic JuggleWork UI tools.
 
 # Tool Policy
 
@@ -476,7 +476,7 @@ Help the user control OpenWork by using the semantic OpenWork UI tools.
 
 - Be concise, calm, and direct.
 - If audio is unclear, ask the user to repeat it instead of guessing.
-- Ignore background speech that is not addressed to OpenWork.
+- Ignore background speech that is not addressed to JuggleWork.
 - Summarize tool results briefly and offer the next useful step.${contextSection}`;
 }
 
@@ -511,13 +511,13 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
       if (error instanceof ApiError && error.status === 503) {
         const fallbackKey = await resolveOpenAiRealtimeApiKey(env);
         if (fallbackKey) {
-          console.warn("[voice] OpenWork Models broker returned 503 — falling back to direct OpenAI Realtime.");
+          console.warn("[voice] JuggleWork Models broker returned 503 — falling back to direct OpenAI Realtime.");
           return createDirectOpenAiVoiceSession(fallbackKey, input);
         }
         throw new ApiError(
           503,
           "openwork_models_voice_unavailable",
-          "OpenWork Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
+          "JuggleWork Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
         );
       }
       throw error;
@@ -529,7 +529,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
     throw new ApiError(
       400,
       "openai_api_key_missing",
-      "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the Voice Mode extension.",
+      "OpenAI API key missing. Save OPENAI_API_KEY in JuggleWork Environment Variables or configure the Voice Mode extension.",
     );
   }
 
@@ -555,7 +555,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
   if (!response.ok) {
     const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
     const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
-    throw new ApiError(response.status, "openwork_models_voice_failed", message || "OpenWork Models could not create a voice session");
+    throw new ApiError(response.status, "openwork_models_voice_failed", message || "JuggleWork Models could not create a voice session");
   }
   if (
     !isRecord(payload) ||
@@ -565,7 +565,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
     !Array.isArray(payload.tools) ||
     payload.tools.some((tool) => typeof tool !== "string")
   ) {
-    throw new ApiError(502, "openwork_models_voice_invalid_response", "OpenWork Models did not return a usable Realtime session payload");
+    throw new ApiError(502, "openwork_models_voice_invalid_response", "JuggleWork Models did not return a usable Realtime session payload");
   }
   return {
     ok: true,
@@ -1559,7 +1559,7 @@ function createRoutes(
       throw new ApiError(
         400,
         "agent_diagnostics_workspace_unsupported",
-        "Agent diagnostics must run on the OpenWork server that owns a local workspace",
+        "Agent diagnostics must run on the JuggleWork server that owns a local workspace",
       );
     }
     // Reserve before consuming untrusted bytes and hold the reservation through
@@ -2402,7 +2402,7 @@ function createRoutes(
   });
 
   // Portable export of installed skills and MCP servers (including
-  // OpenWork-managed runtime MCPs that only live in the runtime DB), so
+  // JuggleWork-managed runtime MCPs that only live in the runtime DB), so
   // agents can package them into marketplace plugins. Read-only; MCP
   // secrets (headers/environment) are always redacted.
   addRoute(routes, "POST", "/workspace/:id/extensions/export", "client", async (ctx) => {
@@ -3670,7 +3670,7 @@ type EngineMcpServerState = {
 const ENGINE_MCP_REGISTRATION_MAX_AGE_MS = 15 * 60_000;
 // Registration status is point-in-time evidence from a dynamic POST /mcp,
 // not a durable statement about a later engine process. Scope it to one
-// OpenWork server generation and expire it even when the endpoint is stable.
+// JuggleWork server generation and expire it even when the endpoint is stable.
 const engineMcpServerStateByConfig = new WeakMap<ServerConfig, EngineMcpServerState>();
 const trustedOpencodeProcessByConfig = new WeakMap<ServerConfig, TrustedOpencodeProcessIdentity>();
 let nextEngineMcpServerGeneration = 0;
@@ -3698,7 +3698,7 @@ function clearEngineMcpServerEvidence(state: EngineMcpServerState): void {
 
 /**
  * Bind diagnostics evidence to one OpenCode process generation owned by this
- * OpenWork server. The opaque identity is hashed immediately and never
+ * JuggleWork server. The opaque identity is hashed immediately and never
  * reported. External engines without a trusted per-boot identity still hot
  * sync normally, but their cached registration result cannot authorize a
  * credentialed diagnostics probe.

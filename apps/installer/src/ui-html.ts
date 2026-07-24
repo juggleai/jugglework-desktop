@@ -26,7 +26,7 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
     ? `<img class="logo" src="${escapeHtml(config.logoUrl)}" alt="${escapeHtml(config.clientName)}" />`
     : `<div class="logo">${OPENWORK_LOGO_SVG}</div>`
   const sourceLabel = resolution ? installerConfigSourceLabel(resolution.source) : ""
-  const appName = config?.appName ?? "OpenWork"
+  const appName = config?.appName ?? "JuggleWork"
   const configuredContent = config
     ? `
   ${logo}

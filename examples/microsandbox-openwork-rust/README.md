@@ -1,6 +1,6 @@
-# Microsandbox OpenWork Rust Example
+# Microsandbox JuggleWork Rust Example
 
-Small standalone Rust example that starts the OpenWork micro-sandbox image with the `microsandbox` SDK, publishes the OpenWork server on a host port, persists `/workspace` and `/data` with host bind mounts, verifies `/health`, checks that `/workspaces` is `401` without a token and `200` with the client token, then keeps the sandbox alive until `Ctrl+C` while streaming the sandbox logs to your terminal.
+Small standalone Rust example that starts the JuggleWork micro-sandbox image with the `microsandbox` SDK, publishes the JuggleWork server on a host port, persists `/workspace` and `/data` with host bind mounts, verifies `/health`, checks that `/workspaces` is `401` without a token and `200` with the client token, then keeps the sandbox alive until `Ctrl+C` while streaming the sandbox logs to your terminal.
 
 ## Run
 
@@ -57,7 +57,7 @@ By default, the example creates and reuses two host directories under `examples/
 - `/workspace`
 - `/data`
 
-That keeps OpenWork and OpenCode state around across sandbox restarts, while using normal host filesystem semantics instead of managed microsandbox named volumes.
+That keeps JuggleWork and OpenCode state around across sandbox restarts, while using normal host filesystem semantics instead of managed microsandbox named volumes.
 
 If you want a clean reset, either:
 

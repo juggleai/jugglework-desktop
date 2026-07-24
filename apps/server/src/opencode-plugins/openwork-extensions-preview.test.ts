@@ -376,7 +376,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(output.system.join("\n")).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain("not ready");
     expect(output.system[0]).not.toContain("Repair and test");
-    expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
+    expect(output.system[0]).not.toContain("Do not use JuggleWork documentation tools");
   });
 
   test("reads a transcript by session id without opening the UI", async () => {
@@ -404,7 +404,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     ]);
   });
 
-  test("creates and starts multiple sessions through the OpenWork backend", async () => {
+  test("creates and starts multiple sessions through the JuggleWork backend", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 

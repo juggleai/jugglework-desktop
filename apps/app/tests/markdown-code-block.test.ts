@@ -67,7 +67,7 @@ describe("markdown safety and links", () => {
   });
 
   test("keeps chat file link actions separate from simple surface links", () => {
-    const markdown = `[Open docs](./docs/readme.md) and [OpenWork](https://openworklabs.com)`;
+    const markdown = `[Open docs](./docs/readme.md) and [JuggleWork](https://openworklabs.com)`;
     const chatHtml = renderMarkdownHtml(markdown);
     expect(chatHtml).toContain("data-openwork-link-chevron");
     expect(chatHtml).toContain("data-openwork-link-href");

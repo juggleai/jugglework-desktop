@@ -14,10 +14,10 @@ describe("blueprint sessions", () => {
         sessions: [
           {
             id: "welcome",
-            title: "Welcome to OpenWork",
+            title: "Welcome to JuggleWork",
             openOnFirstLoad: true,
             messages: [
-              { role: "assistant", text: "Hi welcome to OpenWork!" },
+              { role: "assistant", text: "Hi welcome to JuggleWork!" },
               { role: "user", text: "Help me get started." },
             ],
           },
@@ -28,10 +28,10 @@ describe("blueprint sessions", () => {
     expect(sessions).toEqual([
       {
         id: "welcome",
-        title: "Welcome to OpenWork",
+        title: "Welcome to JuggleWork",
         openOnFirstLoad: true,
         messages: [
-          { role: "assistant", text: "Hi welcome to OpenWork!" },
+          { role: "assistant", text: "Hi welcome to JuggleWork!" },
           { role: "user", text: "Help me get started." },
         ],
       },

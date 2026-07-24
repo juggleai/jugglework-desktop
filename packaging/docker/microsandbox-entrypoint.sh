@@ -32,7 +32,7 @@ export HOME USER SHELL XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HO
 mkdir -p "$OPENWORK_WORKSPACE" "$OPENWORK_DATA_DIR" "$OPENWORK_SIDECAR_DIR"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$XDG_STATE_HOME"
 
-printf '%s\n' "Starting OpenWork micro-sandbox"
+printf '%s\n' "Starting JuggleWork micro-sandbox"
 printf '%s\n' "- workspace: $OPENWORK_WORKSPACE"
 printf '%s\n' "- home: $HOME"
 printf '%s\n' "- openwork url: http://$OPENWORK_CONNECT_HOST:$OPENWORK_PORT"

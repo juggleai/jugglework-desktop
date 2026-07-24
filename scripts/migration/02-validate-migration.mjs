@@ -161,9 +161,9 @@ async function main() {
     stdio: "inherit",
   });
   if (unzipResult.status !== 0) die("unzip failed");
-  const appPath = join(unzipDir, "OpenWork.app");
+  const appPath = join(unzipDir, "JuggleWork.app");
   if (!existsSync(appPath)) {
-    console.log(`[validate] ✗ OpenWork.app not found inside zip (got: ${unzipDir})`);
+    console.log(`[validate] ✗ JuggleWork.app not found inside zip (got: ${unzipDir})`);
     die("zip layout unexpected");
   }
   const sig = codesignVerify(appPath);
@@ -181,7 +181,7 @@ async function main() {
   const steps = [
     "Install a fresh Tauri v0.11.x build on a test machine (or VM).",
     `Launch it, "Check for updates" → migrates to ${args.tag}.`,
-    "Restart, see the 'OpenWork is moving' modal, click 'Install now'.",
+    "Restart, see the 'JuggleWork is moving' modal, click 'Install now'.",
     "Confirm Electron app launches automatically after ~30s.",
     "Confirm sidebar shows every workspace that was visible in Tauri.",
     "Open one workspace; confirm last session is preselected.",

@@ -72,7 +72,7 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
       code: "cloud_desired_missing",
       stage: "desired",
       retryable: false,
-      recommendedAction: "Connect OpenWork Cloud",
+      recommendedAction: "Connect JuggleWork Cloud",
       message: "missing",
     },
     checkedAt: new Date(NOW).toISOString(),

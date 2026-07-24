@@ -54,8 +54,8 @@ export function connectDebugProxyFault(input: {
     return {
       kind: "response",
       label: "auth-expired",
-      response: jsonError(401, "invalid_token", "The debug scenario expired the OpenWork Connect token.", {
-        "www-authenticate": "Bearer error=\"invalid_token\", error_description=\"OpenWork Connect debug token expired\"",
+      response: jsonError(401, "invalid_token", "The debug scenario expired the JuggleWork Connect token.", {
+        "www-authenticate": "Bearer error=\"invalid_token\", error_description=\"JuggleWork Connect debug token expired\"",
       }),
     }
   }

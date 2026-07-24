@@ -21,7 +21,7 @@ const onboardingScreen = await readFile(
 const serverUrlMatch = landingConfig.match(/export const MCP_SERVER_URL = "([^"]+)";/);
 assert.ok(serverUrlMatch, "Landing installer is missing MCP_SERVER_URL");
 const serverUrl = serverUrlMatch[1];
-assert.equal(serverUrl, "https://api.openworklabs.com/mcp/agent", "OpenWork Connect must use the public /mcp/agent endpoint");
+assert.equal(serverUrl, "https://api.openworklabs.com/mcp/agent", "JuggleWork Connect must use the public /mcp/agent endpoint");
 const codexDeepLinkMatch = landingConfig.match(/export const CODEX_CONNECTIONS_DEEPLINK = "([^"]+)";/);
 assert.ok(codexDeepLinkMatch, "Landing installer is missing CODEX_CONNECTIONS_DEEPLINK");
 const chatGptSettingsMatch = landingConfig.match(/export const CHATGPT_SETTINGS_URL = "([^"]+)";/);
@@ -147,6 +147,6 @@ assert.ok(
 assert.ok(onboardingScreen.includes("OpenCode is verified"), "Cloud onboarding must state verified clients");
 assert.ok(onboardingScreen.includes("setup guides"), "Cloud onboarding must state setup-only client coverage");
 assert.ok(onboardingScreen.includes("break-all") && onboardingScreen.includes("whitespace-normal"), "Cloud onboarding endpoint text must wrap on narrow screens");
-assert.ok(onboardingScreen.includes("aria-live=\"polite\"") && onboardingScreen.includes("Copy OpenWork MCP endpoint"), "Cloud onboarding must expose accessible copy feedback");
+assert.ok(onboardingScreen.includes("aria-live=\"polite\"") && onboardingScreen.includes("Copy JuggleWork MCP endpoint"), "Cloud onboarding must expose accessible copy feedback");
 
-console.log("OpenWork Connect landing and docs installers are in parity.");
+console.log("JuggleWork Connect landing and docs installers are in parity.");

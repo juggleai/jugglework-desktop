@@ -1,6 +1,6 @@
-# OpenWork Orchestrator
+# JuggleWork Orchestrator
 
-Host orchestrator for opencode + OpenWork server. This is a CLI-first way to run host mode without the desktop UI.
+Host orchestrator for opencode + JuggleWork server. This is a CLI-first way to run host mode without the desktop UI.
 
 Published on npm as `openwork-orchestrator` and installs the `openwork` command.
 
@@ -63,12 +63,12 @@ pnpm --filter openwork-orchestrator dev -- \
   start --workspace /path/to/workspace --approval auto --allow-external
 ```
 
-When `OPENWORK_DEV_MODE=1` is set, orchestrator uses an isolated OpenCode dev state for config, auth, data, cache, and state. OpenWork's repo-level `pnpm dev` commands enable this automatically so local development does not reuse your personal OpenCode environment.
+When `OPENWORK_DEV_MODE=1` is set, orchestrator uses an isolated OpenCode dev state for config, auth, data, cache, and state. JuggleWork's repo-level `pnpm dev` commands enable this automatically so local development does not reuse your personal OpenCode environment.
 
 The command prints pairing URLs by default and withholds live credentials from stdout to avoid leaking them into shell history or collected logs. Use `--json` only when you explicitly need the raw pairing secrets in command output.
 
 Use `--detach` to keep services running and exit the dashboard. The detach summary includes the
-OpenWork URL and a redacted `opencode attach` command, while keeping live credentials out of the detached summary.
+JuggleWork URL and a redacted `opencode attach` command, while keeping live credentials out of the detached summary.
 
 ## Sandbox mode (Docker / Apple container)
 
@@ -111,7 +111,7 @@ Override with `OPENWORK_SANDBOX_MOUNT_ALLOWLIST`.
 
 ## Logging
 
-`openwork` emits a unified log stream from OpenCode and OpenWork server. Use JSON format for
+`openwork` emits a unified log stream from OpenCode and JuggleWork server. Use JSON format for
 structured, OpenTelemetry-friendly logs and a stable run id for correlation.
 
 ```bash
@@ -125,7 +125,7 @@ OpenCode runs at `INFO` by default, which produces large log files in
 `OPENWORK_OPENCODE_LOG_LEVEL`) to forward `--log-level` to managed `opencode serve` and reduce log
 volume.
 
-OpenWork server logs every request with method, path, status, and duration. Disable this when running
+JuggleWork server logs every request with method, path, status, and duration. Disable this when running
 `openwork-server` directly by setting `OPENWORK_LOG_REQUESTS=0` or passing `--no-log-requests`.
 
 ## Router daemon (multi-workspace)
@@ -145,8 +145,8 @@ Use `OPENWORK_DATA_DIR` or `--data-dir` to isolate router state in tests.
 
 ## Pairing notes
 
-- Use the **OpenWork connect URL** and **client token** to connect a remote OpenWork client.
-- The OpenWork server advertises the **OpenCode connect URL** plus optional basic auth credentials to the client.
+- Use the **JuggleWork connect URL** and **client token** to connect a remote JuggleWork client.
+- The JuggleWork server advertises the **OpenCode connect URL** plus optional basic auth credentials to the client.
 
 ## Approvals (manual mode)
 

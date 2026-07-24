@@ -1,6 +1,6 @@
 // Live local e2e fraimz for `openwork install app` using a real macOS DMG.
 //
-// The flow creates a tiny OpenWork.app fixture, packages it as a .dmg, writes an
+// The flow creates a tiny JuggleWork.app fixture, packages it as a .dmg, writes an
 // install manifest with a SHA-256 digest, installs the bootstrap CLI into a temp
 // bin dir, then runs the installed `openwork install app` command against the
 // manifest and verifies it with `openwork doctor --app`.
@@ -23,11 +23,11 @@ const cli = join(packageRoot, "bin", "openwork.mjs")
 const outDir = join(repoRoot, "evals", "results", "openwork-app-install-dmg")
 const temp = join(tmpdir(), `openwork-app-install-dmg-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 const sourceDir = join(temp, "source")
-const appFixture = join(sourceDir, "OpenWork.app")
+const appFixture = join(sourceDir, "JuggleWork.app")
 const installDir = join(temp, "install")
 const binDir = join(temp, "bin")
 const appDir = join(temp, "Applications")
-const dmgPath = join(temp, "OpenWork.dmg")
+const dmgPath = join(temp, "JuggleWork.dmg")
 const manifestPath = join(temp, "openwork-install-manifest.json")
 const installedOpenwork = join(binDir, "openwork-bootstrap")
 mkdirSync(outDir, { recursive: true })
@@ -72,34 +72,34 @@ try {
   writeFileSync(join(appFixture, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>OpenWork</string>
+<key>CFBundleExecutable</key><string>JuggleWork</string>
 <key>CFBundleIdentifier</key><string>com.openwork.fixture</string>
-<key>CFBundleName</key><string>OpenWork</string>
+<key>CFBundleName</key><string>JuggleWork</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.0.0-fixture</string>
 </dict></plist>
 `)
-  writeFileSync(join(appFixture, "Contents", "MacOS", "OpenWork"), "#!/usr/bin/env sh\necho OpenWork fixture\n")
-  chmodSync(join(appFixture, "Contents", "MacOS", "OpenWork"), 0o755)
+  writeFileSync(join(appFixture, "Contents", "MacOS", "JuggleWork"), "#!/usr/bin/env sh\necho JuggleWork fixture\n")
+  chmodSync(join(appFixture, "Contents", "MacOS", "JuggleWork"), 0o755)
 
-  execFileSync("hdiutil", ["create", "-quiet", "-volname", "OpenWork", "-srcfolder", sourceDir, "-ov", "-format", "UDZO", dmgPath])
+  execFileSync("hdiutil", ["create", "-quiet", "-volname", "JuggleWork", "-srcfolder", sourceDir, "-ov", "-format", "UDZO", dmgPath])
   const digest = sha256(dmgPath)
   writeFileSync(manifestPath, JSON.stringify({
     version: "0.0.0-fixture",
-    appName: "OpenWork.app",
+    appName: "JuggleWork.app",
     artifacts: {
       darwin: {
         [process.arch]: {
           type: "dmg",
           url: pathToFileURL(dmgPath).toString(),
           sha256: digest,
-          appName: "OpenWork.app",
+          appName: "JuggleWork.app",
         },
       },
     },
   }, null, 2))
   prove("A real macOS DMG install manifest is available", {
-    action: "Create OpenWork.app fixture, package it with hdiutil, and write manifest JSON",
+    action: "Create JuggleWork.app fixture, package it with hdiutil, and write manifest JSON",
     assert: "manifest references a .dmg with SHA-256 for this macOS architecture",
     evidence: { manifestPath, dmgPath, sha256: digest, arch: process.arch },
   }, existsSync(dmgPath) && existsSync(manifestPath) && digest.length === 64)
@@ -112,10 +112,10 @@ try {
   }, installCli.status === 0 && existsSync(installedOpenwork))
 
   const installApp = run(installedOpenwork, ["install", "app", "--manifest", manifestPath, "--app-dir", appDir, "--json"], { timeout: 30_000 })
-  const appPath = join(appDir, "OpenWork.app")
-  prove("The installed CLI can download, verify, mount, and install OpenWork.app from a DMG", {
+  const appPath = join(appDir, "JuggleWork.app")
+  prove("The installed CLI can download, verify, mount, and install JuggleWork.app from a DMG", {
     action: "openwork install app --manifest <fixture-manifest> --app-dir <tmp>/Applications --json",
-    assert: "exit 0, checksum recorded, and OpenWork.app copied into app dir",
+    assert: "exit 0, checksum recorded, and JuggleWork.app copied into app dir",
     evidence: { status: installApp.status, body: installApp.json, appExists: existsSync(appPath), stderr: installApp.stderr },
   }, installApp.status === 0 && installApp.json?.ok === true && installApp.json?.install?.artifact?.sha256 === digest && existsSync(appPath))
 
@@ -145,9 +145,9 @@ const frameFiles = frames.map((frame, index) => {
 
 const allOk = frames.every((frame) => frame.ok)
 writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<title>OpenWork App DMG Install — fraimz</title>
+<title>JuggleWork App DMG Install — fraimz</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
-</head><body><main><h1>OpenWork App DMG Install — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Frames: ${frames.length}</div>
+</head><body><main><h1>JuggleWork App DMG Install — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Frames: ${frames.length}</div>
 ${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({

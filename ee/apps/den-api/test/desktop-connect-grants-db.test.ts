@@ -62,7 +62,7 @@ function mintGrant() {
   return grants.mintDesktopConnectGrant({
     installLinkId,
     organizationName: "Replica Test Org",
-    appName: "OpenWork",
+    appName: "JuggleWork",
     logoUrl: null,
     iconUrl: null,
     webUrl: "https://den.example.test",

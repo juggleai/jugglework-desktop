@@ -1,4 +1,4 @@
-# OpenWork Bootstrap CLI
+# JuggleWork Bootstrap CLI
 
 Script-installable `openwork-bootstrap` command for agent-first onboarding.
 

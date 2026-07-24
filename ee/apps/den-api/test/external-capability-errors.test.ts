@@ -51,7 +51,7 @@ test("externalConnectionErrorHint gives reconnect guidance for HTTP auth errors"
 
   expect(hint).toContain('The stored credential for "Acme MCP" is invalid or expired')
   expect(hint).toContain('Reconnect "Acme MCP"')
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
+  expect(hint).toContain("JuggleWork Cloud itself is still connected")
   expect(hint).toContain("This is a live probe, not a cached result")
 })
 
@@ -63,8 +63,8 @@ test("JSON-RPC refresh failures are classified as downstream connector reauthori
   expect(externalCapabilities.externalMcpAuthErrorCode(error, message)).toBe("invalid_refresh_token")
   expect(externalCapabilities.isExternalMcpAuthError(error)).toBe(true)
   expect(hint).toContain('Reconnect "Knowledge Hub"')
-  expect(hint).toContain("OpenWork Cloud -> Your Connections")
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
+  expect(hint).toContain("JuggleWork Cloud -> Your Connections")
+  expect(hint).toContain("JuggleWork Cloud itself is still connected")
 })
 
 test("invalid_grant is classified without connector-specific special casing", () => {
@@ -189,8 +189,8 @@ test("generic provider failures route to connector inspection instead of cloud r
 
   expect(hint).toContain('inspect "Ticketing"')
   expect(hint).toContain("dashboard -> Connections")
-  expect(hint).toContain("OpenWork Cloud itself is still connected")
-  expect(hint).not.toContain("Reconnect OpenWork Cloud")
+  expect(hint).toContain("JuggleWork Cloud itself is still connected")
+  expect(hint).not.toContain("Reconnect JuggleWork Cloud")
 })
 
 test("externalConnectionErrorHint gives provider-admin guidance for JSON-RPC rejections", () => {

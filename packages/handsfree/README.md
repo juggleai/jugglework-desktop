@@ -1,7 +1,7 @@
-# OpenWork Computer Use
+# JuggleWork Computer Use
 
-Native macOS computer-use runtime for OpenWork.
-Packaged OpenWork builds wrap this runtime in a bundled `Computer Use.app`
+Native macOS computer-use runtime for JuggleWork.
+Packaged JuggleWork builds wrap this runtime in a bundled `Computer Use.app`
 helper so macOS Accessibility and Screen Recording permissions belong to the
 helper app instead of a transient Node or Swift process.
 

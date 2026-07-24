@@ -57,7 +57,7 @@ vendor/opencode/
 .opencode/node_modules/
 .opencode/bun.lock
 
-# OpenWork workspace-local artifacts
+# JuggleWork workspace-local artifacts
 .opencode/openwork/
 .opencode/agents/openwork.md
 .opencode/openwork.json

@@ -2,9 +2,9 @@
 # the same macOS bundle identifier, keychain entries, Launchpad slot, and TCC
 # permissions. In-place migration from Tauri to Electron depends on this.
 appId: com.differentai.openwork
-productName: OpenWork
+productName: JuggleWork
 protocols:
-  - name: OpenWork
+  - name: JuggleWork
     schemes:
       - openwork
 directories:
@@ -53,7 +53,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: OpenWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
+    NSMicrophoneUsageDescription: JuggleWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -70,7 +70,7 @@ mac:
     - from: resources/helpers
       to: helpers
       filter:
-        - "OpenWork Computer Use.app/**"
+        - "JuggleWork Computer Use.app/**"
   target:
     - dmg
     - zip

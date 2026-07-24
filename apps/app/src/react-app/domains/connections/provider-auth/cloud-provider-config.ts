@@ -30,7 +30,7 @@ const escapeRegExp = (value: string) =>
 const removeCloudProviderComment = (raw: string, providerId: string) =>
   raw.replace(
     new RegExp(
-      `(^[ \t]*)// OpenWork Cloud import:.*\\n\\1(?="${escapeRegExp(providerId)}":)`,
+      `(^[ \t]*)// JuggleWork Cloud import:.*\\n\\1(?="${escapeRegExp(providerId)}":)`,
       "m",
     ),
     "$1",
@@ -148,7 +148,7 @@ export const buildCloudProviderConfig = (
     env: getCloudProviderEnv(provider.providerConfig),
   };
 
-  // OpenWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
+  // JuggleWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
   // the provider + key with zero model rows — writing `models: {}` can prevent
   // the engine from keeping catalog models, so omit an empty map for openwork.
   if (Object.keys(models).length > 0 || provider.source !== "openwork") {

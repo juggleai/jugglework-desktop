@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
+        description: "Release title (defaults to JuggleWork <tag>)"
         required: false
         type: string
       release_body:
@@ -131,14 +131,14 @@ jobs:
           if [ -n "$RELEASE_NAME_INPUT" ]; then
             RELEASE_NAME="$RELEASE_NAME_INPUT"
           else
-            RELEASE_NAME="OpenWork $TAG"
+            RELEASE_NAME="JuggleWork $TAG"
           fi
 
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
           if [ -n "$RELEASE_BODY_INPUT" ]; then
             RELEASE_BODY="$RELEASE_BODY_INPUT"
           else
-            printf -v RELEASE_BODY '%s\n\nOpenWork %s desktop release.\n\n%s\n%s' \
+            printf -v RELEASE_BODY '%s\n\nJuggleWork %s desktop release.\n\n%s\n%s' \
               "## What's new" \
               "$TAG" \
               "- Download the attached installer for your platform." \
@@ -890,7 +890,7 @@ jobs:
 
           version="${RELEASE_TAG#v}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="JuggleWork Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev

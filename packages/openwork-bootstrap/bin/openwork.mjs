@@ -11,7 +11,7 @@ const VERSION = "0.1.0"
 // with the openwork-orchestrator npm package, which also installs an "openwork"
 // binary onto the user's PATH.
 const COMMAND_NAME = "openwork-bootstrap"
-const DEFAULT_OPENWORK_MARKETPLACE_NAME = "OpenWork Marketplace"
+const DEFAULT_OPENWORK_MARKETPLACE_NAME = "JuggleWork Marketplace"
 const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)
 const here = dirname(fileURLToPath(import.meta.url))
 const selfPath = fileURLToPath(import.meta.url)
@@ -117,7 +117,7 @@ function defaultAppDir() {
   return process.env.OPENWORK_APP_DIR || (process.platform === "darwin"
     ? join(process.env.HOME || process.cwd(), "Applications")
     : process.platform === "win32"
-      ? join(process.env.LOCALAPPDATA || join(process.env.HOME || process.cwd(), "AppData", "Local"), "OpenWork")
+      ? join(process.env.LOCALAPPDATA || join(process.env.HOME || process.cwd(), "AppData", "Local"), "JuggleWork")
       : join(process.env.HOME || process.cwd(), ".local", "share", "openwork"))
 }
 
@@ -209,7 +209,7 @@ function runInstall(args) {
   }
   writeFileSync(join(installDir, "install.json"), JSON.stringify(manifest, null, 2))
 
-  jsonOut({ ok: true, message: `OpenWork CLI installed at ${executable}`, install: manifest }, json)
+  jsonOut({ ok: true, message: `JuggleWork CLI installed at ${executable}`, install: manifest }, json)
 }
 
 function sha256(buffer) {
@@ -273,12 +273,12 @@ function inferArtifactType(url) {
 
 function defaultInstalledName(type, manifest, artifact) {
   if (artifact.appName || manifest.appName) return artifact.appName || manifest.appName
-  if (type === "dmg") return "OpenWork.app"
-  if (type === "appimage") return "OpenWork.AppImage"
-  if (type === "exe") return "OpenWork.exe"
-  if (type === "msi") return "OpenWork.msi"
-  if (process.platform === "darwin") return "OpenWork.app"
-  if (process.platform === "win32") return "OpenWork.exe"
+  if (type === "dmg") return "JuggleWork.app"
+  if (type === "appimage") return "JuggleWork.AppImage"
+  if (type === "exe") return "JuggleWork.exe"
+  if (type === "msi") return "JuggleWork.msi"
+  if (process.platform === "darwin") return "JuggleWork.app"
+  if (process.platform === "win32") return "JuggleWork.exe"
   return "openwork"
 }
 
@@ -343,7 +343,7 @@ function installDmg(input) {
   try {
     execFileSync("hdiutil", ["attach", input.artifactPath, "-nobrowse", "-readonly", "-mountpoint", mountPoint], { stdio: "pipe" })
     mounted = true
-    const appName = input.appName || "OpenWork.app"
+    const appName = input.appName || "JuggleWork.app"
     const sourceApp = join(mountPoint, appName)
     if (!existsSync(sourceApp)) {
       throw new Error(`app_not_found_in_dmg: ${appName}`)
@@ -408,7 +408,7 @@ async function runInstallApp(args) {
     const type = artifact.type || inferArtifactType(artifact.url)
     if (!type) throw new Error("unsupported_app_artifact_type: unknown")
 
-    const artifactPath = join(workDir, artifact.fileName || "OpenWork.dmg")
+    const artifactPath = join(workDir, artifact.fileName || "JuggleWork.dmg")
     await downloadArtifact(artifact.url, artifactPath)
     const digest = sha256(readFileSync(artifactPath))
     if (artifact.sha256 && digest !== artifact.sha256) {
@@ -444,7 +444,7 @@ async function runInstallApp(args) {
     }
     mkdirSync(dirname(appPath), { recursive: true })
     writeFileSync(join(appDir, "openwork-app-install.json"), JSON.stringify(install, null, 2))
-    jsonOut({ ok: true, message: `OpenWork app installed at ${appPath}`, install }, json)
+    jsonOut({ ok: true, message: `JuggleWork app installed at ${appPath}`, install }, json)
   } finally {
     rmSync(workDir, { recursive: true, force: true })
   }
@@ -489,9 +489,9 @@ async function runDoctor(args) {
   if (hasFlag(args.flags, "app") || args.flags.has("app-dir")) {
     const appManifest = join(appDir, "openwork-app-install.json")
     let appPath = process.platform === "darwin"
-      ? join(appDir, "OpenWork.app")
+      ? join(appDir, "JuggleWork.app")
       : process.platform === "win32"
-        ? join(appDir, "OpenWork.exe")
+        ? join(appDir, "JuggleWork.exe")
         : join(appDir, "openwork")
     if (existsSync(appManifest)) {
       try {
@@ -520,7 +520,7 @@ async function runDoctor(args) {
   }
 
   const ok = checks.every((check) => check.ok)
-  jsonOut({ ok, message: ok ? "OpenWork doctor: ok" : "OpenWork doctor: failed", version: VERSION, manifest, checks }, json)
+  jsonOut({ ok, message: ok ? "JuggleWork doctor: ok" : "JuggleWork doctor: failed", version: VERSION, manifest, checks }, json)
   if (!ok) process.exitCode = 1
 }
 
@@ -565,7 +565,7 @@ async function signupAndSignin(baseUrl, input) {
 }
 
 function skillText(name, output) {
-  return `---\nname: ${name}\ndescription: Starter skill created by openwork bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(output)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${output}\`\n\nUse this skill to confirm OpenWork cloud onboarding can create and trigger a deterministic skill.`
+  return `---\nname: ${name}\ndescription: Starter skill created by openwork bootstrap.\nopenworkBootstrapTrigger: bootstrap.verify\nopenworkBootstrapOutput: ${JSON.stringify(output)}\n---\n\n# ${name}\n\nWhen triggered with \`bootstrap.verify\`, output exactly:\n\n\`${output}\`\n\nUse this skill to confirm JuggleWork cloud onboarding can create and trigger a deterministic skill.`
 }
 
 async function createCloudSkillPlugin(baseUrl, auth, input) {
@@ -789,7 +789,7 @@ async function runCloudOnboard(args) {
   const ownerPassword = await resolveOwnerPassword(args.flags)
   const orgName = getFlag(args.flags, "org-name")
   const inviteEmail = getFlag(args.flags, "invite-email")
-  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const skillName = getFlag(args.flags, "skill-name", "First JuggleWork Skill")
   const skillOutput = getFlag(args.flags, "skill-output", "OPENWORK_BOOTSTRAP_SKILL_TRIGGERED")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
@@ -806,7 +806,7 @@ async function runCloudOnboard(args) {
   }
 
   const owner = await signupAndSignin(baseUrl, {
-    name: "OpenWork Owner",
+    name: "JuggleWork Owner",
     email: ownerEmail,
     password: ownerPassword,
   })
@@ -857,7 +857,7 @@ async function runCloudOnboard(args) {
 
   jsonOut({
     ok: true,
-    message: "OpenWork cloud onboarding complete",
+    message: "JuggleWork cloud onboarding complete",
     user: { id: owner.user.id, email: owner.user.email, emailVerified: owner.user.emailVerified },
     organization: org.body.organization,
     invitation: invite.body,
@@ -871,7 +871,7 @@ async function runCloudBootstrapWorkspace(args) {
   const json = hasFlag(args.flags, "json")
   const baseUrl = getFlag(args.flags, "base-url", "https://api.openworklabs.com")?.replace(/\/$/, "")
   const workspaceName = getFlag(args.flags, "workspace-name")
-  const skillName = getFlag(args.flags, "skill-name", "First OpenWork Skill")
+  const skillName = getFlag(args.flags, "skill-name", "First JuggleWork Skill")
   const ownerEmail = getFlag(args.flags, "owner-email")
   const prepareDesktop = hasFlag(args.flags, "prepare-desktop")
   const desktopBootstrapPath = getFlag(args.flags, "desktop-bootstrap-path", defaultDesktopBootstrapPath())
@@ -937,7 +937,7 @@ async function runCloudBootstrapWorkspace(args) {
 
   jsonOut({
     ok: true,
-    message: "OpenWork workspace bootstrap complete",
+    message: "JuggleWork workspace bootstrap complete",
     organization: response.body.organization,
     setup: response.body.setup,
     skill: response.body.skill,

@@ -49,9 +49,9 @@ export type McpDirectoryInfo = {
   iconSrc?: string;
   /** Prompt inserted from the composer extension picker. */
   composerPrompt?: string;
-  /** Whether OpenWork should show this extension as enabled before user setup. */
+  /** Whether JuggleWork should show this extension as enabled before user setup. */
   defaultEnabled?: boolean;
-  /** Whether OpenWork should hide this extension from the default catalog view. */
+  /** Whether JuggleWork should hide this extension from the default catalog view. */
   defaultHidden?: boolean;
   /** Whether this extension is still in preview. */
   preview?: boolean;
@@ -171,7 +171,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     kind: "mcp",
     iconSrc: "/openwork-mark.svg",
     // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
-    // configured + enabled while signed in to OpenWork Cloud. Hidden from the
+    // configured + enabled while signed in to JuggleWork Cloud. Hidden from the
     // default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },

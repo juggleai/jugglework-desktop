@@ -109,7 +109,7 @@ the cloud stack for env-gated cloud flows.
 ## Pitfalls (learned the hard way)
 
 - **Target the right CDP page.** A sandbox can expose several targets; ad-hoc
-  `browser_eval` defaults to the first — pass the OpenWork `target_id` when
+  `browser_eval` defaults to the first — pass the JuggleWork `target_id` when
   probing manually.
 - **`__openworkControl` readiness.** Attaches after boot and resets on config
   reload: `ctx.waitFor("Boolean(window.__openworkControl)")` before driving,

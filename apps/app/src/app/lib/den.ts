@@ -46,7 +46,7 @@ export const CLOUD_MCP_SYNC_MARKER_STORAGE_KEY = "openwork.den.mcp.sync";
 const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
-export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
+export const DEFAULT_DEN_AUTH_NAME = "JuggleWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
@@ -486,10 +486,10 @@ export function denOriginComparisonKey(input: string | null | undefined): string
 }
 
 /**
- * True when the effective Den control plane is not the hosted OpenWork Cloud
+ * True when the effective Den control plane is not the hosted JuggleWork Cloud
  * (app.openworklabs.com). Self-hosted deployments point the app at their own
  * control plane via VITE_DEN_BASE_URL or the desktop bootstrap config, so
- * hosted-only surfaces (e.g. OpenWork Models upsells) should stay hidden.
+ * hosted-only surfaces (e.g. JuggleWork Models upsells) should stay hidden.
  */
 export function isSelfHostedControlPlane(): boolean {
   return (

@@ -79,7 +79,7 @@ function serverError(status: number, code: string, message: string) {
 }
 
 describe("resolveRemoteWorkspaceConnectionTarget", () => {
-  test("builds a host-scoped OpenWork target from saved worker credentials", () => {
+  test("builds a host-scoped JuggleWork target from saved worker credentials", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         openworkHostUrl: "https://worker.example.com",
@@ -130,7 +130,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     expect(target.state.message).toContain("URL is invalid");
   });
 
-  test("does not run OpenWork probes against non-OpenWork remote workspaces", () => {
+  test("does not run JuggleWork probes against non-JuggleWork remote workspaces", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         remoteType: "opencode",
@@ -143,10 +143,10 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     expect(target.ok).toBe(false);
     if (target.ok) return;
     expect(target.state.status).toBe("error");
-    expect(target.state.message).toContain("OpenWork remote workers");
+    expect(target.state.message).toContain("JuggleWork remote workers");
   });
 
-  test("does not run OpenWork probes against stale OpenWork fields on non-OpenWork remotes", () => {
+  test("does not run JuggleWork probes against stale JuggleWork fields on non-JuggleWork remotes", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         remoteType: "opencode",
@@ -158,7 +158,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
 
     expect(target.ok).toBe(false);
     if (target.ok) return;
-    expect(target.state.message).toContain("OpenWork remote workers");
+    expect(target.state.message).toContain("JuggleWork remote workers");
   });
 });
 
@@ -185,7 +185,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token is missing");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
@@ -200,11 +200,11 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("unhealthy response");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
-  test("uses fallback OpenWork tokens saved on older workspace records", async () => {
+  test("uses fallback JuggleWork tokens saved on older workspace records", async () => {
     const result = await testRemoteWorkspaceConnection(
       workspace({
         openworkToken: "",
@@ -234,7 +234,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
@@ -251,7 +251,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Workspace ws_remote was not found");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
@@ -299,7 +299,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
@@ -316,7 +316,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("is not authorized");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 
@@ -333,7 +333,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.ok).toBe(false);
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Cannot reach worker.example.com");
-    expect(result.state.message).toContain("Upgrade the OpenWork host");
+    expect(result.state.message).toContain("Upgrade the JuggleWork host");
     expect(result.state.message).toContain("team@openworklabs.com");
   });
 

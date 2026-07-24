@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add self-serve enterprise SSO to Den so each OpenWork organization can configure its own SAML or OIDC provider, expose an organization-specific sign-in URL, and keep SSO identity state aligned with SCIM provisioning state.
+Add self-serve enterprise SSO to Den so each JuggleWork organization can configure its own SAML or OIDC provider, expose an organization-specific sign-in URL, and keep SSO identity state aligned with SCIM provisioning state.
 
 The intended product model is:
 

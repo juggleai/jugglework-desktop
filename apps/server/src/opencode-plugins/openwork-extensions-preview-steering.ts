@@ -135,22 +135,22 @@ const connectSkillsResponseSchema = z.object({
 }).passthrough();
 
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
+  "If the user asks for something you cannot do with obvious built-in tools, check JuggleWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action.";
 
 export const OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in OpenWork Cloud as a private plugin, not in the workspace. For later steps, use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
+  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling openwork-cloud_execute_capability with its exact <capability>. Create the skill in JuggleWork Cloud as a private plugin, not in the workspace. For later steps, use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
 
 export const OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
   "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";
 
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
-  "The OpenWork Cloud connection is verified ready for this exact workspace/model. For org-connected services, use openwork-cloud_search_capabilities with 2-4 keyword variants, then openwork-cloud_execute_capability with an exact returned name — and only mention services that search (or available_skills) actually returns. When a remote skill is listed under available_skills, call openwork-cloud_execute_capability with that skill's <capability> directly; do not treat the local OpenCode skill list as the full inventory. Local OpenWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call. Settings > Connect is the member connection surface. A successful search proves OpenWork Cloud itself is authorized, so a downstream connector failure does not mean OpenWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
+  "The JuggleWork Cloud connection is verified ready for this exact workspace/model. For org-connected services, use openwork-cloud_search_capabilities with 2-4 keyword variants, then openwork-cloud_execute_capability with an exact returned name — and only mention services that search (or available_skills) actually returns. When a remote skill is listed under available_skills, call openwork-cloud_execute_capability with that skill's <capability> directly; do not treat the local OpenCode skill list as the full inventory. Local JuggleWork extensions remain available through openwork_query/openwork_execute with extension.actions and extension.call. Settings > Connect is the member connection surface. A successful search proves JuggleWork Cloud itself is authorized, so a downstream connector failure does not mean JuggleWork Cloud needs to be reconnected. If a result has kind connection_status, name connectionStatus.connectionName and relay connectionStatus.action exactly: use Your Connections for the member, the organization Connections dashboard for an org admin, or the provider admin console for a provider-side failure. After the requested human fixes that connector, search again in the same task because results are live, not cached, so unchanged retries return the same error.";
 
 export const OPENWORK_CONNECT_SIGN_IN_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to OpenWork and connect the service in Settings → Connect.`;
+  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} JuggleWork Cloud is not signed in or no desired agent access configuration exists for this workspace. Direct the user to sign in to JuggleWork and connect the service in Settings → Connect.`;
 
 export const OPENWORK_CONNECT_DISABLED_INSTRUCTION =
-  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} OpenWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
+  `${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION} JuggleWork Cloud agent access is explicitly disabled for this workspace. Explain that the user can enable agent access in Settings → Connect.`;
 
 const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
 
@@ -211,7 +211,7 @@ function requireOpenWorkServer(): { url: string; token: string } {
   const url = serverUrl();
   const token = serverToken();
   if (!url || !token) {
-    throw new Error("OpenWork extension tools are only available when OpenCode is launched by OpenWork.");
+    throw new Error("JuggleWork extension tools are only available when OpenCode is launched by JuggleWork.");
   }
   return { url, token };
 }
@@ -283,7 +283,7 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
     headers: { Authorization: `Bearer ${token}` },
   });
   const payload = await parseResponse(response);
-  if (!response.ok) throw new Error(errorMessage(payload, "OpenWork connect state request failed"));
+  if (!response.ok) throw new Error(errorMessage(payload, "JuggleWork connect state request failed"));
   const parsed = connectStateResponseSchema.parse(payload);
   return {
     connectEnabled: parsed.connectEnabled,

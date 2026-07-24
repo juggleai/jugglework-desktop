@@ -2326,7 +2326,7 @@ export function DenAdminPanel() {
                           }}
                           className="h-4 w-4 rounded border-slate-300"
                         />
-                        OpenWork Connect (alpha)
+                        JuggleWork Connect (alpha)
                       </label>
                     </div>
                     {capabilityError?.orgId === org.id ? (
@@ -2587,7 +2587,7 @@ export function DenAdminPanel() {
               Edit free seats
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Set the total number of free seats for {freeSeatsDialog.org.name}. The default {DEFAULT_FREE_SEAT_COUNT} seats stay included; OpenWork saves only the additional seats in organization metadata.
+              Set the total number of free seats for {freeSeatsDialog.org.name}. The default {DEFAULT_FREE_SEAT_COUNT} seats stay included; JuggleWork saves only the additional seats in organization metadata.
             </p>
 
             <label className="mt-5 grid gap-2">

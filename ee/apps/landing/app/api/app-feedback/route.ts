@@ -51,7 +51,7 @@ function formatDiagnosticsSummary(context: ReturnType<typeof sanitizeContext>) {
     ["Entrypoint", context.entrypoint],
     ["Deployment", context.deployment],
     ["App version", context.appVersion],
-    ["OpenWork server", context.openworkServerVersion],
+    ["JuggleWork server", context.openworkServerVersion],
     ["OpenCode", context.opencodeVersion],
     ["Orchestrator", context.orchestratorVersion],
     ["OS", osLabel],

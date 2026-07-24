@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// den-admin-mcp — read-only admin analytics MCP server for the OpenWork Den database.
+// den-admin-mcp — read-only admin analytics MCP server for the JuggleWork Den database.
 //
 // Tools: den_overview, den_growth, den_retention, den_company_users,
 //        den_users_search, den_org_overview, den_query
@@ -10,7 +10,7 @@
 // a user is "active" on a day if they have a sign-in session day or a
 // `session.active` telemetry event that day.
 //
-// Register in OpenWork (opencode.json):
+// Register in JuggleWork (opencode.json):
 //   { "mcp": { "den-admin": { "type": "local",
 //       "command": ["node", "/path/to/ee/packages/den-admin-mcp/index.mjs"],
 //       "environment": { "DATABASE_URL": "mysql://..." }, "enabled": true } } }

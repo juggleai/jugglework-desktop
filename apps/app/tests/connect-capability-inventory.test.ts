@@ -4,7 +4,7 @@ import {
   listAssignedConnectCapabilities,
 } from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
-describe("assigned OpenWork Connect capability inventory", () => {
+describe("assigned JuggleWork Connect capability inventory", () => {
   test("returns active marketplace skills and MCPs with Connect provenance", async () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",

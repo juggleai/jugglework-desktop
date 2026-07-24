@@ -1,6 +1,6 @@
-const home = `# OpenWork
+const home = `# JuggleWork
 
-> The open-source Claude Cowork alternative. OpenWork is a desktop app that lets teams chat with 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.
+> The open-source Claude Cowork alternative. JuggleWork is a desktop app that lets teams chat with 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.
 
 ## What it is
 
@@ -26,10 +26,10 @@ const home = `# OpenWork
 
 ## FAQ
 
-### What is OpenWork?
+### What is JuggleWork?
 A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
 
-### Is OpenWork free?
+### Is JuggleWork free?
 Yes — the desktop app is free and open source with bring-your-own keys. Team Starter includes your first 5 seats free, then \\$10 per seat/mo; Enterprise is custom.
 
 ### Which models does it support?
@@ -48,9 +48,9 @@ No. Desktop mode keeps files local; prompts go directly to your chosen LLM provi
 Backed by Y Combinator.
 `
 
-const pricing = `# OpenWork pricing — free, team, and enterprise
+const pricing = `# JuggleWork pricing — free, team, and enterprise
 
-> OpenWork has three tiers: free open-source desktop, Team Starter with the first 5 seats free then \\$10 per seat/mo, and custom Enterprise.
+> JuggleWork has three tiers: free open-source desktop, Team Starter with the first 5 seats free then \\$10 per seat/mo, and custom Enterprise.
 
 ## Solo — Free
 
@@ -74,7 +74,7 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 - SSO / SAML and SCIM provisioning
 - Bring your own inference — self-hosted or private models
 - Desktop policies and version controls — admins decide which providers, models, extensions, and app versions employees can use; the desktop app enforces it automatically
-- Managed deployment — self-hosted in your environment or hosted by OpenWork
+- Managed deployment — self-hosted in your environment or hosted by JuggleWork
 - Custom skill development and MCP consulting
 - Enterprise rollout support and custom commercial terms
 - Existing organizations already using SSO or desktop policies keep full access (grandfathered)
@@ -91,7 +91,7 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 
 - SSO / SAML integration and SCIM provisioning
 - Desktop policies and version controls — guardrails for providers, models, extensions, and app versions, enforced by the desktop app
-- Managed deployment — self-hosted in your environment or hosted by OpenWork
+- Managed deployment — self-hosted in your environment or hosted by JuggleWork
 - Custom skill development for your team's workflows
 - MCP consulting — connect internal data sources and tools as MCP servers
 - Enterprise rollout support and custom commercial terms
@@ -100,7 +100,7 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 ## Deployment models
 
 - Self-hosted desktop app — data stays local, bring your own keys
-- Cloud workers — managed by OpenWork, sandbox infrastructure via Daytona (EU)
+- Cloud workers — managed by JuggleWork, sandbox infrastructure via Daytona (EU)
 
 ## Next step
 
@@ -111,7 +111,7 @@ const enterprise = `# A privacy-first alternative to Claude Cowork for your orga
 
 const trust = `# Trust & Security
 
-> How OpenWork handles data, what subprocessors are involved, and how to reach the security team.
+> How JuggleWork handles data, what subprocessors are involved, and how to reach the security team.
 
 ## Key facts
 
@@ -127,8 +127,8 @@ const trust = `# Trust & Security
 | Data type | Self-hosted | Cloud |
 |---|---|---|
 | Source code | Local only | Accessed at runtime via your LLM provider; not stored |
-| LLM API keys | Local keychain / env vars | Held by your LLM provider, not by OpenWork |
-| Prompts & responses | Local only | Sent to your LLM provider; not logged by OpenWork |
+| LLM API keys | Local keychain / env vars | Held by your LLM provider, not by JuggleWork |
+| Prompts & responses | Local only | Sent to your LLM provider; not logged by JuggleWork |
 | Usage telemetry | None | Anonymous via PostHog; can be disabled |
 | Authentication | Your SSO / SAML | Google or GitHub OAuth |
 
@@ -145,38 +145,38 @@ const trust = `# Trust & Security
 Omar McAdam — team+security@openworklabs.com
 `
 
-const glm52 = `# GLM 5.2 is now in OpenWork — with 2x usage
+const glm52 = `# GLM 5.2 is now in JuggleWork — with 2x usage
 
-> GLM 5.2 is available through OpenWork Models, and we're doubling your usage so you can run real agent work on an open model at a fraction of the cost.
+> GLM 5.2 is available through JuggleWork Models, and we're doubling your usage so you can run real agent work on an open model at a fraction of the cost.
 
 ## What's new
 
-- **GLM 5.2 in OpenWork Models** — managed OSS model access with 2x usage, no keys required
+- **GLM 5.2 in JuggleWork Models** — managed OSS model access with 2x usage, no keys required
 - **Run your day from chat** — tasks organize into In progress / Done / Requires attention; move them by asking
 - **Split screen** — two windows side by side, less tab-switching
-- **Voice mode** — control the OpenWork UI by voice
-- **Advanced analytics on OpenWork Cloud** — usage, activity, and team behavior in one view
+- **Voice mode** — control the JuggleWork UI by voice
+- **Advanced analytics on JuggleWork Cloud** — usage, activity, and team behavior in one view
 
 ## How it works
 
 1. **Sign up** — [Get Started for free](https://app.openworklabs.com?mode=sign-up&intent=models)
-2. **Subscribe** — OpenWork Models at $10/user/mo includes GLM 5.2 with 2x usage
+2. **Subscribe** — JuggleWork Models at $10/user/mo includes GLM 5.2 with 2x usage
 3. **Open the app** — switch to GLM 5.2 from the model picker
 
 ## What to try first
 
-Open OpenWork, switch to GLM 5.2, and ask the chat to organize your tasks.
+Open JuggleWork, switch to GLM 5.2, and ask the chat to organize your tasks.
 
 ## Links
 
-- [Try GLM 5.2 in OpenWork](https://app.openworklabs.com?mode=sign-up&intent=models)
+- [Try GLM 5.2 in JuggleWork](https://app.openworklabs.com?mode=sign-up&intent=models)
 - [Download the app](https://openworklabs.com/download)
 - [Full changelog](https://openworklabs.com/docs/changelog)
 `
 
-const download = `# Get Started with OpenWork
+const download = `# Get Started with JuggleWork
 
-> Create a free OpenWork Cloud account first, then use the guided desktop app access flow.
+> Create a free JuggleWork Cloud account first, then use the guided desktop app access flow.
 
 ## Start here
 

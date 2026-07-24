@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # openwork-debug.sh — one-stop observability + lifecycle control for the
-# OpenWork dev stack.
+# JuggleWork dev stack.
 #
 # Subcommands:
 #   snapshot        (default) processes, ports, health, orphans, sink preview
@@ -40,7 +40,7 @@
 # Explicitly NOT touched by `reset`:
 #   - ~/Library/Application Support/com.differentai.openwork.dev/** (tokens,
 #     workspaces registry, prefs). Use `reset-webview` for WebKit state.
-#   - /Applications/OpenWork.app (prod build never targeted).
+#   - /Applications/JuggleWork.app (prod build never targeted).
 #
 set -euo pipefail
 
@@ -79,7 +79,7 @@ log() { printf '[openwork-debug] %s\n' "$*"; }
 kill_by_pattern() {
   # Sends TERM then KILL to every process whose full command line matches the
   # given regex. Used for targeted teardown of things like the Tauri dev
-  # webview (matched by its target/debug path, so prod OpenWork.app is safe).
+  # webview (matched by its target/debug path, so prod JuggleWork.app is safe).
   local pattern="$1"
   local pids
   pids=$(pgrep -f "$pattern" || true)

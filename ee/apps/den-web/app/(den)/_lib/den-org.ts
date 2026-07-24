@@ -951,7 +951,7 @@ export function parseInvitationPreviewPayload(payload: unknown): DenInvitationPr
       slug: organizationSlug,
       allowedEmailDomains: asStringArray(organization.allowedEmailDomains),
       branding: {
-        appName: asString(branding?.appName) ?? "OpenWork",
+        appName: asString(branding?.appName) ?? "JuggleWork",
         logoUrl: asString(branding?.logoUrl),
         iconUrl: asString(branding?.iconUrl),
       },

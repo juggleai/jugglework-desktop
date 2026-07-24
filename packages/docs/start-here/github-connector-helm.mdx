@@ -1,9 +1,9 @@
 ---
 title: "GitHub connector for Helm"
-description: "Create a GitHub App and configure the OpenWork EE Helm chart for repository connectors."
+description: "Create a GitHub App and configure the JuggleWork EE Helm chart for repository connectors."
 ---
 
-The GitHub connector lets a self-hosted OpenWork deployment install a GitHub App, list repositories the installation can read, discover plugin or marketplace manifests, import selected repositories, and keep imported content fresh from GitHub webhooks.
+The GitHub connector lets a self-hosted JuggleWork deployment install a GitHub App, list repositories the installation can read, discover plugin or marketplace manifests, import selected repositories, and keep imported content fresh from GitHub webhooks.
 
 This is separate from GitHub social sign-in. Social sign-in uses `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for Better Auth. The repository connector uses the `GITHUB_CONNECTOR_APP_*` settings below.
 
@@ -18,7 +18,7 @@ config:
     apiOrigin: "https://api.openwork.example.com"
 ```
 
-The GitHub App needs these OpenWork URLs:
+The GitHub App needs these JuggleWork URLs:
 
 | GitHub App field | Value |
 | --- | --- |
@@ -103,9 +103,9 @@ Optional connector keys:
 
 The chart writes `GITHUB_CONNECTOR_APP_ID` and `GITHUB_CONNECTOR_APP_CLIENT_ID` through the shared ConfigMap, and writes `GITHUB_CONNECTOR_APP_PRIVATE_KEY`, `GITHUB_CONNECTOR_APP_WEBHOOK_SECRET`, and `GITHUB_CONNECTOR_APP_CLIENT_SECRET` through the shared Secret.
 
-## What OpenWork does with it
+## What JuggleWork does with it
 
-When an admin clicks **Connect GitHub** in OpenWork:
+When an admin clicks **Connect GitHub** in JuggleWork:
 
 1. Den API calls `/v1/connectors/github/install/start`.
 2. Den API reads the GitHub App metadata with the app ID and private key.
@@ -124,6 +124,6 @@ After deploying the chart, sign in to Den web and open:
 https://openwork.example.com/dashboard/integrations
 ```
 
-Choose GitHub, install the GitHub App on a test account or organization, select a repository, and start discovery. A working setup should return to OpenWork, show repositories visible to the installation, and allow discovery on a selected repository.
+Choose GitHub, install the GitHub App on a test account or organization, select a repository, and start discovery. A working setup should return to JuggleWork, show repositories visible to the installation, and allow discovery on a selected repository.
 
 For webhook validation, push to a connected repository and check Den API logs for an accepted or intentionally ignored GitHub webhook delivery. A `503` response from `/v1/webhooks/connectors/github` means the webhook secret is not configured in the Den API pod.

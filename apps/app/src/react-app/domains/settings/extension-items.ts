@@ -329,7 +329,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     ],
     // The MCP quick-connect surface ("Available apps · One-click connect")
     // needs unconfigured directory entries too — otherwise Notion, Linear,
-    // OpenWork Cloud Control, etc. are undiscoverable for anyone who is not
+    // JuggleWork Cloud Control, etc. are undiscoverable for anyone who is not
     // signed in to cloud (regression from #2008, which narrowed the section
     // to installed entries only).
     quickConnectEntries: [

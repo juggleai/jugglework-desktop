@@ -218,13 +218,13 @@ function redactedExecutionSnapshot(command, args, cwd, injectedEnv) {
 
 function assertOpenworkServerReady(snapshot) {
   if (!snapshot?.running) {
-    throw new Error("OpenWork server did not stay running after startup.");
+    throw new Error("JuggleWork server did not stay running after startup.");
   }
   if (!snapshot.baseUrl) {
-    throw new Error("OpenWork server did not report a base URL after startup.");
+    throw new Error("JuggleWork server did not report a base URL after startup.");
   }
   if (!snapshot.ownerToken && !snapshot.clientToken) {
-    throw new Error("OpenWork server did not report an access token after startup.");
+    throw new Error("JuggleWork server did not report an access token after startup.");
   }
   return snapshot;
 }
@@ -535,7 +535,7 @@ export async function resolveSystemCaEnv({
   const env = parentEnv ?? {};
   if (Object.prototype.hasOwnProperty.call(env, "NODE_EXTRA_CA_CERTS")) {
     if (typeof logInfo === "function") {
-      logInfo("OpenWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
+      logInfo("JuggleWork runtime: NODE_EXTRA_CA_CERTS is already set; skipping system CA bundle export.");
     }
     return {};
   }
@@ -1150,7 +1150,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           "Content-Type": "application/json",
           "X-OpenWork-Host-Token": hostToken,
         },
-        body: JSON.stringify({ scope: "owner", label: "OpenWork desktop owner token" }),
+        body: JSON.stringify({ scope: "owner", label: "JuggleWork desktop owner token" }),
       },
       5000,
     );
@@ -1211,7 +1211,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       : [...packagedPaths, devPath];
     const embeddedPath = candidates.find((candidate) => existsSync(candidate));
     if (!embeddedPath) {
-      throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
+      throw new Error(`Cannot find JuggleWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
     const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
@@ -1291,7 +1291,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           engineState.childExited = false;
         }
       } catch (error) {
-        appendOutput(openworkServerState, "lastStderr", `OpenWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
+        appendOutput(openworkServerState, "lastStderr", `JuggleWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
     if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
@@ -1475,7 +1475,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         opencodeBinPath: options.opencodeBinPath,
       });
     } catch (error) {
-      appendOutput(engineState, "lastStderr", `OpenWork server: ${error instanceof Error ? error.message : String(error)}\n`);
+      appendOutput(engineState, "lastStderr", `JuggleWork server: ${error instanceof Error ? error.message : String(error)}\n`);
       throw error;
     }
 
@@ -1655,7 +1655,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         status: -1,
         stdout: "",
         stderr:
-          "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.",
+          "Guided install is not supported on Windows yet. Install the JuggleWork-pinned OpenCode version manually, then restart JuggleWork.",
       };
     }
 

@@ -94,7 +94,7 @@ export type McpViewProps = {
   isRemoteWorkspace: boolean;
   /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
-  /** MCP capabilities assigned through OpenWork Connect. */
+  /** MCP capabilities assigned through JuggleWork Connect. */
   availableConnectMcpServers?: McpServerEntry[];
   availableConnectMcpStatuses?: McpStatusMap;
   /** Installed organization extensions to render alongside runtime extensions. */
@@ -126,7 +126,7 @@ export type McpViewProps = {
   isExtensionConnected?: (entry: McpDirectoryInfo) => boolean;
   /** Enablement context for evaluating extension active state. */
   enablementContext?: import("../../../../app/enablement").EnablementContext;
-  /** Organization policy restriction for OpenWork-provided built-in extensions. */
+  /** Organization policy restriction for JuggleWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
   previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
@@ -531,7 +531,7 @@ export function McpView(props: McpViewProps) {
 
       {props.builtInExtensionsDisabled ? (
         <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
-          Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
+          Built-in JuggleWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
         </div>
       ) : null}
 
@@ -828,7 +828,7 @@ export function McpView(props: McpViewProps) {
             description={detailSkill.description ?? "Installed skill"}
             kind="skill"
             connected={true}
-            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through OpenWork Connect" : undefined}
+            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through JuggleWork Connect" : undefined}
             hidden={hidden}
             path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
@@ -856,11 +856,11 @@ export function McpView(props: McpViewProps) {
               ? `Provided by ${detailConnectMcp.pluginName}${detailConnectMcp.marketplaceName ? ` · ${detailConnectMcp.marketplaceName}` : ""}.`
               : detailConnectMcp.marketplaceName
                 ? `Provided by ${detailConnectMcp.marketplaceName}.`
-                : "Available through OpenWork Connect."
+                : "Available through JuggleWork Connect."
           }
           kind="mcp"
           connected={(props.availableConnectMcpStatuses?.[detailConnectMcp.id ?? detailConnectMcp.name]?.status) === "connected"}
-          connectedLabel="Available through OpenWork Connect"
+          connectedLabel="Available through JuggleWork Connect"
           disconnectedLabel="Setup required"
           url={detailConnectMcp.config.type === "remote" ? detailConnectMcp.config.url : undefined}
           oauth={detailConnectMcp.config.type === "remote"}
@@ -1063,7 +1063,7 @@ function McpQuickConnectSection(props: {
                   ? `Provided by ${entry.pluginName}${entry.marketplaceName ? ` · ${entry.marketplaceName}` : ""}.`
                   : entry.marketplaceName
                     ? `Provided by ${entry.marketplaceName}.`
-                    : "Available through OpenWork Connect."
+                    : "Available through JuggleWork Connect."
               }
               kind="mcp"
               connected={status === "connected"}

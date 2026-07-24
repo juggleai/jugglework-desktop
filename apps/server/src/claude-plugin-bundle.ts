@@ -290,7 +290,7 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
   const description = readString(manifest.description);
   const version = readString(manifest.version);
   if (manifest.hooks !== undefined) {
-    warnings.push("This plugin declares hooks, which OpenWork does not support yet. Hooks were skipped.");
+    warnings.push("This plugin declares hooks, which JuggleWork does not support yet. Hooks were skipped.");
   }
 
   // --- Collect component file paths -----------------------------------------
@@ -343,7 +343,7 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
     for (const [name, config] of Object.entries(record)) {
       if (!isRecord(config)) continue;
       if (mcpConfigReferencesPluginRoot(config)) {
-        warnings.push(`MCP server "${name}" uses \${CLAUDE_PLUGIN_ROOT} (a plugin-local command), which OpenWork does not support yet. It was skipped.`);
+        warnings.push(`MCP server "${name}" uses \${CLAUDE_PLUGIN_ROOT} (a plugin-local command), which JuggleWork does not support yet. It was skipped.`);
         continue;
       }
       mcpServers[name] = config;
@@ -447,7 +447,7 @@ export async function resolveClaudePluginBundle(input: { url: string; ref?: stri
   }
 
   if (memberships.length === 0) {
-    throw new ApiError(400, "plugin_empty", "This plugin has no MCP servers, skills, commands, or agents OpenWork can install.");
+    throw new ApiError(400, "plugin_empty", "This plugin has no MCP servers, skills, commands, or agents JuggleWork can install.");
   }
 
   const resolved: CloudPluginResolved = {

@@ -479,7 +479,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     if (desktopAuthRequested) {
-      setAuthInfo("Signed in. Returning to OpenWork...");
+      setAuthInfo("Signed in. Returning to JuggleWork...");
       return null;
     }
 
@@ -1008,7 +1008,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const openworkUrl = getDesktopHandoffOpenworkUrl(payload) ?? "";
       if (!openworkUrl) {
-        setAuthError("Desktop handoff succeeded, but no OpenWork redirect URL was returned.");
+        setAuthError("Desktop handoff succeeded, but no JuggleWork redirect URL was returned.");
         return;
       }
 
@@ -1016,7 +1016,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       setDesktopRedirectUrl(openworkUrl);
       window.location.assign(openworkUrl);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to open OpenWork.");
+      setAuthError(error instanceof Error ? error.message : "Failed to open JuggleWork.");
     } finally {
       setDesktopRedirectBusy(false);
     }

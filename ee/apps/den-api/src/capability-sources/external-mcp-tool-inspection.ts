@@ -338,7 +338,7 @@ export function diagnoseExternalMcpToolCall(input: {
       return {
         status: "failed",
         layer: "network",
-        summary: "OpenWork could not reach the remote MCP while preparing the session, so tools/call was not sent.",
+        summary: "JuggleWork could not reach the remote MCP while preparing the session, so tools/call was not sent.",
       }
     }
     if (
@@ -359,7 +359,7 @@ export function diagnoseExternalMcpToolCall(input: {
     return {
       status: "failed",
       layer: "openwork",
-      summary: "The call failed inside OpenWork before an outbound tools/call request was sent.",
+      summary: "The call failed inside JuggleWork before an outbound tools/call request was sent.",
     }
   }
   if (!input.inspection.response) {
@@ -374,7 +374,7 @@ export function diagnoseExternalMcpToolCall(input: {
       return {
         status: "failed",
         layer: "openwork",
-        summary: "OpenWork's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
+        summary: "JuggleWork's outbound network safety policy blocked this tools/call request, so it was not sent to the remote MCP.",
       }
     }
     if (input.diagnostic?.code === "MCP_PROVIDER_AUTH_REQUIRED") {
@@ -388,13 +388,13 @@ export function diagnoseExternalMcpToolCall(input: {
       return {
         status: "failed",
         layer: "network",
-        summary: "OpenWork sent the request, but the remote MCP did not respond before OpenWork’s deadline.",
+        summary: "JuggleWork sent the request, but the remote MCP did not respond before JuggleWork’s deadline.",
       }
     }
     return {
       status: "failed",
       layer: "network",
-      summary: "OpenWork started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
+      summary: "JuggleWork started tools/call but did not capture an HTTP response. This does not prove the remote MCP caused the failure.",
     }
   }
   if (input.inspection.response.status < 200 || input.inspection.response.status >= 300) {
@@ -413,6 +413,6 @@ export function diagnoseExternalMcpToolCall(input: {
       ? "The remote MCP responded, but the downstream provider rejected the operation."
       : input.diagnostic?.phase === "MCP_TOOL_EXECUTION"
         ? "The remote MCP responded, but the MCP tool returned an error."
-      : "The remote MCP answered, but OpenWork could not accept the MCP response as a successful tool result.",
+      : "The remote MCP answered, but JuggleWork could not accept the MCP response as a successful tool result.",
   }
 }

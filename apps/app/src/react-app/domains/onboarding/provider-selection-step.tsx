@@ -32,7 +32,7 @@ export function ProviderSelectionStep({
         <PageHeader className="mb-8 text-center">
           <PageTitle>Power your first task</PageTitle>
           <PageDescription>
-            Connect a model, then try a real task in chat so you can see OpenWork work.
+            Connect a model, then try a real task in chat so you can see JuggleWork work.
           </PageDescription>
         </PageHeader>
 
@@ -46,10 +46,10 @@ export function ProviderSelectionStep({
               <SparklesIcon className="mt-0.5 size-5 shrink-0 text-blue-10" />
               <div>
                 <div className="text-sm font-medium text-foreground">
-                  Use OpenWork Models
+                  Use JuggleWork Models
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  Pay through OpenWork Cloud and skip API key setup.
+                  Pay through JuggleWork Cloud and skip API key setup.
                 </div>
               </div>
             </button>

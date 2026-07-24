@@ -1,5 +1,5 @@
 /**
- * Library entry point for the OpenWork server.
+ * Library entry point for the JuggleWork server.
  *
  * ```ts
  * import { startEmbeddedServer } from "openwork-server";

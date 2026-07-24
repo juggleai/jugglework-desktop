@@ -86,7 +86,7 @@ export function useBrandLogoUrl(): string | undefined {
 
 /** Organization-managed display name. It does not change the signed app identity. */
 export function useBrandAppName(): string {
-  return useOrgRestrictions().brandAppName ?? "OpenWork";
+  return useOrgRestrictions().brandAppName ?? "JuggleWork";
 }
 
 const POLICY_NOTIFICATION_DEDUPE = "desktop-policy-active";

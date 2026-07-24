@@ -1,6 +1,6 @@
 # Skill: release
 
-Cut an OpenWork release from `dev`. The "Release App" workflow
+Cut a JuggleWork release from `dev`. The "Release App" workflow
 (`.github/workflows/release-macos-aarch64.yml`, triggered by a `v*` tag push or
 dispatch) builds, signs, and publishes the app assets **and** the paste-gated
 installer assets on the same GitHub release. Verified end-to-end on v0.17.37
@@ -80,14 +80,14 @@ gh release view vX.Y.Z --repo different-ai/openwork --json assets --jq '.assets[
 Expect the app assets (`openwork-<platform>-X.Y.Z.*`, `latest*.yml`) plus the
 installer assets:
 
-- `OpenWork-Installer-mac-arm64.dmg`
-- `OpenWork-Installer-mac-x64.dmg`
-- `OpenWork-Installer-win-x64.exe`
+- `JuggleWork-Installer-mac-arm64.dmg`
+- `JuggleWork-Installer-mac-x64.dmg`
+- `JuggleWork-Installer-win-x64.exe`
 
 Spot-check a download URL resolves (302 to release-assets CDN):
 
 ```bash
-curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/OpenWork-Installer-mac-arm64.dmg" | head -2
+curl -sI "https://github.com/different-ai/openwork/releases/download/vX.Y.Z/JuggleWork-Installer-mac-arm64.dmg" | head -2
 ```
 
 ---

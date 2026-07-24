@@ -93,15 +93,15 @@ const kindLabel: Record<ExtensionKind, string> = {
   plugin: "Plugin",
   skill: "Skill",
   "ui-control": "UI Control",
-  extension: "OpenWork Extension",
+  extension: "JuggleWork Extension",
 };
 
 const kindDesc: Record<ExtensionKind, string> = {
   mcp: "Connects as a Model Context Protocol server, giving your agent access to external tools and data.",
-  plugin: "Extends OpenWork with additional capabilities managed by your organization.",
+  plugin: "Extends JuggleWork with additional capabilities managed by your organization.",
   skill: "A reusable workflow that your agent can execute on demand.",
-  "ui-control": "Lets another MCP client inspect and drive this OpenWork desktop UI through a local stdio wrapper.",
-  extension: "An OpenWork extension that adds tools, providers, or integrations to your workspace.",
+  "ui-control": "Lets another MCP client inspect and drive this JuggleWork desktop UI through a local stdio wrapper.",
+  extension: "A JuggleWork extension that adds tools, providers, or integrations to your workspace.",
 };
 
 const uiControlClientConfig = `{
@@ -559,7 +559,7 @@ function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-2 text-sm leading-relaxed text-muted-foreground">
-            <div>OpenWork desktop starts a private localhost bridge automatically.</div>
+            <div>JuggleWork desktop starts a private localhost bridge automatically.</div>
             <div>Your MCP client starts <span className="font-mono text-card-foreground">openwork-ui-mcp</span> over stdio; the wrapper discovers the bridge and proxies UI tools to it.</div>
             <div>Do not point clients at the random localhost bridge URL directly.</div>
           </div>

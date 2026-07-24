@@ -25,16 +25,16 @@ describe("mac DMG layout helpers", () => {
     expect(dmgWindowBounds(dmgLayout.window)).toEqual([100, 100, 760, 500])
 
     const script = buildFinderLayoutScript({
-      appName: "Install OpenWork.app",
-      backgroundPath: "/Volumes/Install OpenWork/.background/bg.tiff",
-      mountPoint: "/Volumes/Install OpenWork",
+      appName: "Install JuggleWork.app",
+      backgroundPath: "/Volumes/Install JuggleWork/.background/bg.tiff",
+      mountPoint: "/Volumes/Install JuggleWork",
     })
 
     expect(script).toContain("set bounds of dmgWindow to {100, 100, 760, 500}")
     expect(script).toContain("set icon size of viewOptions to 128")
     expect(script).toContain("set label position of viewOptions to bottom")
     expect(script).toContain("set background picture of viewOptions to backgroundFile")
-    expect(script).toContain('set position of item "Install OpenWork.app" of dmgWindow to {330, 180}')
+    expect(script).toContain('set position of item "Install JuggleWork.app" of dmgWindow to {330, 180}')
   })
 
   test("builds DMG background and hdiutil arguments", () => {
@@ -54,25 +54,25 @@ describe("mac DMG layout helpers", () => {
       "-format",
       "UDRW",
       "-volname",
-      "Install OpenWork",
+      "Install JuggleWork",
       "-srcfolder",
       "/tmp/root",
       "-ov",
       "/tmp/openwork.rw.dmg",
     ])
-    expect(buildCompressedDmgArgs({ inputPath: "/tmp/openwork.rw.dmg", outputPath: "/tmp/OpenWork.dmg" })).toEqual([
+    expect(buildCompressedDmgArgs({ inputPath: "/tmp/openwork.rw.dmg", outputPath: "/tmp/JuggleWork.dmg" })).toEqual([
       "convert",
       "/tmp/openwork.rw.dmg",
       "-format",
       "UDZO",
       "-ov",
       "-o",
-      "/tmp/OpenWork.dmg",
+      "/tmp/JuggleWork.dmg",
     ])
   })
 
   test("escapes AppleScript strings", () => {
-    expect(appleScriptString('/tmp/Install "OpenWork"/back\\ground.tiff')).toBe('/tmp/Install \\"OpenWork\\"/back\\\\ground.tiff')
+    expect(appleScriptString('/tmp/Install "JuggleWork"/back\\ground.tiff')).toBe('/tmp/Install \\"JuggleWork\\"/back\\\\ground.tiff')
   })
 })
 
@@ -127,7 +127,7 @@ describe("releaseAssetFor", () => {
 describe("windowsInstalledExePath", () => {
   test("reports the installed electron-builder package directory", () => {
     const temp = mkdtempSync(path.join(os.tmpdir(), "openwork-installed-path-"))
-    const installed = path.join(temp, "Programs", "@openworkdesktop", "OpenWork.exe")
+    const installed = path.join(temp, "Programs", "@openworkdesktop", "JuggleWork.exe")
     mkdirSync(path.dirname(installed), { recursive: true })
     writeFileSync(installed, "")
     try {
@@ -255,7 +255,7 @@ describe("resolveInstallerConfig", () => {
 
       expect(resolution.source).toBe("install-link")
       expect(resolution.config).toEqual({
-        appName: "OpenWork",
+        appName: "JuggleWork",
         clientName: "Linked Corp",
         webUrl: "https://linked.example.com",
         apiUrl: "https://linked-api.example.com",
@@ -295,7 +295,7 @@ describe("resolve-link API", () => {
       const response = await fetch(`${installerServer.url}api/resolve-link`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
-        body: JSON.stringify({ installLink: "https://github.com/different-ai/openwork/releases/download/v0.17.39/OpenWork-Installer-win-x64.exe" }),
+        body: JSON.stringify({ installLink: "https://github.com/different-ai/openwork/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe" }),
       })
 
       expect(response.status).toBe(400)
@@ -410,7 +410,7 @@ describe("writeBootstrapConfig", () => {
         writtenAt: "2026-07-09T12:00:00.000Z",
       }))
       const written = writeBootstrapConfig(
-        { appName: "OpenWork", clientName: "Hosted", webUrl: "https://app.openworklabs.com/", apiUrl: "https://api.openworklabs.com/", requireSignin: false, logoUrl: null },
+        { appName: "JuggleWork", clientName: "Hosted", webUrl: "https://app.openworklabs.com/", apiUrl: "https://api.openworklabs.com/", requireSignin: false, logoUrl: null },
         env,
         "win32",
       )
@@ -445,7 +445,7 @@ describe("writeBootstrapConfig", () => {
         claimLinks: [{ id: "claim_example" }],
       }))
       const hostedConfig = {
-        appName: "OpenWork",
+        appName: "JuggleWork",
         clientName: "Hosted",
         webUrl: "https://api.openworklabs.com/v1/",
         apiUrl: "https://api.openworklabs.com/",
@@ -515,21 +515,21 @@ describe("removableInstallerBundlePath", () => {
   const executablePath = "Contents/MacOS/openwork-installer"
 
   test("allows only the installer app bundle in common writable locations", () => {
-    expect(removableInstallerBundlePath(`/Applications/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
-      "/Applications/Install OpenWork.app",
+    expect(removableInstallerBundlePath(`/Applications/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      "/Applications/Install JuggleWork.app",
     )
-    expect(removableInstallerBundlePath(`${homeDir}/Applications/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
-      `${homeDir}/Applications/Install OpenWork.app`,
+    expect(removableInstallerBundlePath(`${homeDir}/Applications/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      `${homeDir}/Applications/Install JuggleWork.app`,
     )
-    expect(removableInstallerBundlePath(`${homeDir}/Downloads/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBe(
-      `${homeDir}/Downloads/Install OpenWork.app`,
+    expect(removableInstallerBundlePath(`${homeDir}/Downloads/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBe(
+      `${homeDir}/Downloads/Install JuggleWork.app`,
     )
   })
 
   test("rejects DMG mounts, wrong app names, nested copies, and other platforms", () => {
-    expect(removableInstallerBundlePath(`/Volumes/Install OpenWork/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
-    expect(removableInstallerBundlePath(`/Applications/OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
-    expect(removableInstallerBundlePath(`${homeDir}/Downloads/OpenWork/Install OpenWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
-    expect(removableInstallerBundlePath(`/Applications/Install OpenWork.app/${executablePath}`, homeDir, "linux")).toBeNull()
+    expect(removableInstallerBundlePath(`/Volumes/Install JuggleWork/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`/Applications/JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`${homeDir}/Downloads/JuggleWork/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBeNull()
+    expect(removableInstallerBundlePath(`/Applications/Install JuggleWork.app/${executablePath}`, homeDir, "linux")).toBeNull()
   })
 })

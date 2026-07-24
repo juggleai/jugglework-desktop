@@ -1,7 +1,7 @@
 {
   "name": "@openwork-ee/den-admin-mcp",
   "version": "0.4.0",
-  "description": "Read-only admin analytics MCP server for the OpenWork Den database — growth, retention, company/user lookups",
+  "description": "Read-only admin analytics MCP server for the JuggleWork Den database — growth, retention, company/user lookups",
   "private": true,
   "type": "module",
   "bin": {

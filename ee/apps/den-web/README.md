@@ -1,4 +1,4 @@
-# OpenWork Cloud App (`ee/apps/den-web`)
+# JuggleWork Cloud App (`ee/apps/den-web`)
 
 Frontend for `app.openworklabs.com`.
 
@@ -8,7 +8,7 @@ Frontend for `app.openworklabs.com`.
 - Handles invited-org signup flows where the invited email stays locked and the user verifies access before joining.
 - Lists and connects existing cloud workers.
 - Sends users to the organization billing page for subscription management.
-- Offers desktop handoff actions so users can open the generated worker directly in OpenWork or copy the connect credentials manually.
+- Offers desktop handoff actions so users can open the generated worker directly in JuggleWork or copy the connect credentials manually.
 - Uses a Next.js proxy route (`/api/den/*`) to reach `api.openworklabs.com` without browser CORS issues.
 - Uses a same-origin auth proxy (`/api/auth/*`) so GitHub OAuth callbacks can land on `app.openworklabs.com`.
 

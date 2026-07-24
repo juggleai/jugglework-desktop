@@ -84,7 +84,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork orchestrator"
+        echo "  JuggleWork orchestrator"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
         echo "  Token:      $$OPENWORK_TOKEN"
@@ -150,7 +150,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork web UI"
+        echo "  JuggleWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
         echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
         echo "============================================"

@@ -117,7 +117,7 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
       icon={Github}
       badgeLabel="GitHub"
       title="Finishing GitHub connection"
-      description="OpenWork is finalizing the GitHub App installation for this organization."
+      description="JuggleWork is finalizing the GitHub App installation for this organization."
       colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       {completionQuery.error ? (
@@ -134,7 +134,7 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
             Finalizing your GitHub connection
           </h2>
           <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500">
-            OpenWork is resolving the installation and loading accessible repositories.
+            JuggleWork is resolving the installation and loading accessible repositories.
           </p>
         </section>
       )}
@@ -193,7 +193,7 @@ function ConfigurationLoadingState() {
       icon={Puzzle}
       badgeLabel="Repository"
       title="Loading…"
-      description="OpenWork is loading this repository's connector configuration."
+      description="JuggleWork is loading this repository's connector configuration."
       colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-sm">
@@ -269,7 +269,7 @@ function GithubConnectorInstanceManagePhase({
       icon={Puzzle}
       badgeLabel="Repository"
       title={repoName}
-      description="Manage which plugins OpenWork imports from this repository."
+      description="Manage which plugins JuggleWork imports from this repository."
       colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
@@ -303,7 +303,7 @@ function GithubConnectorInstanceManagePhase({
                 Auto-import new plugins
               </p>
               <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
-                When new plugin structures appear in this repository on future pushes, OpenWork will discover and import them automatically.
+                When new plugin structures appear in this repository on future pushes, JuggleWork will discover and import them automatically.
               </p>
               {autoImportMutation.error ? (
                 <p className="mt-2 text-[12px] text-red-700">
@@ -347,7 +347,7 @@ function GithubConnectorInstanceManagePhase({
                   Remove this repository
                 </p>
                 <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
-                  Deletes everything OpenWork imported from this repository. The GitHub connection itself stays active.
+                  Deletes everything JuggleWork imported from this repository. The GitHub connection itself stays active.
                 </p>
               </div>
               <DenButton
@@ -542,7 +542,7 @@ function RemoveRepositoryConfirmDialog({
               Remove {repoName}?
             </h2>
             <p className="mt-1 text-[13px] leading-6 text-gray-600">
-              This will delete everything OpenWork imported from this repository, including:
+              This will delete everything JuggleWork imported from this repository, including:
             </p>
             <ul className="mt-3 space-y-1.5 text-[13px] leading-6 text-gray-600">
               <li className="flex gap-2">
@@ -679,7 +679,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       {repositoriesQuery.isLoading || (!connection && (connectionsLoading || connectionsFetching)) ? (
         <StatePanel
           title="Loading repositories"
-          body="OpenWork is checking which repositories this GitHub installation can already read."
+          body="JuggleWork is checking which repositories this GitHub installation can already read."
         />
       ) : repositoriesQuery.error ? (
         <StatePanel
@@ -689,7 +689,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       ) : !connection ? (
         <StatePanel
           title="Connector account not found"
-          body="OpenWork could not find that connected GitHub account. Return to Integrations and reconnect if needed."
+          body="JuggleWork could not find that connected GitHub account. Return to Integrations and reconnect if needed."
         />
       ) : (
         <div className="space-y-5">
@@ -782,7 +782,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
               </p>
               <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
                 {connection.account.repositorySelection === "selected"
-                  ? "This GitHub installation is limited to selected repositories, and OpenWork has already configured all of them."
+                  ? "This GitHub installation is limited to selected repositories, and JuggleWork has already configured all of them."
                   : "This GitHub installation already has access to all repositories under this owner, and there are none unconfigured right now."}
               </p>
               {connection.account.repositorySelection === "selected" && connection.account.manageUrl ? (
@@ -805,7 +805,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
                 No repositories available
               </p>
               <p className="mx-auto mt-2 max-w-[420px] text-[13px] leading-6 text-gray-500">
-                This GitHub installation has no repositories OpenWork can read right now.
+                This GitHub installation has no repositories JuggleWork can read right now.
               </p>
             </div>
           ) : null}
@@ -980,7 +980,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       icon={Sparkles}
       badgeLabel="Discovery"
       title={repoName ?? "Discover repository"}
-      description="Pick which plugins OpenWork should import from this repository."
+      description="Pick which plugins JuggleWork should import from this repository."
       colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
@@ -1005,7 +1005,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       ) : discoveryQuery.error ? (
         <StatePanel
           title="Discovery failed"
-          body={discoveryQuery.error instanceof Error ? discoveryQuery.error.message : "OpenWork could not inspect the connected repository."}
+          body={discoveryQuery.error instanceof Error ? discoveryQuery.error.message : "JuggleWork could not inspect the connected repository."}
         />
       ) : applyMutation.isSuccess ? (
         <DiscoveryAppliedState
@@ -1043,7 +1043,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                   Auto-import new plugins
                 </p>
                 <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
-                  When new plugin structures appear on future pushes, OpenWork will discover and import them automatically.
+                  When new plugin structures appear on future pushes, JuggleWork will discover and import them automatically.
                 </p>
               </div>
               <Toggle
@@ -1072,7 +1072,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
                   No Claude-compatible plugins detected
                 </p>
                 <p className="mx-auto mt-2 max-w-[440px] text-[13px] leading-6 text-gray-500">
-                  OpenWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
+                  JuggleWork currently only supports Claude-compatible plugins and marketplaces. Add <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/marketplace.json</code> or <code className="rounded bg-gray-100 px-1 py-0.5 text-[11px]">.claude-plugin/plugin.json</code> to this repository.
                 </p>
               </div>
             )}
@@ -1083,7 +1083,7 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
               <div className="min-w-0 text-[12.5px] text-gray-500">
                 {selectedPlugins.length === 0
                   ? "Select at least one plugin to import."
-                  : `This will create ${selectedPlugins.length} plugin${selectedPlugins.length === 1 ? "" : "s"} and their mappings in OpenWork.`}
+                  : `This will create ${selectedPlugins.length} plugin${selectedPlugins.length === 1 ? "" : "s"} and their mappings in JuggleWork.`}
               </div>
               <DenButton
                 disabled={selectedPlugins.length === 0}
@@ -1237,7 +1237,7 @@ function DiscoveryAppliedState({
             Discovery applied
           </h2>
           <p className="mt-1 text-[12.5px] leading-[1.6] text-gray-500">
-            OpenWork created <span className="font-semibold text-gray-900">{createdPluginNames.length}</span> plugin{createdPluginNames.length === 1 ? "" : "s"},{" "}
+            JuggleWork created <span className="font-semibold text-gray-900">{createdPluginNames.length}</span> plugin{createdPluginNames.length === 1 ? "" : "s"},{" "}
             <span className="font-semibold text-gray-900">{createdMappingCount}</span> mapping{createdMappingCount === 1 ? "" : "s"}, and{" "}
             <span className="font-semibold text-gray-900">{materializedConfigObjectCount}</span> imported config object{materializedConfigObjectCount === 1 ? "" : "s"}.
           </p>
@@ -1273,7 +1273,7 @@ function DiscoveryLoadingState() {
         Discovering marketplaces and plugins in your repository
       </h2>
       <p className="mt-2 max-w-[460px] text-[13px] leading-[1.6] text-gray-500">
-        OpenWork is scanning the repo for Claude-compatible plugin and marketplace manifests.
+        JuggleWork is scanning the repo for Claude-compatible plugin and marketplace manifests.
       </p>
     </section>
   );

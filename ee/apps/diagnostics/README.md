@@ -1,6 +1,6 @@
-# OpenWork Diagnostics
+# JuggleWork Diagnostics
 
-OpenWork Diagnostics is a deliberately small, Vercel-native MCP compatibility
+JuggleWork Diagnostics is a deliberately small, Vercel-native MCP compatibility
 endpoint. An enterprise can allowlist one stable host, point a client at
 `/mcp`, and use the authenticated dashboard to prove that requests arrived and
 inspect the safely redacted request/response sequence.
@@ -9,7 +9,7 @@ It also supports a controlled Den egress diagnostic for private-cloud and
 Kubernetes deployments. A workspace owner or admin starts the run in **Org
 settings**. The requests originate in the Den process, so they exercise the
 customer's real container DNS, proxy, TLS trust, firewall, service mesh, and
-NetworkPolicy path. OpenWork support can filter the dashboard by the resulting
+NetworkPolicy path. JuggleWork support can filter the dashboard by the resulting
 run ID and see the last request that reached the public service.
 
 It supports one active synthetic profile at a time (`generic`, `microsoft`, or
@@ -41,7 +41,7 @@ scenario URLs such as
 `http://localhost:3010/via/auth-expired/local-connect-debug-proxy`. In the
 desktop, enable **Settings → Advanced → Developer mode**, then paste a complete
 generated URL into **Settings → Cloud → Account → Cloud control plane URL**.
-The same editor is visible on the OpenWork Connect sign-in surface while signed
+The same editor is visible on the JuggleWork Connect sign-in surface while signed
 out. Run the standalone local MCP smoke journey with:
 
 ```bash
@@ -245,7 +245,7 @@ One run uses a UUID correlation header and stops at the first failed layer:
 Every reached endpoint returns a diagnostic reference and retains a redacted
 exchange under the run ID. If Den reports DNS, TLS, connection, or timeout
 failure and the public dashboard has no matching row, the request failed before
-HTTP reached OpenWork. If a row exists, its response status and next missing
+HTTP reached JuggleWork. If a row exists, its response status and next missing
 step narrow the issue to proxy authentication, header stripping, redirects,
 OAuth, or MCP.
 

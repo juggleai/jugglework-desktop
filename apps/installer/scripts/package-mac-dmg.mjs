@@ -14,7 +14,7 @@ import {
   dmgLayout,
 } from "./dmg-layout.mjs"
 
-const appName = "Install OpenWork.app"
+const appName = "Install JuggleWork.app"
 const executableName = "openwork-installer"
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const backgroundAssetDir = path.join(packageRoot, "assets", "dmg-background")
@@ -50,8 +50,8 @@ function writeInfoPlist(appPath) {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Install OpenWork</string>
-  <key>CFBundleDisplayName</key><string>Install OpenWork</string>
+  <key>CFBundleName</key><string>Install JuggleWork</string>
+  <key>CFBundleDisplayName</key><string>Install JuggleWork</string>
   <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
   <key>CFBundleExecutable</key><string>${executableName}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -144,10 +144,10 @@ async function main() {
   const arch = normalizeArch(argValue("--arch") || process.env.OPENWORK_INSTALLER_ARCH || process.env.TARGET_ARCH || process.arch)
   const inputPath = path.resolve(argValue("--input") || defaultInputPath())
   const outDir = path.resolve(argValue("--out-dir") || "dist")
-  const outputPath = path.resolve(argValue("--output") || path.join(outDir, `OpenWork-Installer-${arch}.dmg`))
+  const outputPath = path.resolve(argValue("--output") || path.join(outDir, `JuggleWork-Installer-${arch}.dmg`))
   const stagingRoot = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-dmg-root-"))
   const imageRoot = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-dmg-image-"))
-  const rwImagePath = path.join(imageRoot, "OpenWork-Installer.readwrite.dmg")
+  const rwImagePath = path.join(imageRoot, "JuggleWork-Installer.readwrite.dmg")
   const mountPoint = path.join(imageRoot, dmgLayout.volumeName)
   let attached = false
 

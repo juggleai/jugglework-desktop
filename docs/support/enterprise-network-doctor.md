@@ -14,7 +14,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\openwork-doctor.ps1 -WebUr
 
 Common outcome patterns:
 
-- `LIKELY TLS INTERCEPTION`: the leaf issuer is an internal/proxy CA instead of DigiCert. The corporate proxy is re-signing TLS; allowlist OpenWork hosts or ensure the app runtime trusts that enterprise root.
+- `LIKELY TLS INTERCEPTION`: the leaf issuer is an internal/proxy CA instead of DigiCert. The corporate proxy is re-signing TLS; allowlist JuggleWork hosts or ensure the app runtime trusts that enterprise root.
 - `LIKELY MISSING INTERMEDIATE OR UNTRUSTED ROOT` plus `MISSING INTERMEDIATE CONFIRMED BY OPENSSL`: the server is probably serving the DigiCert leaf without the intermediate, or the machine lacks the issuing root. Fix the control-plane TLS `fullchain`/certificate bundle first.
 - `LIKELY DNS ISSUE`: the hostname does not resolve on that machine. Check VPN, split-horizon DNS, and whether both web and API hostnames exist internally.
 - `PROXY DETECTED`: WinHTTP or .NET routes the URL through a proxy. Verify proxy auth/allowlisting and whether the desktop runtime is expected to use system proxy settings.

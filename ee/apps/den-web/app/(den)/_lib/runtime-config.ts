@@ -14,7 +14,7 @@ export const EMPTY_RUNTIME_CONFIG: DenWebRuntimeConfig = {
   openworkAppConnectUrl: "",
   openworkAuthCallbackUrl: "",
   orgMode: "single_org",
-  singleOrgName: "OpenWork",
+  singleOrgName: "JuggleWork",
   singleOrgSlug: "default",
   singleOrgAllowPublicSignup: false,
   singleOrgSsoConfigured: false
@@ -46,7 +46,7 @@ function normalizeRuntimeConfig(value: unknown): DenWebRuntimeConfig {
     openworkAppConnectUrl: readStringProperty(value, "openworkAppConnectUrl"),
     openworkAuthCallbackUrl: readStringProperty(value, "openworkAuthCallbackUrl"),
     orgMode: normalizeOrgMode(readStringProperty(value, "orgMode")),
-    singleOrgName: singleOrgName || "OpenWork",
+    singleOrgName: singleOrgName || "JuggleWork",
     singleOrgSlug: singleOrgSlug || "default",
     singleOrgAllowPublicSignup: readBooleanProperty(value, "singleOrgAllowPublicSignup"),
     singleOrgSsoConfigured: readBooleanProperty(value, "singleOrgSsoConfigured")

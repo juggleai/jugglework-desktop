@@ -135,7 +135,7 @@ export async function handleMcpRequest(request: Request, rawBody: string): Promi
     const version = negotiatedVersion(value)
     return json(200, rpcResult(id, {
       capabilities: { tools: { listChanged: false } },
-      instructions: "Synthetic OpenWork Diagnostics endpoint. No customer content is returned or retained.",
+      instructions: "Synthetic JuggleWork Diagnostics endpoint. No customer content is returned or retained.",
       protocolVersion: version,
       serverInfo: { name: "openwork-diagnostics", version: "1.0.0" },
     }), {

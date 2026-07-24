@@ -60,7 +60,7 @@ async function loadModelsDevCatalog() {
   const response = await fetch(MODELS_DEV_API_URL, {
     headers: {
       Accept: "application/json",
-      "User-Agent": "OpenWork Den API",
+      "User-Agent": "JuggleWork Den API",
     },
   })
 

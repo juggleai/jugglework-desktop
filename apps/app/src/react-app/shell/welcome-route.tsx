@@ -209,7 +209,7 @@ export function WelcomeRoute() {
           list = null;
         }
         if (!list) {
-          throw new Error("OpenWork server is unavailable. Start or reconnect the server before creating a workspace.");
+          throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
         }
         const createdId =
           resolveWorkspaceListSelectedId(list) ||
@@ -313,7 +313,7 @@ export function WelcomeRoute() {
           }
         }
         if (!list) {
-          throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
+          throw new Error("JuggleWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
         }
         const createdId =
           resolveWorkspaceListSelectedId(list) ||
@@ -440,7 +440,7 @@ export function WelcomeRoute() {
         <ProviderSelectionStep
           showOpenWorkModels={showOpenWorkModelsPromo}
           onOpenWorkModels={() => {
-            // Land on the OpenWork Models value-prop page when already
+            // Land on the JuggleWork Models value-prop page when already
             // signed in to Den; otherwise start sign-up. Previously this
             // always opened a bare sign-up page — payment before value.
             platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));

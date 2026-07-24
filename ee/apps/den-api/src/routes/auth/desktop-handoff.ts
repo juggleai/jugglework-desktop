@@ -183,7 +183,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       hide: true,
       tags: ["Authentication"],
       summary: "Create desktop handoff grant",
-      description: "Creates a short-lived desktop handoff grant and deep link so a signed-in web user can continue the same account in the OpenWork desktop app.",
+      description: "Creates a short-lived desktop handoff grant and deep link so a signed-in web user can continue the same account in the JuggleWork desktop app.",
       responses: {
         200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
         400: jsonResponse("The handoff request body was invalid.", invalidRequestSchema),

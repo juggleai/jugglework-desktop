@@ -49,7 +49,7 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  openwork: "OpenWork",
+  openwork: "JuggleWork",
   opencode: "OpenCode Zen",
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -202,7 +202,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return [
         {
           id: OPENWORK_MODELS_PROVIDER_ID,
-          name: "OpenWork",
+          name: "JuggleWork",
           methods: [{ type: "cloud", label: "Subscribe" }],
           connected: connectedToOpenWork,
           env: [],
@@ -689,7 +689,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         : "Use OpenAI's device flow when the local browser callback is unreliable.";
     }
     if (method.type === "oauth") {
-      return "Continue in the browser and let OpenWork finish the connection automatically.";
+      return "Continue in the browser and let JuggleWork finish the connection automatically.";
     }
     if (method.type === "cloud") {
       return method.description ?? "Use the provider and credential managed by your organization.";
@@ -697,7 +697,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (isOpencodeZenProvider(entry.id)) {
       return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
     }
-    return "Paste a secret key that OpenWork stores locally on this device.";
+    return "Paste a secret key that JuggleWork stores locally on this device.";
   };
 
   return (
@@ -944,7 +944,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[11px] text-gray-9">
-                      OpenWork will install the provider config and use the credential stored for your org.
+                      JuggleWork will install the provider config and use the credential stored for your org.
                     </div>
                     <Button onClick={handleCloudSubmit} disabled={actionDisabled}>
                       {props.submitting ? "Connecting..." : "Connect provider"}
@@ -957,7 +957,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <div className="text-sm font-medium text-gray-12">OpenWork Models</div>
+                      <div className="text-sm font-medium text-gray-12">JuggleWork Models</div>
                       <div className="text-xs text-gray-10 mt-1">
                         Frontier intelligence, hand picked for your team&apos;s most ambitious work.
                       </div>

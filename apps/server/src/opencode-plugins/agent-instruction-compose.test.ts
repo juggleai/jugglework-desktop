@@ -25,9 +25,9 @@ describe("agent instruction compose primitives", () => {
       createInstructionSection("ui", "use openwork_ui_*"),
     );
     const withoutUi = deleteInstructionSection(base, "ui");
-    const expanded = expandInstructionSection(withoutUi, "browser", (body) => `${body}\nnever use browser_* on OpenWork`);
+    const expanded = expandInstructionSection(withoutUi, "browser", (body) => `${body}\nnever use browser_* on JuggleWork`);
     expect(composeAgentInstructions(expanded)).toEqual([
-      "use openwork_execute browser.open_url\nnever use browser_* on OpenWork",
+      "use openwork_execute browser.open_url\nnever use browser_* on JuggleWork",
     ]);
   });
 

@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          asset="OpenWork-Installer-mac-arm64.dmg"
+          asset="JuggleWork-Installer-mac-arm64.dmg"
           url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$asset"
 
           curl --fail --location --retry 5 --silent --show-error \
@@ -74,7 +74,7 @@ jobs:
           hdiutil attach "$RUNNER_TEMP/$asset" -mountpoint "$mount_dir" -nobrowse -readonly
           trap 'hdiutil detach "$mount_dir" || true' EXIT
 
-          app="$mount_dir/OpenWork Installer.app"
+          app="$mount_dir/JuggleWork Installer.app"
           test -d "$app"
           test ! -e "$mount_dir/openwork-installer.json"
           codesign --verify --deep --strict --verbose=2 "$app"

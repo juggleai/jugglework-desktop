@@ -1,6 +1,6 @@
-# OpenWork EE Helm Chart
+# JuggleWork EE Helm Chart
 
-Initial Helm chart for the OpenWork EE Den stack:
+Initial Helm chart for the JuggleWork EE Den stack:
 
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
@@ -30,9 +30,9 @@ image:
 config:
   tenancy:
     # Default chart behavior is single-org for private/self-hosted installs.
-    # Hosted OpenWork Cloud should set this to "multi_org" explicitly.
+    # Hosted JuggleWork Cloud should set this to "multi_org" explicitly.
     mode: "single_org"
-    singleOrgName: "OpenWork"
+    singleOrgName: "JuggleWork"
     singleOrgSlug: "default"
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
@@ -59,7 +59,7 @@ secret:
     databaseUrl: "mysql://openwork:REPLACE_ME@mysql.example.internal:3306/openwork_den?sslaccept=accept"
     betterAuthSecret: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
     denDbEncryptionKey: "REPLACE_WITH_AT_LEAST_32_CHARACTERS"
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "JuggleWork <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
     smtpUser: "openwork@example.com"
@@ -143,11 +143,11 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
 
-Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
+Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling JuggleWork Models management.
 
 ## Custom CA certificates
 
-Use `customCa` when OpenWork must trust a private certificate authority for
+Use `customCa` when JuggleWork must trust a private certificate authority for
 strict TLS verification, such as a MySQL endpoint signed by an internal or cloud
 private CA. The chart does not accept PEM material in values and does not create
 the CA resource for you; create the Kubernetes Secret or ConfigMap in the
@@ -209,7 +209,7 @@ the CA bundle.
 
 The custom CA is release-wide for Node.js processes in this chart. Treat it as a
 global trust decision for outbound TLS from those workloads, and include only CA
-roots your OpenWork deployment should trust. On CA rotation, update the existing
+roots your JuggleWork deployment should trust. On CA rotation, update the existing
 Secret or ConfigMap and restart the running workloads so Node reloads the CA
 file, for example:
 
@@ -244,11 +244,11 @@ Before starting, you need:
   authentication.
 - `kubectl` and Helm configured for the target cluster.
 
-The chart configures telemetry export from OpenWork; it does not install an
+The chart configures telemetry export from JuggleWork; it does not install an
 OpenTelemetry Collector. For an in-cluster Collector, use its Kubernetes DNS
 name, for example
 `http://otel-collector.observability.svc.cluster.local:4318`. Do not use
-`localhost`, because that would refer to the OpenWork container itself.
+`localhost`, because that would refer to the JuggleWork container itself.
 
 First create the namespace used by this example:
 
@@ -260,7 +260,7 @@ If the Collector does not require authentication, skip the Secret and leave
 `observability.otel.headers.existingSecret` empty.
 
 If it requires a bearer token, create the header Secret in the **same
-namespace as OpenWork**:
+namespace as JuggleWork**:
 
 ```bash
 kubectl create secret generic openwork-otel-headers \
@@ -324,7 +324,7 @@ For a Collector without authentication, use:
       key: OTEL_EXPORTER_OTLP_HEADERS
 ```
 
-Install or upgrade OpenWork with the values file:
+Install or upgrade JuggleWork with the values file:
 
 ```bash
 helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
@@ -383,13 +383,13 @@ and active-request metrics.
 
 ### Endpoint and troubleshooting notes
 
-- `observability.otel.endpoint` is a base endpoint. OpenWork appends
+- `observability.otel.endpoint` is a base endpoint. JuggleWork appends
   `/v1/traces`, `/v1/metrics`, and `/v1/logs`.
 - Signal-specific endpoints are used exactly as written. Include the full
   signal path, such as `https://collector.example.com/v1/traces`.
 - Only OTLP HTTP/protobuf is supported. Port `4317` is normally OTLP gRPC and
   will not work; use the HTTP receiver, usually port `4318`.
-- The Secret must be in the OpenWork release namespace, and its key must match
+- The Secret must be in the JuggleWork release namespace, and its key must match
   `observability.otel.headers.key` exactly.
 - A `401` or `403` exporter error usually means the token or header syntax is
   wrong. A connection error usually means the endpoint is not reachable from
@@ -483,7 +483,7 @@ the chart Secret:
 ```yaml
 secret:
   values:
-    emailFrom: "OpenWork <no-reply@example.com>"
+    emailFrom: "JuggleWork <no-reply@example.com>"
     smtpHost: "smtp.example.com"
     smtpPort: "587"
     smtpUser: "openwork@example.com"
@@ -513,7 +513,7 @@ The chart defaults to a private single-org deployment:
 config:
   tenancy:
     mode: "single_org"
-    singleOrgName: "OpenWork"
+    singleOrgName: "JuggleWork"
     singleOrgSlug: "default"
     ownerEmails: "admin@example.com"
     allowPublicSignup: "false"
@@ -707,7 +707,7 @@ not both.
 
 ### Guided desktop setup
 
-The organization download page hands the normal OpenWork app its Den
+The organization download page hands the normal JuggleWork app its Den
 configuration in an explicit second step. The default is a short-lived,
 single-use HTTPS exchange and needs no key configuration:
 
@@ -724,7 +724,7 @@ Den validates the install token and then either:
 - redirects the browser directly to the exact configured GitHub release asset.
 
 Den does not download, cache, wrap, or ZIP GitHub artifacts. The organization
-setup stays in the **Open OpenWork** deep-link step after installation.
+setup stays in the **Open JuggleWork** deep-link step after installation.
 
 For an optional signed handoff, explicitly select signed mode and configure a
 dedicated Ed25519 key whose public key is already trusted by the desktop build:

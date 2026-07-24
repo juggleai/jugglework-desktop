@@ -580,7 +580,7 @@ describe("marketplace capabilities source", () => {
     if (!missingConnection.ok) throw new Error(missingConnection.message)
     expect(missingConnection.result.serverSpec).toEqual(serverSpec)
     expect(missingConnection.result.status).toBe("needs_connection")
-    expect(missingConnection.result.hint).toContain("OpenWork Cloud -> Connectors")
+    expect(missingConnection.result.hint).toContain("JuggleWork Cloud -> Connectors")
 
     const connectionId = createDenTypeId("externalMcpConnection")
     await db.insert(ExternalMcpConnectionTable).values({

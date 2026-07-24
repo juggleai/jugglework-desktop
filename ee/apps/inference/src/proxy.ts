@@ -159,7 +159,7 @@ function sanitizeHeaders(request: Request, apiKey: string, openworkRequestId: st
   if (env.proxyBaseUrl) {
     headers.set("http-referer", env.proxyBaseUrl)
   }
-  headers.set("x-title", "OpenWork Inference")
+  headers.set("x-title", "JuggleWork Inference")
   return headers
 }
 
@@ -400,7 +400,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
+    return { error: openAiError(400, "unsupported_model_selection", `JuggleWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
   }
 
   if (requestedModel === null) {
@@ -428,7 +428,7 @@ async function prepareBody(request: Request, input: {
 
   const body = json
   if (!model) {
-    logProxyError("Unknown OpenWork model alias", {
+    logProxyError("Unknown JuggleWork model alias", {
       openworkRequestId: input.openworkRequestId,
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
@@ -448,7 +448,7 @@ async function prepareBody(request: Request, input: {
       resolvedUpstreamModel: null,
       status: 404,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
+    return { error: openAiError(404, "model_not_found", `Unknown JuggleWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
   }
 
   body.model = model.upstreamModel
@@ -456,7 +456,7 @@ async function prepareBody(request: Request, input: {
   body.session_id = input.openworkRequestId
   body.trace = {
     trace_id: input.openworkRequestId,
-    trace_name: "OpenWork Inference",
+    trace_name: "JuggleWork Inference",
     generation_name: model.alias,
     org_membership_id: input.orgMembershipId,
     inference_key_id: input.inferenceKeyId,
@@ -490,7 +490,7 @@ function localRouteRejection(path: string, method: string) {
   if (path === modelsPath) {
     return openAiError(405, "method_not_allowed", `Method ${method} is not allowed for ${path}. Use GET.`)
   }
-  return openAiError(404, "not_found", `Unsupported OpenWork inference route: ${method} ${path}.`)
+  return openAiError(404, "not_found", `Unsupported JuggleWork inference route: ${method} ${path}.`)
 }
 
 export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies = defaultProxyDependencies) {
@@ -500,13 +500,13 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const rawKey = readApiKey(c.req.raw)
     if (!rawKey) {
       logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
+      return c.json({ error: { message: "Missing JuggleWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
     const inferenceKey = await dependencies.findActiveInferenceKey(rawKey)
     if (!inferenceKey) {
       logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
-      return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
+      return c.json({ error: { message: "Invalid JuggleWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
@@ -548,7 +548,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: null,
         status: 400,
       })
-      return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
+      return openAiError(400, "unsupported_query_parameters", "JuggleWork chat completions does not accept query parameters.")
     }
 
     const prepared = await prepareBody(c.req.raw, {

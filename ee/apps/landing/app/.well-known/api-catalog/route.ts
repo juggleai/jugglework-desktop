@@ -8,28 +8,28 @@ const linkset = {
         {
           href: "https://api.openworklabs.com/openapi.json",
           type: "application/vnd.oai.openapi+json;version=3.1",
-          title: "OpenWork Den API — OpenAPI 3.1 document",
+          title: "JuggleWork Den API — OpenAPI 3.1 document",
         },
       ],
       "service-doc": [
         {
           href: "https://openworklabs.com/docs/api-reference",
           type: "text/html",
-          title: "OpenWork Den API — human documentation",
+          title: "JuggleWork Den API — human documentation",
         },
       ],
       status: [
         {
           href: "https://api.openworklabs.com/health",
           type: "application/json",
-          title: "OpenWork Den API — health endpoint",
+          title: "JuggleWork Den API — health endpoint",
         },
       ],
       "service-meta": [
         {
           href: "https://openworklabs.com/llms.txt",
           type: "text/plain",
-          title: "OpenWork llms.txt — agent-facing site guide",
+          title: "JuggleWork llms.txt — agent-facing site guide",
         },
       ],
     },

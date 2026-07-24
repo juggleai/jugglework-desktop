@@ -40,7 +40,7 @@ const MAX_GMAIL_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024
 const MAX_GMAIL_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_GMAIL_ATTACHMENT_BYTES / 3) * 4
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i
 
-const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the OpenWork Cloud dashboard."
+const CONNECT_GOOGLE_ACCOUNT_MESSAGE = "Connect your Google account first: open Settings > Connect and use Connect your account on the Google Workspace row, or connect from the JuggleWork Cloud dashboard."
 
 const gmailDraftAttachmentSchema = z.object({
   filename: z.string().trim().min(1).max(255).refine((value) => !/[\r\n]/.test(value), "Filename must not contain line breaks.").describe("Filename to show in Gmail."),
@@ -351,7 +351,7 @@ export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boo
 }
 
 function missingPermissionMessage(label: string): string {
-  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in OpenWork Cloud -> Connectors; then reconnect your account in Settings -> Extensions.`
+  return `Your connected Google account is missing the ${label} permission. An admin can enable it on the Google Workspace connector in JuggleWork Cloud -> Connectors; then reconnect your account in Settings -> Extensions.`
 }
 
 async function googleWorkspaceToken(input: {
@@ -973,7 +973,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Share a Google Drive file with a person or the organization",
-      description: "Creates a Drive permission for one file using the calling member's Google Workspace account. To share with one person pass type=user plus emailAddress; to share with the entire organization pass type=domain plus the org's Google Workspace domain (e.g. openworklabs.com). Sharing files not created through OpenWork needs the Full Drive access feature enabled by an admin.",
+      description: "Creates a Drive permission for one file using the calling member's Google Workspace account. To share with one person pass type=user plus emailAddress; to share with the entire organization pass type=domain plus the org's Google Workspace domain (e.g. openworklabs.com). Sharing files not created through JuggleWork needs the Full Drive access feature enabled by an admin.",
       responses: {
         200: jsonResponse("Google Drive file shared.", shareDriveFileResponseSchema),
         400: jsonResponse("The share request was invalid.", invalidRequestSchema),
@@ -1041,7 +1041,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create a Gmail draft or threaded reply draft; attach workspace files with body.attachments: [{ filename, mimeType, dataBase64 }], where dataBase64 is each attachment's file bytes encoded as standard base64",
-      description: "Creates a plain-text Gmail draft in the calling member own mailbox, with optional Cc/Bcc recipients and files read from the active workspace. Set threadId to attach the draft to an existing Gmail thread as a reply using the thread's matching subject; threadId is required for replies and forwards. For threaded drafts, OpenWork appends the quoted conversation automatically. Always share the returned draftUrl with the user because it opens the ready-to-send draft in Gmail for review and send. Returns needs_connection when the member has not connected their Google account yet or when a threaded reply needs Gmail read permission.",
+      description: "Creates a plain-text Gmail draft in the calling member own mailbox, with optional Cc/Bcc recipients and files read from the active workspace. Set threadId to attach the draft to an existing Gmail thread as a reply using the thread's matching subject; threadId is required for replies and forwards. For threaded drafts, JuggleWork appends the quoted conversation automatically. Always share the returned draftUrl with the user because it opens the ready-to-send draft in Gmail for review and send. Returns needs_connection when the member has not connected their Google account yet or when a threaded reply needs Gmail read permission.",
       responses: {
         200: jsonResponse("Draft created.", createDraftResponseSchema),
         400: jsonResponse("The draft request was invalid.", z.union([invalidRequestSchema, missingThreadIdSchema])),

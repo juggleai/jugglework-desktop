@@ -3,7 +3,7 @@ import { getGithubData } from "../../lib/github";
 import { baseOpenGraph } from "../../lib/seo";
 
 export const metadata = {
-  title: "OpenWork Enterprise — Self-hosted AI agents for teams",
+  title: "JuggleWork Enterprise — Self-hosted AI agents for teams",
   description:
     "Deploy shared skills, MCPs, and agent workflows across your org. Self-hosted or managed, 50+ LLM providers, HIPAA / SOC 2 / ISO 27001 / GDPR ready.",
   alternates: {

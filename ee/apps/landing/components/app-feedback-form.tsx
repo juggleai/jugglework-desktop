@@ -36,7 +36,7 @@ export function AppFeedbackForm(props: Props) {
   const contextItems = useMemo(
     () => [
       { label: "App version", value: props.prefill.appVersion },
-      { label: "OpenWork server", value: props.prefill.openworkServerVersion },
+      { label: "JuggleWork server", value: props.prefill.openworkServerVersion },
       { label: "OpenCode", value: props.prefill.opencodeVersion },
       { label: "Orchestrator", value: props.prefill.orchestratorVersion },
       {
@@ -137,7 +137,7 @@ export function AppFeedbackForm(props: Props) {
             Tell us what broke, felt rough, or needs polish.
           </h1>
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-slate-600">
-            Your note goes to the OpenWork team with your contact details, app
+            Your note goes to the JuggleWork team with your contact details, app
             version, and runtime context already attached.
           </p>
 

@@ -11,7 +11,7 @@ import { app, shell } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
+const COMPUTER_USE_HELPER_APP_NAME = "JuggleWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
 function computerUseHelperExecutablePath() {
@@ -41,7 +41,7 @@ function getComputerUseMcpCommand() {
   if (helperExecutable) return [helperExecutable, "mcp"];
 
   if (app.isPackaged) {
-    throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
+    throw new Error("JuggleWork Computer Use is missing from this JuggleWork build.");
   }
 
   if (process.env.OPENWORK_DEV_MODE === "1") {

@@ -314,7 +314,7 @@ function reportTags(report: InferenceRequestReport | InferenceHandledErrorReport
 
 export const sentryInferenceReporter: InferenceReporter = {
   request(report) {
-    Sentry.logger.info("OpenWork chat completions inference request", {
+    Sentry.logger.info("JuggleWork chat completions inference request", {
       ...reportAttributes(report),
       payloadMode: report.payloadMode,
       payload: report.payload,
@@ -329,9 +329,9 @@ export const sentryInferenceReporter: InferenceReporter = {
       upstreamUrl: report.upstreamUrl,
       error: report.error,
     }
-    Sentry.logger.error("OpenWork inference handled error", attributes)
+    Sentry.logger.error("JuggleWork inference handled error", attributes)
     if (report.exception === undefined) {
-      Sentry.captureMessage(`OpenWork inference handled error: ${report.reason}`, {
+      Sentry.captureMessage(`JuggleWork inference handled error: ${report.reason}`, {
         level: "error",
         tags: reportTags(report),
         contexts: { inference: attributes },

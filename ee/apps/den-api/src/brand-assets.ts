@@ -113,7 +113,7 @@ export async function validateAndNormalizeBrandAsset(input: {
       return failure("type-mismatch", "The file contents do not match the selected image type.")
     }
     if (!metadata.width || !metadata.height) {
-      return failure("invalid-image", "OpenWork could not read that image's dimensions.")
+      return failure("invalid-image", "JuggleWork could not read that image's dimensions.")
     }
 
     const dimensionFailure = validateDimensions(input.kind, metadata.width, metadata.height)
@@ -138,7 +138,7 @@ export async function validateAndNormalizeBrandAsset(input: {
       height: normalized.info.height,
     }
   } catch {
-    return failure("invalid-image", "OpenWork could not decode that image. Use a valid PNG or JPEG file.")
+    return failure("invalid-image", "JuggleWork could not decode that image. Use a valid PNG or JPEG file.")
   }
 }
 

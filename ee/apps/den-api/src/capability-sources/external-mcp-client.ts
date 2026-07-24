@@ -57,7 +57,7 @@ import {
  * optional secret + free-form extras) is identical either way.
  */
 
-const CLIENT_NAME = "OpenWork"
+const CLIENT_NAME = "JuggleWork"
 const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
 const EXTERNAL_MCP_LIFECYCLE_TIMEOUT_MS = 45_000
 const EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS = 120_000

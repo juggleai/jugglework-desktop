@@ -26,7 +26,7 @@ export function App() {
 
       <section className="hero-card panel">
         <div className="hero-copy">
-          <span className="eyebrow">OpenWork UI demo</span>
+          <span className="eyebrow">JuggleWork UI demo</span>
           <h1>Seeded Paper gradients on their own dev surface</h1>
           <p>
             Type a TypeID-like string, inspect the deterministic values derived from it, and preview

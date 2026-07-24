@@ -462,15 +462,15 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
                   Connect
                 </text>
-                <text fg={theme.textMuted}>OpenWork URL (LAN)</text>
+                <text fg={theme.textMuted}>JuggleWork URL (LAN)</text>
                 <text fg={theme.text}>{state.connect.openworkUrl}</text>
-                <text fg={theme.textMuted}>OpenWork Collaborator Token</text>
+                <text fg={theme.textMuted}>JuggleWork Collaborator Token</text>
                 <text fg={theme.text}>{state.connect.openworkToken}</text>
                 <Show when={state.connect.ownerToken}>
-                  <text fg={theme.textMuted}>OpenWork Owner Token</text>
+                  <text fg={theme.textMuted}>JuggleWork Owner Token</text>
                   <text fg={theme.text}>{state.connect.ownerToken}</text>
                 </Show>
-                <text fg={theme.textMuted}>OpenWork Host Admin Token</text>
+                <text fg={theme.textMuted}>JuggleWork Host Admin Token</text>
                 <text fg={theme.text}>{state.connect.hostToken}</text>
                 <text fg={theme.textMuted}>OpenCode URL</text>
                 <text fg={theme.text}>{state.connect.opencodeUrl}</text>

@@ -54,7 +54,7 @@ describe("ensureWorkspaceFiles", () => {
 
   test("uses external resources plugin path in packaged Electron", () => {
     const previousResourcesPath = process.resourcesPath;
-    const resourcesPath = join("/Applications", "OpenWork.app", "Contents", "Resources");
+    const resourcesPath = join("/Applications", "JuggleWork.app", "Contents", "Resources");
     process.resourcesPath = resourcesPath;
     try {
       const pluginPath = openworkPluginPath(
@@ -80,14 +80,14 @@ describe("ensureWorkspaceFiles", () => {
     });
   });
 
-  test("does not rewrite existing OpenWork agents", async () => {
+  test("does not rewrite existing JuggleWork agents", async () => {
     await withWorkspace(async (root) => {
       await mkdir(join(root, ".opencode", "agents"), { recursive: true });
       await writeFile(join(root, ".opencode", "agents", "openwork.md"), "---\ndescription: Old\n---\n\nOld instructions\n", "utf8");
       const result = await ensureWorkspaceFiles(root, "starter");
       const agent = await readFile(join(root, ".opencode", "agents", "openwork.md"), "utf8");
       expect(agent).toContain("Old instructions");
-      expect(agent).not.toContain("OpenWork Artifacts");
+      expect(agent).not.toContain("JuggleWork Artifacts");
       expect(result.reloadReasons).toEqual([]);
     });
   });

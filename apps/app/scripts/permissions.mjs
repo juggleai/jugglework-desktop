@@ -28,7 +28,7 @@ try {
 
   // Create a session that asks for tool permission.
   const session = await client.session.create({
-    title: "OpenWork permission test",
+    title: "JuggleWork permission test",
     permission: [
       {
         permission: "bash",

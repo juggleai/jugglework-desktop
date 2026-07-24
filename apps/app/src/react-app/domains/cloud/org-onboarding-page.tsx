@@ -255,7 +255,7 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
             className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
           >
             <CheckCircle2 className="size-3.5" />
-            Setup complete — OpenWork is ready
+            Setup complete — JuggleWork is ready
           </div>
           <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
             <BuildingOffice2Icon className="size-7 text-foreground" />
@@ -627,7 +627,7 @@ export function ResourceSelectionPage() {
             </div>
             <PageTitle>Workspace identity is ready</PageTitle>
             <PageDescription>
-              Restart OpenWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
+              Restart JuggleWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
             </PageDescription>
             {brandingRestart.updateReady ? (
               <div className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11">
@@ -657,7 +657,7 @@ export function ResourceSelectionPage() {
               Continue without restarting
             </Button>
             <Button type="button" size="lg" onClick={() => void restartWithBranding()}>
-              Restart OpenWork
+              Restart JuggleWork
               <ArrowRight data-icon="inline-end" />
             </Button>
           </PageFooter>
@@ -680,7 +680,7 @@ export function ResourceSelectionPage() {
               className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
             >
               <CheckCircle2 className="size-3.5" />
-              Setup complete — OpenWork prepared this workspace
+              Setup complete — JuggleWork prepared this workspace
             </div>
           ) : null}
           <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
@@ -716,7 +716,7 @@ export function ResourceSelectionPage() {
               <EmptyHeader>
                 <EmptyTitle>No resources have been configured for this organization yet.</EmptyTitle>
                 <EmptyDescription>
-                  Add AI providers or marketplaces from the OpenWork Cloud dashboard.
+                  Add AI providers or marketplaces from the JuggleWork Cloud dashboard.
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
@@ -724,7 +724,7 @@ export function ResourceSelectionPage() {
                   variant="outline"
                   onClick={() => platform.openLink(resolveDenBaseUrls(settings.baseUrl).baseUrl)}
                 >
-                  Open OpenWork Cloud
+                  Open JuggleWork Cloud
                   <ArrowUpRightIcon data-icon="inline-end" />
                 </Button>
               </EmptyContent>

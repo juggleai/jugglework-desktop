@@ -1,11 +1,11 @@
 ---
 name: run-evals
-description: do e2e tests, run e2e, validate feature, prove it works, PR proof, frame proof, pnpm evals. Launches OpenWork on Daytona or local Electron and runs the coded eval flows via CDP. Launch + run mechanics; the proof loop itself is the fraimz skill.
+description: do e2e tests, run e2e, validate feature, prove it works, PR proof, frame proof, pnpm evals. Launches JuggleWork on Daytona or local Electron and runs the coded eval flows via CDP. Launch + run mechanics; the proof loop itself is the fraimz skill.
 ---
 
 # Skill: Run Evals
 
-Launch a real OpenWork app and run coded eval flows against it. This skill owns
+Launch a real JuggleWork app and run coded eval flows against it. This skill owns
 **launch + run**; the prove/repair/verdict loop and evidence standard live in
 the **`fraimz` skill** — load that too for anything that ends in a verdict.
 `pnpm evals` runs automation mode; use `pnpm fraimz` for demo/voiceover mode.
@@ -36,7 +36,7 @@ published frame proof. Refresh the snapshot when dependencies change:
 Verify the endpoint before running flows:
 
 ```
-browser_list({ browser_url: "<CDP_URL>" })   # must show an "OpenWork" target
+browser_list({ browser_url: "<CDP_URL>" })   # must show an "JuggleWork" target
 ```
 
 If it fails, inspect `/tmp/electron.log` — the real success marker is

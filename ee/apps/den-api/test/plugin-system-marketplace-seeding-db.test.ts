@@ -104,7 +104,7 @@ test("concurrent marketplace lists seed one complete set of defaults", async () 
   for (const result of results) {
     expect(result.items.map((item) => item.name).sort()).toEqual([
       "Anthropic-Compatible Plugins",
-      "OpenWork Marketplace",
+      "JuggleWork Marketplace",
     ])
   }
 

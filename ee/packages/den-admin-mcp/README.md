@@ -1,6 +1,6 @@
 # den-admin-mcp
 
-Read-only admin analytics MCP server for the OpenWork Den database. Ask OpenWork
+Read-only admin analytics MCP server for the JuggleWork Den database. Ask JuggleWork
 things like "what's our weekly growth rate?", "show retention for the last 8
 weeks", or "who at acme.test is active?" and the agent answers from real data.
 
@@ -8,7 +8,7 @@ weeks", or "who at acme.test is active?" and the agent answers from real data.
 > streamable HTTP at `/mcp/admin` (see `ee/apps/den-api/src/mcp/admin.ts`),
 > authenticated with the desktop's first-party MCP token and gated by the
 > platform-admin allowlist — no `DATABASE_URL` on client machines. In the app,
-> connect "OpenWork Admin Analytics" from Settings -> Connections -> MCP
+> connect "JuggleWork Admin Analytics" from Settings -> Connections -> MCP
 > (under Show hidden). This stdio package remains the break-glass/dev variant
 > for when den-api itself is down. Keep tool payloads and
 > `DEN_ADMIN_MCP_VERSION` in sync between the two; `den_admin_version` reports
@@ -41,7 +41,7 @@ CREATE USER 'den_readonly'@'%' IDENTIFIED BY '...';
 GRANT SELECT ON openwork_den.* TO 'den_readonly'@'%';
 ```
 
-## Register in OpenWork
+## Register in JuggleWork
 
 Add to `opencode.json` (workspace) or `~/.config/opencode/opencode.jsonc`
 (global), or via Settings -> Connections -> MCP in the app:

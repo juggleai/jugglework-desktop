@@ -294,7 +294,7 @@ describe("env routes", () => {
     expect(put.status).toBe(400);
     const body = (await put.json()) as { code: string; message: string };
     expect(body.code).toBe("reserved_env_key");
-    expect(body.message).toBe("Environment variable name is reserved for OpenWork internals");
+    expect(body.message).toBe("Environment variable name is reserved for JuggleWork internals");
     expect(body.message).not.toContain("OPENWORK_TOKEN");
   });
 
@@ -367,7 +367,7 @@ describe("env routes", () => {
     });
   });
 
-  test("voice realtime session prefers OpenWork Models broker when configured", async () => {
+  test("voice realtime session prefers JuggleWork Models broker when configured", async () => {
     process.env.OPENAI_API_KEY = "sk-should-not-be-used";
     const { base } = await boot();
 

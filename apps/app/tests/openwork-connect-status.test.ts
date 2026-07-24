@@ -25,7 +25,7 @@ function maintenance(
   };
 }
 
-describe("OpenWork Connect status", () => {
+describe("JuggleWork Connect status", () => {
   test("labels the diagnosed message as one possible issue for native tooltips", () => {
     expect(openWorkConnectAttentionTitle("Connected service tools could not be verified."))
       .toBe("One possible issue: Connected service tools could not be verified.");

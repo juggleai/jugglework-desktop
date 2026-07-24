@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "OpenWork Docs",
+  "name": "JuggleWork Docs",
   "favicon": "/logo/light.svg",
   "logo": {
     "light": "/logo/light.svg",
@@ -57,7 +57,7 @@
             ]
           },
           {
-            "group": "Help improve OpenWork",
+            "group": "Help improve JuggleWork",
             "pages": [
               "start-here/missing-docs",
               "start-here/missing-languages"
@@ -164,7 +164,7 @@
   "navbar": {
     "primary": {
       "type": "button",
-      "label": "Download OpenWork",
+      "label": "Download JuggleWork",
       "href": "https://openworklabs.com/download"
     }
   }

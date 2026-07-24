@@ -43,20 +43,20 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: metadataBaseFromOrigin(metadataOrigin),
-    title: "OpenWork Cloud",
+    title: "JuggleWork Cloud",
     description:
-      "Share your OpenWork setup with your team, manage billing, and use OpenWork Cloud from app.openworklabs.com.",
+      "Share your JuggleWork setup with your team, manage billing, and use JuggleWork Cloud from app.openworklabs.com.",
     openGraph: {
-      title: "OpenWork Cloud",
+      title: "JuggleWork Cloud",
       description:
-        "Share your OpenWork setup with your team and keep selected workflows available in OpenWork Cloud.",
+        "Share your JuggleWork setup with your team and keep selected workflows available in JuggleWork Cloud.",
       images: ["/opengraph-image"]
     },
     twitter: {
       card: "summary_large_image",
-      title: "OpenWork Cloud",
+      title: "JuggleWork Cloud",
       description:
-        "Share your OpenWork setup with your team and manage OpenWork Cloud from app.openworklabs.com.",
+        "Share your JuggleWork setup with your team and manage JuggleWork Cloud from app.openworklabs.com.",
       images: ["/opengraph-image"]
     },
     icons: {

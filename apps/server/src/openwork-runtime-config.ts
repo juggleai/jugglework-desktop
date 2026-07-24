@@ -33,9 +33,9 @@ import {
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 
-const OPENWORK_AGENT_PROMPT = `You are OpenWork.
+const OPENWORK_AGENT_PROMPT = `You are JuggleWork.
 
-When the user refers to "you", they mean the OpenWork app and the current workspace.
+When the user refers to "you", they mean the JuggleWork app and the current workspace.
 
 Your job:
 - Help the user work on files safely.
@@ -57,9 +57,9 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 - If steps repeat, factor them into a skill.
 - Prefer clear, practical steps over abstract explanations.
 
-## OpenWork Artifacts
+## JuggleWork Artifacts
 
-OpenWork can preview, edit, and download standard artifacts when you create or update them in the workspace.
+JuggleWork can preview, edit, and download standard artifacts when you create or update them in the workspace.
 
 - Prefer standard output files for user-visible deliverables: Markdown (.md), CSV (.csv), Excel workbooks (.xlsx), PowerPoint decks (.pptx), and browser previews (index.html or a local http://localhost:<port> URL).
 - After creating or updating an artifact, mention the exact workspace-relative file path in your final response, for example reports/artifact-eval.md or reports/artifact-eval.xlsx.
@@ -101,13 +101,13 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {
-        description: "OpenWork default agent",
+        description: "JuggleWork default agent",
         mode: "primary",
         temperature: 0.2,
         prompt: OPENWORK_AGENT_PROMPT,
         permission: {
           skill: {
-            // OpenWork supplies its own current skill routing and no longer
+            // JuggleWork supplies its own current skill routing and no longer
             // supports these engine or legacy workspace skills.
             "customize-opencode": "deny",
             "get-started": "deny",

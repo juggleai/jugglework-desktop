@@ -18,7 +18,7 @@ export const metadata = {
 const softwareApplicationSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "OpenWork",
+  name: "JuggleWork",
   description:
     "Open source Claude Cowork alternative. Desktop app that lets teams use 50+ LLMs, bring their own provider keys, and ship reusable agent setups with guardrails.",
   url: "https://openworklabs.com",
@@ -32,7 +32,7 @@ const softwareApplicationSchema = {
   },
   publisher: {
     "@type": "Organization",
-    name: "OpenWork",
+    name: "JuggleWork",
     url: "https://openworklabs.com"
   }
 };

@@ -3,7 +3,7 @@
 //
 // These are VERIFICATION keys only — safe to publish. The matching private
 // keys are held by the deployment operator that mints connect links (for
-// OpenWork Cloud: the vendor's secret store) and never enter this repository.
+// JuggleWork Cloud: the vendor's secret store) and never enter this repository.
 // Rotation: generate a fresh pair with scripts/generate-connect-link-keypair.mjs,
 // add the new public key here under its kid, ship a release, flip the minting
 // side to the new kid, then drop the old entry in a later release.

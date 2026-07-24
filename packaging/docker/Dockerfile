@@ -20,15 +20,15 @@ ENV OPENWORK_SIDECAR_DIR=/data/sidecars
 # The workspace is mounted from the host/volume.
 ENV OPENWORK_WORKSPACE=/workspace
 
-# OpenWork host contract surface.
+# JuggleWork host contract surface.
 EXPOSE 8787
 
 VOLUME ["/workspace", "/data"]
 
 # Defaults:
-# - OpenWork server is published intentionally via --remote-access
+# - JuggleWork server is published intentionally via --remote-access
 # - OpenCode stays internal (127.0.0.1:4096)
-# - OpenWork server proxies OpenCode via localhost
+# - JuggleWork server proxies OpenCode via localhost
 CMD [
   "openwork",
   "serve",

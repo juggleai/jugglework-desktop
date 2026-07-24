@@ -3,7 +3,7 @@ import { openworkFeatureContributionSchema } from "@openwork/types/openwork-prov
 
 import { buildOpenworkProviderContributions } from "./openwork-provider-adapters.js";
 
-describe("OpenWork provider adapters", () => {
+describe("JuggleWork provider adapters", () => {
   test("normalizes sessions and extensions into semantic contributions", () => {
     const contributions = buildOpenworkProviderContributions([]);
 

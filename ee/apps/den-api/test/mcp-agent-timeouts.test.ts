@@ -125,7 +125,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("cloudReadiness")
   expect(client.getInstructions()).toContain("Gmail read/search")
   expect(client.getInstructions()).toContain("Settings > Connect")
-  expect(client.getInstructions()).toContain("Never tell the user to reconnect OpenWork Cloud")
+  expect(client.getInstructions()).toContain("Never tell the user to reconnect JuggleWork Cloud")
   expect(client.getInstructions()).toContain("connectionStatus.connectionName")
   expect(client.getInstructions()).toContain("schemaGuidance is advisory")
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
@@ -171,7 +171,7 @@ test("built-in cloud skills are searchable and executable as skill capabilities"
   expect(createSkill).toMatchObject({
     kind: "skill",
     name: "Create Skill",
-    provenance: "Built into OpenWork Cloud.",
+    provenance: "Built into JuggleWork Cloud.",
   })
   expect(createSkill?.content).toContain("name: create-skill")
   expect(createSkill?.content).toContain("postPlugins")
@@ -387,7 +387,7 @@ test("successful provider output preserves advisory schema guidance as additiona
     schemaGuidance: {
       advisory: true,
       providerCallAttempted: true,
-      message: "OpenWork forwarded the call to the provider. Use the provider result as the source of truth.",
+      message: "JuggleWork forwarded the call to the provider. Use the provider result as the source of truth.",
       warnings: [{
         code: "arguments_schema_mismatch",
         message: "The arguments did not match the advertised schema.",

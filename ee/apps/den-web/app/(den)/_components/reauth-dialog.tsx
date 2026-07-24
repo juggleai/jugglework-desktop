@@ -241,7 +241,7 @@ export function ReauthDialog({
   async function continueSocial(provider: SocialAuthProvider) {
     const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
     if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      setError("JuggleWork could not open the sign-in window. Allow popups for JuggleWork, then try again.");
       return;
     }
 
@@ -286,7 +286,7 @@ export function ReauthDialog({
 
     const popup = window.open("", "openwork-reauth", "popup,width=480,height=640");
     if (!popup) {
-      setError("OpenWork could not open the sign-in window. Allow popups for OpenWork, then try again.");
+      setError("JuggleWork could not open the sign-in window. Allow popups for JuggleWork, then try again.");
       return;
     }
 
@@ -339,7 +339,7 @@ export function ReauthDialog({
               {WORKSPACE_REAUTH_SECURITY_MESSAGE}
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
-              OpenWork retries the pending action automatically after you confirm.
+              JuggleWork retries the pending action automatically after you confirm.
             </p>
           </div>
         </div>

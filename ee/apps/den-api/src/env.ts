@@ -442,7 +442,7 @@ export const env = {
   },
   orgMode,
   singleOrg: {
-    name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "OpenWork",
+    name: optionalString(parsed.DEN_SINGLE_ORG_NAME) ?? "JuggleWork",
     slug: normalizeSingleOrgSlug(parsed.DEN_SINGLE_ORG_SLUG),
     allowPublicSignup: parseSingleOrgAllowPublicSignup(parsed.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP, orgMode),
     ownerEmails: splitCsv(parsed.DEN_SINGLE_ORG_OWNER_EMAILS)
@@ -500,7 +500,7 @@ export const env = {
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
     workerRepo:
-      // TODO(ent): require RENDER_WORKER_REPO for hosted/customer Render deployments instead of using OpenWork's public repo default.
+      // TODO(ent): require RENDER_WORKER_REPO for hosted/customer Render deployments instead of using JuggleWork's public repo default.
       parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir:

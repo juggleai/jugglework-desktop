@@ -750,7 +750,7 @@ function requirementHint(input: {
   if (input.requirement.state === "needs_connection" || input.requirement.state === "reconnect") {
     return `${input.capabilityName} belongs to marketplace plugin "${input.requirement.pluginName}", which requires "${input.requirement.name}". ${input.requirement.action.label} from Your Connections, then try again.`
   }
-  return `${input.capabilityName} belongs to marketplace plugin "${input.requirement.pluginName}", which needs an org admin to configure its required MCP connection before it can run in OpenWork Cloud.`
+  return `${input.capabilityName} belongs to marketplace plugin "${input.requirement.pluginName}", which needs an org admin to configure its required MCP connection before it can run in JuggleWork Cloud.`
 }
 
 function connectionById(connections: ExternalMcpConnectionRow[]) {
@@ -1179,7 +1179,7 @@ async function mcpHint(input: {
 
   return {
     status: "needs_connection",
-    hint: `This plugin declares an MCP server but OpenWork will not auto-provision it. Ask an org admin to add it in OpenWork Cloud -> Connectors, or install "${input.row.plugin.name}" locally.`,
+    hint: `This plugin declares an MCP server but JuggleWork will not auto-provision it. Ask an org admin to add it in JuggleWork Cloud -> Connectors, or install "${input.row.plugin.name}" locally.`,
   }
 }
 
@@ -1392,7 +1392,7 @@ export async function executeMarketplaceCapability(input: {
       ...basePayload(row),
       definition: version.rawSourceText,
       status: "unsupported",
-      hint: "Marketplace plugin hooks are not supported on the OpenWork capability rail yet.",
+      hint: "Marketplace plugin hooks are not supported on the JuggleWork capability rail yet.",
     },
   }
 }

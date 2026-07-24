@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { ensureDir, exists } from "./utils.js";
 
 // User-level environment variables, persisted so the desktop shell can inject
-// them into every spawned child (OpenCode and OpenWork server).
+// them into every spawned child (OpenCode and JuggleWork server).
 // Motivation: Linux GUI launches don't inherit shell env, so users set
 // ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
 // Scope: user/machine, not workspace. Not synced to the cloud.
@@ -13,7 +13,7 @@ import { ensureDir, exists } from "./utils.js";
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Keys reserved for internal wiring by the shell/orchestrator/server. This UI
-// is for service credentials, not OpenWork/OpenCode runtime knobs; users who
+// is for service credentials, not JuggleWork/OpenCode runtime knobs; users who
 // need OPENCODE_* process settings should set them from the launching shell.
 // We refuse writes to these and strip them when reading for injection, so a
 // tampered file cannot shadow auth credentials, token paths, or process
@@ -259,7 +259,7 @@ export class InvalidEnvKeyError extends Error {
   constructor(key: string, code: "invalid_env_key" | "reserved_env_key") {
     super(
       code === "reserved_env_key"
-        ? `Environment variable name is reserved for OpenWork internals: ${key}`
+        ? `Environment variable name is reserved for JuggleWork internals: ${key}`
         : `Invalid environment variable name: ${key}`,
     );
     this.code = code;

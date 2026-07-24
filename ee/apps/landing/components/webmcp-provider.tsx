@@ -76,15 +76,15 @@ const downloadLinks = {
   platforms: {
     macos: {
       page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      note: "Sign up for JuggleWork Cloud first, then use the guided desktop app access flow.",
     },
     windows: {
       page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      note: "Sign up for JuggleWork Cloud first, then use the guided desktop app access flow.",
     },
     linux: {
       page: "https://app.openworklabs.com?mode=sign-up",
-      note: "Sign up for OpenWork Cloud first, then use the guided desktop app access flow.",
+      note: "Sign up for JuggleWork Cloud first, then use the guided desktop app access flow.",
     },
   },
 }
@@ -137,7 +137,7 @@ const tools: Tool[] = [
   {
     name: "get_pricing_summary",
     description:
-      "Return OpenWork's pricing tiers, what each includes, and the CTA destination. Read-only; does not navigate.",
+      "Return JuggleWork's pricing tiers, what each includes, and the CTA destination. Read-only; does not navigate.",
     inputSchema: {
       type: "object",
       properties: {},

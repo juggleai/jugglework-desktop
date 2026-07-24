@@ -1,11 +1,11 @@
 ---
 name: daytona-seeded-cloud-demo
-description: Daytona seeded cloud demo, demo credentials, Acme Robotics seed. Use when the user asks to spin up, keep running, seed, or prepare an OpenWork Cloud/Den Daytona demo instance.
+description: Daytona seeded cloud demo, demo credentials, Acme Robotics seed. Use when the user asks to spin up, keep running, seed, or prepare a JuggleWork Cloud/Den Daytona demo instance.
 ---
 
 # Daytona Seeded Cloud Demo
 
-Use this skill to quickly create a persistent-enough OpenWork Cloud/Den Daytona server demo, seed it with Acme Robotics demo data, validate the login, and return copy-pasteable demo details.
+Use this skill to quickly create a persistent-enough JuggleWork Cloud/Den Daytona server demo, seed it with Acme Robotics demo data, validate the login, and return copy-pasteable demo details.
 
 ## Goal
 

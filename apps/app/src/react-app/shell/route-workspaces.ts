@@ -116,7 +116,7 @@ export function describeWorkspaceCreateError(error: unknown) {
     lower.includes("os error 60") ||
     lower.includes("etimedout")
   ) {
-    return `${message}\n\nOpenWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
+    return `${message}\n\nJuggleWork could not read the workspace config before the filesystem timed out. This often happens when the folder is still syncing from iCloud Drive or another remote folder. Wait for the folder to finish downloading, move the workspace to a local folder, or try again.`;
   }
   return message;
 }
@@ -134,7 +134,7 @@ export function mergeRouteWorkspaces(
   );
 
   // If a server workspace's id matches a desktop workspace marked as remote,
-  // skip the server's view entirely. The local OpenWork server may have stale
+  // skip the server's view entirely. The local JuggleWork server may have stale
   // registrations from earlier (buggy) activate calls that show up here as
   // `workspaceType: "local"`, which would otherwise clobber the desktop's
   // remote routing fields and send workspace-scoped requests back to the

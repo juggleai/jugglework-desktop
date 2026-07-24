@@ -22,9 +22,9 @@ opencode mcp auth openwork`;
       id: "codex",
       label: "Codex",
       eyebrow: "Codex desktop, CLI, and IDE",
-      helper: "Add OpenWork once, then sign in with Codex's MCP login command.",
+      helper: "Add JuggleWork once, then sign in with Codex's MCP login command.",
       supportStatus: "Setup only",
-      supportExplanation: "Setup guide only: add OpenWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch.",
+      supportExplanation: "Setup guide only: add JuggleWork, run codex mcp login openwork, and reconnect with logout then login. Native proof must be rerun on this exact branch.",
       copyText: `codex mcp add openwork --url ${MCP_SERVER_URL}`,
       authText: CODEX_LOGIN_COMMAND,
       reconnectText: CODEX_RECONNECT_COMMAND,
@@ -135,7 +135,7 @@ opencode mcp auth openwork`;
         </div>
       </div>
 
-      <div className="overflow-x-auto border-b border-gray-100 px-4 pt-4 dark:border-white/10" role="tablist" aria-label="OpenWork MCP client install options">
+      <div className="overflow-x-auto border-b border-gray-100 px-4 pt-4 dark:border-white/10" role="tablist" aria-label="JuggleWork MCP client install options">
         <div className="flex min-w-max gap-1">
           {installs.map((install) => (
             <button
@@ -195,8 +195,8 @@ opencode mcp auth openwork`;
           </div>
         ) : null}
         <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="m-0 text-xs text-gray-500">Works with your OpenWork account — <a href="https://app.openworklabs.com?mode=sign-up" className="font-medium underline">create one free</a>.</p>
-          <button type="button" aria-label="Copy the OpenWork MCP install command" onClick={() => copy(activeInstall.id, activeInstall.copyText)} className="shrink-0 rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white">
+          <p className="m-0 text-xs text-gray-500">Works with your JuggleWork account — <a href="https://app.openworklabs.com?mode=sign-up" className="font-medium underline">create one free</a>.</p>
+          <button type="button" aria-label="Copy the JuggleWork MCP install command" onClick={() => copy(activeInstall.id, activeInstall.copyText)} className="shrink-0 rounded-lg bg-[#011627] px-4 py-2 text-xs font-medium text-white">
             {copied === activeInstall.id ? "Copied" : copied === "error" ? "Couldn't copy" : "Copy"}
           </button>
         </div>
@@ -206,7 +206,7 @@ opencode mcp auth openwork`;
         <span className="font-semibold uppercase tracking-wider text-gray-400">Server URL</span>
         <div className="flex min-w-0 items-center gap-2">
           <code className="break-all text-gray-950 dark:text-white">{MCP_SERVER_URL}</code>
-          <button type="button" aria-label="Copy the OpenWork MCP server URL" onClick={() => copy("server-url", MCP_SERVER_URL)} className="shrink-0 font-medium underline">
+          <button type="button" aria-label="Copy the JuggleWork MCP server URL" onClick={() => copy("server-url", MCP_SERVER_URL)} className="shrink-0 font-medium underline">
             {copied === "server-url" ? "Copied" : "Copy URL"}
           </button>
         </div>

@@ -1,4 +1,4 @@
-# OpenWork Host (Docker)
+# JuggleWork Host (Docker)
 
 ## Den local stack (Docker)
 
@@ -20,7 +20,7 @@ What it does:
 - Starts **MySQL** for the Den service
 - Starts **Den control plane** on port 8788 inside Docker with `PROVISIONER_MODE=stub`
 - Runs **Den migrations** automatically before the API starts in the local compose stack
-- Starts the **OpenWork Cloud web app** on port 3005 inside Docker
+- Starts the **JuggleWork Cloud web app** on port 3005 inside Docker
 - Points the web app's auth + API proxy routes at the local Den service
 - Prints randomized host URLs so multiple stacks can run side by side
 
@@ -262,13 +262,13 @@ Set `DEN_BOOTSTRAP_ADMIN_EMAILS` on the Den API service, restart it, open `/admi
 
 If you are iterating on Den locally and do not need the full Dockerized web stack, use the hybrid path instead:
 
-From the OpenWork repo root:
+From the JuggleWork repo root:
 
 ```bash
 pnpm dev:den
 ```
 
-Or from the OpenWork enterprise root:
+Or from the JuggleWork enterprise root:
 
 ```bash
 pnpm --dir _repos/openwork dev:den
@@ -277,7 +277,7 @@ pnpm --dir _repos/openwork dev:den
 What it does:
 - Starts only **MySQL** in Docker
 - Runs **Den controller** locally in watch mode
-- Runs **OpenWork Cloud web app** locally in Next.js dev mode
+- Runs **JuggleWork Cloud web app** locally in Next.js dev mode
 - Reuses the existing local-dev wiring in `scripts/dev-web-local.sh`
 
 This is usually the fastest path for UI/auth/control-plane iteration because it avoids rebuilding the Docker web image on each boot.
@@ -337,7 +337,7 @@ Useful overrides:
 
 ## Production container
 
-This is a minimal packaging template to run the OpenWork Host contract in a single container.
+This is a minimal packaging template to run the JuggleWork Host contract in a single container.
 
 It runs:
 
@@ -371,9 +371,9 @@ Optional:
 Persistence:
 
 - Workspace is mounted at `/workspace`
-- Host data dir is mounted at `/data` (OpenCode caches + OpenWork server config/tokens)
+- Host data dir is mounted at `/data` (OpenCode caches + JuggleWork server config/tokens)
 
 ### Notes
 
-- OpenCode is not exposed directly; access it via the OpenWork proxy (`/opencode/*`).
+- OpenCode is not exposed directly; access it via the JuggleWork proxy (`/opencode/*`).
 - For PaaS, replace `./workspace:/workspace` with a volume or a checkout strategy (git clone on boot).

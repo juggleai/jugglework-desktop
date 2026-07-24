@@ -1,9 +1,9 @@
 ---
 title: "Diagnostic prompts"
-description: "Paste-able prompts that let your agent debug OpenWork issues on its own."
+description: "Paste-able prompts that let your agent debug JuggleWork issues on its own."
 ---
 
-When something in OpenWork looks wrong, the fastest debugger is usually the agent itself: it can read its own configuration, probe servers, and verify fixes in-band. This page collects paste-able diagnostic prompts. Copy the whole block for your situation into a chat and let the agent work through it.
+When something in JuggleWork looks wrong, the fastest debugger is usually the agent itself: it can read its own configuration, probe servers, and verify fixes in-band. This page collects paste-able diagnostic prompts. Copy the whole block for your situation into a chat and let the agent work through it.
 
 Each prompt is safe by default: it gathers evidence first, redacts secrets, and asks before changing anything.
 
@@ -22,7 +22,7 @@ Your agent's `openwork-cloud` MCP entry is a snapshot: it stores a server URL an
 **Paste this to your agent**
 
 ````text
-Debug and fix my OpenWork Cloud MCP connection. It may be pointed at a stale or local server instead of my real OpenWork Cloud server. Work through ALL phases, show your findings after each, and ask before anything destructive. Never print bearer tokens or Authorization headers — redact them.
+Debug and fix my JuggleWork Cloud MCP connection. It may be pointed at a stale or local server instead of my real JuggleWork Cloud server. Work through ALL phases, show your findings after each, and ask before anything destructive. Never print bearer tokens or Authorization headers — redact them.
 
 My expected cloud web URL: https://app.openworklabs.com (replace with your self-hosted Den web URL if you run your own).
 
@@ -60,10 +60,10 @@ State which world you are in:
 
 8. If a desktop-bootstrap.json contains stale/localhost URLs: show it, then delete that file.
 9. If a stale local server process is still listening: show the process, then stop it, so nothing can silently serve old answers again.
-10. Tell me to do these steps in OpenWork, then wait:
-    - Restart the OpenWork app.
+10. Tell me to do these steps in JuggleWork, then wait:
+    - Restart the JuggleWork app.
     - In the affected workspace, open Settings → Extensions and click Refresh (re-mints the token and rewrites the Cloud MCP config).
-    - Click Show hidden, then verify OpenWork Cloud Control under Your apps.
+    - Click Show hidden, then verify JuggleWork Cloud Control under Your apps.
     - Run Reload OpenCode config from the command palette.
     - Start a NEW task so it receives the current tool set.
 
@@ -88,27 +88,27 @@ If the agent completes all phases and verification still fails, [open an issue](
 
 - Settings shows an `openwork-cloud` MCP entry, but the agent calls `openwork_docs_search` for requests involving connected services.
 - The agent claims that `search_capabilities` and `execute_capability` are only "conceptual capabilities" rather than callable tools.
-- A connected service such as ServiceNow appears ready in OpenWork Cloud, but the task does not expose `openwork-cloud_search_capabilities` or `openwork-cloud_execute_capability`.
+- A connected service such as ServiceNow appears ready in JuggleWork Cloud, but the task does not expose `openwork-cloud_search_capabilities` or `openwork-cloud_execute_capability`.
 
 **What this diagnostic checks**
 
-The prompt below runs OpenWork's bundled OpenCode executable against its generated runtime config and checks whether a fresh OpenCode process can connect to `openwork-cloud`. It does not attach to the OpenCode server already running inside OpenWork, so it combines that result with the live status shown in OpenWork and a forced tool call from a new task.
+The prompt below runs JuggleWork's bundled OpenCode executable against its generated runtime config and checks whether a fresh OpenCode process can connect to `openwork-cloud`. It does not attach to the OpenCode server already running inside JuggleWork, so it combines that result with the live status shown in JuggleWork and a forced tool call from a new task.
 
 **Paste this to your agent**
 
 ````text
-Diagnose whether OpenWork Cloud MCP tools are available in this workspace. Gather evidence only: do not modify configuration, authenticate, log out, remove anything, restart services, or print configuration-file contents.
+Diagnose whether JuggleWork Cloud MCP tools are available in this workspace. Gather evidence only: do not modify configuration, authenticate, log out, remove anything, restart services, or print configuration-file contents.
 
 ## Phase 1 — Test the task's actual tools
 
 1. Attempt to call `openwork-cloud_search_capabilities` with `{"query":"ServiceNow incident","type":"mcp","limit":10}`. Do not use documentation or explain alternatives. Record whether the runtime accepts the tool call and its exact non-secret result or rejection.
 2. Attempt to call `openwork_extension_list_actions`. Record whether the runtime accepts the call. Do not infer tool availability from an answer to "list your tools"; models can omit or invent tools.
 
-## Phase 2 — Find OpenWork's exact OpenCode runtime
+## Phase 2 — Find JuggleWork's exact OpenCode runtime
 
 3. Detect whether this machine is Windows, macOS, or Linux.
-4. Find the exact OpenCode executable used by the OpenWork desktop app. Prefer the bundled executable in OpenWork's `resources/sidecars` directory; do not assume an unrelated `opencode` on `PATH` is the same binary. If multiple OpenWork builds are running, use the process associated with this task when that can be established safely; otherwise report the ambiguity.
-5. Find OpenWork's generated `runtime-opencode-config.json` beside the active `server.json`. Respect discovered `OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`, or XDG overrides. Typical locations are:
+4. Find the exact OpenCode executable used by the JuggleWork desktop app. Prefer the bundled executable in JuggleWork's `resources/sidecars` directory; do not assume an unrelated `opencode` on `PATH` is the same binary. If multiple JuggleWork builds are running, use the process associated with this task when that can be established safely; otherwise report the ambiguity.
+5. Find JuggleWork's generated `runtime-opencode-config.json` beside the active `server.json`. Respect discovered `OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`, or XDG overrides. Typical locations are:
    - Windows: `%APPDATA%\openwork\runtime-opencode-config.json`
    - macOS/Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/openwork/runtime-opencode-config.json`
 6. Report whether the runtime config exists and its last-modified time. Never display, copy, parse, or summarize its contents: it can contain Authorization headers and other credentials.
@@ -127,7 +127,7 @@ Diagnose whether OpenWork Cloud MCP tools are available in this workspace. Gathe
    - its exact status and non-secret error
    - whether the failing workspace is the primary managed workspace or may be a secondary workspace configured dynamically
 
-Important: `opencode mcp list` starts a fresh process. Do not claim that it attaches to or tests the OpenCode server already running inside OpenWork. Describe it only as a fresh-process probe using the same binary and generated config.
+Important: `opencode mcp list` starts a fresh process. Do not claim that it attaches to or tests the OpenCode server already running inside JuggleWork. Describe it only as a fresh-process probe using the same binary and generated config.
 
 ## Phase 4 — Classify the result
 
@@ -140,17 +140,17 @@ Important: `opencode mcp list` starts a fresh process. Do not claim that it atta
 Finish with a concise redacted report. Never reveal bearer tokens, Authorization values, cookies, passwords, API keys, local server tokens, or strings beginning with `ow_mcp_at_`.
 ````
 
-**Verify inside OpenWork**
+**Verify inside JuggleWork**
 
 1. In the affected workspace, open **Settings → Extensions** and click **Refresh**.
-2. Click **Show hidden**, then find **OpenWork Cloud Control** under **Your apps**. This row shows live OpenCode MCP status; the catalog card only proves that the entry is configured.
+2. Click **Show hidden**, then find **JuggleWork Cloud Control** under **Your apps**. This row shows live OpenCode MCP status; the catalog card only proves that the entry is configured.
 3. Expand the row and retain its status and non-secret error: **Ready**, **Issue**, **Sign in needed**, **Offline**, or **Paused**.
 4. Return to the task, open the command palette, run **Reload OpenCode config**, and create a new task in the same workspace.
 5. Repeat the forced Cloud tool call from Phase 1.
 
 **How to interpret both results**
 
-| Fresh `opencode mcp list` | OpenWork status / forced call | Likely boundary |
+| Fresh `opencode mcp list` | JuggleWork status / forced call | Likely boundary |
 | --- | --- | --- |
 | Missing or failed | Missing or failed | Generated config, endpoint, token, TLS, or authentication |
 | Connected | In-app status failed | Live engine registration or workspace routing |

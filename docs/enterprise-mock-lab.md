@@ -43,7 +43,7 @@ The local admin application is [`ee/apps/enterprise-mock-lab`](../ee/apps/enterp
 Dependency rules:
 
 1. `enterprise-mock-lab` may depend on `enterprise-mcp-mock-server`.
-2. `enterprise-mcp-mock-server` must not import Den, an EE app, OpenWork's MCP client, or a provider SDK.
+2. `enterprise-mcp-mock-server` must not import Den, an EE app, JuggleWork's MCP client, or a provider SDK.
 3. Den must not import the EE app. A future Den test connects to a lab data-plane URL like any other remote MCP client.
 4. Provider differences belong in named, sourced profiles or faults—not hidden environment checks.
 5. Runtime secrets and ports belong to the app or test harness, never to package fixtures.

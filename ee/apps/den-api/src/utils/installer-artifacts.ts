@@ -9,7 +9,7 @@ export type ConfiguredInstallerArtifact = {
 }
 
 export const DEFAULT_INSTALLER_RELEASE_REPO = "different-ai/openwork"
-// First GitHub release tag on different-ai/openwork that carries the OpenWork-Installer-* assets;
+// First GitHub release tag on different-ai/openwork that carries the JuggleWork-Installer-* assets;
 // earlier tags have no installer assets so redirects to them 404.
 export const FIRST_GENERIC_INSTALLER_RELEASE = "0.17.37"
 
@@ -51,13 +51,13 @@ export function desktopReleaseAssetName(platform: string, releaseTag: string) {
 
 export function genericInstallerArtifactName(platform: string) {
   if (platform === "mac-arm64") {
-    return "OpenWork-Installer-mac-arm64.dmg"
+    return "JuggleWork-Installer-mac-arm64.dmg"
   }
   if (platform === "mac-x64") {
-    return "OpenWork-Installer-mac-x64.dmg"
+    return "JuggleWork-Installer-mac-x64.dmg"
   }
   if (platform === "win-x64") {
-    return "OpenWork-Installer-win-x64.exe"
+    return "JuggleWork-Installer-win-x64.exe"
   }
   return null
 }

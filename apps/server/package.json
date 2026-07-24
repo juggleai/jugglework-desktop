@@ -1,7 +1,7 @@
 {
   "name": "openwork-server",
   "version": "0.17.40",
-  "description": "Filesystem-backed API for OpenWork remote clients",
+  "description": "Filesystem-backed API for JuggleWork remote clients",
   "type": "module",
   "bin": {
     "openwork-server": "bin/openwork-server.mjs"

@@ -14,7 +14,7 @@ const posthogEnabled = process.env.VERCEL_ENV === "production";
 const organizationSchema = {
   "@context": "https://schema.org",
   "@type": "Organization",
-  name: "OpenWork",
+  name: "JuggleWork",
   legalName: "Different AI",
   url: "https://openworklabs.com",
   logo: "https://openworklabs.com/openwork-mark.svg",
@@ -35,7 +35,7 @@ const jetbrains = JetBrains_Mono({
 
 export const metadata = {
   metadataBase: new URL("https://openworklabs.com"),
-  title: "OpenWork — Open source Claude Cowork alternative for teams",
+  title: "JuggleWork — Open source Claude Cowork alternative for teams",
   description:
     "Bring your own model and provider, wire in your tools and context, and ship reusable agent setups across your org — with guardrails built in.",
   alternates: {
@@ -47,7 +47,7 @@ export const metadata = {
   },
   openGraph: {
     type: "website",
-    siteName: "OpenWork",
+    siteName: "JuggleWork",
     locale: "en_US",
     images: ["/og-image-clean.png"]
   },

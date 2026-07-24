@@ -325,7 +325,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         const channelState = await bridge.getChannel?.();
         const currentVersion = channelState?.currentVersion ?? appVersion;
         if (!currentVersion) {
-          throw new Error("Could not determine the installed OpenWork version.");
+          throw new Error("Could not determine the installed JuggleWork version.");
         }
 
         const selection = await resolveFreshStableDesktopUpdate({

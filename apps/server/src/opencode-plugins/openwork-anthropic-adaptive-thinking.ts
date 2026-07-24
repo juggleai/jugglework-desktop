@@ -1,5 +1,5 @@
 /**
- * OpenWork Anthropic Adaptive Thinking Plugin
+ * JuggleWork Anthropic Adaptive Thinking Plugin
  *
  * Newer Anthropic models (Claude 5 family, e.g. "claude-fable-5") reject the
  * legacy extended-thinking payload `thinking: { type: "enabled", budgetTokens }`

@@ -57,7 +57,7 @@ if git diff --quiet -- PKGBUILD .SRCINFO; then
 fi
 
 git add PKGBUILD .SRCINFO
-git -c user.name="OpenWork Release Bot" \
+git -c user.name="JuggleWork Release Bot" \
     -c user.email="release-bot@users.noreply.github.com" \
     commit -m "chore(aur): update PKGBUILD for ${VERSION}"
 

@@ -79,7 +79,7 @@ async function callMcpTool(id: number, session: string, name: string) {
   }), JSON.stringify(body))
 }
 
-describe("OpenWork Diagnostics MCP endpoint", () => {
+describe("JuggleWork Diagnostics MCP endpoint", () => {
   test("keeps short-lived OAuth access tokens distinct from MCP session tokens", () => {
     const secret = "a-test-signing-secret-with-more-than-32-characters"
     const now = Date.now()
@@ -152,7 +152,7 @@ describe("OpenWork Diagnostics MCP endpoint", () => {
 
     const verified = await completeMockAuthorization(new Request(connectUrl))
     expect(verified.status).toBe(200)
-    expect(await verified.text()).toContain("Return to OpenWork")
+    expect(await verified.text()).toContain("Return to JuggleWork")
 
     // A fresh MCP session models the reconnect/retry performed after the
     // browser action. Authorization is bound to the synthetic bearer identity,

@@ -1,11 +1,11 @@
 ---
 name: daytona-electron-test
-description: "do e2e tests, run e2e, test on Daytona, run Electron on Daytona, validate feature, real desktop flow, CDP/noVNC, PR proof. Launch and drive OpenWork Electron in Daytona with validated frame evidence."
+description: "do e2e tests, run e2e, test on Daytona, run Electron on Daytona, validate feature, real desktop flow, CDP/noVNC, PR proof. Launch and drive JuggleWork Electron in Daytona with validated frame evidence."
 ---
 
 # Skill: Daytona Electron Test
 
-Drive the real OpenWork Electron app inside a Daytona sandbox via CDP browser
+Drive the real JuggleWork Electron app inside a Daytona sandbox via CDP browser
 tools. Covers workspace creation, session interaction, settings verification,
 and bug reproduction.
 
@@ -115,7 +115,7 @@ daytona preview-url "$SANDBOX" -p 6080
 browser_list({ browser_url: "<CDP_URL>" })
 ```
 
-Should show: `[target_id] OpenWork  http://localhost:5173/#/welcome`
+Should show: `[target_id] JuggleWork  http://localhost:5173/#/welcome`
 
 ### 6. Verify it's real Electron (not plain Chromium)
 
@@ -187,7 +187,7 @@ The reducer uses `{ key, value }` actions. NOT direct state replacement.
 
 5. **Wait 10-12s.** Verify:
    - URL contains `#/workspace/ws_`
-   - Status bar shows "OpenWork Ready"
+   - Status bar shows "JuggleWork Ready"
    - opencode process running: `daytona exec "$SANDBOX" -- "bash -lc 'ps aux | grep opencode | grep -v grep'"`
 
 ### Native Linux dialogs
@@ -340,10 +340,10 @@ daytona exec "$SANDBOX" -- "bash -lc 'apt-get update && apt-get install -y xdoto
 Then:
 ```bash
 # Minimize
-daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name OpenWork windowminimize'"
+daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name JuggleWork windowminimize'"
 
 # Restore
-daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name OpenWork windowactivate'"
+daytona exec "$SANDBOX" -- "bash -lc 'DISPLAY=:99 xdotool search --name JuggleWork windowactivate'"
 ```
 
 ## API keys and eval secrets
@@ -432,7 +432,7 @@ manually, pass `--no-sandbox` or set the env var.
 
 **Generic DBus errors in Electron logs:**
 DBus warnings are expected in Daytona/Linux containers. They are not fatal if
-you also see `DevTools listening on ws://127.0.0.1:9825/...` and an OpenWork
+you also see `DevTools listening on ws://127.0.0.1:9825/...` and a JuggleWork
 window in noVNC.
 
 **GPU process errors in Electron logs:**
@@ -455,7 +455,7 @@ daytona exec "$SANDBOX" -- "bash -lc 'tail -80 /tmp/vite.log'"
 ```
 
 The app log line `[openwork] Electron CDP exposed at http://127.0.0.1:9825`
-means OpenWork requested CDP. The real success marker is Chromium's own line:
+means JuggleWork requested CDP. The real success marker is Chromium's own line:
 `DevTools listening on ws://127.0.0.1:9825/devtools/browser/...`.
 
 **opencode sidecar not restarting after kill:**

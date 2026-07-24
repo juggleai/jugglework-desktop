@@ -47,7 +47,7 @@ function fakeBotApi() {
           result: {
             id: 123456,
             is_bot: true,
-            first_name: "OpenWork",
+            first_name: "JuggleWork",
             last_name: "Cloud",
             username: "openwork_test_bot",
           },
@@ -93,7 +93,7 @@ describe("Telegram Bot API client", () => {
     await expect(validateTelegramBot(botToken, { apiRoot: fake.apiRoot })).resolves.toEqual({
       id: "123456",
       username: "openwork_test_bot",
-      displayName: "OpenWork Cloud",
+      displayName: "JuggleWork Cloud",
     })
     await registerTelegramWebhook({
       apiRoot: fake.apiRoot,

@@ -1,6 +1,6 @@
 import { CLOUD_MCP_SYNC_MARKER_STORAGE_KEY } from "../../../app/lib/den";
 
-/** Durable, scoped records for the auto-managed OpenWork Cloud MCP. */
+/** Durable, scoped records for the auto-managed JuggleWork Cloud MCP. */
 
 export const CLOUD_MCP_SERVER_NAME = "openwork-cloud";
 

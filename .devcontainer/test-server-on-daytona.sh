@@ -101,7 +101,7 @@ echo "==> Uploading server start script..."
 START_SCRIPT_B64="$(base64 < "$ROOT_DIR/.devcontainer/start-daytona-server.sh" | tr -d '\n')"
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; mkdir -p .devcontainer; printf %s $START_SCRIPT_B64 | base64 -d > .devcontainer/start-daytona-server.sh; chmod +x .devcontainer/start-daytona-server.sh'"
 
-echo "==> Starting OpenWork Den server stack..."
+echo "==> Starting JuggleWork Den server stack..."
 daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" DEN_WORKER_PROXY_PUBLIC_URL=\"$DEN_WORKER_PROXY_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT DEN_WORKER_PROXY_PORT=$DEN_WORKER_PROXY_PORT bash .devcontainer/start-daytona-server.sh'"
 
 echo "==> Waiting for public Den Web health (up to ${MAX_WAIT}s)..."

@@ -39,7 +39,7 @@ const status: InstallStatus = {
 
 const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com"
 const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com"
-const INSTALLER_APP_BUNDLE_NAME = "Install OpenWork.app"
+const INSTALLER_APP_BUNDLE_NAME = "Install JuggleWork.app"
 
 type BootstrapCandidate = {
   config: Record<string, unknown>
@@ -258,8 +258,8 @@ async function run(command: string, args: string[]): Promise<void> {
 
 export function windowsInstalledExePath(localAppData: string): string {
   const candidates = [
-    path.join(localAppData, "Programs", "OpenWork", "OpenWork.exe"),
-    path.join(localAppData, "Programs", "@openworkdesktop", "OpenWork.exe"),
+    path.join(localAppData, "Programs", "JuggleWork", "JuggleWork.exe"),
+    path.join(localAppData, "Programs", "@openworkdesktop", "JuggleWork.exe"),
   ]
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
 }
@@ -299,7 +299,7 @@ async function installExe(exePath: string): Promise<string> {
 function installAppImage(appImagePath: string): string {
   const appDir = path.join(os.homedir(), ".local", "share", "openwork")
   mkdirSync(appDir, { recursive: true })
-  const target = path.join(appDir, "OpenWork.AppImage")
+  const target = path.join(appDir, "JuggleWork.AppImage")
   rmSync(target, { force: true })
   writeFileSync(target, readFileSync(appImagePath))
   chmodSync(target, 0o755)
@@ -310,7 +310,7 @@ function installAppImage(appImagePath: string): string {
     mkdirSync(applicationsDir, { recursive: true })
     writeFileSync(
       path.join(applicationsDir, "openwork.desktop"),
-      ["[Desktop Entry]", "Type=Application", "Name=OpenWork", `Exec=${target}`, "Terminal=false", "Categories=Utility;"].join("\n") + "\n",
+      ["[Desktop Entry]", "Type=Application", "Name=JuggleWork", `Exec=${target}`, "Terminal=false", "Categories=Utility;"].join("\n") + "\n",
       "utf8",
     )
   } catch {
@@ -340,7 +340,7 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
     update({ step: "check-version", message: "Checking your deployment for the supported app version..." }, opts.onStatus)
     const version = await fetchLatestSupportedVersion(config.apiUrl)
     const asset = releaseAssetFor(version)
-    update({ version, message: `Deployment supports OpenWork ${version}.` }, opts.onStatus)
+    update({ version, message: `Deployment supports JuggleWork ${version}.` }, opts.onStatus)
 
     if (opts.dryRun) {
       const head = await fetch(asset.url, { method: "HEAD", redirect: "follow" })
@@ -352,14 +352,14 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
       return installStatus()
     }
 
-    update({ step: "download", message: `Downloading OpenWork ${version}...` }, opts.onStatus)
+    update({ step: "download", message: `Downloading JuggleWork ${version}...` }, opts.onStatus)
     const workDir = path.join(os.tmpdir(), `openwork-installer-${process.pid}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(workDir, { recursive: true })
     try {
       const artifactPath = path.join(workDir, asset.fileName)
       await downloadAsset(asset, artifactPath, opts)
 
-      update({ step: "install", message: "Installing OpenWork..." }, opts.onStatus)
+      update({ step: "install", message: "Installing JuggleWork..." }, opts.onStatus)
       const installedPath =
         asset.type === "dmg"
           ? installDmg(artifactPath, workDir)
@@ -368,7 +368,7 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
             : installAppImage(artifactPath)
 
       update(
-        { state: "done", step: null, installedPath, message: `OpenWork ${version} installed successfully.` },
+        { state: "done", step: null, installedPath, message: `JuggleWork ${version} installed successfully.` },
         opts.onStatus,
       )
     } finally {

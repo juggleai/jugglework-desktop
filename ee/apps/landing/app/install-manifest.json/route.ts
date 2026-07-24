@@ -1,6 +1,6 @@
 // GET /install-manifest.json
 //
-// Resolves the latest OpenWork desktop release on GitHub and returns an install
+// Resolves the latest JuggleWork desktop release on GitHub and returns an install
 // manifest in the shape the `openwork-bootstrap install app` command expects:
 //
 //   { version, artifacts: { <platform>: { <arch>: { type, url, appName } } } }
@@ -26,7 +26,7 @@ type ManifestArtifact = {
   appName?: string;
 };
 
-// Only treat OpenWork desktop-app installers as artifacts. The orchestrator
+// Only treat JuggleWork desktop-app installers as artifacts. The orchestrator
 // release ships sidecar/CLI binaries (openwork-server-*.exe,
 // openwork-bun-*) that must NOT be treated as the desktop app, so we positively
 // require the desktop app's OS-tagged naming (openwork-mac / openwork-linux /
@@ -114,7 +114,7 @@ function buildManifest(release: GithubRelease) {
         _pref: pref,
         type,
         url: asset.browser_download_url,
-        ...(type === "dmg" ? { appName: "OpenWork.app" } : {}),
+        ...(type === "dmg" ? { appName: "JuggleWork.app" } : {}),
       };
     }
   }
@@ -155,7 +155,7 @@ export async function GET() {
 
     const releases = (await response.json()) as GithubRelease[];
     // Prefer the newest release (incl. prereleases/alpha) that ships an actual
-    // OpenWork desktop installer (not the orchestrator sidecar bundle).
+    // JuggleWork desktop installer (not the orchestrator sidecar bundle).
     const release = releases
       .filter((r) => !r.draft)
       .find((r) =>

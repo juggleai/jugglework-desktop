@@ -191,7 +191,7 @@ function AgentAccessCard(props: {
     setBusy("test");
     setError(null);
     try {
-      // probe: verify the Cloud endpoint directly from the OpenWork server as
+      // probe: verify the Cloud endpoint directly from the JuggleWork server as
       // well, so a failure can be attributed to the endpoint, the network
       // path, or the engine — not just reported as the engine's cached state.
       const result = await runOpenworkCloudMcpReconciler({
@@ -224,7 +224,7 @@ function AgentAccessCard(props: {
       if (result.status === "skipped") {
         setError(
           result.skippedReason === "unsupported"
-            ? "This OpenWork server does not support engine refresh yet. Update OpenWork, then retry."
+            ? "This JuggleWork server does not support engine refresh yet. Update JuggleWork, then retry."
             : "Select a workspace before refreshing the engine connection.",
         );
       }
@@ -379,7 +379,7 @@ function AgentAccessCard(props: {
         <div className="space-y-1">
           <div className="text-base font-semibold text-dls-text">Agent access to connected services</div>
           <div className="max-w-[62ch] text-sm text-dls-secondary">
-            Lets agents use the exact OpenWork Cloud tools for this active workspace and organization.
+            Lets agents use the exact JuggleWork Cloud tools for this active workspace and organization.
           </div>
         </div>
         <SettingsStatusBadge label={summary.statusLabel} tone={summary.tone} />

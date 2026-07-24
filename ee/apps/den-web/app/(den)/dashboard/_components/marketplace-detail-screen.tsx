@@ -1058,7 +1058,7 @@ function MarketplacePluginCard({
           ) : (
             <p className="mt-2 text-[11.5px] text-gray-400">
               {plugin.sourceFormat === "openwork-builtin"
-                ? "Built into the OpenWork desktop app"
+                ? "Built into the JuggleWork desktop app"
                 : "Content imports when the source repository is connected"}
             </p>
           )}

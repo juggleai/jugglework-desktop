@@ -208,13 +208,13 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       const access = await requireCloudAccessOrPayment({
         userId: normalizeDenTypeId("user", user.id),
         email,
-        name: user.name ?? user.email ?? "OpenWork User",
+        name: user.name ?? user.email ?? "JuggleWork User",
       })
 
       if (!access.allowed) {
         return c.json({
           error: "cloud_worker_billing_unavailable",
-          message: "Creating new cloud workers requires an existing OpenWork Cloud plan. New self-serve purchases are no longer available.",
+          message: "Creating new cloud workers requires an existing JuggleWork Cloud plan. New self-serve purchases are no longer available.",
         }, 402)
       }
 
@@ -422,7 +422,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     describeRoute({
       tags: ["Workers"],
       summary: "Get worker connection tokens",
-      description: "Returns connection tokens and the resolved OpenWork connect URL for an existing worker.",
+      description: "Returns connection tokens and the resolved JuggleWork connect URL for an existing worker.",
       responses: {
         200: jsonResponse("Worker connection tokens returned successfully.", workerTokensResponseSchema),
         400: jsonResponse("The worker token path parameters were invalid.", invalidRequestSchema),

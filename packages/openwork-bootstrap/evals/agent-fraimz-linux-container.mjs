@@ -1,4 +1,4 @@
-// Linux e2e fraimz for OpenWork bootstrap without shipping to production.
+// Linux e2e fraimz for JuggleWork bootstrap without shipping to production.
 //
 // This runs inside a real Linux container and proves:
 // - the bootstrap CLI installs on Linux,
@@ -104,7 +104,7 @@ function randomPassword() {
 
 try {
   const appBinary = join(artifactRoot, "openwork")
-  writeFileSync(appBinary, "#!/usr/bin/env sh\necho OpenWork Linux fixture\n")
+  writeFileSync(appBinary, "#!/usr/bin/env sh\necho JuggleWork Linux fixture\n")
   chmodSync(appBinary, 0o755)
   execFileSync("tar", ["-czf", artifactPath, "-C", artifactRoot, "openwork"])
   const digest = sha256(artifactPath)
@@ -180,9 +180,9 @@ const frameFiles = frames.map((frame, index) => {
 
 const allOk = frames.every((frame) => frame.ok)
 writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<title>OpenWork Linux Bootstrap — fraimz</title>
+<title>JuggleWork Linux Bootstrap — fraimz</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
-</head><body><main><h1>OpenWork Linux Bootstrap — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(denBaseUrl)}</code> · Frames: ${frames.length}</div>
+</head><body><main><h1>JuggleWork Linux Bootstrap — fraimz</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(denBaseUrl)}</code> · Frames: ${frames.length}</div>
 ${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
