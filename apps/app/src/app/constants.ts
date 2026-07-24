@@ -169,7 +169,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     type: "remote",
     oauth: true,
     kind: "mcp",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/jugglework-logo.png",
     // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
     // configured + enabled while signed in to OpenWork Cloud. Hidden from the
     // default catalog; "Show hidden" reveals it.
@@ -184,7 +184,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     command: ["npx", "-y", "openwork-ui-mcp"],
     oauth: false,
     kind: "ui-control",
-    iconSrc: "/openwork-mark.svg",
+    iconSrc: "/jugglework-logo.png",
     // Internal UI-control surface for agents driving the desktop app. Hidden
     // from the default catalog; "Show hidden" reveals it.
     defaultHidden: true,

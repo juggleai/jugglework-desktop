@@ -1434,7 +1434,7 @@ export function SessionPage(props: SessionPageProps) {
                               );
                             }}
                           >
-                            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
+                            <img src={resolveExtensionIconSrc("/jugglework-logo.png")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
                               <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
                               <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>

@@ -1,6 +1,4 @@
 import { installerConfigSourceLabel, type InstallerConfigResolution } from "./config"
-import { OPENWORK_LOGO_SVG } from "./openwork-logo"
-
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -24,7 +22,7 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   const config = resolution?.config ?? null
   const logo = config?.logoUrl
     ? `<img class="logo" src="${escapeHtml(config.logoUrl)}" alt="${escapeHtml(config.clientName)}" />`
-    : `<div class="logo">${OPENWORK_LOGO_SVG}</div>`
+    : `<img class="logo" src="/jugglework-logo.png" alt="JuggleWork" />`
   const sourceLabel = resolution ? installerConfigSourceLabel(resolution.source) : ""
   const appName = config?.appName ?? "OpenWork"
   const configuredContent = config
@@ -40,7 +38,7 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   </div>
   <div class="status" id="status"></div>`
     : `
-  <div class="logo">${OPENWORK_LOGO_SVG}</div>
+  <img class="logo" src="/jugglework-logo.png" alt="JuggleWork" />
   <div class="title">Paste your install link</div>
   <div class="client">It's in the copy box on your team's install page — the tab you downloaded this from. Your organization admin can also copy it from the Members page.</div>
   <form class="paste" id="paste-form">
@@ -71,7 +69,6 @@ export function renderInstallerHtml(resolution: InstallerConfigResolution | null
   }
   main { display: grid; gap: 6px; justify-items: center; width: 340px; text-align: center; }
   .logo { max-height: 100px; max-width: 260px; width: auto; height: auto; object-fit: contain; margin-bottom: 10px; }
-  div.logo svg { max-height: 72px; width: auto; height: 72px; }
   .title { font-size: 17px; font-weight: 600; }
   .client { font-size: 14px; color: #71717a; margin-bottom: 6px; line-height: 1.35; }
   .source { font-size: 11px; color: #a1a1aa; margin-bottom: 8px; }
