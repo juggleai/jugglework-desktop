@@ -156,7 +156,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     name: "JuggleWork Browser",
     description: "Automate the built-in browser panel that stays visible inside JuggleWork.",
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
+    icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use the JuggleWork Browser extension to " },
     setup: {
       instructions: "JuggleWork Browser is ready by default in desktop workspaces.",
@@ -187,7 +187,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
     preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
+    icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use Computer Use to " },
     setup: {
       instructions: "Computer Use is Mac only. It runs as a local MCP server backed by the macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
@@ -234,7 +234,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     description: "Talk to JuggleWork through a Realtime voice panel that drives the same semantic UI controls as JuggleWork UI MCP.",
     preview: true,
     source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
+    icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use Voice Mode to " },
     setup: {
       instructions: "Voice Mode uses OpenAI Realtime. Save an OpenAI API key in JuggleWork env vars, then open the session rail panel and speak or send a typed voice command.",

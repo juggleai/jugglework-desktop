@@ -288,6 +288,25 @@ describe("install link helpers", () => {
   })
 })
 
+describe("default installer branding", () => {
+  test("serves and displays the formal JuggleWork logo", async () => {
+    const installerServer = startInstallerServer(null, () => undefined)
+    try {
+      const page = await fetch(installerServer.url)
+      const html = await page.text()
+      expect(html).toContain('<img class="logo" src="/jugglework-logo.png" alt="JuggleWork" />')
+
+      const logo = await fetch(`${installerServer.url}jugglework-logo.png`)
+      expect(logo.status).toBe(200)
+      expect(logo.headers.get("content-type")).toBe("image/png")
+      const signature = new Uint8Array(await logo.arrayBuffer()).slice(1, 4)
+      expect(new TextDecoder().decode(signature)).toBe("PNG")
+    } finally {
+      installerServer.stop()
+    }
+  })
+})
+
 describe("resolve-link API", () => {
   test("explains pasted GitHub artifact URLs are not install links", async () => {
     const installerServer = startInstallerServer(null, () => undefined)

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto"
 import { installerConfigSourceLabel, resolveInstallLinkConfig, type InstallerConfigResolution } from "./config"
 import { installStatus, launchInstalledApp, runInstall } from "./install"
 import { renderInstallerHtml } from "./ui-html"
+import juggleWorkLogoPath from "../assets/jugglework-logo.png" with { type: "file" }
 
 export type InstallerServer = {
   url: string
@@ -39,6 +40,14 @@ export function startInstallerServer(initialResolution: InstallerConfigResolutio
       if (request.method === "GET" && url.pathname === "/") {
         return new Response(renderInstallerHtml(resolution, token), {
           headers: { "content-type": "text/html; charset=utf-8" },
+        })
+      }
+      if (request.method === "GET" && url.pathname === "/jugglework-logo.png") {
+        return new Response(Bun.file(juggleWorkLogoPath), {
+          headers: {
+            "cache-control": "public, max-age=31536000, immutable",
+            "content-type": "image/png",
+          },
         })
       }
 
