@@ -75,6 +75,11 @@ import {
   isDesktopProviderBlocked,
   type DesktopAppRestrictionChecker,
 } from "../../../../app/cloud/desktop-app-restrictions";
+import {
+  buildJuggleRouterProviderConfig,
+  JUGGLEROUTER_PROVIDER_ID,
+  JUGGLEROUTER_PROVIDER_NAME,
+} from "./jugglerouter-provider";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
@@ -239,6 +244,20 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         id,
         name: provider.name.trim() || id,
         env: getCloudProviderEnv(provider.providerConfig),
+      });
+    }
+
+    if (
+      !merged.has(JUGGLEROUTER_PROVIDER_ID) &&
+      !isDesktopProviderBlocked({
+        providerId: JUGGLEROUTER_PROVIDER_ID,
+        checkRestriction: options.checkDesktopAppRestriction,
+      })
+    ) {
+      merged.set(JUGGLEROUTER_PROVIDER_ID, {
+        id: JUGGLEROUTER_PROVIDER_ID,
+        name: JUGGLEROUTER_PROVIDER_NAME,
+        env: [],
       });
     }
 
@@ -1074,6 +1093,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       merged[id] = [...existing, { type: "api", label: t("providers.api_key_label") }];
     }
 
+    if (
+      availableProviders.some((provider) => provider.id === JUGGLEROUTER_PROVIDER_ID) &&
+      !(merged[JUGGLEROUTER_PROVIDER_ID] ?? []).some((method) => method.type === "api")
+    ) {
+      merged[JUGGLEROUTER_PROVIDER_ID] = [
+        ...(merged[JUGGLEROUTER_PROVIDER_ID] ?? []),
+        { type: "api", label: t("providers.api_key_label") },
+      ];
+    }
+
     const availableProvidersById = new Map((availableProviders ?? []).map((provider) => [provider.id, provider]));
     for (const [id, providerMethods] of Object.entries(merged)) {
       if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
@@ -1364,6 +1393,31 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     setStateField("providerAuthBusy", true);
     try {
+      if (providerId.trim().toLowerCase() === JUGGLEROUTER_PROVIDER_ID) {
+        const target = await resolveOpenworkConfigTarget("write");
+        if (!target.canUseOpenworkServer || !target.openworkClient) {
+          throw new Error("OpenWork server unavailable. Connect to add JuggleRouter.");
+        }
+        const { models } = await target.openworkClient.getJuggleRouterModels();
+        if (models.length === 0) {
+          throw new Error("JuggleRouter did not return any compatible chat models.");
+        }
+        await c.auth.set({
+          providerID: JUGGLEROUTER_PROVIDER_ID,
+          auth: { type: "api", key: trimmed },
+        });
+        try {
+          await patchRuntimeProviders({
+            [JUGGLEROUTER_PROVIDER_ID]: buildJuggleRouterProviderConfig(models),
+          });
+        } catch (error) {
+          await removeProviderAuthCredentials(JUGGLEROUTER_PROVIDER_ID).catch(() => undefined);
+          throw error;
+        }
+        options.markOpencodeConfigReloadRequired();
+        await refreshProviders({ dispose: true });
+        return `${t("status.connected")} ${JUGGLEROUTER_PROVIDER_NAME}`;
+      }
       if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
@@ -1735,6 +1789,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await refreshProviders({ dispose: true });
         removeProviderFromState(resolved);
         return `${t("providers.disconnected_prefix")} ${resolved}`;
+      }
+
+      if (resolved.toLowerCase() === JUGGLEROUTER_PROVIDER_ID) {
+        try {
+          await removeProviderAuthCredentials(JUGGLEROUTER_PROVIDER_ID);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
+            throw error;
+          }
+        }
+        await patchRuntimeProviders({ [JUGGLEROUTER_PROVIDER_ID]: null });
+        options.markOpencodeConfigReloadRequired();
+        await refreshProviders({ dispose: true });
+        removeProviderFromState(JUGGLEROUTER_PROVIDER_ID);
+        return `${t("providers.disconnected_prefix")} ${JUGGLEROUTER_PROVIDER_NAME}`;
       }
 
       await removeProviderAuthCredentials(resolved);
