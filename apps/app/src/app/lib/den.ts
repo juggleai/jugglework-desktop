@@ -50,7 +50,7 @@ export const DEFAULT_DEN_AUTH_NAME = "JuggleWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
-    : "").trim() || "https://app.openworklabs.com";
+    : "").trim() || "https://work.juggle.im";
 const BUILD_DEN_REQUIRE_SIGNIN =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_REQUIRE_SIGNIN === "string"
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
@@ -695,7 +695,7 @@ export async function initializeDenBootstrapConfig(): Promise<DenBootstrapConfig
   // silently reverted custom/self-hosted control planes to the production
   // URL until a manual reload.
   desktopBootstrapConfig = resolveDenBootstrapConfig({
-    baseUrl: HOSTED_DEFAULT_DEN_BASE_URL,
+    baseUrl: BUILD_DEN_BASE_URL,
     requireSignin: BUILD_DEN_REQUIRE_SIGNIN,
   });
 
