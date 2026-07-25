@@ -33,7 +33,7 @@ describe("Den sign-out", () => {
     ).resolves.toBeUndefined();
     expect(requests).toEqual([
       {
-        url: "https://den.test/api/auth/sign-out",
+        url: "https://den.test/jwork/api/auth/sign-out",
         method: "POST",
         authorization: "Bearer tok_test",
       },

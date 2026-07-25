@@ -76,7 +76,7 @@ function configUrlFromInstallLink(input: URL) {
     return { url: input.toString(), token, host: input.host }
   }
   if (pathname === "/install") {
-    const url = new URL(`/api/den/v1/install-config?token=${encodeURIComponent(token)}`, input.origin)
+    const url = new URL(`/jwork/api/v1/install-config?token=${encodeURIComponent(token)}`, input.origin)
     return { url: url.toString(), token, host: input.host }
   }
 

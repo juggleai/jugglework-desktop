@@ -13,7 +13,7 @@ describe("resolveDenBaseUrls", () => {
       baseUrl: "https://app.openworklabs.com",
       apiBaseUrl: "https://app.openworklabs.com",
     });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/jwork/api");
   });
 
   test("ignores an explicit API origin when a base URL is present", () => {
@@ -21,7 +21,7 @@ describe("resolveDenBaseUrls", () => {
       baseUrl: "https://app.openworklabs.com",
       apiBaseUrl: "https://api.example.com",
     });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/jwork/api");
   });
 
   test("ignores an explicit loopback API URL when a base URL is present", () => {
@@ -29,12 +29,12 @@ describe("resolveDenBaseUrls", () => {
       baseUrl: "http://localhost:3000",
       apiBaseUrl: "http://127.0.0.1:8787",
     });
-    expect(resolved.apiBaseUrl).toBe("http://localhost:3000/api/den");
+    expect(resolved.apiBaseUrl).toBe("http://localhost:3000/jwork/api");
   });
 
-  test("derives the /api/den proxy from a web-app baseUrl when no apiBaseUrl is set", () => {
+  test("derives the /jwork/api root from a bare baseUrl when no apiBaseUrl is set", () => {
     const resolved = resolveDenBaseUrls({ baseUrl: "https://app.openworklabs.com" });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/jwork/api");
   });
 });
 
@@ -53,7 +53,7 @@ describe("isLegacyWebAppMcpUrl", () => {
   });
 
   test("accepts valid MCP URLs", () => {
-    expect(isLegacyWebAppMcpUrl("https://app.openworklabs.com/api/den/mcp")).toBe(false);
+    expect(isLegacyWebAppMcpUrl("https://app.openworklabs.com/jwork/api/mcp")).toBe(false);
     expect(isLegacyWebAppMcpUrl("http://127.0.0.1:8787/mcp")).toBe(false);
   });
 
@@ -64,18 +64,18 @@ describe("isLegacyWebAppMcpUrl", () => {
 });
 
 describe("resolveCloudMcpResourceUrl", () => {
-  test("heals a minted legacy web-app resource through the /api/den proxy", () => {
+  test("heals a minted legacy web-app resource onto the control plane MCP route", () => {
     expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/mcp")).toBe(
-      "https://app.openworklabs.com/api/den/mcp",
+      "https://app.openworklabs.com/jwork/api/mcp",
     );
     expect(resolveCloudMcpResourceUrl("https://app.openwork.software/mcp/")).toBe(
-      "https://app.openwork.software/api/den/mcp",
+      "https://app.openwork.software/jwork/api/mcp",
     );
   });
 
   test("keeps healthy resources verbatim", () => {
-    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/api/den/mcp")).toBe(
-      "https://app.openworklabs.com/api/den/mcp",
+    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/jwork/api/mcp")).toBe(
+      "https://app.openworklabs.com/jwork/api/mcp",
     );
     expect(resolveCloudMcpResourceUrl("http://127.0.0.1:8787/mcp")).toBe(
       "http://127.0.0.1:8787/mcp",

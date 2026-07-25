@@ -27,7 +27,7 @@ const client = () =>
 describe("Den memory client", () => {
   test("listMemory normalizes memories, tags, and contexts and drops malformed rows", async () => {
     const calls = mockFetch((url) => {
-      expect(url).toContain("/api/den/v1/memory");
+      expect(url).toContain("/jwork/api/v1/memory");
       return new Response(
         JSON.stringify({
           memories: [

@@ -143,11 +143,11 @@ describe("JuggleWork Cloud MCP reconciler", () => {
       },
       token: {
         ...token,
-        resource: "https://app.openwork.test/api/den/mcp",
+        resource: "https://app.openwork.test/jwork/api/mcp",
       },
     });
 
-    expect(payload?.config.url).toBe("https://app.openwork.test/api/den/mcp/agent");
+    expect(payload?.config.url).toBe("https://app.openwork.test/jwork/api/mcp/agent");
   });
 
   test("Test now performs only GET health", async () => {

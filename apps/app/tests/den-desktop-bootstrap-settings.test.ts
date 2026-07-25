@@ -99,7 +99,7 @@ describe("desktop Den bootstrap settings", () => {
 
     const settings = readDenSettings();
     expect(settings.baseUrl).toBe("https://bootstrap.example.com");
-    expect(settings.apiBaseUrl).toBe("https://bootstrap.example.com/api/den");
+    expect(settings.apiBaseUrl).toBe("https://bootstrap.example.com/jwork/api");
   });
 
   test("keeps the prepared workspace and claim action in the shared bootstrap snapshot", async () => {

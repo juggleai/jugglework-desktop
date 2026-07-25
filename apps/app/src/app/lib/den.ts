@@ -58,7 +58,19 @@ const BUILD_DEN_REQUIRE_SIGNIN =
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
-export const DEN_INFERENCE_PATH = "/dashboard/inference";
+
+/**
+ * Path prefix the JuggleWork server mounts every route under (its
+ * `configures.HTTPPathPrefix`). `<origin>/jwork` is the control plane root:
+ * the login page, `/api/auth/*`, `/api/v1/*`, `/api/mcp/*` and the web
+ * console all hang off it.
+ */
+export const DEN_CONTROL_PLANE_PATH = "/jwork";
+/** API root under the control plane prefix (`/jwork/api`). */
+const DEN_API_BASE_PATH = `${DEN_CONTROL_PLANE_PATH}/api`;
+/** The pre-`/jwork` layout: den-web proxied den-api at `<origin>/api/den`. */
+const LEGACY_DEN_API_BASE_PATH = "/api/den";
+export const DEN_INFERENCE_PATH = `${DEN_CONTROL_PLANE_PATH}/console/dashboard/inference`;
 
 // Den wire types moved to den-types.ts (leaf module); re-exported here so
 // the many existing den.ts importers keep working.
@@ -467,8 +479,9 @@ export function normalizeDenBaseUrl(input: string | null | undefined): string | 
 
 /**
  * Origin-level comparison key for Den URLs. Ignores paths (deep links may
- * carry an `/api/den` proxy path) and treats loopback aliases (127.0.0.1,
- * [::1]) as `localhost`, matching den-api's own dev-mode resource aliasing.
+ * carry the `/jwork/api` control plane path) and treats loopback aliases
+ * (127.0.0.1, [::1]) as `localhost`, matching the server's own dev-mode
+ * resource aliasing.
  */
 export function denOriginComparisonKey(input: string | null | undefined): string | null {
   const normalized = normalizeDenBaseUrl(input);
@@ -507,6 +520,11 @@ function isHostedWebAppHost(hostname: string): boolean {
   return hostname.trim().toLowerCase().startsWith("app.");
 }
 
+/**
+ * Strip the API path from a stored/deep-linked URL so only the deployment
+ * origin remains. Legacy `/api/den` values are accepted so clients upgraded
+ * from a den-web deployment keep resolving to the same origin.
+ */
 function stripDenApiBasePath(input: string | null | undefined): string | null {
   const normalized = normalizeDenBaseUrl(input);
   if (!normalized) return null;
@@ -514,8 +532,10 @@ function stripDenApiBasePath(input: string | null | undefined): string | null {
   try {
     const url = new URL(normalized);
     const pathname = url.pathname.replace(/\/+$/, "");
-    const suffix = "/api/den";
-    if (!pathname.toLowerCase().endsWith(suffix)) {
+    const suffix = [DEN_API_BASE_PATH, LEGACY_DEN_API_BASE_PATH, DEN_CONTROL_PLANE_PATH].find((candidate) =>
+      pathname.toLowerCase().endsWith(candidate),
+    );
+    if (!suffix) {
       return normalized;
     }
 
@@ -534,14 +554,19 @@ function ensureDenApiBasePath(input: string | null | undefined): string | null {
   try {
     const url = new URL(normalized);
     const pathname = url.pathname.replace(/\/+$/, "");
-    if (pathname.toLowerCase().endsWith("/api/den")) {
+    if (pathname.toLowerCase().endsWith(DEN_API_BASE_PATH)) {
       return normalized;
     }
-    url.pathname = `${pathname}/api/den`.replace(/\/+/g, "/");
+    url.pathname = `${pathname}${DEN_API_BASE_PATH}`.replace(/\/+/g, "/");
     return url.toString().replace(/\/+$/, "");
   } catch {
     return normalized;
   }
+}
+
+/** The control plane root (`<origin>/jwork`) that `/api/...` routes hang off. */
+function denControlPlaneBaseUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}${DEN_CONTROL_PLANE_PATH}`;
 }
 
 export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?: string | null } | string | null | undefined): DenBaseUrls {
@@ -582,9 +607,9 @@ export function isLegacyWebAppMcpUrl(input: string | null | undefined): boolean 
  * Resolve the URL the cloud MCP entry should connect to from a minted
  * token's `resource`. Older den-api builds mint the bare web-app origin
  * (`https://app.openworklabs.com/mcp`) where nothing serves MCP — heal
- * those to the `/api/den` proxy on the same origin instead of trusting
- * them verbatim. Returns null when the resource is unusable so callers
- * can keep their bootstrap-derived URL.
+ * those to the control plane's MCP route on the same origin instead of
+ * trusting them verbatim. Returns null when the resource is unusable so
+ * callers can keep their bootstrap-derived URL.
  */
 export function resolveCloudMcpResourceUrl(resource: string | null | undefined): string | null {
   const trimmed = resource?.trim() ?? "";
@@ -593,7 +618,7 @@ export function resolveCloudMcpResourceUrl(resource: string | null | undefined):
     const url = new URL(trimmed);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (isLegacyWebAppMcpUrl(trimmed)) {
-      url.pathname = "/api/den/mcp";
+      url.pathname = `${DEN_API_BASE_PATH}/mcp`;
     }
     return url.toString().replace(/\/+$/, "");
   } catch {
@@ -769,7 +794,9 @@ export async function setDenBootstrapConfig(
 }
 
 export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): string {
-  const target = new URL(resolveDenBaseUrls(baseUrl).baseUrl);
+  // The server serves the browser login + desktop handoff page at
+  // `<origin>/jwork/login`; the bare origin is not a control plane route.
+  const target = new URL(`${denControlPlaneBaseUrl(resolveDenBaseUrls(baseUrl).baseUrl)}/login`);
   target.searchParams.set("mode", mode);
   if (isDesktopDeployment()) {
     target.searchParams.set("desktopAuth", "1");
@@ -778,8 +805,11 @@ export function buildDenAuthUrl(baseUrl: string, mode: "sign-in" | "sign-up"): s
   return target.toString();
 }
 
+// Auth routes are written out in full (`/api/auth/...`) so they resolve
+// against the control plane root; everything else is a path under the API
+// root (`/v1/...` -> `/jwork/api/v1/...`).
 function resolveRequestBaseUrl(baseUrls: DenBaseUrls, path: string): string {
-  return path.startsWith("/api/") ? baseUrls.baseUrl : baseUrls.apiBaseUrl;
+  return path.startsWith("/api/") ? denControlPlaneBaseUrl(baseUrls.baseUrl) : baseUrls.apiBaseUrl;
 }
 
 export function readDenSettings(): DenSettings {
@@ -1960,7 +1990,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
   const token = options.token?.trim() ?? null;
 
   return {
-    /** The resolved web base URL and its derived `/api/den` proxy URL. */
+    /** The resolved deployment origin and its derived `/jwork/api` root. */
     baseUrls,
 
     async setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }): Promise<void> {

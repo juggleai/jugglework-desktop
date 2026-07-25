@@ -163,7 +163,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
       try {
         return `${getDenMcpUrl()}/agent`;
       } catch {
-        return "https://work.juggle.im/api/den/mcp/agent";
+        return "https://work.juggle.im/jwork/api/mcp/agent";
       }
     },
     type: "remote",
