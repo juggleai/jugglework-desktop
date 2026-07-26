@@ -168,7 +168,7 @@ test("canonical organization scope header wins over a different active session o
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-jugglework-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -188,7 +188,7 @@ test("legacy organization scope header remains an alias", async () => {
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-legacy-org-id": headerOrg.id },
+    headers: { "x-jugglework-legacy-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -225,7 +225,7 @@ test("an explicit header for a non-member org hard fails instead of falling back
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: sessionOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": nonMemberOrgId },
+    headers: { "x-jugglework-org-id": nonMemberOrgId },
   })
 
   expect(response.status).toBe(404)
@@ -278,7 +278,7 @@ test("a canonical header fixes a stale session even when the user has multiple o
   const app = createOrgContextApp(state, { sessionActiveOrganizationId: staleOrgId })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-jugglework-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)
@@ -299,7 +299,7 @@ test("an API-key scoped org wins over a conflicting request header", async () =>
   const app = createOrgContextApp(state, { apiKey, sessionActiveOrganizationId: headerOrg.id })
 
   const response = await app.request("http://den.local/v1/org", {
-    headers: { "x-openwork-org-id": headerOrg.id },
+    headers: { "x-jugglework-org-id": headerOrg.id },
   })
 
   expect(response.status).toBe(200)

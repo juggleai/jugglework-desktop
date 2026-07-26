@@ -35,7 +35,7 @@ describe("Den desktop config client", () => {
 
     await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getDesktopConfig("org_test");
 
-    expect(headers[0]?.get("x-openwork-legacy-org-id")).toBe("org_test");
+    expect(headers[0]?.get("x-jugglework-legacy-org-id")).toBe("org_test");
   });
 
   test("falls back to latestAppVersion for older Den version metadata", async () => {

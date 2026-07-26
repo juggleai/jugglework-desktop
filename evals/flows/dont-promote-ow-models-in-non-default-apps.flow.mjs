@@ -130,7 +130,7 @@ async function findFreePort() {
 
 function sendJson(response, status, payload) {
   response.writeHead(status, {
-    "access-control-allow-headers": "authorization, content-type, x-openwork-legacy-org-id",
+    "access-control-allow-headers": "authorization, content-type, x-jugglework-legacy-org-id, x-openwork-legacy-org-id",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
     "content-type": "application/json",

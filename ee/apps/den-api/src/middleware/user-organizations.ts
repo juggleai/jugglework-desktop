@@ -4,8 +4,13 @@ import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
 import type { AuthContextVariables } from "../session.js"
 
-export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
-export const ORG_SCOPE_HEADER = "x-openwork-org-id"
+export const LEGACY_ORG_PROXY_HEADER = "x-jugglework-legacy-org-id"
+export const ORG_SCOPE_HEADER = "x-jugglework-org-id"
+
+// Header names before the OpenWork -> JuggleWork rename. Older desktop builds
+// still send these, so keep reading them as a fallback.
+const DEPRECATED_LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
+const DEPRECATED_ORG_SCOPE_HEADER = "x-openwork-org-id"
 
 export type UserOrganizationsContext = {
   userOrganizations: UserOrgSummary[]
@@ -29,11 +34,18 @@ function getHeaderOrganizationId(headers: Headers, headerName: string) {
 }
 
 export function getLegacyProxyOrganizationId(headers: Headers) {
-  return getHeaderOrganizationId(headers, LEGACY_ORG_PROXY_HEADER)
+  return (
+    getHeaderOrganizationId(headers, LEGACY_ORG_PROXY_HEADER) ??
+    getHeaderOrganizationId(headers, DEPRECATED_LEGACY_ORG_PROXY_HEADER)
+  )
 }
 
 export function getRequestScopedOrganizationId(headers: Headers) {
-  return getHeaderOrganizationId(headers, ORG_SCOPE_HEADER) ?? getLegacyProxyOrganizationId(headers)
+  return (
+    getHeaderOrganizationId(headers, ORG_SCOPE_HEADER) ??
+    getHeaderOrganizationId(headers, DEPRECATED_ORG_SCOPE_HEADER) ??
+    getLegacyProxyOrganizationId(headers)
+  )
 }
 
 export function shouldHydrateSessionActiveOrganization(input: {

@@ -91,7 +91,15 @@ if (env.corsOrigins.length > 0) {
       cors({
         origin: env.corsOrigins,
         credentials: true,
-        allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id"],
+        allowHeaders: [
+          "Content-Type",
+          "Authorization",
+          "X-Api-Key",
+          "X-Request-Id",
+          "X-JuggleWork-Legacy-Org-Id",
+          "X-JuggleWork-Org-Id",
+          "X-OpenWork-Legacy-Org-Id",
+        ],
         allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         exposeHeaders: ["Content-Length", "X-Request-Id"],
         maxAge: 600,

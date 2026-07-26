@@ -7,7 +7,7 @@ const ORG = { id: "org_eval_branding", name: "Acme Robotics", slug: "acme-roboti
 
 function json(response, body) {
   response.writeHead(200, {
-    "access-control-allow-headers": "authorization,content-type,x-openwork-legacy-org-id",
+    "access-control-allow-headers": "authorization,content-type,x-jugglework-legacy-org-id,x-openwork-legacy-org-id",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
     "content-type": "application/json",
@@ -21,7 +21,7 @@ async function startBrandingServer(ctx) {
     const requestPath = request.url?.replace(/^\/api\/den/, "") ?? "";
     if (request.method === "OPTIONS") {
       response.writeHead(204, {
-        "access-control-allow-headers": "authorization,content-type,x-openwork-legacy-org-id",
+        "access-control-allow-headers": "authorization,content-type,x-jugglework-legacy-org-id,x-openwork-legacy-org-id",
         "access-control-allow-methods": "GET,POST,OPTIONS",
         "access-control-allow-origin": "*",
       });
