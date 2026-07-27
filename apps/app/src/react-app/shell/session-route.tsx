@@ -88,8 +88,14 @@ import {
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import {
+  isDesktopModelBlocked,
+  isDesktopProviderBlocked,
+} from "@/app/cloud/desktop-app-restrictions";
+import {
+  useCheckDesktopRestriction,
+  useDesktopAllowedModels,
+} from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
@@ -402,6 +408,7 @@ export function SessionRoute() {
   const local = useLocal();
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  const allowedModels = useDesktopAllowedModels();
   const restrictionNotice = useRestrictionNotice();
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
   const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
@@ -764,9 +771,10 @@ export function SessionRoute() {
       local.prefs.defaultModel &&
       (!selectedModelUsesCloudProvider || cloudProviderSyncReady) &&
       (
-        isDesktopProviderBlocked({
-          providerId: local.prefs.defaultModel.providerID,
+        isDesktopModelBlocked({
+          model: local.prefs.defaultModel,
           checkRestriction: checkDesktopRestriction,
+          allowedModels,
         }) ||
         (
           selectedModelProviderList &&
@@ -1487,6 +1495,7 @@ export function SessionRoute() {
           .filter((provider) => !isDesktopProviderBlocked({
             providerId: provider.id,
             checkRestriction: checkDesktopRestriction,
+            allowedModels,
           }))
           .find((provider) => Object.keys(provider.models ?? {}).length > 0);
         const availableModelId = availableProvider ? Object.keys(availableProvider.models ?? {})[0] : undefined;
@@ -1520,7 +1529,7 @@ export function SessionRoute() {
         };
       },
     };
-  }, [checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
+  }, [allowedModels, checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
   useControlAction(seedUnavailableModelControlAction);
 
   const seedActiveSessionSidebarControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -2053,12 +2062,12 @@ export function SessionRoute() {
         preferredProviderId: sessionProviderAuthSnapshot.providerAuthPreferredProviderId,
         workerType: sessionProviderAuthSnapshot.providerAuthWorkerType,
         providers: sessionProviderAuthSnapshot.providerAuthProviders.filter(
-          (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction }),
+          (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction, allowedModels }),
         ),
         connectedProviderIds: providerConnectedIds,
         authMethods: Object.fromEntries(
           Object.entries(sessionProviderAuthSnapshot.providerAuthMethods).filter(
-            ([providerId]) => !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction }),
+            ([providerId]) => !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction, allowedModels }),
           ),
         ),
         onSelect: sessionProviderAuthStore.startProviderAuth,

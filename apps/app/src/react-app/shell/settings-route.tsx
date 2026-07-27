@@ -125,7 +125,11 @@ import {
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
+import {
+  useCheckDesktopRestriction,
+  useDesktopAllowedModels,
+  useDesktopConfig,
+} from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
@@ -374,6 +378,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const { memoryEnabled, toggleMemory } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  const allowedModels = useDesktopAllowedModels();
   const restrictionNotice = useRestrictionNotice();
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
@@ -2543,7 +2548,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         workerType={providerAuthSnapshot.providerAuthWorkerType}
         // Hide any provider the org blocks at the desktop layer so users
         // can't connect a forbidden one (dev #1505). Same helper covers
-        // opencode-provider gating via the `allowZenModel` restriction.
+        // opencode-provider gating via the `allowZenModel` restriction and
+        // the connected cloud's `allowedModels` catalog.
         // We also strip the matching key from `authMethods` because the
         // modal builds its entry list from `Object.keys(authMethods)`,
         // not from `providers`.
@@ -2552,6 +2558,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             !isDesktopProviderBlocked({
               providerId: provider.id,
               checkRestriction: checkDesktopRestriction,
+              allowedModels,
             }),
         )}
         connectedProviderIds={providerConnectedIds}
@@ -2561,6 +2568,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               !isDesktopProviderBlocked({
                 providerId,
                 checkRestriction: checkDesktopRestriction,
+                allowedModels,
               }),
           ),
         )}

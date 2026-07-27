@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   commandMatchesPackagedSidecar,
+  denModelsCatalogUrl,
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
   resolveOpenworkServerConfigPath,
@@ -169,5 +170,36 @@ describe("snapshotEngineState", () => {
     assert.equal(snapshot.running, true);
     assert.equal(snapshot.managedByServer, true);
     assert.equal(snapshot.pid, 12345);
+  });
+});
+
+describe("denModelsCatalogUrl", () => {
+  it("points the engine at the connected deployment's catalog", () => {
+    for (const baseUrl of [
+      "https://work.juggle.im",
+      "https://work.juggle.im/",
+      "https://work.juggle.im/jwork",
+      "https://work.juggle.im/jwork/api",
+    ]) {
+      assert.equal(denModelsCatalogUrl(baseUrl), "https://work.juggle.im/jwork/models");
+    }
+  });
+
+  it("keeps a deployment mounted under a sub-path", () => {
+    assert.equal(
+      denModelsCatalogUrl("https://host.example/base/api/den"),
+      "https://host.example/base/jwork/models",
+    );
+  });
+
+  it("leaves the public mirror in place for the hosted cloud", () => {
+    assert.equal(denModelsCatalogUrl("https://app.openworklabs.com"), null);
+    assert.equal(denModelsCatalogUrl("https://app.openworklabs.com/api/den"), null);
+  });
+
+  it("returns null rather than a broken URL for unusable input", () => {
+    for (const value of ["", "   ", "not a url", "ftp://host/path", null, undefined]) {
+      assert.equal(denModelsCatalogUrl(value), null);
+    }
   });
 });

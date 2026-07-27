@@ -10,6 +10,50 @@ export type DesktopAppRestrictionChecker = (input: {
 
 export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
 
+/**
+ * `<providerId>/<modelId>` entries the connected cloud supports, from the
+ * `allowedModels` desktop policy. A private cloud serves the catalog it can
+ * actually configure providers for, which is narrower than the public
+ * models.dev list the engine reports. An empty list means "not restricted" —
+ * a deployment that sends nothing must not lock every model out.
+ */
+export function readDesktopAllowedModels(
+  config: DenDesktopConfig | null | undefined,
+): readonly string[] {
+  return config?.allowedModels ?? [];
+}
+
+/**
+ * Mirrors `isCloudManagedProviderKey` in
+ * `react-app/domains/connections/provider-auth/cloud-provider-config.ts`
+ * (duplicated because this module sits below `react-app/`). Org-managed
+ * providers are pushed down by the cloud itself, so the catalog allowlist must
+ * never hide them — an admin can publish a provider that the catalog does not
+ * list, and it stays legitimate.
+ */
+function isCloudManagedProviderId(providerId: string) {
+  return /^lpr_/i.test(providerId) || providerId === "openwork";
+}
+
+function isAllowedByModelCatalog(input: {
+  allowedModels: readonly string[] | undefined;
+  providerId: string;
+  modelId?: string;
+}) {
+  const allowedModels = input.allowedModels;
+  if (!allowedModels || allowedModels.length === 0) return true;
+
+  const providerId = input.providerId.trim();
+  if (!providerId) return true;
+  if (isCloudManagedProviderId(providerId)) return true;
+
+  const modelId = input.modelId?.trim();
+  if (modelId) return allowedModels.includes(`${providerId}/${modelId}`);
+
+  const prefix = `${providerId}/`;
+  return allowedModels.some((entry) => entry.startsWith(prefix));
+}
+
 export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
@@ -20,24 +64,40 @@ export function checkDesktopAppRestriction(input: {
 export function isDesktopProviderBlocked(input: {
   providerId: string;
   checkRestriction: DesktopAppRestrictionChecker;
+  allowedModels?: readonly string[];
 }) {
   const providerId = input.providerId.trim().toLowerCase();
   if (!providerId) return false;
 
   if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
-    return input.checkRestriction({ restriction: "allowZenModel" });
+    if (input.checkRestriction({ restriction: "allowZenModel" })) return true;
   }
 
-  return false;
+  return !isAllowedByModelCatalog({
+    allowedModels: input.allowedModels,
+    providerId: input.providerId,
+  });
 }
 
 export function isDesktopModelBlocked(input: {
   model: ModelRef;
   checkRestriction: DesktopAppRestrictionChecker;
+  allowedModels?: readonly string[];
 }) {
-  return isDesktopProviderBlocked({
+  if (
+    isDesktopProviderBlocked({
+      providerId: input.model.providerID,
+      checkRestriction: input.checkRestriction,
+      allowedModels: input.allowedModels,
+    })
+  ) {
+    return true;
+  }
+
+  return !isAllowedByModelCatalog({
+    allowedModels: input.allowedModels,
     providerId: input.model.providerID,
-    checkRestriction: input.checkRestriction,
+    modelId: input.model.modelID,
   });
 }
 

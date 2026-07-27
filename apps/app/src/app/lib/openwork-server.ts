@@ -41,11 +41,6 @@ export type OpenworkServerCapabilities = {
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
 
-export type OpenworkJuggleRouterModel = {
-  id: string;
-  tags: string[];
-};
-
 export type OpenworkServerDiagnostics = {
   ok: boolean;
   version: string;
@@ -1374,12 +1369,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     googleWorkspaceSetActiveAccount: (accountId: string) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/active-account", { token, hostToken, method: "POST", body: { accountId }, timeoutMs: timeouts.status }),
     googleWorkspaceTestConnection: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/test", { token, hostToken, method: "POST", timeoutMs: 60_000 }),
     googleWorkspaceRunScopeSmokeTest: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/smoke-test", { token, hostToken, method: "POST", timeoutMs: 120_000 }),
-    getJuggleRouterModels: () =>
-      requestJson<{ models: OpenworkJuggleRouterModel[] }>(
-        baseUrl,
-        "/experimental/jugglerouter/models",
-        { token, hostToken, timeoutMs: timeouts.config },
-      ),
     callExtensionAction: (payload: OpenworkExtensionActionCall) =>
       requestJson<OpenworkExtensionActionResult>(baseUrl, "/experimental/extensions/call", {
         token,

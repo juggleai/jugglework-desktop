@@ -14,6 +14,7 @@ import { desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
 
 import {
   checkDesktopAppRestriction,
+  readDesktopAllowedModels,
   type DesktopAppRestrictionChecker,
 } from "../../../app/cloud/desktop-app-restrictions";
 import {
@@ -63,6 +64,7 @@ const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
+  "allowedModels",
   "brandAppName",
   "brandLogoUrl",
   "brandIconUrl",
@@ -447,6 +449,15 @@ export function useConnectEnabled(): boolean | undefined {
  */
 export function useCheckDesktopRestriction(): DesktopAppRestrictionChecker {
   return useDesktopConfig().checkRestriction;
+}
+
+/**
+ * The connected cloud's model catalog as `<providerId>/<modelId>` entries.
+ * Empty when the deployment does not restrict models (hosted cloud, older
+ * private-cloud builds), so callers can pass it through unconditionally.
+ */
+export function useDesktopAllowedModels(): readonly string[] {
+  return readDesktopAllowedModels(useDesktopConfig().config);
 }
 
 /**

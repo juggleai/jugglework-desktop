@@ -76,11 +76,6 @@ import {
   type DesktopAppRestrictionChecker,
 } from "../../../../app/cloud/desktop-app-restrictions";
 import {
-  buildJuggleRouterProviderConfig,
-  JUGGLEROUTER_PROVIDER_ID,
-  JUGGLEROUTER_PROVIDER_NAME,
-} from "./jugglerouter-provider";
-import {
   createLatestSyncQueue,
   shouldAdoptWorkspaceSnapshot,
 } from "./cloud-provider-sync-queue";
@@ -165,6 +160,8 @@ type CreateProviderAuthStoreOptions = {
   providerConnectedIds: () => string[];
   disabledProviders: () => string[];
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
+  /** `<providerId>/<modelId>` catalog the connected cloud supports; empty when unrestricted. */
+  desktopAllowedModels?: () => readonly string[];
   selectedWorkspaceDisplay: () => WorkspaceDisplay;
   providerBaseUrl: () => string;
   selectedWorkspaceRoot: () => string;
@@ -222,6 +219,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const listener of listeners) listener();
    };
 
+  // Blocked either by a desktop policy flag or by the connected cloud's model
+  // catalog, which narrows the engine's models.dev-wide list to what this
+  // deployment supports. Providers the org itself published are exempt: an
+  // admin may publish a custom provider the catalog does not list.
+  const isProviderBlocked = (providerId: string) => {
+    const id = providerId.trim();
+    if (state.cloudOrgProviders.some((provider) => provider.providerId.trim() === id)) {
+      return false;
+    }
+    return isDesktopProviderBlocked({
+      providerId,
+      checkRestriction: options.checkDesktopAppRestriction,
+      allowedModels: options.desktopAllowedModels?.(),
+    });
+  };
+
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
 
@@ -231,7 +244,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of options.providers()) {
       const id = provider.id?.trim();
       if (!id) continue;
-      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
+      if (isProviderBlocked(id)) continue;
       merged.set(id, {
         id,
         name: provider.name?.trim() || id,
@@ -242,25 +255,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of state.cloudOrgProviders) {
       const id = provider.providerId.trim();
       if (!id || merged.has(id)) continue;
-      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
+      if (isProviderBlocked(id)) continue;
       merged.set(id, {
         id,
         name: provider.name.trim() || id,
         env: getCloudProviderEnv(provider.providerConfig),
-      });
-    }
-
-    if (
-      !merged.has(JUGGLEROUTER_PROVIDER_ID) &&
-      !isDesktopProviderBlocked({
-        providerId: JUGGLEROUTER_PROVIDER_ID,
-        checkRestriction: options.checkDesktopAppRestriction,
-      })
-    ) {
-      merged.set(JUGGLEROUTER_PROVIDER_ID, {
-        id: JUGGLEROUTER_PROVIDER_ID,
-        name: JUGGLEROUTER_PROVIDER_NAME,
-        env: [],
       });
     }
 
@@ -725,12 +724,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   };
 
   const assertProviderAllowedByDesktopPolicy = (providerId: string) => {
-    if (
-      isDesktopProviderBlocked({
-        providerId,
-        checkRestriction: options.checkDesktopAppRestriction,
-      })
-    ) {
+    if (isProviderBlocked(providerId)) {
       throw new Error(`${providerId} is blocked by your organization desktop policy.`);
     }
   };
@@ -1100,26 +1094,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of availableProviders ?? []) {
       const id = provider.id?.trim();
       if (!id) continue;
-      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
+      if (isProviderBlocked(id)) continue;
       if (!Array.isArray(provider.env) || provider.env.length === 0) continue;
       const existing = merged[id] ?? [];
       if (existing.some((method) => method.type === "api")) continue;
       merged[id] = [...existing, { type: "api", label: t("providers.api_key_label") }];
     }
 
-    if (
-      availableProviders.some((provider) => provider.id === JUGGLEROUTER_PROVIDER_ID) &&
-      !(merged[JUGGLEROUTER_PROVIDER_ID] ?? []).some((method) => method.type === "api")
-    ) {
-      merged[JUGGLEROUTER_PROVIDER_ID] = [
-        ...(merged[JUGGLEROUTER_PROVIDER_ID] ?? []),
-        { type: "api", label: t("providers.api_key_label") },
-      ];
-    }
-
     const availableProvidersById = new Map((availableProviders ?? []).map((provider) => [provider.id, provider]));
     for (const [id, providerMethods] of Object.entries(merged)) {
-      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) {
+      if (isProviderBlocked(id)) {
         delete merged[id];
         continue;
       }
@@ -1139,7 +1123,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const provider of cloudProviders) {
       const id = provider.providerId.trim();
       if (!id) continue;
-      if (isDesktopProviderBlocked({ providerId: id, checkRestriction: options.checkDesktopAppRestriction })) continue;
+      if (isProviderBlocked(id)) continue;
       const existing = merged[id] ?? [];
       if (
         existing.some(
@@ -1407,31 +1391,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     setStateField("providerAuthBusy", true);
     try {
-      if (providerId.trim().toLowerCase() === JUGGLEROUTER_PROVIDER_ID) {
-        const target = await resolveOpenworkConfigTarget("write");
-        if (!target.canUseOpenworkServer || !target.openworkClient) {
-          throw new Error("OpenWork server unavailable. Connect to add JuggleRouter.");
-        }
-        const { models } = await target.openworkClient.getJuggleRouterModels();
-        if (models.length === 0) {
-          throw new Error("JuggleRouter did not return any compatible chat models.");
-        }
-        await c.auth.set({
-          providerID: JUGGLEROUTER_PROVIDER_ID,
-          auth: { type: "api", key: trimmed },
-        });
-        try {
-          await patchRuntimeProviders({
-            [JUGGLEROUTER_PROVIDER_ID]: buildJuggleRouterProviderConfig(models),
-          });
-        } catch (error) {
-          await removeProviderAuthCredentials(JUGGLEROUTER_PROVIDER_ID).catch(() => undefined);
-          throw error;
-        }
-        options.markOpencodeConfigReloadRequired();
-        await refreshProviders({ dispose: true });
-        return `${t("status.connected")} ${JUGGLEROUTER_PROVIDER_NAME}`;
-      }
       if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
         await ensureProjectProviderDisabledState(providerId, false);
       }
@@ -1792,22 +1751,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await refreshProviders({ dispose: true });
         removeProviderFromState(resolved);
         return `${t("providers.disconnected_prefix")} ${resolved}`;
-      }
-
-      if (resolved.toLowerCase() === JUGGLEROUTER_PROVIDER_ID) {
-        try {
-          await removeProviderAuthCredentials(JUGGLEROUTER_PROVIDER_ID);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error ?? "");
-          if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
-            throw error;
-          }
-        }
-        await patchRuntimeProviders({ [JUGGLEROUTER_PROVIDER_ID]: null });
-        options.markOpencodeConfigReloadRequired();
-        await refreshProviders({ dispose: true });
-        removeProviderFromState(JUGGLEROUTER_PROVIDER_ID);
-        return `${t("providers.disconnected_prefix")} ${JUGGLEROUTER_PROVIDER_NAME}`;
       }
 
       await removeProviderAuthCredentials(resolved);

@@ -95,6 +95,41 @@ export function embeddedServerImportUrl(embeddedPath) {
   return url.href;
 }
 
+/** Control-plane prefix every JuggleWork server route hangs off (`/jwork`). */
+const DEN_CONTROL_PLANE_PATH = "/jwork";
+/** Path suffixes a stored Den base URL may already carry. */
+const DEN_BASE_PATH_SUFFIXES = [`${DEN_CONTROL_PLANE_PATH}/api`, DEN_CONTROL_PLANE_PATH, "/api/den"];
+/** The hosted control plane: it does not serve a private model catalog. */
+const HOSTED_DEN_HOST = "app.openworklabs.com";
+
+/**
+ * The provider catalog a connected JuggleWork server serves
+ * (`<origin>/jwork/models`), used as the engine's `OPENCODE_MODELS_URL` so its
+ * provider list matches that deployment's catalog. Returns null for the hosted
+ * cloud or unusable input, leaving the public mirror in place.
+ */
+export function denModelsCatalogUrl(denBaseUrl) {
+  const raw = String(denBaseUrl ?? "").trim();
+  if (!raw) return null;
+
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.hostname.toLowerCase() === HOSTED_DEN_HOST) return null;
+
+  const pathname = url.pathname.replace(/\/+$/, "");
+  const suffix = DEN_BASE_PATH_SUFFIXES.find((candidate) => pathname.toLowerCase().endsWith(candidate));
+  const root = suffix ? pathname.slice(0, -suffix.length) : pathname;
+  url.pathname = `${root}${DEN_CONTROL_PLANE_PATH}/models`.replace(/\/+/g, "/");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -569,7 +604,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths }) {
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl }) {
   const engineState = createEngineState();
   const openworkServerState = createOpenworkServerState();
   const orchestratorState = createOrchestratorState();
@@ -1231,6 +1266,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       manageOpencode: options.manageOpencode === true,
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
+      // Read at spawn time: switching clouds needs an engine restart to take
+      // effect, which openworkServerRestart already performs.
+      modelsUrl: denModelsCatalogUrl(readDenBaseUrl?.()) ?? undefined,
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

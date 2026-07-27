@@ -34,10 +34,6 @@ import type {
   ProviderAuthProvider,
   ProviderOAuthStartResult,
 } from "./store";
-import {
-  JUGGLEROUTER_PROVIDER_ID,
-  JUGGLEROUTER_WEBSITE_URL,
-} from "./jugglerouter-provider";
 
 type ProviderAuthEntry = {
   id: string;
@@ -156,8 +152,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const isOpencodeZenProvider = (id: string) => id.trim().toLowerCase() === "opencode";
-  const isJuggleRouterProvider = (id: string) =>
-    id.trim().toLowerCase() === JUGGLEROUTER_PROVIDER_ID;
 
   const OPENCODE_ZEN_KEY_URL = "https://opencode.ai/auth";
 
@@ -869,8 +863,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <div className="text-xs text-gray-10 mt-1">
                         {isOpencodeZenProvider(selectedEntry.id)
                           ? "Sign in to OpenCode Zen with an API key from opencode.ai/auth."
-                          : isJuggleRouterProvider(selectedEntry.id)
-                            ? "Connect to JuggleRouter with an API key from jugglerouter.com."
                           : "Paste your API key to connect."}
                       </div>
                     </div>
@@ -889,20 +881,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         onClick={() => void openExternalUrl(OPENCODE_ZEN_KEY_URL)}
                       >
                         Get an API key →
-                      </button>
-                    </div>
-                  ) : null}
-                  {isJuggleRouterProvider(selectedEntry.id) ? (
-                    <div className="rounded-lg border border-indigo-5/30 bg-indigo-3/15 px-3 py-2.5 text-xs text-indigo-12 space-y-1.5">
-                      <div>
-                        JuggleRouter gives you one OpenAI-compatible endpoint for its supported chat models.
-                      </div>
-                      <button
-                        type="button"
-                        className="text-indigo-11 hover:text-indigo-12 underline underline-offset-2 font-medium"
-                        onClick={() => void openExternalUrl(JUGGLEROUTER_WEBSITE_URL)}
-                      >
-                        Visit jugglerouter.com →
                       </button>
                     </div>
                   ) : null}

@@ -4,9 +4,12 @@
 // session-route.tsx; settings-route carries a sibling copy that should adopt
 // this hook next.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
 import type { Client, ModelOption } from "@/app/types";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import {
+  useCheckDesktopRestriction,
+  useDesktopAllowedModels,
+} from "@/react-app/domains/cloud/desktop-config-provider";
 import {
   getConnectedProviderItems,
   useProviderListQuery,
@@ -29,6 +32,7 @@ export type UseModelPickerInput = {
 export function useModelPicker(input: UseModelPickerInput) {
   const { client, baseUrl, workspaceRoot, onOpen, onLoadError } = input;
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  const allowedModels = useDesktopAllowedModels();
 
   const [open, setOpenState] = useState(false);
   const [compactOpen, setCompactOpen] = useState(false);
@@ -141,15 +145,18 @@ export function useModelPicker(input: UseModelPickerInput) {
   //   - `allowZenModel` hides the built-in OpenCode provider entries when false
   //   - `allowCustomProviders` hides providers that OpenCode does not report
   //     as connected through the provider list endpoint.
+  //   - `allowedModels` narrows the engine's models.dev-wide list to the
+  //     catalog the connected cloud supports.
   const options = useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
     });
     return modelOptions.filter((option) => {
       if (
-        isDesktopProviderBlocked({
-          providerId: option.providerID,
+        isDesktopModelBlocked({
+          model: { providerID: option.providerID, modelID: option.modelID },
           checkRestriction: checkDesktopRestriction,
+          allowedModels,
         })
       ) {
         return false;
@@ -159,7 +166,7 @@ export function useModelPicker(input: UseModelPickerInput) {
       }
       return true;
     });
-  }, [checkDesktopRestriction, modelOptions]);
+  }, [allowedModels, checkDesktopRestriction, modelOptions]);
 
   return {
     open,

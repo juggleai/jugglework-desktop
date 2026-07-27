@@ -1100,6 +1100,9 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  // Lets the engine read its provider catalog from the connected private
+  // cloud instead of the public mirror.
+  readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
 
 let runtimeDisposedForQuit = false;

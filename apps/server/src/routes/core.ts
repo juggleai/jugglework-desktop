@@ -11,7 +11,6 @@ import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
 import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
-import { fetchJuggleRouterCatalog } from "../jugglerouter-catalog.js";
 import {
   createGoogleWorkspaceConnectFlowManager,
   googleWorkspaceDisconnect,
@@ -333,18 +332,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       skills,
       instruction: renderOpenWorkConnectSkillInstruction(skills),
     });
-  });
-
-  addRoute(routes, "GET", "/experimental/jugglerouter/models", "client", async () => {
-    try {
-      return jsonResponse({ models: await fetchJuggleRouterCatalog() });
-    } catch {
-      throw new ApiError(
-        502,
-        "jugglerouter_catalog_failed",
-        "Could not load the JuggleRouter model catalog.",
-      );
-    }
   });
 
   addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {

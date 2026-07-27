@@ -197,6 +197,11 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
+    // "<providerId>/<modelId>" entries the connected cloud supports. Absent
+    // (or empty) means the deployment does not restrict the model catalog.
+    allowedModels: z
+      .array(z.string().trim().min(3).max(256))
+      .optional(),
     brandAppName: z.string().trim().min(1).max(64).optional(),
     brandLogoUrl: z.string().url().max(2048).optional(),
     brandIconUrl: z.string().url().max(2048).optional(),
@@ -232,6 +237,23 @@ function normalizeAllowedDesktopVersions(value: unknown): string[] | undefined {
       value
         .map((entry) => normalizeDesktopVersionString(entry))
         .filter((entry): entry is string => Boolean(entry)),
+    ),
+  ];
+}
+
+function normalizeAllowedModels(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return [
+    ...new Set(
+      value.flatMap((entry) => {
+        if (typeof entry !== "string") return [];
+        const [providerId, ...modelIdParts] = entry.trim().split("/");
+        const modelId = modelIdParts.join("/");
+        return providerId && modelId ? [`${providerId}/${modelId}`] : [];
+      }),
     ),
   ];
 }
@@ -532,6 +554,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const allowedDesktopVersions = normalizeAllowedDesktopVersions(
     raw?.allowedDesktopVersions,
   );
+  const allowedModels = normalizeAllowedModels(raw?.allowedModels);
   const brandAppName = normalizeBrandAppName(raw?.brandAppName);
   const brandLogoUrl = normalizeBrandUrl(raw?.brandLogoUrl);
   const brandIconUrl = normalizeBrandUrl(raw?.brandIconUrl);
@@ -543,6 +566,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   return {
     ...policy,
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
+    ...(allowedModels !== undefined ? { allowedModels } : {}),
     ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),

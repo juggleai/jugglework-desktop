@@ -7,7 +7,10 @@ import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import type { Client, ProviderListItem, WorkspaceDisplay } from "@/app/types";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import {
+  useCheckDesktopRestriction,
+  useDesktopAllowedModels,
+} from "@/react-app/domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
@@ -56,6 +59,11 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setDisabledProviderIds,
   } = input;
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  // Read through a ref: the catalog arrives after the desktop-config fetch
+  // resolves, and recreating the store would trigger a spurious cloud sync.
+  const allowedModels = useDesktopAllowedModels();
+  const allowedModelsRef = useRef(allowedModels);
+  allowedModelsRef.current = allowedModels;
   const reloadCoordinator = useReloadCoordinator();
   const { markReloadRequired } = reloadCoordinator;
   const onboardingProviderAuthPendingRef = useRef(false);
@@ -96,6 +104,7 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
         providerConnectedIds: () => stateRef.current.providerConnectedIds,
         disabledProviders: () => stateRef.current.disabledProviderIds,
         checkDesktopAppRestriction: checkDesktopRestriction,
+        desktopAllowedModels: () => allowedModelsRef.current,
         providerBaseUrl: () => stateRef.current.opencodeBaseUrl,
         selectedWorkspaceDisplay: () =>
           stateRef.current.selectedWorkspace

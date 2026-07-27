@@ -18,7 +18,10 @@ import {
 } from "@/components/ui/tooltip";
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import {
+  useCheckDesktopRestriction,
+  useDesktopAllowedModels,
+} from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   getOpenWorkModelsActionUrl,
@@ -43,7 +46,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 
@@ -58,6 +61,7 @@ function getProviderDisplayName(providerId: string) {
 function useModelOptions(open: boolean) {
   const { client, opencodeBaseUrl, selectedWorkspaceRoot } = useWorkspace();
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  const allowedModels = useDesktopAllowedModels();
 
   const { data, refetch } = useProviderListQuery({
     client,
@@ -85,6 +89,8 @@ function useModelOptions(open: boolean) {
   //   - `allowZenModel` hides the built-in OpenCode provider entries when false
   //   - `allowCustomProviders` hides providers that OpenCode does not report
   //     as connected through the provider list endpoint.
+  //   - `allowedModels` narrows the engine's models.dev-wide list to the
+  //     catalog the connected cloud supports.
   return React.useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
@@ -108,9 +114,10 @@ function useModelOptions(open: boolean) {
 
     return options.filter((option) => {
       if (
-        isDesktopProviderBlocked({
-          providerId: option.providerID,
+        isDesktopModelBlocked({
+          model: { providerID: option.providerID, modelID: option.modelID },
           checkRestriction: checkDesktopRestriction,
+          allowedModels,
         })
       ) {
         return false;
@@ -122,7 +129,7 @@ function useModelOptions(open: boolean) {
 
       return true;
     });
-  }, [checkDesktopRestriction, data]);
+  }, [allowedModels, checkDesktopRestriction, data]);
 }
 
 type ModelSelectModelItem = {
