@@ -87,7 +87,11 @@ import {
   seedOpenworkWorkspaceConfigIfEmpty,
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
-import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
+import {
+  buildOpenworkRuntimeConfigObject,
+  openworkRuntimeConfigFilePath,
+  writeOpenworkRuntimeConfigFile,
+} from "./openwork-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
@@ -3219,6 +3223,24 @@ async function reloadOpencodeEngine(
   const baseUrl = connection.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
+  }
+
+  // A managed OpenCode process has one global OPENCODE_CONFIG file even when
+  // it serves several workspace directories. Rebuild that file from the
+  // target workspace before dispose, otherwise switching workspaces reloads
+  // the engine with whichever workspace happened to be primary at startup.
+  // External engines are not tied to this server-managed file.
+  if (trustedOpencodeProcessIdentity(config, workspace)) {
+    try {
+      await writeOpenworkRuntimeConfigFile(config, workspace.id);
+    } catch (error) {
+      throw new ApiError(
+        500,
+        "opencode_runtime_config_refresh_failed",
+        "Failed to prepare the workspace runtime configuration for engine reload",
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
   }
 
   const directory = resolveOpencodeDirectory(workspace);

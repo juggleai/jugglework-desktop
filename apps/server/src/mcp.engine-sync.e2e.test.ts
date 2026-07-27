@@ -11,6 +11,10 @@ import {
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
+import {
+  openworkRuntimeConfigFilePath,
+  writeOpenworkRuntimeConfigFile,
+} from "./openwork-runtime-config.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
@@ -783,6 +787,64 @@ describe("runtime MCP engine sync", () => {
       expect(disposeIndex).toBeGreaterThanOrEqual(0);
       expect(syncIndex).toBeGreaterThan(disposeIndex);
       expect(mock.requests[syncIndex]?.body).toEqual({ name: "posthog", config: POSTHOG_CONFIG });
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("rebuilds the managed config for the target workspace before reload", async () => {
+    const primaryRoot = await createWorkspaceRoot();
+    const secondaryRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(primaryRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const openwork = await startOpenworkServer(primaryRoot, `http://127.0.0.1:${mock.server.port}`);
+      openwork.config.workspaces.push({
+        id: "ws_2",
+        name: "Secondary",
+        path: secondaryRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: `http://127.0.0.1:${mock.server.port}`,
+      });
+      openwork.config.authorizedRoots.push(secondaryRoot);
+
+      await writeOpenworkRuntimeConfigFile(openwork.config, "ws_1");
+      await writeRuntimeOpencodeConfig(openwork.config, "ws_2", (current) => ({
+        ...current,
+        provider: {
+          lpr_cloud: {
+            id: "testrouter",
+            name: "TestRouter",
+            models: {
+              "model-cloud": { id: "model-cloud", name: "Cloud Model" },
+            },
+          },
+        },
+      }));
+
+      const before = JSON.parse(
+        await readFile(openworkRuntimeConfigFilePath(openwork.config), "utf8"),
+      ) as { provider?: Record<string, unknown> };
+      expect(before.provider?.lpr_cloud).toBeUndefined();
+
+      const reloadResponse = await fetch(`${openwork.base}/workspace/ws_2/engine/reload`, {
+        method: "POST",
+        headers: auth(openwork.token),
+      });
+      expect(reloadResponse.status).toBe(200);
+
+      const after = JSON.parse(
+        await readFile(openworkRuntimeConfigFilePath(openwork.config), "utf8"),
+      ) as { provider?: Record<string, { models?: Record<string, unknown> }> };
+      expect(Object.keys(after.provider?.lpr_cloud?.models ?? {})).toEqual(["model-cloud"]);
+      expect(mock.requests.some((entry) =>
+        entry.method === "POST" &&
+        entry.pathname === "/instance/dispose" &&
+        entry.search.includes(encodeURIComponent(secondaryRoot))
+      )).toBe(true);
     } finally {
       if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
       else process.env.OPENWORK_RUNTIME_DB = previousDb;
