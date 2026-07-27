@@ -1,6 +1,3 @@
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { connect, debuggerUrlFor, listTargets } from "../runner/cdp.mjs";
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
@@ -12,7 +9,6 @@ const WEB_CDP_URL = clean(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
 const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
 const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
 const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BRANDED_APP_NAME = "Acme Work";
 const BRAND_LOGO_URL = `${DEN_WEB_URL}/openwork-logo-transparent.svg`;
 
@@ -389,19 +385,6 @@ export default {
           await withWeb(ctx, async () => ctx.prove("Optional signed handoffs use the same standard installer experience", {
             voiceover: vo[5],
             action: async () => {
-              const defaultRender = spawnSync("helm", ["template", "openwork-ee", "packaging/helm/openwork-ee"], {
-                cwd: REPO_ROOT,
-                encoding: "utf8",
-              });
-              const signedRender = spawnSync("helm", [
-                "template", "openwork-ee", "packaging/helm/openwork-ee",
-                "--set", "config.public.connectLinkMode=signed",
-                "--set", "config.public.connectLinkKeyId=owc-future",
-                "--set-string", "secret.values.connectLinkPrivateKey=future-private-key",
-              ], { cwd: REPO_ROOT, encoding: "utf8" });
-              witness(ctx, defaultRender.status === 0 && defaultRender.stdout.includes('DEN_CONNECT_LINK_MODE: "exchange"'), "The chart defaults every custom deployment to no-key exchange mode", defaultRender.status);
-              witness(ctx, signedRender.status === 0 && signedRender.stdout.includes('DEN_CONNECT_LINK_MODE: "signed"'), "An operator has an explicit signed-mode upgrade path", signedRender.status);
-
               await navigate(ctx, state.installPageUrl);
               await ctx.waitFor("Boolean(document.querySelector('[data-testid=install-download-primary]'))", { timeoutMs: 30_000, label: "unchanged standard download" });
               const href = await ctx.eval("document.querySelector('[data-testid=install-download-primary]')?.href ?? ''");
@@ -410,11 +393,7 @@ export default {
                 status: response.status,
                 location: response.headers.get("location"),
               });
-              ctx.output("Helm handoff modes", [
-                'default: DEN_CONNECT_LINK_MODE: "exchange"',
-                'optional: DEN_CONNECT_LINK_MODE: "signed"',
-                `installer: ${response.headers.get("location")}`,
-              ].join("\n"));
+              ctx.output("Installer handoff", `installer: ${response.headers.get("location")}`);
             },
             assert: async () => {
               await ctx.expectText("Download the OpenWork installer");

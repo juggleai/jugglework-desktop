@@ -536,11 +536,7 @@ async function main() {
   console.log(`Demo B folder: ${demoRun.consumer.root}`);
   console.log(`  Electron:    ${demoRun.consumer.userDataDir}`);
   console.log(`  JuggleWork:    ${demoRun.consumer.dataDir}`);
-  const denStartup =
-    adminPort === appProfiles.admin.port && consumerPort === appProfiles.consumer.port
-      ? "pnpm demo:den"
-      : `OPENWORK_EXTRA_APP_PORTS=${adminPort},${consumerPort} pnpm dev:den`;
-  console.log(`Den startup:   ${denStartup}`);
+  console.log(`Control plane: ${denWebUrl}`);
   console.log("Press Ctrl-C to stop both instances.\n");
 }
 

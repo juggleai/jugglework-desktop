@@ -12,10 +12,6 @@ set -euo pipefail
 #   - Electron app — the real desktop app on the virtual display
 #   - CDP debugging (port 9825) — for automation
 #
-# Optional (if MySQL is available):
-#   - Den API (port 8788)
-#   - Den Web (port 3005)
-
 cd /workspace
 
 # ── 1. Virtual display ──
@@ -44,30 +40,6 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# ── 5. Optional: Den stack (only if MySQL is reachable) ──
-if mysql -h mysql -u root -ppassword -e "SELECT 1" >/dev/null 2>&1; then
-  echo "==> MySQL found, starting Den stack..."
-
-  echo "  Pushing DB schema..."
-  pnpm --filter @openwork-ee/den-db db:push 2>&1 || echo "  DB push failed (may be up to date)"
-
-  echo "  Starting Den API on :8788..."
-  pnpm dev:den:api > /tmp/den-api.log 2>&1 &
-
-  for i in $(seq 1 20); do
-    if curl -sf http://localhost:8788/health >/dev/null 2>&1; then
-      echo "  Den API healthy."
-      break
-    fi
-    sleep 2
-  done
-
-  echo "  Starting Den Web on :3005..."
-  pnpm dev:den:web > /tmp/den-web.log 2>&1 &
-else
-  echo "==> MySQL not found, skipping Den stack."
-fi
-
 echo ""
 echo "============================================"
 echo "  All services running!"
@@ -75,10 +47,6 @@ echo ""
 echo "  Desktop App (noVNC):  http://localhost:6080"
 echo "  CDP Debug:            ws://127.0.0.1:9825"
 echo "  Vite HMR:             http://localhost:5173"
-if mysql -h mysql -u root -ppassword -e "SELECT 1" >/dev/null 2>&1; then
-echo "  Den Web:              http://localhost:3005"
-echo "  Den API:              http://localhost:8788"
-fi
 echo "============================================"
 echo ""
 

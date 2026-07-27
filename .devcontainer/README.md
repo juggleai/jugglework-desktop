@@ -57,27 +57,6 @@ Do not use the generic `daytona create https://github.com/different-ai/openwork`
 flow for Electron/noVNC tests. The default resource size is too small and the
 generic image path does not guarantee the desktop stack we need.
 
-## Quick start with Daytona server
-
-```bash
-bash .devcontainer/create-daytona-openwork-server-snapshot.sh  # one-time / refresh when deps change
-bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-```
-
-The server helper creates a separate public Daytona sandbox for the Den stack:
-MySQL, Den API, Den Web, and the worker proxy. It prints public preview URLs and
-the exact Electron command to point a desktop sandbox at that server:
-
-```bash
-bash .devcontainer/test-on-daytona.sh [branch-or-commit] \
-  --den-base-url https://3005-...daytonaproxy... \
-  --den-api-base-url https://8788-...daytonaproxy...
-```
-
-This keeps the architecture simple: the server sandbox owns cloud auth, orgs,
-policies, workers, and persistence; the Electron sandbox stays a real desktop
-client and talks to the server through public Daytona preview URLs.
-
 ## How it works
 
 1. `.devcontainer/Dockerfile.daytona-vnc` starts from `daytonaio/sandbox:0.6.0`,

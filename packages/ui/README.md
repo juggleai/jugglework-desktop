@@ -3,7 +3,7 @@
 Shared UI primitives for JuggleWork apps.
 
 This package ships one entrypoint: `@openwork/ui/react`, used by `apps/app`
-and `ee/apps/den-web`. (A Solid flavor existed during the Solid-to-React
+and the JuggleWork dashboard. (A Solid flavor existed during the Solid-to-React
 migration and was removed once the last Solid consumer disappeared.)
 
 Exports resolve to `src/` directly, so consumers need no build step.

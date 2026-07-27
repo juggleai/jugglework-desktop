@@ -468,10 +468,7 @@ Daytona-hosted Den server stack.
 
 ### Steps
 
-1. Start the server sandbox:
-   ```bash
-   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-   ```
+1. Prepare an isolated test deployment of `jugglework-server`.
 
 2. Copy the printed `Den Web` and `Den API` URLs, then start Electron against
    the server:
@@ -519,10 +516,8 @@ variables.
 
 ### Steps
 
-1. Start a fresh Daytona server sandbox and seed the demo organization:
-   ```bash
-   bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
-   ```
+1. Prepare a fresh `jugglework-server` test deployment and seed the demo
+   organization.
 
 2. Start a fresh Electron sandbox against that Den server with recording enabled:
    ```bash

@@ -5,17 +5,11 @@ apps/desktop/dist-electron-demo-a/
 apps/desktop/dist-electron-demo-b/
 packages/*/node_modules/
 apps/*/node_modules/
-ee/apps/*/node_modules/
-ee/packages/*/node_modules/
 .next/
-ee/apps/landing/.next-prod-eval/
 out/
 dist/
 packages/*/dist/
 apps/*/dist/
-ee/apps/*/dist/
-ee/packages/*/dist/
-ee/apps/inference/models-site/models/api.json
 tmp/
 
 # Local git worktrees
@@ -30,7 +24,7 @@ apps/desktop/server/
 .env
 .env.*
 !.env.example
-# Committed local-dev defaults (throwaway secrets) loaded by scripts/dev-local.mjs.
+# Committed local-dev defaults.
 !.env.dev
 # The migration-release fragment is committed only on the tagged
 # migration-release commit and removed by 03-post-migration-cleanup.mjs.

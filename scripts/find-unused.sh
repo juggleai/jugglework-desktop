@@ -31,10 +31,8 @@ INFRA_GLOBS=(
   # Docker
   "packaging/docker/Dockerfile*"
   "packaging/docker/docker-compose*.yml"
-  "ee/apps/den-worker-runtime/Dockerfile*"
   # Deployment
   "apps/app/vercel.json"
-  "ee/apps/den-web/vercel.json"
   # Tauri
   "apps/desktop/src-tauri/tauri.conf.json"
   # Monorepo orchestration
@@ -44,15 +42,6 @@ INFRA_GLOBS=(
   "apps/app/tailwind.config.ts"
   "apps/story-book/vite.config.ts"
   "apps/ui-demo/vite.config.ts"
-  "ee/apps/den-web/next.config.js"
-  "ee/apps/den-web/postcss.config.js"
-  "ee/apps/den-web/tailwind.config.js"
-  "ee/apps/landing/next.config.js"
-  "ee/apps/landing/postcss.config.js"
-  "ee/apps/landing/tailwind.config.js"
-  "ee/packages/den-db/drizzle.config.ts"
-  "ee/packages/den-db/tsup.config.ts"
-  "ee/packages/utils/tsup.config.ts"
   "packages/ui/tsup.config.ts"
   # Build scripts (all)
   "scripts/*.mjs"
@@ -64,8 +53,6 @@ INFRA_GLOBS=(
   "apps/*/scripts/*.mjs"
   "apps/*/scripts/*.ts"
   "apps/*/scripts/*.sh"
-  "ee/apps/*/scripts/*.mjs"
-  "ee/apps/*/scripts/*.sh"
   # .opencode skills/commands that may invoke source
   ".opencode/skills/*/scripts/*.sh"
   ".opencode/skills/*/*.sh"
@@ -80,10 +67,7 @@ CONVENTION_PATTERNS=(
 )
 
 # File-based routing directories — files here are entry points by convention
-ROUTING_DIRS=(
-  "ee/apps/den-web/app/"
-  "ee/apps/landing/app/"
-)
+ROUTING_DIRS=()
 
 # Paths to ignore entirely
 IGNORE_PREFIXES=(

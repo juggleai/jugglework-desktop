@@ -1065,12 +1065,12 @@ Unreleased draft release. Tagged at `2026-03-19T14:01:13-07:00`.
 Session trace rows only open when they have details
 
 #### One-line summary
-Stops empty trace rows from expanding, removes stray desktop token-store test code from releases, and moves the repo into the new apps and ee layout.
+Stops empty trace rows from expanding, removes stray desktop token-store test code from releases, and reorganizes the repository layout.
 
 #### Main changes
 - Only trace rows with real details expand, with tighter mobile wrapping and clearer tool icons.
 - Removed stray token-store test code from desktop release code.
-- Reorganized the repo into `apps/` and `ee/` paths without changing app behavior.
+- Reorganized the repository paths without changing app behavior.
 
 #### Lines of code changed since previous release
 1577 lines changed since `v0.11.170` (986 insertions, 591 deletions).

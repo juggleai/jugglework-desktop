@@ -99,21 +99,6 @@ The runner probes `http://127.0.0.1:9825` (Daytona) then `:9823` (local
 (gitignored). Open `evals/results/<run-id>/index.html` for the frame proof.
 A non-zero exit code means at least one flow failed.
 
-### One-command cloud stack
-
-```bash
-pnpm evals --all --stack den     # MySQL + schema + den-api + demo seed +
-                                 # desktop bootstrap + dev app, then runs flows
-pnpm evals --stack-down          # stop what --stack den started
-```
-
-`--stack den` is idempotent: each layer (MySQL, schema, den-api, seed, app)
-is skipped when already up. It signs in as the seeded demo owner
-(`alex@acme.test`) and exports `OPENWORK_EVAL_DEN_API_URL` /
-`OPENWORK_EVAL_DEN_TOKEN`, so the env-gated cloud flows run with zero manual
-setup. Requires Docker. The MySQL volume survives `--stack-down`, so
-subsequent runs skip schema push and seeding.
-
 The markdown specs below remain the source narrative; when codifying a flow,
 link the spec via the flow's `spec` field.
 
@@ -253,10 +238,8 @@ Before reporting a flow as passed:
 - [`desktop-policy-extension-flows.md`](./desktop-policy-extension-flows.md) —
   admin-to-member extension policy flows for disabling and restoring built-in
   extensions.
-- [`cloud-admin-to-member-assignment-flows.md`](./cloud-admin-to-member-assignment-flows.md)
   — admin assigns providers/policies to a member, member desktop receives and
   uses them, then removal restores/cleans up UI state.
-- [`cloud-signin-client-provisioning-funnel.md`](./cloud-signin-client-provisioning-funnel.md)
   — founder funnel from website sign-in to provisioning skills/plugins/providers
   and validating the capability appears and produces value in the desktop client.
 - [`workspace-layout-state-flows.md`](./workspace-layout-state-flows.md) —
@@ -265,7 +248,6 @@ Before reporting a flow as passed:
 - [`environment-variable-flows.md`](./environment-variable-flows.md) — local
   environment variable CRUD, masking, validation, apply/restart behavior, and
   remote-workspace secret boundaries.
-- [`cloud-auth-flows.md`](./cloud-auth-flows.md) — desktop cloud sign-in
   (browser handoff + paste-code), expired grants, sign-out cleanup, and org
   switching.
 - [`cloud-mcp-agent-flows.md`](./cloud-mcp-agent-flows.md) — agent-driven org
@@ -278,7 +260,6 @@ Before reporting a flow as passed:
   marketplace plugin import/update/removal sync between Den and the desktop.
 - [`cloud-org-membership-flows.md`](./cloud-org-membership-flows.md) — org
   invitations, role updates, member removal, and domain restrictions.
-- [`daytona-server-failure-recovery-flows.md`](./daytona-server-failure-recovery-flows.md)
   — Den API/Web/proxy/MySQL outage and recovery behavior.
 - [`default-openwork-marketplace-onboarding-flow.md`](./default-openwork-marketplace-onboarding-flow.md)
   — default Marketplace provisioning funnel from sign-in to chat handoff.

@@ -2,7 +2,6 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveCdpBaseUrl } from "./cdp.ts";
-import { denStackDown, ensureDenStack } from "./den-stack.ts";
 import { missingEnv, loadFlows, runFlow } from "./runner.ts";
 import { renderMarkdown } from "./reporters/markdown.ts";
 import { renderFrameIndex } from "./reporters/fraimz-html.ts";
@@ -21,8 +20,6 @@ interface CliArgs {
   list: boolean;
   cdpUrl: string | null;
   out: string | null;
-  stack: string | null;
-  stackDown: boolean;
   scaffold: string | null;
   force: boolean;
   pr: true | string | null;
@@ -43,8 +40,6 @@ export function parseArgs(argv: string[]): CliArgs {
     list: false,
     cdpUrl: null,
     out: null,
-    stack: null,
-    stackDown: false,
     scaffold: null,
     force: false,
     pr: null,
@@ -64,9 +59,6 @@ export function parseArgs(argv: string[]): CliArgs {
     } else if (value === "--out") {
       args.out = readRequiredValue(argv, index, value);
       index += 1;
-    } else if (value === "--stack") {
-      args.stack = readRequiredValue(argv, index, value);
-      index += 1;
     } else if (value === "--mode") {
       const mode = readRequiredValue(argv, index, value);
       if (mode !== "automation" && mode !== "demo") {
@@ -74,8 +66,7 @@ export function parseArgs(argv: string[]): CliArgs {
       }
       args.mode = mode;
       index += 1;
-    } else if (value === "--stack-down") args.stackDown = true;
-    else if (value === "scaffold") {
+    } else if (value === "scaffold") {
       args.scaffold = readRequiredValue(argv, index, value);
       index += 1;
     } else if (value === "--force") args.force = true;
@@ -93,27 +84,6 @@ export function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-async function readFlowSource(flowId: string): Promise<string | null> {
-  for (const extension of [".flow.ts", ".flow.mjs"]) {
-    try {
-      return await readFile(join(FLOWS_DIR, `${flowId}${extension}`), "utf8");
-    } catch {
-      // Try the next supported flow extension.
-    }
-  }
-  return null;
-}
-
-async function selectedStackNeedsApp(args: CliArgs): Promise<boolean> {
-  if (args.list) return false;
-  if (args.all || args.flows.length === 0) return true;
-  for (const flowId of args.flows) {
-    const source = await readFlowSource(flowId);
-    if (!source || !/requiresApp\s*:\s*false/.test(source)) return true;
-  }
-  return false;
-}
-
 function incrementSummary(summary: Record<FlowStatus, number>, status: FlowStatus): void {
   if (status === "passed") summary.passed += 1;
   else if (status === "failed") summary.failed += 1;
@@ -121,18 +91,13 @@ function incrementSummary(summary: Record<FlowStatus, number>, status: FlowStatu
 }
 
 function printHelp(): void {
-  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--out <dir>] [--pr [number]] [--stack den | --stack-down]");
+  console.log("Usage: node evals/runner/run.mjs [--mode automation|demo] [--list | --all | --flow <id> ... | scaffold <id> [--force]] [--cdp-url <url>] [--out <dir>] [--pr [number]]");
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   if (args.help) {
     printHelp();
-    return;
-  }
-
-  if (args.stackDown) {
-    await denStackDown({ log: (msg) => console.log(`▸ ${msg}`) });
     return;
   }
 
@@ -145,16 +110,6 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
     console.log("Fill in each frame's action/assert, then run: pnpm fraimz --flow " + args.scaffold);
     return;
-  }
-
-  if (args.stack === "den") {
-    await ensureDenStack({
-      log: (msg) => console.log(`▸ ${msg}`),
-      cdpCandidates: args.cdpUrl ? [args.cdpUrl] : DEFAULT_CDP_CANDIDATES,
-      skipApp: !(await selectedStackNeedsApp(args)),
-    });
-  } else if (args.stack) {
-    throw new Error(`Unknown stack: ${args.stack}. Supported: den`);
   }
 
   const flows = await loadFlows(FLOWS_DIR);
