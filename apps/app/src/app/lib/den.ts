@@ -70,6 +70,7 @@ export const DEN_CONTROL_PLANE_PATH = "/jwork";
 const DEN_API_BASE_PATH = `${DEN_CONTROL_PLANE_PATH}/api`;
 /** The pre-`/jwork` layout: den-web proxied den-api at `<origin>/api/den`. */
 const LEGACY_DEN_API_BASE_PATH = "/api/den";
+export const DEN_DASHBOARD_PATH = `${DEN_CONTROL_PLANE_PATH}/console`;
 export const DEN_INFERENCE_PATH = `${DEN_CONTROL_PLANE_PATH}/console/dashboard/inference`;
 
 // Den wire types moved to den-types.ts (leaf module); re-exported here so
@@ -580,6 +581,10 @@ export function resolveDenBaseUrls(input: { baseUrl?: string | null; apiBaseUrl?
     baseUrl,
     apiBaseUrl: ensureDenApiBasePath(baseUrl) ?? baseUrl,
   };
+}
+
+export function buildDenDashboardUrl(baseUrl: string | null | undefined): string {
+  return new URL(DEN_DASHBOARD_PATH, resolveDenBaseUrls(baseUrl).baseUrl).toString();
 }
 
 /** The MCP endpoint served through the Den web proxy from the single base URL. */

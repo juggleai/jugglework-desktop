@@ -3,6 +3,7 @@ import * as React from "react";
 import { toast } from "@/components/ui/sonner";
 
 import {
+  buildDenDashboardUrl,
   buildDenAuthUrl,
   clearDenSession,
   createDenClient,
@@ -235,7 +236,7 @@ export function useDenSession({
   }, [syncCurrentDenSettings]);
 
   const openControlPlane = React.useCallback(() => {
-    openLink(resolveDenBaseUrls(baseUrl).baseUrl);
+    openLink(buildDenDashboardUrl(baseUrl));
   }, [baseUrl, openLink]);
 
   const openBrowserAuth = React.useCallback(

@@ -1,11 +1,26 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildDenDashboardUrl,
   getDenMcpUrl,
   isLegacyWebAppMcpUrl,
   resolveCloudMcpResourceUrl,
   resolveDenBaseUrls,
 } from "../src/app/lib/den";
+
+describe("buildDenDashboardUrl", () => {
+  test("opens the JuggleWork console dashboard", () => {
+    expect(buildDenDashboardUrl("https://work.juggle.im")).toBe(
+      "https://work.juggle.im/jwork/console",
+    );
+  });
+
+  test("keeps developer-mode control plane origins", () => {
+    expect(buildDenDashboardUrl("http://localhost:3000")).toBe(
+      "http://localhost:3000/jwork/console",
+    );
+  });
+});
 
 describe("resolveDenBaseUrls", () => {
   test("always derives the API proxy from the base URL", () => {
