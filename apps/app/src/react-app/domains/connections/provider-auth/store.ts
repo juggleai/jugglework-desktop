@@ -80,6 +80,10 @@ import {
   JUGGLEROUTER_PROVIDER_ID,
   JUGGLEROUTER_PROVIDER_NAME,
 } from "./jugglerouter-provider";
+import {
+  createLatestSyncQueue,
+  shouldAdoptWorkspaceSnapshot,
+} from "./cloud-provider-sync-queue";
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
@@ -211,9 +215,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersLoadKey = "";
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
-  let cloudProviderSyncInFlight: Promise<void> | null = null;
-  let cloudProviderSyncQueuedReason: CloudProviderSyncReason | null = null;
   let cloudProviderSyncContextKey = "";
+  let importedCloudProvidersWorkspaceKey = "";
 
   const emitChange = () => {
     for (const listener of listeners) listener();
@@ -418,18 +421,28 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   const refreshImportedCloudProviders = async (refreshOptions?: { strict?: boolean }) => {
     try {
+      const workspaceKey = currentWorkspaceKey();
       const config = await readWorkspaceOpenworkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       const next = cloudImports.providers;
       // Guard: don't overwrite non-empty import state with an empty read.
       // This prevents a transient server unavailability (e.g. during engine
       // restart) from clearing a just-completed import from the badge.
-      const hasNext = Object.keys(next).length > 0;
-      const hasCurrent = Object.keys(state.importedCloudProviders).length > 0;
-      if (hasNext || !hasCurrent) {
+      const nextEntryCount = Object.keys(next).length;
+      const currentEntryCount = Object.keys(state.importedCloudProviders).length;
+      if (
+        shouldAdoptWorkspaceSnapshot({
+          currentWorkspaceKey: workspaceKey,
+          snapshotWorkspaceKey: importedCloudProvidersWorkspaceKey,
+          currentEntryCount,
+          nextEntryCount,
+        })
+      ) {
         setStateField("importedCloudProviders", next);
+        importedCloudProvidersWorkspaceKey = workspaceKey;
+        return next;
       }
-      return next;
+      return state.importedCloudProviders;
     } catch (error) {
       if (refreshOptions?.strict) {
         throw error;
@@ -458,6 +471,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       );
     }
     setStateField("importedCloudProviders", nextProviders);
+    importedCloudProvidersWorkspaceKey = currentWorkspaceKey();
   };
 
   const readProjectConfigFile = async () => {
@@ -1731,30 +1745,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  async function runCloudProviderSync(reason: CloudProviderSyncReason) {
-    if (cloudProviderSyncInFlight) {
-      cloudProviderSyncQueuedReason = reason;
-      return cloudProviderSyncInFlight;
-    }
-
-    const request = performCloudProviderSync(reason)
-      .catch((error) => {
+  const cloudProviderSyncQueue = createLatestSyncQueue<CloudProviderSyncReason>(
+    async (reason) => {
+      await performCloudProviderSync(reason).catch((error) => {
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
           setStateField("providerAuthError", message);
         }
-      })
-      .finally(() => {
-        cloudProviderSyncInFlight = null;
-        const queuedReason = cloudProviderSyncQueuedReason;
-        cloudProviderSyncQueuedReason = null;
-        if (queuedReason) {
-          void runCloudProviderSync(queuedReason);
-        }
       });
+    },
+  );
 
-    cloudProviderSyncInFlight = request;
-    return request;
+  function runCloudProviderSync(reason: CloudProviderSyncReason) {
+    return cloudProviderSyncQueue.run(reason);
   }
 
   async function disconnectProvider(providerId: string) {

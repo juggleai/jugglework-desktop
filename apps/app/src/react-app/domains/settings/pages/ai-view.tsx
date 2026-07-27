@@ -127,7 +127,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pricing is handled through JuggleWork Cloud. You can continue using OpenCode Zen or your own providers.
+                    Pricing is handled through JuggleWork Cloud. You can continue using organization models or your own providers.
                   </p>
                 </div>
               </div>

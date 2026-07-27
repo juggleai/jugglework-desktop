@@ -68,7 +68,7 @@ export function OpenWorkModelsStartupDialog(props: OpenWorkModelsStartupDialogPr
           </div>
 
           <p className="text-xs text-dls-secondary">
-            Pricing is handled through JuggleWork Cloud. Continue without it to use OpenCode Zen or your own provider keys.
+            Pricing is handled through JuggleWork Cloud. Continue without it to use your organization models or your own provider keys.
           </p>
         </div>
 

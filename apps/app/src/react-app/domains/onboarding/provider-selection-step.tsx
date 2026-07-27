@@ -74,7 +74,7 @@ export function ProviderSelectionStep({
           <div className="pt-1 text-center">
             <Button variant="ghost" size="sm" onClick={onSkip}>
               <SkipForwardIcon className="mr-1.5 size-3.5" />
-              Skip and use the free model
+              Skip for now
             </Button>
           </div>
         </div>
