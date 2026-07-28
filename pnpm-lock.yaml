@@ -66,8 +66,8 @@ importers:
         specifier: ^0.35.0
         version: 0.35.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(yjs@13.6.30)
       '@opencode-ai/sdk':
-        specifier: ^1.17.11
-        version: 1.17.11
+        specifier: ^1.18.7
+        version: 1.18.7
       '@openwork/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
@@ -217,8 +217,8 @@ importers:
   apps/desktop:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.17.11
-        version: 1.17.11
+        specifier: ^1.18.7
+        version: 1.18.7
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -269,8 +269,8 @@ importers:
   apps/orchestrator:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.17.11
-        version: 1.17.11
+        specifier: ^1.18.7
+        version: 1.18.7
       '@opentui/core':
         specifier: 0.1.77
         version: 0.1.77(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -315,8 +315,8 @@ importers:
   apps/server:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.17.11
-        version: 1.17.11
+        specifier: ^1.18.7
+        version: 1.18.7
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
@@ -1951,8 +1951,8 @@ packages:
   '@open-draft/until@2.1.0':
     resolution: {integrity: sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg==}
 
-  '@opencode-ai/sdk@1.17.11':
-    resolution: {integrity: sha512-UdSwnNM4/cD5rHnI8O7VaHuiwYnsEOglpRPVeeYE2S5Nm1K34ijCyZGDvBecb0ShdBQgn49XvyQWJH6cREsIPw==}
+  '@opencode-ai/sdk@1.18.7':
+    resolution: {integrity: sha512-5txVELvCxzC3O/MYnRKdTvBN3TqQjE3PaEks3kDRA/moWzMSUhdm15xCth/Mz/NPYyGTn2u4IdScdV9vLTfLRg==}
 
   '@opentelemetry/api@1.9.0':
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
@@ -7903,7 +7903,7 @@ snapshots:
 
   '@open-draft/until@2.1.0': {}
 
-  '@opencode-ai/sdk@1.17.11':
+  '@opencode-ai/sdk@1.18.7':
     dependencies:
       cross-spawn: 7.0.6
 

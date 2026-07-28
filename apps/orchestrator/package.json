@@ -43,7 +43,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.17.11",
+    "@opencode-ai/sdk": "^1.18.7",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
     "openwork-server": "0.17.40",
