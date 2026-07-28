@@ -1,8 +1,8 @@
 import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProviderModelContext,
-} from "../../../app/lib/openwork-server";
+  JuggleWorkCloudMcpFailure,
+  JuggleWorkCloudMcpHealth,
+  JuggleWorkCloudMcpProviderModelContext,
+} from "../../../app/lib/jugglework-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
@@ -11,12 +11,12 @@ export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+  "jugglework-cloud_search_capabilities",
+  "jugglework-cloud_execute_capability",
 ];
 
 export type CloudMcpSubmissionIssue = Pick<
-  OpenworkCloudMcpFailure,
+  JuggleWorkCloudMcpFailure,
   "code" | "stage" | "retryable" | "recommendedAction" | "message"
 >;
 
@@ -27,7 +27,7 @@ export type CloudMcpSubmissionGateContext = {
   serverBaseUrl: string;
   orgId: string | null;
   workspaceId: string;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: JuggleWorkCloudMcpProviderModelContext;
   userState: CloudMcpUserState | null;
 };
 
@@ -41,13 +41,13 @@ export type CloudMcpSubmissionGateDecision =
     };
 
 export type CloudMcpSubmissionReadinessAssessment =
-  | { ready: true; health: OpenworkCloudMcpHealth }
-  | { ready: false; health: OpenworkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue };
+  | { ready: true; health: JuggleWorkCloudMcpHealth }
+  | { ready: false; health: JuggleWorkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue };
 
 export type CloudMcpSubmissionReadinessResult =
-  | { outcome: "ready"; health: OpenworkCloudMcpHealth; attempts: number }
-  | { outcome: "bypass"; health: OpenworkCloudMcpHealth; attempts: number; reason: "disabled" }
-  | { outcome: "failed"; health: OpenworkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue; attempts: number };
+  | { outcome: "ready"; health: JuggleWorkCloudMcpHealth; attempts: number }
+  | { outcome: "bypass"; health: JuggleWorkCloudMcpHealth; attempts: number; reason: "disabled" }
+  | { outcome: "failed"; health: JuggleWorkCloudMcpHealth | null; issue: CloudMcpSubmissionIssue; attempts: number };
 
 export type CloudMcpSubmissionAttempt = {
   phase: "readiness" | "repair";
@@ -111,7 +111,7 @@ function genericSubmissionIssue(input?: {
   };
 }
 
-function failureIssue(health: OpenworkCloudMcpHealth): CloudMcpSubmissionIssue {
+function failureIssue(health: JuggleWorkCloudMcpHealth): CloudMcpSubmissionIssue {
   const failure = health.firstFailure;
   if (!failure) return genericSubmissionIssue();
   return {
@@ -123,7 +123,7 @@ function failureIssue(health: OpenworkCloudMcpHealth): CloudMcpSubmissionIssue {
   };
 }
 
-function healthShowsExplicitDisable(health: OpenworkCloudMcpHealth): boolean {
+function healthShowsExplicitDisable(health: JuggleWorkCloudMcpHealth): boolean {
   const code = health.firstFailure?.code.trim().toLowerCase().replace(/[-.]/g, "_") ?? "";
   return health.desired.config?.enabled === false || code === "cloud_mcp_disabled" || code === "cloud_disabled";
 }
@@ -210,8 +210,8 @@ export async function resolveCloudMcpSubmissionAuth(
  * OpenCode experimental tool listing plus the direct MCP tools/list probe.
  */
 export function assessCloudMcpSubmissionReadiness(input: {
-  health: OpenworkCloudMcpHealth | null;
-  providerModel: OpenworkCloudMcpProviderModelContext;
+  health: JuggleWorkCloudMcpHealth | null;
+  providerModel: JuggleWorkCloudMcpProviderModelContext;
 }): CloudMcpSubmissionReadinessAssessment {
   const health = input.health;
   if (!health) {
@@ -320,9 +320,9 @@ function errorAssessment(error: unknown): CloudMcpSubmissionReadinessAssessment 
 }
 
 export async function ensureCloudMcpSubmissionReadiness(input: {
-  providerModel: OpenworkCloudMcpProviderModelContext;
-  check: () => Promise<OpenworkCloudMcpHealth | null>;
-  repair: () => Promise<OpenworkCloudMcpHealth | null>;
+  providerModel: JuggleWorkCloudMcpProviderModelContext;
+  check: () => Promise<JuggleWorkCloudMcpHealth | null>;
+  repair: () => Promise<JuggleWorkCloudMcpHealth | null>;
   retryDelaysMs?: number[];
   attemptTimeoutMs?: number;
   wait?: (delayMs: number) => Promise<void>;

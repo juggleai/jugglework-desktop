@@ -253,7 +253,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       meta: t("session.cmd_settings_meta"),
       action: () => {
         props.onClose();
-        openUrl("https://openwork.dev/docs");
+        openUrl("https://jugglework.dev/docs");
       },
     },
     {
@@ -262,7 +262,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       meta: t("session.cmd_settings_meta"),
       action: () => {
         props.onClose();
-        openUrl("https://openwork.dev/feedback");
+        openUrl("https://jugglework.dev/feedback");
       },
     },
     {

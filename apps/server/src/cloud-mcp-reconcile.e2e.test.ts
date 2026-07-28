@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES, cloudMcpDeliveryState } from "./cloud-mcp-health.js";
+import { JUGGLEWORK_CLOUD_EXPECTED_TOOLS, JUGGLEWORK_CLOUD_PLUGIN_CANARIES, cloudMcpDeliveryState } from "./cloud-mcp-health.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { inspectEngineMcpRegistration, registerTrustedOpencodeProcess, startServer } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
@@ -41,11 +41,11 @@ type CloudConfig = {
 
 const CLIENT_TOKEN = "owt_cloud_mcp_client";
 const HOST_TOKEN = "owt_cloud_mcp_host";
-const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousRuntimeDb = process.env.JUGGLEWORK_RUNTIME_DB;
 const stops: Array<() => void | Promise<void>> = [];
 const roots: string[] = [];
 const runtimeDbRoots: string[] = [];
-const cloudConfigsByOpenworkBase = new Map<string, CloudConfig>();
+const cloudConfigsByJuggleWorkBase = new Map<string, CloudConfig>();
 
 afterEach(async () => {
   cloudMcpDeliveryState.clear();
@@ -58,25 +58,25 @@ afterEach(async () => {
   } else {
     while (runtimeDbRoots.length) await rm(runtimeDbRoots.pop() ?? "", { recursive: true, force: true });
   }
-  cloudConfigsByOpenworkBase.clear();
-  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  cloudConfigsByJuggleWorkBase.clear();
+  if (previousRuntimeDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+  else process.env.JUGGLEWORK_RUNTIME_DB = previousRuntimeDb;
 });
 
-async function createRoot(prefix = "openwork-cloud-mcp-"): Promise<string> {
+async function createRoot(prefix = "jugglework-cloud-mcp-"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
 }
 
 async function createRuntimeDbRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-cloud-mcp-runtime-"));
+  const root = await mkdtemp(join(tmpdir(), "jugglework-cloud-mcp-runtime-"));
   runtimeDbRoots.push(root);
   return root;
 }
 
 function allReadyToolIds(): string[] {
-  return [...OPENWORK_CLOUD_EXPECTED_TOOLS, ...OPENWORK_CLOUD_PLUGIN_CANARIES];
+  return [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS, ...JUGGLEWORK_CLOUD_PLUGIN_CANARIES];
 }
 
 function startMockOpencode(options: MockOpencodeOptions = {}) {
@@ -101,7 +101,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         registerCount += 1;
         return Response.json({});
       }
-      if (url.pathname === "/mcp/openwork-cloud/disconnect" && request.method === "POST") {
+      if (url.pathname === "/mcp/jugglework-cloud/disconnect" && request.method === "POST") {
         // OpenCode closes the client and keeps the config; status is no longer
         // connected until a later POST /mcp re-registers it.
         registerCount = 0;
@@ -111,12 +111,12 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         statusReads += 1;
         if (options.delayMcpStatusMs) await new Promise((resolve) => setTimeout(resolve, options.delayMcpStatusMs));
         if (options.cloudFailedError) {
-          return Response.json({ "openwork-cloud": { status: "failed", error: options.cloudFailedError } });
+          return Response.json({ "jugglework-cloud": { status: "failed", error: options.cloudFailedError } });
         }
         if (options.connectAfterStatusReads && statusReads < options.connectAfterStatusReads) {
-          return Response.json({ "openwork-cloud": { status: "failed", error: "slow connect" } });
+          return Response.json({ "jugglework-cloud": { status: "failed", error: "slow connect" } });
         }
-        return Response.json(registerCount > 0 || options.initialConnected ? { "openwork-cloud": { status: "connected" } } : {});
+        return Response.json(registerCount > 0 || options.initialConnected ? { "jugglework-cloud": { status: "connected" } } : {});
       }
       if (url.pathname === "/experimental/tool/ids") {
         if (options.unsupportedToolIds) return Response.json({ code: "not_found" }, { status: 404 });
@@ -133,15 +133,15 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
           : {
               "claude-sonnet-4": { id: "claude-sonnet-4", providerID: "anthropic", name: "Claude Sonnet", capabilities: { toolcall } },
               claude: { id: "claude", providerID: "anthropic", name: "Claude", capabilities: { toolcall } },
-              "gpt-5": { id: "gpt-5", providerID: "openwork", name: "GPT-5", capabilities: { toolcall } },
+              "gpt-5": { id: "gpt-5", providerID: "jugglework", name: "GPT-5", capabilities: { toolcall } },
             };
         return Response.json({
           all: [
             { id: "anthropic", name: "Anthropic", source: "config", env: [], options: {}, models },
-            { id: "openwork", name: "JuggleWork", source: "config", env: [], options: {}, models },
+            { id: "jugglework", name: "JuggleWork", source: "config", env: [], options: {}, models },
           ],
           default: {},
-          connected: ["anthropic", "openwork"],
+          connected: ["anthropic", "jugglework"],
         });
       }
       if (url.pathname.endsWith("/mcp/agent") && request.method === "POST") {
@@ -152,7 +152,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 });
         const id = rpc.id ?? 1;
         const result = rpc.method === "initialize"
-          ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "openwork-cloud-test", version: "1.0.0" } }
+          ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "jugglework-cloud-test", version: "1.0.0" } }
           : rpc.method === "tools/list"
             ? { tools: (options.cloudToolNames ?? ["search_capabilities", "execute_capability"]).map((name) => ({ name, description: name, inputSchema: {} })) }
             : {};
@@ -187,9 +187,9 @@ function workspace(id: string, path: string, baseUrl: string, extra?: Partial<Wo
   };
 }
 
-async function startOpenwork(workspaces: WorkspaceInfo[]): Promise<{ base: string; config: ServerConfig }> {
+async function startJuggleWork(workspaces: WorkspaceInfo[]): Promise<{ base: string; config: ServerConfig }> {
   const runtimeRoot = await createRuntimeDbRoot();
-  process.env.OPENWORK_RUNTIME_DB = join(runtimeRoot, "runtime.sqlite");
+  process.env.JUGGLEWORK_RUNTIME_DB = join(runtimeRoot, "runtime.sqlite");
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -210,7 +210,7 @@ async function startOpenwork(workspaces: WorkspaceInfo[]): Promise<{ base: strin
   const server = await startServer(config);
   stops.push(() => server.stop());
   const base = `http://127.0.0.1:${server.port}`;
-  cloudConfigsByOpenworkBase.set(base, cloudConfig(cloudUrlFromBase(workspaces[0]?.baseUrl)));
+  cloudConfigsByJuggleWorkBase.set(base, cloudConfig(cloudUrlFromBase(workspaces[0]?.baseUrl)));
   return { base, config };
 }
 
@@ -251,7 +251,7 @@ function delivery(body: Record<string, unknown>): Record<string, unknown> {
 
 const CLOUD_CONFIG: CloudConfig = {
   type: "remote",
-  url: "https://api.openworklabs.com/mcp/agent",
+  url: "https://work.juggle.im/jwork/api/mcp/agent",
   enabled: true,
   headers: { Authorization: "Bearer owt_secret_cloud_token" },
   oauth: false,
@@ -266,13 +266,13 @@ function cloudUrlFromBase(baseUrl: string | undefined): string {
   return new URL("/mcp/agent", baseUrl).toString();
 }
 
-function cloudConfigForOpenwork(base: string): CloudConfig {
-  return cloudConfigsByOpenworkBase.get(base) ?? CLOUD_CONFIG;
+function cloudConfigForJuggleWork(base: string): CloudConfig {
+  return cloudConfigsByJuggleWorkBase.get(base) ?? CLOUD_CONFIG;
 }
 
 async function reconcile(base: string, workspaceId = "ws_1", body: Record<string, unknown> = {}): Promise<Response> {
-  const config = body.config ?? cloudConfigsByOpenworkBase.get(base) ?? CLOUD_CONFIG;
-  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/reconcile`, {
+  const config = body.config ?? cloudConfigsByJuggleWorkBase.get(base) ?? CLOUD_CONFIG;
+  return fetch(`${base}/workspace/${workspaceId}/mcp/jugglework-cloud/reconcile`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ config, ...body }),
@@ -280,16 +280,16 @@ async function reconcile(base: string, workspaceId = "ws_1", body: Record<string
 }
 
 async function getHealth(base: string, workspaceId = "ws_1", query = ""): Promise<Response> {
-  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/health${query}`, { headers: headers() });
+  return fetch(`${base}/workspace/${workspaceId}/mcp/jugglework-cloud/health${query}`, { headers: headers() });
 }
 
-describe("openwork-cloud MCP strict reconcile", () => {
+describe("jugglework-cloud MCP strict reconcile", () => {
   test("clean ready persists desired config, verifies tools, and redacts the token", async () => {
     const root = await createRoot();
     const mock = startMockOpencode();
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const response = await reconcile(openwork.base, "ws_1", {
+    const response = await reconcile(jugglework.base, "ws_1", {
       tokenMetadata: { expiresAt: "2026-07-13T00:00:00.000Z" },
       org: { id: "org_1", name: "Acme" },
       provider: "anthropic",
@@ -306,7 +306,7 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(body.usable).toBe(true);
     expect(body.usableByCurrentModel).toBe(true);
     const tools = requireRecord(body.tools, "tools");
-    expect(requireArray(tools.present, "tools.present").sort()).toEqual([...OPENWORK_CLOUD_EXPECTED_TOOLS].sort());
+    expect(requireArray(tools.present, "tools.present").sort()).toEqual([...JUGGLEWORK_CLOUD_EXPECTED_TOOLS].sort());
     expect(requireRecord(tools.direct, "tools.direct")).toMatchObject({
       checked: true,
       present: ["search_capabilities", "execute_capability"],
@@ -322,7 +322,7 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").opencode, "opencode").expectedVersion).toBeTruthy();
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").experimentalToolIds, "experimentalToolIds")).toMatchObject({ includesMcpTools: true });
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").experimentalProviderTools, "experimentalProviderTools")).toMatchObject({ includesMcpTools: true });
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
+    expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["jugglework-cloud"]?.url).toBe(cloudConfigForJuggleWork(jugglework.base).url);
 
     const mcpPosts = mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp");
     expect(mcpPosts.length).toBe(1);
@@ -333,25 +333,25 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const root = await createRoot();
     const mock = startMockOpencode({ connectAfterStatusReads: 2 });
     const baseUrl = `http://127.0.0.1:${mock.server.port}`;
-    const openwork = await startOpenwork([workspace("ws_1", root, baseUrl)]);
-    registerTrustedOpencodeProcess(openwork.config, {
+    const jugglework = await startJuggleWork([workspace("ws_1", root, baseUrl)]);
+    registerTrustedOpencodeProcess(jugglework.config, {
       baseUrl,
       identity: "cloud-reconcile-live-heal",
       isAlive: () => true,
     });
 
-    const response = await reconcile(openwork.base);
+    const response = await reconcile(jugglework.base);
     const body = await responseRecord(response);
     expect(response.status).toBe(200);
     expect(firstFailure(body).code).toBe("opencode_mcp_sync_failed");
     expect(inspectEngineMcpRegistration(
-      openwork.config,
-      openwork.config.workspaces[0]!,
-      "openwork-cloud",
-      cloudConfigForOpenwork(openwork.base),
+      jugglework.config,
+      jugglework.config.workspaces[0]!,
+      "jugglework-cloud",
+      cloudConfigForJuggleWork(jugglework.base),
     )).toBe("connected");
 
-    const health = await responseRecord(await getHealth(openwork.base));
+    const health = await responseRecord(await getHealth(jugglework.base));
     expect(health.phase).toBe("ready");
     expect(health.usable).toBe(true);
     expect(mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp").length).toBe(1);
@@ -360,55 +360,55 @@ describe("openwork-cloud MCP strict reconcile", () => {
   test("rejects malformed desired config without persisting or registering it", async () => {
     const root = await createRoot();
     const mock = startMockOpencode();
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
     const cases: Array<{ config: Record<string, unknown>; code: string }> = [
-      { config: { ...CLOUD_CONFIG, url: "https://api.openworklabs.com/mcp" }, code: "cloud_endpoint_invalid" },
+      { config: { ...CLOUD_CONFIG, url: "https://work.juggle.im/jwork/api/mcp" }, code: "cloud_endpoint_invalid" },
       { config: { ...CLOUD_CONFIG, enabled: false }, code: "cloud_mcp_disabled" },
       { config: { ...CLOUD_CONFIG, headers: {} }, code: "invalid_mcp_token" },
       { config: { ...CLOUD_CONFIG, oauth: {} }, code: "invalid_mcp_token" },
     ];
 
     for (const item of cases) {
-      const body = await responseRecord(await reconcile(openwork.base, "ws_1", { config: item.config }));
+      const body = await responseRecord(await reconcile(jugglework.base, "ws_1", { config: item.config }));
       expect(firstFailure(body).code).toBe(item.code);
       expect(firstFailure(body).stage).toBe("desired_config");
     }
 
-    const mismatch = await responseRecord(await reconcile(openwork.base, "ws_1", {
+    const mismatch = await responseRecord(await reconcile(jugglework.base, "ws_1", {
       tokenMetadata: { organizationId: "org_token" },
       org: { id: "org_active" },
     }));
     expect(firstFailure(mismatch).code).toBe("cloud_token_org_mismatch");
     expect(firstFailure(mismatch).stage).toBe("desired_config");
 
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]).toBeUndefined();
+    expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["jugglework-cloud"]).toBeUndefined();
     expect(mock.requests.some((request) => request.method === "POST" && request.pathname === "/mcp")).toBe(false);
   });
 
   test("normalizes a harmless trailing slash on the Cloud MCP endpoint", async () => {
     const root = await createRoot();
     const mock = startMockOpencode();
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
     const url = `http://127.0.0.1:${mock.server.port}/api/den/mcp/agent/`;
 
-    const body = await responseRecord(await reconcile(openwork.base, "ws_1", {
+    const body = await responseRecord(await reconcile(jugglework.base, "ws_1", {
       config: { ...CLOUD_CONFIG, url },
     }));
     expect(body.phase).toBe("ready");
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(url.slice(0, -1));
+    expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["jugglework-cloud"]?.url).toBe(url.slice(0, -1));
   });
 
   test("GET health reports persisted malformed desired config even when the engine looks live", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
-    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    await writeRuntimeOpencodeConfig(jugglework.config, "ws_1", (current) => ({
       ...current,
-      mcp: { "openwork-cloud": { ...CLOUD_CONFIG, url: "https://api.openworklabs.com/mcp" } },
+      mcp: { "jugglework-cloud": { ...CLOUD_CONFIG, url: "https://work.juggle.im/jwork/api/mcp" } },
     }));
 
-    const body = await responseRecord(await getHealth(openwork.base));
+    const body = await responseRecord(await getHealth(jugglework.base));
     expect(body.usable).toBe(false);
     expect(firstFailure(body).code).toBe("cloud_endpoint_invalid");
     expect(firstFailure(body).stage).toBe("desired_config");
@@ -417,13 +417,13 @@ describe("openwork-cloud MCP strict reconcile", () => {
   test("GET health safely adopts a live exact match before reporting ready", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
-    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    await writeRuntimeOpencodeConfig(jugglework.config, "ws_1", (current) => ({
       ...current,
-      mcp: { "openwork-cloud": cloudConfigForOpenwork(openwork.base) },
+      mcp: { "jugglework-cloud": cloudConfigForJuggleWork(jugglework.base) },
     }));
 
-    const body = await responseRecord(await getHealth(openwork.base));
+    const body = await responseRecord(await getHealth(jugglework.base));
     expect(body.phase).toBe("ready");
     expect(body.usable).toBe(true);
     expect(delivery(body).appliedRevision).toBe(delivery(body).desiredRevision);
@@ -432,65 +432,65 @@ describe("openwork-cloud MCP strict reconcile", () => {
   test("GET health runs the direct Cloud endpoint probe only when requested", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
-    await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    await writeRuntimeOpencodeConfig(jugglework.config, "ws_1", (current) => ({
       ...current,
-      mcp: { "openwork-cloud": cloudConfigForOpenwork(openwork.base) },
+      mcp: { "jugglework-cloud": cloudConfigForJuggleWork(jugglework.base) },
     }));
 
-    const defaultBody = await responseRecord(await getHealth(openwork.base));
+    const defaultBody = await responseRecord(await getHealth(jugglework.base));
     expect(defaultBody.phase).toBe("ready");
     expect(mock.requests.filter((request) => request.pathname.endsWith("/mcp/agent")).length).toBe(0);
 
-    const probedBody = await responseRecord(await getHealth(openwork.base, "ws_1", "?probe=1"));
+    const probedBody = await responseRecord(await getHealth(jugglework.base, "ws_1", "?probe=1"));
     expect(probedBody.phase).toBe("ready");
     expect(mock.requests.filter((request) => request.pathname.endsWith("/mcp/agent")).length).toBeGreaterThan(0);
   });
 
   test("health probe timeout is bounded", async () => {
-    const previousTimeout = process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS;
-    process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS = "25";
+    const previousTimeout = process.env.JUGGLEWORK_CLOUD_MCP_PROBE_TIMEOUT_MS;
+    process.env.JUGGLEWORK_CLOUD_MCP_PROBE_TIMEOUT_MS = "25";
     try {
       const root = await createRoot();
       const mock = startMockOpencode({ initialConnected: true, delayMcpStatusMs: 100 });
-      const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
-      await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({
+      const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+      await writeRuntimeOpencodeConfig(jugglework.config, "ws_1", (current) => ({
         ...current,
-        mcp: { "openwork-cloud": cloudConfigForOpenwork(openwork.base) },
+        mcp: { "jugglework-cloud": cloudConfigForJuggleWork(jugglework.base) },
       }));
 
-      const body = await responseRecord(await getHealth(openwork.base));
+      const body = await responseRecord(await getHealth(jugglework.base));
       expect(body.usable).toBe(false);
       expect(firstFailure(body).code).toBe("opencode_engine_unreachable");
     } finally {
-      if (previousTimeout === undefined) delete process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS;
-      else process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined) delete process.env.JUGGLEWORK_CLOUD_MCP_PROBE_TIMEOUT_MS;
+      else process.env.JUGGLEWORK_CLOUD_MCP_PROBE_TIMEOUT_MS = previousTimeout;
     }
   });
 
   test("unreachable engine leaves desired config persisted but not applied", async () => {
     const root = await createRoot();
-    const openwork = await startOpenwork([workspace("ws_1", root, "http://127.0.0.1:9")]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, "http://127.0.0.1:9")]);
 
-    const response = await reconcile(openwork.base);
+    const response = await reconcile(jugglework.base);
     const body = await responseRecord(response);
     expect(response.status).toBe(200);
     expect(firstFailure(body).code).toBe("opencode_mcp_sync_failed");
     expect(delivery(body).appliedRevision).toBeNull();
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
+    expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["jugglework-cloud"]?.url).toBe(cloudConfigForJuggleWork(jugglework.base).url);
   });
 
   test("uses the exact secondary workspace directory", async () => {
-    const rootA = await createRoot("openwork-cloud-primary-");
-    const rootB = await createRoot("openwork-cloud-secondary-");
+    const rootA = await createRoot("jugglework-cloud-primary-");
+    const rootB = await createRoot("jugglework-cloud-secondary-");
     const mock = startMockOpencode();
     const baseUrl = `http://127.0.0.1:${mock.server.port}`;
-    const openwork = await startOpenwork([
+    const jugglework = await startJuggleWork([
       workspace("ws_1", rootA, baseUrl),
       workspace("ws_2", rootB, baseUrl),
     ]);
 
-    const response = await reconcile(openwork.base, "ws_2");
+    const response = await reconcile(jugglework.base, "ws_2");
     const body = await responseRecord(response);
     expect(body.phase).toBe("ready");
     const post = mock.requests.find((request) => request.method === "POST" && request.pathname === "/mcp");
@@ -502,16 +502,16 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const explicitDirectory = join(root, "remote-project");
     const mock = startMockOpencode();
     const baseUrl = `http://127.0.0.1:${mock.server.port}`;
-    const openwork = await startOpenwork([
+    const jugglework = await startJuggleWork([
       workspace("ws_remote", root, baseUrl, { workspaceType: "remote", directory: explicitDirectory }),
       workspace("ws_ambiguous", root, baseUrl, { workspaceType: "remote" }),
     ]);
 
-    const ready = await reconcile(openwork.base, "ws_remote");
+    const ready = await reconcile(jugglework.base, "ws_remote");
     expect((await responseRecord(ready)).phase).toBe("ready");
     expectDirectoryQuery(mock.requests.find((request) => request.method === "POST" && request.pathname === "/mcp")?.search, explicitDirectory);
 
-    const ambiguous = await reconcile(openwork.base, "ws_ambiguous");
+    const ambiguous = await reconcile(jugglework.base, "ws_ambiguous");
     const body = await responseRecord(ambiguous);
     expect(firstFailure(body).code).toBe("workspace_directory_ambiguous");
     expect(delivery(body).appliedRevision).toBeNull();
@@ -520,9 +520,9 @@ describe("openwork-cloud MCP strict reconcile", () => {
   test("connected engine with direct Cloud endpoint missing a tool reports cloud_tools_missing without re-registering", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ cloudToolNames: ["search_capabilities"] });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base));
+    const body = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(body).code).toBe("cloud_tools_missing");
     expect(requireRecord(requireRecord(body.tools, "tools").direct, "direct").missing).toEqual(["execute_capability"]);
     expect(requireArray(requireRecord(body.tools, "tools").present, "tools.present")).toEqual([]);
@@ -532,13 +532,13 @@ describe("openwork-cloud MCP strict reconcile", () => {
   test("current OpenCode engines that exclude MCP tool IDs use direct tools/list plus provider capability", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({
-      toolIds: [...OPENWORK_CLOUD_PLUGIN_CANARIES],
-      providerToolIds: [...OPENWORK_CLOUD_PLUGIN_CANARIES],
+      toolIds: [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES],
+      providerToolIds: [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES],
       cloudToolsAsSse: true,
     });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base, "ws_1", { provider: "anthropic", model: "claude" }));
+    const body = await responseRecord(await reconcile(jugglework.base, "ws_1", { provider: "anthropic", model: "claude" }));
     expect(body.phase).toBe("ready");
     expect(body.usable).toBe(true);
     expect(body.usableByCurrentModel).toBe(true);
@@ -548,28 +548,28 @@ describe("openwork-cloud MCP strict reconcile", () => {
       source: "provider_capability",
       modelExists: true,
       toolCalling: true,
-      missing: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      missing: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS],
     });
-    expect(requireArray(requireRecord(body.tools, "tools").present, "tools.present").sort()).toEqual([...OPENWORK_CLOUD_EXPECTED_TOOLS].sort());
+    expect(requireArray(requireRecord(body.tools, "tools").present, "tools.present").sort()).toEqual([...JUGGLEWORK_CLOUD_EXPECTED_TOOLS].sort());
   });
 
   test("reports provider projection missing when fallback provider model lacks tool calling", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({
-      toolIds: [...OPENWORK_CLOUD_PLUGIN_CANARIES],
-      providerToolIds: [...OPENWORK_CLOUD_PLUGIN_CANARIES],
+      toolIds: [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES],
+      providerToolIds: [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES],
       providerToolCalling: false,
     });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base, "ws_1", { provider: "anthropic", model: "claude" }));
+    const body = await responseRecord(await reconcile(jugglework.base, "ws_1", { provider: "anthropic", model: "claude" }));
     expect(firstFailure(body).code).toBe("provider_tool_projection_missing");
     expect(firstFailure(body).recommendedAction).toBe("Choose a model that can use JuggleWork Cloud tools");
     expect(requireRecord(requireRecord(body.tools, "tools").providerProjection, "projection")).toMatchObject({
       source: "provider_capability",
       modelExists: true,
       toolCalling: false,
-      missing: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      missing: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS],
     });
   });
 
@@ -579,13 +579,13 @@ describe("openwork-cloud MCP strict reconcile", () => {
       // Global IDs include Cloud MCP tools…
       toolIds: allReadyToolIds(),
       // …but the per-model experimental list does not (OpenCode ToolRegistry quirk).
-      providerToolIds: [...OPENWORK_CLOUD_PLUGIN_CANARIES],
+      providerToolIds: [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES],
       providerToolCalling: true,
       cloudToolsAsSse: true,
     });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base, "ws_1", { provider: "anthropic", model: "claude" }));
+    const body = await responseRecord(await reconcile(jugglework.base, "ws_1", { provider: "anthropic", model: "claude" }));
     expect(body.phase).toBe("ready");
     expect(body.usable).toBe(true);
     expect(body.usableByCurrentModel).toBe(true);
@@ -601,35 +601,35 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
   test("reports extension canary missing when docs canary is present but extension canary is absent", async () => {
     const root = await createRoot();
-    const mock = startMockOpencode({ toolIds: [...OPENWORK_CLOUD_EXPECTED_TOOLS, "openwork_docs_search"] });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const mock = startMockOpencode({ toolIds: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS, "jugglework_docs_search"] });
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base));
+    const body = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(body).code).toBe("extensions_plugin_missing");
-    expect(requireArray(requireRecord(body.pluginCanaries, "pluginCanaries").missing, "missing")).toContain("openwork_query");
+    expect(requireArray(requireRecord(body.pluginCanaries, "pluginCanaries").missing, "missing")).toContain("jugglework_query");
   });
 
   test("old engines without tool.ids return Update JuggleWork guidance", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ unsupportedToolIds: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base));
+    const body = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(body).code).toBe("opencode_tool_ids_unsupported");
     expect(firstFailure(body).recommendedAction).toBe("Update JuggleWork");
   });
 
   test("health detects project tool denies while generic MCP add remains best-effort", async () => {
     const root = await createRoot();
-    await writeFile(join(root, "opencode.jsonc"), JSON.stringify({ tools: { deny: ["openwork-cloud_*"] } }), "utf8");
+    await writeFile(join(root, "opencode.jsonc"), JSON.stringify({ tools: { deny: ["jugglework-cloud_*"] } }), "utf8");
     const mock = startMockOpencode();
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const strictBody = await responseRecord(await reconcile(openwork.base));
+    const strictBody = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(strictBody).code).toBe("cloud_tools_denied");
     expect(requireArray(strictBody.toolDenies, "toolDenies").length).toBeGreaterThan(0);
 
-    const generic = await fetch(`${openwork.base}/workspace/ws_1/mcp`, {
+    const generic = await fetch(`${jugglework.base}/workspace/ws_1/mcp`, {
       method: "POST",
       headers: headers(),
       body: JSON.stringify({ name: "posthog", config: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } }),
@@ -641,24 +641,24 @@ describe("openwork-cloud MCP strict reconcile", () => {
 });
 
 async function engineRefresh(base: string, workspaceId = "ws_1", body?: Record<string, unknown>): Promise<Response> {
-  return fetch(`${base}/workspace/${workspaceId}/mcp/openwork-cloud/engine-refresh`, {
+  return fetch(`${base}/workspace/${workspaceId}/mcp/jugglework-cloud/engine-refresh`, {
     method: "POST",
     headers: headers(),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 }
 
-describe("openwork-cloud MCP engine refresh", () => {
+describe("jugglework-cloud MCP engine refresh", () => {
   test("disconnects the engine client, re-registers, and returns ordered refresh steps with probed health", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const seeded = await reconcile(openwork.base, "ws_1", { trigger: "seed" });
+    const seeded = await reconcile(jugglework.base, "ws_1", { trigger: "seed" });
     expect(seeded.status).toBe(200);
     const registersBeforeRefresh = mock.requests.filter((request) => request.pathname === "/mcp" && request.method === "POST").length;
 
-    const response = await engineRefresh(openwork.base, "ws_1", { trigger: "support-call" });
+    const response = await engineRefresh(jugglework.base, "ws_1", { trigger: "support-call" });
     expect(response.status).toBe(200);
     const body = await responseRecord(response);
 
@@ -675,7 +675,7 @@ describe("openwork-cloud MCP engine refresh", () => {
     expect(health.usable).toBe(true);
     expect(delivery(health).state).toBe("ready");
 
-    const disconnects = mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect");
+    const disconnects = mock.requests.filter((request) => request.pathname === "/mcp/jugglework-cloud/disconnect");
     expect(disconnects).toHaveLength(1);
     expectDirectoryQuery(disconnects[0]?.search, root);
     const registersAfterRefresh = mock.requests.filter((request) => request.pathname === "/mcp" && request.method === "POST").length;
@@ -685,9 +685,9 @@ describe("openwork-cloud MCP engine refresh", () => {
   test("reports desired_missing without touching the engine when no config is persisted", async () => {
     const root = await createRoot();
     const mock = startMockOpencode();
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const response = await engineRefresh(openwork.base);
+    const response = await engineRefresh(jugglework.base);
     expect(response.status).toBe(200);
     const body = await responseRecord(response);
 
@@ -696,22 +696,22 @@ describe("openwork-cloud MCP engine refresh", () => {
     expect(refresh.reason).toBe("desired_missing");
     expect(requireArray(refresh.steps, "refresh.steps")).toHaveLength(0);
     expect(requireRecord(body.health, "health").usable).toBe(false);
-    expect(mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")).toHaveLength(0);
+    expect(mock.requests.filter((request) => request.pathname === "/mcp/jugglework-cloud/disconnect")).toHaveLength(0);
   });
 
   test("rejects malformed JSON on engine refresh instead of silently ignoring it", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const response = await fetch(`${openwork.base}/workspace/ws_1/mcp/openwork-cloud/engine-refresh`, {
+    const response = await fetch(`${jugglework.base}/workspace/ws_1/mcp/jugglework-cloud/engine-refresh`, {
       method: "POST",
       headers: headers(),
       body: "not-json",
     });
     expect(response.status).toBe(400);
     expect((await responseRecord(response)).code).toBe("invalid_json");
-    expect(mock.requests.filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")).toHaveLength(0);
+    expect(mock.requests.filter((request) => request.pathname === "/mcp/jugglework-cloud/disconnect")).toHaveLength(0);
   });
 
   test("richer engine cert/TLS error strings stay classified as connection failures, not token problems", async () => {
@@ -719,9 +719,9 @@ describe("openwork-cloud MCP engine refresh", () => {
     const mock = startMockOpencode({
       cloudFailedError: "fetch failed; caused by: certificate has expired (CERT_HAS_EXPIRED)",
     });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base));
+    const body = await responseRecord(await reconcile(jugglework.base));
     const failure = firstFailure(body);
     // A transport/cert failure must never be classified as an expired token:
     // "Reconnect JuggleWork Cloud" cannot repair a broken TLS path.
@@ -731,23 +731,23 @@ describe("openwork-cloud MCP engine refresh", () => {
 
   test("token-expired engine errors keep their token classification", async () => {
     const root = await createRoot();
-    const mock = startMockOpencode({ cloudFailedError: "openwork-cloud bearer token expired" });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const mock = startMockOpencode({ cloudFailedError: "jugglework-cloud bearer token expired" });
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const body = await responseRecord(await reconcile(openwork.base));
+    const body = await responseRecord(await reconcile(jugglework.base));
     expect(firstFailure(body).code).toBe("invalid_mcp_token");
   });
 
   test("keeps step-level failure detail when the engine goes down between seed and refresh", async () => {
     const root = await createRoot();
     const mock = startMockOpencode({ initialConnected: true });
-    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+    const jugglework = await startJuggleWork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
 
-    const seeded = await reconcile(openwork.base, "ws_1", { trigger: "seed" });
+    const seeded = await reconcile(jugglework.base, "ws_1", { trigger: "seed" });
     expect(seeded.status).toBe(200);
     mock.server.stop(true);
 
-    const response = await engineRefresh(openwork.base, "ws_1", { trigger: "engine-down" });
+    const response = await engineRefresh(jugglework.base, "ws_1", { trigger: "engine-down" });
     expect(response.status).toBe(200);
     const body = await responseRecord(response);
 

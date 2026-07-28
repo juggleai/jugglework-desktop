@@ -37,8 +37,8 @@ const status: InstallStatus = {
   error: null,
 }
 
-const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com"
-const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com"
+const HOSTED_DESKTOP_WEB_URL = "https://work.juggle.im"
+const HOSTED_DESKTOP_API_URL = "https://work.juggle.im"
 const INSTALLER_APP_BUNDLE_NAME = "Install JuggleWork.app"
 
 type BootstrapCandidate = {
@@ -232,7 +232,7 @@ export function scheduleInstallerSelfCleanup(selfPath: string = process.execPath
   const bundlePath = removableInstallerBundlePath(selfPath)
   if (!bundlePath || !existsSync(bundlePath)) return
   try {
-    const child = spawn("/bin/sh", ["-c", "sleep 1; /bin/rm -rf \"$1\"", "openwork-installer-cleanup", bundlePath], {
+    const child = spawn("/bin/sh", ["-c", "sleep 1; /bin/rm -rf \"$1\"", "jugglework-installer-cleanup", bundlePath], {
       detached: true,
       stdio: "ignore",
     })
@@ -259,7 +259,7 @@ async function run(command: string, args: string[]): Promise<void> {
 export function windowsInstalledExePath(localAppData: string): string {
   const candidates = [
     path.join(localAppData, "Programs", "JuggleWork", "JuggleWork.exe"),
-    path.join(localAppData, "Programs", "@openworkdesktop", "JuggleWork.exe"),
+    path.join(localAppData, "Programs", "@juggleworkdesktop", "JuggleWork.exe"),
   ]
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
 }
@@ -297,7 +297,7 @@ async function installExe(exePath: string): Promise<string> {
 }
 
 function installAppImage(appImagePath: string): string {
-  const appDir = path.join(os.homedir(), ".local", "share", "openwork")
+  const appDir = path.join(os.homedir(), ".local", "share", "jugglework")
   mkdirSync(appDir, { recursive: true })
   const target = path.join(appDir, "JuggleWork.AppImage")
   rmSync(target, { force: true })
@@ -309,7 +309,7 @@ function installAppImage(appImagePath: string): string {
     const applicationsDir = path.join(os.homedir(), ".local", "share", "applications")
     mkdirSync(applicationsDir, { recursive: true })
     writeFileSync(
-      path.join(applicationsDir, "openwork.desktop"),
+      path.join(applicationsDir, "jugglework.desktop"),
       ["[Desktop Entry]", "Type=Application", "Name=JuggleWork", `Exec=${target}`, "Terminal=false", "Categories=Utility;"].join("\n") + "\n",
       "utf8",
     )
@@ -353,7 +353,7 @@ export async function runInstall(config: InstallerConfig, opts: InstallOptions =
     }
 
     update({ step: "download", message: `Downloading JuggleWork ${version}...` }, opts.onStatus)
-    const workDir = path.join(os.tmpdir(), `openwork-installer-${process.pid}-${Math.random().toString(36).slice(2)}`)
+    const workDir = path.join(os.tmpdir(), `jugglework-installer-${process.pid}-${Math.random().toString(36).slice(2)}`)
     mkdirSync(workDir, { recursive: true })
     try {
       const artifactPath = path.join(workDir, asset.fileName)

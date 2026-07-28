@@ -18,9 +18,9 @@ import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { computeReloadFingerprint } from "./reload-fingerprint.js";
 import { startReloadWatchers } from "./reload-watcher.js";
-import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
+import { opencodeConfigPath, juggleworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
+import { defaultWorkspaceJuggleWorkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { EnvService } from "./env-file.js";
@@ -36,7 +36,7 @@ import {
   applyMaterializedBlueprintSessions,
   normalizeBlueprintSessionTemplates,
   readMaterializedBlueprintSessions,
-  sanitizeOpenworkTemplateConfig,
+  sanitizeJuggleWorkTemplateConfig,
 } from "./blueprint-sessions.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { seedOpencodeSessionMessages } from "./opencode-db.js";
@@ -65,8 +65,8 @@ import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import {
-  markOpenworkCloudMcpStale,
-  reconcilePersistedOpenworkCloudMcp,
+  markJuggleWorkCloudMcpStale,
+  reconcilePersistedJuggleWorkCloudMcp,
   type CloudMcpHealth,
 } from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
@@ -81,17 +81,17 @@ import {
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import {
-  hasOpenworkWorkspaceConfig,
-  mergeOpenworkWorkspaceConfigs,
-  readOpenworkWorkspaceConfig,
-  seedOpenworkWorkspaceConfigIfEmpty,
-  writeOpenworkWorkspaceConfig,
-} from "./openwork-workspace-config-store.js";
+  hasJuggleWorkWorkspaceConfig,
+  mergeJuggleWorkWorkspaceConfigs,
+  readJuggleWorkWorkspaceConfig,
+  seedJuggleWorkWorkspaceConfigIfEmpty,
+  writeJuggleWorkWorkspaceConfig,
+} from "./jugglework-workspace-config-store.js";
 import {
-  buildOpenworkRuntimeConfigObject,
-  openworkRuntimeConfigFilePath,
-  writeOpenworkRuntimeConfigFile,
-} from "./openwork-runtime-config.js";
+  buildJuggleWorkRuntimeConfigObject,
+  juggleworkRuntimeConfigFilePath,
+  writeJuggleWorkRuntimeConfigFile,
+} from "./jugglework-runtime-config.js";
 import { readLegacyConfigSweepState } from "./legacy-config-sweep.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
@@ -105,8 +105,8 @@ export {
 const SERVER_VERSION = pkg.version;
 const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
-const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
-const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+const JUGGLEWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
+const JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 const agentDiagnosticsLastRunByServer = new WeakMap<ServerConfig, Map<string, number>>();
 const agentDiagnosticsInFlightByServer = new WeakMap<ServerConfig, Set<string>>();
@@ -123,7 +123,7 @@ function agentDiagnosticsActorWorkspaceKey(actor: Actor | undefined, workspaceId
 
 function requireAgentDiagnosticsRateLimit(config: ServerConfig, actor: Actor | undefined, workspaceId: string): void {
   const now = Date.now();
-  const configured = Number(process.env.OPENWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS ?? "3000");
+  const configured = Number(process.env.JUGGLEWORK_AGENT_DIAGNOSTICS_COOLDOWN_MS ?? "3000");
   const cooldownMs = Number.isFinite(configured) && configured >= 0 ? configured : 3_000;
   const key = agentDiagnosticsActorWorkspaceKey(actor, workspaceId);
   const agentDiagnosticsLastRun = agentDiagnosticsLastRunByServer.get(config) ?? new Map<string, number>();
@@ -171,27 +171,27 @@ function reserveAgentDiagnosticsRun(
   };
 }
 
-const OPENWORK_VOICE_REALTIME_TOOLS = [
+const JUGGLEWORK_VOICE_REALTIME_TOOLS = [
   {
     type: "function",
-    name: "openwork_snapshot",
+    name: "jugglework_snapshot",
     description: "Read the current JuggleWork UI control snapshot: route, status, narration, and visible action metadata.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
-    name: "openwork_list_actions",
-    description: "List semantic JuggleWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
+    name: "jugglework_list_actions",
+    description: "List semantic JuggleWork UI actions. Call this before jugglework_execute_action when you do not know the exact action id.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function",
-    name: "openwork_execute_action",
+    name: "jugglework_execute_action",
     description: "Execute a semantic JuggleWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
     parameters: {
       type: "object",
       properties: {
-        actionId: { type: "string", description: "The action id from openwork_list_actions, such as composer.set_text or composer.send." },
+        actionId: { type: "string", description: "The action id from jugglework_list_actions, such as composer.set_text or composer.send." },
         args: { type: "object", description: "Optional JSON arguments for the action.", additionalProperties: true },
       },
       required: ["actionId"],
@@ -216,21 +216,21 @@ const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "mcp", "di
 type LegacyRuntimeConfigKey = typeof LEGACY_RUNTIME_CONFIG_KEYS[number];
 type UserOpencodeRuntimeConfigKey = typeof USER_OPENCODE_RUNTIME_CONFIG_KEYS[number];
 
-function legacyRuntimeConfigFromOpenworkConfig(openwork: Record<string, unknown>): {
+function legacyRuntimeConfigFromJuggleWorkConfig(jugglework: Record<string, unknown>): {
   config: RuntimeOpencodeConfig;
   keys: LegacyRuntimeConfigKey[];
 } {
   const keys: LegacyRuntimeConfigKey[] = [];
-  const plugin = Array.isArray(openwork.plugin) ? openwork.plugin.filter((item) => typeof item === "string") : [];
+  const plugin = Array.isArray(jugglework.plugin) ? jugglework.plugin.filter((item) => typeof item === "string") : [];
   const mcp: Record<string, Record<string, unknown>> = {};
-  if (isRecord(openwork.mcp)) {
-    for (const [name, value] of Object.entries(openwork.mcp)) {
+  if (isRecord(jugglework.mcp)) {
+    for (const [name, value] of Object.entries(jugglework.mcp)) {
       if (isRecord(value)) mcp[name] = value;
     }
   }
-  const permission = isRecord(openwork.permission) ? openwork.permission : null;
+  const permission = isRecord(jugglework.permission) ? jugglework.permission : null;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : null;
-  const provider = isRecord(openwork.provider) ? openwork.provider : null;
+  const provider = isRecord(jugglework.provider) ? jugglework.provider : null;
 
   if (plugin.length) keys.push("plugin");
   if (Object.keys(mcp).length) keys.push("mcp");
@@ -248,8 +248,8 @@ function legacyRuntimeConfigFromOpenworkConfig(openwork: Record<string, unknown>
   };
 }
 
-function removeLegacyRuntimeConfig(openwork: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...openwork };
+function removeLegacyRuntimeConfig(jugglework: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...jugglework };
   for (const key of LEGACY_RUNTIME_CONFIG_KEYS) {
     delete next[key];
   }
@@ -261,7 +261,7 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
   keys: UserOpencodeRuntimeConfigKey[];
 } {
   const keys: UserOpencodeRuntimeConfigKey[] = [];
-  const defaultAgent = opencode.default_agent === "openwork" ? "openwork" : undefined;
+  const defaultAgent = opencode.default_agent === "jugglework" ? "jugglework" : undefined;
   const plugin = Array.isArray(opencode.plugin) ? opencode.plugin.filter((item) => typeof item === "string") : undefined;
   const mcp: Record<string, Record<string, unknown>> = {};
   if (isRecord(opencode.mcp)) {
@@ -360,7 +360,7 @@ async function readManagedRuntimeConfigDebug(config: ServerConfig): Promise<{
   managedFileRebuiltAt: number | null;
   managedFileContentRedacted: string | null;
 }> {
-  const managedFilePath = openworkRuntimeConfigFilePath(config);
+  const managedFilePath = juggleworkRuntimeConfigFilePath(config);
   try {
     const [metadata, content] = await Promise.all([
       stat(managedFilePath),
@@ -425,33 +425,33 @@ async function resolveOpenAiRealtimeApiKey(env: EnvService): Promise<string> {
     "";
   if (storedKey) return storedKey;
 
-  return process.env.OPENWORK_OPENAI_REALTIME_API_KEY?.trim() ||
+  return process.env.JUGGLEWORK_OPENAI_REALTIME_API_KEY?.trim() ||
     process.env.OPENAI_REALTIME_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     "";
 }
 
-async function resolveOpenWorkModelsVoiceConfig(env: EnvService): Promise<{ baseUrl: string; apiKey: string } | null> {
+async function resolveJuggleWorkModelsVoiceConfig(env: EnvService): Promise<{ baseUrl: string; apiKey: string } | null> {
   const records = await env.list();
   const apiKey =
-    records.find((entry) => entry.key === "OPENWORK_API_KEY")?.value.trim() ||
-    records.find((entry) => entry.key === "OPENWORK_MODELS_API_KEY")?.value.trim() ||
-    process.env.OPENWORK_API_KEY?.trim() ||
-    process.env.OPENWORK_MODELS_API_KEY?.trim() ||
+    records.find((entry) => entry.key === "JUGGLEWORK_API_KEY")?.value.trim() ||
+    records.find((entry) => entry.key === "JUGGLEWORK_MODELS_API_KEY")?.value.trim() ||
+    process.env.JUGGLEWORK_API_KEY?.trim() ||
+    process.env.JUGGLEWORK_MODELS_API_KEY?.trim() ||
     "";
   if (!apiKey) return null;
 
   const baseUrl =
-    records.find((entry) => entry.key === "OPENWORK_INFERENCE_BASE_URL")?.value.trim() ||
-    records.find((entry) => entry.key === "OPENWORK_MODELS_BASE_URL")?.value.trim() ||
-    process.env.OPENWORK_INFERENCE_BASE_URL?.trim() ||
-    process.env.OPENWORK_MODELS_BASE_URL?.trim() ||
+    records.find((entry) => entry.key === "JUGGLEWORK_INFERENCE_BASE_URL")?.value.trim() ||
+    records.find((entry) => entry.key === "JUGGLEWORK_MODELS_BASE_URL")?.value.trim() ||
+    process.env.JUGGLEWORK_INFERENCE_BASE_URL?.trim() ||
+    process.env.JUGGLEWORK_MODELS_BASE_URL?.trim() ||
     "";
   if (!baseUrl) return null;
   return { apiKey, baseUrl: baseUrl.replace(/\/+$/, "") };
 }
 
-function openworkVoiceRealtimeInstructions(sessionContext: string) {
+function juggleworkVoiceRealtimeInstructions(sessionContext: string) {
   const trimmedContext = sessionContext.trim();
   const contextSection = trimmedContext
     ? `
@@ -469,7 +469,7 @@ Help the user control JuggleWork by using the semantic JuggleWork UI tools.
 
 # Tool Policy
 
-- Prefer openwork_snapshot, openwork_list_actions, and openwork_execute_action over visual guessing.
+- Prefer jugglework_snapshot, jugglework_list_actions, and jugglework_execute_action over visual guessing.
 - If the user asks to write or draft something, use composer.set_text.
 - If the user asks to send or run the current prompt, use composer.send.
 - For navigation, settings, session, transcript, and composer work, inspect the action list first if the action id is unknown.
@@ -507,7 +507,7 @@ function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expir
 }
 
 async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown) {
-  const managedVoice = await resolveOpenWorkModelsVoiceConfig(env);
+  const managedVoice = await resolveJuggleWorkModelsVoiceConfig(env);
   if (managedVoice) {
     try {
       return await createManagedVoiceSession(managedVoice, input);
@@ -520,7 +520,7 @@ async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown)
         }
         throw new ApiError(
           503,
-          "openwork_models_voice_unavailable",
+          "jugglework_models_voice_unavailable",
           "JuggleWork Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
         );
       }
@@ -559,7 +559,7 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
   if (!response.ok) {
     const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
     const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
-    throw new ApiError(response.status, "openwork_models_voice_failed", message || "JuggleWork Models could not create a voice session");
+    throw new ApiError(response.status, "jugglework_models_voice_failed", message || "JuggleWork Models could not create a voice session");
   }
   if (
     !isRecord(payload) ||
@@ -569,21 +569,21 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
     !Array.isArray(payload.tools) ||
     payload.tools.some((tool) => typeof tool !== "string")
   ) {
-    throw new ApiError(502, "openwork_models_voice_invalid_response", "JuggleWork Models did not return a usable Realtime session payload");
+    throw new ApiError(502, "jugglework_models_voice_invalid_response", "JuggleWork Models did not return a usable Realtime session payload");
   }
   return {
     ok: true,
     clientSecret: payload.clientSecret,
     expiresAt: typeof payload.expiresAt === "number" ? payload.expiresAt : null,
     model: payload.model,
-    transcriptionModel: typeof payload.transcriptionModel === "string" ? payload.transcriptionModel : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
+    transcriptionModel: typeof payload.transcriptionModel === "string" ? payload.transcriptionModel : JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL,
     tools: payload.tools,
     ...(typeof payload.source === "string" ? { source: payload.source } : {}),
   };
 }
 
 async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
+  const model = readStringField(input, "model") || JUGGLEWORK_VOICE_REALTIME_MODEL;
   const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
   const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
@@ -598,7 +598,7 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
         output_modalities: ["audio"],
         audio: {
           input: {
-            transcription: { model: OPENWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
+            transcription: { model: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
             turn_detection: {
               type: "server_vad",
               threshold: 0.58,
@@ -609,9 +609,9 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
             },
           },
         },
-        instructions: openworkVoiceRealtimeInstructions(sessionContext),
+        instructions: juggleworkVoiceRealtimeInstructions(sessionContext),
         tool_choice: "auto",
-        tools: OPENWORK_VOICE_REALTIME_TOOLS,
+        tools: JUGGLEWORK_VOICE_REALTIME_TOOLS,
       },
     }),
   });
@@ -640,8 +640,8 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
     clientSecret,
     expiresAt,
     model,
-    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    transcriptionModel: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL,
+    tools: JUGGLEWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
   };
 }
 
@@ -669,10 +669,10 @@ function toUnixNano(): string {
 }
 
 export function createServerLogger(config: ServerConfig): ServerLogger {
-  const runId = process.env.OPENWORK_RUN_ID ?? shortId();
+  const runId = process.env.JUGGLEWORK_RUN_ID ?? shortId();
   const host = hostname().trim();
   const resource: Record<string, string> = {
-    "service.name": "openwork-server",
+    "service.name": "jugglework-server",
     "service.version": SERVER_VERSION,
     "service.instance.id": runId,
   };
@@ -783,7 +783,7 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
   // Prevent viewers from self-approving OpenCode permission requests via the
   // proxy. OpenCode uses /permission/:requestId/reply (and historically also
   // a session-scoped variant). Collaborators must be allowed: the SPA's only
-  // credential is the collaborator-scoped client token (OPENWORK_TOKEN), so
+  // credential is the collaborator-scoped client token (JUGGLEWORK_TOKEN), so
   // an owner-only gate made every interactive permission dialog un-answerable
   // (403 "Only owner tokens can reply") and left tool calls stuck in
   // "running" forever (#1918).
@@ -952,7 +952,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         return finalize(response);
       } catch (error) {
         if (!(error instanceof ApiError)) {
-          console.error("[openwork-server] Unhandled error:", error);
+          console.error("[jugglework-server] Unhandled error:", error);
         }
         const apiError = error instanceof ApiError
           ? error
@@ -1080,8 +1080,8 @@ async function proxyOpencodeRequest(input: {
   const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
-  headers.delete("x-openwork-host-token");
-  headers.delete("x-openwork-client-id");
+  headers.delete("x-jugglework-host-token");
+  headers.delete("x-jugglework-client-id");
   headers.delete("host");
   headers.delete("origin");
 
@@ -1163,7 +1163,7 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   headers.set("Access-Control-Allow-Origin", allowOrigin);
   headers.set(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, X-OpenWork-Host-Token, X-OpenWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
+    "Authorization, Content-Type, X-JuggleWork-Host-Token, X-JuggleWork-Client-Id, X-OpenCode-Directory, X-Opencode-Directory, x-opencode-directory",
   );
   headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   headers.set("Vary", "Origin");
@@ -1181,12 +1181,12 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   if (!scope) {
     throw new ApiError(401, "unauthorized", "Invalid bearer token");
   }
-  const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
+  const clientId = request.headers.get("x-jugglework-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
 }
 
 function requireHostToken(request: Request, config: ServerConfig): Actor {
-  const hostToken = request.headers.get("x-openwork-host-token");
+  const hostToken = request.headers.get("x-jugglework-host-token");
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
   }
@@ -1194,7 +1194,7 @@ function requireHostToken(request: Request, config: ServerConfig): Actor {
 }
 
 async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
-  const hostToken = request.headers.get("x-openwork-host-token");
+  const hostToken = request.headers.get("x-jugglework-host-token");
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
   }
@@ -1209,7 +1209,7 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   if (scope !== "owner") {
     throw new ApiError(401, "unauthorized", "Invalid host token");
   }
-  const clientId = request.headers.get("x-openwork-client-id") ?? undefined;
+  const clientId = request.headers.get("x-jugglework-client-id") ?? undefined;
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
@@ -1228,7 +1228,7 @@ function buildCapabilities(config: ServerConfig): Capabilities {
     schemaVersion,
     serverVersion: SERVER_VERSION,
     opencodeVersion: OPENCODE_VERSION,
-    skills: { read: true, write: writeEnabled, source: "openwork" },
+    skills: { read: true, write: writeEnabled, source: "jugglework" },
     plugins: { read: true, write: writeEnabled },
     mcp: { read: true, write: writeEnabled },
     commands: { read: true, write: writeEnabled },
@@ -1246,8 +1246,8 @@ function buildCapabilities(config: ServerConfig): Capabilities {
       files: {
         injection: writeEnabled && inboxEnabled,
         outbox: outboxEnabled,
-        inboxPath: ".opencode/openwork/inbox/",
-        outboxPath: ".opencode/openwork/outbox/",
+        inboxPath: ".opencode/jugglework/inbox/",
+        outboxPath: ".opencode/jugglework/outbox/",
         maxBytes,
       },
     },
@@ -1255,33 +1255,33 @@ function buildCapabilities(config: ServerConfig): Capabilities {
 }
 
 function resolveSandboxBackend(): Capabilities["sandbox"]["backend"] {
-  const raw = (process.env.OPENWORK_SANDBOX_BACKEND ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_SANDBOX_BACKEND ?? "").trim().toLowerCase();
   if (raw === "docker") return "docker";
   if (raw === "container") return "container";
   return "none";
 }
 
 function resolveSandboxEnabled(backend: Capabilities["sandbox"]["backend"]): boolean {
-  const raw = (process.env.OPENWORK_SANDBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_SANDBOX_ENABLED ?? "").trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(raw)) return true;
   if (["0", "false", "no", "off"].includes(raw)) return false;
   return backend !== "none";
 }
 
 function resolveInboxEnabled(): boolean {
-  const raw = (process.env.OPENWORK_INBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_INBOX_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function resolveOutboxEnabled(): boolean {
-  const raw = (process.env.OPENWORK_OUTBOX_ENABLED ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_OUTBOX_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
 function resolveInboxMaxBytes(): number {
-  const raw = (process.env.OPENWORK_INBOX_MAX_BYTES ?? "").trim();
+  const raw = (process.env.JUGGLEWORK_INBOX_MAX_BYTES ?? "").trim();
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.min(Math.trunc(parsed), 250_000_000);
@@ -1290,22 +1290,22 @@ function resolveInboxMaxBytes(): number {
 }
 
 function resolveToyUiEnabled(): boolean {
-  const raw = (process.env.OPENWORK_TOY_UI ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_TOY_UI ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
-// Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
+// Dev-only log sink target. When JUGGLEWORK_DEV_LOG_FILE is set to a path, the
 // /dev/log endpoint accepts JSON payloads and appends them to that file so an
 // operator can `tail -f` the file to see live browser activity. Returning null
 // disables the endpoint entirely.
 function resolveDevLogPath(): string | null {
-  const raw = (process.env.OPENWORK_DEV_LOG_FILE ?? "").trim();
+  const raw = (process.env.JUGGLEWORK_DEV_LOG_FILE ?? "").trim();
   return raw.length > 0 ? raw : null;
 }
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
-  const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
+  const raw = (process.env.JUGGLEWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
   if (raw === "sandbox-headless") {
     return { enabled: true, placement: "in-sandbox", mode: "headless" };
   }
@@ -1612,19 +1612,19 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const openwork = await readOpenworkConfigForWorkspace(config, workspace);
+    const jugglework = await readJuggleWorkConfigForWorkspace(config, workspace);
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
       await readRuntimeOpencodeConfig(config, workspace.id),
     );
     const lastAudit = await readLastAudit(workspace.path, workspace.id);
-    return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+    return jsonResponse({ opencode, jugglework, updatedAt: lastAudit?.timestamp ?? null });
   });
 
   addRoute(routes, "GET", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const openwork = await readOpenworkConfigForWorkspace(config, workspace);
-    return jsonResponse(readDesktopCloudSyncState(openwork));
+    const jugglework = await readJuggleWorkConfigForWorkspace(config, workspace);
+    return jsonResponse(readDesktopCloudSyncState(jugglework));
   });
 
   addRoute(routes, "POST", "/workspace/:id/desktop-cloud-sync", "client", async (ctx) => {
@@ -1638,17 +1638,17 @@ function createRoutes(
     }
 
     const result = await enqueueDesktopCloudSync(async () => {
-      const openwork = await readOpenworkConfigForWorkspace(config, workspace);
+      const jugglework = await readJuggleWorkConfigForWorkspace(config, workspace);
       const installed = await readInstalledCloudPlugins(config, workspace.id);
       const cloudImports = {
         ...installed,
-        providers: readWorkspaceCloudImports(openwork).providers,
+        providers: readWorkspaceCloudImports(jugglework).providers,
       };
-      const next = syncDesktopCloudResources({ openwork: { ...openwork, cloudImports }, snapshot });
+      const next = syncDesktopCloudResources({ jugglework: { ...jugglework, cloudImports }, snapshot });
       // The plugin DB owns plugins/marketplaces, but provider import baselines live in
       // the workspace config. Writing the merged cloudImports back erased providers
       // and drove the provider-sync dispose/create loop.
-      await writeOpenworkWorkspaceConfig(config, workspace.id, (current) => ({
+      await writeJuggleWorkWorkspaceConfig(config, workspace.id, (current) => ({
         ...current,
         desktopCloudSync: next.state,
       }));
@@ -1657,7 +1657,7 @@ function createRoutes(
         workspaceId: workspace.id,
         actor: ctx.actor ?? { type: "remote" },
         action: "desktop_cloud_sync.update",
-        target: openworkConfigPath(workspace.path),
+        target: juggleworkConfigPath(workspace.path),
         summary: "Updated desktop cloud sync state",
         timestamp: Date.now(),
       });
@@ -1689,7 +1689,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "cloud_plugins.install",
       summary: `Install cloud plugin ${resolved.plugin.name}`,
-      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
+      paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
     const result = await installCloudPlugin({
@@ -1713,7 +1713,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "cloud_plugins.install",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Installed cloud plugin ${resolved.plugin.name}`,
       timestamp: Date.now(),
     });
@@ -1761,7 +1761,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "cloud_plugins.install",
       summary: `Install Claude plugin ${bundle.resolved.plugin.name} from ${bundle.preview.source.owner}/${bundle.preview.source.repo}`,
-      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
+      paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
     const result = await installCloudPlugin({
@@ -1778,7 +1778,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "cloud_plugins.install",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Installed Claude plugin ${bundle.resolved.plugin.name} from ${url}`,
       timestamp: Date.now(),
     });
@@ -1813,7 +1813,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "cloud_plugins.remove",
       summary: `Remove cloud plugin ${pluginId}`,
-      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
+      paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
     const removed = await removeCloudPlugin({
@@ -1828,7 +1828,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "cloud_plugins.remove",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Removed cloud plugin ${removed.name}`,
       timestamp: Date.now(),
     });
@@ -1860,7 +1860,7 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const folders = parseAuthorizedFoldersPayload(body.folders, workspace.path);
-    const configPath = openworkConfigPath(workspace.path);
+    const configPath = juggleworkConfigPath(workspace.path);
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -1915,7 +1915,7 @@ function createRoutes(
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const configPath = openworkConfigPath(workspace.path);
+    const configPath = juggleworkConfigPath(workspace.path);
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -1924,31 +1924,31 @@ function createRoutes(
       paths: [configPath],
     });
 
-    // Resolve the effective openwork config (DB, migrating any legacy file
+    // Resolve the effective jugglework config (DB, migrating any legacy file
     // contents in on read) so legacy runtime keys are detected wherever they
     // currently live.
-    let openworkError: string | null = null;
-    let openworkData: Record<string, unknown> = {};
+    let juggleworkError: string | null = null;
+    let juggleworkData: Record<string, unknown> = {};
     try {
-      openworkData = await readOpenworkConfigForWorkspace(config, workspace);
+      juggleworkData = await readJuggleWorkConfigForWorkspace(config, workspace);
     } catch (error) {
       if (error instanceof ApiError && error.code === "invalid_json") {
-        openworkError = error.message;
+        juggleworkError = error.message;
       } else {
         throw error;
       }
     }
-    const legacy = legacyRuntimeConfigFromOpenworkConfig(openworkData);
+    const legacy = legacyRuntimeConfigFromJuggleWorkConfig(juggleworkData);
     const user = userRuntimeConfigFromOpencodeConfig(await readOpencodeConfig(workspace.path));
     if (!legacy.keys.length && !user.keys.length) {
-      return jsonResponse({ migrated: false, keys: [], legacyKeys: [], userOpencodeKeys: [], updatedAt: null, legacyError: openworkError });
+      return jsonResponse({ migrated: false, keys: [], legacyKeys: [], userOpencodeKeys: [], updatedAt: null, legacyError: juggleworkError });
     }
 
     await writeRuntimeOpencodeConfig(config, workspace.id, (current) => (
       mergeLegacyRuntimeConfig(mergeLegacyRuntimeConfig(current, legacy.config), user.config)
     ));
-    if (legacy.keys.length && !openworkError) {
-      await writeOpenworkConfigForWorkspace(config, workspace, removeLegacyRuntimeConfig(openworkData), false);
+    if (legacy.keys.length && !juggleworkError) {
+      await writeJuggleWorkConfigForWorkspace(config, workspace, removeLegacyRuntimeConfig(juggleworkData), false);
     }
     await removeUserRuntimeConfigFromOpencode(workspace.path, user.keys);
 
@@ -1965,7 +1965,7 @@ function createRoutes(
     });
     emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
 
-    return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: openworkError });
+    return jsonResponse({ migrated: true, keys, legacyKeys: legacy.keys, userOpencodeKeys: user.keys, updatedAt, legacyError: juggleworkError });
   });
 
   addRoute(routes, "POST", "/workspace/:id/runtime-config/disabled-providers", "client", async (ctx) => {
@@ -1980,7 +1980,7 @@ function createRoutes(
     }));
 
     if (result.changed) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkRuntimeConfigFilePath(config)));
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(juggleworkRuntimeConfigFilePath(config)));
     }
 
     return jsonResponse({
@@ -1992,19 +1992,19 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/runtime-config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
-    // Report legacy runtime keys from the effective (DB-backed) openwork config
+    // Report legacy runtime keys from the effective (DB-backed) jugglework config
     // so the status reflects post-migration state, while still surfacing parse
     // errors from a malformed legacy file.
-    const fileStatus = await readOpenworkConfigForStatus(workspace.path);
-    const effectiveOpenwork = fileStatus.error ? {} : await readOpenworkConfigForWorkspace(config, workspace);
-    const legacy = legacyRuntimeConfigFromOpenworkConfig(effectiveOpenwork);
+    const fileStatus = await readJuggleWorkConfigForStatus(workspace.path);
+    const effectiveJuggleWork = fileStatus.error ? {} : await readJuggleWorkConfigForWorkspace(config, workspace);
+    const legacy = legacyRuntimeConfigFromJuggleWorkConfig(effectiveJuggleWork);
     const rawOpencode = await readRawOpencodeConfig(opencodeConfigPath(workspace.path));
     const persistedOpencode = await readOpencodeConfig(workspace.path);
     const globalOpencodePath = resolveOpencodeConfigFilePath("global", workspace.path);
     const rawGlobalOpencode = await readRawOpencodeConfig(globalOpencodePath);
     const emptyGlobalOpencode: Record<string, unknown> = {};
     const globalOpencode = (await readJsoncFile(globalOpencodePath, emptyGlobalOpencode, { allowInvalid: true })).data;
-    const effectiveRuntime = await buildOpenworkRuntimeConfigObject(config, workspace.id);
+    const effectiveRuntime = await buildJuggleWorkRuntimeConfigObject(config, workspace.id);
     const user = userRuntimeConfigFromOpencodeConfig(persistedOpencode);
     const managedFile = await readManagedRuntimeConfigDebug(config);
     const sweep = await readLegacyConfigSweepState(config);
@@ -2037,8 +2037,8 @@ function createRoutes(
           config: effectiveRuntime,
         },
       },
-      legacyOpenwork: {
-        path: openworkConfigPath(workspace.path),
+      legacyJuggleWork: {
+        path: juggleworkConfigPath(workspace.path),
         keys: legacy.keys,
         error: fileStatus.error,
       },
@@ -2123,22 +2123,22 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const opencode = body.opencode as Record<string, unknown> | undefined;
-    const openwork = body.openwork as Record<string, unknown> | undefined;
+    const jugglework = body.jugglework as Record<string, unknown> | undefined;
     let runtimeChanged = false;
 
-    if (!opencode && !openwork) {
-      throw new ApiError(400, "invalid_payload", "opencode or openwork updates required");
+    if (!opencode && !jugglework) {
+      throw new ApiError(400, "invalid_payload", "opencode or jugglework updates required");
     }
 
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "config.patch",
       summary: "Patch workspace config",
-      paths: [opencode || openwork ? openworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
+      paths: [opencode || jugglework ? juggleworkConfigPath(workspace.path) : null].filter(Boolean) as string[],
     });
 
     if (opencode) {
-      const configPath = openworkConfigPath(workspace.path);
+      const configPath = juggleworkConfigPath(workspace.path);
       const nextOpencode = ensurePlainObject(opencode);
       const { permission, provider, ...topLevelUpdates } = nextOpencode;
       const logicalUpdates: Record<string, unknown> = { ...topLevelUpdates };
@@ -2181,10 +2181,10 @@ function createRoutes(
         runtimeChanged = result.changed;
       }
     }
-    if (openwork) {
-      await writeOpenworkWorkspaceConfig(config, workspace.id, (current) => ({
+    if (jugglework) {
+      await writeJuggleWorkWorkspaceConfig(config, workspace.id, (current) => ({
         ...current,
-        ...openwork,
+        ...jugglework,
       }));
     }
 
@@ -2193,7 +2193,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "config.patch",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: "Patched workspace config",
       timestamp: Date.now(),
     });
@@ -2201,7 +2201,7 @@ function createRoutes(
     // A no-op provider patch (for example cloud sync reconciling an identical
     // block) must not force an engine reload; that caused a dispose/create loop.
     if (opencode && runtimeChanged) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(openworkConfigPath(workspace.path)));
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(juggleworkConfigPath(workspace.path)));
     }
 
     return jsonResponse({ updatedAt: Date.now() });
@@ -2251,7 +2251,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "plugins.add",
       summary: `Add plugin ${spec}`,
-      paths: [openworkConfigPath(workspace.path)],
+      paths: [juggleworkConfigPath(workspace.path)],
     });
     const changed = await addPlugin(config, workspace.id, spec);
     await recordAudit(workspace.path, {
@@ -2259,7 +2259,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "plugins.add",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Added ${spec}`,
       timestamp: Date.now(),
     });
@@ -2284,7 +2284,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "plugins.remove",
       summary: `Remove plugin ${name}`,
-      paths: [openworkConfigPath(workspace.path)],
+      paths: [juggleworkConfigPath(workspace.path)],
     });
     const removed = await removePlugin(config, workspace.id, name);
     await recordAudit(workspace.path, {
@@ -2292,7 +2292,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "plugins.remove",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Removed ${name}`,
       timestamp: Date.now(),
     });
@@ -2445,7 +2445,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "mcp.add",
       summary: `Add MCP ${name}`,
-      paths: [openworkConfigPath(workspace.path)],
+      paths: [juggleworkConfigPath(workspace.path)],
     });
     const result = await addMcp(config, workspace.id, name, configPayload);
     // Hot-add into the running engine so connect/auth works immediately,
@@ -2462,7 +2462,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "mcp.add",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Added MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -2484,7 +2484,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action: "mcp.remove",
       summary: `Remove MCP ${name}`,
-      paths: [openworkConfigPath(workspace.path)],
+      paths: [juggleworkConfigPath(workspace.path)],
     });
     const removed = await removeMcp(config, workspace.id, name);
     await recordAudit(workspace.path, {
@@ -2492,7 +2492,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "mcp.remove",
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `Removed MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -2527,7 +2527,7 @@ function createRoutes(
       workspaceId: workspace.id,
       action,
       summary,
-      paths: [openworkConfigPath(workspace.path)],
+      paths: [juggleworkConfigPath(workspace.path)],
     });
     const updated = await setMcpEnabled(config, workspace.id, name, enabled);
     if (!updated) {
@@ -2545,7 +2545,7 @@ function createRoutes(
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action,
-      target: openworkConfigPath(workspace.path),
+      target: juggleworkConfigPath(workspace.path),
       summary: `${enabled ? "Enabled" : "Disabled"} MCP ${name}`,
       timestamp: Date.now(),
     });
@@ -2914,7 +2914,7 @@ async function readAgentDiagnosticsJsonBody(request: Request): Promise<unknown> 
     "agent_diagnostics_request_timeout",
     "Agent diagnostics request body timed out",
   );
-  const configuredDeadlineMs = Number(process.env.OPENWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS);
+  const configuredDeadlineMs = Number(process.env.JUGGLEWORK_AGENT_DIAGNOSTICS_BODY_TIMEOUT_MS);
   const deadlineMs = Number.isFinite(configuredDeadlineMs) && configuredDeadlineMs >= 50
     ? Math.min(configuredDeadlineMs, 10_000)
     : AGENT_DIAGNOSTICS_DEFAULT_BODY_DEADLINE_MS;
@@ -3065,8 +3065,8 @@ function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoo
 }
 
 function getRuntimeControlConfig(): { baseUrl: string; token: string } | null {
-  const baseUrl = process.env.OPENWORK_CONTROL_BASE_URL?.trim() ?? "";
-  const token = process.env.OPENWORK_CONTROL_TOKEN?.trim() ?? "";
+  const baseUrl = process.env.JUGGLEWORK_CONTROL_BASE_URL?.trim() ?? "";
+  const token = process.env.JUGGLEWORK_CONTROL_TOKEN?.trim() ?? "";
   if (!baseUrl || !token) return null;
   return { baseUrl: baseUrl.replace(/\/+$/, ""), token };
 }
@@ -3097,23 +3097,23 @@ async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string,
   return data;
 }
 
-async function readOpenworkConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
-  const path = openworkConfigPath(workspaceRoot);
+async function readJuggleWorkConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
+  const path = juggleworkConfigPath(workspaceRoot);
   if (!(await exists(path))) return {};
   try {
     const raw = await readFile(path, "utf8");
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    throw new ApiError(422, "invalid_json", "Failed to parse openwork.json");
+    throw new ApiError(422, "invalid_json", "Failed to parse jugglework.json");
   }
 }
 
-async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
+async function readJuggleWorkConfigForStatus(workspaceRoot: string): Promise<{
   data: Record<string, unknown>;
   error: string | null;
 }> {
   try {
-    return { data: await readOpenworkConfig(workspaceRoot), error: null };
+    return { data: await readJuggleWorkConfig(workspaceRoot), error: null };
   } catch (error) {
     if (error instanceof ApiError && error.code === "invalid_json") {
       return { data: {}, error: error.message };
@@ -3123,49 +3123,49 @@ async function readOpenworkConfigForStatus(workspaceRoot: string): Promise<{
 }
 
 /**
- * Resolve the effective per-workspace openwork config from the runtime DB,
- * migrating a legacy `.opencode/openwork.json` file into the DB on first read.
+ * Resolve the effective per-workspace jugglework config from the runtime DB,
+ * migrating a legacy `.opencode/jugglework.json` file into the DB on first read.
  *
  * The DB is the source of truth. The file is only consulted to seed the DB
  * once (back-compat for workspaces created before the file->DB migration), and
  * is never written afterwards. Returns the merged view ({...file, ...db}) so a
  * partially-migrated install still surfaces every key.
  */
-async function readOpenworkConfigForWorkspace(
+async function readJuggleWorkConfigForWorkspace(
   config: ServerConfig,
   workspace: WorkspaceInfo,
 ): Promise<Record<string, unknown>> {
-  const stored = await readOpenworkWorkspaceConfig(config, workspace.id);
-  if (Object.keys(stored).length > 0 || (await hasOpenworkWorkspaceConfig(config, workspace.id))) {
+  const stored = await readJuggleWorkWorkspaceConfig(config, workspace.id);
+  if (Object.keys(stored).length > 0 || (await hasJuggleWorkWorkspaceConfig(config, workspace.id))) {
     return stored;
   }
-  const legacy = await readOpenworkConfigForStatus(workspace.path);
+  const legacy = await readJuggleWorkConfigForStatus(workspace.path);
   if (Object.keys(legacy.data).length === 0) {
     if (workspace.workspaceType !== "remote" && workspace.path.trim()) {
-      return seedOpenworkWorkspaceConfigIfEmpty(
+      return seedJuggleWorkWorkspaceConfigIfEmpty(
         config,
         workspace.id,
-        defaultWorkspaceOpenworkConfig(workspace.path, workspace.preset ?? "starter"),
+        defaultWorkspaceJuggleWorkConfig(workspace.path, workspace.preset ?? "starter"),
       );
     }
     return {};
   }
   // Migrate-on-read: copy the legacy file contents into the DB once.
-  await seedOpenworkWorkspaceConfigIfEmpty(config, workspace.id, legacy.data);
-  return mergeOpenworkWorkspaceConfigs(legacy.data, await readOpenworkWorkspaceConfig(config, workspace.id));
+  await seedJuggleWorkWorkspaceConfigIfEmpty(config, workspace.id, legacy.data);
+  return mergeJuggleWorkWorkspaceConfigs(legacy.data, await readJuggleWorkWorkspaceConfig(config, workspace.id));
 }
 
 /**
- * Persist a full openwork config document for a workspace to the runtime DB.
+ * Persist a full jugglework config document for a workspace to the runtime DB.
  * Replaces the legacy file write path; the file is no longer written.
  */
-async function writeOpenworkConfigForWorkspace(
+async function writeJuggleWorkConfigForWorkspace(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   payload: Record<string, unknown>,
   merge: boolean,
 ): Promise<void> {
-  await writeOpenworkWorkspaceConfig(config, workspace.id, (current) =>
+  await writeJuggleWorkWorkspaceConfig(config, workspace.id, (current) =>
     merge ? { ...current, ...payload } : payload,
   );
 }
@@ -3232,7 +3232,7 @@ async function reloadOpencodeEngine(
   // External engines are not tied to this server-managed file.
   if (trustedOpencodeProcessIdentity(config, workspace)) {
     try {
-      await writeOpenworkRuntimeConfigFile(config, workspace.id);
+      await writeJuggleWorkRuntimeConfigFile(config, workspace.id);
     } catch (error) {
       throw new ApiError(
         500,
@@ -3269,7 +3269,7 @@ async function reloadOpencodeEngine(
     });
   }
 
-  markOpenworkCloudMcpStale(workspace, directory);
+  markJuggleWorkCloudMcpStale(workspace, directory);
   // Re-register runtime-DB MCPs: dispose rebuilds engine state from disk
   // configs (including the server-managed runtime config file for the
   // primary workspace), but other workspaces' runtime MCPs only reach the
@@ -3286,7 +3286,7 @@ async function reloadOpencodeEngine(
     logRuntimeMcpSyncError({ config, workspace, trigger: "engine_reload", error });
   }
   try {
-    const health = await reconcilePersistedOpenworkCloudMcp({
+    const health = await reconcilePersistedJuggleWorkCloudMcp({
       config,
       workspace,
       directory,
@@ -3363,7 +3363,7 @@ async function syncRuntimeMcpToOpencodeEngine(
   if (connection.authHeader) headers.Authorization = connection.authHeader;
 
   // Keep going past per-entry failures: one dead or invalid MCP must not
-  // block re-registration of every entry after it (e.g. openwork-ui) on
+  // block re-registration of every entry after it (e.g. jugglework-ui) on
   // each engine reload.
   const failures: EngineMcpSyncFailure[] = [];
   const registrations: EngineMcpRegistrationResult[] = [];
@@ -3583,12 +3583,12 @@ async function readBoundedEngineMcpRegistrationResponse(response: Response): Pro
 
 // Read lazily so tests can shrink the delay at runtime.
 function engineMcpSyncRetryDelayMs(): number {
-  const parsed = Number(process.env.OPENWORK_MCP_SYNC_RETRY_DELAY_MS ?? "750");
+  const parsed = Number(process.env.JUGGLEWORK_MCP_SYNC_RETRY_DELAY_MS ?? "750");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 750;
 }
 
 function engineMcpDeferredSyncDelayMs(): number {
-  const parsed = Number(process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS ?? "12000");
+  const parsed = Number(process.env.JUGGLEWORK_MCP_SYNC_DEFERRED_DELAY_MS ?? "12000");
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 12_000;
 }
 
@@ -3818,7 +3818,7 @@ function reconcileEngineMcpWorkspaceIdentity(
 }
 
 function engineMcpRegistrationMaxAgeMs(): number {
-  const configured = Number(process.env.OPENWORK_MCP_REGISTRATION_MAX_AGE_MS);
+  const configured = Number(process.env.JUGGLEWORK_MCP_REGISTRATION_MAX_AGE_MS);
   if (!Number.isFinite(configured) || configured < 1) return ENGINE_MCP_REGISTRATION_MAX_AGE_MS;
   return Math.min(ENGINE_MCP_REGISTRATION_MAX_AGE_MS, Math.round(configured));
 }
@@ -4140,7 +4140,7 @@ function logPersistedCloudMcpReconcileResult(input: {
     `Cloud MCP ${input.trigger} reconciliation left connected service tools unavailable for workspace ${input.workspace.id}.`,
     {
       "workspace.id": input.workspace.id,
-      "mcp.name": "openwork-cloud",
+      "mcp.name": "jugglework-cloud",
       "mcp.trigger": input.trigger,
       "mcp.failure.code": failure?.code ?? "unknown",
       "mcp.failure.stage": failure?.stage ?? "unknown",
@@ -4179,7 +4179,7 @@ function logPersistedCloudMcpReconcileError(input: {
     `Cloud MCP ${input.trigger} reconciliation crashed for workspace ${input.workspace.id}.`,
     {
       "workspace.id": input.workspace.id,
-      "mcp.name": "openwork-cloud",
+      "mcp.name": "jugglework-cloud",
       "mcp.trigger": input.trigger,
       "mcp.failure.code": "cloud_mcp_reconcile_exception",
       "mcp.failure.message": input.error instanceof Error ? input.error.message : String(input.error),
@@ -4206,7 +4206,7 @@ export async function syncAllWorkspacesRuntimeMcpToEngine(config: ServerConfig):
       logRuntimeMcpSyncError({ config, workspace, trigger: "startup", error });
     }
     try {
-      const health = await reconcilePersistedOpenworkCloudMcp({
+      const health = await reconcilePersistedJuggleWorkCloudMcp({
         config,
         workspace,
         directory: resolveOpencodeDirectory(workspace),
@@ -4283,7 +4283,7 @@ async function exportWorkspace(
   const sensitiveMode = options?.sensitiveMode ?? "auto";
   const rawOpencode = await readOpencodeConfig(workspace.path);
   let opencode = sanitizePortableOpencodeConfig(rawOpencode);
-  const openwork = sanitizeOpenworkTemplateConfig(await readOpenworkConfigForWorkspace(config, workspace));
+  const jugglework = sanitizeJuggleWorkTemplateConfig(await readJuggleWorkConfigForWorkspace(config, workspace));
   const skills = await listSkills(workspace.path, false);
   const commands = await listCommands(workspace.path, "workspace");
   let files = await listPortableFiles(workspace.path);
@@ -4320,7 +4320,7 @@ async function exportWorkspace(
     workspaceId: workspace.id,
     exportedAt: Date.now(),
     opencode,
-    openwork,
+    jugglework,
     skills: skillContents,
     commands: commandContents,
     ...(files.length ? { files } : {}),
@@ -4374,13 +4374,13 @@ async function importWorkspace(config: ServerConfig, workspace: WorkspaceInfo, p
   }
 
   if (
-    input.openwork !== undefined &&
-    changedPath("openwork", workspaceImportRelativePath(workspace, openworkConfigPath(workspace.path)))
+    input.jugglework !== undefined &&
+    changedPath("jugglework", workspaceImportRelativePath(workspace, juggleworkConfigPath(workspace.path)))
   ) {
-    if (input.modes.openwork === "replace") {
-      await writeOpenworkConfigForWorkspace(config, workspace, input.openwork, false);
+    if (input.modes.jugglework === "replace") {
+      await writeJuggleWorkConfigForWorkspace(config, workspace, input.jugglework, false);
     } else {
-      await writeOpenworkConfigForWorkspace(config, workspace, input.openwork, true);
+      await writeJuggleWorkConfigForWorkspace(config, workspace, input.jugglework, true);
     }
   }
 
@@ -4437,13 +4437,13 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   existing: Array<{ templateId: string; sessionId: string }>;
   openSessionId: string | null;
 }> {
-  const openwork = await readOpenworkConfigForWorkspace(config, workspace);
-  const templates = normalizeBlueprintSessionTemplates(openwork);
+  const jugglework = await readJuggleWorkConfigForWorkspace(config, workspace);
+  const templates = normalizeBlueprintSessionTemplates(jugglework);
   if (!templates.length) {
     return { ok: true, created: [], existing: [], openSessionId: null };
   }
 
-  const existing = readMaterializedBlueprintSessions(openwork);
+  const existing = readMaterializedBlueprintSessions(jugglework);
   if (existing.length > 0) {
     const preferredTemplate = templates.find((template) => template.openOnFirstLoad) ?? templates[0] ?? null;
     const openSessionId = preferredTemplate
@@ -4470,12 +4470,12 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   }
 
   const now = Date.now();
-  const nextOpenwork = applyMaterializedBlueprintSessions(
-    openwork,
+  const nextJuggleWork = applyMaterializedBlueprintSessions(
+    jugglework,
     created.map(({ templateId, sessionId }) => ({ templateId, sessionId })),
     now,
   );
-  await writeOpenworkConfigForWorkspace(config, workspace, nextOpenwork, false);
+  await writeJuggleWorkConfigForWorkspace(config, workspace, nextJuggleWork, false);
 
   const preferredTemplate = templates.find((template) => template.openOnFirstLoad) ?? templates[0] ?? null;
   const openSessionId = preferredTemplate

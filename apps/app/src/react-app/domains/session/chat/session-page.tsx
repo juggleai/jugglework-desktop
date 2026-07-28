@@ -6,9 +6,9 @@ import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, Globe, Mic2, Settings
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
-import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
+import { JUGGLEWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
-import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import { type JuggleWorkServerClient, type JuggleWorkServerStatus } from "../../../../app/lib/jugglework-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
 import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -67,8 +67,8 @@ import { SidePanel } from "../panel/side-panel";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import { getExtensionId, isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
+import { useControlAction, type JuggleWorkControlAction } from "../../../shell/control/control-provider";
+import { getExtensionId, isJuggleWorkExtensionEnabled, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
 import { cn } from "@/lib/utils";
 import {
   canNavigateSelectedConversationHistory,
@@ -86,7 +86,7 @@ const STARTUP_SKELETON_ROWS = [
   { id: "middle", titleWidth: "56%", bodyWidth: "88%" },
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
-const GLOBAL_VOICE_SIDE_PANEL_KEY = "__openwork_voice__";
+const GLOBAL_VOICE_SIDE_PANEL_KEY = "__jugglework_voice__";
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const EMPTY_SESSION_TABS: WorkbenchSessionTab[] = [];
 
@@ -106,7 +106,7 @@ type StatusBarOverrides = Pick<
   | "settingsOpen"
   | "reloadBusy"
   | "reloadError"
-  | "openWorkConnectState"
+  | "juggleWorkConnectState"
 >;
 
 export type SessionPageHistoryControls = {
@@ -148,7 +148,7 @@ export type SessionPageSidebarProps = {
 
 export type SessionPageSurfaceProps = Omit<
   SessionSurfaceProps,
-  "client" | "workspaceId" | "sessionId" | "opencodeBaseUrl" | "openworkToken" | "isControlTarget"
+  "client" | "workspaceId" | "sessionId" | "opencodeBaseUrl" | "juggleworkToken" | "isControlTarget"
 >;
 
 export type SessionPageProps = {
@@ -171,10 +171,10 @@ export type SessionPageProps = {
   opencodeBaseUrl?: string | null;
   workspaces: WorkspaceInfo[];
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerClient: OpenworkServerClient | null;
-  environmentClient?: OpenworkServerClient | null;
-  openworkServerToken?: string | null;
+  juggleworkServerStatus: JuggleWorkServerStatus;
+  juggleworkServerClient: JuggleWorkServerClient | null;
+  environmentClient?: JuggleWorkServerClient | null;
+  juggleworkServerToken?: string | null;
   developerMode: boolean;
   headerStatus: string;
   busyHint: string | null;
@@ -260,7 +260,7 @@ function absoluteWorkspacePath(root: string | null | undefined, value: string) {
 
 function hiddenAccessibleTargetsStorageKey(workspaceId: string | null | undefined, sessionId: string | null | undefined) {
   if (!workspaceId || !sessionId) return null;
-  return `openwork.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
+  return `jugglework.session.hiddenAccessibleTargets.v1:${workspaceId}:${sessionId}`;
 }
 
 function readHiddenAccessibleTargetIds(workspaceId: string | null | undefined, sessionId: string | null | undefined): Set<string> {
@@ -336,10 +336,10 @@ export function SessionPage(props: SessionPageProps) {
   const extensionsRailActive = activeSidePanel === "extensions";
   const voiceRailActive = activeSidePanel === "voice";
   const voiceExtension = useMemo(
-    () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
+    () => JUGGLEWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "jugglework-voice") ?? null,
     [],
   );
-  const voiceExtensionEnabled = voiceExtension ? isOpenWorkExtensionEnabled(voiceExtension) : false;
+  const voiceExtensionEnabled = voiceExtension ? isJuggleWorkExtensionEnabled(voiceExtension) : false;
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -367,7 +367,7 @@ export function SessionPage(props: SessionPageProps) {
   const workbenchSplitSessionId = useWorkbenchStore((state) => state.splitSessionId);
   const focusedWorkbenchPane = useWorkbenchStore((state) => state.focusedPane);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
-  const openWorkbenchTab = useWorkbenchStore((state) => state.openTab);
+  const juggleWorkbenchTab = useWorkbenchStore((state) => state.openTab);
   const closeWorkbenchTab = useWorkbenchStore((state) => state.closeTab);
   const setWorkbenchSplit = useWorkbenchStore((state) => state.setSplit);
   const focusWorkbenchPane = useWorkbenchStore((state) => state.focusPane);
@@ -404,7 +404,7 @@ export function SessionPage(props: SessionPageProps) {
   // the panel opened and doesn't render the unified panel chrome.
   useEffect(() => {
     if (!isElectronRuntime()) return;
-    const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
+    const browser = (window as Window).__JUGGLEWORK_ELECTRON__?.browser;
     if (!browser) return;
     const unsubOpen = browser.onPanelOpened?.(() => {
       if (preserveSidePanelOnPanelOpenRef.current) {
@@ -446,11 +446,11 @@ export function SessionPage(props: SessionPageProps) {
     return target.value;
   }, []);
   const downloadOpenTarget = useCallback(async (target: OpenTarget) => {
-    if (target.kind !== "file" || !props.openworkServerClient || !props.runtimeWorkspaceId) {
+    if (target.kind !== "file" || !props.juggleworkServerClient || !props.runtimeWorkspaceId) {
       return;
     }
 
-    const result = await props.openworkServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
+    const result = await props.juggleworkServerClient.downloadWorkspaceFile(props.runtimeWorkspaceId, target.value);
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
 
@@ -459,13 +459,13 @@ export function SessionPage(props: SessionPageProps) {
     anchor.click();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [props.juggleworkServerClient, props.runtimeWorkspaceId]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
         setCurrentSidePanel("panel");
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url);
+        void window.__JUGGLEWORK_ELECTRON__?.browser?.createTab?.(url);
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
@@ -523,12 +523,12 @@ export function SessionPage(props: SessionPageProps) {
     if (opening && isElectronRuntime()) {
       const hasBrowserTab = sessionPanelState.tabs.some((tab) => tab.type === "browser");
       if (!hasBrowserTab) {
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.();
+        void window.__JUGGLEWORK_ELECTRON__?.browser?.createTab?.();
       }
     }
     toggleCurrentSidePanel("panel");
   }, [panelRailActive, sessionPanelState.tabs, toggleCurrentSidePanel]);
-  const openBrowserUrlControlAction = useMemo<OpenworkControlAction>(() => ({
+  const openBrowserUrlControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "browser.open_url",
     label: "Open URL in built-in browser",
     description: "Create or select a JuggleWork built-in browser tab, navigate it to a URL, and return the CDP handle for browser automation.",
@@ -548,23 +548,23 @@ export function SessionPage(props: SessionPageProps) {
         return { ok: false, error: `Browser provider is not available yet: ${provider}` };
       }
       setCurrentSidePanel("panel");
-      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
+      return window.__JUGGLEWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
     },
   }), [setCurrentSidePanel]);
   useControlAction(openBrowserUrlControlAction);
-  const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
+  const setBrowserProxyControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "browser.set_proxy",
     label: "Set built-in browser proxy",
     description: "Route all built-in browser traffic through an HTTP/SOCKS proxy (e.g. to browse from another location). Applies to every built-in browser tab until cleared. Pass an empty proxy to restore system network settings.",
     sideEffect: "mutation",
     args: [
-      { name: "proxy", type: "string", description: "Proxy URL like http://user:pass@host:8080 or socks5://host:1080, env:NAME to use the OPENWORK_BROWSER_PROXY_NAME environment variable, or empty to clear." },
+      { name: "proxy", type: "string", description: "Proxy URL like http://user:pass@host:8080 or socks5://host:1080, env:NAME to use the JUGGLEWORK_BROWSER_PROXY_NAME environment variable, or empty to clear." },
     ],
     previewArgs: { proxy: "env:DE" },
     disabled: !isElectronRuntime(),
     execute: async (args) => {
       const proxy = controlStringArg(args, "proxy") || "";
-      const setProxy = window.__OPENWORK_ELECTRON__?.browser?.setProxy;
+      const setProxy = window.__JUGGLEWORK_ELECTRON__?.browser?.setProxy;
       if (!setProxy) return { ok: false, error: "Built-in browser is not available." };
       return setProxy(proxy);
     },
@@ -634,24 +634,24 @@ export function SessionPage(props: SessionPageProps) {
       const target = accessibleTargets.find((item) => item.id === requested?.id || item.value === requested?.value);
       if (target) removeAccessibleTarget(target);
     };
-    window.addEventListener("openwork-open-accessible-target", open);
-    window.addEventListener("openwork-hide-accessible-target", hide);
+    window.addEventListener("jugglework-open-accessible-target", open);
+    window.addEventListener("jugglework-hide-accessible-target", hide);
     return () => {
-      window.removeEventListener("openwork-open-accessible-target", open);
-      window.removeEventListener("openwork-hide-accessible-target", hide);
+      window.removeEventListener("jugglework-open-accessible-target", open);
+      window.removeEventListener("jugglework-hide-accessible-target", hide);
     };
   }, [accessibleTargets, openTarget, removeAccessibleTarget]);
   useEffect(() => {
     const handler = () => setCurrentSidePanel(null);
-    window.addEventListener("openwork-close-right-pane", handler);
-    return () => window.removeEventListener("openwork-close-right-pane", handler);
+    window.addEventListener("jugglework-close-right-pane", handler);
+    return () => window.removeEventListener("jugglework-close-right-pane", handler);
   }, [setCurrentSidePanel]);
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -661,7 +661,7 @@ export function SessionPage(props: SessionPageProps) {
     }
   }, [activeSidePanel, setCurrentSidePanel, voiceExtensionEnabled]);
 
-  const openVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+  const openVoicePanelControlAction = useMemo<JuggleWorkControlAction | null>(() => (
     voiceExtensionEnabled ? {
       id: "voice.panel.open",
       label: "Open Voice Mode",
@@ -676,7 +676,7 @@ export function SessionPage(props: SessionPageProps) {
   ), [setCurrentSidePanel, voiceExtensionEnabled]);
   useControlAction(openVoicePanelControlAction);
 
-  const closeVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
+  const closeVoicePanelControlAction = useMemo<JuggleWorkControlAction | null>(() => (
     voiceExtensionEnabled && activeSidePanel === "voice" ? {
       id: "voice.panel.close",
       label: "Close Voice Mode",
@@ -802,13 +802,13 @@ export function SessionPage(props: SessionPageProps) {
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
-    props.openworkServerToken?.trim() ||
-    props.openworkServerClient?.token?.trim() ||
+    props.juggleworkServerToken?.trim() ||
+    props.juggleworkServerClient?.token?.trim() ||
     "";
   const canRenderReactSurface = Boolean(
     props.selectedSessionId &&
       props.runtimeWorkspaceId &&
-      props.openworkServerClient &&
+      props.juggleworkServerClient &&
       reactSessionBaseUrl &&
       reactSessionToken &&
       props.surface,
@@ -829,16 +829,16 @@ export function SessionPage(props: SessionPageProps) {
   );
 
   const openSessionTab = useCallback((workspaceId: string, sessionId: string) => {
-    openWorkbenchTab({
+    juggleWorkbenchTab({
       workspaceId,
       sessionId,
       title: sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId),
     });
     focusWorkbenchPane("primary");
     props.sidebar.onOpenSession(workspaceId, sessionId);
-  }, [focusWorkbenchPane, openWorkbenchTab, props.sidebar]);
+  }, [focusWorkbenchPane, juggleWorkbenchTab, props.sidebar]);
 
-  const focusWorkbenchSessionControlAction = useMemo<OpenworkControlAction>(() => ({
+  const focusWorkbenchSessionControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "workbench.session.focus",
     label: "Focus an open session",
     description: "Focus a session already visible in either split-screen pane, or reuse its existing tab without opening a duplicate.",
@@ -1095,8 +1095,8 @@ export function SessionPage(props: SessionPageProps) {
                   size="sm"
                   onClick={() => {
                     try {
-                      window.localStorage.removeItem("openwork.acknowledgedProviders");
-                      window.localStorage.removeItem("openwork.orgOnboardingSeen");
+                      window.localStorage.removeItem("jugglework.acknowledgedProviders");
+                      window.localStorage.removeItem("jugglework.orgOnboardingSeen");
                     } catch {}
                   }}
                   title="Clears acknowledged providers + org onboarding so they trigger again"
@@ -1260,17 +1260,17 @@ export function SessionPage(props: SessionPageProps) {
                         // Spread `surface` first so the explicit per-workspace
                         // routing props below CAN'T be silently overridden by
                         // anything that leaks into `surface`. SessionSurface's
-                        // server target (client/workspaceId/sessionId/opencodeBaseUrl/openworkToken)
+                        // server target (client/workspaceId/sessionId/opencodeBaseUrl/juggleworkToken)
                         // must come from the resolved workspace endpoint passed by
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
-                        client={props.openworkServerClient!}
+                        client={props.juggleworkServerClient!}
                         environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
                         sessionId={props.selectedSessionId!}
                         isControlTarget={focusedWorkbenchPane === "primary"}
                         opencodeBaseUrl={reactSessionBaseUrl}
-                        openworkToken={reactSessionToken}
+                        juggleworkToken={reactSessionToken}
                         todos={props.todos}
                         activePermission={props.activePermission}
                         permissionReplyBusy={props.permissionReplyBusy}
@@ -1292,13 +1292,13 @@ export function SessionPage(props: SessionPageProps) {
                       >
                         <SessionSurface
                           {...props.surface!}
-                          client={props.openworkServerClient!}
+                          client={props.juggleworkServerClient!}
                           environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}
                           sessionId={splitSessionId!}
                           isControlTarget={focusedWorkbenchPane === "secondary"}
                           opencodeBaseUrl={reactSessionBaseUrl}
-                          openworkToken={reactSessionToken}
+                          juggleworkToken={reactSessionToken}
                           todos={[]}
                           onOpenTarget={openTarget}
                         />
@@ -1478,7 +1478,7 @@ export function SessionPage(props: SessionPageProps) {
           {shellConfig.statusBar ? (
             <StatusBar
               clientConnected={props.clientConnected}
-              openworkServerStatus={props.openworkServerStatus}
+              juggleworkServerStatus={props.juggleworkServerStatus}
               developerMode={props.developerMode}
               showConnectionStatus={Boolean(props.selectedWorkspaceId)}
               settingsOpen={props.statusBar?.settingsOpen ?? false}
@@ -1490,7 +1490,7 @@ export function SessionPage(props: SessionPageProps) {
               showSettingsButton={props.statusBar?.showSettingsButton}
               reloadBusy={props.statusBar?.reloadBusy}
               reloadError={props.statusBar?.reloadError}
-              openWorkConnectState={props.statusBar?.openWorkConnectState}
+              juggleWorkConnectState={props.statusBar?.juggleWorkConnectState}
             />
           ) : null}
               </main>
@@ -1511,7 +1511,7 @@ export function SessionPage(props: SessionPageProps) {
                     </div>
                   ) : activeSidePanel === "voice" ? (
                     <VoicePanel
-                      client={props.openworkServerClient}
+                      client={props.juggleworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       sessionId={props.selectedSessionId}
                       onClose={closeRightPane}
@@ -1519,7 +1519,7 @@ export function SessionPage(props: SessionPageProps) {
                   ) : activeSidePanel === "panel" && props.selectedSessionId ? (
                     <SidePanel
                       sessionId={props.selectedSessionId}
-                      client={props.openworkServerClient}
+                      client={props.juggleworkServerClient}
                       workspaceId={props.runtimeWorkspaceId}
                       workspaceRoot={props.selectedWorkspaceRoot}
                       isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}

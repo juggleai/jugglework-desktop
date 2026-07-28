@@ -17,30 +17,30 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useControlAction, type JuggleWorkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
-import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
+import type { JuggleWorkServerStatus } from "../../../../app/lib/jugglework-server";
 import { readDenSettings } from "../../../../app/lib/den";
 import {
-  openWorkConnectAttentionTitle,
-  resolveOpenWorkConnectStatus,
-  type OpenWorkConnectStatus,
-} from "../../connections/openwork-connect-status";
+  juggleWorkConnectAttentionTitle,
+  resolveJuggleWorkConnectStatus,
+  type JuggleWorkConnectStatus,
+} from "../../connections/jugglework-connect-status";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import {
-  getOpenWorkModelsActionUrl,
-  hasOpenWorkModelsProvider,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  markOpenWorkModelsPromoShown,
-  OPENWORK_MODELS_PROMO_SHOW_DELAY_MS,
-  OPENWORK_MODELS_PROMO_VISIBLE_MS,
-  openWorkModelsPromoChangedEvent,
-  shouldShowOpenWorkModelsPromo,
-} from "../../cloud/openwork-models-promo";
+  getJuggleWorkModelsActionUrl,
+  hasJuggleWorkModelsProvider,
+  hideJuggleWorkModelsPromo,
+  useJuggleWorkModelsPromoEligibility,
+  isJuggleWorkModelsPromoHidden,
+  markJuggleWorkModelsPromoShown,
+  JUGGLEWORK_MODELS_PROMO_SHOW_DELAY_MS,
+  JUGGLEWORK_MODELS_PROMO_VISIBLE_MS,
+  juggleWorkModelsPromoChangedEvent,
+  shouldShowJuggleWorkModelsPromo,
+} from "../../cloud/jugglework-models-promo";
 
-const DOCS_URL = "https://openworklabs.com/docs";
+const DOCS_URL = "https://juggle.im/docs";
 const STATUS_BAR_BOOT_STARTED_AT = Date.now();
 const STATUS_BAR_INITIALIZING_MS = 15_000;
 
@@ -71,8 +71,8 @@ function StatusDot({ variant }: StatusDotProps) {
   );
 }
 
-function OpenWorkConnectIndicator(props: {
-  status: OpenWorkConnectStatus;
+function JuggleWorkConnectIndicator(props: {
+  status: JuggleWorkConnectStatus;
   onRunDiagnostics: () => void;
 }) {
   const content = (
@@ -91,7 +91,7 @@ function OpenWorkConnectIndicator(props: {
   if (props.status.state !== "needs_attention") {
     return (
       <Tooltip>
-        <TooltipTrigger render={<span data-testid="openwork-connect-status" className="inline-flex" />}>{content}</TooltipTrigger>
+        <TooltipTrigger render={<span data-testid="jugglework-connect-status" className="inline-flex" />}>{content}</TooltipTrigger>
         <TooltipContent>{props.status.description}</TooltipContent>
       </Tooltip>
     );
@@ -103,8 +103,8 @@ function OpenWorkConnectIndicator(props: {
         render={(
           <button
             type="button"
-            data-testid="openwork-connect-status"
-            title={openWorkConnectAttentionTitle(props.status.description)}
+            data-testid="jugglework-connect-status"
+            title={juggleWorkConnectAttentionTitle(props.status.description)}
             className="rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
           />
         )}
@@ -124,7 +124,7 @@ function OpenWorkConnectIndicator(props: {
 
 type StatusIndicatorProps = {
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  juggleworkServerStatus: JuggleWorkServerStatus;
   developerMode: boolean;
   loading?: boolean;
   initializing: boolean;
@@ -161,7 +161,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
     );
   }
 
-  if (props.loading || (props.openworkServerStatus === "disconnected" && props.initializing)) {
+  if (props.loading || (props.juggleworkServerStatus === "disconnected" && props.initializing)) {
     return (
       <div className="flex min-w-0 items-center gap-2.5">
         <StatusDot variant="loading" />
@@ -196,7 +196,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
     );
   }
 
-  if (props.openworkServerStatus === "limited") {
+  if (props.juggleworkServerStatus === "limited") {
     return (
       <div className="flex min-w-0 items-center gap-2.5">
         <StatusDot variant="partial" />
@@ -225,7 +225,7 @@ function StatusIndicator(props: StatusIndicatorProps) {
 
 export type StatusBarProps = {
   clientConnected: boolean;
-  openworkServerStatus: OpenworkServerStatus;
+  juggleworkServerStatus: JuggleWorkServerStatus;
   developerMode: boolean;
   showConnectionStatus?: boolean;
   settingsOpen: boolean;
@@ -238,7 +238,7 @@ export type StatusBarProps = {
   initializing?: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
-  openWorkConnectState?: SessionCloudMcpMaintenanceState;
+  juggleWorkConnectState?: SessionCloudMcpMaintenanceState;
 };
 
 export function StatusBar(props: StatusBarProps) {
@@ -249,19 +249,19 @@ export function StatusBar(props: StatusBarProps) {
   const docsButtonRef = useRef<HTMLButtonElement>(null);
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
-  const [openWorkModelsHintVisible, setOpenWorkModelsHintVisible] = useState(false);
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
-  const hasOpenWorkModels = useMemo(
-    () => hasOpenWorkModelsProvider(props.providerConnectedIds),
+  const [juggleWorkModelsHintVisible, setJuggleWorkModelsHintVisible] = useState(false);
+  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
+  const hasJuggleWorkModels = useMemo(
+    () => hasJuggleWorkModelsProvider(props.providerConnectedIds),
     [props.providerConnectedIds],
   );
   const [initializing, setInitializing] = useState(
     () => Date.now() - STATUS_BAR_BOOT_STARTED_AT < STATUS_BAR_INITIALIZING_MS,
   );
-  const openWorkConnectStatus = resolveOpenWorkConnectStatus(
+  const juggleWorkConnectStatus = resolveJuggleWorkConnectStatus(
     denAuth.isSignedIn
       || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
-    props.openWorkConnectState,
+    props.juggleWorkConnectState,
   );
 
   useEffect(() => {
@@ -276,30 +276,30 @@ export function StatusBar(props: StatusBarProps) {
 
   useEffect(() => {
     const handlePromoChanged = () => {
-      if (isOpenWorkModelsPromoHidden()) {
-        setOpenWorkModelsHintVisible(false);
+      if (isJuggleWorkModelsPromoHidden()) {
+        setJuggleWorkModelsHintVisible(false);
       }
     };
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   useEffect(() => {
-    if (!openWorkModelsPromoEligible || !shellConfig.cloudSignin || hasOpenWorkModels) {
-      setOpenWorkModelsHintVisible(false);
+    if (!juggleWorkModelsPromoEligible || !shellConfig.cloudSignin || hasJuggleWorkModels) {
+      setJuggleWorkModelsHintVisible(false);
       return;
     }
     if (denAuth.status === "checking") return;
 
     let showTimeout: number | null = null;
     const maybeShow = () => {
-      if (showTimeout !== null || !shouldShowOpenWorkModelsPromo()) return;
+      if (showTimeout !== null || !shouldShowJuggleWorkModelsPromo()) return;
       showTimeout = window.setTimeout(() => {
         showTimeout = null;
-        if (!shouldShowOpenWorkModelsPromo()) return;
-        markOpenWorkModelsPromoShown();
-        setOpenWorkModelsHintVisible(true);
-      }, OPENWORK_MODELS_PROMO_SHOW_DELAY_MS);
+        if (!shouldShowJuggleWorkModelsPromo()) return;
+        markJuggleWorkModelsPromoShown();
+        setJuggleWorkModelsHintVisible(true);
+      }, JUGGLEWORK_MODELS_PROMO_SHOW_DELAY_MS);
     };
 
     maybeShow();
@@ -310,31 +310,31 @@ export function StatusBar(props: StatusBarProps) {
       }
       window.clearInterval(interval);
     };
-  }, [denAuth.status, hasOpenWorkModels, openWorkModelsPromoEligible, shellConfig.cloudSignin]);
+  }, [denAuth.status, hasJuggleWorkModels, juggleWorkModelsPromoEligible, shellConfig.cloudSignin]);
 
   useEffect(() => {
-    if (!openWorkModelsHintVisible) return;
+    if (!juggleWorkModelsHintVisible) return;
     const timeout = window.setTimeout(
-      () => setOpenWorkModelsHintVisible(false),
-      OPENWORK_MODELS_PROMO_VISIBLE_MS,
+      () => setJuggleWorkModelsHintVisible(false),
+      JUGGLEWORK_MODELS_PROMO_VISIBLE_MS,
     );
     return () => window.clearTimeout(timeout);
-  }, [openWorkModelsHintVisible]);
+  }, [juggleWorkModelsHintVisible]);
 
-  const openOpenWorkModels = useCallback(() => {
-    setOpenWorkModelsHintVisible(false);
+  const openJuggleWorkModels = useCallback(() => {
+    setJuggleWorkModelsHintVisible(false);
     if (!denAuth.isSignedIn) {
       navigate("/settings/cloud-account");
     }
-    platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+    platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn));
   }, [denAuth.isSignedIn, navigate, platform]);
 
-  const hideOpenWorkModels = useCallback(() => {
-    setOpenWorkModelsHintVisible(false);
-    hideOpenWorkModelsPromo();
+  const hideJuggleWorkModels = useCallback(() => {
+    setJuggleWorkModelsHintVisible(false);
+    hideJuggleWorkModelsPromo();
   }, []);
 
-  const docsControlAction = useMemo<OpenworkControlAction>(() => ({
+  const docsControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.docs.open",
     label: "Open JuggleWork docs",
     description: "Open the documentation from the status bar.",
@@ -344,7 +344,7 @@ export function StatusBar(props: StatusBarProps) {
   }), [platform]);
   useControlAction(docsControlAction);
 
-  const feedbackControlAction = useMemo<OpenworkControlAction>(() => ({
+  const feedbackControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.feedback.open",
     label: "Send feedback",
     description: "Open the JuggleWork feedback surface from the status bar.",
@@ -354,7 +354,7 @@ export function StatusBar(props: StatusBarProps) {
   }), [props.onSendFeedback]);
   useControlAction(feedbackControlAction);
 
-  const settingsControlAction = useMemo<OpenworkControlAction>(() => ({
+  const settingsControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.settings.open",
     label: props.settingsOpen ? "Go back from settings" : "Open settings from the status bar",
     description: "Use the visible settings button in the status bar.",
@@ -372,7 +372,7 @@ export function StatusBar(props: StatusBarProps) {
           {props.showConnectionStatus !== false ? (
             <StatusIndicator
               clientConnected={props.clientConnected}
-              openworkServerStatus={props.openworkServerStatus}
+              juggleworkServerStatus={props.juggleworkServerStatus}
               developerMode={props.developerMode}
               loading={props.loading}
               initializing={initializing}
@@ -380,11 +380,11 @@ export function StatusBar(props: StatusBarProps) {
               reloadError={props.reloadError}
             />
           ) : null}
-          {openWorkConnectStatus ? (
+          {juggleWorkConnectStatus ? (
             <>
               {props.showConnectionStatus !== false ? <span className="h-3.5 w-px shrink-0 bg-border" /> : null}
-              <OpenWorkConnectIndicator
-                status={openWorkConnectStatus}
+              <JuggleWorkConnectIndicator
+                status={juggleWorkConnectStatus}
                 onRunDiagnostics={() => navigate("/settings/connect")}
               />
             </>
@@ -392,12 +392,12 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1">
-          {openWorkModelsHintVisible ? (
+          {juggleWorkModelsHintVisible ? (
             <div className="mr-1 flex h-6 items-center overflow-hidden rounded-full border border-blue-6/60 bg-blue-2/70 shadow-[0_0_18px_rgba(var(--dls-accent-rgb),0.16)] animate-in fade-in slide-in-from-bottom-1 zoom-in-95 duration-300">
               <button
                 type="button"
                 className="flex min-w-0 items-center gap-1.5 px-2.5 text-xs font-medium text-blue-12 transition-colors hover:bg-blue-3/70"
-                onClick={openOpenWorkModels}
+                onClick={openJuggleWorkModels}
               >
                 <Sparkles className="size-3.5 text-blue-11" />
                 <span className="whitespace-nowrap">JuggleWork Models</span>
@@ -409,7 +409,7 @@ export function StatusBar(props: StatusBarProps) {
               <button
                 type="button"
                 className="flex size-6 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
-                onClick={hideOpenWorkModels}
+                onClick={hideJuggleWorkModels}
                 aria-label="Hide JuggleWork Models hint"
               >
                 <X className="size-3" />

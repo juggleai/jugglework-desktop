@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useMemo, useState } from "react";
-import { installConfigSchema, parseInstallLinkInput } from "@openwork/install-config";
+import { installConfigSchema, parseInstallLinkInput } from "@jugglework/install-config";
 
 import { createDenClient, readDenSettings, setDenBootstrapConfig } from "@/app/lib/den";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
@@ -141,7 +141,7 @@ export function JoinOrganizationDialog({
     if (!parsed) return false;
 
     const baseUrl = parsed.baseUrl ?? readDenSettings().baseUrl;
-    setStatus({ phase: "connecting", clientName: t("join_org.openwork_cloud"), host: hostFromUrl(baseUrl) });
+    setStatus({ phase: "connecting", clientName: t("join_org.jugglework_cloud"), host: hostFromUrl(baseUrl) });
     const result = await exchangeHandoffAndSignIn(parsed.grant, {
       baseUrl,
       client: createDenClient({ baseUrl }),
@@ -153,7 +153,7 @@ export function JoinOrganizationDialog({
       return true;
     }
 
-    setStatus({ phase: "success", clientName: t("join_org.openwork_cloud"), host: hostFromUrl(baseUrl) });
+    setStatus({ phase: "success", clientName: t("join_org.jugglework_cloud"), host: hostFromUrl(baseUrl) });
     finishConnected();
     return true;
   }, [finishConnected]);

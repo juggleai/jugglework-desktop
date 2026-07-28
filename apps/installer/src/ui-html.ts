@@ -228,9 +228,9 @@ ${configuredContent}
   }
 
   function closeWindow() {
-    if (window.openworkInstallerExit) {
+    if (window.juggleworkInstallerExit) {
       // Native webview: the bound function terminates the window run loop.
-      window.openworkInstallerExit();
+      window.juggleworkInstallerExit();
       return;
     }
     api("/api/exit").catch(() => {});

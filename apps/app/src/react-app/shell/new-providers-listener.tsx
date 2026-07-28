@@ -11,12 +11,12 @@ import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { notifyEvent } from "./notifications";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
-const SEEN_KEY = "openwork.seenProviderIds";
-const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
+const SEEN_KEY = "jugglework.seenProviderIds";
+const PENDING_MODEL_PICKER_KEY = "jugglework.pendingModelPickerProviderIds";
 const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
 /** Custom event to request the model picker to open. */
-export const openModelPickerEvent = "openwork-open-model-picker";
+export const openModelPickerEvent = "jugglework-open-model-picker";
 export const pendingModelPickerProviderIdsKey = PENDING_MODEL_PICKER_KEY;
 
 function readSeenProviderIds(): Set<string> {

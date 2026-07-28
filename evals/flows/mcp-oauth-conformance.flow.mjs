@@ -15,9 +15,9 @@ import {
 const FLOW_ID = "mcp-oauth-conformance";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MOCK_PORT = Number(process.env.OPENWORK_EVAL_MCP_OAUTH_PORT ?? 39728);
+const ADMIN_EMAIL = process.env.JUGGLEWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.JUGGLEWORK_EVAL_DEMO_PASSWORD?.trim() || "JuggleWorkDemo123!";
+const MOCK_PORT = Number(process.env.JUGGLEWORK_EVAL_MCP_OAUTH_PORT ?? 39728);
 const MOCK_ORIGIN = `http://127.0.0.1:${MOCK_PORT}`;
 const RUN_TAG = Date.now().toString(36);
 const CONNECTION_PREFIX = "OAuth conformance";
@@ -42,7 +42,7 @@ function requireState(value, label) {
 function authHeaders() {
   return {
     authorization: `Bearer ${requireState(state.adminToken, "admin token")}`,
-    "x-openwork-org-id": requireState(state.organizationId, "organization id"),
+    "x-jugglework-org-id": requireState(state.organizationId, "organization id"),
   };
 }
 
@@ -175,7 +175,7 @@ export default {
   kind: "user-facing",
   spec: "docs/external-mcp-oauth.md",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["JUGGLEWORK_EVAL_DEN_API_URL", "JUGGLEWORK_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Prepare the isolated Den and OAuth MCP server",
@@ -278,7 +278,7 @@ export default {
     {
       name: "DCR and PKCE return through the shared callback",
       run: async (ctx) => {
-        await ctx.prove("Dynamic registration identifies OpenWork as a web client and completes through one shared callback", {
+        await ctx.prove("Dynamic registration identifies JuggleWork as a web client and completes through one shared callback", {
           voiceover: vo[1],
           action: async () => {
             const selected = await ctx.eval(`(() => {

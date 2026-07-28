@@ -49,21 +49,21 @@ This may navigate JuggleWork away from the user's current session while the look
 
 ### JuggleWork agents
 
-Inside JuggleWork, agents control the app through the semantic tools (`openwork_context`, `openwork_query`, `openwork_execute`) using affordance ids from context. External MCP clients can also use the hidden **JuggleWork UI Control** MCP via **Settings -> Extensions -> Show hidden**.
+Inside JuggleWork, agents control the app through the semantic tools (`jugglework_context`, `jugglework_query`, `jugglework_execute`) using affordance ids from context. External MCP clients can also use the hidden **JuggleWork UI Control** MCP via **Settings -> Extensions -> Show hidden**.
 
 ## Install
 
 ```bash
-npm install -g openwork-ui-mcp
+npm install -g jugglework-ui-mcp
 ```
 
 Or run without installing:
 
 ```bash
-npx openwork-ui-mcp
+npx jugglework-ui-mcp
 ```
 
-> The package is [`openwork-ui-mcp` on npm](https://www.npmjs.com/package/openwork-ui-mcp).
+> The package is [`jugglework-ui-mcp` on npm](https://www.npmjs.com/package/jugglework-ui-mcp).
 
 ## Add to OpenCode
 
@@ -72,9 +72,9 @@ Add the MCP server to your workspace or global `opencode.json`:
 ```json
 {
   "mcp": {
-    "openwork-ui": {
+    "jugglework-ui": {
       "type": "local",
-      "command": ["npx", "-y", "openwork-ui-mcp"],
+      "command": ["npx", "-y", "jugglework-ui-mcp"],
       "enabled": true
     }
   }
@@ -94,9 +94,9 @@ Both use the same MCP config shape. Add to your `claude_desktop_config.json` or 
 ```json
 {
   "mcpServers": {
-    "openwork-ui": {
+    "jugglework-ui": {
       "command": "npx",
-      "args": ["-y", "openwork-ui-mcp"]
+      "args": ["-y", "jugglework-ui-mcp"]
     }
   }
 }
@@ -114,7 +114,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const transport = new StdioClientTransport({
   command: "npx",
-  args: ["-y", "openwork-ui-mcp"],
+  args: ["-y", "jugglework-ui-mcp"],
 });
 const client = new Client({ name: "my-app", version: "1.0.0" });
 await client.connect(transport);
@@ -233,14 +233,14 @@ The exact list depends on the current JuggleWork route and state. Common actions
 ## Requirements
 
 - **JuggleWork desktop** must be running. The MCP server connects to JuggleWork's local bridge which starts automatically when the desktop app launches.
-- **macOS** is the primary supported platform. The bridge uses Electron IPC and writes a discovery file to `~/Library/Application Support/com.differentai.openwork/`.
+- **macOS** is the primary supported platform. The bridge uses Electron IPC and writes a discovery file to `~/Library/Application Support/com.juggleai.jugglework/`.
 - The MCP server runs as a **stdio** process — your MCP client spawns it and communicates over stdin/stdout.
 
 ## How it works under the hood
 
 ```
 ┌─────────────┐     MCP stdio      ┌──────────────────┐     HTTP localhost     ┌──────────────┐
-│  MCP client  │ ←────────────────→ │  openwork-ui-mcp │ ←───────────────────→ │  JuggleWork app │
+│  MCP client  │ ←────────────────→ │  jugglework-ui-mcp │ ←───────────────────→ │  JuggleWork app │
 │  (HandsFree, │                    │  (Node.js)       │                       │  (Electron)   │
 │   OpenCode,  │                    │                  │                       │               │
 │   Codex)     │                    └──────────────────┘                       └──────────────┘
@@ -248,8 +248,8 @@ The exact list depends on the current JuggleWork route and state. Common actions
 ```
 
 1. JuggleWork desktop starts a private localhost HTTP bridge on a random port, protected by a bearer token.
-2. It writes a discovery file with the port and token so `openwork-ui-mcp` can find it.
-3. `openwork-ui-mcp` reads the discovery file, proxies MCP tool calls to the bridge, and returns structured results.
-4. The bridge calls `window.__openworkControl` inside the Electron renderer to snapshot state and execute actions.
+2. It writes a discovery file with the port and token so `jugglework-ui-mcp` can find it.
+3. `jugglework-ui-mcp` reads the discovery file, proxies MCP tool calls to the bridge, and returns structured results.
+4. The bridge calls `window.__juggleworkControl` inside the Electron renderer to snapshot state and execute actions.
 
-The bridge and discovery file are implementation details — you never need to touch them directly. Just point your MCP client at `openwork-ui-mcp`.
+The bridge and discovery file are implementation details — you never need to touch them directly. Just point your MCP client at `jugglework-ui-mcp`.

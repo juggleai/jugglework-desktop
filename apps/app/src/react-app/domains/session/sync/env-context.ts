@@ -1,12 +1,12 @@
-import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
-import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
+import type { JuggleWorkServerClient } from "../../../../app/lib/jugglework-server";
+import { readJuggleWorkEnvPendingChanges } from "../../../../app/lib/jugglework-env-runtime";
 
-const DEFAULT_CACHE_KEY = "__openwork_env_default__";
+const DEFAULT_CACHE_KEY = "__jugglework_env_default__";
 const MAX_CONTEXT_CACHE_ENTRIES = 100;
 
 const envSystemContextCache = new Map<string, string | undefined>();
 
-export function clearOpenworkEnvSystemContextCache(): void {
+export function clearJuggleWorkEnvSystemContextCache(): void {
   envSystemContextCache.clear();
 }
 
@@ -21,8 +21,8 @@ function normalizeEnvKeys(keys: string[]): string[] {
   ).sort((a, b) => a.localeCompare(b));
 }
 
-export async function buildOpenworkEnvSystemContext(
-  client: OpenworkServerClient | null,
+export async function buildJuggleWorkEnvSystemContext(
+  client: JuggleWorkServerClient | null,
   options: {
     cacheKey?: string;
     runtimeKey?: string | null;
@@ -31,7 +31,7 @@ export async function buildOpenworkEnvSystemContext(
 ): Promise<string | undefined> {
   if (!client) return undefined;
   const readPendingChanges = options.readPendingChanges ??
-    (() => readOpenworkEnvPendingChanges(options.runtimeKey));
+    (() => readJuggleWorkEnvPendingChanges(options.runtimeKey));
   if (readPendingChanges()) return undefined;
 
   const cacheKey = `${client.baseUrl}:${options.cacheKey ?? DEFAULT_CACHE_KEY}`;

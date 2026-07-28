@@ -1,12 +1,11 @@
-# IMPORTANT: appId intentionally matches the Tauri shell so both builds share
-# the same macOS bundle identifier, keychain entries, Launchpad slot, and TCC
-# permissions. In-place migration from Tauri to Electron depends on this.
-appId: com.differentai.openwork
+# Stable JuggleWork bundle identifier for macOS keychain entries, Launchpad,
+# TCC permissions, and the packaged desktop application.
+appId: com.juggleai.jugglework
 productName: JuggleWork
 protocols:
   - name: JuggleWork
     schemes:
-      - openwork
+      - jugglework
 directories:
   output: dist-electron
 toolsets:
@@ -24,7 +23,7 @@ extraResources:
     filter:
       - "*.js"
   - from: ../../packages/docs
-    to: openwork-docs
+    to: jugglework-docs
     filter:
       - "**/*.md"
       - "**/*.mdx"
@@ -36,13 +35,11 @@ asarUnpack:
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
-# electron-updater feed. Matches the existing release workflow's GitHub target
-# so both Tauri (latest.json) and Electron (latest*.yml) can live on the same
-# release assets during the migration window.
+# electron-updater feed for JuggleWork desktop releases.
 publish:
   - provider: github
-    owner: different-ai
-    repo: openwork
+    owner: juggleai
+    repo: jugglework-desktop
     releaseType: release
 mac:
   icon: resources/icons/icon.icns
@@ -61,9 +58,9 @@ mac:
         - opencode
         - opencode-aarch64-apple-darwin
         - opencode-x86_64-apple-darwin
-        - openwork-orchestrator
-        - openwork-orchestrator-aarch64-apple-darwin
-        - openwork-orchestrator-x86_64-apple-darwin
+        - jugglework-orchestrator
+        - jugglework-orchestrator-aarch64-apple-darwin
+        - jugglework-orchestrator-x86_64-apple-darwin
         - versions.json
         - versions.json-aarch64-apple-darwin
         - versions.json-x86_64-apple-darwin
@@ -76,7 +73,7 @@ mac:
     - zip
 linux:
   icon: resources/icons/icon.png
-  executableName: openwork
+  executableName: jugglework
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -84,9 +81,9 @@ linux:
         - opencode
         - opencode-aarch64-unknown-linux-gnu
         - opencode-x86_64-unknown-linux-gnu
-        - openwork-orchestrator
-        - openwork-orchestrator-aarch64-unknown-linux-gnu
-        - openwork-orchestrator-x86_64-unknown-linux-gnu
+        - jugglework-orchestrator
+        - jugglework-orchestrator-aarch64-unknown-linux-gnu
+        - jugglework-orchestrator-x86_64-unknown-linux-gnu
         - versions.json
         - versions.json-aarch64-unknown-linux-gnu
         - versions.json-x86_64-unknown-linux-gnu
@@ -102,9 +99,9 @@ win:
         - opencode.exe
         - opencode-aarch64-pc-windows-msvc.exe
         - opencode-x86_64-pc-windows-msvc.exe
-        - openwork-orchestrator.exe
-        - openwork-orchestrator-aarch64-pc-windows-msvc.exe
-        - openwork-orchestrator-x86_64-pc-windows-msvc.exe
+        - jugglework-orchestrator.exe
+        - jugglework-orchestrator-aarch64-pc-windows-msvc.exe
+        - jugglework-orchestrator-x86_64-pc-windows-msvc.exe
         - versions.json
         - versions.json-aarch64-pc-windows-msvc.exe
         - versions.json-x86_64-pc-windows-msvc.exe
@@ -112,4 +109,4 @@ win:
     - nsis
 nsis:
   include: build/installer.nsh
-artifactName: openwork-${os}-${arch}-${version}.${ext}
+artifactName: jugglework-${os}-${arch}-${version}.${ext}

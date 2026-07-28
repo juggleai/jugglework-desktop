@@ -14,9 +14,9 @@ import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import type {
-  OpenworkServerClient,
-  OpenworkSessionSnapshot,
-} from "@/app/lib/openwork-server";
+  JuggleWorkServerClient,
+  JuggleWorkSessionSnapshot,
+} from "@/app/lib/jugglework-server";
 import type {
   ComposerAttachment,
   ComposerDraft,
@@ -33,7 +33,7 @@ import {
   publishInspectorSlice,
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { useControlAction, type JuggleWorkControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
@@ -44,7 +44,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@jugglework/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
@@ -109,7 +109,7 @@ const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next JuggleWork task.
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
 
-This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [JuggleWork link](https://openworklabs.com) readable in one message.
+This shared renderer keeps **bold proof text**, inline \`renderMarkdownHtml\`, and [JuggleWork link](https://juggle.im) readable in one message.
 
 \`\`\`ts
 const pipeline = "shared markdown primitive";
@@ -149,14 +149,14 @@ function createMarkdownPrimitiveEvalMessages(sessionId: string) {
 }
 
 export type SessionSurfaceProps = {
-  client: OpenworkServerClient;
-  environmentClient?: OpenworkServerClient | null;
+  client: JuggleWorkServerClient;
+  environmentClient?: JuggleWorkServerClient | null;
   workspaceId: string;
   workspaceRoot: string;
   sessionId: string;
   isControlTarget: boolean;
   opencodeBaseUrl: string;
-  openworkToken: string;
+  juggleworkToken: string;
   developerMode: boolean;
   modelLabel: string;
   onModelClick: () => void;
@@ -164,7 +164,7 @@ export type SessionSurfaceProps = {
   modelUnavailable?: boolean;
   selectedModel: ModelRef;
   /** Den/import includes JuggleWork Models for this org member (not just local sync). */
-  openWorkModelsEntitled?: boolean;
+  juggleWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
@@ -262,7 +262,7 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
-function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
+function statusLabel(snapshot: JuggleWorkSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
   if (snapshot?.status.type === "busy") return "Running...";
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
@@ -530,7 +530,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [error, setError] = useState<SessionError | null>(null);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
-  const [rendered, setRendered] = useState<{ sessionId: string; snapshot: OpenworkSessionSnapshot } | null>(null);
+  const [rendered, setRendered] = useState<{ sessionId: string; snapshot: JuggleWorkSessionSnapshot } | null>(null);
   const [toolSkills, setToolSkills] = useState<SkillCard[]>([]);
   const [toolMcpServers, setToolMcpServers] = useState<McpServerEntry[]>([]);
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
@@ -552,8 +552,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
-    () => createClient(props.opencodeBaseUrl, undefined, { token: props.openworkToken, mode: "openwork" }),
-    [props.opencodeBaseUrl, props.openworkToken],
+    () => createClient(props.opencodeBaseUrl, undefined, { token: props.juggleworkToken, mode: "jugglework" }),
+    [props.opencodeBaseUrl, props.juggleworkToken],
   );
 
   const snapshotQueryKey = useMemo(
@@ -568,7 +568,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
-  const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
+  const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
     staleTime: 500,
@@ -702,7 +702,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     return [...baseRenderedMessages, ...evalMarkdownMessages];
   }, [baseRenderedMessages, evalMarkdownMessages]);
-  const seedMarkdownPrimitiveControlAction = useMemo<OpenworkControlAction | null>(() => {
+  const seedMarkdownPrimitiveControlAction = useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -1206,7 +1206,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const typeComposerText = useCallback(async (text: string) => {
-    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    window.dispatchEvent(new Event("jugglework:focusPrompt"));
     setComposerDraft(props.sessionId, text);
     await waitForControl(40);
   }, [props.sessionId, setComposerDraft]);
@@ -1225,11 +1225,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
         length: text.length,
       });
     };
-    window.addEventListener("openwork:voice-transcript", handleVoiceTranscript);
-    return () => window.removeEventListener("openwork:voice-transcript", handleVoiceTranscript);
+    window.addEventListener("jugglework:voice-transcript", handleVoiceTranscript);
+    return () => window.removeEventListener("jugglework:voice-transcript", handleVoiceTranscript);
   }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
 
-  const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerSetTextControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "composer.set_text",
     label: "Type into the composer",
     description: "Replace the current session draft and type the supplied text visibly.",
@@ -1249,7 +1249,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [attachments, buildDraft, props.onDraftChange, typeComposerText]);
   useControlAction(props.isControlTarget ? composerSetTextControlAction : null);
 
-  const composerSendControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerSendControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "composer.send",
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
@@ -1263,7 +1263,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
-  const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
+  const composerStopControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "composer.stop",
     label: "Stop the current run",
     description: "Stop the current streaming session run.",
@@ -1330,7 +1330,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source,
-      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+      origin: entry.name === "jugglework-cloud" ? "jugglework-connect" : "local",
     } satisfies McpServerEntry));
 
     let localStatuses: McpStatusMap = {};
@@ -1377,7 +1377,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const listImportedPlugins = async (): Promise<CloudImportedPlugin[]> => {
     const response = await props.client.getConfig(props.workspaceId);
-    const plugins = Object.values(readWorkspaceCloudImports(response.openwork).plugins)
+    const plugins = Object.values(readWorkspaceCloudImports(response.jugglework).plugins)
       .sort((left, right) => left.name.localeCompare(right.name));
     setToolImportedPlugins(plugins);
     return plugins;
@@ -1461,10 +1461,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const resetReconnectState = () => {
       useChatMcpReconnectStore.getState().reset();
       connectInventoryCacheRef.current = null;
-      setToolSkills((current) => current.filter((skill) => skill.origin !== "openwork-connect"));
-      setToolMcpServers((current) => current.filter((server) => server.origin !== "openwork-connect"));
+      setToolSkills((current) => current.filter((skill) => skill.origin !== "jugglework-connect"));
+      setToolMcpServers((current) => current.filter((server) => server.origin !== "jugglework-connect"));
       setToolMcpStatuses((current) => Object.fromEntries(
-        Object.entries(current).filter(([key]) => !key.startsWith("openwork-connect:")),
+        Object.entries(current).filter(([key]) => !key.startsWith("jugglework-connect:")),
       ));
     };
     window.addEventListener(denSettingsChangedEvent, resetReconnectState);
@@ -1592,7 +1592,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     })();
   }, [props.onRevertToMessage, props.sessionId, typeComposerText]);
 
-  const sessionScrollTopControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionScrollTopControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.scroll_top",
     label: "Go to the top of the session",
     description: "Scroll the visible session transcript to the first messages.",
@@ -1607,7 +1607,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), []);
   useControlAction(props.isControlTarget ? sessionScrollTopControlAction : null);
 
-  const sessionScrollBottomControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionScrollBottomControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.scroll_bottom",
     label: "Go to the bottom of the session",
     description: "Scroll the visible session transcript to the newest messages and composer area.",
@@ -1620,7 +1620,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [sessionScroll.jumpToLatest]);
   useControlAction(props.isControlTarget ? sessionScrollBottomControlAction : null);
 
-  const sessionLatestMessageControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionLatestMessageControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.latest_message",
     label: "Read the latest session message",
     description: "Return the latest visible message in the current session transcript.",
@@ -1641,7 +1641,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [props.sessionId, renderedMessages]);
   useControlAction(props.isControlTarget ? sessionLatestMessageControlAction : null);
 
-  const sessionReadTranscriptControlAction = useMemo<OpenworkControlAction>(() => ({
+  const sessionReadTranscriptControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "session.read_transcript",
     label: "Read the current session transcript",
     description: "Return the last messages from the current session transcript as readable text, including the session ID, title, and message count.",
@@ -1844,7 +1844,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
-        openWorkModelsEntitled={props.openWorkModelsEntitled}
+        juggleWorkModelsEntitled={props.juggleWorkModelsEntitled}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
         onModelChange={props.onModelChange}
         attachments={attachments}

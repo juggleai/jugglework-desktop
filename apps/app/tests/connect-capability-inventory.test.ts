@@ -120,7 +120,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
       expect.objectContaining({
         name: "Escalate ticket",
         trigger: "escalate-ticket",
-        origin: "openwork-connect",
+        origin: "jugglework-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         connectCapabilityName: "plugin:plugin_1:skill_1",
@@ -129,7 +129,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     expect(inventory.mcpServers).toEqual([
       expect.objectContaining({
         name: "Support MCP",
-        origin: "openwork-connect",
+        origin: "jugglework-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         config: {

@@ -25,8 +25,8 @@ describe("getDenModelCatalogUrl", () => {
   test("returns null where there is no private catalog to read", () => {
     // The hosted cloud serves no deployment catalog, and an unusable value
     // must not become a URL — both leave imports on Den's metadata alone.
-    expect(getDenModelCatalogUrl("https://app.openworklabs.com")).toBeNull();
-    expect(getDenModelCatalogUrl("https://app.openworklabs.com/jwork/api")).toBeNull();
+    expect(getDenModelCatalogUrl("https://work.juggle.im")).toBeNull();
+    expect(getDenModelCatalogUrl("https://work.juggle.im/jwork/api")).toBeNull();
     expect(getDenModelCatalogUrl("")).toBeNull();
     expect(getDenModelCatalogUrl("not a url")).toBeNull();
   });

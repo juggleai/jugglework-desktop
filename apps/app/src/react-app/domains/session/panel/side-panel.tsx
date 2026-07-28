@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useDragControls } from "motion/react";
 
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,7 +30,7 @@ import {
   useActivePanelTab,
   useSessionPanelState,
 } from "./panel-tab-store";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useControlAction, type JuggleWorkControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import {
@@ -43,7 +43,7 @@ import {
 
 type SidePanelProps = {
   sessionId: string;
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
   isRemoteWorkspace?: boolean;
@@ -60,7 +60,7 @@ if (import.meta.hot) {
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
 
-The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [JuggleWork](https://openworklabs.com).
+The artifact preview keeps **outside-chat Markdown** readable with inline \`surface renderer\`, a fenced code block, and [JuggleWork](https://juggle.im).
 
 \`\`\`ts
 const surface = "shared markdown primitive";
@@ -410,7 +410,7 @@ export function SidePanel({
 
   const { createTab, closeTab, selectTab, reorderTabs } = useSidePanelTabs(sessionId);
 
-  const seedArtifactOverflowControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedArtifactOverflowControlAction = React.useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -439,7 +439,7 @@ export function SidePanel({
         for (let index = 1; index <= count; index += 1) {
           const padded = String(index).padStart(2, "0");
           const baseName = longNameLast && index === count
-            ? `openwork-self-managed-subscription-and-licensing-overview-very-long-${padded}`
+            ? `jugglework-self-managed-subscription-and-licensing-overview-very-long-${padded}`
             : `overflow-tab-${padded}`;
           const value = `artifacts/${baseName}.md`;
           const label = `${baseName}.md`;
@@ -477,7 +477,7 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedArtifactOverflowControlAction);
 
-  const seedMarkdownPrimitiveArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedMarkdownPrimitiveArtifactControlAction = React.useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {
@@ -519,7 +519,7 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedMarkdownPrimitiveArtifactControlAction);
 
-  const seedPdfArtifactControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+  const seedPdfArtifactControlAction = React.useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
     return {

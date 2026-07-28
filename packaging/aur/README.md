@@ -6,8 +6,8 @@ Use this directory to build and install the JuggleWork package locally on Arch L
 
 - Targets `x86_64` and `aarch64` Arch Linux.
 - Downloads the published Electron GitHub release asset for the current architecture.
-- Installs the Electron bundle under `/opt/openwork`.
-- Adds `/usr/bin/openwork`, a desktop entry, and the JuggleWork icon.
+- Installs the Electron bundle under `/opt/jugglework`.
+- Adds `/usr/bin/jugglework`, a desktop entry, and the JuggleWork icon.
 
 ## Prerequisites
 
@@ -33,10 +33,10 @@ makepkg -si
 That will:
 
 1. download the Electron tarball pinned in `PKGBUILD`
-2. build an Arch package such as `openwork-<version>-1-x86_64.pkg.tar.zst`
+2. build an Arch package such as `jugglework-<version>-1-x86_64.pkg.tar.zst`
 3. install it locally with `pacman`
 
-After install, `openwork` is available as the desktop launcher. The bundled sidecars remain inside `/opt/openwork`; the package does not claim the standalone `opencode` command.
+After install, `jugglework` is available as the desktop launcher. The bundled sidecars remain inside `/opt/jugglework`; the package does not claim the standalone `opencode` command.
 
 ## Update the package to a newer release
 
@@ -63,17 +63,17 @@ makepkg -s
 This leaves the built package in `packaging/aur/` so you can install it later with:
 
 ```bash
-sudo pacman -U openwork-<version>-1-x86_64.pkg.tar.zst
+sudo pacman -U jugglework-<version>-1-x86_64.pkg.tar.zst
 ```
 
 ## Verify the installed app
 
 ```bash
-openwork
+jugglework
 ```
 
 If you want to confirm the package contents first:
 
 ```bash
-pacman -Ql openwork
+pacman -Ql jugglework
 ```

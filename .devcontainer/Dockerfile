@@ -30,7 +30,7 @@ ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
 # Clone and install
-ARG REPO_URL=https://github.com/different-ai/openwork.git
+ARG REPO_URL=https://github.com/juggleai/jugglework-desktop.git
 ARG BRANCH=dev
 WORKDIR /workspace
 RUN git clone --depth 1 --branch $BRANCH $REPO_URL . && pnpm install --frozen-lockfile || pnpm install

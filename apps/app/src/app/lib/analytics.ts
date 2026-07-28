@@ -11,26 +11,26 @@
  *   Preferences) turns everything off; an explicitly blank PostHog key means
  *   no network.
  * - Every capture is mirrored into the local app inspector
- *   (`window.__openwork.record("analytics.<event>")`) so coded evals can
+ *   (`window.__jugglework.record("analytics.<event>")`) so coded evals can
  *   assert instrumentation without any analytics backend.
  */
 import { denSessionUpdatedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
 import { recordInspectorEvent } from "./app-inspector";
 import { resolvePosthogKey } from "./analytics-key";
 
-const ENV_POSTHOG_HOST = String(import.meta.env.VITE_OPENWORK_POSTHOG_HOST ?? "").trim();
-const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
+const ENV_POSTHOG_HOST = String(import.meta.env.VITE_JUGGLEWORK_POSTHOG_HOST ?? "").trim();
+const ENV_APP_VERSION = String(import.meta.env.VITE_JUGGLEWORK_APP_VERSION ?? "").trim();
 
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
 // Packaged releases use the default publishable key; dev builds stay silent
-// unless VITE_OPENWORK_POSTHOG_KEY is set. Set it to "" to disable analytics
+// unless VITE_JUGGLEWORK_POSTHOG_KEY is set. Set it to "" to disable analytics
 // in any build. The inspector mirror still records events locally either way.
-const POSTHOG_KEY = resolvePosthogKey(import.meta.env.VITE_OPENWORK_POSTHOG_KEY, import.meta.env.DEV);
+const POSTHOG_KEY = resolvePosthogKey(import.meta.env.VITE_JUGGLEWORK_POSTHOG_KEY, import.meta.env.DEV);
 const POSTHOG_HOST = (ENV_POSTHOG_HOST || DEFAULT_POSTHOG_HOST).replace(/\/+$/, "");
 
-const PREFS_STORAGE_KEY = "openwork.preferences";
-const DISTINCT_ID_STORAGE_KEY = "openwork.analytics.distinctId";
+const PREFS_STORAGE_KEY = "jugglework.preferences";
+const DISTINCT_ID_STORAGE_KEY = "jugglework.analytics.distinctId";
 const FLUSH_INTERVAL_MS = 10_000;
 const MAX_BATCH = 50;
 

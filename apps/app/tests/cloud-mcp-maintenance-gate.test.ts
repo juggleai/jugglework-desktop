@@ -3,24 +3,24 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { DenMcpToken } from "../src/app/lib/den";
 import type { DenSettings } from "../src/app/lib/den-types";
 import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-  OpenworkMcpItem,
-} from "../src/app/lib/openwork-server";
+  JuggleWorkCloudMcpFailure,
+  JuggleWorkCloudMcpHealth,
+  JuggleWorkMcpItem,
+} from "../src/app/lib/jugglework-server";
 import {
   __setCloudMcpUserStateStorageForTest,
   CLOUD_MCP_SERVER_NAME,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
-import { runOpenworkCloudMcpReconciler } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
+import { runJuggleWorkCloudMcpReconciler } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 import { syncCloudControlMcpInBackground } from "../src/react-app/domains/connections/use-session-mcp-maintenance";
 
 const NOW = Date.parse("2026-07-14T12:00:00.000Z");
-const LEGACY_USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
+const LEGACY_USER_STATE_KEY = "jugglework.den.mcp.cloudControlUserState";
 
 const scope = {
-  denBaseUrl: "https://app.openwork.test",
-  serverBaseUrl: "https://worker.openwork.test",
+  denBaseUrl: "https://app.jugglework.test",
+  serverBaseUrl: "https://worker.jugglework.test",
   orgId: "org_1",
   workspaceId: "ws_1",
 };
@@ -36,7 +36,7 @@ const settings: DenSettings = {
 const context = {
   ...scope,
   denAuthToken: settings.authToken,
-  providerModel: { provider: "openwork", model: "gpt-5" },
+  providerModel: { provider: "jugglework", model: "gpt-5" },
 };
 
 const token: DenMcpToken = {
@@ -44,7 +44,7 @@ const token: DenMcpToken = {
   expiresAt: new Date(NOW + 7 * 24 * 60 * 60 * 1000).toISOString(),
   organizationId: scope.orgId,
   scopes: ["mcp:read", "mcp:write"],
-  resource: "https://api.openwork.test/mcp",
+  resource: "https://api.jugglework.test/mcp",
 };
 
 let storageValues: Map<string, string>;
@@ -58,7 +58,7 @@ function installStorageStub(initial?: Record<string, string>) {
   });
 }
 
-function failure(code: string): OpenworkCloudMcpFailure {
+function failure(code: string): JuggleWorkCloudMcpFailure {
   return {
     code,
     stage: "engine_status",
@@ -68,7 +68,7 @@ function failure(code: string): OpenworkCloudMcpFailure {
   };
 }
 
-function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | null }): OpenworkCloudMcpHealth {
+function health(input: { usable: boolean; failure?: JuggleWorkCloudMcpFailure | null }): JuggleWorkCloudMcpHealth {
   const usable = input.usable;
   return {
     schemaVersion: 1,
@@ -94,9 +94,9 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
     },
     engine: { status: usable ? "connected" : "failed" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-      missing: usable ? [] : ["openwork-cloud_search_capabilities"],
+      expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+      present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+      missing: usable ? [] : ["jugglework-cloud_search_capabilities"],
       direct: {
         checked: true,
         source: "mcp_tools_list",
@@ -106,37 +106,37 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
       },
       providerProjection: {
         checked: usable,
-        provider: "openwork",
+        provider: "jugglework",
         model: "gpt-5",
         source: "experimental_tool",
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
       },
     },
     pluginCanaries: {
-      expected: ["openwork_docs_search"],
-      present: usable ? ["openwork_docs_search"] : [],
-      missing: usable ? [] : ["openwork_docs_search"],
+      expected: ["jugglework_docs_search"],
+      present: usable ? ["jugglework_docs_search"] : [],
+      missing: usable ? [] : ["jugglework_docs_search"],
     },
     compatibility: {
-      openwork: { serverVersion: "test", app: null },
+      jugglework: { serverVersion: "test", app: null },
       opencode: { expectedVersion: "1.17.11", actualVersion: "1.17.11", probe: "ok" },
       pluginFileHashes: [],
       supportedFeatures: { dynamicMcp: true, directoryScoping: true, toolIds: true, providerToolProjection: usable, pluginCanaries: true },
       experimentalToolIds: {
         checked: true,
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
         includesMcpTools: usable,
       },
       experimentalProviderTools: {
         checked: usable,
-        provider: "openwork",
+        provider: "jugglework",
         model: "gpt-5",
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
         includesMcpTools: usable ? true : null,
       },
     },
@@ -146,13 +146,13 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
   };
 }
 
-function configuredItem(): OpenworkMcpItem {
+function configuredItem(): JuggleWorkMcpItem {
   return {
     name: CLOUD_MCP_SERVER_NAME,
     config: {
       type: "remote",
       enabled: true,
-      url: "https://api.openwork.test/mcp/agent",
+      url: "https://api.jugglework.test/mcp/agent",
       headers: { Authorization: "Bearer owt_mcp_expired" },
     },
     source: "config.remote",
@@ -173,8 +173,8 @@ describe("cloud MCP maintenance user-state gate", () => {
       client: {
         baseUrl: scope.serverBaseUrl,
         listMcp: async () => ({ items: [configuredItem()] }),
-        getOpenworkCloudMcpHealth: async () => health({ usable: false, failure: failure("invalid_mcp_token") }),
-        reconcileOpenworkCloudMcp: async () => {
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false, failure: failure("invalid_mcp_token") }),
+        reconcileJuggleWorkCloudMcp: async () => {
           reconcileCount += 1;
           return health({ usable: true });
         },
@@ -201,8 +201,8 @@ describe("cloud MCP maintenance user-state gate", () => {
       client: {
         baseUrl: scope.serverBaseUrl,
         listMcp: async () => ({ items: [] }),
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async () => {
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async () => {
           reconcileCount += 1;
           return health({ usable: true });
         },
@@ -222,13 +222,13 @@ describe("cloud MCP maintenance user-state gate", () => {
 
   test("explicitly disabled entries stay skipped even without recorded intent", async () => {
     let mintCount = 0;
-    const disabled: OpenworkMcpItem = { ...configuredItem(), config: { ...configuredItem().config, enabled: false } };
+    const disabled: JuggleWorkMcpItem = { ...configuredItem(), config: { ...configuredItem().config, enabled: false } };
     const result = await syncCloudControlMcpInBackground({
       client: {
         baseUrl: scope.serverBaseUrl,
         listMcp: async () => ({ items: [disabled] }),
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async () => health({ usable: true }),
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async () => health({ usable: true }),
       },
       workspaceId: scope.workspaceId,
       settings,
@@ -246,12 +246,12 @@ describe("cloud MCP maintenance user-state gate", () => {
     writeCloudMcpUserState("removed", scope);
 
     let mintCount = 0;
-    const proceeding = await runOpenworkCloudMcpReconciler({
+    const proceeding = await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async () => health({ usable: true }),
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async () => health({ usable: true }),
       },
       context,
       mintToken: async () => {
@@ -265,12 +265,12 @@ describe("cloud MCP maintenance user-state gate", () => {
     expect(proceeding.status).toBe("repaired");
     expect(mintCount).toBe(1);
 
-    const blocked = await runOpenworkCloudMcpReconciler({
+    const blocked = await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async () => health({ usable: true }),
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async () => health({ usable: true }),
       },
       context,
       mintToken: async () => {

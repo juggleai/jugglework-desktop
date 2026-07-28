@@ -13,7 +13,7 @@ const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/te
 describe("staleUpdaterStatePaths", () => {
   it("targets the ShipIt cache on macOS", { skip: process.platform !== "darwin" }, () => {
     assert.deepEqual(staleUpdaterStatePaths(fakeApp), [
-      "/Users/test/Library/Caches/com.differentai.openwork.ShipIt",
+      "/Users/test/Library/Caches/com.juggleai.jugglework.ShipIt",
     ]);
   });
 
@@ -26,7 +26,7 @@ describe("targetedStableUpdaterFeed", () => {
   it("builds a fixed GitHub release feed from a strict stable version", () => {
     assert.equal(
       targetedStableUpdaterFeed("0.17.22", "0.17.23"),
-      "https://github.com/different-ai/openwork/releases/download/v0.17.23",
+      "https://github.com/juggleai/jugglework-desktop/releases/download/v0.17.23",
     );
   });
 
@@ -69,7 +69,7 @@ describe("installAndRestart", () => {
       getMainWindow: () => null,
     });
 
-    const install = handlers.get("openwork:updater:installAndRestart");
+    const install = handlers.get("jugglework:updater:installAndRestart");
     assert.equal(typeof install, "function");
     assert.deepEqual(await install(), {
       ok: false,

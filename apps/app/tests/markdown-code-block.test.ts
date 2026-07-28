@@ -11,11 +11,11 @@ describe("markdown code blocks", () => {
   test("renders fallback code blocks with subtle theme-aware styling and copy affordance", () => {
     const html = renderMarkdownHtml(MARKDOWN);
 
-    expect(html).toContain("data-openwork-code-block");
+    expect(html).toContain("data-jugglework-code-block");
     expect(html).toContain("bg-gray-2/60");
-    expect(html).toContain("data-openwork-code-copy");
-    expect(html).toContain("data-openwork-code-copy-icon");
-    expect(html).toContain("data-openwork-code-copy-check-icon");
+    expect(html).toContain("data-jugglework-code-copy");
+    expect(html).toContain("data-jugglework-code-copy-icon");
+    expect(html).toContain("data-jugglework-code-copy-check-icon");
     expect(html).toContain("h-7 w-7");
     expect(html).toContain('aria-label="Copy code block"');
     expect(html).toContain('aria-live="polite"');
@@ -30,11 +30,11 @@ describe("markdown code blocks", () => {
   test("renders highlighted code blocks with the same copy affordance and dual Shiki themes", async () => {
     const html = await renderHighlightedMarkdownHtml(MARKDOWN);
 
-    expect(html).toContain("data-openwork-code-block");
-    expect(html).toContain("data-openwork-shiki");
-    expect(html).toContain("data-openwork-code-copy");
-    expect(html).toContain("data-openwork-code-copy-icon");
-    expect(html).toContain("data-openwork-code-copy-check-icon");
+    expect(html).toContain("data-jugglework-code-block");
+    expect(html).toContain("data-jugglework-shiki");
+    expect(html).toContain("data-jugglework-code-copy");
+    expect(html).toContain("data-jugglework-code-copy-icon");
+    expect(html).toContain("data-jugglework-code-copy-check-icon");
     expect(html).toContain("--shiki-dark");
     expect(html).toContain("github-light");
     expect(html).toContain("github-dark");
@@ -45,13 +45,13 @@ describe("markdown code blocks", () => {
     expect(fallbackHtml).toContain("border-dls-border/70");
     expect(fallbackHtml).toContain("bg-gray-1/80");
     expect(fallbackHtml).toContain('class="language-ts"');
-    expect(fallbackHtml).not.toContain("data-openwork-code-copy");
+    expect(fallbackHtml).not.toContain("data-jugglework-code-copy");
 
     const highlightedHtml = await renderPrimitiveHighlightedMarkdownHtml(MARKDOWN, "surface");
-    expect(highlightedHtml).toContain("data-openwork-shiki");
+    expect(highlightedHtml).toContain("data-jugglework-shiki");
     expect(highlightedHtml).toContain("github-light");
     expect(highlightedHtml).not.toContain("github-dark");
-    expect(highlightedHtml).not.toContain("data-openwork-code-copy");
+    expect(highlightedHtml).not.toContain("data-jugglework-code-copy");
   });
 });
 
@@ -67,17 +67,17 @@ describe("markdown safety and links", () => {
   });
 
   test("keeps chat file link actions separate from simple surface links", () => {
-    const markdown = `[Open docs](./docs/readme.md) and [JuggleWork](https://openworklabs.com)`;
+    const markdown = `[Open docs](./docs/readme.md) and [JuggleWork](https://juggle.im)`;
     const chatHtml = renderMarkdownHtml(markdown);
-    expect(chatHtml).toContain("data-openwork-link-chevron");
-    expect(chatHtml).toContain("data-openwork-link-href");
-    expect(chatHtml).toContain('href="https://openworklabs.com"');
+    expect(chatHtml).toContain("data-jugglework-link-chevron");
+    expect(chatHtml).toContain("data-jugglework-link-href");
+    expect(chatHtml).toContain('href="https://juggle.im"');
 
     const surfaceHtml = renderPrimitiveMarkdownHtml(markdown, "surface");
-    expect(surfaceHtml).not.toContain("data-openwork-link-chevron");
-    expect(surfaceHtml).not.toContain("data-openwork-link-href");
+    expect(surfaceHtml).not.toContain("data-jugglework-link-chevron");
+    expect(surfaceHtml).not.toContain("data-jugglework-link-href");
     expect(surfaceHtml).toContain('href="./docs/readme.md"');
-    expect(surfaceHtml).toContain('href="https://openworklabs.com"');
+    expect(surfaceHtml).toContain('href="https://juggle.im"');
   });
 });
 

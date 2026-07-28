@@ -10,11 +10,11 @@ import {
 } from "lucide-react";
 
 import type {
-  OpenworkAuditEntry,
-  OpenworkRuntimeConfigStatus,
-  OpenworkServerCapabilities,
-  OpenworkServerDiagnostics,
-} from "../../../../app/lib/openwork-server";
+  JuggleWorkAuditEntry,
+  JuggleWorkRuntimeConfigStatus,
+  JuggleWorkServerCapabilities,
+  JuggleWorkServerDiagnostics,
+} from "../../../../app/lib/jugglework-server";
 import type { NukeManifestPreview, SandboxDebugProbeResult } from "../../../../app/lib/desktop";
 import type {
   OpencodeConnectStatus,
@@ -58,7 +58,7 @@ type RuntimeSummary = {
   appVersionLabel: string;
   appCommitLabel: string;
   opencodeVersionLabel: string;
-  openworkServerVersionLabel: string;
+  juggleworkServerVersionLabel: string;
 };
 
 type StatusPill = {
@@ -93,7 +93,7 @@ export type DebugViewProps = {
   runtimeSummary: RuntimeSummary;
   runtimeDebugReportJson: string;
   bootstrapConfigDebugJson: string;
-  runtimeConfigStatus: OpenworkRuntimeConfigStatus | null;
+  runtimeConfigStatus: JuggleWorkRuntimeConfigStatus | null;
   runtimeConfigStatusError: string | null;
   runtimeDebugStatus: string | null;
   onCopyRuntimeDebugReport: () => void | Promise<void>;
@@ -142,33 +142,33 @@ export type DebugViewProps = {
   resetModalBusy: boolean;
   resetStatus: string | null;
   opencodeRestarting: boolean;
-  openworkServerRestarting: boolean;
+  juggleworkServerRestarting: boolean;
   opencodeServiceStatus: ServiceStatus;
-  openworkServiceStatus: ServiceStatus;
+  juggleworkServiceStatus: ServiceStatus;
   opencodeLogStatus: string | null;
-  openworkLogStatus: string | null;
+  juggleworkLogStatus: string | null;
   onCopyOpencodeLogs: () => void | Promise<void>;
   onExportOpencodeLogs: () => void | Promise<void>;
-  onCopyOpenworkLogs: () => void | Promise<void>;
-  onExportOpenworkLogs: () => void | Promise<void>;
+  onCopyJuggleWorkLogs: () => void | Promise<void>;
+  onExportJuggleWorkLogs: () => void | Promise<void>;
   serviceRestartError: string | null;
   onRestartOpencode: () => void | Promise<void>;
-  onRestartOpenworkServer: () => void | Promise<void>;
+  onRestartJuggleWorkServer: () => void | Promise<void>;
   engineCard: RuntimeServiceCard;
   opencodeConnectCard: OpenCodeConnectDebugCard;
-  openworkCard: RuntimeServiceCard;
-  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
+  juggleworkCard: RuntimeServiceCard;
+  juggleworkServerDiagnostics: JuggleWorkServerDiagnostics | null;
   runtimeWorkspaceId: string | null;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
+  juggleworkServerCapabilities: JuggleWorkServerCapabilities | null;
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
   workspaceDebugEventsStatus: string | null;
   safeStringify: (value: unknown) => string;
   onClearWorkspaceDebugEvents: () => void | Promise<void>;
-  openworkAuditEntries: OpenworkAuditEntry[];
-  openworkAuditStatus: StatusPill;
-  openworkAuditError: string | null;
+  juggleworkAuditEntries: JuggleWorkAuditEntry[];
+  juggleworkAuditStatus: StatusPill;
+  juggleworkAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   opencodeDevModeEnabled: boolean;
   nukeConfigBusy: boolean;
@@ -182,10 +182,10 @@ export type DebugViewProps = {
   onCloseNukeDialog: () => void;
   onSetNukeConfirmationText: (value: string) => void;
   onSetNukePreserveBootstrap: (value: boolean) => void | Promise<void>;
-  onConfirmNukeOpenworkAndOpencodeConfig: () => void | Promise<void>;
+  onConfirmNukeJuggleWorkAndOpencodeConfig: () => void | Promise<void>;
 };
 
-function formatActor(entry: OpenworkAuditEntry) {
+function formatActor(entry: JuggleWorkAuditEntry) {
   if (entry.actor.type === "host") return t("settings.audit_actor_host");
   if (entry.actor.clientId) return entry.actor.clientId;
   if (entry.actor.tokenHash) return entry.actor.tokenHash;
@@ -292,7 +292,7 @@ function formatManagedFileTime(value: number | null | undefined): string {
 }
 
 function RuntimeConfigOwnershipCard(props: {
-  status: OpenworkRuntimeConfigStatus | null;
+  status: JuggleWorkRuntimeConfigStatus | null;
   error: string | null;
 }) {
   return (
@@ -514,8 +514,8 @@ export function DebugView(props: DebugViewProps) {
             {t("settings.debug_opencode_version", { version: props.runtimeSummary.opencodeVersionLabel })}
           </div>
           <div>
-            {t("settings.debug_openwork_server_version", {
-              version: props.runtimeSummary.openworkServerVersionLabel,
+            {t("settings.debug_jugglework_server_version", {
+              version: props.runtimeSummary.juggleworkServerVersionLabel,
             })}
           </div>
         </div>
@@ -549,21 +549,21 @@ export function DebugView(props: DebugViewProps) {
 
         <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
           <ServiceCard
-            title={t("settings.openwork_server_label")}
-            description={t("settings.openwork_config_sidecar_desc")}
-            pill={props.openworkCard}
-            lines={props.openworkCard.lines}
-            stdout={props.openworkCard.stdout ?? null}
-            stderr={props.openworkCard.stderr ?? null}
-            execution={props.openworkCard.execution ?? null}
-            error={props.openworkCard.error ?? null}
-            restarting={props.openworkServerRestarting}
-            restartLabel={t("settings.restart_openwork_server")}
-            onRestart={props.onRestartOpenworkServer}
-            serviceStatus={props.openworkServiceStatus}
-            logStatus={props.openworkLogStatus}
-            onCopyLogs={props.onCopyOpenworkLogs}
-            onExportLogs={props.onExportOpenworkLogs}
+            title={t("settings.jugglework_server_label")}
+            description={t("settings.jugglework_config_sidecar_desc")}
+            pill={props.juggleworkCard}
+            lines={props.juggleworkCard.lines}
+            stdout={props.juggleworkCard.stdout ?? null}
+            stderr={props.juggleworkCard.stderr ?? null}
+            execution={props.juggleworkCard.execution ?? null}
+            error={props.juggleworkCard.error ?? null}
+            restarting={props.juggleworkServerRestarting}
+            restartLabel={t("settings.restart_jugglework_server")}
+            onRestart={props.onRestartJuggleWorkServer}
+            serviceStatus={props.juggleworkServiceStatus}
+            logStatus={props.juggleworkLogStatus}
+            onCopyLogs={props.onCopyJuggleWorkLogs}
+            onExportLogs={props.onExportJuggleWorkLogs}
             isDesktop={isDesktop}
           />
 
@@ -625,52 +625,52 @@ export function DebugView(props: DebugViewProps) {
       {/* Section: Diagnostics */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
-          <div className={sectionTitleClass}>{t("settings.openwork_diagnostics_title")}</div>
+          <div className={sectionTitleClass}>{t("settings.jugglework_diagnostics_title")}</div>
           <div className={sectionDescClass}>
             <span className="font-mono text-[11px] text-dls-secondary">
-              {props.openworkServerDiagnostics?.version ?? "—"}
+              {props.juggleworkServerDiagnostics?.version ?? "—"}
             </span>
           </div>
         </div>
 
-        {props.openworkServerDiagnostics ? (
+        {props.juggleworkServerDiagnostics ? (
           <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-            <div>{t("settings.diag_started", { time: formatUptime(props.openworkServerDiagnostics.uptimeMs) })}</div>
+            <div>{t("settings.diag_started", { time: formatUptime(props.juggleworkServerDiagnostics.uptimeMs) })}</div>
             <div>
               {t("settings.diag_read_only", {
-                value: props.openworkServerDiagnostics.readOnly ? "true" : "false",
+                value: props.juggleworkServerDiagnostics.readOnly ? "true" : "false",
               })}
             </div>
             <div>
               {t("settings.diag_approval", {
-                mode: props.openworkServerDiagnostics.approval.mode,
-                ms: String(props.openworkServerDiagnostics.approval.timeoutMs),
+                mode: props.juggleworkServerDiagnostics.approval.mode,
+                ms: String(props.juggleworkServerDiagnostics.approval.timeoutMs),
               })}
             </div>
-            <div>{t("settings.diag_workspaces", { count: String(props.openworkServerDiagnostics.workspaceCount) })}</div>
+            <div>{t("settings.diag_workspaces", { count: String(props.juggleworkServerDiagnostics.workspaceCount) })}</div>
             <div>
               {t("settings.diag_selected_workspace", {
-                id: props.openworkServerDiagnostics.selectedWorkspaceId ?? "—",
+                id: props.juggleworkServerDiagnostics.selectedWorkspaceId ?? "—",
               })}
             </div>
             <div>
               {t("settings.diag_runtime_workspace", {
-                id: props.openworkServerDiagnostics.activeWorkspaceId ?? "—",
+                id: props.juggleworkServerDiagnostics.activeWorkspaceId ?? "—",
               })}
             </div>
             <div>
               {t("settings.diag_config_path", {
-                path: props.openworkServerDiagnostics.server.configPath ?? t("settings.diag_default"),
+                path: props.juggleworkServerDiagnostics.server.configPath ?? t("settings.diag_default"),
               })}
             </div>
             <div>
               {t("settings.diag_token_source", {
-                source: props.openworkServerDiagnostics.tokenSource.client,
+                source: props.juggleworkServerDiagnostics.tokenSource.client,
               })}
             </div>
             <div>
               {t("settings.diag_host_token_source", {
-                source: props.openworkServerDiagnostics.tokenSource.host,
+                source: props.juggleworkServerDiagnostics.tokenSource.host,
               })}
             </div>
           </div>
@@ -689,17 +689,17 @@ export function DebugView(props: DebugViewProps) {
                 : t("settings.worker_unresolved")}
             </div>
           </div>
-          {props.openworkServerCapabilities ? (
+          {props.juggleworkServerCapabilities ? (
             <div className="grid gap-2 text-[12px] text-dls-secondary md:grid-cols-2">
-              <div>{t("settings.cap_skills", { value: formatCapability(props.openworkServerCapabilities.skills) })}</div>
-              <div>{t("settings.cap_plugins", { value: formatCapability(props.openworkServerCapabilities.plugins) })}</div>
-              <div>{t("settings.cap_mcp", { value: formatCapability(props.openworkServerCapabilities.mcp) })}</div>
-              <div>{t("settings.cap_commands", { value: formatCapability(props.openworkServerCapabilities.commands) })}</div>
-              <div>{t("settings.cap_config", { value: formatCapability(props.openworkServerCapabilities.config) })}</div>
+              <div>{t("settings.cap_skills", { value: formatCapability(props.juggleworkServerCapabilities.skills) })}</div>
+              <div>{t("settings.cap_plugins", { value: formatCapability(props.juggleworkServerCapabilities.plugins) })}</div>
+              <div>{t("settings.cap_mcp", { value: formatCapability(props.juggleworkServerCapabilities.mcp) })}</div>
+              <div>{t("settings.cap_commands", { value: formatCapability(props.juggleworkServerCapabilities.commands) })}</div>
+              <div>{t("settings.cap_config", { value: formatCapability(props.juggleworkServerCapabilities.config) })}</div>
               <div>
                 {t("settings.cap_browser_tools", {
                   value: (() => {
-                    const browser = props.openworkServerCapabilities.toolProviders?.browser;
+                    const browser = props.juggleworkServerCapabilities.toolProviders?.browser;
                     if (!browser?.enabled) return t("settings.disabled");
                     return `${browser.mode} · ${browser.placement}`;
                   })(),
@@ -708,7 +708,7 @@ export function DebugView(props: DebugViewProps) {
               <div>
                 {t("settings.cap_file_tools", {
                   value: (() => {
-                    const files = props.openworkServerCapabilities.toolProviders?.files;
+                    const files = props.juggleworkServerCapabilities.toolProviders?.files;
                     if (!files) return t("config.unavailable");
                     return [
                       files.injection ? t("settings.cap_inbox_on") : t("settings.cap_inbox_off"),
@@ -719,8 +719,8 @@ export function DebugView(props: DebugViewProps) {
               </div>
               <div>
                 {t("settings.cap_sandbox", {
-                  value: props.openworkServerCapabilities.sandbox
-                    ? `${props.openworkServerCapabilities.sandbox.backend} (${props.openworkServerCapabilities.sandbox.enabled ? t("settings.on") : t("settings.off")})`
+                  value: props.juggleworkServerCapabilities.sandbox
+                    ? `${props.juggleworkServerCapabilities.sandbox.backend} (${props.juggleworkServerCapabilities.sandbox.enabled ? t("settings.on") : t("settings.off")})`
                     : t("config.unavailable"),
                 })}
               </div>
@@ -743,14 +743,14 @@ export function DebugView(props: DebugViewProps) {
             <div className="text-sm font-semibold tracking-[-0.1px] text-dls-text">
               {t("settings.audit_log_title")}
             </div>
-            <div className={`rounded-full border px-2 py-1 text-[11px] font-medium ${props.openworkAuditStatus.className}`}>
-              {props.openworkAuditStatus.label}
+            <div className={`rounded-full border px-2 py-1 text-[11px] font-medium ${props.juggleworkAuditStatus.className}`}>
+              {props.juggleworkAuditStatus.label}
             </div>
           </div>
-          {props.openworkAuditError ? <StatusBanner tone="error" message={props.openworkAuditError} /> : null}
-          {props.openworkAuditEntries.length > 0 ? (
+          {props.juggleworkAuditError ? <StatusBanner tone="error" message={props.juggleworkAuditError} /> : null}
+          {props.juggleworkAuditEntries.length > 0 ? (
             <div className="divide-y divide-dls-border/60">
-              {props.openworkAuditEntries.map((entry) => (
+              {props.juggleworkAuditEntries.map((entry) => (
                 <div key={entry.id} className="flex items-start justify-between gap-4 py-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm text-dls-text">{entry.summary}</div>
@@ -1223,12 +1223,12 @@ export function DebugView(props: DebugViewProps) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold tracking-[-0.1px] text-dls-text">
-                {t("settings.reset_openwork_title")}
+                {t("settings.reset_jugglework_title")}
               </div>
               <div className="text-[12px] text-dls-secondary">
                 {props.opencodeDevModeEnabled
-                  ? t("settings.reset_openwork_desc_dev")
-                  : t("settings.reset_openwork_desc_prod")}
+                  ? t("settings.reset_jugglework_desc_dev")
+                  : t("settings.reset_jugglework_desc_prod")}
               </div>
             </div>
             <div
@@ -1360,7 +1360,7 @@ export function DebugView(props: DebugViewProps) {
           <AlertDialogCancel disabled={props.nukeConfigBusy}>{t("settings.nuke_cancel")}</AlertDialogCancel>
           <AlertDialogAction
             variant="destructive"
-            onClick={() => void props.onConfirmNukeOpenworkAndOpencodeConfig()}
+            onClick={() => void props.onConfirmNukeJuggleWorkAndOpencodeConfig()}
             disabled={!canConfirmNuke}
           >
             {props.nukeConfigBusy ? t("settings.removing_local_state") : t("settings.nuke_confirm_button")}

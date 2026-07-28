@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@jugglework/ui/react";
 
 import { t } from "../../../i18n";
 import {

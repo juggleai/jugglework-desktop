@@ -1,0 +1,30 @@
+{
+  "name": "jugglework-ui-mcp",
+  "version": "0.2.0",
+  "description": "MCP server for JuggleWork app context and semantic UI control",
+  "author": "JuggleWork <support@juggle.im>",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "jugglework-ui-mcp": "index.mjs"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "scripts": {
+    "check": "node --check index.mjs",
+    "test": "node --check index.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juggleai/jugglework-desktop.git",
+    "directory": "packages/jugglework-ui-mcp"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  }
+}

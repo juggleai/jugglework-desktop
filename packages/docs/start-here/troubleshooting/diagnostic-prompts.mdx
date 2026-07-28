@@ -17,24 +17,24 @@ Each prompt is safe by default: it gathers evidence first, redacts secrets, and 
 
 **What is usually wrong**
 
-Your agent's `openwork-cloud` MCP entry is a snapshot: it stores a server URL and token from the moment it was connected. If it was created against a local development server or an old deployment — including via a leftover `desktop-bootstrap.json` file that overrides server URLs beneath the Settings UI — the agent keeps querying that old world forever, while the dashboard shows the current one.
+Your agent's `jugglework-cloud` MCP entry is a snapshot: it stores a server URL and token from the moment it was connected. If it was created against a local development server or an old deployment — including via a leftover `desktop-bootstrap.json` file that overrides server URLs beneath the Settings UI — the agent keeps querying that old world forever, while the dashboard shows the current one.
 
 **Paste this to your agent**
 
 ````text
 Debug and fix my JuggleWork Cloud MCP connection. It may be pointed at a stale or local server instead of my real JuggleWork Cloud server. Work through ALL phases, show your findings after each, and ask before anything destructive. Never print bearer tokens or Authorization headers — redact them.
 
-My expected cloud web URL: https://app.openworklabs.com (replace with your self-hosted Den web URL if you run your own).
+My expected cloud web URL: https://work.juggle.im (replace with your self-hosted Den web URL if you run your own).
 
 ## Phase 1 — Evidence: what am I actually connected to?
 
-1. Print the `openwork-cloud` MCP entry's `url` (redact headers) from every config you can find:
+1. Print the `jugglework-cloud` MCP entry's `url` (redact headers) from every config you can find:
    - `~/.config/opencode/opencode.json`
    - any `.opencode/opencode.json` or `opencode.jsonc` in the current project
    - your own runtime config if you have an export tool
 2. Inspect these files if they exist (they can silently override server URLs beneath the Settings UI), but report only `baseUrl`, `apiBaseUrl`, `requireSignin`, and `writtenAt`. Never print `handoff`, `claimLinks`, grants, tokens, or other credential-bearing fields:
-   - `~/.config/openwork/desktop-bootstrap.json`
-   - `~/Library/Application Support/com.differentai.openwork/desktop-bootstrap.json`
+   - `~/.config/jugglework/desktop-bootstrap.json`
+   - `~/Library/Application Support/com.juggleai.jugglework/desktop-bootstrap.json`
 3. If the url from step 1 is a localhost address, find what serves that port:
    - `lsof -nP -iTCP:<port> -sTCP:LISTEN`
    - for each PID: `ps -p <PID> -o pid=,command=` and `lsof -a -p <PID> -d cwd -Fn | tail -1`
@@ -53,7 +53,7 @@ My expected cloud web URL: https://app.openworklabs.com (replace with your self-
 ## Phase 4 — Diagnose
 
 State which world you are in:
-- openwork-cloud url is localhost/127.0.0.1, OR search returned only gmail-drafts, OR execute returned unknown_capability → you are bound to a STALE server, not the expected cloud.
+- jugglework-cloud url is localhost/127.0.0.1, OR search returned only gmail-drafts, OR execute returned unknown_capability → you are bound to a STALE server, not the expected cloud.
 - a desktop-bootstrap.json contains localhost URLs → that file is the root cause (it is the desktop app's Cloud URL source of truth).
 
 ## Phase 5 — Fix (confirm with me before each destructive step)
@@ -76,23 +76,23 @@ State which world you are in:
 
 **Expected passing state**
 
-- The `openwork-cloud` entry's `url` points at your real server and ends in `/mcp/agent` (either a direct API host or the web app's `/api/den` proxy).
+- The `jugglework-cloud` entry's `url` points at your real server and ends in `/mcp/agent` (either a direct API host or the web app's `/api/den` proxy).
 - `search_capabilities` reflects your server's current catalog.
 - `execute_capability` on a known capability returns data or an actionable connection message — never `unknown_capability`.
 
-If the agent completes all phases and verification still fails, [open an issue](https://github.com/different-ai/openwork/issues) and paste the agent's final report (it is already redacted).
+If the agent completes all phases and verification still fails, [open an issue](https://github.com/juggleai/jugglework-desktop/issues) and paste the agent's final report (it is already redacted).
 
 ## 2. Cloud MCP is configured, but its tools are missing
 
 **Symptoms**
 
-- Settings shows an `openwork-cloud` MCP entry, but the agent calls `openwork_docs_search` for requests involving connected services.
+- Settings shows an `jugglework-cloud` MCP entry, but the agent calls `jugglework_docs_search` for requests involving connected services.
 - The agent claims that `search_capabilities` and `execute_capability` are only "conceptual capabilities" rather than callable tools.
-- A connected service such as ServiceNow appears ready in JuggleWork Cloud, but the task does not expose `openwork-cloud_search_capabilities` or `openwork-cloud_execute_capability`.
+- A connected service such as ServiceNow appears ready in JuggleWork Cloud, but the task does not expose `jugglework-cloud_search_capabilities` or `jugglework-cloud_execute_capability`.
 
 **What this diagnostic checks**
 
-The prompt below runs JuggleWork's bundled OpenCode executable against its generated runtime config and checks whether a fresh OpenCode process can connect to `openwork-cloud`. It does not attach to the OpenCode server already running inside JuggleWork, so it combines that result with the live status shown in JuggleWork and a forced tool call from a new task.
+The prompt below runs JuggleWork's bundled OpenCode executable against its generated runtime config and checks whether a fresh OpenCode process can connect to `jugglework-cloud`. It does not attach to the OpenCode server already running inside JuggleWork, so it combines that result with the live status shown in JuggleWork and a forced tool call from a new task.
 
 **Paste this to your agent**
 
@@ -101,16 +101,16 @@ Diagnose whether JuggleWork Cloud MCP tools are available in this workspace. Gat
 
 ## Phase 1 — Test the task's actual tools
 
-1. Attempt to call `openwork-cloud_search_capabilities` with `{"query":"ServiceNow incident","type":"mcp","limit":10}`. Do not use documentation or explain alternatives. Record whether the runtime accepts the tool call and its exact non-secret result or rejection.
-2. Attempt to call `openwork_extension_list_actions`. Record whether the runtime accepts the call. Do not infer tool availability from an answer to "list your tools"; models can omit or invent tools.
+1. Attempt to call `jugglework-cloud_search_capabilities` with `{"query":"ServiceNow incident","type":"mcp","limit":10}`. Do not use documentation or explain alternatives. Record whether the runtime accepts the tool call and its exact non-secret result or rejection.
+2. Attempt to call `jugglework_extension_list_actions`. Record whether the runtime accepts the call. Do not infer tool availability from an answer to "list your tools"; models can omit or invent tools.
 
 ## Phase 2 — Find JuggleWork's exact OpenCode runtime
 
 3. Detect whether this machine is Windows, macOS, or Linux.
 4. Find the exact OpenCode executable used by the JuggleWork desktop app. Prefer the bundled executable in JuggleWork's `resources/sidecars` directory; do not assume an unrelated `opencode` on `PATH` is the same binary. If multiple JuggleWork builds are running, use the process associated with this task when that can be established safely; otherwise report the ambiguity.
-5. Find JuggleWork's generated `runtime-opencode-config.json` beside the active `server.json`. Respect discovered `OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`, or XDG overrides. Typical locations are:
-   - Windows: `%APPDATA%\openwork\runtime-opencode-config.json`
-   - macOS/Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/openwork/runtime-opencode-config.json`
+5. Find JuggleWork's generated `runtime-opencode-config.json` beside the active `server.json`. Respect discovered `JUGGLEWORK_SERVER_CONFIG`, `JUGGLEWORK_RUNTIME_DB`, or XDG overrides. Typical locations are:
+   - Windows: `%APPDATA%\jugglework\runtime-opencode-config.json`
+   - macOS/Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/jugglework/runtime-opencode-config.json`
 6. Report whether the runtime config exists and its last-modified time. Never display, copy, parse, or summarize its contents: it can contain Authorization headers and other credentials.
 
 ## Phase 3 — Run a safe fresh-process probe
@@ -123,7 +123,7 @@ Diagnose whether JuggleWork Cloud MCP tools are available in this workspace. Gat
    - operating system
    - exact OpenCode executable path and version
    - runtime config path, existence, and last-modified time
-   - whether `openwork-cloud` is listed
+   - whether `jugglework-cloud` is listed
    - its exact status and non-secret error
    - whether the failing workspace is the primary managed workspace or may be a secondary workspace configured dynamically
 
@@ -131,7 +131,7 @@ Important: `opencode mcp list` starts a fresh process. Do not claim that it atta
 
 ## Phase 4 — Classify the result
 
-- Fresh probe omits `openwork-cloud`: the generated config is missing, the wrong runtime config was selected, or this is a secondary workspace whose MCPs are registered dynamically.
+- Fresh probe omits `jugglework-cloud`: the generated config is missing, the wrong runtime config was selected, or this is a secondary workspace whose MCPs are registered dynamically.
 - Fresh probe reports `failed` or `needs_auth`: preserve the exact non-secret error; investigate token, endpoint, TLS, or authentication.
 - Fresh probe reports `connected`, but Phase 1 rejects the Cloud tool: the stored endpoint and token work, but the live desktop engine or task has stale/missing tool registration.
 - Both Phase 1 calls are rejected: investigate whether the running engine loaded the injected config and plugins, plus project/global tool-deny policy.

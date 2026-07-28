@@ -1,10 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
-const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
-const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
-const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
+const NATIVE_MENU_OPEN_SETTINGS_EVENT = "jugglework:native-menu:open-settings";
+const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "jugglework:native-menu:toggle-sidebar";
+const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
+const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -17,14 +17,14 @@ function applyShellDocumentMarkers() {
     const root = document?.documentElement;
     if (!root) return false;
 
-    root.dataset.openworkShell = "electron";
-    root.classList.add("openwork-electron");
+    root.dataset.juggleworkShell = "electron";
+    root.classList.add("jugglework-electron");
     if (process.platform === "darwin") {
-      root.classList.add("openwork-platform-mac");
+      root.classList.add("jugglework-platform-mac");
     } else if (process.platform === "win32") {
-      root.classList.add("openwork-platform-windows");
+      root.classList.add("jugglework-platform-windows");
     } else if (process.platform === "linux") {
-      root.classList.add("openwork-platform-linux");
+      root.classList.add("jugglework-platform-linux");
     }
     return true;
   } catch {
@@ -33,7 +33,7 @@ function applyShellDocumentMarkers() {
 }
 
 function notifyMenuOverlayDismiss() {
-  ipcRenderer.send("openwork:menu-overlay:dismiss");
+  ipcRenderer.send("jugglework:menu-overlay:dismiss");
 }
 
 function installMenuOverlayDismissListeners() {
@@ -50,138 +50,138 @@ function installMenuOverlayDismissListeners() {
 
 let desktopBootstrap = null;
 try {
-  desktopBootstrap = ipcRenderer.sendSync("openwork:desktop-bootstrap-sync");
+  desktopBootstrap = ipcRenderer.sendSync("jugglework:desktop-bootstrap-sync");
 } catch {
   desktopBootstrap = null;
 }
 
-contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
+contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
-    return ipcRenderer.invoke("openwork:desktop", command, ...args);
+    return ipcRenderer.invoke("jugglework:desktop", command, ...args);
   },
   shell: {
     openExternal(url) {
-      return ipcRenderer.invoke("openwork:shell:openExternal", url);
+      return ipcRenderer.invoke("jugglework:shell:openExternal", url);
     },
     relaunch() {
-      return ipcRenderer.invoke("openwork:shell:relaunch");
+      return ipcRenderer.invoke("jugglework:shell:relaunch");
     },
   },
   system: {
     getArchitectureInfo() {
-      return ipcRenderer.invoke("openwork:system:architecture");
+      return ipcRenderer.invoke("jugglework:system:architecture");
     },
     getMicrophoneStatus() {
-      return ipcRenderer.invoke("openwork:system:microphoneStatus");
+      return ipcRenderer.invoke("jugglework:system:microphoneStatus");
     },
     askMicrophoneAccess() {
-      return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
+      return ipcRenderer.invoke("jugglework:system:askMicrophoneAccess");
     },
   },
   migration: {
     readSnapshot() {
-      return ipcRenderer.invoke("openwork:migration:read");
+      return ipcRenderer.invoke("jugglework:migration:read");
     },
     ackSnapshot() {
-      return ipcRenderer.invoke("openwork:migration:ack");
+      return ipcRenderer.invoke("jugglework:migration:ack");
     },
   },
   brandIcon: {
     apply(url) {
-      return ipcRenderer.invoke("openwork:desktop", "__applyBrandIcon", url ?? null);
+      return ipcRenderer.invoke("jugglework:desktop", "__applyBrandIcon", url ?? null);
     },
     getState() {
-      return ipcRenderer.invoke("openwork:desktop", "__getBrandIconState");
+      return ipcRenderer.invoke("jugglework:desktop", "__getBrandIconState");
     },
   },
   dev: {
     evalRelaunch() {
-      return ipcRenderer.invoke("openwork:desktop", "__evalRelaunch");
+      return ipcRenderer.invoke("jugglework:desktop", "__evalRelaunch");
     },
   },
   nuke: {
     preview(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigPreview", options);
+      return ipcRenderer.invoke("jugglework:desktop", "nukeJuggleWorkAndOpencodeConfigPreview", options);
     },
     execute(options) {
-      return ipcRenderer.invoke("openwork:desktop", "nukeOpenworkAndOpencodeConfigAndExit", options);
+      return ipcRenderer.invoke("jugglework:desktop", "nukeJuggleWorkAndOpencodeConfigAndExit", options);
     },
   },
   updater: {
     getChannel() {
-      return ipcRenderer.invoke("openwork:updater:getChannel");
+      return ipcRenderer.invoke("jugglework:updater:getChannel");
     },
     setChannel(channel) {
-      return ipcRenderer.invoke("openwork:updater:setChannel", channel);
+      return ipcRenderer.invoke("jugglework:updater:setChannel", channel);
     },
     check(channel, targetVersion) {
-      return ipcRenderer.invoke("openwork:updater:check", channel, targetVersion);
+      return ipcRenderer.invoke("jugglework:updater:check", channel, targetVersion);
     },
     download() {
-      return ipcRenderer.invoke("openwork:updater:download");
+      return ipcRenderer.invoke("jugglework:updater:download");
     },
     installAndRestart() {
-      return ipcRenderer.invoke("openwork:updater:installAndRestart");
+      return ipcRenderer.invoke("jugglework:updater:installAndRestart");
     },
     /** Subscribe to incremental download progress from electron-updater. */
     onDownloadProgress(callback) {
       const handler = (_event, data) => callback(data);
-      ipcRenderer.on("openwork:updater:download-progress", handler);
+      ipcRenderer.on("jugglework:updater:download-progress", handler);
       return () => {
-        ipcRenderer.removeListener("openwork:updater:download-progress", handler);
+        ipcRenderer.removeListener("jugglework:updater:download-progress", handler);
       };
     },
   },
   browser: {
-    show(bounds) { return ipcRenderer.invoke("openwork:browser:show", bounds); },
-    hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
-    openUrl(url, provider) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider); },
-    navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
-    back() { return ipcRenderer.invoke("openwork:browser:back"); },
-    forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
-    reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
-    setBounds(bounds) { return ipcRenderer.invoke("openwork:browser:bounds", bounds); },
-    getState() { return ipcRenderer.invoke("openwork:browser:state"); },
-    createTab(url) { return ipcRenderer.invoke("openwork:browser:createTab", url); },
-    closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
-    closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
-    selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
-    reorderTabs(tabIds) { return ipcRenderer.invoke("openwork:browser:reorderTabs", tabIds); },
-    listTabs() { return ipcRenderer.invoke("openwork:browser:listTabs"); },
-    setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
-    getProxy() { return ipcRenderer.invoke("openwork:browser:getProxy"); },
-    showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
-    destroy() { return ipcRenderer.invoke("openwork:browser:destroy"); },
+    show(bounds) { return ipcRenderer.invoke("jugglework:browser:show", bounds); },
+    hide() { return ipcRenderer.invoke("jugglework:browser:hide"); },
+    openUrl(url, provider) { return ipcRenderer.invoke("jugglework:browser:openUrl", url, provider); },
+    navigate(url) { return ipcRenderer.invoke("jugglework:browser:navigate", url); },
+    back() { return ipcRenderer.invoke("jugglework:browser:back"); },
+    forward() { return ipcRenderer.invoke("jugglework:browser:forward"); },
+    reload() { return ipcRenderer.invoke("jugglework:browser:reload"); },
+    setBounds(bounds) { return ipcRenderer.invoke("jugglework:browser:bounds", bounds); },
+    getState() { return ipcRenderer.invoke("jugglework:browser:state"); },
+    createTab(url) { return ipcRenderer.invoke("jugglework:browser:createTab", url); },
+    closeTab(tabId) { return ipcRenderer.invoke("jugglework:browser:closeTab", tabId); },
+    closeAllTabs() { return ipcRenderer.invoke("jugglework:browser:closeAllTabs"); },
+    selectTab(tabId) { return ipcRenderer.invoke("jugglework:browser:selectTab", tabId); },
+    reorderTabs(tabIds) { return ipcRenderer.invoke("jugglework:browser:reorderTabs", tabIds); },
+    listTabs() { return ipcRenderer.invoke("jugglework:browser:listTabs"); },
+    setProxy(proxy) { return ipcRenderer.invoke("jugglework:browser:setProxy", proxy); },
+    getProxy() { return ipcRenderer.invoke("jugglework:browser:getProxy"); },
+    showTabContextMenu(tabId, point) { return ipcRenderer.invoke("jugglework:browser:tabContextMenu", tabId, point); },
+    destroy() { return ipcRenderer.invoke("jugglework:browser:destroy"); },
     onStateChange(callback) {
       const handler = (_event, state) => callback(state);
-      ipcRenderer.on("openwork:browser:state", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:state", handler);
+      ipcRenderer.on("jugglework:browser:state", handler);
+      return () => ipcRenderer.removeListener("jugglework:browser:state", handler);
     },
     onPanelOpened(callback) {
       const handler = () => callback();
-      ipcRenderer.on("openwork:browser:panel-opened", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:panel-opened", handler);
+      ipcRenderer.on("jugglework:browser:panel-opened", handler);
+      return () => ipcRenderer.removeListener("jugglework:browser:panel-opened", handler);
     },
     onPanelClosed(callback) {
       const handler = () => callback();
-      ipcRenderer.on("openwork:browser:panel-closed", handler);
-      return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
+      ipcRenderer.on("jugglework:browser:panel-closed", handler);
+      return () => ipcRenderer.removeListener("jugglework:browser:panel-closed", handler);
     },
   },
   terminal: {
-    create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },
-    write(terminalId, data) { return ipcRenderer.invoke("openwork:terminal:write", terminalId, data); },
-    resize(terminalId, cols, rows) { return ipcRenderer.invoke("openwork:terminal:resize", terminalId, cols, rows); },
-    kill(terminalId) { return ipcRenderer.invoke("openwork:terminal:kill", terminalId); },
+    create(options) { return ipcRenderer.invoke("jugglework:terminal:create", options); },
+    write(terminalId, data) { return ipcRenderer.invoke("jugglework:terminal:write", terminalId, data); },
+    resize(terminalId, cols, rows) { return ipcRenderer.invoke("jugglework:terminal:resize", terminalId, cols, rows); },
+    kill(terminalId) { return ipcRenderer.invoke("jugglework:terminal:kill", terminalId); },
     onData(callback) {
       const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("openwork:terminal:data", handler);
-      return () => ipcRenderer.removeListener("openwork:terminal:data", handler);
+      ipcRenderer.on("jugglework:terminal:data", handler);
+      return () => ipcRenderer.removeListener("jugglework:terminal:data", handler);
     },
     onExit(callback) {
       const handler = (_event, payload) => callback(payload);
-      ipcRenderer.on("openwork:terminal:exit", handler);
-      return () => ipcRenderer.removeListener("openwork:terminal:exit", handler);
+      ipcRenderer.on("jugglework:terminal:exit", handler);
+      return () => ipcRenderer.removeListener("jugglework:terminal:exit", handler);
     },
   },
   meta: {

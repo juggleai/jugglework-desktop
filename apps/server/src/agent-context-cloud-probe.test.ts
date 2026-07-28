@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
-  probeOpenworkCloudCatalog,
+  probeJuggleWorkCloudCatalog,
   type CloudCatalogProbeCode,
   type CloudCatalogProbeFetch,
-  type ProbeOpenworkCloudCatalogInput,
+  type ProbeJuggleWorkCloudCatalogInput,
 } from "./agent-context-cloud-probe.js";
 
 const TOKEN = "Bearer ow_diagnostics_token_abcdefghijklmnopqrstuvwxyz";
-const ENDPOINT = "https://app.openworklabs.com/api/den/mcp/agent";
+const ENDPOINT = "https://work.juggle.im/api/den/mcp/agent";
 const SESSION_ID = "diagnostics-session-id";
 const PROTOCOL_VERSION = "2025-06-18";
 
-function input(overrides: Partial<ProbeOpenworkCloudCatalogInput> = {}): ProbeOpenworkCloudCatalogInput {
+function input(overrides: Partial<ProbeJuggleWorkCloudCatalogInput> = {}): ProbeJuggleWorkCloudCatalogInput {
   const { fetchImpl, ...values } = overrides;
   return {
     workspaceId: "ws_diagnostics",
@@ -74,7 +74,7 @@ function requestPayload(init?: RequestInit): Record<string, unknown> {
 function initializeResponse(extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify({
     jsonrpc: "2.0",
-    id: "openwork-agent-diagnostics-initialize",
+    id: "jugglework-agent-diagnostics-initialize",
     result: {
       capabilities: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -110,7 +110,7 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 afterEach(() => {
-  delete process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS;
+  delete process.env.JUGGLEWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS;
 });
 
 describe("JuggleWork Cloud catalog probe", () => {
@@ -139,11 +139,11 @@ describe("JuggleWork Cloud catalog probe", () => {
       if (isInitialize) {
         expect(body).toEqual({
           jsonrpc: "2.0",
-          id: "openwork-agent-diagnostics-initialize",
+          id: "jugglework-agent-diagnostics-initialize",
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "openwork-server-agent-context-diagnostics", version: "1.0.0" },
+            clientInfo: { name: "jugglework-server-agent-context-diagnostics", version: "1.0.0" },
             protocolVersion: PROTOCOL_VERSION,
           },
         });
@@ -166,7 +166,7 @@ describe("JuggleWork Cloud catalog probe", () => {
 
     const probeInput = input();
     probeInput.fetchImpl = fetchImpl;
-    const observed = await probeOpenworkCloudCatalog(probeInput);
+    const observed = await probeJuggleWorkCloudCatalog(probeInput);
     expect(calls).toBe(3);
     expect(observed).toEqual({
       performed: true,
@@ -185,7 +185,7 @@ describe("JuggleWork Cloud catalog probe", () => {
   });
 
   test("accepts a finite JSON tools/list response", async () => {
-    const observed = await probeOpenworkCloudCatalog(input({
+    const observed = await probeJuggleWorkCloudCatalog(input({
       requestId: "json-request",
       fetchImpl: async () => jsonResponse("json-request"),
     }));
@@ -201,7 +201,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       ["reflected-tool", ["search_capabilities", "execute_capability", reflectedCredential]],
     ] as const;
     for (const [requestId, toolIds] of cases) {
-      const observed = await probeOpenworkCloudCatalog(input({
+      const observed = await probeJuggleWorkCloudCatalog(input({
         requestId,
         fetchImpl: async () => jsonResponse(requestId, [...toolIds]),
       }));
@@ -216,7 +216,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       expect(JSON.stringify(observed)).not.toContain("provider_extra");
     }
 
-    const reversed = await probeOpenworkCloudCatalog(input({
+    const reversed = await probeJuggleWorkCloudCatalog(input({
       requestId: "reversed-canonical-catalog",
       fetchImpl: async () => jsonResponse("reversed-canonical-catalog", ["execute_capability", "search_capabilities"]),
     }));
@@ -233,7 +233,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       calls += 1;
       return jsonResponse("unused");
     };
-    const cases: Array<[Partial<ProbeOpenworkCloudCatalogInput>, CloudCatalogProbeCode]> = [
+    const cases: Array<[Partial<ProbeJuggleWorkCloudCatalogInput>, CloudCatalogProbeCode]> = [
       [{ workspaceType: "remote" }, "remote_workspace_unavailable"],
       [{ runtimeConfigAvailable: false }, "runtime_config_unavailable"],
       [{ registrationStatus: "failed" }, "registration_failed"],
@@ -248,15 +248,15 @@ describe("JuggleWork Cloud catalog probe", () => {
       [{ toolPolicyStatus: "denied" }, "cloud_tool_policy_denied"],
       [{ toolPolicyProvenance: "passive-static-subset" }, "cloud_tool_policy_unavailable"],
       [{ toolPolicyProvenance: "unavailable" }, "cloud_tool_policy_unavailable"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "https://app.openworklabs.com/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
-      [{ config: { type: "remote", enabled: true, url: "http://app.openworklabs.com/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://work.juggle.im/api/den/mcp/agent?token=secret", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://work.juggle.im/api/den/mcp/agent/", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://work.juggle.im/api/den/mcp/agent/status", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "https://work.juggle.im/api/den/mcp/agentish", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
+      [{ config: { type: "remote", enabled: true, url: "http://work.juggle.im/mcp/agent", headers: { Authorization: TOKEN } } }, "invalid_endpoint"],
       [{ config: { type: "remote", enabled: true, url: "https://localhost.evil/mcp/agent", headers: { Authorization: TOKEN } } }, "untrusted_endpoint"],
     ];
     for (const [overrides, code] of cases) {
-      const blocked = await probeOpenworkCloudCatalog(input({ ...overrides, fetchImpl }));
+      const blocked = await probeJuggleWorkCloudCatalog(input({ ...overrides, fetchImpl }));
       expect(blocked.performed).toBe(false);
       expect(blocked.code).toBe(code);
     }
@@ -264,7 +264,7 @@ describe("JuggleWork Cloud catalog probe", () => {
   });
 
   test("allows exact loopback and explicitly configured HTTPS origins only", async () => {
-    const loopback = await probeOpenworkCloudCatalog(input({
+    const loopback = await probeJuggleWorkCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -276,8 +276,8 @@ describe("JuggleWork Cloud catalog probe", () => {
     }));
     expect(loopback.status).toBe("observed");
 
-    process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS = "https://den.customer.example";
-    const trusted = await probeOpenworkCloudCatalog(input({
+    process.env.JUGGLEWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS = "https://den.customer.example";
+    const trusted = await probeJuggleWorkCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -296,7 +296,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       calls += 1;
       return jsonResponse("unused");
     };
-    const duplicate = await probeOpenworkCloudCatalog(input({
+    const duplicate = await probeJuggleWorkCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -307,7 +307,7 @@ describe("JuggleWork Cloud catalog probe", () => {
     }));
     expect(duplicate.code).toBe("duplicate_authorization");
 
-    const injected = await probeOpenworkCloudCatalog(input({
+    const injected = await probeJuggleWorkCloudCatalog(input({
       config: {
         type: "remote",
         enabled: true,
@@ -321,7 +321,7 @@ describe("JuggleWork Cloud catalog probe", () => {
   });
 
   test("rejects redirects and cancels a response that exceeds 64 KiB", async () => {
-    const redirected = await probeOpenworkCloudCatalog(input({
+    const redirected = await probeJuggleWorkCloudCatalog(input({
       requestId: "redirect-request",
       fetchImpl: async () => new Response(null, { status: 302, headers: { location: "https://evil.example/mcp/agent" } }),
     }));
@@ -339,7 +339,7 @@ describe("JuggleWork Cloud catalog probe", () => {
         cancelled = true;
       },
     });
-    const tooLarge = await probeOpenworkCloudCatalog(input({
+    const tooLarge = await probeJuggleWorkCloudCatalog(input({
       requestId: "large-request",
       fetchImpl: async () => new Response(oversized, { headers: { "content-type": "text/event-stream" } }),
     }));
@@ -367,7 +367,7 @@ describe("JuggleWork Cloud catalog probe", () => {
     });
     redirectTarget = `http://127.0.0.1:${server.port}/redirect-target/mcp/agent`;
     try {
-      const redirected = await probeOpenworkCloudCatalog(input({
+      const redirected = await probeJuggleWorkCloudCatalog(input({
         workspaceId: "ws_real_redirect",
         requestId: "real-redirect",
         config: {
@@ -401,7 +401,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       },
     });
     const startedAt = Date.now();
-    const timedOut = await probeOpenworkCloudCatalog(input({
+    const timedOut = await probeJuggleWorkCloudCatalog(input({
       requestId: "stalled-body-request",
       timeoutMs: 15,
       fetchImpl: async () => new Response(stalled, {
@@ -420,7 +420,7 @@ describe("JuggleWork Cloud catalog probe", () => {
   });
 
   test("classifies abort-aware fetch and body failures as deadline timeouts", async () => {
-    const fetchTimedOut = await probeOpenworkCloudCatalog(input({
+    const fetchTimedOut = await probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_abort_aware_fetch",
       requestId: "abort-aware-fetch",
       timeoutMs: 15,
@@ -437,7 +437,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       httpStatus: null,
     });
 
-    const bodyTimedOut = await probeOpenworkCloudCatalog(input({
+    const bodyTimedOut = await probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_abort_aware_body",
       requestId: "abort-aware-body",
       timeoutMs: 15,
@@ -470,7 +470,7 @@ describe("JuggleWork Cloud catalog probe", () => {
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
-    const cancelled = await probeOpenworkCloudCatalog(input({
+    const cancelled = await probeJuggleWorkCloudCatalog(input({
       signal: controller.signal,
       fetchImpl: async () => {
         calls += 1;
@@ -493,7 +493,7 @@ describe("JuggleWork Cloud catalog probe", () => {
     const fetchStarted = new Promise<void>((resolve) => {
       markFetchStarted = resolve;
     });
-    const pending = probeOpenworkCloudCatalog(input({
+    const pending = probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_parent_abort_fetch",
       requestId: "parent-abort-fetch",
       signal: controller.signal,
@@ -531,7 +531,7 @@ describe("JuggleWork Cloud catalog probe", () => {
         cancelled = true;
       },
     }, { highWaterMark: 0 });
-    const pending = probeOpenworkCloudCatalog(input({
+    const pending = probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_parent_abort_body",
       requestId: "parent-abort-body",
       signal: controller.signal,
@@ -562,7 +562,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       ["unsafe", payload("unsafe", ["search_capabilities\r\nspoof"]), "invalid_catalog"],
     ];
     for (const [requestId, body, code] of cases) {
-      const observed = await probeOpenworkCloudCatalog(input({
+      const observed = await probeJuggleWorkCloudCatalog(input({
         workspaceId: `ws_${requestId}`,
         requestId,
         fetchImpl: async () => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
@@ -581,8 +581,8 @@ describe("JuggleWork Cloud catalog probe", () => {
       const requestId = JSON.parse(String(init?.body)).id as string;
       return new Promise<Response>((resolve) => deferred.push({ requestId, release: resolve }));
     };
-    const first = probeOpenworkCloudCatalog(input({ requestId: "single-flight-one", fetchImpl }));
-    const joined = probeOpenworkCloudCatalog(input({ requestId: "single-flight-two", fetchImpl }));
+    const first = probeJuggleWorkCloudCatalog(input({ requestId: "single-flight-one", fetchImpl }));
+    const joined = probeJuggleWorkCloudCatalog(input({ requestId: "single-flight-two", fetchImpl }));
     await waitUntil(() => calls === 2 && deferred.length === 2);
     expect(calls).toBe(2);
     expect(deferred).toHaveLength(2);
@@ -590,7 +590,7 @@ describe("JuggleWork Cloud catalog probe", () => {
     expect((await first).status).toBe("observed");
     expect((await joined).status).toBe("observed");
 
-    const afterSettlement = await probeOpenworkCloudCatalog(input({
+    const afterSettlement = await probeJuggleWorkCloudCatalog(input({
       requestId: "single-flight-three",
       fetchImpl: async () => {
         calls += 1;
@@ -607,19 +607,19 @@ describe("JuggleWork Cloud catalog probe", () => {
       const requestId = JSON.parse(String(init?.body)).id as string;
       return new Promise<Response>((resolve) => pending.push({ requestId, resolve }));
     };
-    const active = Array.from({ length: 16 }, (_, index) => probeOpenworkCloudCatalog(input({
+    const active = Array.from({ length: 16 }, (_, index) => probeJuggleWorkCloudCatalog(input({
       workspaceId: `ws_busy_${index}`,
       requestId: `busy-${index}`,
       fetchImpl,
     })));
     await waitUntil(() => pending.length === 16);
     expect(pending).toHaveLength(16);
-    const sameFingerprintBusy = await probeOpenworkCloudCatalog(input({
+    const sameFingerprintBusy = await probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_busy_0",
       requestId: "busy-joined",
       fetchImpl,
     }));
-    const busy = await probeOpenworkCloudCatalog(input({
+    const busy = await probeJuggleWorkCloudCatalog(input({
       workspaceId: "ws_busy_overflow",
       requestId: "busy-overflow",
       fetchImpl,
@@ -631,7 +631,7 @@ describe("JuggleWork Cloud catalog probe", () => {
   });
 
   test("returns only a safe network code when fetch throws a secret-bearing error", async () => {
-    const failed = await probeOpenworkCloudCatalog(input({
+    const failed = await probeJuggleWorkCloudCatalog(input({
       fetchImpl: async () => { throw new Error(`Bearer hidden ${ENDPOINT}?token=private /Users/private/file`); },
     }));
     expect(failed).toMatchObject({ performed: true, status: "failed", code: "network_error", httpStatus: null });
@@ -650,7 +650,7 @@ describe("JuggleWork Cloud catalog probe", () => {
       ["ERR_PROXY_AUTH_FAILED", "proxy_error"],
     ] as const;
     for (const [causeCode, expectedCode] of cases) {
-      const failed = await probeOpenworkCloudCatalog(input({
+      const failed = await probeJuggleWorkCloudCatalog(input({
         requestId: `network-${expectedCode}`,
         fetchImpl: async () => {
           throw new Error("RAW_NETWORK_SECRET", { cause: { code: causeCode } });

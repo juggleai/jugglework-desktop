@@ -4,24 +4,24 @@ import { useEffect } from "react";
 import {
   engineInfo,
   engineStart,
-  openworkServerInfo,
-  openworkServerRestart,
+  juggleworkServerInfo,
+  juggleworkServerRestart,
   resolveWorkspaceListSelectedId,
   runtimeBootstrap,
   workspaceBootstrap,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
   type EngineInfo,
-  type OpenworkServerInfo,
+  type JuggleWorkServerInfo,
   type WorkspaceInfo,
   type WorkspaceList,
 } from "../../app/lib/desktop";
 import { ingestMigrationSnapshotOnElectronBoot } from "../../app/lib/migration";
 import {
-  hydrateOpenworkServerSettingsFromEnv,
-  readOpenworkServerSettings,
-  writeOpenworkServerSettings,
-} from "../../app/lib/openwork-server";
+  hydrateJuggleWorkServerSettingsFromEnv,
+  readJuggleWorkServerSettings,
+  writeJuggleWorkServerSettings,
+} from "../../app/lib/jugglework-server";
 import { isDesktopRuntime, isElectronRuntime, safeStringify } from "../../app/utils";
 import { useServer } from "../kernel/server-provider";
 import { useBootState } from "./boot-state";
@@ -31,7 +31,7 @@ import { useBootState } from "./boot-state";
 // keeps running across the transient unmount.
 let BOOT_STARTED = false;
 
-type BootOpenworkServerInfo = {
+type BootJuggleWorkServerInfo = {
   running?: boolean | null;
   baseUrl?: string | null;
   ownerToken?: string | null;
@@ -41,11 +41,11 @@ type BootOpenworkServerInfo = {
   remoteAccessEnabled?: boolean;
 };
 
-function isOpenworkServerInfoLike(info: unknown): info is BootOpenworkServerInfo {
+function isJuggleWorkServerInfoLike(info: unknown): info is BootJuggleWorkServerInfo {
   return typeof info === "object" && info !== null;
 }
 
-function isOpenworkServerReady(info?: BootOpenworkServerInfo) {
+function isJuggleWorkServerReady(info?: BootJuggleWorkServerInfo) {
   return Boolean(
     info?.running === true &&
       info.baseUrl?.trim() &&
@@ -92,12 +92,12 @@ export function useDesktopRuntimeBoot() {
             console.info(`[migration] hydrated ${hydrated} localStorage keys from Tauri snapshot`);
           }
         }
-        hydrateOpenworkServerSettingsFromEnv();
-        const preferredRemoteAccess = readOpenworkServerSettings().remoteAccessEnabled === true;
+        hydrateJuggleWorkServerSettingsFromEnv();
+        const preferredRemoteAccess = readJuggleWorkServerSettings().remoteAccessEnabled === true;
 
-        const publishOpenworkServerInfo = (serverInfo: BootOpenworkServerInfo | null | undefined) => {
+        const publishJuggleWorkServerInfo = (serverInfo: BootJuggleWorkServerInfo | null | undefined) => {
           if (!serverInfo?.baseUrl) return;
-          writeOpenworkServerSettings({
+          writeJuggleWorkServerSettings({
             urlOverride: serverInfo.baseUrl,
             token:
               serverInfo.ownerToken?.trim() ||
@@ -108,7 +108,7 @@ export function useDesktopRuntimeBoot() {
             remoteAccessEnabled: serverInfo.remoteAccessEnabled === true,
           });
           try {
-            window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+            window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
           } catch {
             /* ignore */
           }
@@ -116,15 +116,15 @@ export function useDesktopRuntimeBoot() {
 
         const startServerWithoutDesktopWorkspace = async () => {
           setPhase("starting-engine", "Starting JuggleWork server");
-          const serverInfo = await openworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
-            console.warn("[desktop-boot] openworkServerRestart failed:", error);
+          const serverInfo = await juggleworkServerRestart({ remoteAccessEnabled: preferredRemoteAccess }).catch((error) => {
+            console.warn("[desktop-boot] juggleworkServerRestart failed:", error);
             return null;
           });
-          if (!isOpenworkServerInfoLike(serverInfo) || !isOpenworkServerReady(serverInfo)) {
+          if (!isJuggleWorkServerInfoLike(serverInfo) || !isJuggleWorkServerReady(serverInfo)) {
             setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
             return;
           }
-          publishOpenworkServerInfo(serverInfo);
+          publishJuggleWorkServerInfo(serverInfo);
           markReady();
         };
 
@@ -160,7 +160,7 @@ export function useDesktopRuntimeBoot() {
             skipped?: boolean;
             error?: string;
             engine?: { baseUrl?: string | null };
-            openworkServer?: BootOpenworkServerInfo;
+            juggleworkServer?: BootJuggleWorkServerInfo;
           };
 
           if (boot.ok === false) {
@@ -168,7 +168,7 @@ export function useDesktopRuntimeBoot() {
             return;
           }
 
-          if (!boot.skipped && !isOpenworkServerReady(boot.openworkServer)) {
+          if (!boot.skipped && !isJuggleWorkServerReady(boot.juggleworkServer)) {
             setError("JuggleWork server did not finish starting. Please restart JuggleWork.");
             return;
           }
@@ -176,31 +176,31 @@ export function useDesktopRuntimeBoot() {
           if (boot.engine?.baseUrl) {
             setActive(boot.engine.baseUrl);
           }
-          let serverInfo = boot.openworkServer;
+          let serverInfo = boot.juggleworkServer;
           if (preferredRemoteAccess && serverInfo?.remoteAccessEnabled !== true) {
-            const restarted = await openworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
-              console.warn("[desktop-boot] openworkServerRestart failed:", error);
+            const restarted = await juggleworkServerRestart({ remoteAccessEnabled: true }).catch((error) => {
+              console.warn("[desktop-boot] juggleworkServerRestart failed:", error);
               return null;
             });
-            if (isOpenworkServerInfoLike(restarted)) serverInfo = restarted;
+            if (isJuggleWorkServerInfoLike(restarted)) serverInfo = restarted;
           }
-          publishOpenworkServerInfo(serverInfo);
+          publishJuggleWorkServerInfo(serverInfo);
           markReady();
           return;
         }
 
         // FAST PATH ─────────────────────────────────────────────────────
         // Cheap status probe: if engine is already running just publish the
-        // current openwork-server base URL + token and finish in <1s.
+        // current jugglework-server base URL + token and finish in <1s.
         // This mirrors Solid's bootstrap at context/workspace.ts:3883-3907
         // ("localAttachExisting"), which never restarts a running stack.
         try {
           const engine = await engineInfo() as EngineInfo | null;
           if (engine?.running && engine.baseUrl) {
             setActive(engine.baseUrl);
-            const fresh = await openworkServerInfo().catch(() => null) as OpenworkServerInfo | null;
+            const fresh = await juggleworkServerInfo().catch(() => null) as JuggleWorkServerInfo | null;
             if (fresh?.baseUrl) {
-              writeOpenworkServerSettings({
+              writeJuggleWorkServerSettings({
                 urlOverride: fresh.baseUrl,
                 token:
                   fresh.ownerToken?.trim() ||
@@ -212,7 +212,7 @@ export function useDesktopRuntimeBoot() {
               });
               try {
                 window.dispatchEvent(
-                  new CustomEvent("openwork-server-settings-changed"),
+                  new CustomEvent("jugglework-server-settings-changed"),
                 );
               } catch {
                 /* ignore */
@@ -227,7 +227,7 @@ export function useDesktopRuntimeBoot() {
 
         // SLOW PATH ─────────────────────────────────────────────────────
         // No running engine. Tauri now mirrors Electron: engine_start boots
-        // openwork-server and lets that server manage OpenCode.
+        // jugglework-server and lets that server manage OpenCode.
         const localPaths = list.workspaces.flatMap((entry: WorkspaceInfo) => {
           const path = entry.workspaceType !== "remote" ? entry.path?.trim() ?? "" : "";
           return path ? [path] : [];
@@ -247,7 +247,7 @@ export function useDesktopRuntimeBoot() {
         let engineStartResult = await engineStart(workspaceRoot, {
           runtime: "direct",
           workspacePaths: workspacePathsFor(workspaceRoot),
-          openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+          juggleworkRemoteAccess: readJuggleWorkServerSettings().remoteAccessEnabled === true,
         }).catch((error) => {
           console.warn("[desktop-boot] engineStart failed:", error);
           return null;
@@ -268,7 +268,7 @@ export function useDesktopRuntimeBoot() {
             engineStartResult = await engineStart(fallbackRoot, {
               runtime: "direct",
               workspacePaths: workspacePathsFor(fallbackRoot).filter((path) => path !== workspaceRoot),
-              openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
+              juggleworkRemoteAccess: readJuggleWorkServerSettings().remoteAccessEnabled === true,
             }).catch((error) => {
               console.warn("[desktop-boot] fallback engineStart failed:", error);
               setError(error instanceof Error ? error.message : safeStringify(error));
@@ -288,9 +288,9 @@ export function useDesktopRuntimeBoot() {
             setActive(engineStartResult.baseUrl);
           }
           try {
-            const freshInfo = await openworkServerInfo() as OpenworkServerInfo | null;
+            const freshInfo = await juggleworkServerInfo() as JuggleWorkServerInfo | null;
             if (freshInfo?.baseUrl) {
-              writeOpenworkServerSettings({
+              writeJuggleWorkServerSettings({
                 urlOverride: freshInfo.baseUrl,
                 token:
                   freshInfo.ownerToken?.trim() ||
@@ -301,13 +301,13 @@ export function useDesktopRuntimeBoot() {
                 remoteAccessEnabled: freshInfo.remoteAccessEnabled === true,
               });
               try {
-                window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+                window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
               } catch {
                 /* ignore */
               }
             }
           } catch (error) {
-            console.warn("[desktop-boot] post-engineStart openworkServerInfo failed:", error);
+            console.warn("[desktop-boot] post-engineStart juggleworkServerInfo failed:", error);
           }
         }
 

@@ -14,10 +14,10 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "@/i18n";
 import type {
-  OpenworkServerCapabilities,
-  OpenworkServerClient,
-  OpenworkServerStatus,
-} from "../../../../app/lib/openwork-server";
+  JuggleWorkServerCapabilities,
+  JuggleWorkServerClient,
+  JuggleWorkServerStatus,
+} from "../../../../app/lib/jugglework-server";
 import { pickDirectory } from "../../../../app/lib/desktop";
 import {
   isDesktopRuntime,
@@ -41,9 +41,9 @@ import {
 } from "../settings-layout";
 
 export type AuthorizedFoldersPanelProps = {
-  openworkServerClient: OpenworkServerClient | null;
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerCapabilities: OpenworkServerCapabilities | null;
+  juggleworkServerClient: JuggleWorkServerClient | null;
+  juggleworkServerStatus: JuggleWorkServerStatus;
+  juggleworkServerCapabilities: JuggleWorkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   activeWorkspaceType: "local" | "remote";
@@ -132,24 +132,24 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "status", value });
   const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "error", value });
 
-  const openworkServerReady = props.openworkServerStatus === "connected";
-  const openworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
+  const juggleworkServerReady = props.juggleworkServerStatus === "connected";
+  const juggleworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
   const canReadConfig =
-    openworkServerReady &&
-    openworkServerWorkspaceReady &&
-    (props.openworkServerCapabilities?.config?.read ?? false);
+    juggleworkServerReady &&
+    juggleworkServerWorkspaceReady &&
+    (props.juggleworkServerCapabilities?.config?.read ?? false);
   const canWriteConfig =
-    openworkServerReady &&
-    openworkServerWorkspaceReady &&
-    (props.openworkServerCapabilities?.config?.write ?? false);
+    juggleworkServerReady &&
+    juggleworkServerWorkspaceReady &&
+    (props.juggleworkServerCapabilities?.config?.write ?? false);
 
   const authorizedFoldersHint = useMemo(() => {
-    if (!openworkServerReady) return t("context_panel.server_disconnected");
-    if (!openworkServerWorkspaceReady) return t("context_panel.no_server_workspace");
+    if (!juggleworkServerReady) return t("context_panel.server_disconnected");
+    if (!juggleworkServerWorkspaceReady) return t("context_panel.no_server_workspace");
     if (!canReadConfig) return t("context_panel.config_access_unavailable");
     if (!canWriteConfig) return t("context_panel.config_read_only");
     return null;
-  }, [canReadConfig, canWriteConfig, openworkServerReady, openworkServerWorkspaceReady]);
+  }, [canReadConfig, canWriteConfig, juggleworkServerReady, juggleworkServerWorkspaceReady]);
 
   const canPickAuthorizedFolder =
     isDesktopRuntime() && canWriteConfig && props.activeWorkspaceType === "local";
@@ -160,10 +160,10 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   }, [authorizedFolders, workspaceRootFolder]);
 
   useEffect(() => {
-    const openworkClient = props.openworkServerClient;
-    const openworkWorkspaceId = props.runtimeWorkspaceId;
+    const juggleworkClient = props.juggleworkServerClient;
+    const juggleworkWorkspaceId = props.runtimeWorkspaceId;
 
-    if (!openworkClient || !openworkWorkspaceId || !canReadConfig) {
+    if (!juggleworkClient || !juggleworkWorkspaceId || !canReadConfig) {
       setServerWorkspaceRoot("");
       dispatchFolderState({ type: "reset" });
       return;
@@ -174,7 +174,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
 
     void (async () => {
       try {
-        const response = await openworkClient.listAuthorizedFolders(openworkWorkspaceId);
+        const response = await juggleworkClient.listAuthorizedFolders(juggleworkWorkspaceId);
         if (cancelled) return;
         setServerWorkspaceRoot(response.workspaceRoot.trim());
         dispatchFolderState({
@@ -194,12 +194,12 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [canReadConfig, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canReadConfig, props.juggleworkServerClient, props.runtimeWorkspaceId]);
 
   const persistAuthorizedFolders = useCallback(async (nextFolders: string[]) => {
-    const openworkClient = props.openworkServerClient;
-    const openworkWorkspaceId = props.runtimeWorkspaceId;
-    if (!openworkClient || !openworkWorkspaceId || !canWriteConfig) {
+    const juggleworkClient = props.juggleworkServerClient;
+    const juggleworkWorkspaceId = props.runtimeWorkspaceId;
+    if (!juggleworkClient || !juggleworkWorkspaceId || !canWriteConfig) {
       setAuthorizedFoldersError(t("context_panel.writable_workspace_required"));
       return false;
     }
@@ -209,7 +209,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     setAuthorizedFoldersStatus(t("context_panel.saving_folders"));
 
     try {
-      const response = await openworkClient.setAuthorizedFolders(openworkWorkspaceId, nextFolders);
+      const response = await juggleworkClient.setAuthorizedFolders(juggleworkWorkspaceId, nextFolders);
       setAuthorizedFolders(response.folders);
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
@@ -227,7 +227,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     } finally {
       setAuthorizedFoldersSaving(false);
     }
-  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canWriteConfig, props.onConfigUpdated, props.juggleworkServerClient, props.runtimeWorkspaceId]);
 
   const removeAuthorizedFolder = useCallback(async (folder: string) => {
     const nextFolders = authorizedFolders.filter((entry) => entry !== folder);

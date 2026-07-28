@@ -4,11 +4,11 @@ const FLOW_ID = "cloud-mcp-submit-readiness";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 const ORIGINAL_PROMPT = "Search my connected services for the latest reliability report.";
 const EDITED_PROMPT = `${ORIGINAL_PROMPT} Keep this edit while tools are prepared.`;
-const SIGNED_OUT_PROMPT = "Run this local task while OpenWork Cloud is signed out.";
+const SIGNED_OUT_PROMPT = "Run this local task while JuggleWork Cloud is signed out.";
 const HEALTH_DELAY_MS = 8_000;
 const DEMO_EMAIL = "alex@acme.test";
-const DEMO_PASSWORD = "OpenWorkDemo123!";
-const EVAL_SESSION_TOKEN_KEY = "openwork.eval.cloudMcpSubmitReadiness.sessionToken";
+const DEMO_PASSWORD = "JuggleWorkDemo123!";
+const EVAL_SESSION_TOKEN_KEY = "jugglework.eval.cloudMcpSubmitReadiness.sessionToken";
 
 const state = {
   workspaceId: null,
@@ -37,7 +37,7 @@ async function serverFetchJson(path) {
   const response = await fetch(`http://127.0.0.1:${state.serverAuth.port}${path}`, {
     headers: {
       authorization: `Bearer ${state.serverAuth.token}`,
-      ...(state.serverAuth.hostToken ? { "x-openwork-host-token": state.serverAuth.hostToken } : {}),
+      ...(state.serverAuth.hostToken ? { "x-jugglework-host-token": state.serverAuth.hostToken } : {}),
     },
   });
   const text = await response.text();
@@ -57,7 +57,7 @@ async function waitForLiveCloudHealth(query) {
   const deadline = Date.now() + 60_000;
   let health = null;
   while (Date.now() < deadline) {
-    health = await serverFetchJson(`/workspace/${encodeURIComponent(state.workspaceId)}/mcp/openwork-cloud/health?${query.toString()}`);
+    health = await serverFetchJson(`/workspace/${encodeURIComponent(state.workspaceId)}/mcp/jugglework-cloud/health?${query.toString()}`);
     if (health.usable === true && health.engine?.status === "connected") return health;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
@@ -67,12 +67,12 @@ async function waitForLiveCloudHealth(query) {
 async function restorePriorEvalProbes(ctx) {
   await releaseSavedSessionRestore(ctx).catch(() => undefined);
   await ctx.eval(`(() => {
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__JUGGLEWORK_ELECTRON__;
     const reliability = window.__cloudMcpReliabilityProbe;
     if (reliability?.retryTimer) window.clearInterval(reliability.retryTimer);
     if (bridge && reliability?.originalInvoke) bridge.invokeDesktop = reliability.originalInvoke;
-    localStorage.removeItem("openwork.eval.cloudMcpReliability.guard");
-    localStorage.removeItem("openwork.eval.cloudMcpReliability.blockedDesktopFetches");
+    localStorage.removeItem("jugglework.eval.cloudMcpReliability.guard");
+    localStorage.removeItem("jugglework.eval.cloudMcpReliability.blockedDesktopFetches");
     delete window.__cloudMcpReliabilityProbe;
 
     const readiness = window.__cloudMcpSubmitReadinessProbe;
@@ -80,7 +80,7 @@ async function restorePriorEvalProbes(ctx) {
     if (readiness?.originalFetch) window.fetch = readiness.originalFetch;
     delete window.__cloudMcpSubmitReadinessProbe;
     const savedSessionToken = localStorage.getItem(${quoted(EVAL_SESSION_TOKEN_KEY)});
-    if (savedSessionToken) localStorage.setItem("openwork.den.authToken", savedSessionToken);
+    if (savedSessionToken) localStorage.setItem("jugglework.den.authToken", savedSessionToken);
     localStorage.removeItem(${quoted(EVAL_SESSION_TOKEN_KEY)});
     return true;
   })()`);
@@ -88,7 +88,7 @@ async function restorePriorEvalProbes(ctx) {
 
 async function installSubmissionProbe(ctx) {
   const result = await ctx.eval(`(() => {
-    const bridge = window.__OPENWORK_ELECTRON__;
+    const bridge = window.__JUGGLEWORK_ELECTRON__;
     if (!bridge?.invokeDesktop) return { ok: false, reason: "desktop bridge unavailable" };
     const originalInvoke = bridge.invokeDesktop.bind(bridge);
     const originalFetch = window.fetch.bind(window);
@@ -99,7 +99,7 @@ async function installSubmissionProbe(ctx) {
       delayMs: ${HEALTH_DELAY_MS},
     };
     const delayHealth = async (url, method, channel) => {
-      if (method !== "GET" || !url.includes("/mcp/openwork-cloud/health")) return;
+      if (method !== "GET" || !url.includes("/mcp/jugglework-cloud/health")) return;
       probe.healthCalls.push({ at: Date.now(), method, url, channel });
       await new Promise((resolve) => window.setTimeout(resolve, probe.delayMs));
     };
@@ -125,11 +125,11 @@ async function installSubmissionProbe(ctx) {
 }
 
 async function dismissModelUpsells(ctx) {
-  if (await ctx.hasText("Use OpenWork Models without API keys")) {
-    await ctx.clickText("Continue without OpenWork Models", { selector: "button", timeoutMs: 15_000 });
-    await ctx.waitFor("!document.body.innerText.includes('Use OpenWork Models without API keys')", {
+  if (await ctx.hasText("Use JuggleWork Models without API keys")) {
+    await ctx.clickText("Continue without JuggleWork Models", { selector: "button", timeoutMs: 15_000 });
+    await ctx.waitFor("!document.body.innerText.includes('Use JuggleWork Models without API keys')", {
       timeoutMs: 15_000,
-      label: "OpenWork Models upsell dismissed",
+      label: "JuggleWork Models upsell dismissed",
     });
   }
   if (await ctx.hasText("Power your first task")) {
@@ -142,14 +142,14 @@ async function dismissModelUpsells(ctx) {
 }
 
 async function beginSavedSessionRestore(ctx) {
-  const held = await fetch(`${ctx.env.OPENWORK_EVAL_DEN_API_URL.replace(/\/+$/, "")}/__openwork_eval/auth-delay?action=hold`, {
+  const held = await fetch(`${ctx.env.JUGGLEWORK_EVAL_DEN_API_URL.replace(/\/+$/, "")}/__jugglework_eval/auth-delay?action=hold`, {
     method: "POST",
   });
   ctx.assert(held.ok, `The eval auth-delay control is unavailable (${held.status}).`);
-  const result = await ctx.eval("Boolean((localStorage.getItem('openwork.den.authToken') || '').trim())");
+  const result = await ctx.eval("Boolean((localStorage.getItem('jugglework.den.authToken') || '').trim())");
   witness(ctx, result === true, "The live desktop begins restoring its saved Cloud session.", result);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", {
     timeoutMs: 60_000,
     label: "control API while saved Cloud session validation is paused",
   });
@@ -160,7 +160,7 @@ async function beginSavedSessionRestore(ctx) {
     const status = await readAuthDelay(ctx);
     if (status.calls >= 1 && status.pending === status.calls) {
       await ctx.waitFor(
-        "window.__openworkControl?.listActions?.().some((action) => action.id === 'composer.set_text' && !action.disabled)",
+        "window.__juggleworkControl?.listActions?.().some((action) => action.id === 'composer.set_text' && !action.disabled)",
         { timeoutMs: 15_000, label: "composer remains available during saved Cloud session validation" },
       );
       return;
@@ -171,34 +171,34 @@ async function beginSavedSessionRestore(ctx) {
 }
 
 async function releaseSavedSessionRestore(ctx) {
-  const baseUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL?.replace(/\/+$/, "") ?? "";
+  const baseUrl = ctx.env.JUGGLEWORK_EVAL_DEN_API_URL?.replace(/\/+$/, "") ?? "";
   if (!baseUrl) return;
-  const response = await fetch(`${baseUrl}/__openwork_eval/auth-delay?action=release`, {
+  const response = await fetch(`${baseUrl}/__jugglework_eval/auth-delay?action=release`, {
     method: "POST",
   });
   if (!response.ok) throw new Error(`The eval auth-delay release failed (${response.status}).`);
 }
 
 async function readAuthDelay(ctx) {
-  const response = await fetch(`${ctx.env.OPENWORK_EVAL_DEN_API_URL.replace(/\/+$/, "")}/__openwork_eval/auth-delay`);
+  const response = await fetch(`${ctx.env.JUGGLEWORK_EVAL_DEN_API_URL.replace(/\/+$/, "")}/__jugglework_eval/auth-delay`);
   if (!response.ok) throw new Error(`The eval auth-delay status failed (${response.status}).`);
   return response.json();
 }
 
 async function setSignedOutForSubmission(ctx) {
   await ctx.eval(`(async () => {
-    const token = (localStorage.getItem("openwork.den.authToken") || "").trim();
+    const token = (localStorage.getItem("jugglework.den.authToken") || "").trim();
     if (token) localStorage.setItem(${quoted(EVAL_SESSION_TOKEN_KEY)}, token);
-    localStorage.removeItem("openwork.den.authToken");
+    localStorage.removeItem("jugglework.den.authToken");
     return true;
   })()`, { awaitPromise: true });
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", {
     timeoutMs: 60_000,
     label: "control API after signed-out restart",
   });
   await ctx.waitFor(
-    "window.__openworkControl?.listActions?.().some((action) => action.id === 'composer.set_text' && !action.disabled)",
+    "window.__juggleworkControl?.listActions?.().some((action) => action.id === 'composer.set_text' && !action.disabled)",
     { timeoutMs: 15_000, label: "composer available after signed-out restart" },
   );
 }
@@ -206,13 +206,13 @@ async function setSignedOutForSubmission(ctx) {
 async function restoreSavedSession(ctx) {
   await ctx.eval(`(async () => {
     const token = localStorage.getItem(${quoted(EVAL_SESSION_TOKEN_KEY)});
-    if (token) localStorage.setItem("openwork.den.authToken", token);
+    if (token) localStorage.setItem("jugglework.den.authToken", token);
     localStorage.removeItem(${quoted(EVAL_SESSION_TOKEN_KEY)});
-    window.dispatchEvent(new CustomEvent("openwork-den-session-updated", {
+    window.dispatchEvent(new CustomEvent("jugglework-den-session-updated", {
       detail: { status: "success" },
     }));
     await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
-    return Boolean((localStorage.getItem("openwork.den.authToken") || "").trim());
+    return Boolean((localStorage.getItem("jugglework.den.authToken") || "").trim());
   })()`, { awaitPromise: true });
 }
 
@@ -249,7 +249,7 @@ async function readProbe(ctx) {
 
 async function transcriptCount(ctx) {
   const result = await ctx.eval(
-    "window.__openworkControl.execute('session.read_transcript', { count: 30 })",
+    "window.__juggleworkControl.execute('session.read_transcript', { count: 30 })",
     { awaitPromise: true },
   );
   if (result?.ok === true) return result.result?.messages?.length ?? 0;
@@ -262,7 +262,7 @@ async function createFreshTask(ctx) {
   let lastError = "unavailable";
   while (Date.now() < deadline) {
     const result = await ctx.eval(
-      "window.__openworkControl.execute('session.create_task', null)",
+      "window.__juggleworkControl.execute('session.create_task', null)",
       { awaitPromise: true },
     );
     if (result?.ok === true) return;
@@ -283,9 +283,9 @@ async function waitForTranscriptIncrease(ctx, before) {
 }
 
 async function ensureLocalCloudSession(ctx) {
-  const denBaseUrl = ctx.env.OPENWORK_EVAL_DEN_API_URL?.trim() ?? "";
-  const denOrigin = ctx.env.OPENWORK_EVAL_DEN_ORIGIN?.trim() || denBaseUrl;
-  let token = ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
+  const denBaseUrl = ctx.env.JUGGLEWORK_EVAL_DEN_API_URL?.trim() ?? "";
+  const denOrigin = ctx.env.JUGGLEWORK_EVAL_DEN_ORIGIN?.trim() || denBaseUrl;
+  let token = ctx.env.JUGGLEWORK_EVAL_DEN_TOKEN?.trim() ?? "";
   ctx.assert(denBaseUrl, "The isolated Den stack URL is missing.");
   if (!token) {
     const signIn = await fetch(`${denBaseUrl.replace(/\/+$/, "")}/api/auth/sign-in/email`, {
@@ -307,41 +307,41 @@ async function ensureLocalCloudSession(ctx) {
   const org = orgs.find((entry) => entry.id === payload.activeOrgId) ?? orgs[0];
   ctx.assert(org?.id, "The isolated Den demo session has no organization.");
   await ctx.eval(`(() => {
-    localStorage.setItem("openwork.den.baseUrl", ${quoted(denBaseUrl)});
-    localStorage.setItem("openwork.den.authToken", ${quoted(token)});
-    localStorage.setItem("openwork.den.activeOrgId", ${quoted(org.id)});
-    ${org.slug ? `localStorage.setItem("openwork.den.activeOrgSlug", ${quoted(org.slug)});` : "localStorage.removeItem(\"openwork.den.activeOrgSlug\");"}
-    ${org.name ? `localStorage.setItem("openwork.den.activeOrgName", ${quoted(org.name)});` : "localStorage.removeItem(\"openwork.den.activeOrgName\");"}
-    window.dispatchEvent(new CustomEvent("openwork-den-settings-changed"));
-    window.dispatchEvent(new CustomEvent("openwork-den-session-updated", {
+    localStorage.setItem("jugglework.den.baseUrl", ${quoted(denBaseUrl)});
+    localStorage.setItem("jugglework.den.authToken", ${quoted(token)});
+    localStorage.setItem("jugglework.den.activeOrgId", ${quoted(org.id)});
+    ${org.slug ? `localStorage.setItem("jugglework.den.activeOrgSlug", ${quoted(org.slug)});` : "localStorage.removeItem(\"jugglework.den.activeOrgSlug\");"}
+    ${org.name ? `localStorage.setItem("jugglework.den.activeOrgName", ${quoted(org.name)});` : "localStorage.removeItem(\"jugglework.den.activeOrgName\");"}
+    window.dispatchEvent(new CustomEvent("jugglework-den-settings-changed"));
+    window.dispatchEvent(new CustomEvent("jugglework-den-session-updated", {
       detail: { status: "success" },
     }));
     return true;
   })()`);
   await ctx.eval("location.reload()");
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", {
     timeoutMs: 60_000,
     label: "control API after isolated Cloud session restore",
   });
 }
 
 async function setup(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "control API" });
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs: 60_000, label: "control API" });
   await restorePriorEvalProbes(ctx);
   await ensureLocalCloudSession(ctx);
 
   const context = await ctx.eval(`(() => {
-    const prefs = JSON.parse(localStorage.getItem("openwork.preferences") || "{}");
+    const prefs = JSON.parse(localStorage.getItem("jugglework.preferences") || "{}");
     const hashWorkspace = (window.location.hash.match(new RegExp("/workspace/([^/]+)")) || [])[1] || "";
     return {
-      signedIn: Boolean((localStorage.getItem("openwork.den.authToken") || "").trim()),
-      orgId: (localStorage.getItem("openwork.den.activeOrgId") || "").trim(),
-      workspaceId: hashWorkspace || (localStorage.getItem("openwork.react.activeWorkspace") || "").trim(),
+      signedIn: Boolean((localStorage.getItem("jugglework.den.authToken") || "").trim()),
+      orgId: (localStorage.getItem("jugglework.den.activeOrgId") || "").trim(),
+      workspaceId: hashWorkspace || (localStorage.getItem("jugglework.react.activeWorkspace") || "").trim(),
       provider: prefs.defaultModel?.providerID || "",
       model: prefs.defaultModel?.modelID || "",
-      port: (localStorage.getItem("openwork.server.port") || "").trim(),
-      token: (localStorage.getItem("openwork.server.token") || "").trim(),
-      hostToken: (localStorage.getItem("openwork.server.hostToken") || "").trim(),
+      port: (localStorage.getItem("jugglework.server.port") || "").trim(),
+      token: (localStorage.getItem("jugglework.server.token") || "").trim(),
+      hostToken: (localStorage.getItem("jugglework.server.hostToken") || "").trim(),
     };
   })()`);
   ctx.assert(context.signedIn && context.orgId, "This flow requires a signed-in local Cloud demo organization.");
@@ -356,7 +356,7 @@ async function setup(ctx) {
       hasHostToken: Boolean(context.hostToken),
     })}`,
   );
-  ctx.assert(context.port && context.token, "OpenWork server credentials are unavailable in the isolated desktop.");
+  ctx.assert(context.port && context.token, "JuggleWork server credentials are unavailable in the isolated desktop.");
   state.workspaceId = context.workspaceId;
   state.provider = context.provider;
   state.model = context.model;
@@ -373,7 +373,7 @@ async function setup(ctx) {
 
   await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
   await ctx.waitFor(
-    "window.__openworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)",
+    "window.__juggleworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)",
     { timeoutMs: 45_000, label: "session.create_task enabled" },
   );
   await createFreshTask(ctx);
@@ -389,7 +389,7 @@ export default {
   id: FLOW_ID,
   title: "Cloud submissions wait for selected-model tool proof and fail closed",
   kind: "user-facing",
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL"],
+  requiredEnv: ["JUGGLEWORK_EVAL_DEN_API_URL"],
   steps: [
     {
       name: "Setup: use the live signed-in workspace and bundled engine contract gap",
@@ -490,7 +490,7 @@ export default {
           action: async () => {
             await ctx.navigateHash(`/workspace/${state.workspaceId}/session`);
             await ctx.waitFor(
-              "window.__openworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)",
+              "window.__juggleworkControl?.listActions?.().some((action) => action.id === 'session.create_task' && !action.disabled)",
               { timeoutMs: 45_000, label: "session.create_task enabled for signed-out proof" },
             );
             await createFreshTask(ctx);

@@ -10,15 +10,15 @@ const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const defaultDevDataDir = resolve(
   process.env.HOME ?? process.env.USERPROFILE ?? repoRoot,
-  ".openwork",
-  "openwork-orchestrator-dev",
+  ".jugglework",
+  "jugglework-orchestrator-dev",
 );
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
-const explicitStartUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || "";
+const explicitStartUrl = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || "";
 const startUrl = explicitStartUrl || `http://localhost:${devPort}`;
 const viteProbeUrls = explicitStartUrl
   ? [explicitStartUrl]
@@ -196,14 +196,14 @@ async function stopAll(exitCode = 0) {
 process.once("SIGINT", () => void stopAll(130));
 process.once("SIGTERM", () => void stopAll(143));
 
-if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
+if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
 }
 
 // Build the server TS → JS so Electron can import it in-process
-console.log("[electron-dev] Building openwork-server (tsc)...");
-runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+console.log("[electron-dev] Building jugglework-server (tsc)...");
+runSync(pnpmCmd, ["--filter", "jugglework-server", "build"], { cwd: repoRoot });
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;
@@ -229,8 +229,8 @@ if (!viteReady) {
     env: {
       ...process.env,
       PORT: String(devPort),
-      OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
-      OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
+      JUGGLEWORK_DEV_MODE: process.env.JUGGLEWORK_DEV_MODE ?? "1",
+      JUGGLEWORK_DATA_DIR: process.env.JUGGLEWORK_DATA_DIR ?? defaultDevDataDir,
     },
   });
 }
@@ -239,23 +239,23 @@ const resolvedStartUrl = await waitForVite(startUrl);
 
 // Optional Electron CDP for external debugging / raw CDP clients.
 // NOT required for the built-in browser (uses native webContents APIs).
-// Set OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9823 to enable.
-const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
+// Set JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT=9823 to enable.
+const cdpPortRaw = process.env.JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "";
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs"], {
   cwd: desktopRoot,
   env: {
     ...process.env,
-    OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE ?? "1",
-    OPENWORK_DATA_DIR: process.env.OPENWORK_DATA_DIR ?? defaultDevDataDir,
-    OPENWORK_ELECTRON_START_URL: resolvedStartUrl,
-    ...(cdpPort ? { OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
+    JUGGLEWORK_DEV_MODE: process.env.JUGGLEWORK_DEV_MODE ?? "1",
+    JUGGLEWORK_DATA_DIR: process.env.JUGGLEWORK_DATA_DIR ?? defaultDevDataDir,
+    JUGGLEWORK_ELECTRON_START_URL: resolvedStartUrl,
+    ...(cdpPort ? { JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort } : {}),
   },
 });
 
 if (cdpPort) {
-  console.log(`[openwork] Electron CDP exposed at http://127.0.0.1:${cdpPort}`);
+  console.log(`[jugglework] Electron CDP exposed at http://127.0.0.1:${cdpPort}`);
 }
 
 electronChild.on("exit", (code) => {

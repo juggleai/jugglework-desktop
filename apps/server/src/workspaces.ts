@@ -20,12 +20,12 @@ export function workspaceIdForRemote(baseUrl: string, directory?: string | null)
   return workspaceIdForKey(key);
 }
 
-export function workspaceIdForOpenwork(hostUrl: string, workspaceId?: string | null): string {
+export function workspaceIdForJuggleWork(hostUrl: string, workspaceId?: string | null): string {
   const normalizedHostUrl = hostUrl.trim();
   const normalizedWorkspaceId = workspaceId?.trim() ?? "";
   const key = normalizedWorkspaceId
-    ? `openwork::${normalizedHostUrl}::${normalizedWorkspaceId}`
-    : `openwork::${normalizedHostUrl}`;
+    ? `jugglework::${normalizedHostUrl}::${normalizedWorkspaceId}`
+    : `jugglework::${normalizedHostUrl}`;
   return workspaceIdForKey(key);
 }
 
@@ -40,13 +40,13 @@ export function buildWorkspaceInfos(
     const remoteType = workspace.remoteType;
     const id = workspace.id?.trim()
       || (workspaceType === "remote"
-        ? remoteType === "openwork"
-          ? workspaceIdForOpenwork(workspace.openworkHostUrl ?? workspace.baseUrl ?? "", workspace.openworkWorkspaceId)
+        ? remoteType === "jugglework"
+          ? workspaceIdForJuggleWork(workspace.juggleworkHostUrl ?? workspace.baseUrl ?? "", workspace.juggleworkWorkspaceId)
           : workspaceIdForRemote(workspace.baseUrl ?? "", workspace.directory)
         : workspaceIdForPath(resolvedPath));
     const name = workspace.name?.trim()
       || workspace.displayName?.trim()
-      || workspace.openworkWorkspaceName?.trim()
+      || workspace.juggleworkWorkspaceName?.trim()
       || basename(resolvedPath || workspace.directory?.trim() || workspace.baseUrl?.trim() || "Workspace");
     return {
       id,
@@ -58,10 +58,10 @@ export function buildWorkspaceInfos(
       baseUrl: workspace.baseUrl,
       directory: workspace.directory,
       displayName: workspace.displayName,
-      openworkHostUrl: workspace.openworkHostUrl,
-      openworkToken: workspace.openworkToken,
-      openworkWorkspaceId: workspace.openworkWorkspaceId,
-      openworkWorkspaceName: workspace.openworkWorkspaceName,
+      juggleworkHostUrl: workspace.juggleworkHostUrl,
+      juggleworkToken: workspace.juggleworkToken,
+      juggleworkWorkspaceId: workspace.juggleworkWorkspaceId,
+      juggleworkWorkspaceName: workspace.juggleworkWorkspaceName,
       sandboxBackend: workspace.sandboxBackend,
       sandboxRunId: workspace.sandboxRunId,
       sandboxContainerName: workspace.sandboxContainerName,

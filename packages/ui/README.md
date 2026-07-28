@@ -1,8 +1,8 @@
-# @openwork/ui
+# @jugglework/ui
 
 Shared UI primitives for JuggleWork apps.
 
-This package ships one entrypoint: `@openwork/ui/react`, used by `apps/app`
+This package ships one entrypoint: `@jugglework/ui/react`, used by `apps/app`
 and the JuggleWork dashboard. (A Solid flavor existed during the Solid-to-React
 migration and was removed once the last Solid consumer disappeared.)
 
@@ -16,8 +16,8 @@ Current components:
 
 - `PaperMeshGradient`
 - `PaperGrainGradient`
-- `OpenWorkRoadmap`
-- `DownloadOpenWorkCard`
+- `JuggleWorkRoadmap`
+- `DownloadJuggleWorkCard`
 
 Both accept a `seed` prop. Pass a TypeID-like string such as `om_01kmhbscaze02vp04ykqa4tcsb` and the component will deterministically derive colors and shader params from it. The same seed always produces the same result.
 
@@ -29,7 +29,7 @@ Explicit props still work and override the seeded values, so the merge order is:
 
 ## Roadmap component
 
-`OpenWorkRoadmap` is the shared visual roadmap used by the landing and docs
+`JuggleWorkRoadmap` is the shared visual roadmap used by the landing and docs
 routes. Its typed sections are exported as `roadmapSections` so other JuggleWork
 surfaces can reuse the same source of truth.
 

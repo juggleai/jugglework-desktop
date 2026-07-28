@@ -1,11 +1,11 @@
 {
-  "name": "@openwork/desktop",
+  "name": "@jugglework/desktop",
   "private": true,
   "version": "0.17.40",
   "description": "JuggleWork desktop shell",
   "author": {
     "name": "JuggleWork",
-    "email": "support@openworklabs.com"
+    "email": "support@juggle.im"
   },
   "main": "electron/main.mjs",
   "type": "module",
@@ -34,7 +34,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@openwork/types": "workspace:*",
+    "@jugglework/types": "workspace:*",
     "electron": "^35.0.0",
     "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^4.0.0"

@@ -156,7 +156,7 @@ jobs:
         shell: bash
         env:
           TARGET: aarch64-apple-darwin
-        run: pnpm --filter @openwork/desktop build:electron
+        run: pnpm --filter @jugglework/desktop build:electron
 
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
@@ -232,10 +232,10 @@ jobs:
           const fs = require("node:fs");
           const manifestPath = "apps/desktop/dist-electron/latest-mac.yml";
           const releaseTag = process.env.ALPHA_RUN_RELEASE_TAG;
-          const baseUrl = `https://github.com/different-ai/openwork/releases/download/${releaseTag}`;
+          const baseUrl = `https://github.com/juggleai/jugglework-desktop/releases/download/${releaseTag}`;
           const rewritten = fs.readFileSync(manifestPath, "utf8")
-            .replace(/(url:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`)
-            .replace(/(path:\s*)(openwork-[^\n]+)/g, `$1${baseUrl}/$2`);
+            .replace(/(url:\s*)(jugglework-[^\n]+)/g, `$1${baseUrl}/$2`)
+            .replace(/(path:\s*)(jugglework-[^\n]+)/g, `$1${baseUrl}/$2`);
           fs.writeFileSync(process.env.POINTER_MANIFEST, rewritten);
           NODE
 

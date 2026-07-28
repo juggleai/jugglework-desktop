@@ -5,23 +5,23 @@ import { join } from "node:path";
 
 import {
   readMcpSkillIndex,
-  readOpenWorkConnectSkillCatalog,
-  renderOpenWorkConnectSkillInstruction,
-  resetOpenWorkConnectSkillCatalogCacheForTests,
-  type OpenWorkConnectSkill,
+  readJuggleWorkConnectSkillCatalog,
+  renderJuggleWorkConnectSkillInstruction,
+  resetJuggleWorkConnectSkillCatalogCacheForTests,
+  type JuggleWorkConnectSkill,
 } from "./connect-skill-catalog.js";
 import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
-const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousRuntimeDb = process.env.JUGGLEWORK_RUNTIME_DB;
 
 afterEach(async () => {
-  resetOpenWorkConnectSkillCatalogCacheForTests();
+  resetJuggleWorkConnectSkillCatalogCacheForTests();
   while (roots.length) await rm(roots.pop() ?? "", { recursive: true, force: true });
-  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  if (previousRuntimeDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+  else process.env.JUGGLEWORK_RUNTIME_DB = previousRuntimeDb;
 });
 
 function skillIndexFetcher(capability = "skill:skill_customer_briefing"): (url: string, init?: RequestInit) => Promise<Response> {
@@ -55,9 +55,9 @@ function skillIndexFetcher(capability = "skill:skill_customer_briefing"): (url: 
 }
 
 async function serverConfig(): Promise<ServerConfig> {
-  const root = await mkdtemp(join(tmpdir(), "openwork-connect-skills-"));
+  const root = await mkdtemp(join(tmpdir(), "jugglework-connect-skills-"));
   roots.push(root);
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
   const workspace = {
     id: "ws_legacy",
     name: "Legacy",
@@ -70,7 +70,7 @@ async function serverConfig(): Promise<ServerConfig> {
     port: 0,
     token: "test",
     hostToken: "host",
-    configPath: join(root, "openwork.json"),
+    configPath: join(root, "jugglework.json"),
     approval: { mode: "auto", timeoutMs: 1000 },
     corsOrigins: ["*"],
     workspaces: [workspace],
@@ -86,7 +86,7 @@ async function serverConfig(): Promise<ServerConfig> {
 
 describe("JuggleWork Connect skill catalog", () => {
   test("renders discovery metadata and capability retrieval guidance", () => {
-    const instruction = renderOpenWorkConnectSkillInstruction([{
+    const instruction = renderJuggleWorkConnectSkillInstruction([{
       name: "customer-briefing",
       type: "skill-md",
       title: "Customer Briefing",
@@ -105,17 +105,17 @@ describe("JuggleWork Connect skill catalog", () => {
     expect(instruction).toContain("<plugin>Customer &lt;Ops&gt;</plugin>");
     expect(instruction).toContain("<location>skill://customer-briefing/SKILL.md</location>");
     expect(instruction).toContain("<capability>skill:skill_customer_briefing</capability>");
-    expect(instruction).toContain("openwork-cloud_execute_capability");
+    expect(instruction).toContain("jugglework-cloud_execute_capability");
     expect(instruction).toContain("NEVER use the native Load Skill tool");
     expect(instruction).toContain("exact value from that skill's <capability> field");
-    expect(instruction).toContain("Do not call openwork-cloud_search_capabilities first");
+    expect(instruction).toContain("Do not call jugglework-cloud_search_capabilities first");
     expect(instruction).toContain("transient HTTP 502, 503, or 504");
     expect(instruction).toContain("retry the same capability once");
     expect(instruction).not.toContain("# Customer Briefing");
   });
 
   test("renders every authorized skill beyond the former count and character limits", () => {
-    const skills: OpenWorkConnectSkill[] = Array.from({ length: 150 }, (_, index) => ({
+    const skills: JuggleWorkConnectSkill[] = Array.from({ length: 150 }, (_, index) => ({
       name: `marketplace-skill-${index}`,
       type: "skill-md",
       title: `Marketplace Skill ${index}`,
@@ -126,7 +126,7 @@ describe("JuggleWork Connect skill catalog", () => {
       capability: `plugin:plg_${index}:cob_${index}`,
     }));
 
-    const instruction = renderOpenWorkConnectSkillInstruction(skills);
+    const instruction = renderJuggleWorkConnectSkillInstruction(skills);
 
     expect(instruction.length).toBeGreaterThan(32_000);
     expect(instruction.match(/  <skill>/g)).toHaveLength(150);
@@ -135,7 +135,7 @@ describe("JuggleWork Connect skill catalog", () => {
   });
 
   test("keeps older skill indexes compatible by falling back from title to name", () => {
-    const instruction = renderOpenWorkConnectSkillInstruction([{
+    const instruction = renderJuggleWorkConnectSkillInstruction([{
       name: "legacy-skill",
       type: "skill-md",
       description: "",
@@ -150,7 +150,7 @@ describe("JuggleWork Connect skill catalog", () => {
   });
 
   test("omits the prompt block when no authorized skills exist", () => {
-    expect(renderOpenWorkConnectSkillInstruction([])).toBe("");
+    expect(renderJuggleWorkConnectSkillInstruction([])).toBe("");
   });
 
   test("reads the standards-shaped index through an authenticated MCP resource", async () => {
@@ -261,17 +261,17 @@ describe("JuggleWork Connect skill catalog", () => {
       headers: { Authorization: "Bearer secret" },
     });
 
-    const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher());
+    const skills = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher());
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("customer-briefing");
   });
 
-  test("promotes legacy workspace openwork-cloud config into server scope", async () => {
+  test("promotes legacy workspace jugglework-cloud config into server scope", async () => {
     const config = await serverConfig();
     await writeRuntimeOpencodeConfig(config, "ws_legacy", (current) => ({
       ...current,
       mcp: {
-        "openwork-cloud": {
+        "jugglework-cloud": {
           type: "remote",
           url: "https://connect.example/mcp/agent",
           enabled: true,
@@ -279,13 +279,13 @@ describe("JuggleWork Connect skill catalog", () => {
       },
     }));
 
-    const skills = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
+    const skills = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
     expect(skills[0]?.capability).toBe("skill:skill_promoted");
 
     // Second read should use the promoted host-level copy even if workspace config is cleared.
     await writeRuntimeOpencodeConfig(config, "ws_legacy", () => ({ mcp: {} }));
-    resetOpenWorkConnectSkillCatalogCacheForTests();
-    const again = await readOpenWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
+    resetJuggleWorkConnectSkillCatalogCacheForTests();
+    const again = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
     expect(again[0]?.capability).toBe("skill:skill_promoted");
   });
 
@@ -301,7 +301,7 @@ describe("JuggleWork Connect skill catalog", () => {
     await writeRuntimeOpencodeConfig(config, "ws_legacy", (current) => ({
       ...current,
       mcp: {
-        "openwork-cloud": {
+        "jugglework-cloud": {
           type: "remote",
           url: "https://connect.example/mcp/agent",
           enabled: true,
@@ -318,7 +318,7 @@ describe("JuggleWork Connect skill catalog", () => {
       return working(url, init);
     };
 
-    const skills = await readOpenWorkConnectSkillCatalog(config, fetcher);
+    const skills = await readJuggleWorkConnectSkillCatalog(config, fetcher);
     expect(skills[0]?.capability).toBe("skill:skill_live");
 
     // The working workspace config must replace the poisoned server-scoped copy.
@@ -335,7 +335,7 @@ describe("JuggleWork Connect skill catalog", () => {
     });
     const fetcher = async () => Response.json({ error: "invalid_token" }, { status: 401 });
 
-    expect(await readOpenWorkConnectSkillCatalog(config, fetcher)).toEqual([]);
+    expect(await readJuggleWorkConnectSkillCatalog(config, fetcher)).toEqual([]);
     // The dead config must not be re-promoted or kept as a false positive.
     const kept = await readConnectCloudMcp(config);
     expect(kept?.url).toBe("https://stale.local.test/mcp/agent");

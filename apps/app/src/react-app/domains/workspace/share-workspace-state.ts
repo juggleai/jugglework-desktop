@@ -2,16 +2,16 @@
 import { useCallback, useEffect, useMemo, useReducer } from "react";
 
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  parseOpenworkWorkspaceIdFromUrl,
-} from "../../../app/lib/openwork-server";
+  buildJuggleWorkWorkspaceBaseUrl,
+  createJuggleWorkServerClient,
+  parseJuggleWorkWorkspaceIdFromUrl,
+} from "../../../app/lib/jugglework-server";
 import type {
   EngineInfo,
-  OpenworkServerInfo,
+  JuggleWorkServerInfo,
   WorkspaceInfo,
 } from "../../../app/lib/desktop";
-import type { OpenworkServerSettings } from "../../../app/lib/openwork-server";
+import type { JuggleWorkServerSettings } from "../../../app/lib/jugglework-server";
 import { t } from "../../../i18n";
 import { isDesktopRuntime, normalizeDirectoryPath } from "../../../app/utils";
 
@@ -19,8 +19,8 @@ export type ShareWorkspaceState = ReturnType<typeof useShareWorkspaceState>;
 
 type UseShareWorkspaceStateOptions = {
   workspaces: WorkspaceInfo[];
-  openworkServerHostInfo: OpenworkServerInfo | null;
-  openworkServerSettings: OpenworkServerSettings;
+  juggleworkServerHostInfo: JuggleWorkServerInfo | null;
+  juggleworkServerSettings: JuggleWorkServerSettings;
   engineInfo: EngineInfo | null;
   exportWorkspaceBusy: boolean;
   openLink: (url: string) => void;
@@ -29,17 +29,17 @@ type UseShareWorkspaceStateOptions = {
 
 type ShareWorkspaceLocalState = {
   shareWorkspaceId: string | null;
-  shareLocalOpenworkWorkspaceId: string | null;
+  shareLocalJuggleWorkWorkspaceId: string | null;
 };
 
 type ShareWorkspaceLocalAction =
   | { type: "open"; workspaceId: string }
   | { type: "close" }
-  | { type: "localOpenworkWorkspace"; workspaceId: string | null };
+  | { type: "localJuggleWorkWorkspace"; workspaceId: string | null };
 
 const initialShareWorkspaceLocalState: ShareWorkspaceLocalState = {
   shareWorkspaceId: null,
-  shareLocalOpenworkWorkspaceId: null,
+  shareLocalJuggleWorkWorkspaceId: null,
 };
 
 function shareWorkspaceLocalReducer(
@@ -51,13 +51,13 @@ function shareWorkspaceLocalReducer(
       return { ...state, shareWorkspaceId: action.workspaceId };
     case "close":
       return { ...state, shareWorkspaceId: null };
-    case "localOpenworkWorkspace":
-      return { ...state, shareLocalOpenworkWorkspaceId: action.workspaceId };
+    case "localJuggleWorkWorkspace":
+      return { ...state, shareLocalJuggleWorkWorkspaceId: action.workspaceId };
   }
 }
 
 export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
-  const [{ shareWorkspaceId, shareLocalOpenworkWorkspaceId }, dispatchShareWorkspace] = useReducer(
+  const [{ shareWorkspaceId, shareLocalJuggleWorkWorkspaceId }, dispatchShareWorkspace] = useReducer(
     shareWorkspaceLocalReducer,
     initialShareWorkspaceLocalState,
   );
@@ -84,11 +84,11 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
     const workspace = shareWorkspace;
     if (!workspace) return "";
     if (workspace.workspaceType === "remote") {
-      if (workspace.remoteType === "openwork") {
-        const hostUrl = workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
-        const mounted = buildOpenworkWorkspaceBaseUrl(
+      if (workspace.remoteType === "jugglework") {
+        const hostUrl = workspace.juggleworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
+        const mounted = buildJuggleWorkWorkspaceBaseUrl(
           hostUrl,
-          workspace.openworkWorkspaceId,
+          workspace.juggleworkWorkspaceId,
         );
         return mounted || hostUrl;
       }
@@ -103,10 +103,10 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
 
   useEffect(() => {
     const workspace = shareWorkspace;
-    const baseUrl = options.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+    const baseUrl = options.juggleworkServerHostInfo?.baseUrl?.trim() ?? "";
     const token =
-      options.openworkServerHostInfo?.ownerToken?.trim() ||
-      options.openworkServerHostInfo?.clientToken?.trim() ||
+      options.juggleworkServerHostInfo?.ownerToken?.trim() ||
+      options.juggleworkServerHostInfo?.clientToken?.trim() ||
       "";
     const workspacePath = workspace?.workspaceType === "local" ? (workspace.path?.trim() ?? "") : "";
 
@@ -117,16 +117,16 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
       !baseUrl ||
       !token
     ) {
-      dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
+      dispatchShareWorkspace({ type: "localJuggleWorkWorkspace", workspaceId: null });
       return;
     }
 
     let cancelled = false;
-    dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
+    dispatchShareWorkspace({ type: "localJuggleWorkWorkspace", workspaceId: null });
 
     void (async () => {
       try {
-        const client = createOpenworkServerClient({ baseUrl, token });
+        const client = createJuggleWorkServerClient({ baseUrl, token });
         const response = await client.listWorkspaces();
         if (cancelled) return;
         const items = Array.isArray(response.items) ? response.items : [];
@@ -134,10 +134,10 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
         const match = items.find(
           (entry) => normalizeDirectoryPath(entry.path) === targetPath,
         );
-        dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: match?.id ?? null });
+        dispatchShareWorkspace({ type: "localJuggleWorkWorkspace", workspaceId: match?.id ?? null });
       } catch {
         if (!cancelled) {
-          dispatchShareWorkspace({ type: "localOpenworkWorkspace", workspaceId: null });
+          dispatchShareWorkspace({ type: "localJuggleWorkWorkspace", workspaceId: null });
         }
       }
     })();
@@ -145,7 +145,7 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
     return () => {
       cancelled = true;
     };
-  }, [options.openworkServerHostInfo, shareWorkspace]);
+  }, [options.juggleworkServerHostInfo, shareWorkspace]);
 
   const shareFields = useMemo(() => {
     const workspace = shareWorkspace;
@@ -160,22 +160,22 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
     }
 
     if (workspace.workspaceType !== "remote") {
-      if (options.openworkServerHostInfo?.remoteAccessEnabled !== true) {
+      if (options.juggleworkServerHostInfo?.remoteAccessEnabled !== true) {
         return [];
       }
       const hostUrl =
-        options.openworkServerHostInfo?.connectUrl?.trim() ||
-        options.openworkServerHostInfo?.lanUrl?.trim() ||
-        options.openworkServerHostInfo?.mdnsUrl?.trim() ||
-        options.openworkServerHostInfo?.baseUrl?.trim() ||
+        options.juggleworkServerHostInfo?.connectUrl?.trim() ||
+        options.juggleworkServerHostInfo?.lanUrl?.trim() ||
+        options.juggleworkServerHostInfo?.mdnsUrl?.trim() ||
+        options.juggleworkServerHostInfo?.baseUrl?.trim() ||
         "";
-      const mountedUrl = shareLocalOpenworkWorkspaceId
-        ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId)
+      const mountedUrl = shareLocalJuggleWorkWorkspaceId
+        ? buildJuggleWorkWorkspaceBaseUrl(hostUrl, shareLocalJuggleWorkWorkspaceId)
         : null;
       const url = mountedUrl || hostUrl;
-      const collaboratorToken = options.openworkServerHostInfo?.clientToken?.trim() || "";
+      const collaboratorToken = options.juggleworkServerHostInfo?.clientToken?.trim() || "";
       const ownerToken =
-        collaboratorToken || options.openworkServerHostInfo?.ownerToken?.trim() || "";
+        collaboratorToken || options.juggleworkServerHostInfo?.ownerToken?.trim() || "";
       return [
         {
           label: t("session.share_worker_url"),
@@ -210,14 +210,14 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
       ];
     }
 
-    if (workspace.remoteType === "openwork") {
-      const hostUrl = workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
+    if (workspace.remoteType === "jugglework") {
+      const hostUrl = workspace.juggleworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
       const url =
-        buildOpenworkWorkspaceBaseUrl(hostUrl, workspace.openworkWorkspaceId) ||
+        buildJuggleWorkWorkspaceBaseUrl(hostUrl, workspace.juggleworkWorkspaceId) ||
         hostUrl;
       const token =
-        workspace.openworkToken?.trim() ||
-        options.openworkServerSettings.token?.trim() ||
+        workspace.juggleworkToken?.trim() ||
+        options.juggleworkServerSettings.token?.trim() ||
         "";
       return [
         {
@@ -248,9 +248,9 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
       },
     ];
   }, [
-    options.openworkServerHostInfo,
-    options.openworkServerSettings,
-    shareLocalOpenworkWorkspaceId,
+    options.juggleworkServerHostInfo,
+    options.juggleworkServerSettings,
+    shareLocalJuggleWorkWorkspaceId,
     shareWorkspace,
   ]);
 
@@ -266,29 +266,29 @@ export function useShareWorkspaceState(options: UseShareWorkspaceStateOptions) {
   const shareServiceDisabledReason = useMemo(() => {
     const workspace = shareWorkspace;
     if (!workspace) return t("session.share_select_workspace");
-    if (workspace.workspaceType === "remote" && workspace.remoteType !== "openwork") {
-      return t("session.share_openwork_workers_only");
+    if (workspace.workspaceType === "remote" && workspace.remoteType !== "jugglework") {
+      return t("session.share_jugglework_workers_only");
     }
     if (workspace.workspaceType !== "remote") {
-      const baseUrl = options.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const baseUrl = options.juggleworkServerHostInfo?.baseUrl?.trim() ?? "";
       const token =
-        options.openworkServerHostInfo?.ownerToken?.trim() ||
-        options.openworkServerHostInfo?.clientToken?.trim() ||
+        options.juggleworkServerHostInfo?.ownerToken?.trim() ||
+        options.juggleworkServerHostInfo?.clientToken?.trim() ||
         "";
       if (!baseUrl || !token) {
         return t("session.share_local_host_not_ready");
       }
     } else {
-      const hostUrl = workspace.openworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
+      const hostUrl = workspace.juggleworkHostUrl?.trim() || workspace.baseUrl?.trim() || "";
       const token =
-        workspace.openworkToken?.trim() ||
-        options.openworkServerSettings.token?.trim() ||
+        workspace.juggleworkToken?.trim() ||
+        options.juggleworkServerSettings.token?.trim() ||
         "";
       if (!hostUrl) return t("session.share_missing_host_url");
       if (!token) return t("session.share_missing_token");
     }
     return null;
-  }, [options.openworkServerHostInfo, options.openworkServerSettings, shareWorkspace]);
+  }, [options.juggleworkServerHostInfo, options.juggleworkServerSettings, shareWorkspace]);
 
   const exportDisabledReason = useMemo(() => {
     const workspace = shareWorkspace;

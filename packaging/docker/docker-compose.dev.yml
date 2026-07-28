@@ -6,19 +6,19 @@
 # Then open the printed Web UI URL — already wired to headless, no config needed.
 #
 # Env overrides (optional, via .env or export):
-#   OPENWORK_TOKEN        — shared client token (auto-generated if unset)
-#   OPENWORK_HOST_TOKEN   — host/admin token (auto-generated if unset)
-#   OPENWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
-#   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
+#   JUGGLEWORK_TOKEN        — shared client token (auto-generated if unset)
+#   JUGGLEWORK_HOST_TOKEN   — host/admin token (auto-generated if unset)
+#   JUGGLEWORK_WORKSPACE    — host path to mount as workspace (default: ./workspace)
+#   JUGGLEWORK_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
-#   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
-#   OPENWORK_DEV_MODE     — enables isolated OpenCode dev state
-#   OPENWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs
-#   OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
-#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override
-#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override
-#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config
-#   OPENWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
+#   JUGGLEWORK_DEV_ID       — unique ID for this stack (default: default)
+#   JUGGLEWORK_DEV_MODE     — enables isolated OpenCode dev state
+#   JUGGLEWORK_PUBLIC_HOST  — browser-facing host/IP for LAN-accessible URLs
+#   JUGGLEWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1 — import host OpenCode config/auth into the isolated dev state
+#   JUGGLEWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override
+#   JUGGLEWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override
+#   JUGGLEWORK_HOST_OPENCODE_CONFIG_DIR — import source for OpenCode config
+#   JUGGLEWORK_HOST_OPENCODE_DATA_DIR   — import source for OpenCode auth/data
 
 x-shared: &shared
   image: node:22-bookworm-slim
@@ -28,9 +28,9 @@ x-shared: &shared
     - ../../:/app
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
-    - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
-    - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
-    - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
+    - ${JUGGLEWORK_WORKSPACE:-./workspace}:/workspace
+    - ${JUGGLEWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.jugglework-host-opencode-config}:/persist/.config/opencode:ro
+    - ${JUGGLEWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.jugglework-host-opencode-data}:/persist/.jugglework-host-opencode-data:ro
 
 services:
   orchestrator:
@@ -65,45 +65,45 @@ services:
         # --- Use source entrypoints for the dev stack ---
         # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
         # issues from bun --compile inside Docker on macOS.
-        export OPENWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
+        export JUGGLEWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
 
         # --- Resolve tokens ---
-        if [ -z "$$OPENWORK_TOKEN" ]; then
-          OPENWORK_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_TOKEN
+        if [ -z "$$JUGGLEWORK_TOKEN" ]; then
+          JUGGLEWORK_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export JUGGLEWORK_TOKEN
         fi
-        if [ -z "$$OPENWORK_HOST_TOKEN" ]; then
-          OPENWORK_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
-          export OPENWORK_HOST_TOKEN
+        if [ -z "$$JUGGLEWORK_HOST_TOKEN" ]; then
+          JUGGLEWORK_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
+          export JUGGLEWORK_HOST_TOKEN
         fi
 
         # Write tokens so the web service can source them
         mkdir -p /app/tmp
-        printf 'OPENWORK_TOKEN=%s\nOPENWORK_HOST_TOKEN=%s\n' \
-          "$$OPENWORK_TOKEN" "$$OPENWORK_HOST_TOKEN" > "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
+        printf 'JUGGLEWORK_TOKEN=%s\nJUGGLEWORK_HOST_TOKEN=%s\n' \
+          "$$JUGGLEWORK_TOKEN" "$$JUGGLEWORK_HOST_TOKEN" > "/app/tmp/.dev-env-${JUGGLEWORK_DEV_ID:-default}"
 
         echo ""
         echo "============================================"
         echo "  JuggleWork orchestrator"
-        echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
-        echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
-        echo "  Token:      $$OPENWORK_TOKEN"
-        echo "  Host token: $$OPENWORK_HOST_TOKEN"
+        echo "  Server:     http://localhost:${JUGGLEWORK_PORT:-8787}"
+        echo "  Health:     http://localhost:${JUGGLEWORK_PORT:-8787}/health"
+        echo "  Token:      $$JUGGLEWORK_TOKEN"
+        echo "  Host token: $$JUGGLEWORK_HOST_TOKEN"
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwork-orchestrator dev -- start \
+        exec pnpm --filter jugglework-orchestrator dev -- start \
           --workspace /workspace \
           --remote-access \
-          --openwork-port 8787 \
-          --openwork-token "$$OPENWORK_TOKEN" \
-          --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
-          --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
+          --jugglework-port 8787 \
+          --jugglework-token "$$JUGGLEWORK_TOKEN" \
+          --jugglework-host-token "$$JUGGLEWORK_HOST_TOKEN" \
+          --jugglework-server-bin "$$JUGGLEWORK_SERVER_BIN" \
           --approval auto \
           --allow-external \
           --cors "*"
     ports:
-      - "${OPENWORK_PORT:-8787}:8787"
+      - "${JUGGLEWORK_PORT:-8787}:8787"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8787/health || exit 1"]
       interval: 5s
@@ -112,13 +112,13 @@ services:
       start_period: 90s
     environment:
       CI: "true"
-      OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
-      OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
-      OPENWORK_DEV_MODE: ${OPENWORK_DEV_MODE:-1}
-      OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
-      OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.openwork-host-opencode-data
-      OPENWORK_SIDECAR_SOURCE: external
+      JUGGLEWORK_TOKEN: ${JUGGLEWORK_TOKEN:-}
+      JUGGLEWORK_HOST_TOKEN: ${JUGGLEWORK_HOST_TOKEN:-}
+      JUGGLEWORK_DEV_ID: ${JUGGLEWORK_DEV_ID:-default}
+      JUGGLEWORK_DEV_MODE: ${JUGGLEWORK_DEV_MODE:-1}
+      JUGGLEWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
+      JUGGLEWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.jugglework-host-opencode-data
+      JUGGLEWORK_SIDECAR_SOURCE: external
  
   web:
     <<: *shared
@@ -143,36 +143,36 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Read token written by orchestrator ---
-        if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
-          . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
-          export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
+        if [ -f "/app/tmp/.dev-env-${JUGGLEWORK_DEV_ID:-default}" ]; then
+          . "/app/tmp/.dev-env-${JUGGLEWORK_DEV_ID:-default}"
+          export VITE_JUGGLEWORK_TOKEN="$$JUGGLEWORK_TOKEN"
         fi
 
         echo ""
         echo "============================================"
         echo "  JuggleWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
+        echo "  Token: $${VITE_JUGGLEWORK_TOKEN:-<see orchestrator logs>}"
         echo "============================================"
         echo ""
 
-        export VITE_OPENWORK_URL="http://${OPENWORK_PUBLIC_HOST:-localhost}:${OPENWORK_PORT:-8787}"
-        export VITE_OPENWORK_PORT="${OPENWORK_PORT:-8787}"
+        export VITE_JUGGLEWORK_URL="http://${JUGGLEWORK_PUBLIC_HOST:-localhost}:${JUGGLEWORK_PORT:-8787}"
+        export VITE_JUGGLEWORK_PORT="${JUGGLEWORK_PORT:-8787}"
         export VITE_ALLOWED_HOSTS="all"
         export HOST="0.0.0.0"
         export PORT="5173"
 
-        exec pnpm --filter @openwork/app exec vite \
+        exec pnpm --filter @jugglework/app exec vite \
           --host 0.0.0.0 \
           --port 5173 \
           --strictPort
     ports:
       - "${WEB_PORT:-5173}:5173"
     environment:
-      OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
+      JUGGLEWORK_DEV_ID: ${JUGGLEWORK_DEV_ID:-default}
 
 volumes:
   pnpm-store:
-    name: openwork-dev-pnpm-store
+    name: jugglework-dev-pnpm-store
   bun-install:
-    name: openwork-dev-bun-install
+    name: jugglework-dev-bun-install

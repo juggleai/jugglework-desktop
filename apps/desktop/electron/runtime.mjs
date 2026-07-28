@@ -12,9 +12,9 @@ import { pathToFileURL } from "node:url";
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
-const ORCHESTRATOR_RUNTIME = "openwork-orchestrator";
-const OPENWORK_SERVER_PORT_RANGE_START = 48_000;
-const OPENWORK_SERVER_PORT_RANGE_END = 51_000;
+const ORCHESTRATOR_RUNTIME = "jugglework-orchestrator";
+const JUGGLEWORK_SERVER_PORT_RANGE_START = 48_000;
+const JUGGLEWORK_SERVER_PORT_RANGE_END = 51_000;
 
 function truncateOutput(value, limit = 8000) {
   const text = String(value ?? "");
@@ -48,24 +48,24 @@ export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
   return paths;
 }
 
-export function resolveOpenworkServerConfigPath(env = process.env) {
-  const override = String(env.OPENWORK_SERVER_CONFIG ?? "").trim();
+export function resolveJuggleWorkServerConfigPath(env = process.env) {
+  const override = String(env.JUGGLEWORK_SERVER_CONFIG ?? "").trim();
   if (override) return path.resolve(override);
   if (process.platform === "win32") {
     const appData = String(env.APPDATA ?? "").trim();
     const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "server.json");
+    return path.join(root, "jugglework", "server.json");
   }
   const xdgConfigHome = String(env.XDG_CONFIG_HOME ?? "").trim();
   const root = xdgConfigHome || path.join(os.homedir(), ".config");
-  return path.join(root, "openwork", "server.json");
+  return path.join(root, "jugglework", "server.json");
 }
 
 export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfigExists) {
   return serverConfigExists ? [] : workspacePaths;
 }
 
-export function selectStickyOpenworkPortWorkspace(requestedWorkspacePaths = [], serverWorkspacePaths = []) {
+export function selectStickyJuggleWorkPortWorkspace(requestedWorkspacePaths = [], serverWorkspacePaths = []) {
   for (const value of [...requestedWorkspacePaths, ...serverWorkspacePaths]) {
     const workspacePath = String(value ?? "").trim();
     if (workspacePath) return workspacePath;
@@ -78,8 +78,8 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
     return false;
   }
-  return value.includes("openwork-orchestrator") ||
-    value.includes("openwork-server") ||
+  return value.includes("jugglework-orchestrator") ||
+    value.includes("jugglework-server") ||
     /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
@@ -100,7 +100,7 @@ const DEN_CONTROL_PLANE_PATH = "/jwork";
 /** Path suffixes a stored Den base URL may already carry. */
 const DEN_BASE_PATH_SUFFIXES = [`${DEN_CONTROL_PLANE_PATH}/api`, DEN_CONTROL_PLANE_PATH, "/api/den"];
 /** The hosted control plane: it does not serve a private model catalog. */
-const HOSTED_DEN_HOST = "app.openworklabs.com";
+const HOSTED_DEN_HOST = "work.juggle.im";
 
 /**
  * The provider catalog a connected JuggleWork server serves
@@ -186,7 +186,7 @@ export function snapshotEngineState(state) {
   };
 }
 
-function createOpenworkServerState() {
+function createJuggleWorkServerState() {
   return {
     child: null,
     childExited: true,
@@ -209,7 +209,7 @@ function createOpenworkServerState() {
   };
 }
 
-function snapshotOpenworkServerState(state) {
+function snapshotJuggleWorkServerState(state) {
   const child = state.childExited ? null : state.child;
   const running = state.inProcess || Boolean(child && child.exitCode === null && !child.killed);
   return {
@@ -251,7 +251,7 @@ function redactedExecutionSnapshot(command, args, cwd, injectedEnv) {
   };
 }
 
-function assertOpenworkServerReady(snapshot) {
+function assertJuggleWorkServerReady(snapshot) {
   if (!snapshot?.running) {
     throw new Error("JuggleWork server did not stay running after startup.");
   }
@@ -505,25 +505,25 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
   }
 }
 
-// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Resolves ~/.config/jugglework/env.json (or %APPDATA%\jugglework\env.json on
 // Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/orchestrator/src/cli.ts. Honor OPENWORK_ENV_STORE override.
+// apps/orchestrator/src/cli.ts. Honor JUGGLEWORK_ENV_STORE override.
 function resolveUserEnvFilePath() {
-  const override = String(process.env.OPENWORK_ENV_STORE ?? "").trim();
+  const override = String(process.env.JUGGLEWORK_ENV_STORE ?? "").trim();
   if (override) return path.resolve(override);
   if (process.platform === "win32") {
     const appData = String(process.env.APPDATA ?? "").trim();
     const root = appData || path.join(os.homedir(), "AppData", "Roaming");
-    return path.join(root, "openwork", "env.json");
+    return path.join(root, "jugglework", "env.json");
   }
-  return path.join(os.homedir(), ".config", "openwork", "env.json");
+  return path.join(os.homedir(), ".config", "jugglework", "env.json");
 }
 
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
+const USER_ENV_RESERVED_PREFIXES = ["JUGGLEWORK_", "OPENCODE_"];
 
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
-// are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
+// are stripped so a tampered file can never shadow JUGGLEWORK_* / OPENCODE_*.
 function loadUserEnvFile() {
   try {
     const raw = readFileSync(resolveUserEnvFilePath(), "utf8");
@@ -606,7 +606,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
 
 export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl }) {
   const engineState = createEngineState();
-  const openworkServerState = createOpenworkServerState();
+  const juggleworkServerState = createJuggleWorkServerState();
   const orchestratorState = createOrchestratorState();
 
   // Serialize engine lifecycle operations. Without this, concurrent renderer
@@ -643,12 +643,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return systemCaEnvPromise;
   }
 
-  function openworkServerTokenStorePath() {
-    return path.join(userDataDir, "openwork-server-tokens.json");
+  function juggleworkServerTokenStorePath() {
+    return path.join(userDataDir, "jugglework-server-tokens.json");
   }
 
-  function openworkServerStatePath() {
-    return path.join(userDataDir, "openwork-server-state.json");
+  function juggleworkServerStatePath() {
+    return path.join(userDataDir, "jugglework-server-state.json");
   }
 
   function managedOpencodeWorkdir() {
@@ -656,17 +656,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   function orchestratorDataDir() {
-    const envDir = process.env.OPENWORK_DATA_DIR?.trim();
+    const envDir = process.env.JUGGLEWORK_DATA_DIR?.trim();
     if (envDir) return envDir;
-    return path.join(app.getPath("home"), ".openwork", "openwork-orchestrator");
+    return path.join(app.getPath("home"), ".jugglework", "jugglework-orchestrator");
   }
 
   function orchestratorStatePath(dataDir) {
-    return path.join(dataDir, "openwork-orchestrator-state.json");
+    return path.join(dataDir, "jugglework-orchestrator-state.json");
   }
 
   function orchestratorAuthPath(dataDir) {
-    return path.join(dataDir, "openwork-orchestrator-auth.json");
+    return path.join(dataDir, "jugglework-orchestrator-auth.json");
   }
 
   async function readOrchestratorStateFile(dataDir) {
@@ -703,17 +703,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function loadTokenStore() {
-    return readJsonFile(openworkServerTokenStorePath(), { version: 1, workspaces: {} });
+    return readJsonFile(juggleworkServerTokenStorePath(), { version: 1, workspaces: {} });
   }
 
   async function saveTokenStore(store) {
-    const filePath = openworkServerTokenStorePath();
+    const filePath = juggleworkServerTokenStorePath();
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
   }
 
   async function loadPortState() {
-    return readJsonFile(openworkServerStatePath(), {
+    return readJsonFile(juggleworkServerStatePath(), {
       version: 3,
       workspacePorts: {},
       preferredPort: null,
@@ -721,7 +721,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function savePortState(state) {
-    const filePath = openworkServerStatePath();
+    const filePath = juggleworkServerStatePath();
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   }
@@ -753,7 +753,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     await saveTokenStore(store);
   }
 
-  async function readPreferredOpenworkPort(workspaceKey) {
+  async function readPreferredJuggleWorkPort(workspaceKey) {
     const state = await loadPortState();
     const normalized = normalizeWorkspaceKey(workspaceKey);
     if (normalized && state.workspacePorts?.[normalized]) {
@@ -762,7 +762,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return state.preferredPort ?? null;
   }
 
-  async function persistPreferredOpenworkPort(workspaceKey, port) {
+  async function persistPreferredJuggleWorkPort(workspaceKey, port) {
     const state = await loadPortState();
     const normalized = normalizeWorkspaceKey(workspaceKey);
     state.version = 3;
@@ -785,8 +785,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return portAvailable(host, port);
   }
 
-  async function resolveOpenworkPort(host, workspaceKey, currentPort = null) {
-    const preferredPort = await readPreferredOpenworkPort(workspaceKey);
+  async function resolveJuggleWorkPort(host, workspaceKey, currentPort = null) {
+    const preferredPort = await readPreferredJuggleWorkPort(workspaceKey);
     if (currentPort && (await waitForPortAvailable(host, currentPort))) {
       return { port: currentPort, preferredPort };
     }
@@ -797,7 +797,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function ensureDevModePaths() {
-    const root = path.join(userDataDir, "openwork-dev-data");
+    const root = path.join(userDataDir, "jugglework-dev-data");
     const paths = {
       homeDir: path.join(root, "home"),
       xdgConfigHome: path.join(root, "xdg", "config"),
@@ -837,9 +837,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (pathEnv) {
       env[pathKey] = pathEnv;
     }
-    if (process.env.OPENWORK_DEV_MODE === "1") {
+    if (process.env.JUGGLEWORK_DEV_MODE === "1") {
       const devPaths = await ensureDevModePaths();
-      env.OPENWORK_DEV_MODE = "1";
+      env.JUGGLEWORK_DEV_MODE = "1";
       env.HOME = devPaths.homeDir;
       env.USERPROFILE = devPaths.homeDir;
       env.XDG_CONFIG_HOME = devPaths.xdgConfigHome;
@@ -903,7 +903,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const candidates = [];
     const seen = new Set();
 
-    for (const key of ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
+    for (const key of ["JUGGLEWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
       const value = process.env[key]?.trim();
       if (value && !seen.has(value)) {
         seen.add(value);
@@ -956,7 +956,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     throw new Error(
-      `Failed to run docker: ${errors.join("; ")} (Set OPENWORK_DOCKER_BIN to your docker binary if needed)`,
+      `Failed to run docker: ${errors.join("; ")} (Set JUGGLEWORK_DOCKER_BIN to your docker binary if needed)`,
     );
   }
 
@@ -979,10 +979,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const sanitized = String(runId ?? "")
       .replace(/[^a-zA-Z0-9_.-]+/g, "-")
       .slice(0, 24);
-    return `openwork-orchestrator-${sanitized}`;
+    return `jugglework-orchestrator-${sanitized}`;
   }
 
-  async function listOpenworkManagedContainers() {
+  async function listJuggleWorkManagedContainers() {
     const result = runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
     if (result.status !== 0) {
       const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
@@ -991,7 +991,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return result.stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((name) => name && (name.startsWith("openwork-orchestrator-") || name.startsWith("openwork-dev-") || name.startsWith("openwrk-")))
+      .filter((name) => name && (name.startsWith("jugglework-orchestrator-") || name.startsWith("jugglework-dev-") || name.startsWith("openwrk-")))
       .sort();
   }
 
@@ -1183,7 +1183,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-OpenWork-Host-Token": hostToken,
+          "X-JuggleWork-Host-Token": hostToken,
         },
         body: JSON.stringify({ scope: "owner", label: "JuggleWork desktop owner token" }),
       },
@@ -1196,20 +1196,20 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   // In-process server handle. Kept alive across restarts so we can stop it.
   let inProcessServer = null;
 
-  async function startOpenworkServer(options) {
-    const currentPort = openworkServerState.port;
+  async function startJuggleWorkServer(options) {
+    const currentPort = juggleworkServerState.port;
     // Stop any previously running in-process server
     if (inProcessServer) {
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
-    await stopChild(openworkServerState);
+    await stopChild(juggleworkServerState);
 
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
-    openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
-    openworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
+    juggleworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
+    juggleworkServerState.managedOpencodeBinSource = managedOpencode?.source ?? null;
     if (options.manageOpencode) {
       engineState.opencodeBinPath = managedOpencode?.path ?? null;
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
@@ -1223,14 +1223,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // truth. Do not pass Electron's legacy workspace list as CLI workspaces or
     // the server config loader will ignore server.json and lose server-created
     // workspaces after restart.
-    const serverConfigPath = resolveOpenworkServerConfigPath(process.env);
+    const serverConfigPath = resolveJuggleWorkServerConfigPath(process.env);
     const requestedWorkspacePaths = (options.workspacePaths ?? []).filter((value) => value.trim().length > 0);
     const workspacePaths = seedWorkspacePathsForEmbeddedServer(
       requestedWorkspacePaths,
       existsSync(serverConfigPath),
     );
-    const activeWorkspace = selectStickyOpenworkPortWorkspace(requestedWorkspacePaths, workspacePaths);
-    const portSelection = await resolveOpenworkPort(host, activeWorkspace, currentPort);
+    const activeWorkspace = selectStickyJuggleWorkPortWorkspace(requestedWorkspacePaths, workspacePaths);
+    const portSelection = await resolveJuggleWorkPort(host, activeWorkspace, currentPort);
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
@@ -1241,7 +1241,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       path.resolve(__runtimeDir, "..", "server", "dist", "embedded.js"),
       ...(process.resourcesPath ? [path.resolve(process.resourcesPath, "server", "dist", "embedded.js")] : []),
     ];
-    const candidates = process.env.OPENWORK_DEV_MODE === "1"
+    const candidates = process.env.JUGGLEWORK_DEV_MODE === "1"
       ? [devPath, ...packagedPaths]
       : [...packagedPaths, devPath];
     const embeddedPath = candidates.find((candidate) => existsSync(candidate));
@@ -1267,11 +1267,11 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
       // Read at spawn time: switching clouds needs an engine restart to take
-      // effect, which openworkServerRestart already performs.
+      // effect, which juggleworkServerRestart already performs.
       modelsUrl: denModelsCatalogUrl(readDenBaseUrl?.()) ?? undefined,
     });
     inProcessServer = handle;
-    openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
+    juggleworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
     engineState.managedByServer = Boolean(handle.managedOpencode);
     engineState.managedPid = handle.managedOpencode?.pid ?? null;
     engineState.managedIsAlive = handle.managedOpencode?.isAlive ?? null;
@@ -1279,18 +1279,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const boundPort = handle.port;
     const baseUrl = handle.url;
 
-    openworkServerState.inProcess = true;
-    openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
-    openworkServerState.host = host;
-    openworkServerState.port = boundPort;
-    openworkServerState.baseUrl = baseUrl;
-    openworkServerState.clientToken = tokens.clientToken;
-    openworkServerState.hostToken = tokens.hostToken;
+    juggleworkServerState.inProcess = true;
+    juggleworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
+    juggleworkServerState.host = host;
+    juggleworkServerState.port = boundPort;
+    juggleworkServerState.baseUrl = baseUrl;
+    juggleworkServerState.clientToken = tokens.clientToken;
+    juggleworkServerState.hostToken = tokens.hostToken;
 
     const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
-    openworkServerState.connectUrl = connectUrls.connectUrl;
-    openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
-    openworkServerState.lanUrl = connectUrls.lanUrl;
+    juggleworkServerState.connectUrl = connectUrls.connectUrl;
+    juggleworkServerState.mdnsUrl = connectUrls.mdnsUrl;
+    juggleworkServerState.lanUrl = connectUrls.lanUrl;
 
     // No health check needed -- startServer() resolves only after the listener is bound.
     let workspaceList = null;
@@ -1305,7 +1305,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       }
     }
     ownerToken ||= await issueOwnerToken(baseUrl, tokens.hostToken);
-    openworkServerState.ownerToken = ownerToken;
+    juggleworkServerState.ownerToken = ownerToken;
     if (ownerToken) {
       await persistWorkspaceOwnerToken(activeWorkspace, ownerToken);
     }
@@ -1329,13 +1329,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
           engineState.childExited = false;
         }
       } catch (error) {
-        appendOutput(openworkServerState, "lastStderr", `JuggleWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
+        appendOutput(juggleworkServerState, "lastStderr", `JuggleWork server workspace probe: ${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
     if (!portSelection.preferredPort || boundPort === portSelection.preferredPort) {
-      await persistPreferredOpenworkPort(activeWorkspace, boundPort);
+      await persistPreferredJuggleWorkPort(activeWorkspace, boundPort);
     }
-    return snapshotOpenworkServerState(openworkServerState);
+    return snapshotJuggleWorkServerState(juggleworkServerState);
   }
 
   async function resolveOrchestratorBaseUrl() {
@@ -1357,9 +1357,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const opencodePort = await findFreePort("127.0.0.1");
     const [username, password] = generateManagedCredentials();
 
-    const orchestratorProgram = resolveBinary("openwork-orchestrator") ?? resolveBinary("openwork");
+    const orchestratorProgram = resolveBinary("jugglework-orchestrator") ?? resolveBinary("jugglework");
     if (!orchestratorProgram) {
-      throw new Error("Failed to locate openwork-orchestrator.");
+      throw new Error("Failed to locate jugglework-orchestrator.");
     }
 
     const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
@@ -1368,9 +1368,9 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     const env = await buildChildEnv({
-      OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
-      OPENWORK_OPENCODE_USERNAME: username,
-      OPENWORK_OPENCODE_PASSWORD: password,
+      JUGGLEWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
+      JUGGLEWORK_OPENCODE_USERNAME: username,
+      JUGGLEWORK_OPENCODE_PASSWORD: password,
       ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
     });
 
@@ -1481,7 +1481,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       try { await inProcessServer.stop(); } catch { /* ignore */ }
       inProcessServer = null;
     }
-    await stopChild(openworkServerState);
+    await stopChild(juggleworkServerState);
     await stopChild(orchestratorState, {
       requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
     });
@@ -1489,7 +1489,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     await stopChild(engineState);
 
     Object.assign(engineState, createEngineState());
-    Object.assign(openworkServerState, createOpenworkServerState());
+    Object.assign(juggleworkServerState, createJuggleWorkServerState());
     Object.assign(orchestratorState, createOrchestratorState());
   }
 
@@ -1500,10 +1500,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     lifecycleState = "idle";
   }
 
-  async function ensureOpenwork(options) {
-    let openworkServer;
+  async function ensureJuggleWork(options) {
+    let juggleworkServer;
     try {
-      openworkServer = await startOpenworkServer({
+      juggleworkServer = await startJuggleWorkServer({
         workspacePaths: options.workspacePaths,
         opencodeBaseUrl: engineState.baseUrl,
         opencodeUsername: engineState.opencodeUsername,
@@ -1517,7 +1517,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       throw error;
     }
 
-    assertOpenworkServerReady(openworkServer);
+    assertJuggleWorkServerReady(juggleworkServer);
   }
 
   async function engineStart(projectDir, options = {}) {
@@ -1528,20 +1528,20 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
     // Reuse a healthy server instead of tearing it down. During boot the
     // main process kicks off bootRuntimeForSelectedWorkspace while renderer
-    // routes independently call ensureDesktopLocalOpenworkConnection. Both go
+    // routes independently call ensureDesktopLocalJuggleWorkConnection. Both go
     // through this serialized path; without this guard the second call runs
     // prepareFreshRuntime (killing the freshly bound server) and then rebinds
     // the sticky preferred port, racing the not-yet-released socket into
     // EADDRINUSE and leaving the runtime in error -> boot screen.
-    const requestedRemoteAccess = options.openworkRemoteAccess === true;
+    const requestedRemoteAccess = options.juggleworkRemoteAccess === true;
     if (
       options.forceRestart !== true &&
-      openworkServerState.inProcess &&
+      juggleworkServerState.inProcess &&
       lifecycleState === "healthy" &&
       normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(safeProjectDir) &&
-      openworkServerState.remoteAccessEnabled === requestedRemoteAccess
+      juggleworkServerState.remoteAccessEnabled === requestedRemoteAccess
     ) {
-      const existing = snapshotOpenworkServerState(openworkServerState);
+      const existing = snapshotJuggleWorkServerState(juggleworkServerState);
       if (existing.running && existing.baseUrl && (existing.ownerToken || existing.clientToken)) {
         return snapshotEngineState(engineState);
       }
@@ -1563,10 +1563,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       engineState.child = null;
       engineState.childExited = true;
 
-      await ensureOpenwork({
+      await ensureJuggleWork({
         projectDir: safeProjectDir,
         workspacePaths,
-        remoteAccessEnabled: options.openworkRemoteAccess === true,
+        remoteAccessEnabled: options.juggleworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -1591,14 +1591,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
     }
-    const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
-      ? options.openworkRemoteAccess
-      : openworkServerState.remoteAccessEnabled;
+    const juggleworkRemoteAccess = typeof options.juggleworkRemoteAccess === "boolean"
+      ? options.juggleworkRemoteAccess
+      : juggleworkServerState.remoteAccessEnabled;
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
-      openworkRemoteAccess,
+      juggleworkRemoteAccess,
       forceRestart: true,
     });
   }
@@ -1611,41 +1611,41 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return {
       lifecycleState,
       engine: await engineInfo(),
-      openworkServer: snapshotOpenworkServerState(openworkServerState),
+      juggleworkServer: snapshotJuggleWorkServerState(juggleworkServerState),
     };
   }
 
-  async function openworkServerInfo() {
-    return snapshotOpenworkServerState(openworkServerState);
+  async function juggleworkServerInfo() {
+    return snapshotJuggleWorkServerState(juggleworkServerState);
   }
 
-  async function openworkServerRestart(options = {}) {
+  async function juggleworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
-      openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
+      juggleworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
     );
-    return startOpenworkServer({
+    return startJuggleWorkServer({
       workspacePaths,
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
       remoteAccessEnabled: options.remoteAccessEnabled === true,
       manageOpencode: shouldManageOpencode,
-      opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
+      opencodeBinPath: engineState.opencodeBinPath ?? juggleworkServerState.managedOpencodeBinPath,
     });
   }
 
   async function orchestratorStatus() {
     const engine = snapshotEngineState(engineState);
-    const openworkServer = snapshotOpenworkServerState(openworkServerState);
+    const juggleworkServer = snapshotJuggleWorkServerState(juggleworkServerState);
     const workspaces = engine.projectDir
       ? [{ id: normalizeWorkspaceKey(engine.projectDir), path: engine.projectDir, name: path.basename(engine.projectDir) || "Workspace" }]
       : [];
     return {
       running: engine.running,
       dataDir: null,
-      daemon: openworkServer.running
-        ? { baseUrl: openworkServer.baseUrl, port: openworkServer.port, pid: openworkServer.pid, runtime: "direct" }
+      daemon: juggleworkServer.running
+        ? { baseUrl: juggleworkServer.baseUrl, port: juggleworkServer.port, pid: juggleworkServer.pid, runtime: "direct" }
         : null,
       opencode: engine.running
         ? { baseUrl: engine.baseUrl, port: engine.port, pid: engine.pid, projectDir: engine.projectDir, runtime: "direct" }
@@ -1841,8 +1841,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     if (!name) {
       throw new Error("containerName is required");
     }
-    if (!name.startsWith("openwork-orchestrator-")) {
-      throw new Error("Refusing to stop container: expected name starting with 'openwork-orchestrator-'");
+    if (!name.startsWith("jugglework-orchestrator-")) {
+      throw new Error("Refusing to stop container: expected name starting with 'jugglework-orchestrator-'");
     }
     if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
       throw new Error("containerName contains invalid characters");
@@ -1856,8 +1856,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
-  async function sandboxCleanupOpenworkContainers() {
-    const candidates = await listOpenworkManagedContainers().catch((error) => {
+  async function sandboxCleanupJuggleWorkContainers() {
+    const candidates = await listJuggleWorkManagedContainers().catch((error) => {
       throw error;
     });
     const removed = [];
@@ -1894,12 +1894,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const runId = String(options.runId ?? randomUUID()).trim();
     const containerName = wantsDockerSandbox ? deriveOrchestratorContainerName(runId) : null;
     const port = await findFreePort("127.0.0.1");
-    const token = String(options.openworkToken ?? randomUUID()).trim();
-    const hostToken = String(options.openworkHostToken ?? randomUUID()).trim();
-    const openworkUrl = `http://127.0.0.1:${port}`;
-    const program = resolveBinary("openwork-orchestrator") ?? resolveBinary("openwork");
+    const token = String(options.juggleworkToken ?? randomUUID()).trim();
+    const hostToken = String(options.juggleworkHostToken ?? randomUUID()).trim();
+    const juggleworkUrl = `http://127.0.0.1:${port}`;
+    const program = resolveBinary("jugglework-orchestrator") ?? resolveBinary("jugglework");
     if (!program) {
-      throw new Error("Failed to locate openwork orchestrator.");
+      throw new Error("Failed to locate jugglework orchestrator.");
     }
 
     const args = [
@@ -1909,7 +1909,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       "--approval",
       "auto",
       "--detach",
-      "--openwork-port",
+      "--jugglework-port",
       String(port),
       "--run-id",
       runId,
@@ -1918,18 +1918,18 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     ];
 
     const child = spawn(program, args, {
-      env: { ...(await buildChildEnv()), OPENWORK_TOKEN: token, OPENWORK_HOST_TOKEN: hostToken },
+      env: { ...(await buildChildEnv()), JUGGLEWORK_TOKEN: token, JUGGLEWORK_HOST_TOKEN: hostToken },
       detached: true,
       stdio: "ignore",
       windowsHide: true,
     });
     child.unref();
 
-    await waitForHttpOk(`${openworkUrl}/health`, wantsDockerSandbox ? 90_000 : 12_000);
-    const ownerToken = await issueOwnerToken(openworkUrl, hostToken).catch(() => null);
+    await waitForHttpOk(`${juggleworkUrl}/health`, wantsDockerSandbox ? 90_000 : 12_000);
+    const ownerToken = await issueOwnerToken(juggleworkUrl, hostToken).catch(() => null);
 
     return {
-      openworkUrl,
+      juggleworkUrl,
       token,
       ownerToken,
       hostToken,
@@ -1943,7 +1943,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function sandboxDebugProbe() {
     const startedAt = nowMs();
     const runId = `probe-${randomUUID()}`;
-    const workspacePath = path.join(os.tmpdir(), `openwork-sandbox-probe-${randomUUID()}`);
+    const workspacePath = path.join(os.tmpdir(), `jugglework-sandbox-probe-${randomUUID()}`);
     await mkdir(workspacePath, { recursive: true });
 
     const doctor = await sandboxDoctor();
@@ -2041,8 +2041,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInfo,
     engineDoctor,
     engineInstall,
-    openworkServerInfo,
-    openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
+    juggleworkServerInfo,
+    juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     orchestratorStatus,
     orchestratorWorkspaceActivate,
     orchestratorInstanceDispose,
@@ -2050,7 +2050,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     opencodeMcpAuth,
     sandboxDoctor,
     sandboxStop,
-    sandboxCleanupOpenworkContainers,
+    sandboxCleanupJuggleWorkContainers,
     sandboxDebugProbe,
   };
 }

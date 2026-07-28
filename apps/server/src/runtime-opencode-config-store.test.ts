@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addMcp, listMcp, setMcpEnabled } from "./mcp.js";
-import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
-import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
+import { buildJuggleWorkRuntimeConfig } from "./jugglework-runtime-config.js";
+import { readJuggleWorkWorkspaceConfig } from "./jugglework-workspace-config-store.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
 import {
   onRuntimeOpencodeConfigWrite,
@@ -42,15 +42,15 @@ function serverConfig(root: string, dbPath: string): ServerConfig {
 }
 
 async function withWorkspace(fn: (input: { root: string; config: ServerConfig }) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "openwork-runtime-config-"));
-  const previousDb = process.env.OPENWORK_RUNTIME_DB;
+  const root = await mkdtemp(join(tmpdir(), "jugglework-runtime-config-"));
+  const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
   const dbPath = join(root, "runtime.sqlite");
-  process.env.OPENWORK_RUNTIME_DB = dbPath;
+  process.env.JUGGLEWORK_RUNTIME_DB = dbPath;
   try {
     await fn({ root, config: serverConfig(root, dbPath) });
   } finally {
-    if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-    else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+    else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -107,7 +107,7 @@ describe("runtime OpenCode config store", () => {
       await setMcpEnabled(config, WORKSPACE_ID, "runtime", false);
 
       expect(await readFile(opencodePath, "utf8")).toBe(opencode);
-      await expectMissing(join(root, ".opencode", "openwork.json"));
+      await expectMissing(join(root, ".opencode", "jugglework.json"));
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.runtime?.enabled).toBe(false);
 
       const items = await listMcp(config, WORKSPACE_ID, root);
@@ -127,14 +127,14 @@ describe("runtime OpenCode config store", () => {
       expect(await addPlugin(config, WORKSPACE_ID, "runtime-plugin")).toBe(true);
 
       expect(await readFile(opencodePath, "utf8")).toBe(opencode);
-      await expectMissing(join(root, ".opencode", "openwork.json"));
+      await expectMissing(join(root, ".opencode", "jugglework.json"));
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).plugin).toEqual(["runtime-plugin"]);
 
       const result = await listPlugins(config, WORKSPACE_ID, root, false);
       expect(result.items.map((item) => item.spec)).toEqual(["project-plugin", "runtime-plugin"]);
 
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp", enabled: true });
-      const runtimeConfig = JSON.parse(await buildOpenworkRuntimeConfig(config, WORKSPACE_ID)) as {
+      const runtimeConfig = JSON.parse(await buildJuggleWorkRuntimeConfig(config, WORKSPACE_ID)) as {
         plugin?: string[];
         mcp?: Record<string, Record<string, unknown>>;
       };
@@ -165,7 +165,7 @@ describe("runtime OpenCode config store", () => {
           method: "PATCH",
           headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
           body: JSON.stringify({
-            openwork: {
+            jugglework: {
               cloudImports: {
                 plugins: {
                   plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
@@ -176,11 +176,11 @@ describe("runtime OpenCode config store", () => {
         });
         expect(response.status).toBe(200);
 
-        const legacyOpenworkPath = join(root, ".opencode", "openwork.json");
-        const legacyOpenwork = await readFile(legacyOpenworkPath, "utf8").catch(() => "");
-        expect(legacyOpenwork).not.toContain("productivity");
-        expect(legacyOpenwork).not.toContain("cloudImports");
-        expect((await readOpenworkWorkspaceConfig(config, WORKSPACE_ID)).cloudImports).toEqual({
+        const legacyJuggleWorkPath = join(root, ".opencode", "jugglework.json");
+        const legacyJuggleWork = await readFile(legacyJuggleWorkPath, "utf8").catch(() => "");
+        expect(legacyJuggleWork).not.toContain("productivity");
+        expect(legacyJuggleWork).not.toContain("cloudImports");
+        expect((await readJuggleWorkWorkspaceConfig(config, WORKSPACE_ID)).cloudImports).toEqual({
           plugins: {
             plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
           },
@@ -191,7 +191,7 @@ describe("runtime OpenCode config store", () => {
         });
         expect(configResponse.status).toBe(200);
         expect(await configResponse.json()).toMatchObject({
-          openwork: {
+          jugglework: {
             cloudImports: {
               plugins: {
                 plugin_1: { pluginId: "plugin_1", name: "productivity", files: [] },
@@ -208,8 +208,8 @@ describe("runtime OpenCode config store", () => {
   test("explicitly migrates legacy JuggleWork runtime config into the runtime DB", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
-      const openworkPath = join(root, ".opencode", "openwork.json");
-      await writeFile(openworkPath, JSON.stringify({
+      const juggleworkPath = join(root, ".opencode", "jugglework.json");
+      await writeFile(juggleworkPath, JSON.stringify({
         version: 1,
         workspace: { name: "Test" },
         plugin: ["legacy-plugin"],
@@ -238,14 +238,14 @@ describe("runtime OpenCode config store", () => {
 
         // The legacy file is migrated into the runtime DB and never rewritten.
         // The cleaned config (legacy runtime keys stripped, metadata kept)
-        // now lives in the DB-backed openwork config.
-        const openwork = await readOpenworkWorkspaceConfig(config, WORKSPACE_ID);
-        expect(openwork.version).toBe(1);
-        expect(openwork.workspace).toEqual({ name: "Test" });
-        expect(openwork.plugin).toBeUndefined();
-        expect(openwork.mcp).toBeUndefined();
-        expect(openwork.permission).toBeUndefined();
-        expect(openwork.provider).toBeUndefined();
+        // now lives in the DB-backed jugglework config.
+        const jugglework = await readJuggleWorkWorkspaceConfig(config, WORKSPACE_ID);
+        expect(jugglework.version).toBe(1);
+        expect(jugglework.workspace).toEqual({ name: "Test" });
+        expect(jugglework.plugin).toBeUndefined();
+        expect(jugglework.mcp).toBeUndefined();
+        expect(jugglework.permission).toBeUndefined();
+        expect(jugglework.provider).toBeUndefined();
 
         const statusResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/runtime-config`, {
           headers: { authorization: `Bearer ${config.token}` },
@@ -261,13 +261,13 @@ describe("runtime OpenCode config store", () => {
             projectOpencode: { exists: false, keys: [] },
             runtimeDatabase: { keys: ["plugin", "mcp", "permission", "provider"] },
           },
-          legacyOpenwork: { keys: [] },
+          legacyJuggleWork: { keys: [] },
           userOpencode: { exists: false, keys: [] },
         });
-        expect(status.effectiveRuntime.default_agent).toBe("openwork");
-        expect(status.effectiveRuntime.agent).toMatchObject({ openwork: { mode: "primary" } });
+        expect(status.effectiveRuntime.default_agent).toBe("jugglework");
+        expect(status.effectiveRuntime.agent).toMatchObject({ jugglework: { mode: "primary" } });
         expect(status.effectiveRuntime.provider).toMatchObject({ legacy: { npm: "legacy-provider" } });
-        expect(status.sources.injected.config?.agent).toMatchObject({ openwork: { mode: "primary" } });
+        expect(status.sources.injected.config?.agent).toMatchObject({ jugglework: { mode: "primary" } });
         expect(status.sources.injected.keys).toContain("provider");
         expect(status.sources.globalOpencode).toHaveProperty("path");
       } finally {
@@ -279,7 +279,7 @@ describe("runtime OpenCode config store", () => {
   test("runtime config status tolerates malformed legacy JuggleWork metadata", async () => {
     await withWorkspace(async ({ root, config }) => {
       await mkdir(join(root, ".opencode"), { recursive: true });
-      await writeFile(join(root, ".opencode", "openwork.json"), "{ invalid\n", "utf8");
+      await writeFile(join(root, ".opencode", "jugglework.json"), "{ invalid\n", "utf8");
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp" });
 
       const server = await startServer(config) as Served;
@@ -290,7 +290,7 @@ describe("runtime OpenCode config store", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
           runtimeKeys: ["mcp"],
-          legacyOpenwork: { keys: [], error: "Failed to parse openwork.json" },
+          legacyJuggleWork: { keys: [], error: "Failed to parse jugglework.json" },
         });
       } finally {
         await server.stop(true);
@@ -303,7 +303,7 @@ describe("runtime OpenCode config store", () => {
       const opencodePath = join(root, "opencode.jsonc");
       await writeFile(opencodePath, JSON.stringify({
         $schema: "https://opencode.ai/config.json",
-        default_agent: "openwork",
+        default_agent: "jugglework",
         plugin: ["opencode-chrome-devtools", "user-plugin"],
         provider: { local: { npm: "@ai-sdk/openai-compatible" } },
         disabled_providers: ["old-provider"],
@@ -323,7 +323,7 @@ describe("runtime OpenCode config store", () => {
         });
 
         const runtime = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
-        expect(runtime.default_agent).toBe("openwork");
+        expect(runtime.default_agent).toBe("jugglework");
         expect(runtime.plugin).toEqual(["opencode-chrome-devtools", "user-plugin"]);
         expect(runtime.provider?.local).toEqual({ npm: "@ai-sdk/openai-compatible" });
         expect(runtime.disabled_providers).toEqual(["old-provider"]);

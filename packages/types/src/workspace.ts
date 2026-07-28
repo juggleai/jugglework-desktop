@@ -2,10 +2,10 @@
  * Shared wire contract for workspace records.
  *
  * Producers:
- * - openwork-server (apps/server): `GET /workspaces` and friends — emits plain
+ * - jugglework-server (apps/server): `GET /workspaces` and friends — emits plain
  *   optionals (never null) plus the `opencode*` engine credential fields.
  * - desktop Electron IPC bridge (apps/desktop main.mjs): emits explicit nulls
- *   and the desktop-managed `openworkClientToken`/`openworkHostToken`.
+ *   and the desktop-managed `juggleworkClientToken`/`juggleworkHostToken`.
  *
  * Consumers (apps/app) must treat every optional field as possibly absent,
  * undefined, or null. Producer-side types assert assignability against this
@@ -14,7 +14,7 @@
  */
 export type WorkspaceKind = "local" | "remote";
 
-export type WorkspaceRemoteKind = "opencode" | "openwork";
+export type WorkspaceRemoteKind = "opencode" | "jugglework";
 
 export type WorkspaceWire = {
   id: string;
@@ -26,22 +26,22 @@ export type WorkspaceWire = {
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
+  juggleworkHostUrl?: string | null;
+  juggleworkToken?: string | null;
   /** Desktop IPC only: tokens for desktop-managed remote workspaces. */
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
+  juggleworkClientToken?: string | null;
+  juggleworkHostToken?: string | null;
+  juggleworkWorkspaceId?: string | null;
+  juggleworkWorkspaceName?: string | null;
   /**
    * Vocabulary differs per producer today ("docker" | "microsandbox" on the
-   * desktop, "none" | "docker" | "container" in openwork-server), so the wire
+   * desktop, "none" | "docker" | "container" in jugglework-server), so the wire
    * stays a plain string until the backends converge.
    */
   sandboxBackend?: string | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
-  /** openwork-server only: credentials for the proxied opencode engine. */
+  /** jugglework-server only: credentials for the proxied opencode engine. */
   opencodeUsername?: string | null;
   opencodePassword?: string | null;
   opencode?: {

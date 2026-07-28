@@ -12,7 +12,7 @@
     <script>
       (function () {
         try {
-          var mode = localStorage.getItem("openwork.themePref") || "system";
+          var mode = localStorage.getItem("jugglework.themePref") || "system";
           var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           var resolved = mode === "dark" || (mode === "system" && prefersDark) ? "dark" : "light";
           document.documentElement.dataset.theme = resolved;

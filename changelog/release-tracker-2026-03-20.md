@@ -67,14 +67,14 @@ None.
 Downloads CTA and npm install fallback land
 
 #### One-line summary
-Gets desktop users to the right download path faster and lets `openwork-orchestrator` recover when npm skips its platform binary.
+Gets desktop users to the right download path faster and lets `jugglework-orchestrator` recover when npm skips its platform binary.
 
 #### Main changes
 Routes the desktop landing CTA to the Download page so the install path is clearer.
 
 Also released:
 
-- `openwork-orchestrator` postinstall now downloads the matching release binary when optional platform packages are missing.
+- `jugglework-orchestrator` postinstall now downloads the matching release binary when optional platform packages are missing.
 - Daytona snapshot builds now use the source orchestrator binary.
 
 #### Lines of code changed since previous release

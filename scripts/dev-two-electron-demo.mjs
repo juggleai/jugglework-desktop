@@ -14,13 +14,13 @@ const desktopRequire = createRequire(path.join(desktopRoot, "package.json"));
 const electronCli = desktopRequire.resolve("electron/cli.js");
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 export function resolveDemoRoot(env = process.env) {
-  return env.OPENWORK_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "openwork-two-electron-demo");
+  return env.JUGGLEWORK_ELECTRON_DEMO_ROOT?.trim() || path.join(os.tmpdir(), "jugglework-two-electron-demo");
 }
 
 const demoRoot = resolveDemoRoot();
 const appProfiles = {
   admin: {
-    appIdentifier: "com.differentai.openwork.demo.admin",
+    appIdentifier: "com.juggleai.jugglework.demo.admin",
     appName: "JuggleWork Demo A",
     bootstrapName: "admin-bootstrap.json",
     cdpFlag: "--admin-cdp",
@@ -31,7 +31,7 @@ const appProfiles = {
     requireSignin: false,
   },
   consumer: {
-    appIdentifier: "com.differentai.openwork.demo.consumer",
+    appIdentifier: "com.juggleai.jugglework.demo.consumer",
     appName: "JuggleWork Demo B",
     bootstrapName: "consumer-bootstrap.json",
     cdpFlag: "--consumer-cdp",
@@ -50,9 +50,9 @@ function profilePaths(runRoot, profile) {
     bootstrapPath: path.join(root, profile.bootstrapName),
     cacheHome: path.join(root, "xdg-cache"),
     configHome: path.join(root, "xdg-config"),
-    dataDir: path.join(root, "openwork-data"),
+    dataDir: path.join(root, "jugglework-data"),
     dataHome: path.join(root, "xdg-data"),
-    envStorePath: path.join(root, "openwork-env.json"),
+    envStorePath: path.join(root, "jugglework-env.json"),
     homeDir: path.join(root, "home"),
     localAppDataDir: path.join(root, "local-appdata"),
     opencodeConfigDir: path.join(root, "opencode-config"),
@@ -322,7 +322,7 @@ function startElectron(profile, env, built, packaged) {
     : built
       ? [
         electronCli,
-        ...(env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
+        ...(env.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1" ? ["--use-mock-keychain"] : []),
         "./electron/main.mjs",
       ]
       : ["dev:electron"];
@@ -398,20 +398,20 @@ export function demoEnv(profile, paths, port, cdpPort) {
     APPDATA: paths.appDataDir,
     HOME: paths.homeDir,
     LOCALAPPDATA: paths.localAppDataDir,
-    OPENWORK_DATA_DIR: paths.dataDir,
-    OPENWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
-    OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
-    OPENWORK_DEV_MODE: "1",
-    OPENWORK_ENV_STORE: paths.envStorePath,
+    JUGGLEWORK_DATA_DIR: paths.dataDir,
+    JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH: paths.bootstrapPath,
+    JUGGLEWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
+    JUGGLEWORK_DEV_MODE: "1",
+    JUGGLEWORK_ENV_STORE: paths.envStorePath,
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
-    VITE_DISABLE_OPENWORK_MODELS: "1",
-    OPENWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
-    OPENWORK_ELECTRON_APP_NAME: profile.appName,
-    OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
-    OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
-    OPENWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
-    OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
-    OPENWORK_ELECTRON_USERDATA: paths.userDataDir,
+    VITE_DISABLE_JUGGLEWORK_MODELS: "1",
+    JUGGLEWORK_ELECTRON_APP_IDENTIFIER: profile.appIdentifier,
+    JUGGLEWORK_ELECTRON_APP_NAME: profile.appName,
+    JUGGLEWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION: "1",
+    JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT: cdpPort,
+    JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE: "1",
+    JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1",
+    JUGGLEWORK_ELECTRON_USERDATA: paths.userDataDir,
     PORT: port,
     XDG_CACHE_HOME: paths.cacheHome,
     XDG_CONFIG_HOME: paths.configHome,
@@ -483,7 +483,7 @@ async function main() {
   await assertDemoPortsAvailable(portEntries);
 
   if (built && !existsSync(path.join(repoRoot, "apps", "app", "dist", "index.html"))) {
-    throw new Error("The desktop renderer is not built. Run pnpm --filter @openwork/desktop build:electron first.");
+    throw new Error("The desktop renderer is not built. Run pnpm --filter @jugglework/desktop build:electron first.");
   }
 
   const demoRun = requestedRunRoot

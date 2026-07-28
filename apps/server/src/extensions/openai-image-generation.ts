@@ -50,14 +50,14 @@ function slugifyImageArtifactName(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "openwork-image";
+    .slice(0, 48) || "jugglework-image";
 }
 
 async function resolveOpenAiImageApiKey(env: EnvService): Promise<string> {
   const records = await env.list();
-  return records.find((entry) => entry.key === "OPENWORK_OPENAI_IMAGE_API_KEY")?.value.trim() ||
+  return records.find((entry) => entry.key === "JUGGLEWORK_OPENAI_IMAGE_API_KEY")?.value.trim() ||
     records.find((entry) => entry.key === "OPENAI_API_KEY")?.value.trim() ||
-    process.env.OPENWORK_OPENAI_IMAGE_API_KEY?.trim() ||
+    process.env.JUGGLEWORK_OPENAI_IMAGE_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     "";
 }

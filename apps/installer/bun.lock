@@ -3,14 +3,14 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@openwork/installer",
+      "name": "@jugglework/installer",
       "dependencies": {
-        "@openwork/install-config": "workspace:*",
+        "@jugglework/install-config": "workspace:*",
         "webview-bun": "2.4.0",
       },
     },
     "../../packages/install-config": {
-      "name": "@openwork/install-config",
+      "name": "@jugglework/install-config",
       "dependencies": {
         "zod": "4.3.6",
       },
@@ -81,7 +81,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@openwork/install-config": ["@openwork/install-config@workspace:../../packages/install-config"],
+    "@jugglework/install-config": ["@jugglework/install-config@workspace:../../packages/install-config"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.62.2", "", { "os": "android", "cpu": "arm" }, "sha512-6o7ZLZK+BeenkZCFNDXqpbjw9bD6nuWonvS/lwQJp7NoVVxm6p3qE7qQ5jGuBjiFsgvqjD8mZAU5oWxTmbOeOg=="],
 

@@ -80,9 +80,9 @@ import {
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
 
-const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
-const APPLIED_BRANDING_FINGERPRINT_KEY = "openwork.den.appliedBrandingFingerprint";
-const BRANDING_RESTART_RESUME_KEY = "openwork.den.brandingRestartResume";
+const RELOAD_AFTER_ONBOARDING_KEY = "jugglework.reloadAfterOrgOnboarding";
+const APPLIED_BRANDING_FINGERPRINT_KEY = "jugglework.den.appliedBrandingFingerprint";
+const BRANDING_RESTART_RESUME_KEY = "jugglework.den.brandingRestartResume";
 
 type BrandingRestartState = {
   fingerprint: string;
@@ -90,19 +90,19 @@ type BrandingRestartState = {
   warning: string | null;
 };
 
-type OnboardingUpdaterBridge = NonNullable<Window["__OPENWORK_ELECTRON__"]>["updater"];
+type OnboardingUpdaterBridge = NonNullable<Window["__JUGGLEWORK_ELECTRON__"]>["updater"];
 
 declare global {
   interface Window {
-    __openworkOnboardingUpdaterEvalBridge?: OnboardingUpdaterBridge;
+    __juggleworkOnboardingUpdaterEvalBridge?: OnboardingUpdaterBridge;
   }
 }
 
 function onboardingUpdaterBridge(): OnboardingUpdaterBridge | undefined {
-  if (import.meta.env.DEV && window.__openworkOnboardingUpdaterEvalBridge) {
-    return window.__openworkOnboardingUpdaterEvalBridge;
+  if (import.meta.env.DEV && window.__juggleworkOnboardingUpdaterEvalBridge) {
+    return window.__juggleworkOnboardingUpdaterEvalBridge;
   }
-  return window.__OPENWORK_ELECTRON__?.updater;
+  return window.__JUGGLEWORK_ELECTRON__?.updater;
 }
 
 async function stageOnboardingUpdate(
@@ -250,8 +250,8 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
       <PageContainer>
         <PageHeader>
           <div
-            data-openwork-prepared="true"
-            data-openwork-provisional="true"
+            data-jugglework-prepared="true"
+            data-jugglework-provisional="true"
             className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
           >
             <CheckCircle2 className="size-3.5" />
@@ -323,11 +323,11 @@ function markProvidersSeen(providers: DenOrgLlmProvider[]) {
   if (providers.length === 0) return;
 
   try {
-    const raw = window.localStorage.getItem("openwork.seenProviderIds");
+    const raw = window.localStorage.getItem("jugglework.seenProviderIds");
     const existing: string[] = raw ? JSON.parse(raw) : [];
     const ids = new Set(existing);
     for (const provider of providers) ids.add(provider.id);
-    window.localStorage.setItem("openwork.seenProviderIds", JSON.stringify([...ids]));
+    window.localStorage.setItem("jugglework.seenProviderIds", JSON.stringify([...ids]));
   } catch {}
 }
 
@@ -516,7 +516,7 @@ export function ResourceSelectionPage() {
   }, [navigate, providers, selectedDefault]);
 
   const handleContinue = useCallback(async () => {
-    if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
+    if (!window.__JUGGLEWORK_ELECTRON__?.shell?.relaunch) {
       finishOnboarding();
       return;
     }
@@ -676,7 +676,7 @@ export function ResourceSelectionPage() {
         <PageHeader>
           {prepared ? (
             <div
-              data-openwork-prepared="true"
+              data-jugglework-prepared="true"
               className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11"
             >
               <CheckCircle2 className="size-3.5" />

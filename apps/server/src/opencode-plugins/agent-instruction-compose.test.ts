@@ -21,13 +21,13 @@ describe("agent instruction compose primitives", () => {
 
   test("delete and expand are predictable", () => {
     const base = combineInstructionSections(
-      createInstructionSection("browser", "use openwork_execute browser.open_url"),
-      createInstructionSection("ui", "use openwork_ui_*"),
+      createInstructionSection("browser", "use jugglework_execute browser.open_url"),
+      createInstructionSection("ui", "use jugglework_ui_*"),
     );
     const withoutUi = deleteInstructionSection(base, "ui");
     const expanded = expandInstructionSection(withoutUi, "browser", (body) => `${body}\nnever use browser_* on JuggleWork`);
     expect(composeAgentInstructions(expanded)).toEqual([
-      "use openwork_execute browser.open_url\nnever use browser_* on JuggleWork",
+      "use jugglework_execute browser.open_url\nnever use browser_* on JuggleWork",
     ]);
   });
 

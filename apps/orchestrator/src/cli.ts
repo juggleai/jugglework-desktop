@@ -109,26 +109,26 @@ type OpencodeHotReload = {
 
 const FALLBACK_VERSION = "0.1.0";
 
-declare const __OPENWORK_ORCHESTRATOR_VERSION__: string | undefined;
-declare const __OPENWORK_PINNED_OPENCODE_VERSION__: string | undefined;
-const DEFAULT_OPENWORK_PORT = 8787;
+declare const __JUGGLEWORK_ORCHESTRATOR_VERSION__: string | undefined;
+declare const __JUGGLEWORK_PINNED_OPENCODE_VERSION__: string | undefined;
+const DEFAULT_JUGGLEWORK_PORT = 8787;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const MANAGED_OPENCODE_CREDENTIAL_LENGTH = 512;
 const INTERNAL_OPENCODE_CREDENTIALS_ENV =
-  "OPENWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS";
+  "JUGGLEWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS";
 const DEFAULT_OPENCODE_HOT_RELOAD_DEBOUNCE_MS = 700;
 const DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS = 1500;
 const DEFAULT_ACTIVITY_WINDOW_MS = 5 * 60_000;
 const DEFAULT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 
 const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
-const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
-const OPENWORK_DEV_DATA_DIR = "openwork-dev-data";
+const SANDBOX_INTERNAL_JUGGLEWORK_PORT = DEFAULT_JUGGLEWORK_PORT;
+const JUGGLEWORK_DEV_DATA_DIR = "jugglework-dev-data";
 
 const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH =
   "/persist/.config/opencode";
 const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH =
-  "/persist/.openwork-host-opencode-data";
+  "/persist/.jugglework-host-opencode-data";
 const CLI_SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
 const ORCHESTRATOR_ROOT_DIR = resolve(CLI_SOURCE_DIR, "..");
 const REPO_ROOT_DIR = resolve(ORCHESTRATOR_ROOT_DIR, "..", "..");
@@ -148,7 +148,7 @@ type VersionInfo = {
   sha256: string;
 };
 
-type SidecarName = "openwork-server" | "opencode";
+type SidecarName = "jugglework-server" | "opencode";
 
 type SidecarTarget =
   | "darwin-arm64"
@@ -205,7 +205,7 @@ type BinaryDiagnostics = {
   actualVersion?: string;
 };
 
-type RuntimeServiceName = "openwork-server" | "opencode";
+type RuntimeServiceName = "jugglework-server" | "opencode";
 
 type RuntimeServiceSnapshot = {
   name: RuntimeServiceName;
@@ -594,9 +594,9 @@ let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
 let cachedSandboxAllowlistError: string | null = null;
 
 function resolveSandboxAllowlistPath(): string {
-  const override = process.env.OPENWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
+  const override = process.env.JUGGLEWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
   if (override) return resolve(override);
-  return join(homedir(), ".config", "openwork", "sandbox-mount-allowlist.json");
+  return join(homedir(), ".config", "jugglework", "sandbox-mount-allowlist.json");
 }
 
 function expandTildePath(input: string): string {
@@ -618,7 +618,7 @@ async function isDir(input: string): Promise<boolean> {
 async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
   const enabled =
     (
-      process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ??
+      process.env.JUGGLEWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ??
       (internalDevModeFromEnv() ? "0" : "1")
     ).trim() !== "0";
   if (!enabled) return null;
@@ -663,7 +663,7 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
 async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
   const enabled =
     (
-      process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ??
+      process.env.JUGGLEWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ??
       (internalDevModeFromEnv() ? "0" : "1")
     ).trim() !== "0";
   if (!enabled) return null;
@@ -918,10 +918,10 @@ async function fileExists(path: string): Promise<boolean> {
 
 async function resolveCliVersion(): Promise<string> {
   if (
-    typeof __OPENWORK_ORCHESTRATOR_VERSION__ === "string" &&
-    __OPENWORK_ORCHESTRATOR_VERSION__.trim()
+    typeof __JUGGLEWORK_ORCHESTRATOR_VERSION__ === "string" &&
+    __JUGGLEWORK_ORCHESTRATOR_VERSION__.trim()
   ) {
-    return __OPENWORK_ORCHESTRATOR_VERSION__.trim();
+    return __JUGGLEWORK_ORCHESTRATOR_VERSION__.trim();
   }
   const candidates = [
     join(dirname(process.execPath), "..", "package.json"),
@@ -945,10 +945,10 @@ async function resolveCliVersion(): Promise<string> {
 
 async function readPinnedOpencodeVersion(): Promise<string | undefined> {
   if (
-    typeof __OPENWORK_PINNED_OPENCODE_VERSION__ === "string" &&
-    __OPENWORK_PINNED_OPENCODE_VERSION__.trim()
+    typeof __JUGGLEWORK_PINNED_OPENCODE_VERSION__ === "string" &&
+    __JUGGLEWORK_PINNED_OPENCODE_VERSION__.trim()
   ) {
-    return __OPENWORK_PINNED_OPENCODE_VERSION__.trim();
+    return __JUGGLEWORK_PINNED_OPENCODE_VERSION__.trim();
   }
 
   const candidates = [
@@ -1024,7 +1024,7 @@ async function resolveDockerCandidates(): Promise<string[]> {
   };
 
   for (const key of [
-    "OPENWORK_DOCKER_BIN",
+    "JUGGLEWORK_DOCKER_BIN",
     "OPENWRK_DOCKER_BIN",
     "DOCKER_BIN",
   ]) {
@@ -1217,12 +1217,12 @@ function resolveManagedOpencodeCredentials(args: ParsedArgs): {
   const requestedUsername =
     typeof explicitUsernameFlag === "string"
       ? explicitUsernameFlag
-      : process.env.OPENWORK_OPENCODE_USERNAME ??
+      : process.env.JUGGLEWORK_OPENCODE_USERNAME ??
         process.env.OPENCODE_SERVER_USERNAME;
   const requestedPassword =
     typeof explicitPasswordFlag === "string"
       ? explicitPasswordFlag
-      : process.env.OPENWORK_OPENCODE_PASSWORD ??
+      : process.env.JUGGLEWORK_OPENCODE_PASSWORD ??
         process.env.OPENCODE_SERVER_PASSWORD;
   const allowInjectedCredentials =
     (process.env[INTERNAL_OPENCODE_CREDENTIALS_ENV] ?? "").trim() === "1";
@@ -1267,7 +1267,7 @@ function assertManagedOpencodeAuth(args: ParsedArgs) {
     args.flags,
     "opencode-auth",
     true,
-    "OPENWORK_OPENCODE_AUTH",
+    "JUGGLEWORK_OPENCODE_AUTH",
   );
   if (!authEnabled) {
     throw new Error(
@@ -1301,11 +1301,11 @@ function resolveOpencodeLogLevel(requested?: string): string | undefined {
   return normalized;
 }
 
-function resolveOpenworkRemoteAccess(args: ParsedArgs): boolean {
+function resolveJuggleWorkRemoteAccess(args: ParsedArgs): boolean {
   const explicitHost =
-    readFlag(args.flags, "openwork-host") ?? process.env.OPENWORK_HOST;
+    readFlag(args.flags, "jugglework-host") ?? process.env.JUGGLEWORK_HOST;
   const remoteAccessRequested =
-    readBool(args.flags, "remote-access", false, "OPENWORK_REMOTE_ACCESS") ||
+    readBool(args.flags, "remote-access", false, "JUGGLEWORK_REMOTE_ACCESS") ||
     explicitHost?.trim() === "0.0.0.0";
 
   if (explicitHost) {
@@ -1314,7 +1314,7 @@ function resolveOpenworkRemoteAccess(args: ParsedArgs): boolean {
     if (normalized === "0.0.0.0") return true;
     if (!isLoopbackHost(normalized)) {
       throw new Error(
-        `Unsupported --openwork-host value: ${normalized}. Use loopback by default or --remote-access for shared access.`,
+        `Unsupported --jugglework-host value: ${normalized}. Use loopback by default or --remote-access for shared access.`,
       );
     }
   }
@@ -1454,7 +1454,7 @@ async function postWorkerActivityHeartbeat(input: {
       lastActivityAt: payload.lastActivityAt,
       openSessionCount: payload.openSessionCount,
     },
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
   );
 }
 
@@ -1503,7 +1503,7 @@ function prefixStream(
 
 function shouldUseBun(bin: string): boolean {
   if (!bin.endsWith(`${join("dist", "cli.js")}`)) return false;
-  if (bin.includes("openwork-server")) return true;
+  if (bin.includes("jugglework-server")) return true;
   return bin.includes(`${join("packages", "server")}`);
 }
 
@@ -1526,8 +1526,8 @@ function resolveBinCommand(bin: string): {
 async function readVersionManifest(): Promise<VersionManifest | null> {
   const binDir = dirname(process.execPath);
   const moduleDir = dirname(fileURLToPath(import.meta.url));
-  const envManifestPath = process.env.OPENWORK_VERSION_MANIFEST?.trim();
-  const envSidecarDir = process.env.OPENWORK_BUNDLED_SIDECAR_DIR?.trim();
+  const envManifestPath = process.env.JUGGLEWORK_VERSION_MANIFEST?.trim();
+  const envSidecarDir = process.env.JUGGLEWORK_BUNDLED_SIDECAR_DIR?.trim();
   const candidates = [
     ...(envManifestPath
       ? [
@@ -1603,7 +1603,7 @@ function resolveExtraPathEntries(): string[] {
 
   const entries: string[] = [];
   const sidecarOverride =
-    process.env.OPENWRK_SIDECAR_DIR ?? process.env.OPENWORK_SIDECAR_DIR;
+    process.env.OPENWRK_SIDECAR_DIR ?? process.env.JUGGLEWORK_SIDECAR_DIR;
   const sidecarCandidates = [
     sidecarOverride,
     dirname(process.execPath),
@@ -1670,21 +1670,21 @@ function resolveExtraPathEntries(): string[] {
   return entries;
 }
 
-// Resolves ~/.config/openwork/env.json (or %APPDATA%\openwork\env.json on
+// Resolves ~/.config/jugglework/env.json (or %APPDATA%\jugglework\env.json on
 // Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/desktop/electron/runtime.mjs. Honor OPENWORK_ENV_STORE override.
+// apps/desktop/electron/runtime.mjs. Honor JUGGLEWORK_ENV_STORE override.
 function resolveUserEnvFilePath(): string {
-  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  const override = (process.env.JUGGLEWORK_ENV_STORE ?? "").trim();
   if (override) return resolve(override);
   if (platform() === "win32") {
     const appData = (process.env.APPDATA ?? "").trim();
     const root = appData || join(homedir(), "AppData", "Roaming");
-    return join(root, "openwork", "env.json");
+    return join(root, "jugglework", "env.json");
   }
-  return join(homedir(), ".config", "openwork", "env.json");
+  return join(homedir(), ".config", "jugglework", "env.json");
 }
 
-const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+const USER_ENV_RESERVED_PREFIXES = ["JUGGLEWORK_", "OPENCODE_"] as const;
 
 // Synchronous, best-effort, never throws. Absent or malformed files return {}.
 // Reads on every spawn so UI edits are picked up on the next child start.
@@ -1713,7 +1713,7 @@ function buildSpawnEnv(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // User env is layered first so existing process.env / caller overrides
   // always win. This is what makes Linux GUI launches work: the shell env
   // is empty for ANTHROPIC_API_KEY, the user file supplies it, but anything
-  // the shell or spawn-site already set (OPENWORK_TOKEN, etc.) is untouched.
+  // the shell or spawn-site already set (JUGGLEWORK_TOKEN, etc.) is untouched.
   const merged: NodeJS.ProcessEnv = { ...loadUserEnvFile() };
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined) merged[key] = value;
@@ -1851,12 +1851,12 @@ function addEnvPassThroughArgs(args: string[], names: string[]) {
 }
 
 const SANDBOX_INTERNAL_ENV_NAMES = [
-  "OPENWORK_TOKEN",
-  "OPENWORK_HOST_TOKEN",
+  "JUGGLEWORK_TOKEN",
+  "JUGGLEWORK_HOST_TOKEN",
   "OPENCODE_SERVER_USERNAME",
   "OPENCODE_SERVER_PASSWORD",
-  "OPENWORK_OPENCODE_USERNAME",
-  "OPENWORK_OPENCODE_PASSWORD",
+  "JUGGLEWORK_OPENCODE_USERNAME",
+  "JUGGLEWORK_OPENCODE_PASSWORD",
 ] as const;
 
 function sandboxEnvPassThroughNames(userEnv: Record<string, string>): string[] {
@@ -1867,7 +1867,7 @@ function sandboxEnvPassThroughNames(userEnv: Record<string, string>): string[] {
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
   const override =
-    readFlag(flags, "sidecar-dir") ?? process.env.OPENWORK_SIDECAR_DIR;
+    readFlag(flags, "sidecar-dir") ?? process.env.JUGGLEWORK_SIDECAR_DIR;
   if (override && override.trim()) return resolve(override.trim());
   return join(resolveRouterDataDir(flags), "sidecars");
 }
@@ -1878,9 +1878,9 @@ function resolveSidecarBaseUrl(
 ): string {
   const override =
     readFlag(flags, "sidecar-base-url") ??
-    process.env.OPENWORK_SIDECAR_BASE_URL;
+    process.env.JUGGLEWORK_SIDECAR_BASE_URL;
   if (override && override.trim()) return override.trim();
-  return `https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v${cliVersion}`;
+  return `https://github.com/juggleai/jugglework-desktop/releases/download/jugglework-orchestrator-v${cliVersion}`;
 }
 
 function resolveSidecarManifestUrl(
@@ -1889,9 +1889,9 @@ function resolveSidecarManifestUrl(
 ): string {
   const override =
     readFlag(flags, "sidecar-manifest") ??
-    process.env.OPENWORK_SIDECAR_MANIFEST_URL;
+    process.env.JUGGLEWORK_SIDECAR_MANIFEST_URL;
   if (override && override.trim()) return override.trim();
-  return `${baseUrl.replace(/\/$/, "")}/openwork-orchestrator-sidecars.json`;
+  return `${baseUrl.replace(/\/$/, "")}/jugglework-orchestrator-sidecars.json`;
 }
 
 function resolveSidecarConfig(
@@ -2081,7 +2081,7 @@ async function resolveOpencodeDownload(
   if (!sidecar.target) return null;
 
   const assetOverride =
-    process.env.OPENWORK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
+    process.env.JUGGLEWORK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
   const asset = assetOverride?.trim() || resolveOpencodeAsset(sidecar.target);
   if (!asset) return null;
 
@@ -2114,10 +2114,10 @@ async function resolveOpencodeDownload(
   const stamp = Date.now();
   const archivePath = join(
     tmpdir(),
-    `openwork-orchestrator-opencode-${stamp}-${asset}`,
+    `jugglework-orchestrator-opencode-${stamp}-${asset}`,
   );
   const extractDir = await mkdtemp(
-    join(tmpdir(), "openwork-orchestrator-opencode-"),
+    join(tmpdir(), "jugglework-orchestrator-opencode-"),
   );
 
   try {
@@ -2229,7 +2229,7 @@ async function resolveExpectedVersion(
 
   try {
     const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-    if (name === "openwork-server") {
+    if (name === "jugglework-server") {
       const localPath = join(root, "..", "server", "package.json");
       const localVersion = await readPackageVersion(localPath);
       if (localVersion) return localVersion;
@@ -2243,9 +2243,9 @@ async function resolveExpectedVersion(
   }
 
   const require = createRequire(import.meta.url);
-  if (name === "openwork-server") {
+  if (name === "jugglework-server") {
     try {
-      const pkgPath = require.resolve("openwork-server/package.json");
+      const pkgPath = require.resolve("jugglework-server/package.json");
       const version = await readPackageVersion(pkgPath);
       if (version) return version;
     } catch {
@@ -2425,7 +2425,7 @@ async function assertSandboxBinaryFile(
   }
 }
 
-async function resolveOpenworkServerBin(options: {
+async function resolveJuggleWorkServerBin(options: {
   explicit?: string;
   manifest: VersionManifest | null;
   allowExternal: boolean;
@@ -2433,7 +2433,7 @@ async function resolveOpenworkServerBin(options: {
   source: BinarySourcePreference;
 }): Promise<ResolvedBinary> {
   if (options.explicit && !options.allowExternal) {
-    throw new Error("openwork-server-bin requires --allow-external");
+    throw new Error("jugglework-server-bin requires --allow-external");
   }
   if (
     options.explicit &&
@@ -2441,17 +2441,17 @@ async function resolveOpenworkServerBin(options: {
     options.source !== "external"
   ) {
     throw new Error(
-      "openwork-server-bin requires --sidecar-source external or auto",
+      "jugglework-server-bin requires --sidecar-source external or auto",
     );
   }
 
   const expectedVersion = await resolveExpectedVersion(
     options.manifest,
-    "openwork-server",
+    "jugglework-server",
   );
   const resolveExternal = async (): Promise<ResolvedBinary> => {
     if (!options.allowExternal) {
-      throw new Error("External openwork-server requires --allow-external");
+      throw new Error("External jugglework-server requires --allow-external");
     }
     if (options.explicit) {
       const resolved = resolveBinPath(options.explicit);
@@ -2459,16 +2459,16 @@ async function resolveOpenworkServerBin(options: {
         (resolved.includes("/") || resolved.startsWith(".")) &&
         !(await fileExists(resolved))
       ) {
-        throw new Error(`openwork-server-bin not found: ${resolved}`);
+        throw new Error(`jugglework-server-bin not found: ${resolved}`);
       }
       return { bin: resolved, source: "external", expectedVersion };
     }
 
     const require = createRequire(import.meta.url);
     try {
-      const pkgPath = require.resolve("openwork-server/package.json");
+      const pkgPath = require.resolve("jugglework-server/package.json");
       const pkgDir = dirname(pkgPath);
-      const binaryPath = join(pkgDir, "dist", "bin", "openwork-server");
+      const binaryPath = join(pkgDir, "dist", "bin", "jugglework-server");
       if (await isExecutable(binaryPath)) {
         return { bin: binaryPath, source: "external", expectedVersion };
       }
@@ -2480,17 +2480,17 @@ async function resolveOpenworkServerBin(options: {
       // ignore
     }
 
-    return { bin: "openwork-server", source: "external", expectedVersion };
+    return { bin: "jugglework-server", source: "external", expectedVersion };
   };
 
   if (options.source === "bundled") {
     const bundled = await resolveBundledBinary(
       options.manifest,
-      "openwork-server",
+      "jugglework-server",
     );
     if (!bundled) {
       throw new Error(
-        "Bundled openwork-server binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+        "Bundled jugglework-server binary missing. Build with pnpm --filter jugglework-orchestrator build:bin:bundled.",
       );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
@@ -2498,12 +2498,12 @@ async function resolveOpenworkServerBin(options: {
 
   if (options.source === "downloaded") {
     const downloaded = await downloadSidecarBinary({
-      name: "openwork-server",
+      name: "jugglework-server",
       sidecar: options.sidecar,
     });
     if (!downloaded) {
       throw new Error(
-        "openwork-server download failed. Check sidecar manifest or base URL.",
+        "jugglework-server download failed. Check sidecar manifest or base URL.",
       );
     }
     return downloaded;
@@ -2515,7 +2515,7 @@ async function resolveOpenworkServerBin(options: {
 
   const bundled = await resolveBundledBinary(
     options.manifest,
-    "openwork-server",
+    "jugglework-server",
   );
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
@@ -2526,14 +2526,14 @@ async function resolveOpenworkServerBin(options: {
   }
 
   const downloaded = await downloadSidecarBinary({
-    name: "openwork-server",
+    name: "jugglework-server",
     sidecar: options.sidecar,
   });
   if (downloaded) return downloaded;
 
   if (!options.allowExternal) {
     throw new Error(
-      "Bundled openwork-server binary missing and download failed. Use --allow-external or --sidecar-source external.",
+      "Bundled jugglework-server binary missing and download failed. Use --allow-external or --sidecar-source external.",
     );
   }
 
@@ -2583,7 +2583,7 @@ async function resolveOpencodeBin(options: {
     const bundled = await resolveBundledBinary(options.manifest, "opencode");
     if (!bundled) {
       throw new Error(
-        "Bundled opencode binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+        "Bundled opencode binary missing. Build with pnpm --filter jugglework-orchestrator build:bin:bundled.",
       );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
@@ -2646,19 +2646,19 @@ async function resolveOpencodeBin(options: {
 }
 
 function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
-  const override = readFlag(flags, "data-dir") ?? process.env.OPENWORK_DATA_DIR;
+  const override = readFlag(flags, "data-dir") ?? process.env.JUGGLEWORK_DATA_DIR;
   if (override && override.trim()) {
     return resolve(override.trim());
   }
-  return join(homedir(), ".openwork", "openwork-orchestrator");
+  return join(homedir(), ".jugglework", "jugglework-orchestrator");
 }
 
 function resolveInternalDevMode(flags: Map<string, string | boolean>): boolean {
-  return readBool(flags, "internal-dev-mode", false, "OPENWORK_DEV_MODE");
+  return readBool(flags, "internal-dev-mode", false, "JUGGLEWORK_DEV_MODE");
 }
 
 function internalDevModeFromEnv(): boolean {
-  const value = process.env.OPENWORK_DEV_MODE?.trim().toLowerCase();
+  const value = process.env.JUGGLEWORK_DEV_MODE?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
@@ -2676,7 +2676,7 @@ function resolveOpencodeStateLayout(options: {
     };
   }
 
-  const rootDir = join(options.dataDir, OPENWORK_DEV_DATA_DIR);
+  const rootDir = join(options.dataDir, JUGGLEWORK_DEV_DATA_DIR);
   const homeDir = join(rootDir, "home");
   const xdgConfigHome = join(rootDir, "xdg", "config");
   const xdgDataHome = join(rootDir, "xdg", "data");
@@ -2689,11 +2689,11 @@ function resolveOpencodeStateLayout(options: {
     rootDir,
     configDir,
     importConfigDir:
-      process.env.OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR?.trim() || undefined,
+      process.env.JUGGLEWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR?.trim() || undefined,
     importDataDir:
-      process.env.OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR?.trim() || undefined,
+      process.env.JUGGLEWORK_DEV_OPENCODE_IMPORT_DATA_DIR?.trim() || undefined,
     env: {
-      OPENWORK_DEV_MODE: "1",
+      JUGGLEWORK_DEV_MODE: "1",
       OPENCODE_TEST_HOME: homeDir,
       HOME: homeDir,
       XDG_CONFIG_HOME: xdgConfigHome,
@@ -2760,7 +2760,7 @@ async function ensureOpencodeStateLayout(
 }
 
 function routerStatePath(dataDir: string): string {
-  return join(dataDir, "openwork-orchestrator-state.json");
+  return join(dataDir, "jugglework-orchestrator-state.json");
 }
 
 function nowMs(): number {
@@ -2903,7 +2903,7 @@ async function waitForOpencodeHealthy(
 }
 
 /**
- * In sandbox mode the released openwork-server binary may not have our latest
+ * In sandbox mode the released jugglework-server binary may not have our latest
  * token/proxy changes.  Instead of relying on the OpenCode SDK client (which
  * sends Bearer auth that the proxy may not understand yet), we do a simple
  * HTTP fetch through the proxy path.  The server's /opencode/* proxy already
@@ -2914,7 +2914,7 @@ async function waitForOpencodeHealthy(
  * We try multiple path patterns because:
  * - `/opencode/health` — most common OpenCode health endpoint proxied by the
  *   server's catch-all /opencode/* route.
- * - `/health` on the openwork-server itself — already verified by the caller,
+ * - `/health` on the jugglework-server itself — already verified by the caller,
  *   but serves as a fallback signal.
  */
 async function waitForHealthyViaProxy(
@@ -2938,7 +2938,7 @@ async function waitForHealthyViaProxy(
       if (res.ok) return;
       // Some older server versions may return 401/403 on the proxy but that
       // still proves the server is up and proxying.  Accept any non-5xx as
-      // "alive" — the real auth validation happens in verifyOpenworkServer.
+      // "alive" — the real auth validation happens in verifyJuggleWorkServer.
       if (res.status < 500) return;
       lastError = `Proxy returned ${res.status}`;
     } catch (error) {
@@ -2953,18 +2953,18 @@ async function waitForHealthyViaProxy(
 
 function printHelp(): void {
   const message = [
-    "openwork",
+    "jugglework",
     "",
     "Usage:",
-    "  openwork start [--workspace <path>] [options]",
-    "  openwork serve [--workspace <path>] [options]",
-    "  openwork daemon [run|start|stop|status] [options]",
-    "  openwork workspace <action> [options]",
-    "  openwork instance dispose <id> [options]",
-    "  openwork approvals list --openwork-url <url> --host-token <token>",
-    "  openwork approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
-    "  openwork files <action> [options]",
-    "  openwork status [--openwork-url <url>] [--opencode-url <url>]",
+    "  jugglework start [--workspace <path>] [options]",
+    "  jugglework serve [--workspace <path>] [options]",
+    "  jugglework daemon [run|start|stop|status] [options]",
+    "  jugglework workspace <action> [options]",
+    "  jugglework instance dispose <id> [options]",
+    "  jugglework approvals list --jugglework-url <url> --host-token <token>",
+    "  jugglework approvals reply <id> --allow|--deny --jugglework-url <url> --host-token <token>",
+    "  jugglework files <action> [options]",
+    "  jugglework status [--jugglework-url <url>] [--opencode-url <url>]",
     "",
     "Commands:",
     "  start                   Start OpenCode + JuggleWork server",
@@ -2993,11 +2993,11 @@ function printHelp(): void {
     "  --opencode-hot-reload-cooldown-ms <ms>  Minimum interval between hot reloads (default: 1500)",
     "  --opencode-username <u>   Internal-only override for managed OpenCode auth username",
     "  --opencode-password <p>   Internal-only override for managed OpenCode auth password",
-    "  --openwork-host <host>    Bind host for openwork-server (default: 127.0.0.1)",
-    "  --openwork-port <port>    Port for openwork-server (default: 8787)",
+    "  --jugglework-host <host>    Bind host for jugglework-server (default: 127.0.0.1)",
+    "  --jugglework-port <port>    Port for jugglework-server (default: 8787)",
     "  --remote-access           Expose JuggleWork on 0.0.0.0 for remote sharing",
-    "  --openwork-token <token>  Client token for openwork-server",
-    "  --openwork-host-token <t> Host token for approvals",
+    "  --jugglework-token <token>  Client token for jugglework-server",
+    "  --jugglework-host-token <t> Host token for approvals",
     "  --workspace-id <id>       Workspace id for file session commands",
     "  --session-id <id>         File session id for file session commands",
     "  --path <path>             Workspace-relative file path",
@@ -3017,7 +3017,7 @@ function printHelp(): void {
     "  --read-only               Start JuggleWork server in read-only mode",
     "  --cors <origins>          Comma-separated CORS origins or *",
     "  --connect-host <host>     Override LAN host used for pairing URLs",
-    "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
+    "  --jugglework-server-bin <p> Path to jugglework-server binary (requires --allow-external)",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
     "  --sidecar-dir <path>      Cache directory for downloaded sidecars",
     "  --sidecar-base-url <url>  Base URL for sidecar downloads",
@@ -3106,10 +3106,10 @@ async function startOpencode(options: {
     env: {
       ...process.env,
       ...(options.stateLayout?.env ?? {}),
-      OPENCODE_CLIENT: "openwork-orchestrator",
-      OPENWORK: "1",
-      OPENWORK_RUN_ID: options.runId,
-      OPENWORK_LOG_FORMAT: options.logFormat,
+      OPENCODE_CLIENT: "jugglework-orchestrator",
+      JUGGLEWORK: "1",
+      JUGGLEWORK_RUN_ID: options.runId,
+      JUGGLEWORK_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
           "service.name": "opencode",
@@ -3150,7 +3150,7 @@ async function startOpencode(options: {
   return child;
 }
 
-async function startOpenworkServer(options: {
+async function startJuggleWorkServer(options: {
   bin: string;
   host: string;
   port: number;
@@ -3211,34 +3211,34 @@ async function startOpenworkServer(options: {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        OPENWORK_TOKEN: options.token,
-        OPENWORK_HOST_TOKEN: options.hostToken,
-        OPENWORK_RUN_ID: options.runId,
-        OPENWORK_LOG_FORMAT: options.logFormat,
+        JUGGLEWORK_TOKEN: options.token,
+        JUGGLEWORK_HOST_TOKEN: options.hostToken,
+        JUGGLEWORK_RUN_ID: options.runId,
+        JUGGLEWORK_LOG_FORMAT: options.logFormat,
         OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
           {
-            "service.name": "openwork-server",
+            "service.name": "jugglework-server",
             "service.instance.id": options.runId,
           },
           process.env.OTEL_RESOURCE_ATTRIBUTES,
         ),
         ...(options.opencodeBaseUrl
-          ? { OPENWORK_OPENCODE_BASE_URL: options.opencodeBaseUrl }
+          ? { JUGGLEWORK_OPENCODE_BASE_URL: options.opencodeBaseUrl }
           : {}),
         ...(options.opencodeDirectory
-          ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory }
+          ? { JUGGLEWORK_OPENCODE_DIRECTORY: options.opencodeDirectory }
           : {}),
         ...(options.opencodeUsername
-          ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername }
+          ? { JUGGLEWORK_OPENCODE_USERNAME: options.opencodeUsername }
           : {}),
         ...(options.opencodePassword
-          ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword }
+          ? { JUGGLEWORK_OPENCODE_PASSWORD: options.opencodePassword }
           : {}),
         ...(options.controlBaseUrl
-          ? { OPENWORK_CONTROL_BASE_URL: options.controlBaseUrl }
+          ? { JUGGLEWORK_CONTROL_BASE_URL: options.controlBaseUrl }
           : {}),
         ...(options.controlToken
-          ? { OPENWORK_CONTROL_TOKEN: options.controlToken }
+          ? { JUGGLEWORK_CONTROL_TOKEN: options.controlToken }
           : {}),
       },
     },
@@ -3246,14 +3246,14 @@ async function startOpenworkServer(options: {
 
   prefixStream(
     child.stdout,
-    "openwork-server",
+    "jugglework-server",
     "stdout",
     options.logger,
     child.pid ?? undefined,
   );
   prefixStream(
     child.stderr,
-    "openwork-server",
+    "jugglework-server",
     "stderr",
     options.logger,
     child.pid ?? undefined,
@@ -3353,7 +3353,7 @@ async function stageSandboxRuntime(options: {
   containerName: string;
   sidecars: {
     opencode: string;
-    openworkServer: string;
+    juggleworkServer: string;
   };
   detach: boolean;
 }): Promise<{
@@ -3364,7 +3364,7 @@ async function stageSandboxRuntime(options: {
 }> {
   const baseDir = join(
     options.persistDir,
-    "openwork-orchestrator-sandbox",
+    "jugglework-orchestrator-sandbox",
     options.containerName,
   );
   await mkdir(baseDir, { recursive: true });
@@ -3374,13 +3374,13 @@ async function stageSandboxRuntime(options: {
   const entrypointHostPath = join(baseDir, "entrypoint.sh");
 
   const stagedOpencode = join(sidecarsDir, "opencode");
-  const stagedOpenwork = join(sidecarsDir, "openwork-server");
+  const stagedJuggleWork = join(sidecarsDir, "jugglework-server");
   await copyFile(options.sidecars.opencode, stagedOpencode);
-  await copyFile(options.sidecars.openworkServer, stagedOpenwork);
+  await copyFile(options.sidecars.juggleworkServer, stagedJuggleWork);
   await ensureExecutable(stagedOpencode);
-  await ensureExecutable(stagedOpenwork);
+  await ensureExecutable(stagedJuggleWork);
 
-  const rootInContainer = `/persist/openwork-orchestrator-sandbox/${options.containerName}`;
+  const rootInContainer = `/persist/jugglework-orchestrator-sandbox/${options.containerName}`;
   const cleanup = async () => {
     if (options.detach) return;
     try {
@@ -3405,7 +3405,7 @@ async function writeSandboxEntrypoint(options: {
     hotReload: OpencodeHotReload;
     logLevel?: string;
   };
-  openwork: {
+  jugglework: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -3420,7 +3420,7 @@ async function writeSandboxEntrypoint(options: {
   logFormat: LogFormat;
 }): Promise<void> {
   const opencodeBin = `${options.rootInContainer}/sidecars/opencode`;
-  const openworkBin = `${options.rootInContainer}/sidecars/openwork-server`;
+  const juggleworkBin = `${options.rootInContainer}/sidecars/jugglework-server`;
   const workspaceDir = "/workspace";
   const opencodeConfigDir = options.opencodeConfigDirInContainer;
   const hostOpencodeConfigDir = SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH;
@@ -3435,31 +3435,31 @@ async function writeSandboxEntrypoint(options: {
     ? `--log-level ${shQuote(options.opencode.logLevel)}`
     : "";
 
-  const openworkCors = options.openwork.corsOrigins.length
-    ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
+  const juggleworkCors = options.jugglework.corsOrigins.length
+    ? `--cors ${shQuote(options.jugglework.corsOrigins.join(","))}`
     : "";
 
   const requiredSecretEnv = [
-    ': "${OPENWORK_TOKEN:?OPENWORK_TOKEN is required}"',
-    ': "${OPENWORK_HOST_TOKEN:?OPENWORK_HOST_TOKEN is required}"',
+    ': "${JUGGLEWORK_TOKEN:?JUGGLEWORK_TOKEN is required}"',
+    ': "${JUGGLEWORK_HOST_TOKEN:?JUGGLEWORK_HOST_TOKEN is required}"',
     options.opencode.username
       ? ': "${OPENCODE_SERVER_USERNAME:?OPENCODE_SERVER_USERNAME is required}"'
       : "",
     options.opencode.password
       ? ': "${OPENCODE_SERVER_PASSWORD:?OPENCODE_SERVER_PASSWORD is required}"'
       : "",
-    options.openwork.opencodeUsername
-      ? ': "${OPENWORK_OPENCODE_USERNAME:?OPENWORK_OPENCODE_USERNAME is required}"'
+    options.jugglework.opencodeUsername
+      ? ': "${JUGGLEWORK_OPENCODE_USERNAME:?JUGGLEWORK_OPENCODE_USERNAME is required}"'
       : "",
-    options.openwork.opencodePassword
-      ? ': "${OPENWORK_OPENCODE_PASSWORD:?OPENWORK_OPENCODE_PASSWORD is required}"'
+    options.jugglework.opencodePassword
+      ? ': "${JUGGLEWORK_OPENCODE_PASSWORD:?JUGGLEWORK_OPENCODE_PASSWORD is required}"'
       : "",
   ]
     .filter(Boolean)
     .join("\n");
 
-  const openworkDevMode = (process.env.OPENWORK_DEV_MODE ?? "").trim() === "1";
-  const sandboxHomeDir = openworkDevMode ? "/persist/openwork-dev-data/home" : "/persist";
+  const juggleworkDevMode = (process.env.JUGGLEWORK_DEV_MODE ?? "").trim() === "1";
+  const sandboxHomeDir = juggleworkDevMode ? "/persist/jugglework-dev-data/home" : "/persist";
 
   const script = [
     "set -eu",
@@ -3481,16 +3481,16 @@ async function writeSandboxEntrypoint(options: {
     'mkdir -p "$XDG_DATA_HOME/opencode"',
     `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
-    `export OPENCODE_CLIENT=openwork-orchestrator`,
+    `export OPENCODE_CLIENT=jugglework-orchestrator`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
-    `export OPENWORK=1`,
-    `export OPENWORK_DEV_MODE=${shQuote(openworkDevMode ? "1" : "0")}`,
-    `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
-    `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
-    `export OPENWORK_SANDBOX_ENABLED=1`,
-    `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
+    `export JUGGLEWORK=1`,
+    `export JUGGLEWORK_DEV_MODE=${shQuote(juggleworkDevMode ? "1" : "0")}`,
+    `export JUGGLEWORK_RUN_ID=${shQuote(options.runId)}`,
+    `export JUGGLEWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
+    `export JUGGLEWORK_SANDBOX_ENABLED=1`,
+    `export JUGGLEWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
     requiredSecretEnv,
     'opencode_pid=""',
     "cleanup() {",
@@ -3499,15 +3499,15 @@ async function writeSandboxEntrypoint(options: {
     "trap cleanup INT TERM",
     `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))}${opencodeLogLevelArg ? ` ${opencodeLogLevelArg}` : ""} ${opencodeCors} &`,
     "opencode_pid=$!",
-    `exec ${shQuote(openworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_OPENWORK_PORT))}` +
+    `exec ${shQuote(juggleworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_JUGGLEWORK_PORT))}` +
       ` --workspace ${shQuote(workspaceDir)}` +
-      ` --approval ${shQuote(options.openwork.approvalMode)}` +
-      ` --approval-timeout ${shQuote(String(options.openwork.approvalTimeoutMs))}` +
-      (options.openwork.readOnly ? " --read-only" : "") +
+      ` --approval ${shQuote(options.jugglework.approvalMode)}` +
+      ` --approval-timeout ${shQuote(String(options.jugglework.approvalTimeoutMs))}` +
+      (options.jugglework.readOnly ? " --read-only" : "") +
       ` --opencode-base-url ${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}` +
       ` --opencode-directory ${shQuote(workspaceDir)}` +
-      ` --log-format ${shQuote(options.openwork.logFormat)}` +
-      (openworkCors ? ` ${openworkCors}` : ""),
+      ` --log-format ${shQuote(options.jugglework.logFormat)}` +
+      (juggleworkCors ? ` ${juggleworkCors}` : ""),
   ]
     .filter(Boolean)
     .join("\n");
@@ -3525,9 +3525,9 @@ async function startDockerSandbox(options: {
   extraMounts: SandboxMount[];
   sidecars: {
     opencode: string;
-    openworkServer: string;
+    juggleworkServer: string;
   };
-  ports: { openwork: number };
+  ports: { jugglework: number };
   opencode: {
     corsOrigins: string[];
     username?: string;
@@ -3535,7 +3535,7 @@ async function startDockerSandbox(options: {
     hotReload: OpencodeHotReload;
     logLevel?: string;
   };
-  openwork: {
+  jugglework: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -3564,16 +3564,16 @@ async function startDockerSandbox(options: {
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "docker",
     opencode: options.opencode,
-    openwork: {
-      token: options.openwork.token,
-      hostToken: options.openwork.hostToken,
-      approvalMode: options.openwork.approvalMode,
-      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
-      readOnly: options.openwork.readOnly,
-      corsOrigins: options.openwork.corsOrigins,
-      opencodeUsername: options.openwork.opencodeUsername,
-      opencodePassword: options.openwork.opencodePassword,
-      logFormat: options.openwork.logFormat,
+    jugglework: {
+      token: options.jugglework.token,
+      hostToken: options.jugglework.hostToken,
+      approvalMode: options.jugglework.approvalMode,
+      approvalTimeoutMs: options.jugglework.approvalTimeoutMs,
+      readOnly: options.jugglework.readOnly,
+      corsOrigins: options.jugglework.corsOrigins,
+      opencodeUsername: options.jugglework.opencodeUsername,
+      opencodePassword: options.jugglework.opencodePassword,
+      logFormat: options.jugglework.logFormat,
     },
     runId: options.runId,
     logFormat: options.logFormat,
@@ -3585,7 +3585,7 @@ async function startDockerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `127.0.0.1:${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `127.0.0.1:${options.ports.jugglework}:${SANDBOX_INTERNAL_JUGGLEWORK_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -3655,19 +3655,19 @@ async function startDockerSandbox(options: {
     env: {
       ...userEnv,
       ...process.env,
-      OPENWORK_TOKEN: options.openwork.token,
-      OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+      JUGGLEWORK_TOKEN: options.jugglework.token,
+      JUGGLEWORK_HOST_TOKEN: options.jugglework.hostToken,
       ...(options.opencode.username
         ? { OPENCODE_SERVER_USERNAME: options.opencode.username }
         : {}),
       ...(options.opencode.password
         ? { OPENCODE_SERVER_PASSWORD: options.opencode.password }
         : {}),
-      ...(options.openwork.opencodeUsername
-        ? { OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername }
+      ...(options.jugglework.opencodeUsername
+        ? { JUGGLEWORK_OPENCODE_USERNAME: options.jugglework.opencodeUsername }
         : {}),
-      ...(options.openwork.opencodePassword
-        ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
+      ...(options.jugglework.opencodePassword
+        ? { JUGGLEWORK_OPENCODE_PASSWORD: options.jugglework.opencodePassword }
         : {}),
     },
   });
@@ -3698,9 +3698,9 @@ async function startAppleContainerSandbox(options: {
   extraMounts: SandboxMount[];
   sidecars: {
     opencode: string;
-    openworkServer: string;
+    juggleworkServer: string;
   };
-  ports: { openwork: number };
+  ports: { jugglework: number };
   opencode: {
     corsOrigins: string[];
     username?: string;
@@ -3708,7 +3708,7 @@ async function startAppleContainerSandbox(options: {
     hotReload: OpencodeHotReload;
     logLevel?: string;
   };
-  openwork: {
+  jugglework: {
     token: string;
     hostToken: string;
     approvalMode: ApprovalMode;
@@ -3739,16 +3739,16 @@ async function startAppleContainerSandbox(options: {
     opencodeConfigDirInContainer: "/opencode-config",
     backend: "container",
     opencode: options.opencode,
-    openwork: {
-      token: options.openwork.token,
-      hostToken: options.openwork.hostToken,
-      approvalMode: options.openwork.approvalMode,
-      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
-      readOnly: options.openwork.readOnly,
-      corsOrigins: options.openwork.corsOrigins,
-      opencodeUsername: options.openwork.opencodeUsername,
-      opencodePassword: options.openwork.opencodePassword,
-      logFormat: options.openwork.logFormat,
+    jugglework: {
+      token: options.jugglework.token,
+      hostToken: options.jugglework.hostToken,
+      approvalMode: options.jugglework.approvalMode,
+      approvalTimeoutMs: options.jugglework.approvalTimeoutMs,
+      readOnly: options.jugglework.readOnly,
+      corsOrigins: options.jugglework.corsOrigins,
+      opencodeUsername: options.jugglework.opencodeUsername,
+      opencodePassword: options.jugglework.opencodePassword,
+      logFormat: options.jugglework.logFormat,
     },
     runId: options.runId,
     logFormat: options.logFormat,
@@ -3760,7 +3760,7 @@ async function startAppleContainerSandbox(options: {
     "--name",
     options.containerName,
     "-p",
-    `127.0.0.1:${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    `127.0.0.1:${options.ports.jugglework}:${SANDBOX_INTERNAL_JUGGLEWORK_PORT}`,
     "-v",
     `${options.workspace}:/workspace`,
     "-v",
@@ -3828,19 +3828,19 @@ async function startAppleContainerSandbox(options: {
     env: {
       ...userEnv,
       ...process.env,
-      OPENWORK_TOKEN: options.openwork.token,
-      OPENWORK_HOST_TOKEN: options.openwork.hostToken,
+      JUGGLEWORK_TOKEN: options.jugglework.token,
+      JUGGLEWORK_HOST_TOKEN: options.jugglework.hostToken,
       ...(options.opencode.username
         ? { OPENCODE_SERVER_USERNAME: options.opencode.username }
         : {}),
       ...(options.opencode.password
         ? { OPENCODE_SERVER_PASSWORD: options.opencode.password }
         : {}),
-      ...(options.openwork.opencodeUsername
-        ? { OPENWORK_OPENCODE_USERNAME: options.openwork.opencodeUsername }
+      ...(options.jugglework.opencodeUsername
+        ? { JUGGLEWORK_OPENCODE_USERNAME: options.jugglework.opencodeUsername }
         : {}),
-      ...(options.openwork.opencodePassword
-        ? { OPENWORK_OPENCODE_PASSWORD: options.openwork.opencodePassword }
+      ...(options.jugglework.opencodePassword
+        ? { JUGGLEWORK_OPENCODE_PASSWORD: options.jugglework.opencodePassword }
         : {}),
     },
   });
@@ -3877,7 +3877,7 @@ async function verifyOpencodeVersion(
     binary.expectedVersion !== actual
   ) {
     process.stderr.write(
-      `[openwork-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+      `[jugglework-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
     );
     return actual;
   }
@@ -3885,7 +3885,7 @@ async function verifyOpencodeVersion(
   return actual;
 }
 
-async function verifyOpenworkServer(input: {
+async function verifyJuggleWorkServer(input: {
   baseUrl: string;
   token: string;
   hostToken: string;
@@ -3900,7 +3900,7 @@ async function verifyOpenworkServer(input: {
   const actualVersion =
     typeof health?.version === "string" ? health.version : undefined;
   assertVersionMatch(
-    "openwork-server",
+    "jugglework-server",
     input.expectedVersion,
     actualVersion,
     `${input.baseUrl}/health`,
@@ -3971,7 +3971,7 @@ async function verifyOpenworkServer(input: {
     throw new Error("JuggleWork server OpenCode password mismatch.");
   }
 
-  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const hostHeaders = { "X-JuggleWork-Host-Token": input.hostToken };
   await fetchJson(`${input.baseUrl}/approvals`, { headers: hostHeaders });
 
   return actualVersion;
@@ -4012,12 +4012,12 @@ function buildRuntimeServiceSnapshot(input: {
 
 async function runChecks(input: {
   opencodeClient: ReturnType<typeof createOpencodeClient>;
-  openworkUrl: string;
-  openworkToken: string;
+  juggleworkUrl: string;
+  juggleworkToken: string;
   checkEvents: boolean;
 }) {
-  const baseUrl = input.openworkUrl.replace(/\/$/, "");
-  const headers = { Authorization: `Bearer ${input.openworkToken}` };
+  const baseUrl = input.juggleworkUrl.replace(/\/$/, "");
+  const headers = { Authorization: `Bearer ${input.juggleworkToken}` };
   const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
     throw new Error("JuggleWork server returned no workspaces");
@@ -4076,29 +4076,29 @@ async function runChecks(input: {
 
 /**
  * Lighter check suite for sandbox mode.  Uses only raw HTTP against the
- * openwork-server endpoints — no OpenCode SDK calls that rely on Bearer
+ * jugglework-server endpoints — no OpenCode SDK calls that rely on Bearer
  * auth through the proxy (since the released server binary may predate our
  * token/proxy changes).
  */
 async function runSandboxChecks(input: {
-  openworkUrl: string;
-  openworkToken: string;
+  juggleworkUrl: string;
+  juggleworkToken: string;
   hostToken: string;
 }) {
-  const baseUrl = input.openworkUrl.replace(/\/$/, "");
-  const headers = { Authorization: `Bearer ${input.openworkToken}` };
-  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const baseUrl = input.juggleworkUrl.replace(/\/$/, "");
+  const headers = { Authorization: `Bearer ${input.juggleworkToken}` };
+  const hostHeaders = { "X-JuggleWork-Host-Token": input.hostToken };
 
   // 1. Server health
   const health = await fetchJson(`${baseUrl}/health`);
   if (!health || typeof health !== "object") {
-    throw new Error("openwork-server /health returned invalid payload");
+    throw new Error("jugglework-server /health returned invalid payload");
   }
 
   // 2. Workspaces list
   const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
-    throw new Error("openwork-server returned no workspaces");
+    throw new Error("jugglework-server returned no workspaces");
   }
   const workspaceId = workspaces.items[0].id as string;
 
@@ -4135,7 +4135,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   return payload;
 }
 
-async function issueOpenworkOwnerToken(
+async function issueJuggleWorkOwnerToken(
   baseUrl: string,
   hostToken: string,
   label = "JuggleWork owner token",
@@ -4144,7 +4144,7 @@ async function issueOpenworkOwnerToken(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-OpenWork-Host-Token": hostToken,
+      "X-JuggleWork-Host-Token": hostToken,
     },
     body: JSON.stringify({ scope: "owner", label }),
   });
@@ -4210,7 +4210,7 @@ function outputError(error: unknown, json: boolean): void {
 function createVerboseLogger(
   enabled: boolean,
   logger?: Logger,
-  component = "openwork-orchestrator",
+  component = "jugglework-orchestrator",
 ) {
   return (message: string) => {
     if (!enabled) return;
@@ -4277,8 +4277,8 @@ const REDACTED_LOG_VALUE = "[REDACTED]";
 const SENSITIVE_FLAG_NAMES = [
   "--token",
   "--host-token",
-  "--openwork-token",
-  "--openwork-host-token",
+  "--jugglework-token",
+  "--jugglework-host-token",
   "--opencode-password",
   "--opencode-username",
 ];
@@ -4307,7 +4307,7 @@ function isSensitiveAttributeKey(key?: string): boolean {
   const normalized = trimmed.toLowerCase();
   if (SENSITIVE_ATTRIBUTE_KEYS.has(normalized)) return true;
   return (
-    (trimmed.startsWith("OPENWORK_") ||
+    (trimmed.startsWith("JUGGLEWORK_") ||
       trimmed.startsWith("OPENCODE_") ||
       trimmed.startsWith("DEN_")) &&
     /TOKEN|PASSWORD|USERNAME|AUTHORIZATION/.test(trimmed)
@@ -4319,7 +4319,7 @@ function redactSensitiveString(input: string): string {
   redacted = redacted.replace(/\b(Bearer)\s+[^\s"']+/gi, "$1 [REDACTED]");
   redacted = redacted.replace(/\b(Basic)\s+[A-Za-z0-9+/=]+/g, "$1 [REDACTED]");
   redacted = redacted.replace(
-    /((?:OPENWORK|OPENCODE|DEN)_[A-Z0-9_]*(?:TOKEN|PASSWORD|USERNAME|AUTHORIZATION)[A-Z0-9_]*=)([^\s]+)/g,
+    /((?:JUGGLEWORK|OPENCODE|DEN)_[A-Z0-9_]*(?:TOKEN|PASSWORD|USERNAME|AUTHORIZATION)[A-Z0-9_]*=)([^\s]+)/g,
     `$1${REDACTED_LOG_VALUE}`,
   );
   redacted = redacted.replace(
@@ -4401,10 +4401,10 @@ function createLogger(options: {
   const output = options.output ?? "stdout";
   const colorEnabled = options.color ?? false;
   const componentColors: Record<string, string> = {
-    "openwork-orchestrator": ANSI.gray,
+    "jugglework-orchestrator": ANSI.gray,
     opencode: ANSI.cyan,
-    "openwork-server": ANSI.green,
-    "openwork-orchestrator-router": ANSI.cyan,
+    "jugglework-server": ANSI.green,
+    "jugglework-orchestrator-router": ANSI.cyan,
   };
   const levelColors: Record<LogLevel, string> = {
     debug: ANSI.gray,
@@ -4610,50 +4610,50 @@ async function spawnRouterDaemon(
   ];
 
   const opencodeBin =
-    readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+    readFlag(args.flags, "opencode-bin") ?? process.env.JUGGLEWORK_OPENCODE_BIN;
   assertManagedOpencodeAuth(args);
   const opencodeHost = resolveManagedOpencodeHost(
-    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST,
+    readFlag(args.flags, "opencode-host") ?? process.env.JUGGLEWORK_OPENCODE_HOST,
   );
   const opencodePort =
-    readFlag(args.flags, "opencode-port") ?? process.env.OPENWORK_OPENCODE_PORT;
+    readFlag(args.flags, "opencode-port") ?? process.env.JUGGLEWORK_OPENCODE_PORT;
   const opencodeWorkdir =
     readFlag(args.flags, "opencode-workdir") ??
-    process.env.OPENWORK_OPENCODE_WORKDIR;
+    process.env.JUGGLEWORK_OPENCODE_WORKDIR;
   const opencodeLogLevel = resolveOpencodeLogLevel(
     readFlag(args.flags, "opencode-log-level") ??
-      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+      process.env.JUGGLEWORK_OPENCODE_LOG_LEVEL,
   );
   const opencodeHotReload =
     readFlag(args.flags, "opencode-hot-reload") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD;
+    process.env.JUGGLEWORK_OPENCODE_HOT_RELOAD;
   const opencodeHotReloadDebounceMs =
     readFlag(args.flags, "opencode-hot-reload-debounce-ms") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS;
+    process.env.JUGGLEWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS;
   const opencodeHotReloadCooldownMs =
     readFlag(args.flags, "opencode-hot-reload-cooldown-ms") ??
-    process.env.OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
+    process.env.JUGGLEWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
   const opencodeCredentials = resolveManagedOpencodeCredentials(args);
   const opencodeUsername = opencodeCredentials.username;
   const opencodePassword = opencodeCredentials.password;
   const corsValue =
-    readFlag(args.flags, "cors") ?? process.env.OPENWORK_OPENCODE_CORS;
+    readFlag(args.flags, "cors") ?? process.env.JUGGLEWORK_OPENCODE_CORS;
   const allowExternal = readBool(
     args.flags,
     "allow-external",
     false,
-    "OPENWORK_ALLOW_EXTERNAL",
+    "JUGGLEWORK_ALLOW_EXTERNAL",
   );
   const sidecarSource =
     readFlag(args.flags, "sidecar-source") ??
-    process.env.OPENWORK_SIDECAR_SOURCE;
+    process.env.JUGGLEWORK_SIDECAR_SOURCE;
   const opencodeSource =
     readFlag(args.flags, "opencode-source") ??
-    process.env.OPENWORK_OPENCODE_SOURCE;
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+    process.env.JUGGLEWORK_OPENCODE_SOURCE;
+  const verbose = readBool(args.flags, "verbose", false, "JUGGLEWORK_VERBOSE");
   const logFormat =
-    readFlag(args.flags, "log-format") ?? process.env.OPENWORK_LOG_FORMAT;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID;
+    readFlag(args.flags, "log-format") ?? process.env.JUGGLEWORK_LOG_FORMAT;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.JUGGLEWORK_RUN_ID;
 
   if (opencodeBin) commandArgs.push("--opencode-bin", opencodeBin);
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
@@ -4686,8 +4686,8 @@ async function spawnRouterDaemon(
     stdio: "ignore",
     env: {
       ...process.env,
-      OPENWORK_OPENCODE_USERNAME: opencodeUsername,
-      OPENWORK_OPENCODE_PASSWORD: opencodePassword,
+      JUGGLEWORK_OPENCODE_USERNAME: opencodeUsername,
+      JUGGLEWORK_OPENCODE_PASSWORD: opencodePassword,
     },
   });
   child.unref();
@@ -4716,7 +4716,7 @@ async function ensureRouterDaemon(
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "JUGGLEWORK_DAEMON_PORT"),
     "127.0.0.1",
   );
   const baseUrl = `http://${host}:${port}`;
@@ -4878,25 +4878,25 @@ async function runInstanceCommand(args: ParsedArgs) {
 
 async function runRouterDaemon(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+  const verbose = readBool(args.flags, "verbose", false, "JUGGLEWORK_VERBOSE");
   const logFormat = readLogFormat(
     args.flags,
     "log-format",
     "pretty",
-    "OPENWORK_LOG_FORMAT",
+    "JUGGLEWORK_LOG_FORMAT",
   );
   const colorEnabled =
-    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") &&
+    readBool(args.flags, "color", process.stdout.isTTY, "JUGGLEWORK_COLOR") &&
     !process.env.NO_COLOR;
   const runId =
     readFlag(args.flags, "run-id") ??
-    process.env.OPENWORK_RUN_ID ??
+    process.env.JUGGLEWORK_RUN_ID ??
     randomUUID();
   const cliVersion = await resolveCliVersion();
   const logger = createLogger({
     format: logFormat,
     runId,
-    serviceName: "openwork-orchestrator",
+    serviceName: "jugglework-orchestrator",
     serviceVersion: cliVersion,
     output: "stdout",
     color: colorEnabled,
@@ -4904,19 +4904,19 @@ async function runRouterDaemon(args: ParsedArgs) {
   const logVerbose = createVerboseLogger(
     verbose && !outputJson,
     logger,
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
   );
   const sidecarSourceInput = readBinarySource(
     args.flags,
     "sidecar-source",
     "auto",
-    "OPENWORK_SIDECAR_SOURCE",
+    "JUGGLEWORK_SIDECAR_SOURCE",
   );
   const opencodeSourceInput = readBinarySource(
     args.flags,
     "opencode-source",
     "auto",
-    "OPENWORK_OPENCODE_SOURCE",
+    "JUGGLEWORK_OPENCODE_SOURCE",
   );
   const sidecarSource = sidecarSourceInput;
   const opencodeSource = opencodeSourceInput;
@@ -4926,15 +4926,15 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "JUGGLEWORK_DAEMON_PORT"),
     "127.0.0.1",
   );
 
   const opencodeBin =
-    readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+    readFlag(args.flags, "opencode-bin") ?? process.env.JUGGLEWORK_OPENCODE_BIN;
   assertManagedOpencodeAuth(args);
   const opencodeHost = resolveManagedOpencodeHost(
-    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST,
+    readFlag(args.flags, "opencode-host") ?? process.env.JUGGLEWORK_OPENCODE_HOST,
   );
   const opencodeCredentials = resolveManagedOpencodeCredentials(args);
   const opencodeUsername = opencodeCredentials.username;
@@ -4947,14 +4947,14 @@ async function runRouterDaemon(args: ParsedArgs) {
       args.flags,
       "opencode-port",
       state.opencode?.port,
-      "OPENWORK_OPENCODE_PORT",
+      "JUGGLEWORK_OPENCODE_PORT",
     ),
     "127.0.0.1",
     state.opencode?.port,
   );
   const opencodeLogLevel = resolveOpencodeLogLevel(
     readFlag(args.flags, "opencode-log-level") ??
-      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+      process.env.JUGGLEWORK_OPENCODE_LOG_LEVEL,
   );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
@@ -4964,19 +4964,19 @@ async function runRouterDaemon(args: ParsedArgs) {
       cooldownMs: DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS,
     },
     {
-      enabled: "OPENWORK_OPENCODE_HOT_RELOAD",
-      debounceMs: "OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
-      cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
+      enabled: "JUGGLEWORK_OPENCODE_HOT_RELOAD",
+      debounceMs: "JUGGLEWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
+      cooldownMs: "JUGGLEWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
   const corsValue =
     readFlag(args.flags, "cors") ??
-    process.env.OPENWORK_OPENCODE_CORS ??
+    process.env.JUGGLEWORK_OPENCODE_CORS ??
     "http://localhost:5173,tauri://localhost,http://tauri.localhost";
   const corsOrigins = parseList(corsValue);
   const opencodeWorkdirFlag =
     readFlag(args.flags, "opencode-workdir") ??
-    process.env.OPENWORK_OPENCODE_WORKDIR;
+    process.env.JUGGLEWORK_OPENCODE_WORKDIR;
   const activeWorkspace = state.workspaces.find(
     (entry) => entry.id === state.activeId && entry.workspaceType === "local",
   );
@@ -4993,7 +4993,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
   );
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
@@ -5001,7 +5001,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     args.flags,
     "allow-external",
     false,
-    "OPENWORK_ALLOW_EXTERNAL",
+    "JUGGLEWORK_ALLOW_EXTERNAL",
   );
   const manifest = await readVersionManifest();
   logVerbose(`cli version: ${cliVersion}`);
@@ -5126,7 +5126,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           durationMs: Date.now() - startedAt,
           activeId: state.activeId,
         },
-        "openwork-orchestrator-router",
+        "jugglework-orchestrator-router",
       );
     });
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -5374,7 +5374,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     logger.info(
       "Daemon shutting down",
       { host, port },
-      "openwork-orchestrator-router",
+      "jugglework-orchestrator-router",
     );
     try {
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -5410,7 +5410,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         logger.info(
           "Daemon running",
           { host, port },
-          "openwork-orchestrator-router",
+          "jugglework-orchestrator-router",
         );
       } else {
         console.log(`orchestrator daemon running on ${host}:${port}`);
@@ -5423,26 +5423,26 @@ async function runRouterDaemon(args: ParsedArgs) {
   await new Promise(() => undefined);
 }
 
-function readOpenworkClientAuth(args: ParsedArgs): {
-  openworkUrl: string;
+function readJuggleWorkClientAuth(args: ParsedArgs): {
+  juggleworkUrl: string;
   token: string;
 } {
-  const openworkUrl =
-    readFlag(args.flags, "openwork-url") ??
-    process.env.OPENWORK_URL ??
-    process.env.OPENWORK_SERVER_URL ??
+  const juggleworkUrl =
+    readFlag(args.flags, "jugglework-url") ??
+    process.env.JUGGLEWORK_URL ??
+    process.env.JUGGLEWORK_SERVER_URL ??
     "";
   const token =
     readFlag(args.flags, "token") ??
-    readFlag(args.flags, "openwork-token") ??
-    process.env.OPENWORK_TOKEN ??
+    readFlag(args.flags, "jugglework-token") ??
+    process.env.JUGGLEWORK_TOKEN ??
     "";
 
-  if (!openworkUrl || !token) {
-    throw new Error("openwork-url and token are required");
+  if (!juggleworkUrl || !token) {
+    throw new Error("jugglework-url and token are required");
   }
 
-  return { openworkUrl, token };
+  return { juggleworkUrl, token };
 }
 
 function readSessionId(args: ParsedArgs, fallbackIndex: number): string {
@@ -5458,8 +5458,8 @@ function readSessionId(args: ParsedArgs, fallbackIndex: number): string {
 async function runFiles(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const subcommand = args.positionals[1] ?? "";
-  const { openworkUrl, token } = readOpenworkClientAuth(args);
-  const baseUrl = openworkUrl.replace(/\/$/, "");
+  const { juggleworkUrl, token } = readJuggleWorkClientAuth(args);
+  const baseUrl = juggleworkUrl.replace(/\/$/, "");
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
@@ -5715,26 +5715,26 @@ async function runApprovals(args: ParsedArgs) {
     throw new Error("approvals requires 'list' or 'reply'");
   }
 
-  const openworkUrl =
-    readFlag(args.flags, "openwork-url") ??
-    process.env.OPENWORK_URL ??
-    process.env.OPENWORK_SERVER_URL ??
+  const juggleworkUrl =
+    readFlag(args.flags, "jugglework-url") ??
+    process.env.JUGGLEWORK_URL ??
+    process.env.JUGGLEWORK_SERVER_URL ??
     "";
   const hostToken =
-    readFlag(args.flags, "host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? "";
+    readFlag(args.flags, "host-token") ?? process.env.JUGGLEWORK_HOST_TOKEN ?? "";
 
-  if (!openworkUrl || !hostToken) {
-    throw new Error("openwork-url and host-token are required for approvals");
+  if (!juggleworkUrl || !hostToken) {
+    throw new Error("jugglework-url and host-token are required for approvals");
   }
 
   const headers = {
     "Content-Type": "application/json",
-    "X-OpenWork-Host-Token": hostToken,
+    "X-JuggleWork-Host-Token": hostToken,
   };
 
   if (subcommand === "list") {
     const response = await fetch(
-      `${openworkUrl.replace(/\/$/, "")}/approvals`,
+      `${juggleworkUrl.replace(/\/$/, "")}/approvals`,
       { headers },
     );
     if (!response.ok) {
@@ -5758,7 +5758,7 @@ async function runApprovals(args: ParsedArgs) {
 
   const payload = { reply: allow ? "allow" : "deny" };
   const response = await fetch(
-    `${openworkUrl.replace(/\/$/, "")}/approvals/${approvalId}`,
+    `${juggleworkUrl.replace(/\/$/, "")}/approvals/${approvalId}`,
     {
       method: "POST",
       headers,
@@ -5773,8 +5773,8 @@ async function runApprovals(args: ParsedArgs) {
 }
 
 async function runStatus(args: ParsedArgs) {
-  const openworkUrl =
-    readFlag(args.flags, "openwork-url") ?? process.env.OPENWORK_URL ?? "";
+  const juggleworkUrl =
+    readFlag(args.flags, "jugglework-url") ?? process.env.JUGGLEWORK_URL ?? "";
   const opencodeUrl =
     readFlag(args.flags, "opencode-url") ?? process.env.OPENCODE_URL ?? "";
   const username =
@@ -5787,12 +5787,12 @@ async function runStatus(args: ParsedArgs) {
 
   const status: Record<string, unknown> = {};
 
-  if (openworkUrl) {
+  if (juggleworkUrl) {
     try {
-      await waitForHealthy(openworkUrl, 5000, 400);
-      status.openwork = { ok: true, url: openworkUrl };
+      await waitForHealthy(juggleworkUrl, 5000, 400);
+      status.jugglework = { ok: true, url: juggleworkUrl };
     } catch (error) {
-      status.openwork = { ok: false, url: openworkUrl, error: String(error) };
+      status.jugglework = { ok: false, url: juggleworkUrl, error: String(error) };
     }
   }
 
@@ -5816,16 +5816,16 @@ async function runStatus(args: ParsedArgs) {
   if (outputJson) {
     console.log(JSON.stringify(status, null, 2));
   } else {
-    if (status.openwork) {
-      const openwork = status.openwork as {
+    if (status.jugglework) {
+      const jugglework = status.jugglework as {
         ok: boolean;
         url: string;
         error?: string;
       };
       console.log(
-        `JuggleWork server: ${openwork.ok ? "ok" : "error"} (${openwork.url})`,
+        `JuggleWork server: ${jugglework.ok ? "ok" : "error"} (${jugglework.url})`,
       );
-      if (openwork.error) console.log(`  ${openwork.error}`);
+      if (jugglework.error) console.log(`  ${jugglework.error}`);
     }
     if (status.opencode) {
       const opencode = status.opencode as {
@@ -5845,18 +5845,18 @@ async function runStart(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const checkOnly = readBool(args.flags, "check", false);
   const checkEvents = readBool(args.flags, "check-events", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+  const verbose = readBool(args.flags, "verbose", false, "JUGGLEWORK_VERBOSE");
   const logFormat = readLogFormat(
     args.flags,
     "log-format",
     "pretty",
-    "OPENWORK_LOG_FORMAT",
+    "JUGGLEWORK_LOG_FORMAT",
   );
   const detachRequested = readBool(
     args.flags,
     "detach",
     false,
-    "OPENWORK_DETACH",
+    "JUGGLEWORK_DETACH",
   );
   const defaultTui =
     process.stdout.isTTY && !outputJson && !checkOnly && !checkEvents;
@@ -5869,11 +5869,11 @@ async function runStart(args: ParsedArgs) {
     !checkEvents &&
     logFormat === "pretty";
   const colorPreferred =
-    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") &&
+    readBool(args.flags, "color", process.stdout.isTTY, "JUGGLEWORK_COLOR") &&
     !process.env.NO_COLOR;
   const runId =
     readFlag(args.flags, "run-id") ??
-    process.env.OPENWORK_RUN_ID ??
+    process.env.JUGGLEWORK_RUN_ID ??
     randomUUID();
   const cliVersion = await resolveCliVersion();
   const compiledBinary = isCompiledBunBinary();
@@ -5882,14 +5882,14 @@ async function runStart(args: ParsedArgs) {
   const baseLoggerOptions = {
     format: logFormat,
     runId,
-    serviceName: "openwork-orchestrator",
+    serviceName: "jugglework-orchestrator",
     serviceVersion: cliVersion,
     onLog: (event: LogEvent) => {
       if (!tui) return;
       tui.pushLog({
         time: event.time,
         level: event.level,
-        component: event.component ?? "openwork-orchestrator",
+        component: event.component ?? "jugglework-orchestrator",
         message: event.message,
       });
     },
@@ -5902,7 +5902,7 @@ async function runStart(args: ParsedArgs) {
   let logVerbose = createVerboseLogger(
     verbose && !outputJson,
     logger,
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
   );
   const switchToPlainOutput = (error: string) => {
     if (!useTui) return;
@@ -5919,52 +5919,52 @@ async function runStart(args: ParsedArgs) {
     logVerbose = createVerboseLogger(
       verbose && !outputJson,
       logger,
-      "openwork-orchestrator",
+      "jugglework-orchestrator",
     );
     logger.warn(
-      "TUI failed to start; falling back to plain output. Use `openwork serve` for explicit non-TUI mode.",
+      "TUI failed to start; falling back to plain output. Use `jugglework serve` for explicit non-TUI mode.",
       { error },
-      "openwork-orchestrator",
+      "jugglework-orchestrator",
     );
   };
   const sidecarSourceInput = readBinarySource(
     args.flags,
     "sidecar-source",
     "auto",
-    "OPENWORK_SIDECAR_SOURCE",
+    "JUGGLEWORK_SIDECAR_SOURCE",
   );
   const opencodeSourceInput = readBinarySource(
     args.flags,
     "opencode-source",
     "auto",
-    "OPENWORK_OPENCODE_SOURCE",
+    "JUGGLEWORK_OPENCODE_SOURCE",
   );
 
   const workspace =
     readFlag(args.flags, "workspace") ??
-    process.env.OPENWORK_WORKSPACE ??
+    process.env.JUGGLEWORK_WORKSPACE ??
     process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
   logger.info(
     "Run starting",
     { workspace: resolvedWorkspace, logFormat, runId },
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
   );
 
   const sandboxRequested = readSandboxMode(
     args.flags,
     "sandbox",
     "none",
-    "OPENWORK_SANDBOX",
+    "JUGGLEWORK_SANDBOX",
   );
   const sandboxMode = await resolveSandboxMode(sandboxRequested);
   const sandboxImage =
     readFlag(args.flags, "sandbox-image") ??
-    process.env.OPENWORK_SANDBOX_IMAGE ??
+    process.env.JUGGLEWORK_SANDBOX_IMAGE ??
     "debian:bookworm-slim";
   const sandboxPersistOverride =
     readFlag(args.flags, "sandbox-persist-dir") ??
-    process.env.OPENWORK_SANDBOX_PERSIST_DIR;
+    process.env.JUGGLEWORK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
   const devMode = resolveInternalDevMode(args.flags);
   const opencodeStateLayout = resolveOpencodeStateLayout({
@@ -5984,7 +5984,7 @@ async function runStart(args: ParsedArgs) {
   }
 
   const sandboxMountValue =
-    readFlag(args.flags, "sandbox-mount") ?? process.env.OPENWORK_SANDBOX_MOUNT;
+    readFlag(args.flags, "sandbox-mount") ?? process.env.JUGGLEWORK_SANDBOX_MOUNT;
   const sandboxMountSpecs = parseList(sandboxMountValue);
   const sandboxExtraMounts =
     sandboxMode !== "none" && sandboxMountSpecs.length
@@ -5992,14 +5992,14 @@ async function runStart(args: ParsedArgs) {
       : [];
 
   const explicitOpencodeBin =
-    readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const explicitOpenworkServerBin =
-    readFlag(args.flags, "openwork-server-bin") ??
-    process.env.OPENWORK_SERVER_BIN;
+    readFlag(args.flags, "opencode-bin") ?? process.env.JUGGLEWORK_OPENCODE_BIN;
+  const explicitJuggleWorkServerBin =
+    readFlag(args.flags, "jugglework-server-bin") ??
+    process.env.JUGGLEWORK_SERVER_BIN;
   assertManagedOpencodeAuth(args);
   const opencodeBindHost = resolveManagedOpencodeHost(
     readFlag(args.flags, "opencode-host") ??
-      process.env.OPENWORK_OPENCODE_BIND_HOST,
+      process.env.JUGGLEWORK_OPENCODE_BIND_HOST,
   );
   const opencodePort =
     sandboxMode !== "none"
@@ -6009,13 +6009,13 @@ async function runStart(args: ParsedArgs) {
             args.flags,
             "opencode-port",
             undefined,
-            "OPENWORK_OPENCODE_PORT",
+            "JUGGLEWORK_OPENCODE_PORT",
           ),
           "127.0.0.1",
         );
   const opencodeLogLevel = resolveOpencodeLogLevel(
     readFlag(args.flags, "opencode-log-level") ??
-      process.env.OPENWORK_OPENCODE_LOG_LEVEL,
+      process.env.JUGGLEWORK_OPENCODE_LOG_LEVEL,
   );
   const opencodeHotReload = readOpencodeHotReload(
     args.flags,
@@ -6025,47 +6025,47 @@ async function runStart(args: ParsedArgs) {
       cooldownMs: DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS,
     },
     {
-      enabled: "OPENWORK_OPENCODE_HOT_RELOAD",
-      debounceMs: "OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
-      cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
+      enabled: "JUGGLEWORK_OPENCODE_HOT_RELOAD",
+      debounceMs: "JUGGLEWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
+      cooldownMs: "JUGGLEWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
   const opencodeCredentials = resolveManagedOpencodeCredentials(args);
   const opencodeUsername = opencodeCredentials.username;
   const opencodePassword = opencodeCredentials.password;
 
-  const remoteAccessEnabled = resolveOpenworkRemoteAccess(args);
-  const openworkHost = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
-  const openworkPort = await resolvePort(
-    readNumber(args.flags, "openwork-port", undefined, "OPENWORK_PORT"),
+  const remoteAccessEnabled = resolveJuggleWorkRemoteAccess(args);
+  const juggleworkHost = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+  const juggleworkPort = await resolvePort(
+    readNumber(args.flags, "jugglework-port", undefined, "JUGGLEWORK_PORT"),
     "127.0.0.1",
   );
-  const openworkToken =
-    readFlag(args.flags, "openwork-token") ??
-    process.env.OPENWORK_TOKEN ??
+  const juggleworkToken =
+    readFlag(args.flags, "jugglework-token") ??
+    process.env.JUGGLEWORK_TOKEN ??
     randomUUID();
-  const openworkHostToken =
-    readFlag(args.flags, "openwork-host-token") ??
-    process.env.OPENWORK_HOST_TOKEN ??
+  const juggleworkHostToken =
+    readFlag(args.flags, "jugglework-host-token") ??
+    process.env.JUGGLEWORK_HOST_TOKEN ??
     randomUUID();
   const approvalMode =
     (readFlag(args.flags, "approval") as ApprovalMode | undefined) ??
-    (process.env.OPENWORK_APPROVAL_MODE as ApprovalMode | undefined) ??
+    (process.env.JUGGLEWORK_APPROVAL_MODE as ApprovalMode | undefined) ??
     "manual";
   const approvalTimeoutMs = readNumber(
     args.flags,
     "approval-timeout",
     DEFAULT_APPROVAL_TIMEOUT,
-    "OPENWORK_APPROVAL_TIMEOUT_MS",
+    "JUGGLEWORK_APPROVAL_TIMEOUT_MS",
   ) as number;
   const readOnly = readBool(
     args.flags,
     "read-only",
     false,
-    "OPENWORK_READONLY",
+    "JUGGLEWORK_READONLY",
   );
   const corsValue =
-    readFlag(args.flags, "cors") ?? process.env.OPENWORK_CORS_ORIGINS ?? "*";
+    readFlag(args.flags, "cors") ?? process.env.JUGGLEWORK_CORS_ORIGINS ?? "*";
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
@@ -6074,7 +6074,7 @@ async function runStart(args: ParsedArgs) {
     args.flags,
     "allow-external",
     false,
-    "OPENWORK_ALLOW_EXTERNAL",
+    "JUGGLEWORK_ALLOW_EXTERNAL",
   );
   const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
   const sidecar = resolveSidecarConfigForTarget(
@@ -6098,7 +6098,7 @@ async function runStart(args: ParsedArgs) {
     // custom *-bin paths are provided, treat the source as external so we don't
     // accidentally pick host (darwin) bundled binaries.
     if (sidecarSourceInput === "auto") {
-      sidecarSource = explicitOpenworkServerBin ? "external" : "downloaded";
+      sidecarSource = explicitJuggleWorkServerBin ? "external" : "downloaded";
     }
     if (opencodeSourceInput === "auto") {
       opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
@@ -6160,8 +6160,8 @@ async function runStart(args: ParsedArgs) {
       }
     }
   }
-  let openworkServerBinary = await resolveOpenworkServerBin({
-    explicit: explicitOpenworkServerBin,
+  let juggleworkServerBinary = await resolveJuggleWorkServerBin({
+    explicit: explicitJuggleWorkServerBin,
     manifest,
     allowExternal,
     sidecar,
@@ -6170,26 +6170,26 @@ async function runStart(args: ParsedArgs) {
   if (sandboxMode !== "none") {
     // Ensure the binaries we stage into the container are actual files.
     await assertSandboxBinaryFile("opencode", opencodeBinary.bin);
-    await assertSandboxBinaryFile("openwork-server", openworkServerBinary.bin);
+    await assertSandboxBinaryFile("jugglework-server", juggleworkServerBinary.bin);
   }
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
   logVerbose(
-    `openwork-server bin: ${openworkServerBinary.bin} (${openworkServerBinary.source})`,
+    `jugglework-server bin: ${juggleworkServerBinary.bin} (${juggleworkServerBinary.source})`,
   );
 
-  const openworkBaseUrl = `http://127.0.0.1:${openworkPort}`;
-  const openworkConnect = remoteAccessEnabled
-    ? resolveConnectUrl(openworkPort, connectHost)
+  const juggleworkBaseUrl = `http://127.0.0.1:${juggleworkPort}`;
+  const juggleworkConnect = remoteAccessEnabled
+    ? resolveConnectUrl(juggleworkPort, connectHost)
     : {};
-  const openworkConnectUrl = openworkConnect.connectUrl ?? openworkBaseUrl;
+  const juggleworkConnectUrl = juggleworkConnect.connectUrl ?? juggleworkBaseUrl;
 
   const opencodeBaseUrl =
     sandboxMode !== "none"
-      ? `${openworkBaseUrl}/opencode`
+      ? `${juggleworkBaseUrl}/opencode`
       : `http://127.0.0.1:${opencodePort}`;
   const opencodeConnectUrl =
     sandboxMode !== "none"
-      ? `${openworkConnectUrl.replace(/\/$/, "")}/opencode`
+      ? `${juggleworkConnectUrl.replace(/\/$/, "")}/opencode`
       : opencodeBaseUrl;
 
   const attachCommand =
@@ -6210,14 +6210,14 @@ async function runStart(args: ParsedArgs) {
   let sandboxStopCommand: string | null = null;
   let sandboxCleanup: (() => Promise<void>) | null = null;
   let opencodeChild: ChildProcess | null = null;
-  let openworkChild: ChildProcess | null = null;
+  let juggleworkChild: ChildProcess | null = null;
   let controlServer: ReturnType<typeof createHttpServer> | null = null;
   const controlPort = await resolvePort(undefined, "127.0.0.1");
   const controlToken = randomUUID();
   const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
   let opencodeActualVersion: string | undefined;
-  let openworkActualVersion: string | undefined;
-  let openworkOwnerToken: string | undefined;
+  let juggleworkActualVersion: string | undefined;
+  let juggleworkOwnerToken: string | undefined;
   const startedAt = Date.now();
   const workerActivityHeartbeat = resolveWorkerActivityHeartbeatConfig();
   let workerActivityHeartbeatInterval: NodeJS.Timeout | null = null;
@@ -6237,11 +6237,11 @@ async function runStart(args: ParsedArgs) {
   const getRuntimeSnapshot = () => {
     const services = [
       buildRuntimeServiceSnapshot({
-        name: "openwork-server",
+        name: "jugglework-server",
         enabled: true,
-        running: Boolean(openworkChild && isProcessAlive(openworkChild.pid)),
-        binary: openworkServerBinary,
-        actualVersion: openworkActualVersion,
+        running: Boolean(juggleworkChild && isProcessAlive(juggleworkChild.pid)),
+        binary: juggleworkServerBinary,
+        actualVersion: juggleworkActualVersion,
       }),
       buildRuntimeServiceSnapshot({
         name: "opencode",
@@ -6317,25 +6317,25 @@ async function runStart(args: ParsedArgs) {
       }),
     );
   };
-  const restartOpenworkServer = async () => {
+  const restartJuggleWorkServer = async () => {
     if (sandboxMode !== "none") {
       throw new Error(
         "Runtime upgrade is not supported while sandbox mode is enabled",
       );
     }
-    if (openworkChild) {
-      restartingServices.add("openwork-server");
-      removeChildHandle("openwork-server");
-      await stopChild(openworkChild);
-      openworkChild = null;
+    if (juggleworkChild) {
+      restartingServices.add("jugglework-server");
+      removeChildHandle("jugglework-server");
+      await stopChild(juggleworkChild);
+      juggleworkChild = null;
     }
-    const child = await startOpenworkServer({
-      bin: openworkServerBinary.bin,
-      host: openworkHost,
-      port: openworkPort,
+    const child = await startJuggleWorkServer({
+      bin: juggleworkServerBinary.bin,
+      host: juggleworkHost,
+      port: juggleworkPort,
       workspace: resolvedWorkspace,
-      token: openworkToken,
-      hostToken: openworkHostToken,
+      token: juggleworkToken,
+      hostToken: juggleworkHostToken,
       approvalMode: approvalMode === "auto" ? "auto" : "manual",
       approvalTimeoutMs,
       readOnly,
@@ -6350,23 +6350,23 @@ async function runStart(args: ParsedArgs) {
       controlBaseUrl,
       controlToken,
     });
-    openworkChild = child;
-    children.push({ name: "openwork-server", child });
+    juggleworkChild = child;
+    children.push({ name: "jugglework-server", child });
     logger.info(
       "Process spawned",
       { pid: child.pid ?? 0, cause: "runtime-upgrade" },
-      "openwork-server",
+      "jugglework-server",
     );
     child.on("exit", (code, signal) =>
-      handleExit("openwork-server", code, signal),
+      handleExit("jugglework-server", code, signal),
     );
-    child.on("error", (error) => handleSpawnError("openwork-server", error));
-    await waitForHealthy(openworkBaseUrl);
-    openworkActualVersion = await verifyOpenworkServer({
-      baseUrl: openworkBaseUrl,
-      token: openworkToken,
-      hostToken: openworkHostToken,
-      expectedVersion: openworkServerBinary.expectedVersion,
+    child.on("error", (error) => handleSpawnError("jugglework-server", error));
+    await waitForHealthy(juggleworkBaseUrl);
+    juggleworkActualVersion = await verifyJuggleWorkServer({
+      baseUrl: juggleworkBaseUrl,
+      token: juggleworkToken,
+      hostToken: juggleworkHostToken,
+      expectedVersion: juggleworkServerBinary.expectedVersion,
       expectedWorkspace: resolvedWorkspace,
       expectedOpencodeBaseUrl: opencodeConnectUrl,
       expectedOpencodeDirectory: resolvedWorkspace,
@@ -6389,17 +6389,17 @@ async function runStart(args: ParsedArgs) {
         );
       }
       if (
-        services.includes("openwork-server") &&
-        openworkServerBinary.source === "external" &&
-        openworkServerBinary.expectedVersion
+        services.includes("jugglework-server") &&
+        juggleworkServerBinary.source === "external" &&
+        juggleworkServerBinary.expectedVersion
       ) {
         await installGlobalPackages([
-          `openwork-server@${openworkServerBinary.expectedVersion}`,
+          `jugglework-server@${juggleworkServerBinary.expectedVersion}`,
         ]);
       }
-      if (services.includes("openwork-server")) {
-        openworkServerBinary = await resolveOpenworkServerBin({
-          explicit: explicitOpenworkServerBin,
+      if (services.includes("jugglework-server")) {
+        juggleworkServerBinary = await resolveJuggleWorkServerBin({
+          explicit: explicitJuggleWorkServerBin,
           manifest,
           allowExternal,
           sidecar,
@@ -6419,10 +6419,10 @@ async function runStart(args: ParsedArgs) {
         await restartOpencode();
       }
       if (
-        services.includes("openwork-server") ||
+        services.includes("jugglework-server") ||
         services.includes("opencode")
       ) {
-        await restartOpenworkServer();
+        await restartJuggleWorkServer();
       }
       runtimeUpgradeState.status = "idle";
       runtimeUpgradeState.finishedAt = Date.now();
@@ -6434,7 +6434,7 @@ async function runStart(args: ParsedArgs) {
       logger.error(
         "Runtime upgrade failed",
         { error: runtimeUpgradeState.error, services },
-        "openwork-orchestrator",
+        "jugglework-orchestrator",
       );
     }
   };
@@ -6456,7 +6456,7 @@ async function runStart(args: ParsedArgs) {
     logger.info(
       "Shutting down",
       { children: children.map((handle) => handle.name) },
-      "openwork-orchestrator",
+      "jugglework-orchestrator",
     );
     if (sandboxContainerName && sandboxStop) {
       await sandboxStop(sandboxContainerName);
@@ -6510,9 +6510,9 @@ async function runStart(args: ParsedArgs) {
             `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
           ]
         : []),
-      `JuggleWork URL: ${openworkConnectUrl}`,
+      `JuggleWork URL: ${juggleworkConnectUrl}`,
       "Credentials withheld from detached stdout.",
-      ...(openworkOwnerToken ? ["JuggleWork owner token issued."] : []),
+      ...(juggleworkOwnerToken ? ["JuggleWork owner token issued."] : []),
       `OpenCode URL: ${opencodeConnectUrl}`,
       `Attach: ${redactSensitiveString(attachCommand)}`,
       "Use `--json` only when you explicitly need the raw tokens or passwords in command output.",
@@ -6537,8 +6537,8 @@ async function runStart(args: ParsedArgs) {
           .join(" ");
         if (
           text.includes("React is not defined") ||
-          text.includes("/$bunfs/root/openwork-orchestrator") ||
-          text.includes("/$bunfs/root/openwork")
+          text.includes("/$bunfs/root/jugglework-orchestrator") ||
+          text.includes("/$bunfs/root/jugglework")
         ) {
           switchToPlainOutput(text);
         }
@@ -6552,10 +6552,10 @@ async function runStart(args: ParsedArgs) {
         connect: {
           runId,
           workspace: resolvedWorkspace,
-          openworkUrl: openworkConnectUrl,
-          openworkToken,
-          ownerToken: openworkOwnerToken,
-          hostToken: openworkHostToken,
+          juggleworkUrl: juggleworkConnectUrl,
+          juggleworkToken,
+          ownerToken: juggleworkOwnerToken,
+          hostToken: juggleworkHostToken,
           opencodeUrl: opencodeConnectUrl,
           opencodePassword:
             sandboxMode !== "none"
@@ -6575,10 +6575,10 @@ async function runStart(args: ParsedArgs) {
             port: opencodePort,
           },
           {
-            name: "openwork-server",
-            label: "openwork-server",
+            name: "jugglework-server",
+            label: "jugglework-server",
             status: "starting",
-            port: openworkPort,
+            port: juggleworkPort,
           },
         ],
         onQuit: handleQuit,
@@ -6611,7 +6611,7 @@ async function runStart(args: ParsedArgs) {
       code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
     const services =
       name === "sandbox"
-        ? ["opencode", "openwork-server"]
+        ? ["opencode", "jugglework-server"]
         : [name];
     for (const service of services) {
       tui?.updateService(service, { status: "stopped", message: reason });
@@ -6669,12 +6669,12 @@ async function runStart(args: ParsedArgs) {
         }
         const requested = Array.isArray(body?.services)
           ? body.services
-          : ["openwork-server", "opencode"];
+          : ["jugglework-server", "opencode"];
         const services = Array.from(
           new Set(
             requested.filter(
               (item): item is RuntimeServiceName =>
-                item === "openwork-server" || item === "opencode",
+                item === "jugglework-server" || item === "opencode",
             ),
           ),
         );
@@ -6715,7 +6715,7 @@ async function runStart(args: ParsedArgs) {
     });
 
     if (sandboxMode !== "none") {
-      const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
+      const containerName = `jugglework-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
       sandboxContainerName = containerName;
 
       sandboxStop =
@@ -6738,10 +6738,10 @@ async function runStart(args: ParsedArgs) {
               extraMounts: sandboxExtraMounts,
               sidecars: {
                 opencode: opencodeBinary.bin,
-                openworkServer: openworkServerBinary.bin,
+                juggleworkServer: juggleworkServerBinary.bin,
               },
               ports: {
-                openwork: openworkPort,
+                jugglework: juggleworkPort,
               },
               opencode: {
                 corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
@@ -6750,9 +6750,9 @@ async function runStart(args: ParsedArgs) {
                 hotReload: opencodeHotReload,
                 logLevel: opencodeLogLevel,
               },
-              openwork: {
-                token: openworkToken,
-                hostToken: openworkHostToken,
+              jugglework: {
+                token: juggleworkToken,
+                hostToken: juggleworkHostToken,
                 approvalMode: approvalMode === "auto" ? "auto" : "manual",
                 approvalTimeoutMs,
                 readOnly,
@@ -6776,10 +6776,10 @@ async function runStart(args: ParsedArgs) {
               extraMounts: sandboxExtraMounts,
               sidecars: {
                 opencode: opencodeBinary.bin,
-                openworkServer: openworkServerBinary.bin,
+                juggleworkServer: juggleworkServerBinary.bin,
               },
               ports: {
-                openwork: openworkPort,
+                jugglework: juggleworkPort,
               },
               opencode: {
                 corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
@@ -6788,9 +6788,9 @@ async function runStart(args: ParsedArgs) {
                 hotReload: opencodeHotReload,
                 logLevel: opencodeLogLevel,
               },
-              openwork: {
-                token: openworkToken,
-                hostToken: openworkHostToken,
+              jugglework: {
+                token: juggleworkToken,
+                hostToken: juggleworkHostToken,
                 approvalMode: approvalMode === "auto" ? "auto" : "manual",
                 approvalTimeoutMs,
                 readOnly,
@@ -6810,9 +6810,9 @@ async function runStart(args: ParsedArgs) {
         status: "running",
         port: SANDBOX_INTERNAL_OPENCODE_PORT,
       });
-      tui?.updateService("openwork-server", {
+      tui?.updateService("jugglework-server", {
         status: "running",
-        port: openworkPort,
+        port: juggleworkPort,
       });
       if (!detachRequested) {
         children.push({ name: "sandbox", child: sandboxChild.child });
@@ -6834,45 +6834,45 @@ async function runStart(args: ParsedArgs) {
 
       logger.info(
         "Waiting for health",
-        { url: openworkBaseUrl },
-        "openwork-server",
+        { url: juggleworkBaseUrl },
+        "jugglework-server",
       );
-      await waitForHealthy(openworkBaseUrl);
-      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
-      tui?.updateService("openwork-server", { status: "healthy" });
+      await waitForHealthy(juggleworkBaseUrl);
+      logger.info("Healthy", { url: juggleworkBaseUrl }, "jugglework-server");
+      tui?.updateService("jugglework-server", { status: "healthy" });
 
       opencodeClient = createOpencodeClient({
-        baseUrl: `${openworkBaseUrl.replace(/\/$/, "")}/opencode`,
-        headers: { Authorization: `Bearer ${openworkToken}` },
+        baseUrl: `${juggleworkBaseUrl.replace(/\/$/, "")}/opencode`,
+        headers: { Authorization: `Bearer ${juggleworkToken}` },
       });
 
-      // In sandbox mode, the released openwork-server binary may not have our
+      // In sandbox mode, the released jugglework-server binary may not have our
       // latest proxy/auth changes yet.  Instead of using the OpenCode SDK client
       // (which relies on the proxy handling Bearer tokens), do a direct health
-      // check against the openwork-server's own /opencode proxy path.  If the
+      // check against the jugglework-server's own /opencode proxy path.  If the
       // server is healthy *and* is proxying to a healthy opencode, we're good.
       logger.info(
         "Waiting for health (proxy)",
-        { url: `${openworkBaseUrl}/opencode` },
+        { url: `${juggleworkBaseUrl}/opencode` },
         "opencode",
       );
       await waitForHealthyViaProxy(
-        `${openworkBaseUrl.replace(/\/$/, "")}/opencode`,
-        openworkToken,
+        `${juggleworkBaseUrl.replace(/\/$/, "")}/opencode`,
+        juggleworkToken,
       );
       logger.info(
         "Healthy (proxy)",
-        { url: `${openworkBaseUrl}/opencode` },
+        { url: `${juggleworkBaseUrl}/opencode` },
         "opencode",
       );
       tui?.updateService("opencode", { status: "healthy" });
 
       try {
-        openworkActualVersion = await verifyOpenworkServer({
-          baseUrl: openworkBaseUrl,
-          token: openworkToken,
-          hostToken: openworkHostToken,
-          expectedVersion: openworkServerBinary.expectedVersion,
+        juggleworkActualVersion = await verifyJuggleWorkServer({
+          baseUrl: juggleworkBaseUrl,
+          token: juggleworkToken,
+          hostToken: juggleworkHostToken,
+          expectedVersion: juggleworkServerBinary.expectedVersion,
           expectedWorkspace: "/workspace",
           expectedOpencodeBaseUrl: opencodeInternalBaseUrl,
           expectedOpencodeDirectory: "/workspace",
@@ -6887,17 +6887,17 @@ async function runStart(args: ParsedArgs) {
         logger.warn(
           "Sandbox server verification warning (non-fatal)",
           { error: String(verifyError) },
-          "openwork-server",
+          "jugglework-server",
         );
       }
-      openworkOwnerToken = await issueOpenworkOwnerToken(
-        openworkBaseUrl,
-        openworkHostToken,
+      juggleworkOwnerToken = await issueJuggleWorkOwnerToken(
+        juggleworkBaseUrl,
+        juggleworkHostToken,
         "JuggleWork sandbox owner token",
       );
-      tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
+      tui?.setConnectInfo({ ownerToken: juggleworkOwnerToken });
       logVerbose(
-        `openwork-server version: ${openworkActualVersion ?? "unknown"}`,
+        `jugglework-server version: ${juggleworkActualVersion ?? "unknown"}`,
       );
     } else {
       const startedOpencodeChild = await startOpencode({
@@ -6949,13 +6949,13 @@ async function runStart(args: ParsedArgs) {
       logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 
-      const startedOpenworkChild = await startOpenworkServer({
-        bin: openworkServerBinary.bin,
-        host: openworkHost,
-        port: openworkPort,
+      const startedJuggleWorkChild = await startJuggleWorkServer({
+        bin: juggleworkServerBinary.bin,
+        host: juggleworkHost,
+        port: juggleworkPort,
         workspace: resolvedWorkspace,
-        token: openworkToken,
-        hostToken: openworkHostToken,
+        token: juggleworkToken,
+        hostToken: juggleworkHostToken,
         approvalMode: approvalMode === "auto" ? "auto" : "manual",
         approvalTimeoutMs,
         readOnly,
@@ -6970,53 +6970,53 @@ async function runStart(args: ParsedArgs) {
         controlBaseUrl,
         controlToken,
       });
-      openworkChild = startedOpenworkChild;
-      children.push({ name: "openwork-server", child: startedOpenworkChild });
-      tui?.updateService("openwork-server", {
+      juggleworkChild = startedJuggleWorkChild;
+      children.push({ name: "jugglework-server", child: startedJuggleWorkChild });
+      tui?.updateService("jugglework-server", {
         status: "running",
-        pid: startedOpenworkChild.pid ?? undefined,
-        port: openworkPort,
+        pid: startedJuggleWorkChild.pid ?? undefined,
+        port: juggleworkPort,
       });
       logger.info(
         "Process spawned",
-        { pid: startedOpenworkChild.pid ?? 0 },
-        "openwork-server",
+        { pid: startedJuggleWorkChild.pid ?? 0 },
+        "jugglework-server",
       );
-      startedOpenworkChild.on("exit", (code, signal) =>
-        handleExit("openwork-server", code, signal),
+      startedJuggleWorkChild.on("exit", (code, signal) =>
+        handleExit("jugglework-server", code, signal),
       );
-      startedOpenworkChild.on("error", (error) =>
-        handleSpawnError("openwork-server", error),
+      startedJuggleWorkChild.on("error", (error) =>
+        handleSpawnError("jugglework-server", error),
       );
 
       logger.info(
         "Waiting for health",
-        { url: openworkBaseUrl },
-        "openwork-server",
+        { url: juggleworkBaseUrl },
+        "jugglework-server",
       );
-      await waitForHealthy(openworkBaseUrl);
-      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
-      tui?.updateService("openwork-server", { status: "healthy" });
+      await waitForHealthy(juggleworkBaseUrl);
+      logger.info("Healthy", { url: juggleworkBaseUrl }, "jugglework-server");
+      tui?.updateService("jugglework-server", { status: "healthy" });
 
-      openworkActualVersion = await verifyOpenworkServer({
-        baseUrl: openworkBaseUrl,
-        token: openworkToken,
-        hostToken: openworkHostToken,
-        expectedVersion: openworkServerBinary.expectedVersion,
+      juggleworkActualVersion = await verifyJuggleWorkServer({
+        baseUrl: juggleworkBaseUrl,
+        token: juggleworkToken,
+        hostToken: juggleworkHostToken,
+        expectedVersion: juggleworkServerBinary.expectedVersion,
         expectedWorkspace: resolvedWorkspace,
         expectedOpencodeBaseUrl: opencodeConnectUrl,
         expectedOpencodeDirectory: resolvedWorkspace,
         expectedOpencodeUsername: opencodeUsername,
         expectedOpencodePassword: opencodePassword,
       });
-      openworkOwnerToken = await issueOpenworkOwnerToken(
-        openworkBaseUrl,
-        openworkHostToken,
+      juggleworkOwnerToken = await issueJuggleWorkOwnerToken(
+        juggleworkBaseUrl,
+        juggleworkHostToken,
         "JuggleWork owner token",
       );
-      tui?.setConnectInfo({ ownerToken: openworkOwnerToken });
+      tui?.setConnectInfo({ ownerToken: juggleworkOwnerToken });
       logVerbose(
-        `openwork-server version: ${openworkActualVersion ?? "unknown"}`,
+        `jugglework-server version: ${juggleworkActualVersion ?? "unknown"}`,
       );
 
     }
@@ -7029,7 +7029,7 @@ async function runStart(args: ParsedArgs) {
           intervalMs: workerActivityHeartbeat.intervalMs,
           activeWindowMs: workerActivityHeartbeat.activeWindowMs,
         },
-        "openwork-orchestrator",
+        "jugglework-orchestrator",
       );
       const runHeartbeat = () => {
         void postWorkerActivityHeartbeat({
@@ -7040,7 +7040,7 @@ async function runStart(args: ParsedArgs) {
           logger.warn(
             "Worker activity heartbeat failed",
             { error: error instanceof Error ? error.message : String(error) },
-            "openwork-orchestrator",
+            "jugglework-orchestrator",
           );
         });
       };
@@ -7069,16 +7069,16 @@ async function runStart(args: ParsedArgs) {
         hotReload: opencodeHotReload,
         version: opencodeActualVersion,
       },
-      openwork: {
-        baseUrl: openworkBaseUrl,
-        connectUrl: openworkConnectUrl,
-        host: openworkHost,
-        port: openworkPort,
-        collaboratorToken: openworkToken,
-        ownerToken: openworkOwnerToken,
-        token: openworkToken,
-        hostToken: openworkHostToken,
-        version: openworkActualVersion,
+      jugglework: {
+        baseUrl: juggleworkBaseUrl,
+        connectUrl: juggleworkConnectUrl,
+        host: juggleworkHost,
+        port: juggleworkPort,
+        collaboratorToken: juggleworkToken,
+        ownerToken: juggleworkOwnerToken,
+        token: juggleworkToken,
+        hostToken: juggleworkHostToken,
+        version: juggleworkActualVersion,
       },
       diagnostics: {
         cliVersion,
@@ -7098,11 +7098,11 @@ async function runStart(args: ParsedArgs) {
             expectedVersion: opencodeBinary.expectedVersion,
             actualVersion: opencodeActualVersion,
           } as BinaryDiagnostics,
-          openworkServer: {
-            path: openworkServerBinary.bin,
-            source: openworkServerBinary.source,
-            expectedVersion: openworkServerBinary.expectedVersion,
-            actualVersion: openworkActualVersion,
+          juggleworkServer: {
+            path: juggleworkServerBinary.bin,
+            source: juggleworkServerBinary.source,
+            expectedVersion: juggleworkServerBinary.expectedVersion,
+            actualVersion: juggleworkActualVersion,
           } as BinaryDiagnostics,
         },
       },
@@ -7116,9 +7116,9 @@ async function runStart(args: ParsedArgs) {
         {
           workspace: payload.workspace,
           opencode: payload.opencode,
-          openwork: payload.openwork,
+          jugglework: payload.jugglework,
         },
-        "openwork-orchestrator",
+        "jugglework-orchestrator",
       );
     } else if (logFormat === "json") {
       logger.info(
@@ -7126,9 +7126,9 @@ async function runStart(args: ParsedArgs) {
         {
           workspace: payload.workspace,
           opencode: payload.opencode,
-          openwork: payload.openwork,
+          jugglework: payload.jugglework,
         },
-        "openwork-orchestrator",
+        "jugglework-orchestrator",
       );
     } else {
       console.log("JuggleWork orchestrator running");
@@ -7139,11 +7139,11 @@ async function runStart(args: ParsedArgs) {
       if (payload.opencode.username && payload.opencode.password) {
         console.log("OpenCode auth: managed credentials configured (withheld from stdout)");
       }
-      console.log(`JuggleWork server: ${payload.openwork.baseUrl}`);
-      console.log(`JuggleWork connect URL: ${payload.openwork.connectUrl}`);
+      console.log(`JuggleWork server: ${payload.jugglework.baseUrl}`);
+      console.log(`JuggleWork connect URL: ${payload.jugglework.connectUrl}`);
       console.log("JuggleWork collaborator token: issued (withheld from stdout)");
       console.log("  Routine remote access for shared workers.");
-      if (payload.openwork.ownerToken) {
+      if (payload.jugglework.ownerToken) {
         console.log("JuggleWork owner token: issued (withheld from stdout)");
         console.log(
           "  Use this when the remote client must answer permission prompts.",
@@ -7167,23 +7167,23 @@ async function runStart(args: ParsedArgs) {
         if (sandboxMode !== "none") {
           // In sandbox mode the released server binary may not support the
           // Bearer-through-proxy auth that the OpenCode SDK client expects.
-          // Run a lighter set of checks: openwork-server endpoints + proxy
+          // Run a lighter set of checks: jugglework-server endpoints + proxy
           // health.  Full SDK checks (session create, SSE events) are deferred
           // until the modified server binary is released.
           await runSandboxChecks({
-            openworkUrl: openworkBaseUrl,
-            openworkToken,
-            hostToken: openworkHostToken,
+            juggleworkUrl: juggleworkBaseUrl,
+            juggleworkToken,
+            hostToken: juggleworkHostToken,
           });
         } else {
           await runChecks({
             opencodeClient,
-            openworkUrl: openworkBaseUrl,
-            openworkToken,
+            juggleworkUrl: juggleworkBaseUrl,
+            juggleworkToken,
             checkEvents,
           });
         }
-        logger.info("Checks ok", { checkEvents }, "openwork-orchestrator");
+        logger.info("Checks ok", { checkEvents }, "jugglework-orchestrator");
         if (!outputJson && logFormat === "pretty") {
           console.log("Checks: ok");
         }
@@ -7191,7 +7191,7 @@ async function runStart(args: ParsedArgs) {
         logger.error(
           "Checks failed",
           { error: String(error) },
-          "openwork-orchestrator",
+          "jugglework-orchestrator",
         );
         await shutdown();
         tui?.stop();
@@ -7211,7 +7211,7 @@ async function runStart(args: ParsedArgs) {
     logger.error(
       "Run failed",
       { error: error instanceof Error ? error.message : String(error) },
-      "openwork-orchestrator",
+      "jugglework-orchestrator",
     );
     process.exit(1);
   }

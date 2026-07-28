@@ -17,11 +17,11 @@ import {
 import {
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
-  type OpenworkServerInfo,
+  type JuggleWorkServerInfo,
   type WorkspaceList,
 } from "@/app/lib/desktop";
 import { createClient } from "@/app/lib/opencode";
-import { createOpenworkServerClient, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { createJuggleWorkServerClient, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { readDenBootstrapConfig } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -40,8 +40,8 @@ import {
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useBootState } from "./boot-state";
-import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
+import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import {
   classifyRouteSessionReadError,
   describeRouteError,
@@ -69,10 +69,10 @@ import {
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
-  /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
+  /** Invoked when the jugglework-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
-  /** Receives the local openwork-server host info discovered during refresh. */
-  onHostInfo: (info: OpenworkServerInfo | null) => void;
+  /** Receives the local jugglework-server host info discovered during refresh. */
+  onHostInfo: (info: JuggleWorkServerInfo | null) => void;
 };
 
 type ModernRouteSessionResolution =
@@ -99,7 +99,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
   const { markRouteReady: markBootRouteReady } = useBootState();
   const [loading, setLoading] = useState(true);
-  const [client, setClient] = useState<OpenworkServerClient | null>(null);
+  const [client, setClient] = useState<JuggleWorkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
@@ -212,7 +212,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
       const fetchOnce = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
-        const isRemoteOpenworkWorkspace = workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
+        const isRemoteJuggleWorkWorkspace = workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
         const endpoint = endpointForWorkspace(workspace);
         if (!endpoint) {
           if (workspace.workspaceType === "remote") {
@@ -236,7 +236,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         if (startedAt && Date.now() - startedAt < 5_000) return;
         const requestStartedAt = Date.now();
         backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
-        if (isRemoteOpenworkWorkspace) {
+        if (isRemoteJuggleWorkWorkspace) {
           setWorkspaceConnectionOverrides((current) => ({
             ...current,
             [workspace.id]: {
@@ -250,7 +250,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
           const fetchedItems = response.items ?? [];
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-          const items = workspaceRoot && !isRemoteOpenworkWorkspace
+          const items = workspaceRoot && !isRemoteJuggleWorkWorkspace
             ? fetchedItems.filter((session) =>
                 normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
               )
@@ -263,7 +263,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           });
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setWorkspaceConnectionOverrides((current) => {
-            if (isRemoteOpenworkWorkspace) {
+            if (isRemoteJuggleWorkWorkspace) {
               return {
                 ...current,
                 [workspace.id]: {
@@ -369,7 +369,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
       }
 
-      const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await resolveOpenworkConnection();
+      const { normalizedBaseUrl, resolvedToken, resolvedHostToken, hostInfo } = await resolveJuggleWorkConnection();
       onHostInfo(hostInfo);
       if (!normalizedBaseUrl || !resolvedToken) {
         // Keep the workspace endpoint resolver in lockstep with the disconnected state.
@@ -398,12 +398,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // local workspaces => sidebar gets stuck in "loading" forever.
       const routeWorkspaceServerClientResolver = updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
 
-      const openworkClient = createOpenworkServerClient({
+      const juggleworkClient = createJuggleWorkServerClient({
         baseUrl: normalizedBaseUrl,
         token: resolvedToken,
         hostToken: resolvedHostToken || undefined,
       });
-      const list = await openworkClient.listWorkspaces();
+      const list = await juggleworkClient.listWorkspaces();
       const nextWorkspaces = orderRouteWorkspaces(
         mergeRouteWorkspaces(list.items, desktopWorkspaces),
         workspaceOrderIdsRef.current,
@@ -440,7 +440,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
       updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
 
-      setClient(openworkClient);
+      setClient(juggleworkClient);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
       setWorkspaces(nextWorkspaces);
@@ -626,7 +626,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       refreshInFlightRef.current = false;
       void refreshRouteState();
     };
-    window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
+    window.addEventListener("jugglework-server-settings-changed", handleSettingsChange);
 
     // Also retry on visibility flip independently — even when nobody else
     // dispatches the settings event.
@@ -646,7 +646,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         window.clearTimeout(startupRetryTimerRef.current);
         startupRetryTimerRef.current = null;
       }
-      window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+      window.removeEventListener("jugglework-server-settings-changed", handleSettingsChange);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", handleVisibility);
       }
@@ -655,7 +655,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
   // Inspector wiring: publish the route's current state so an external
   // operator (or an AI driver using browser tools) can call
-  // `window.__openwork.snapshot()` or `window.__openwork.slice("route")` and
+  // `window.__jugglework.snapshot()` or `window.__jugglework.slice("route")` and
   // see workspaces / sessions / connection info without walking the DOM.
   useEffect(() => {
     const dispose = publishInspectorSlice("route", () => ({
@@ -772,7 +772,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (!workspaceId || reconnectAttemptedWorkspaceIdRef.current === workspaceId) return;
     reconnectAttemptedWorkspaceIdRef.current = workspaceId;
 
-    void ensureDesktopLocalOpenworkConnection({
+    void ensureDesktopLocalJuggleWorkConnection({
       route: "session",
       workspace: selectedWorkspace,
       allWorkspaces: workspaces,
@@ -923,7 +923,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
         ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
             token: selectedWorkspaceServerToken,
-            mode: "openwork",
+            mode: "jugglework",
           })
         : null,
     [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],

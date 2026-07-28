@@ -64,7 +64,7 @@ async function ghReleaseAssets(tag) {
       "view",
       tag,
       "--repo",
-      "different-ai/openwork",
+      "juggleai/jugglework-desktop",
       "--json",
       "assets",
     ],
@@ -85,7 +85,7 @@ async function ghDownload(tag, assetName, targetDir) {
       "download",
       tag,
       "--repo",
-      "different-ai/openwork",
+      "juggleai/jugglework-desktop",
       "--pattern",
       assetName,
       "--dir",
@@ -117,7 +117,7 @@ async function main() {
     process.exit(args.help ? 0 : 2);
   }
 
-  const workDir = join(tmpdir(), `openwork-migrate-validate-${args.tag}`);
+  const workDir = join(tmpdir(), `jugglework-migrate-validate-${args.tag}`);
   await rm(workDir, { recursive: true, force: true });
   await mkdir(workDir, { recursive: true });
 

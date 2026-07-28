@@ -7,9 +7,9 @@ import {
   cloudMcpDeliveryState,
   CloudMcpDeliveryStateStore,
   calculateCloudMcpDesiredRevision,
-  OPENWORK_CLOUD_EXPECTED_TOOLS,
-  OPENWORK_CLOUD_PLUGIN_CANARIES,
-  readOpenworkCloudMcpHealth,
+  JUGGLEWORK_CLOUD_EXPECTED_TOOLS,
+  JUGGLEWORK_CLOUD_PLUGIN_CANARIES,
+  readJuggleWorkCloudMcpHealth,
 } from "./cloud-mcp-health.js";
 import { sanitizeDiagnosticValue } from "./diagnostic-sanitizer.js";
 import { diagnoseMcpToolDeniesFromConfigs } from "./mcp.js";
@@ -24,7 +24,7 @@ const workspace: WorkspaceInfo = {
   workspaceType: "local",
 };
 
-const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
+const previousRuntimeDb = process.env.JUGGLEWORK_RUNTIME_DB;
 const previousFetch = globalThis.fetch;
 const roots: string[] = [];
 const runtimeDbRoots: string[] = [];
@@ -48,8 +48,8 @@ afterEach(async () => {
   } else {
     while (runtimeDbRoots.length) await rm(runtimeDbRoots.pop() ?? "", { recursive: true, force: true });
   }
-  if (previousRuntimeDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-  else process.env.OPENWORK_RUNTIME_DB = previousRuntimeDb;
+  if (previousRuntimeDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+  else process.env.JUGGLEWORK_RUNTIME_DB = previousRuntimeDb;
 });
 
 async function createRoot(prefix: string): Promise<string> {
@@ -77,11 +77,11 @@ function startMockOpencode(mode: DirectProbeMode) {
       if (url.pathname === "/global/health") return Response.json({ healthy: true, version: "1.17.11" });
       if (url.pathname === "/mcp" && request.method === "GET") {
         return Response.json({
-          "openwork-cloud": { status: "connected" },
+          "jugglework-cloud": { status: "connected" },
           "sibling-remote": { status: "failed", error: "fetch failed" },
         });
       }
-      if (url.pathname === "/experimental/tool/ids") return Response.json([...OPENWORK_CLOUD_EXPECTED_TOOLS, ...OPENWORK_CLOUD_PLUGIN_CANARIES]);
+      if (url.pathname === "/experimental/tool/ids") return Response.json([...JUGGLEWORK_CLOUD_EXPECTED_TOOLS, ...JUGGLEWORK_CLOUD_PLUGIN_CANARIES]);
       if (url.pathname === "/cloud-mcp/mcp/agent" && request.method === "POST") {
         if (mode === "unauthorized") return Response.json({ error: "invalid token" }, { status: 401 });
         const body: unknown = await request.json();
@@ -94,7 +94,7 @@ function startMockOpencode(mode: DirectProbeMode) {
             result: {
               capabilities: { tools: {} },
               protocolVersion: "2025-06-18",
-              serverInfo: { name: "openwork-cloud-test", version: "1.0.0" },
+              serverInfo: { name: "jugglework-cloud-test", version: "1.0.0" },
             },
           });
         }
@@ -137,7 +137,7 @@ function serverConfig(root: string, testWorkspace: WorkspaceInfo): ServerConfig 
 }
 
 async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHealthOptions = {}) {
-  const root = await createRoot("openwork-cloud-health-");
+  const root = await createRoot("jugglework-cloud-health-");
   const engine = startMockOpencode(mode);
   const baseUrl = `http://127.0.0.1:${engine.port}`;
   const directUrl = `${baseUrl}/cloud-mcp/mcp/agent`;
@@ -150,12 +150,12 @@ async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHeal
     baseUrl,
   };
   const config = serverConfig(root, testWorkspace);
-  process.env.OPENWORK_RUNTIME_DB = await createRuntimeDbPath("openwork-cloud-health-runtime-");
+  process.env.JUGGLEWORK_RUNTIME_DB = await createRuntimeDbPath("jugglework-cloud-health-runtime-");
   await writeRuntimeOpencodeConfig(config, testWorkspace.id, (current) => ({
     ...current,
     mcp: {
       ...current.mcp,
-      "openwork-cloud": {
+      "jugglework-cloud": {
         type: "remote",
         url: directUrl,
         enabled: true,
@@ -165,7 +165,7 @@ async function readHealthForDirectProbe(mode: DirectProbeMode, options: ReadHeal
     },
   }));
   options.beforeRead?.(directUrl);
-  const health = await readOpenworkCloudMcpHealth({
+  const health = await readJuggleWorkCloudMcpHealth({
     config,
     workspace: testWorkspace,
     directory: root,
@@ -221,7 +221,7 @@ describe("cloud MCP health foundation", () => {
   test("desired revisions detect token metadata change without embedding raw tokens", () => {
     const config = {
       type: "remote",
-      url: "https://api.openworklabs.com/mcp/agent",
+      url: "https://work.juggle.im/jwork/api/mcp/agent",
       headers: { Authorization: "Bearer owt_super_secret" },
       oauth: false,
     };
@@ -259,56 +259,56 @@ describe("cloud MCP health foundation", () => {
 
   test("diagnoses project and global OpenCode tool denies for exact Cloud IDs", () => {
     const denies = diagnoseMcpToolDeniesFromConfigs({
-      name: "openwork-cloud",
-      toolIds: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      name: "jugglework-cloud",
+      toolIds: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS],
       projectConfig: {
         tools: {
-          "openwork-cloud_search_capabilities": false,
+          "jugglework-cloud_search_capabilities": false,
         },
       },
       globalConfig: {
         permission: [
-          { permission: "tool", pattern: "openwork-cloud_execute_capability", action: "deny" },
+          { permission: "tool", pattern: "jugglework-cloud_execute_capability", action: "deny" },
         ],
       },
     });
 
     expect(denies.map((deny) => deny.source).sort()).toEqual(["config.global", "config.project"]);
     expect(denies.map((deny) => deny.matched).sort()).toEqual([
-      "openwork-cloud_execute_capability",
-      "openwork-cloud_search_capabilities",
+      "jugglework-cloud_execute_capability",
+      "jugglework-cloud_search_capabilities",
     ]);
   });
 
   test("project tool allows override global denies for matching Cloud tool IDs", () => {
     const denies = diagnoseMcpToolDeniesFromConfigs({
-      name: "openwork-cloud",
-      toolIds: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      name: "jugglework-cloud",
+      toolIds: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS],
       projectConfig: {
         tools: {
-          "openwork-cloud_search_capabilities": true,
+          "jugglework-cloud_search_capabilities": true,
         },
       },
       globalConfig: {
-        tools: { deny: ["openwork-cloud_*"] },
+        tools: { deny: ["jugglework-cloud_*"] },
       },
     });
 
     expect(denies).toHaveLength(1);
     expect(denies[0]).toMatchObject({
       source: "config.global",
-      pattern: "openwork-cloud_*",
-      matched: "openwork-cloud_execute_capability",
+      pattern: "jugglework-cloud_*",
+      matched: "jugglework-cloud_execute_capability",
     });
   });
 
   test("plugin canary denies are not reported as Cloud tool denies", () => {
     const denies = diagnoseMcpToolDeniesFromConfigs({
-      name: "openwork-cloud",
-      toolIds: [...OPENWORK_CLOUD_EXPECTED_TOOLS],
+      name: "jugglework-cloud",
+      toolIds: [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS],
       projectConfig: {
         tools: {
-          openwork_query: false,
+          jugglework_query: false,
         },
       },
       globalConfig: {},
@@ -327,7 +327,7 @@ describe("cloud MCP health foundation", () => {
 
     expect(health.usable).toBe(true);
     expect(health.phase).toBe("ready");
-    expect(health.tools.present.sort()).toEqual([...OPENWORK_CLOUD_EXPECTED_TOOLS].sort());
+    expect(health.tools.present.sort()).toEqual([...JUGGLEWORK_CLOUD_EXPECTED_TOOLS].sort());
     expect(health.tools.missing).toEqual([]);
     expect(health.tools.direct.checked).toBe(false);
     expect(directFetchCount).toBe(0);
@@ -376,7 +376,7 @@ describe("cloud MCP health foundation", () => {
     expect(health.engineInspection.cloudPresent).toBe(true);
     expect(health.engineInspection.serverCount).toBe(2);
     expect(health.engineInspection.servers).toEqual([
-      { name: "openwork-cloud", status: "connected" },
+      { name: "jugglework-cloud", status: "connected" },
       { name: "sibling-remote", status: "failed", error: "fetch failed" },
     ]);
   });
@@ -392,7 +392,7 @@ describe("cloud MCP health foundation", () => {
       expect(step.latencyMs).toBeGreaterThanOrEqual(0);
     }
     expect(trace?.steps[0]?.httpStatus).toBe(200);
-    expect(trace?.serverInfo).toEqual({ name: "openwork-cloud-test", version: "1.0.0" });
+    expect(trace?.serverInfo).toEqual({ name: "jugglework-cloud-test", version: "1.0.0" });
     expect(trace?.protocolVersion).toBe("2025-06-18");
     expect(health.durationMs).toBeGreaterThanOrEqual(0);
   });

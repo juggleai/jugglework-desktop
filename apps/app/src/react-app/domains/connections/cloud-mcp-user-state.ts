@@ -2,10 +2,10 @@ import { CLOUD_MCP_SYNC_MARKER_STORAGE_KEY } from "../../../app/lib/den";
 
 /** Durable, scoped records for the auto-managed JuggleWork Cloud MCP. */
 
-export const CLOUD_MCP_SERVER_NAME = "openwork-cloud";
+export const CLOUD_MCP_SERVER_NAME = "jugglework-cloud";
 
-const CLOUD_MCP_USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
-const CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY = "openwork.den.mcp.unhealthyRemintAttempt";
+const CLOUD_MCP_USER_STATE_KEY = "jugglework.den.mcp.cloudControlUserState";
+const CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY = "jugglework.den.mcp.unhealthyRemintAttempt";
 
 export type CloudMcpUserState = "disabled" | "removed";
 export type CloudMcpScope = {

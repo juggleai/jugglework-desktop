@@ -21,7 +21,7 @@ export type DownloadPlatformGroup = {
   options: DownloadPlatformOption[]
 }
 
-const FALLBACK_RELEASE = "https://github.com/different-ai/openwork/releases"
+const FALLBACK_RELEASE = "https://github.com/juggleai/jugglework-desktop/releases"
 
 const FALLBACK_INSTALLERS: DownloadCardInstallers = {
   macos: { appleSilicon: FALLBACK_RELEASE, intel: FALLBACK_RELEASE },
@@ -141,8 +141,8 @@ function DownloadLink({
       href={href}
       target={openInNewTab ? "_blank" : undefined}
       rel={openInNewTab ? "noreferrer" : undefined}
-      data-testid={testId ?? "download-openwork-link"}
-      data-download-openwork-link="true"
+      data-testid={testId ?? "download-jugglework-link"}
+      data-download-jugglework-link="true"
       data-recommended={recommended ? "true" : undefined}
       onClick={onDownload}
       className={
@@ -301,7 +301,7 @@ function groupsForInstallers(installers: DownloadCardInstallers): DownloadPlatfo
   ]
 }
 
-export function DownloadOpenWorkCard({
+export function DownloadJuggleWorkCard({
   installers,
   releaseTag,
 }: {
@@ -314,7 +314,7 @@ export function DownloadOpenWorkCard({
 
   return (
     <section
-      data-testid="download-openwork-card"
+      data-testid="download-jugglework-card"
       data-detected-os={detected?.os}
       data-detected-arch={detected ? detected.arch ?? "unknown" : undefined}
       data-detected-os-version={detected ? detected.osVersion ?? "unknown" : undefined}

@@ -1,13 +1,13 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 import type { DenMcpToken, DenSettings } from "../src/app/lib/den";
-import type { OpenworkCloudMcpHealth, OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
+import type { JuggleWorkCloudMcpHealth, JuggleWorkCloudMcpReconcilePayload } from "../src/app/lib/jugglework-server";
 import {
   __setCloudMcpUserStateStorageForTest,
   readCloudMcpSyncMarker,
   writeCloudMcpUserState,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
-import { cleanupOpenworkCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
+import { cleanupJuggleWorkCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 import {
   getSessionMcpMaintenanceTargetKey,
   runCloudMcpMaintenanceWithRetry,
@@ -18,7 +18,7 @@ import {
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 const WORKSPACE_ID = "workspace_1";
 const SETTINGS: DenSettings = {
-  baseUrl: "https://app.openwork.test",
+  baseUrl: "https://app.jugglework.test",
   authToken: "session-token",
   activeOrgId: "organization_1",
 };
@@ -27,10 +27,10 @@ const MINTED: DenMcpToken = {
   expiresAt: new Date(NOW + 7 * 24 * 60 * 60 * 1000).toISOString(),
   organizationId: "organization_1",
   scopes: ["mcp:read", "mcp:write"],
-  resource: "https://api.openwork.test/mcp",
+  resource: "https://api.jugglework.test/mcp",
 };
 
-function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
+function cloudHealth(usable: boolean): JuggleWorkCloudMcpHealth {
   return {
     schemaVersion: 1,
     phase: usable ? "ready" : "missing_desired",
@@ -40,7 +40,7 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
     workspace: { id: WORKSPACE_ID, type: "local", directory: "/workspace", path: "/workspace" },
     desired: {
       present: usable,
-      name: "openwork-cloud",
+      name: "jugglework-cloud",
       revision: usable ? "rev_ready" : null,
       config: null,
       token: { present: usable, metadata: {} },
@@ -55,14 +55,14 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
     },
     engine: { status: usable ? "connected" : "not_checked" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-      missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+      expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+      present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+      missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
       providerProjection: {
         checked: usable,
-        provider: "openwork",
+        provider: "jugglework",
         model: "gpt-5",
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
         missing: [],
       },
     },
@@ -79,7 +79,7 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
   };
 }
 
-function retryableCloudHealth(): OpenworkCloudMcpHealth {
+function retryableCloudHealth(): JuggleWorkCloudMcpHealth {
   const health = cloudHealth(false);
   return {
     ...health,
@@ -106,12 +106,12 @@ describe("session MCP maintenance", () => {
   beforeEach(() => installStorageStub());
 
   test("mints and hot-updates the Cloud MCP without opening Settings", async () => {
-    const writes: Array<{ workspaceId: string; payload: OpenworkCloudMcpReconcilePayload }> = [];
+    const writes: Array<{ workspaceId: string; payload: JuggleWorkCloudMcpReconcilePayload }> = [];
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.jugglework.test",
       listMcp: async () => ({ items: [] }),
-      getOpenworkCloudMcpHealth: async () => cloudHealth(false),
-      reconcileOpenworkCloudMcp: async (workspaceId: string, payload: OpenworkCloudMcpReconcilePayload) => {
+      getJuggleWorkCloudMcpHealth: async () => cloudHealth(false),
+      reconcileJuggleWorkCloudMcp: async (workspaceId: string, payload: JuggleWorkCloudMcpReconcilePayload) => {
         writes.push({ workspaceId, payload });
         return cloudHealth(true);
       },
@@ -129,18 +129,18 @@ describe("session MCP maintenance", () => {
       workspaceId: WORKSPACE_ID,
       payload: {
         workspaceId: WORKSPACE_ID,
-        name: "openwork-cloud",
+        name: "jugglework-cloud",
         config: {
           type: "remote",
           enabled: true,
-          url: "https://api.openwork.test/mcp/agent",
+          url: "https://api.jugglework.test/mcp/agent",
           headers: { Authorization: "Bearer mcp-token" },
           oauth: false,
         },
         tokenMetadata: {
           organizationId: "organization_1",
           expiresAt: MINTED.expiresAt,
-          resource: "https://api.openwork.test/mcp",
+          resource: "https://api.jugglework.test/mcp",
           scopes: "mcp:read mcp:write",
         },
         org: { id: "organization_1", slug: null, name: null },
@@ -167,15 +167,15 @@ describe("session MCP maintenance", () => {
     const waits: number[] = [];
     const attempts: Array<{ outcome: string; attempt: number; willRetry: boolean }> = [];
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.jugglework.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "jugglework-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.jugglework.test/mcp/agent" },
         }],
       }),
-      getOpenworkCloudMcpHealth: async () => retryableCloudHealth(),
-      reconcileOpenworkCloudMcp: async () => {
+      getJuggleWorkCloudMcpHealth: async () => retryableCloudHealth(),
+      reconcileJuggleWorkCloudMcp: async () => {
         reconcileCount += 1;
         return reconcileCount === 3 ? cloudHealth(true) : retryableCloudHealth();
       },
@@ -217,15 +217,15 @@ describe("session MCP maintenance", () => {
     let writeCount = 0;
     let healthReady = false;
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.jugglework.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "jugglework-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.jugglework.test/mcp/agent" },
         }],
       }),
-      getOpenworkCloudMcpHealth: async () => cloudHealth(healthReady),
-      reconcileOpenworkCloudMcp: async () => {
+      getJuggleWorkCloudMcpHealth: async () => cloudHealth(healthReady),
+      reconcileJuggleWorkCloudMcp: async () => {
         writeCount += 1;
         healthReady = true;
         return cloudHealth(true);
@@ -261,19 +261,19 @@ describe("session MCP maintenance", () => {
     const writes: string[] = [];
     const readyWorkspaces = new Set<string>();
     const client = {
-      baseUrl: "https://worker.openwork.test",
+      baseUrl: "https://worker.jugglework.test",
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "jugglework-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.jugglework.test/mcp/agent" },
         }],
       }),
       addMcp: async (workspaceId: string) => {
         writes.push(workspaceId);
         return { items: [] };
       },
-      getOpenworkCloudMcpHealth: async (workspaceId: string) => cloudHealth(readyWorkspaces.has(workspaceId)),
-      reconcileOpenworkCloudMcp: async (workspaceId: string) => {
+      getJuggleWorkCloudMcpHealth: async (workspaceId: string) => cloudHealth(readyWorkspaces.has(workspaceId)),
+      reconcileJuggleWorkCloudMcp: async (workspaceId: string) => {
         writes.push(workspaceId);
         readyWorkspaces.add(workspaceId);
         return cloudHealth(true);
@@ -318,23 +318,23 @@ describe("session MCP maintenance", () => {
       baseUrl,
       listMcp: async () => ({
         items: [{
-          name: "openwork-cloud",
-          config: { type: "remote", enabled: true, url: "https://api.openwork.test/mcp/agent" },
+          name: "jugglework-cloud",
+          config: { type: "remote", enabled: true, url: "https://api.jugglework.test/mcp/agent" },
         }],
       }),
       addMcp: async () => {
         writes.push(baseUrl);
         return { items: [] };
       },
-      getOpenworkCloudMcpHealth: async () => cloudHealth(readyWorkers.has(baseUrl)),
-      reconcileOpenworkCloudMcp: async () => {
+      getJuggleWorkCloudMcpHealth: async () => cloudHealth(readyWorkers.has(baseUrl)),
+      reconcileJuggleWorkCloudMcp: async () => {
         writes.push(baseUrl);
         readyWorkers.add(baseUrl);
         return cloudHealth(true);
       },
     });
-    const workerA = makeClient("https://worker-a.openwork.test");
-    const workerB = makeClient("https://worker-b.openwork.test");
+    const workerA = makeClient("https://worker-a.jugglework.test");
+    const workerB = makeClient("https://worker-b.jugglework.test");
     const mintToken = async () => {
       mintCount += 1;
       return MINTED;
@@ -357,7 +357,7 @@ describe("session MCP maintenance", () => {
   test("explicit removal keeps background maintenance disabled", async () => {
     writeCloudMcpUserState("removed", {
       denBaseUrl: SETTINGS.baseUrl,
-      serverBaseUrl: "https://worker.openwork.test",
+      serverBaseUrl: "https://worker.jugglework.test",
       orgId: SETTINGS.activeOrgId ?? "",
       workspaceId: WORKSPACE_ID,
     });
@@ -366,13 +366,13 @@ describe("session MCP maintenance", () => {
 
     await expect(syncCloudControlMcpInBackground({
       client: {
-        baseUrl: "https://worker.openwork.test",
+        baseUrl: "https://worker.jugglework.test",
         // The engine list is consulted (an existing enabled entry must stay
         // maintained even under recorded intent), but with no entry present
         // the recorded removal keeps provisioning skipped.
         listMcp: async () => ({ items: [] }),
-        getOpenworkCloudMcpHealth: async () => cloudHealth(false),
-        reconcileOpenworkCloudMcp: async () => {
+        getJuggleWorkCloudMcpHealth: async () => cloudHealth(false),
+        reconcileJuggleWorkCloudMcp: async () => {
           reconciled = true;
           return cloudHealth(true);
         },
@@ -390,15 +390,15 @@ describe("session MCP maintenance", () => {
 
   test("pre-signout cleanup removes runtime MCP and disconnects the exact active workspace before resolving", async () => {
     const events: string[] = [];
-    await cleanupOpenworkCloudMcpAfterSignOut({
+    await cleanupJuggleWorkCloudMcpAfterSignOut({
       context: {
         denBaseUrl: SETTINGS.baseUrl,
-        serverBaseUrl: "https://worker.openwork.test",
+        serverBaseUrl: "https://worker.jugglework.test",
         orgId: SETTINGS.activeOrgId ?? "",
         workspaceId: WORKSPACE_ID,
       },
-      openworkClient: {
-        baseUrl: "https://worker.openwork.test",
+      juggleworkClient: {
+        baseUrl: "https://worker.jugglework.test",
         removeMcp: async (workspaceId, name) => {
           events.push(`remove:${workspaceId}:${name}`);
         },
@@ -415,15 +415,15 @@ describe("session MCP maintenance", () => {
     events.push("auth-cleared");
 
     expect(events.slice(0, 2).sort()).toEqual([
-      "disconnect:/workspace/exact:openwork-cloud",
-      `remove:${WORKSPACE_ID}:openwork-cloud`,
+      "disconnect:/workspace/exact:jugglework-cloud",
+      `remove:${WORKSPACE_ID}:jugglework-cloud`,
     ].sort());
     expect(events[2]).toBe("auth-cleared");
   });
 
   test("deduplicates the same target without blocking another workspace", async () => {
-    const firstClient = { baseUrl: "https://worker.openwork.test" };
-    const recreatedClient = { baseUrl: "https://worker.openwork.test/" };
+    const firstClient = { baseUrl: "https://worker.jugglework.test" };
+    const recreatedClient = { baseUrl: "https://worker.jugglework.test/" };
     const targetA = getSessionMcpMaintenanceTargetKey({
       client: firstClient,
       cloudSignedIn: true,

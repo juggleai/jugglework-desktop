@@ -2,7 +2,7 @@
 import { useBootState, useBootOverlayVisible } from "./boot-state";
 import { OwDotTicker } from "./dot-ticker";
 
-const RELEASES_URL = "https://github.com/different-ai/openwork/releases";
+const RELEASES_URL = "https://github.com/juggleai/jugglework-desktop/releases";
 
 /**
  * Quiet, opaque boot overlay. Solid surface fill so nothing bleeds through.

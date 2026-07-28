@@ -9,7 +9,7 @@ const MAX_PROTOCOL_HEADER_LENGTH = 128;
 const MAX_ACTIVE_PROBES = 16;
 const MCP_ACCEPT = "application/json, text/event-stream";
 const MCP_PROTOCOL_VERSION = "2025-06-18";
-const INITIALIZE_REQUEST_ID = "openwork-agent-diagnostics-initialize";
+const INITIALIZE_REQUEST_ID = "jugglework-agent-diagnostics-initialize";
 const TOOL_ID = /^[A-Za-z][A-Za-z0-9_.:-]*$/;
 const SAFE_RESPONSE_HEADER = /^[!-~]+$/;
 const REQUIRED_TOOL_IDS = ["search_capabilities", "execute_capability"] as const;
@@ -18,8 +18,8 @@ const BEARER = /^Bearer [A-Za-z0-9\-._~+/]+=*$/;
 const REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const REQUIRED_TERMINAL_PATH = "/mcp/agent";
 const DEFAULT_TRUSTED_ORIGINS = new Set([
-  "https://app.openworklabs.com",
-  "https://api.openworklabs.com",
+  "https://work.juggle.im",
+  "https://work.juggle.im",
 ]);
 
 export type CloudCatalogProbeStatus = "observed" | "not-performed" | "failed";
@@ -77,7 +77,7 @@ export type CloudCatalogProbeFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-export type ProbeOpenworkCloudCatalogInput = {
+export type ProbeJuggleWorkCloudCatalogInput = {
   workspaceId: string;
   workspaceType: "local" | "remote";
   runtimeConfigAvailable?: boolean;
@@ -173,7 +173,7 @@ function isLoopbackHostname(hostname: string): boolean {
 
 function configuredTrustedOrigins(): Set<string> {
   const origins = new Set(DEFAULT_TRUSTED_ORIGINS);
-  const configured = process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS ?? "";
+  const configured = process.env.JUGGLEWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS ?? "";
   for (const entry of configured.split(",")) {
     const raw = entry.trim().replace(/\/+$/u, "");
     if (!raw || raw.includes("?") || raw.includes("#")) continue;
@@ -222,7 +222,7 @@ function authorizationHeader(config: Record<string, unknown>): { value: string |
   return { value, duplicate: false };
 }
 
-function prepare(input: ProbeOpenworkCloudCatalogInput): PreparedProbe | CloudCatalogProbeCode {
+function prepare(input: ProbeJuggleWorkCloudCatalogInput): PreparedProbe | CloudCatalogProbeCode {
   if (input.workspaceType !== "local") return "remote_workspace_unavailable";
   if (input.runtimeConfigAvailable === false) return "runtime_config_unavailable";
   if (!isRecord(input.config)) return "cloud_mcp_missing";
@@ -547,7 +547,7 @@ async function performProbe(
         method: "initialize",
         params: {
           capabilities: {},
-          clientInfo: { name: "openwork-server-agent-context-diagnostics", version: "1.0.0" },
+          clientInfo: { name: "jugglework-server-agent-context-diagnostics", version: "1.0.0" },
           protocolVersion: MCP_PROTOCOL_VERSION,
         },
       },
@@ -619,8 +619,8 @@ async function performProbe(
  * never discovers another MCP, follows redirects, calls a tool, or returns
  * endpoint, credential, header, response-body, or caught-error values.
  */
-export async function probeOpenworkCloudCatalog(
-  input: ProbeOpenworkCloudCatalogInput,
+export async function probeJuggleWorkCloudCatalog(
+  input: ProbeJuggleWorkCloudCatalogInput,
 ): Promise<CloudCatalogProbe> {
   const clock = input.clock ?? input.now ?? Date.now;
   const startedAt = clock();

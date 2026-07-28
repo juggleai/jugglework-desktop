@@ -7,7 +7,7 @@ import {
   Users,
   Share2,
 } from "lucide-react";
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@jugglework/ui/react";
 
 import { t } from "../../../i18n";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";

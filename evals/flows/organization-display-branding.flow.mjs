@@ -37,7 +37,7 @@ function errorMessage(error) {
 }
 
 async function daytonaExec(ctx, label, script, timeout = 90_000) {
-  const sandbox = ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX.trim();
+  const sandbox = ctx.env.JUGGLEWORK_EVAL_DAYTONA_SANDBOX.trim();
   const encoded = Buffer.from(script, "utf8").toString("base64");
   try {
     const result = await execFileAsync(
@@ -66,7 +66,7 @@ nohup python3 -m http.server ${ASSET_PORT} --directory /tmp/acme-work-assets >/t
 for _ in $(seq 1 30); do curl -sf http://127.0.0.1:${ASSET_PORT}/wordmark.svg >/dev/null && exit 0; sleep 1; done
 exit 1
 `);
-  const preview = await execFileAsync("daytona", ["preview-url", ctx.env.OPENWORK_EVAL_DAYTONA_SANDBOX.trim(), "-p", String(ASSET_PORT)], {
+  const preview = await execFileAsync("daytona", ["preview-url", ctx.env.JUGGLEWORK_EVAL_DAYTONA_SANDBOX.trim(), "-p", String(ASSET_PORT)], {
     timeout: 30_000,
   });
   const baseUrl = preview.stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith("https://"));
@@ -110,7 +110,7 @@ async function mintInstallLink(ctx) {
   state.installPageUrl = minted.body?.installPageUrl ?? null;
   ctx.assert(typeof state.installToken === "string", `Install-link response was missing token: ${JSON.stringify(minted.body).slice(0, 500)}`);
   ctx.assert(typeof state.installPageUrl === "string", "Install-link response was missing installPageUrl.");
-  const config = await fetch(`${ctx.env.OPENWORK_EVAL_DEN_API_URL.replace(/\/$/, "")}/v1/install-config?token=${encodeURIComponent(state.installToken)}`).then(async (response) => {
+  const config = await fetch(`${ctx.env.JUGGLEWORK_EVAL_DEN_API_URL.replace(/\/$/, "")}/v1/install-config?token=${encodeURIComponent(state.installToken)}`).then(async (response) => {
     const body = await response.json();
     ctx.assert(response.ok, `Install config returned ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
     return body;
@@ -119,18 +119,18 @@ async function mintInstallLink(ctx) {
 }
 
 async function startRemoteInstaller(ctx) {
-  const binary = ctx.env.OPENWORK_EVAL_INSTALLER_BIN?.trim() || "/workspace/apps/installer/dist/openwork-installer";
+  const binary = ctx.env.JUGGLEWORK_EVAL_INSTALLER_BIN?.trim() || "/workspace/apps/installer/dist/jugglework-installer";
   const sidecar = Buffer.from(JSON.stringify(state.installConfig), "utf8").toString("base64");
   const stdout = await daytonaExec(ctx, "configured installer UI", `
 set -euo pipefail
 work=/tmp/acme-work-installer
 rm -rf "$work"
 mkdir -p "$work"
-cp '${binary}' "$work/openwork-installer"
-chmod +x "$work/openwork-installer"
-printf '%s' '${sidecar}' | base64 -d > "$work/openwork-installer.json"
-pkill -f '/tmp/acme-work-installer/openwork-installer' 2>/dev/null || true
-OPENWORK_INSTALLER_UI=manual nohup "$work/openwork-installer" >/tmp/acme-work-installer.log 2>&1 </dev/null &
+cp '${binary}' "$work/jugglework-installer"
+chmod +x "$work/jugglework-installer"
+printf '%s' '${sidecar}' | base64 -d > "$work/jugglework-installer.json"
+pkill -f '/tmp/acme-work-installer/jugglework-installer' 2>/dev/null || true
+JUGGLEWORK_INSTALLER_UI=manual nohup "$work/jugglework-installer" >/tmp/acme-work-installer.log 2>&1 </dev/null &
 for _ in $(seq 1 30); do
   url=$(grep -o 'http://127[.]0[.]0[.]1:[0-9]*/' /tmp/acme-work-installer.log | tail -n 1 || true)
   if [ -n "$url" ]; then printf '%s\n' "$url"; exit 0; fi
@@ -162,7 +162,7 @@ set -euo pipefail
 pkill -f '/electron/dist/electron ./electron/main.mjs' 2>/dev/null || true
 sleep 3
 cd /workspace
-OPENWORK_WORKSPACE_DIR=/workspace OPENWORK_DESKTOP_BOOTSTRAP_PATH=/workspace/.openwork-daytona/desktop-bootstrap.json OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=9825 DISPLAY=:99 bash .devcontainer/start-daytona-electron.sh --detach
+JUGGLEWORK_WORKSPACE_DIR=/workspace JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH=/workspace/.jugglework-daytona/desktop-bootstrap.json JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT=9825 DISPLAY=:99 bash .devcontainer/start-daytona-electron.sh --detach
 for _ in $(seq 1 60); do
   if curl -sf http://127.0.0.1:9825/json/list >/dev/null; then printf 'relaunched\n'; exit 0; fi
   sleep 1
@@ -176,7 +176,7 @@ exit 1
 async function signedIdentity(ctx) {
   return daytonaExec(ctx, "signed application identity", `
 set -euo pipefail
-file=$(find "$HOME/.config" -name openwork-ui-control.json -type f | head -n 1)
+file=$(find "$HOME/.config" -name jugglework-ui-control.json -type f | head -n 1)
 test -n "$file"
 cat "$file"
 `);
@@ -184,20 +184,20 @@ cat "$file"
 
 export default {
   id: "organization-display-branding",
-  title: "Organization display branding reaches download, setup, and desktop while OpenWork's signed identity stays stable",
+  title: "Organization display branding reaches download, setup, and desktop while JuggleWork's signed identity stays stable",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_DAYTONA_SANDBOX",
+    "JUGGLEWORK_EVAL_DEN_API_URL",
+    "JUGGLEWORK_EVAL_DEN_TOKEN",
+    "JUGGLEWORK_EVAL_DEN_WEB_URL",
+    "JUGGLEWORK_EVAL_DAYTONA_SANDBOX",
   ],
   steps: [
     {
       name: "setup",
       run: async (ctx) => {
         await ensureRendererMounted(ctx);
-        await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 30_000, label: "desktop control surface" });
+        await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs: 30_000, label: "desktop control surface" });
         await ctx.ensureLightMode();
         await assertSignedIntoDen(ctx);
         await ensureWorkspaceReady(ctx);
@@ -219,7 +219,7 @@ export default {
             await openAdminPanel(ctx);
             await adminEnsureFreshAuth(ctx);
             await navigateAdminOrgSettings(ctx);
-            await setInputByPlaceholder(ctx, "OpenWork", APP_NAME);
+            await setInputByPlaceholder(ctx, "JuggleWork", APP_NAME);
             await setInputByPlaceholder(ctx, "https://example.com/logo.svg", state.logoUrl);
             await clickSaveSettings(ctx);
           },
@@ -228,7 +228,7 @@ export default {
             ctx.assert(config.brandAppName === APP_NAME, `brandAppName was ${config.brandAppName}`);
             ctx.assert(config.brandLogoUrl === state.logoUrl, `brandLogoUrl was ${config.brandLogoUrl}`);
             await panelEval(ctx, `(() => {
-              const input = Array.from(document.querySelectorAll('input')).find((candidate) => candidate.placeholder === 'OpenWork');
+              const input = Array.from(document.querySelectorAll('input')).find((candidate) => candidate.placeholder === 'JuggleWork');
               input?.scrollIntoView({ block: 'center' });
               return input?.value ?? null;
             })()`);
@@ -295,7 +295,7 @@ export default {
             ctx.assert(title === APP_NAME, `Renderer title was ${title}`);
             const nativeTitle = await nativeWindowTitle(ctx);
             ctx.assert(nativeTitle.includes(APP_NAME), `Native title was ${nativeTitle}`);
-            state.updaterBefore = await ctx.eval("window.__OPENWORK_ELECTRON__?.updater?.getChannel?.()", { awaitPromise: true });
+            state.updaterBefore = await ctx.eval("window.__JUGGLEWORK_ELECTRON__?.updater?.getChannel?.()", { awaitPromise: true });
             ctx.recordEvidence({ type: "assertion", status: "passed", assertion: "The Daytona OS window title contains Acme Work", actual: nativeTitle });
           },
           screenshot: { name: "frame-4-acme-work-desktop", requireText: [APP_NAME, "Search sessions"] },
@@ -305,7 +305,7 @@ export default {
     {
       name: "Frame 5",
       run: async (ctx) => {
-        await ctx.prove("Branding survives a fresh desktop process while app and updater identity remain OpenWork-compatible", {
+        await ctx.prove("Branding survives a fresh desktop process while app and updater identity remain JuggleWork-compatible", {
           voiceover: vo[4],
           action: async () => {
             await relaunchDesktop(ctx);
@@ -316,9 +316,9 @@ export default {
           assert: async () => {
             const config = await waitForDesktopConfig(ctx, "Acme Work after relaunch", (body) => body.brandAppName === APP_NAME && body.brandLogoUrl === state.logoUrl);
             const identity = await signedIdentity(ctx);
-            ctx.assert(/com\.differentai\.openwork(?:\.dev)?/.test(identity), `Unexpected application identity: ${identity}`);
+            ctx.assert(/com\.juggleai\.jugglework(?:\.dev)?/.test(identity), `Unexpected application identity: ${identity}`);
             ctx.assert(!identity.includes("acme-work"), `Display name leaked into signed identity: ${identity}`);
-            const updaterAfter = await ctx.eval("window.__OPENWORK_ELECTRON__?.updater?.getChannel?.()", { awaitPromise: true });
+            const updaterAfter = await ctx.eval("window.__JUGGLEWORK_ELECTRON__?.updater?.getChannel?.()", { awaitPromise: true });
             ctx.assert(updaterAfter?.channel === state.updaterBefore?.channel, `Updater channel changed: ${JSON.stringify({ before: state.updaterBefore, after: updaterAfter })}`);
             ctx.assert(updaterAfter?.feedUrl === state.updaterBefore?.feedUrl, `Updater feed changed: ${JSON.stringify({ before: state.updaterBefore, after: updaterAfter })}`);
             ctx.assert(config.brandAppName === APP_NAME, "Server-managed display branding did not survive the new desktop process.");

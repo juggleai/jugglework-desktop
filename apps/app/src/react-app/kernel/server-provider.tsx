@@ -12,7 +12,7 @@ import {
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "../../app/lib/desktop";
-import { isWebDeployment } from "../../app/lib/openwork-deployment";
+import { isWebDeployment } from "../../app/lib/jugglework-deployment";
 import { isDesktopRuntime } from "../../app/utils";
 import { initialServerState, serverReducer } from "./server-provider-state";
 
@@ -43,7 +43,7 @@ const ServerContext = createContext<ServerContextValue | undefined>(undefined);
 function readStoredList(): string[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem("openwork.server.list");
+    const raw = window.localStorage.getItem("jugglework.server.list");
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
   } catch {
@@ -54,17 +54,17 @@ function readStoredList(): string[] {
 function readStoredActive(): string {
   if (typeof window === "undefined") return "";
   try {
-    const stored = window.localStorage.getItem("openwork.server.active");
+    const stored = window.localStorage.getItem("jugglework.server.active");
     return typeof stored === "string" ? stored : "";
   } catch {
     return "";
   }
 }
 
-function readOpenworkToken(): string {
+function readJuggleWorkToken(): string {
   if (typeof window === "undefined") return "";
   try {
-    return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
+    return (window.localStorage.getItem("jugglework.server.token") ?? "").trim();
   } catch {
     return "";
   }
@@ -72,7 +72,7 @@ function readOpenworkToken(): string {
 
 async function checkHealth(url: string): Promise<boolean> {
   if (!url) return false;
-  const token = readOpenworkToken();
+  const token = readJuggleWorkToken();
   const headers =
     token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
   const client = createOpencodeClient({
@@ -108,8 +108,8 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       !isDesktopRuntime() &&
       isWebDeployment() &&
       (import.meta.env.PROD ||
-        (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
-          import.meta.env.VITE_OPENWORK_URL.trim().length > 0));
+        (typeof import.meta.env?.VITE_JUGGLEWORK_URL === "string" &&
+          import.meta.env.VITE_JUGGLEWORK_URL.trim().length > 0));
 
     if (forceProxy && fallback) {
       dispatchServer({ type: "ready", list: [fallback], active: fallback });
@@ -131,8 +131,8 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     if (!readyRef.current) return;
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.server.list", JSON.stringify(list));
-      window.localStorage.setItem("openwork.server.active", active);
+      window.localStorage.setItem("jugglework.server.list", JSON.stringify(list));
+      window.localStorage.setItem("jugglework.server.active", active);
     } catch {
       // ignore
     }

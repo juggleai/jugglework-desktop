@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   closeWorkbenchTab,
   focusWorkbenchPane,
-  openWorkbenchTab,
+  juggleWorkbenchTab,
   setWorkbenchSplit,
   syncWorkbenchSnapshot,
   type WorkbenchSnapshot,
@@ -31,7 +31,7 @@ describe("workbench store", () => {
         { workspaceId: "workspace-a", sessionId: "session-b", title: "Secondary" },
       ],
     });
-    state = openWorkbenchTab(state, {
+    state = juggleWorkbenchTab(state, {
       workspaceId: "workspace-a",
       sessionId: "session-b",
       title: "Secondary",
@@ -55,7 +55,7 @@ describe("workbench store", () => {
         { workspaceId: "workspace-a", sessionId: "session-b" },
       ],
     });
-    state = openWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
+    state = juggleWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
     state = setWorkbenchSplit(state, "session-b");
     state = focusWorkbenchPane(state, "primary");
     state = focusWorkbenchPane(state, "secondary");
@@ -74,7 +74,7 @@ describe("workbench store", () => {
         { workspaceId: "workspace-a", sessionId: "session-b" },
       ],
     });
-    state = openWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
+    state = juggleWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
     state = setWorkbenchSplit(state, "session-b");
     state = closeWorkbenchTab(state, "session-b");
 
@@ -110,7 +110,7 @@ describe("workbench store", () => {
         { workspaceId: "workspace-a", sessionId: "session-b" },
       ],
     });
-    state = openWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
+    state = juggleWorkbenchTab(state, { workspaceId: "workspace-a", sessionId: "session-b" });
     state = setWorkbenchSplit(state, "session-b");
 
     const loading = syncWorkbenchSnapshot(state, {

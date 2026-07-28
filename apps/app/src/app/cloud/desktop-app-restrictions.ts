@@ -1,4 +1,4 @@
-import type { DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
+import type { DesktopPolicyKey } from "@jugglework/types/den/desktop-policies";
 import type { DenDesktopConfig } from "../lib/den";
 import type { ModelRef } from "../types";
 
@@ -32,7 +32,7 @@ export function readDesktopAllowedModels(
  * list, and it stays legitimate.
  */
 function isCloudManagedProviderId(providerId: string) {
-  return /^lpr_/i.test(providerId) || providerId === "openwork";
+  return /^lpr_/i.test(providerId) || providerId === "jugglework";
 }
 
 function isAllowedByModelCatalog(input: {

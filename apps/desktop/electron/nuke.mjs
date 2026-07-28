@@ -6,11 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
+const BROWSER_SESSION_PARTITION = "persist:jugglework-browser";
 const NUKE_PARTITIONS = ["default", BROWSER_SESSION_PARTITION];
 const PENDING_NUKE_FILENAME = ".nuke-pending.json";
 const WINDOWS_RETRY_CODES = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
-const OPENWORK_CONFIG_FILENAMES = [
+const JUGGLEWORK_CONFIG_FILENAMES = [
   "server.json",
   "runtime.sqlite",
   "runtime.sqlite-wal",
@@ -19,21 +19,21 @@ const OPENWORK_CONFIG_FILENAMES = [
   "tokens.json",
   "env.json",
 ];
-const SHIP_IT_CACHE_DOMAIN = "com.differentai.openwork.ShipIt";
+const SHIP_IT_CACHE_DOMAIN = "com.juggleai.jugglework.ShipIt";
 const NUKE_WORKER_FILENAME = "nuke-worker.mjs";
 const NUKE_WORKER_DEADLINE_MS = 60_000;
 const NUKE_WORKER_PARENT_WAIT_MS = 30_000;
 const NUKE_WORKER_ENV_KEYS = [
   "APPDATA",
   "LOCALAPPDATA",
-  "OPENWORK_DATA_DIR",
-  "OPENWORK_DESKTOP_BOOTSTRAP_PATH",
-  "OPENWORK_DEV_MODE",
-  "OPENWORK_ELECTRON_USERDATA",
-  "OPENWORK_ENV_STORE",
-  "OPENWORK_RUNTIME_DB",
-  "OPENWORK_SERVER_CONFIG",
-  "OPENWORK_TOKEN_STORE",
+  "JUGGLEWORK_DATA_DIR",
+  "JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH",
+  "JUGGLEWORK_DEV_MODE",
+  "JUGGLEWORK_ELECTRON_USERDATA",
+  "JUGGLEWORK_ENV_STORE",
+  "JUGGLEWORK_RUNTIME_DB",
+  "JUGGLEWORK_SERVER_CONFIG",
+  "JUGGLEWORK_TOKEN_STORE",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_DB",
   "XDG_CACHE_HOME",
@@ -53,7 +53,7 @@ function envValue(env, key) {
 }
 
 function isTruthyDevMode(env) {
-  return envValue(env, "OPENWORK_DEV_MODE") === "1";
+  return envValue(env, "JUGGLEWORK_DEV_MODE") === "1";
 }
 
 function normalizePlatform(value) {
@@ -66,11 +66,11 @@ function resolveNukeEnvironment({ env = {}, homedir, platform, userDataPath }) {
   /** @type {Record<string, string | undefined>} */
   const resolvedEnv = { ...env };
   let resolvedHome = homedir;
-  const userDataOverride = envValue(env, "OPENWORK_ELECTRON_USERDATA");
+  const userDataOverride = envValue(env, "JUGGLEWORK_ELECTRON_USERDATA");
   const resolvedUserDataPath = userDataOverride || userDataPath;
 
   if (isTruthyDevMode(env)) {
-    const root = paths.join(resolvedUserDataPath, "openwork-dev-data");
+    const root = paths.join(resolvedUserDataPath, "jugglework-dev-data");
     resolvedHome = paths.join(root, "home");
     resolvedEnv.HOME = resolvedHome;
     resolvedEnv.USERPROFILE = resolvedHome;
@@ -107,47 +107,47 @@ function appDataHome(env, homedir, platform, paths) {
   return appData || paths.join(homedir, "AppData", "Roaming");
 }
 
-function openworkServerConfigPath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_SERVER_CONFIG");
+function juggleworkServerConfigPath(env, homedir, platform, paths) {
+  const override = envValue(env, "JUGGLEWORK_SERVER_CONFIG");
   if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "server.json");
+  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "jugglework", "server.json");
   const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
   const root = xdgConfigHome || paths.join(homedir, ".config");
-  return paths.join(root, "openwork", "server.json");
+  return paths.join(root, "jugglework", "server.json");
 }
 
 function envStorePath(env, homedir, platform, paths) {
-  const override = envValue(env, "OPENWORK_ENV_STORE");
+  const override = envValue(env, "JUGGLEWORK_ENV_STORE");
   if (override) return paths.resolve(override);
-  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "openwork", "env.json");
-  return paths.join(homedir, ".config", "openwork", "env.json");
+  if (platform === "win32") return paths.join(appDataHome(env, homedir, platform, paths), "jugglework", "env.json");
+  return paths.join(homedir, ".config", "jugglework", "env.json");
 }
 
 function tokenStorePath(env, serverConfigPath, homedir, paths) {
-  const override = envValue(env, "OPENWORK_TOKEN_STORE");
+  const override = envValue(env, "JUGGLEWORK_TOKEN_STORE");
   if (override) return paths.resolve(override);
-  const configDir = serverConfigPath ? paths.dirname(serverConfigPath) : paths.join(homedir, ".config", "openwork");
+  const configDir = serverConfigPath ? paths.dirname(serverConfigPath) : paths.join(homedir, ".config", "jugglework");
   return paths.join(configDir, "tokens.json");
 }
 
 function runtimeDbPath(env, serverConfigPath, homedir, paths) {
-  const override = envValue(env, "OPENWORK_RUNTIME_DB");
+  const override = envValue(env, "JUGGLEWORK_RUNTIME_DB");
   if (override) return paths.resolve(override);
-  const configDir = serverConfigPath ? paths.dirname(serverConfigPath) : paths.join(homedir, ".config", "openwork");
+  const configDir = serverConfigPath ? paths.dirname(serverConfigPath) : paths.join(homedir, ".config", "jugglework");
   return paths.join(configDir, "runtime.sqlite");
 }
 
 function desktopBootstrapPath(env, homedir, platform, paths, userDataPath) {
-  const override = envValue(env, "OPENWORK_DESKTOP_BOOTSTRAP_PATH");
+  const override = envValue(env, "JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH");
   if (override) return override;
   if (isTruthyDevMode(env)) {
-    return paths.join(userDataPath, "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
+    return paths.join(userDataPath, "jugglework-dev-data", "home", ".config", "jugglework", "desktop-bootstrap.json");
   }
-  return paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", "desktop-bootstrap.json");
+  return paths.join(desktopConfigHome(env, homedir, platform, paths), "jugglework", "desktop-bootstrap.json");
 }
 
 function legacyDesktopBootstrapPath(homedir, paths) {
-  return paths.join(homedir, ".config", "openwork", "desktop-bootstrap.json");
+  return paths.join(homedir, ".config", "jugglework", "desktop-bootstrap.json");
 }
 
 function globalOpencodeConfigHome(env, homedir, platform, paths) {
@@ -183,9 +183,9 @@ function opencodeCacheDirs(env, homedir, paths) {
 }
 
 function orchestratorDataDir(env, homedir, paths) {
-  const override = envValue(env, "OPENWORK_DATA_DIR");
+  const override = envValue(env, "JUGGLEWORK_DATA_DIR");
   if (override) return override;
-  return paths.join(homedir, ".openwork", "openwork-orchestrator");
+  return paths.join(homedir, ".jugglework", "jugglework-orchestrator");
 }
 
 function opencodeDbOverridePaths(env, dataDirs, paths) {
@@ -227,10 +227,10 @@ function uniquePaths(rawPaths, paths, platform) {
   return output;
 }
 
-function addOpenworkConfigFiles(deletePaths, roots, paths) {
+function addJuggleWorkConfigFiles(deletePaths, roots, paths) {
   for (const root of roots) {
     if (!root) continue;
-    for (const filename of OPENWORK_CONFIG_FILENAMES) {
+    for (const filename of JUGGLEWORK_CONFIG_FILENAMES) {
       deletePaths.push(paths.join(root, filename));
     }
   }
@@ -242,7 +242,7 @@ function resolveNukePlan(input) {
   const bootstrapPath = desktopBootstrapPath(env, homedir, platform, paths, userDataPath);
   const preserveBootstrapPath = input.preserveBootstrap === false ? null : bootstrapPath;
   const legacyBootstrapPath = legacyDesktopBootstrapPath(homedir, paths);
-  const serverConfig = openworkServerConfigPath(env, homedir, platform, paths);
+  const serverConfig = juggleworkServerConfigPath(env, homedir, platform, paths);
   const runtimeDb = runtimeDbPath(env, serverConfig, homedir, paths);
   const envStore = envStorePath(env, homedir, platform, paths);
   const tokens = tokenStorePath(env, serverConfig, homedir, paths);
@@ -266,15 +266,15 @@ function resolveNukePlan(input) {
     orchestratorDataDir(env, homedir, paths),
   ];
 
-  const openworkConfigRoots = [
-    paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork"),
+  const juggleworkConfigRoots = [
+    paths.join(desktopConfigHome(env, homedir, platform, paths), "jugglework"),
     paths.dirname(serverConfig),
     paths.dirname(runtimeDb),
     paths.dirname(tokens),
     paths.dirname(envStore),
   ];
-  deletePaths.push(...openworkConfigRoots);
-  addOpenworkConfigFiles(deletePaths, openworkConfigRoots, paths);
+  deletePaths.push(...juggleworkConfigRoots);
+  addJuggleWorkConfigFiles(deletePaths, juggleworkConfigRoots, paths);
 
   if (platform === "darwin") {
     deletePaths.push(paths.join(homedir, "Library", "Caches", SHIP_IT_CACHE_DOMAIN));
@@ -289,7 +289,7 @@ function resolveNukePlan(input) {
     preserveBootstrapPath: preserveBootstrapPath || null,
     partitions: [...NUKE_PARTITIONS],
   };
-  const pendingPath = paths.join(desktopConfigHome(env, homedir, platform, paths), "openwork", PENDING_NUKE_FILENAME);
+  const pendingPath = paths.join(desktopConfigHome(env, homedir, platform, paths), "jugglework", PENDING_NUKE_FILENAME);
 
   return {
     manifest,
@@ -343,7 +343,7 @@ function nukeWorkerScriptPath() {
 }
 
 function nukeWorkerPayloadPath() {
-  return path.join(os.tmpdir(), `openwork-nuke-worker-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+  return path.join(os.tmpdir(), `jugglework-nuke-worker-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
 }
 
 async function writeNukeWorkerPayload(payloadPath, payload) {
@@ -352,7 +352,7 @@ async function writeNukeWorkerPayload(payloadPath, payload) {
 
 function nukeWorkerSpawnEnv(env = process.env) {
   const workerEnv = { ...env, ELECTRON_RUN_AS_NODE: "1" };
-  delete workerEnv["OPENWORK_ELECTRON_REMOTE_DEBUG_PORT"];
+  delete workerEnv["JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT"];
   return workerEnv;
 }
 
@@ -611,7 +611,7 @@ async function writePendingNukeFile(pendingPath, paths, pending = null, options 
 }
 
 async function writeReceipt(receipt) {
-  const receiptPath = path.join(os.tmpdir(), `openwork-nuke-receipt-${Date.now()}.json`);
+  const receiptPath = path.join(os.tmpdir(), `jugglework-nuke-receipt-${Date.now()}.json`);
   await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
 }
 
@@ -654,7 +654,7 @@ async function quiesceForNuke({ runtimeManager, uiControlServer, removeWindowsBr
   await bestEffort(errors, "ui-control-server", () => uiControlServer.stop(), 3000);
   await bestEffort(errors, "runtime-dispose", () => runtimeManager.dispose(), 12_000);
   await bestEffort(errors, "packaged-sidecar-reaper", () => runtimeManager.prepareFreshRuntime(), 16_000);
-  await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupOpenworkContainers(), 24_000);
+  await bestEffort(errors, "sandbox-docker-cleanup", () => runtimeManager.sandboxCleanupJuggleWorkContainers(), 24_000);
   await bestEffort(errors, "windows-brand-shortcut", removeWindowsBrandShortcut, 5000);
 }
 
@@ -700,7 +700,7 @@ export async function runPendingNukeCleanup(input, options = {}) {
   return pendingCleanupResult({ ran: true, ...verified });
 }
 
-/** @returns {Promise<import("@openwork/types/desktop-ipc").NukeReceipt>} */
+/** @returns {Promise<import("@jugglework/types/desktop-ipc").NukeReceipt>} */
 export async function executeNukeFreshStart({ app, session, runtimeManager, uiControlServer, removeWindowsBrandShortcut }, options = {}) {
   const input = {
     ...(options.input ?? {

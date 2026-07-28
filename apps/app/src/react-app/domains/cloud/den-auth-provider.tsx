@@ -32,7 +32,7 @@ import {
   deepLinkBridgeEvent,
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
-import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { parseDenAuthDeepLink } from "../../../app/lib/jugglework-links";
 import {
   AlertDialog,
   AlertDialogAction,

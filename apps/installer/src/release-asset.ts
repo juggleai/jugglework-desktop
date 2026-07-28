@@ -1,4 +1,4 @@
-const GITHUB_REPO = "different-ai/openwork"
+const GITHUB_REPO = "juggleai/jugglework-desktop"
 
 export type ReleaseAsset = {
   version: string
@@ -9,8 +9,8 @@ export type ReleaseAsset = {
 
 /**
  * Release assets follow a fixed naming scheme (see the stable release
- * workflow): openwork-mac-<arch>-<v>.dmg, openwork-win-x64-<v>.exe,
- * openwork-linux-x86_64|arm64-<v>.AppImage — so the download URL is
+ * workflow): jugglework-mac-<arch>-<v>.dmg, jugglework-win-x64-<v>.exe,
+ * jugglework-linux-x86_64|arm64-<v>.AppImage — so the download URL is
  * deterministic from (version, platform, arch); no releases-API listing needed.
  */
 export function releaseAssetFor(
@@ -32,16 +32,16 @@ export function releaseAssetFor(
   })
 
   if (platform === "darwin") {
-    return build(`openwork-mac-${arch}-${normalized}.dmg`, "dmg")
+    return build(`jugglework-mac-${arch}-${normalized}.dmg`, "dmg")
   }
   if (platform === "win32") {
     if (arch !== "x64") throw new Error(`unsupported Windows architecture: ${arch}`)
-    return build(`openwork-win-x64-${normalized}.exe`, "exe")
+    return build(`jugglework-win-x64-${normalized}.exe`, "exe")
   }
   if (platform === "linux") {
     // The AppImage uses x86_64 in its name while the tarball uses x64.
     const appImageArch = arch === "x64" ? "x86_64" : "arm64"
-    return build(`openwork-linux-${appImageArch}-${normalized}.AppImage`, "appimage")
+    return build(`jugglework-linux-${appImageArch}-${normalized}.AppImage`, "appimage")
   }
   throw new Error(`unsupported platform: ${platform}`)
 }

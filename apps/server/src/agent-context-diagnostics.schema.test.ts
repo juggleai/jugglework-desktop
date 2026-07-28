@@ -7,7 +7,7 @@ import {
   agentContextOrganizationConnectionSummarySchema,
   isAgentContextDiagnosticTextSafe as isSharedTextSafe,
   sanitizeAgentContextDiagnosticText as sanitizeSharedText,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@jugglework/types/agent-context-diagnostics";
 import {
   agentContextDiagnosticCheckRuntimeSchema,
   isAgentContextDiagnosticTextSafe as isLocalTextSafe,
@@ -77,7 +77,7 @@ describe("agent context diagnostics safe output schema", () => {
       evidenceKind: "derived" as const,
       code: "safe_code",
       message: "Safe message",
-      owner: "openwork-server" as const,
+      owner: "jugglework-server" as const,
       action: "No action is required.",
       details: { safeKey: "safe value" },
       durationMs: 0,
@@ -101,8 +101,8 @@ describe("agent context diagnostics safe output schema", () => {
   test("rejects unsafe dynamic agent, MCP, and organization labels", () => {
     const agent = {
       evidenceSource: "configured-intent" as const,
-      defaultAgent: "openwork",
-      configuredOpenworkAgent: {
+      defaultAgent: "jugglework",
+      configuredJuggleWorkAgent: {
         state: "present" as const,
         mode: "primary" as const,
         prompt: {
@@ -116,10 +116,10 @@ describe("agent context diagnostics safe output schema", () => {
           deniedRelevantToolCount: null,
         },
       },
-      pluginLabels: ["openwork-extensions-preview"],
+      pluginLabels: ["jugglework-extensions-preview"],
     };
     const mcp = {
-      name: "openwork-cloud",
+      name: "jugglework-cloud",
       source: "config.remote" as const,
       type: "remote" as const,
       enabled: true,
@@ -232,7 +232,7 @@ function baseCheck() {
     evidenceKind: "derived" as const,
     code: "safe_code",
     message: "Safe message",
-    owner: "openwork-server" as const,
+    owner: "jugglework-server" as const,
     action: "No action is required.",
     details: { safeKey: "safe value" },
     durationMs: 0,

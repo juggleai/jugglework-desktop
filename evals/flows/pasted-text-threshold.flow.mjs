@@ -11,13 +11,13 @@ const SHORT_PASTE = "1234567890".repeat(5);
 const URL_PASTE = "https://example.com/pasted-text-threshold/abcdefghijklmnopqrstuvwxyz";
 
 async function waitForReadySession(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", {
     timeoutMs: 60_000,
     label: "control API",
   });
   return ctx.waitFor(
     `(() => {
-      const control = window.__openworkControl;
+      const control = window.__juggleworkControl;
       const route = control.snapshot().route;
       if (route.startsWith("/welcome") || route.startsWith("/signin")) return "blocked";
       const action = control.listActions().find((item) => item.id === "session.create_task");
@@ -36,12 +36,12 @@ async function waitForComposer(ctx) {
 }
 
 async function createFreshTask(ctx) {
-  const previousRoute = await ctx.eval("window.__openworkControl.snapshot().route || ''");
+  const previousRoute = await ctx.eval("window.__juggleworkControl.snapshot().route || ''");
   await ctx.control("session.create_task");
   await waitForComposer(ctx);
   await ctx.waitFor(
     `(() => {
-      const route = window.__openworkControl.snapshot().route || "";
+      const route = window.__juggleworkControl.snapshot().route || "";
       const editor = document.querySelector(${JSON.stringify(EDITOR_SELECTOR)});
       return Boolean(route !== ${JSON.stringify(previousRoute)} && editor && editor.innerText.trim() === "");
     })()`,

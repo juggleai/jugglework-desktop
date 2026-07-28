@@ -28,12 +28,12 @@ import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { AppMenuProvider } from "./app-menu";
 import {
-  OpenworkControlProvider,
-  OpenworkRouteControlActions,
+  JuggleWorkControlProvider,
+  JuggleWorkRouteControlActions,
   useControlAction,
-  type OpenworkControlAction,
+  type JuggleWorkControlAction,
 } from "./control/control-provider";
-import { OpenworkContextPublisher } from "./openwork-context-publisher";
+import { JuggleWorkContextPublisher } from "./jugglework-context-publisher";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
@@ -181,13 +181,13 @@ function DenSigninGate({ children }: DenSigninGateProps) {
 }
 
 /**
- * Control actions for cloud auth. Placed inside OpenworkControlProvider so
+ * Control actions for cloud auth. Placed inside JuggleWorkControlProvider so
  * the actions are available on every route (including /welcome and /signin).
  */
 function DenAuthControlActions() {
   const denAuth = useDenAuth();
 
-  const exchangeGrantAction = useMemo<OpenworkControlAction>(() => ({
+  const exchangeGrantAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "auth.exchange-grant",
     label: "Sign in with a handoff grant",
     description: "Exchange a desktop handoff grant string to sign in without the browser flow.",
@@ -214,7 +214,7 @@ function DenAuthControlActions() {
   }), []);
   useControlAction(exchangeGrantAction);
 
-  const authStatusAction = useMemo<OpenworkControlAction>(() => ({
+  const authStatusAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "auth.status",
     label: "Get auth status",
     description: "Return the current cloud sign-in status and user.",
@@ -228,7 +228,7 @@ function DenAuthControlActions() {
   }), [denAuth.status, denAuth.user]);
   useControlAction(authStatusAction);
 
-  const setEvalBaseUrlAction = useMemo<OpenworkControlAction | null>(() => {
+  const setEvalBaseUrlAction = useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
     return {
       id: "eval.auth.set-base-url",
@@ -266,10 +266,10 @@ function DenAuthControlActions() {
 
 /**
  * Control action for eval automation: inject brand theme (logo, icon, accent color)
- * via the dev-only desktop config bridge. Placed inside OpenworkControlProvider.
+ * via the dev-only desktop config bridge. Placed inside JuggleWorkControlProvider.
  */
 function BrandThemeControlActions() {
-  const applyAction = useMemo<OpenworkControlAction | null>(() => {
+  const applyAction = useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
     return {
       id: "eval.brand_theme.apply",
@@ -282,7 +282,7 @@ function BrandThemeControlActions() {
         { name: "brandAccentColor", type: "string", description: "Radix color family" },
       ],
       execute: (args) => {
-        const bridge = (window as unknown as Record<string, unknown>).__openworkApplyDesktopConfig;
+        const bridge = (window as unknown as Record<string, unknown>).__juggleworkApplyDesktopConfig;
         if (typeof bridge !== "function") {
           return { ok: false, error: "Desktop config bridge not available (dev mode only)." };
         }
@@ -293,7 +293,7 @@ function BrandThemeControlActions() {
   }, []);
   useControlAction(applyAction);
 
-  const relaunchAction = useMemo<OpenworkControlAction | null>(() => {
+  const relaunchAction = useMemo<JuggleWorkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
     return {
       id: "eval.app.relaunch",
@@ -326,9 +326,9 @@ export function AppRoot() {
       <DevProfiler id="AppRoot">
         <ShellConfigProvider>
         <AppMenuProvider>
-        <OpenworkControlProvider>
-          <OpenworkRouteControlActions />
-          <OpenworkContextPublisher />
+        <JuggleWorkControlProvider>
+          <JuggleWorkRouteControlActions />
+          <JuggleWorkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
           <DenSigninGate>
@@ -412,7 +412,7 @@ export function AppRoot() {
               <Route path="*" element={<Navigate to="/session" replace />} />
             </Routes>
           </DenSigninGate>
-        </OpenworkControlProvider>
+        </JuggleWorkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>
         <LoadingOverlay />

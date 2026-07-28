@@ -17,12 +17,12 @@ capability names instead of loading hundreds of tool definitions into context.
 ## Server URL
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 OAuth sign-in uses your JuggleWork account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free JuggleWork account](https://app.openworklabs.com?mode=sign-up).
+[free JuggleWork account](https://work.juggle.im?mode=sign-up).
 
 ## Setup
 
@@ -31,10 +31,10 @@ pinned into the token. If you do not have an account, create a
    ```json
    {
      "mcp": {
-       "openwork": {
+       "jugglework": {
          "type": "remote",
          "enabled": true,
-         "url": "https://api.openworklabs.com/mcp/agent",
+         "url": "https://work.juggle.im/jwork/api/mcp/agent",
          "oauth": {}
        }
      }
@@ -44,13 +44,13 @@ pinned into the token. If you do not have an account, create a
 2. Authenticate the server:
 
    ```sh
-   opencode mcp auth openwork
+   opencode mcp auth jugglework
    ```
 
 3. Finish the browser sign-in, then choose the organization OpenCode should use.
 
 If OpenCode runs on a remote machine or SSH host, follow
-[Connect JuggleWork MCP from a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+[Connect JuggleWork MCP from a remote machine](/cloud/run-in-the-cloud/connect-jugglework-mcp-remote-machine).
 
 ## Switch organizations
 
@@ -58,8 +58,8 @@ Log out, then authenticate again and pick the organization you want in the
 browser:
 
 ```sh
-opencode mcp logout openwork
-opencode mcp auth openwork
+opencode mcp logout jugglework
+opencode mcp auth jugglework
 ```
 
 <Note>
@@ -81,4 +81,4 @@ end-to-end implementation testing.
 - Publish Notion, Linear, Slack, and other shared tools with
   [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
 - Connect from an SSH host with
-  [JuggleWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+  [JuggleWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-jugglework-mcp-remote-machine).

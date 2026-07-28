@@ -22,7 +22,7 @@ sleep 2
 # ── 2. Vite dev server on 0.0.0.0 (so Electron can reach it via 127.0.0.1) ──
 echo "==> Starting Vite on :5173..."
 cd apps/app
-OPENWORK_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
+JUGGLEWORK_DEV_MODE=1 nohup npx vite --host 0.0.0.0 --port 5173 > /tmp/vite.log 2>&1 &
 cd /workspace
 sleep 3
 

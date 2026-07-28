@@ -26,15 +26,15 @@ import { ProviderIcon } from "../../../design-system/provider-icon";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { usePlatform } from "../../../kernel/platform";
 import {
-  getOpenWorkModelsActionUrl,
-  hasOpenWorkModelsProvider,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  OPENWORK_MODELS_PROVIDER_ID,
-  OPENWORK_MODELS_PROVIDER_NAME,
-  openWorkModelsPromoChangedEvent,
-} from "../../cloud/openwork-models-promo";
+  getJuggleWorkModelsActionUrl,
+  hasJuggleWorkModelsProvider,
+  hideJuggleWorkModelsPromo,
+  useJuggleWorkModelsPromoEligibility,
+  isJuggleWorkModelsPromoHidden,
+  JUGGLEWORK_MODELS_PROVIDER_ID,
+  JUGGLEWORK_MODELS_PROVIDER_NAME,
+  juggleWorkModelsPromoChangedEvent,
+} from "../../cloud/jugglework-models-promo";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
@@ -58,8 +58,8 @@ export type ModelPickerModalProps = {
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
   /** Den entitlement present; used to avoid a false Subscribe CTA while models sync. */
-  openWorkModelsEntitled?: boolean;
-  onRefreshOpenWorkModels?: () => void | Promise<void>;
+  juggleWorkModelsEntitled?: boolean;
+  onRefreshJuggleWorkModels?: () => void | Promise<void>;
 };
 
 type ProviderGroup = {
@@ -76,11 +76,11 @@ type ProviderGroup = {
 export function ModelPickerModal(props: ModelPickerModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
-  const [promoHidden, setPromoHidden] = useState(isOpenWorkModelsPromoHidden);
+  const [promoHidden, setPromoHidden] = useState(isJuggleWorkModelsPromoHidden);
   const denAuth = useDenAuth();
   const navigate = useNavigate();
   const platform = usePlatform();
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
+  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
@@ -95,9 +95,9 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }, [props.open]);
 
   useEffect(() => {
-    const handlePromoChanged = () => setPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    const handlePromoChanged = () => setPromoHidden(isJuggleWorkModelsPromoHidden());
+    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
   // Focus search
@@ -177,8 +177,8 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     const toExpand: string[] = [];
     const current = providerGroups.find((group) => group.hasCurrent);
     if (current && !autoExpandedRef.current.has(current.id)) toExpand.push(current.id);
-    const openwork = providerGroups.find((group) => group.id === OPENWORK_MODELS_PROVIDER_ID);
-    if (openwork && !autoExpandedRef.current.has(openwork.id)) toExpand.push(openwork.id);
+    const jugglework = providerGroups.find((group) => group.id === JUGGLEWORK_MODELS_PROVIDER_ID);
+    if (jugglework && !autoExpandedRef.current.has(jugglework.id)) toExpand.push(jugglework.id);
     if (toExpand.length === 0) return;
     for (const id of toExpand) autoExpandedRef.current.add(id);
     setExpandedProviders((prev) => {
@@ -196,32 +196,32 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     });
   }, []);
 
-  const openWorkModelsAvailable = useMemo(
-    () => hasOpenWorkModelsProvider(props.options.map((option) => option.providerID)),
+  const juggleWorkModelsAvailable = useMemo(
+    () => hasJuggleWorkModelsProvider(props.options.map((option) => option.providerID)),
     [props.options],
   );
-  const showOpenWorkModelsSyncing = Boolean(props.openWorkModelsEntitled) && !openWorkModelsAvailable;
-  const showOpenWorkModelsPromo = useMemo(
+  const showJuggleWorkModelsSyncing = Boolean(props.juggleWorkModelsEntitled) && !juggleWorkModelsAvailable;
+  const showJuggleWorkModelsPromo = useMemo(
     () =>
-      openWorkModelsPromoEligible &&
+      juggleWorkModelsPromoEligible &&
       !promoHidden &&
-      !openWorkModelsAvailable &&
-      !props.openWorkModelsEntitled,
-    [openWorkModelsPromoEligible, openWorkModelsAvailable, promoHidden, props.openWorkModelsEntitled],
+      !juggleWorkModelsAvailable &&
+      !props.juggleWorkModelsEntitled,
+    [juggleWorkModelsPromoEligible, juggleWorkModelsAvailable, promoHidden, props.juggleWorkModelsEntitled],
   );
 
-  const openOpenWorkModels = useCallback(() => {
+  const openJuggleWorkModels = useCallback(() => {
     props.onClose();
     if (!denAuth.isSignedIn) {
       navigate("/settings/cloud-account");
     }
     window.setTimeout(() => {
-      platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn));
+      platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn));
     }, 0);
   }, [denAuth.isSignedIn, navigate, platform, props.onClose]);
 
-  const hideOpenWorkModels = useCallback(() => {
-    hideOpenWorkModelsPromo();
+  const hideJuggleWorkModels = useCallback(() => {
+    hideJuggleWorkModelsPromo();
     setPromoHidden(true);
   }, []);
 
@@ -269,13 +269,13 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             />
           </div>
 
-          {showOpenWorkModelsSyncing ? (
+          {showJuggleWorkModelsSyncing ? (
             <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-amber-6/60 bg-amber-2/40">
               <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
-                <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
+                <ProviderIcon providerId={JUGGLEWORK_MODELS_PROVIDER_ID} providerName={JUGGLEWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                    <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
+                    <span>{JUGGLEWORK_MODELS_PROVIDER_NAME}</span>
                   </div>
                   <div className="truncate text-[11px] text-dls-secondary">
                     Included on your plan — finish syncing to choose a model.
@@ -285,7 +285,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
                   size="sm"
                   variant="outline"
                   className="shrink-0"
-                  onClick={() => void props.onRefreshOpenWorkModels?.()}
+                  onClick={() => void props.onRefreshJuggleWorkModels?.()}
                 >
                   <RefreshCw className="mr-1 size-3" />
                   Refresh
@@ -294,18 +294,18 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
             </div>
           ) : null}
 
-          {showOpenWorkModelsPromo ? (
+          {showJuggleWorkModelsPromo ? (
             <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-blue-6/60 bg-blue-2/60 shadow-[0_12px_30px_-20px_rgba(var(--dls-accent-rgb),0.45)]">
               <button
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-blue-3/70"
-                onClick={openOpenWorkModels}
+                onClick={openJuggleWorkModels}
               >
-                <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-blue-11" />
+                <ProviderIcon providerId={JUGGLEWORK_MODELS_PROVIDER_ID} providerName={JUGGLEWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-blue-11" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
                     <Sparkles className="size-3.5 text-blue-11" />
-                    <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
+                    <span>{JUGGLEWORK_MODELS_PROVIDER_NAME}</span>
                   </div>
                   <div className="truncate text-[11px] text-dls-secondary">
                     {denAuth.isSignedIn ? "Subscribe to use hosted frontier models in this workspace." : "Sign in to unlock hosted frontier models for your team."}
@@ -319,7 +319,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               <button
                 type="button"
                 className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
-                onClick={hideOpenWorkModels}
+                onClick={hideJuggleWorkModels}
                 aria-label="Hide JuggleWork Models"
               >
                 <X className="size-3.5" />

@@ -5,7 +5,7 @@
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
-import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
+import type { JuggleWorkWorkspaceInfo } from "@/app/lib/jugglework-server";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
 import {
@@ -15,13 +15,13 @@ import {
 } from "@/app/utils";
 import { t } from "@/i18n";
 
-export type RouteWorkspace = OpenworkWorkspaceInfo & {
+export type RouteWorkspace = JuggleWorkWorkspaceInfo & {
   displayNameResolved: string;
 };
 
 /**
  * Sessions as the routes handle them: SDK sessions from
- * openwork-server's listSessions, optionally enriched with run-status
+ * jugglework-server's listSessions, optionally enriched with run-status
  * fields that the sidebar probes defensively via getSessionStatus.
  */
 export type RouteSession = Session & {
@@ -42,19 +42,19 @@ export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   };
 }
 
-export function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
+export function workspaceLabel(workspace: JuggleWorkWorkspaceInfo) {
   return (
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
+    workspace.juggleworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
 }
 
-export function workspaceExportFilename(workspace: OpenworkWorkspaceInfo) {
+export function workspaceExportFilename(workspace: JuggleWorkWorkspaceInfo) {
   const slug = workspaceLabel(workspace).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${slug || "workspace"}-openwork-export.json`;
+  return `${slug || "workspace"}-jugglework-export.json`;
 }
 
 export function downloadWorkspaceJson(filename: string, payload: unknown) {
@@ -122,7 +122,7 @@ export function describeWorkspaceCreateError(error: unknown) {
 }
 
 export function mergeRouteWorkspaces(
-  serverWorkspaces: OpenworkWorkspaceInfo[],
+  serverWorkspaces: JuggleWorkWorkspaceInfo[],
   desktopWorkspaces: RouteWorkspace[],
 ): RouteWorkspace[] {
   const desktopById = new Map(desktopWorkspaces.map((workspace) => [workspace.id, workspace]));

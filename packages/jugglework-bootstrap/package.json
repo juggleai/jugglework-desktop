@@ -1,0 +1,22 @@
+{
+  "name": "jugglework-bootstrap",
+  "version": "0.1.0",
+  "description": "Script-installable JuggleWork bootstrap CLI for agents",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "jugglework-bootstrap": "bin/jugglework.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "start.md"
+  ],
+  "scripts": {
+    "check": "node --check bin/jugglework.mjs && node --check evals/agent-fraimz-jugglework-bootstrap.mjs && node --check evals/agent-fraimz-jugglework-app-install.mjs && node --check evals/agent-fraimz-linux-container.mjs",
+    "test": "node test/jugglework-bootstrap.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

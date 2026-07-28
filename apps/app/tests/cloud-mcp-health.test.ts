@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import type { DenMcpToken } from "../src/app/lib/den";
-import type { OpenworkCloudMcpFailure, OpenworkCloudMcpHealth, OpenworkCloudMcpReconcilePayload } from "../src/app/lib/openwork-server";
+import type { JuggleWorkCloudMcpFailure, JuggleWorkCloudMcpHealth, JuggleWorkCloudMcpReconcilePayload } from "../src/app/lib/jugglework-server";
 import {
   __setCloudMcpUserStateStorageForTest,
   getCloudMcpScopeKey,
@@ -9,33 +9,33 @@ import {
   writeCloudMcpSyncMarker,
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 import {
-  buildOpenworkCloudMcpReconcilePayload,
+  buildJuggleWorkCloudMcpReconcilePayload,
   cloudMcpDisplaySummary,
   cloudMcpFailureStageLabel,
   isCloudMcpAuthTokenFailure,
   isCloudMcpAuthTokenFailureCode,
-  runOpenworkCloudMcpEngineRefresh,
-  runOpenworkCloudMcpReconciler,
+  runJuggleWorkCloudMcpEngineRefresh,
+  runJuggleWorkCloudMcpReconciler,
 } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 
 const NOW = Date.parse("2026-07-09T12:00:00.000Z");
 const scope = {
-  denBaseUrl: "https://app.openwork.test",
-  serverBaseUrl: "https://worker.openwork.test",
+  denBaseUrl: "https://app.jugglework.test",
+  serverBaseUrl: "https://worker.jugglework.test",
   orgId: "org_1",
   workspaceId: "ws_1",
 };
 const context = {
   ...scope,
   denAuthToken: "den-session-token",
-  providerModel: { provider: "openwork", model: "gpt-5" },
+  providerModel: { provider: "jugglework", model: "gpt-5" },
 };
 const token: DenMcpToken = {
   token: "owt_mcp_secret_token",
   expiresAt: new Date(NOW + 7 * 24 * 60 * 60 * 1000).toISOString(),
   organizationId: "org_1",
   scopes: ["mcp:read", "mcp:write"],
-  resource: "https://api.openwork.test/mcp",
+  resource: "https://api.jugglework.test/mcp",
 };
 
 function installStorageStub() {
@@ -47,7 +47,7 @@ function installStorageStub() {
   });
 }
 
-function failure(code: string): OpenworkCloudMcpFailure {
+function failure(code: string): JuggleWorkCloudMcpFailure {
   return {
     code,
     stage: "engine_status",
@@ -57,7 +57,7 @@ function failure(code: string): OpenworkCloudMcpFailure {
   };
 }
 
-function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | null; projectionChecked?: boolean }): OpenworkCloudMcpHealth {
+function health(input: { usable: boolean; failure?: JuggleWorkCloudMcpFailure | null; projectionChecked?: boolean }): JuggleWorkCloudMcpHealth {
   const usable = input.usable;
   const projectionChecked = input.projectionChecked ?? usable;
   return {
@@ -69,7 +69,7 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
     workspace: { id: scope.workspaceId, type: "local", directory: "/workspace", path: "/workspace" },
     desired: {
       present: true,
-      name: "openwork-cloud",
+      name: "jugglework-cloud",
       revision: "rev_desired",
       config: null,
       token: { present: true, metadata: { expiresAt: token.expiresAt, scopes: "mcp:read mcp:write" } },
@@ -84,9 +84,9 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
     },
     engine: { status: usable ? "connected" : "failed" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-      missing: usable ? [] : ["openwork-cloud_search_capabilities"],
+      expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+      present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+      missing: usable ? [] : ["jugglework-cloud_search_capabilities"],
       direct: {
         checked: true,
         source: "mcp_tools_list",
@@ -96,33 +96,33 @@ function health(input: { usable: boolean; failure?: OpenworkCloudMcpFailure | nu
       },
       providerProjection: {
         checked: projectionChecked,
-        provider: "openwork",
+        provider: "jugglework",
         model: "gpt-5",
         source: "experimental_tool",
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
       },
     },
-    pluginCanaries: { expected: ["openwork_docs_search"], present: usable ? ["openwork_docs_search"] : [], missing: usable ? [] : ["openwork_docs_search"] },
+    pluginCanaries: { expected: ["jugglework_docs_search"], present: usable ? ["jugglework_docs_search"] : [], missing: usable ? [] : ["jugglework_docs_search"] },
     compatibility: {
-      openwork: { serverVersion: "test", app: null },
+      jugglework: { serverVersion: "test", app: null },
       opencode: { expectedVersion: "1.17.11", actualVersion: "1.17.11", probe: "ok" },
       pluginFileHashes: [],
       supportedFeatures: { dynamicMcp: true, directoryScoping: true, toolIds: true, providerToolProjection: projectionChecked, pluginCanaries: true },
       experimentalToolIds: {
         checked: true,
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
         includesMcpTools: usable,
       },
       experimentalProviderTools: {
         checked: projectionChecked,
-        provider: "openwork",
+        provider: "jugglework",
         model: "gpt-5",
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-        present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"] : [],
-        missing: usable ? [] : ["openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+        present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"] : [],
+        missing: usable ? [] : ["jugglework-cloud_execute_capability"],
         includesMcpTools: projectionChecked ? usable : null,
       },
     },
@@ -136,18 +136,18 @@ describe("JuggleWork Cloud MCP reconciler", () => {
   beforeEach(() => installStorageStub());
 
   test("uses the minted web proxy resource instead of a stale direct API fallback", () => {
-    const payload = buildOpenworkCloudMcpReconcilePayload({
+    const payload = buildJuggleWorkCloudMcpReconcilePayload({
       context: {
         ...context,
-        fallbackUrl: "https://api.openwork.test/mcp/agent",
+        fallbackUrl: "https://api.jugglework.test/mcp/agent",
       },
       token: {
         ...token,
-        resource: "https://app.openwork.test/jwork/api/mcp",
+        resource: "https://app.jugglework.test/jwork/api/mcp",
       },
     });
 
-    expect(payload?.config.url).toBe("https://app.openwork.test/jwork/api/mcp/agent");
+    expect(payload?.config.url).toBe("https://app.jugglework.test/jwork/api/mcp/agent");
   });
 
   test("Test now performs only GET health", async () => {
@@ -166,15 +166,15 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     let getCount = 0;
     let mintCount = 0;
     let postCount = 0;
-    const result = await runOpenworkCloudMcpReconciler({
+    const result = await runJuggleWorkCloudMcpReconciler({
       mode: "health",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => {
+        getJuggleWorkCloudMcpHealth: async () => {
           getCount += 1;
           return health({ usable: true });
         },
-        reconcileOpenworkCloudMcp: async () => {
+        reconcileJuggleWorkCloudMcp: async () => {
           postCount += 1;
           return health({ usable: true });
         },
@@ -198,7 +198,7 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     const probeOptionsSeen: Array<{ probe?: boolean } | undefined> = [];
     const client = {
       baseUrl: scope.serverBaseUrl,
-      getOpenworkCloudMcpHealth: async (
+      getJuggleWorkCloudMcpHealth: async (
         _workspaceId: string,
         _providerModel?: unknown,
         options?: { probe?: boolean },
@@ -206,10 +206,10 @@ describe("JuggleWork Cloud MCP reconciler", () => {
         probeOptionsSeen.push(options);
         return health({ usable: true });
       },
-      reconcileOpenworkCloudMcp: async () => health({ usable: true }),
+      reconcileJuggleWorkCloudMcp: async () => health({ usable: true }),
     };
 
-    await runOpenworkCloudMcpReconciler({
+    await runJuggleWorkCloudMcpReconciler({
       mode: "health",
       client,
       context,
@@ -217,7 +217,7 @@ describe("JuggleWork Cloud MCP reconciler", () => {
       refreshMarginMs: 24 * 60 * 60 * 1000,
       probe: true,
     });
-    await runOpenworkCloudMcpReconciler({
+    await runJuggleWorkCloudMcpReconciler({
       mode: "health",
       client,
       context,
@@ -241,12 +241,12 @@ describe("JuggleWork Cloud MCP reconciler", () => {
         { step: "reapply", ok: true, latencyMs: 480 },
       ],
     };
-    const result = await runOpenworkCloudMcpEngineRefresh({
+    const result = await runJuggleWorkCloudMcpEngineRefresh({
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => refreshedHealth,
-        reconcileOpenworkCloudMcp: async () => refreshedHealth,
-        refreshOpenworkCloudMcpEngine: async (workspaceId, payload) => {
+        getJuggleWorkCloudMcpHealth: async () => refreshedHealth,
+        reconcileJuggleWorkCloudMcp: async () => refreshedHealth,
+        refreshJuggleWorkCloudMcpEngine: async (workspaceId, payload) => {
           calls.push({ workspaceId, payload });
           return { refresh, health: refreshedHealth };
         },
@@ -259,16 +259,16 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     expect(calls).toEqual([
       {
         workspaceId: scope.workspaceId,
-        payload: { provider: "openwork", model: "gpt-5", trigger: "desktop-engine-refresh" },
+        payload: { provider: "jugglework", model: "gpt-5", trigger: "desktop-engine-refresh" },
       },
     ]);
 
-    const failed = await runOpenworkCloudMcpEngineRefresh({
+    const failed = await runJuggleWorkCloudMcpEngineRefresh({
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => refreshedHealth,
-        reconcileOpenworkCloudMcp: async () => refreshedHealth,
-        refreshOpenworkCloudMcpEngine: async () => ({
+        getJuggleWorkCloudMcpHealth: async () => refreshedHealth,
+        reconcileJuggleWorkCloudMcp: async () => refreshedHealth,
+        refreshJuggleWorkCloudMcpEngine: async () => ({
           refresh: { ...refresh, steps: [{ step: "engine_disconnect", ok: false, latencyMs: 3 }, { step: "reapply", ok: false, latencyMs: 9 }] },
           health: health({ usable: false }),
         }),
@@ -277,11 +277,11 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     });
     expect(failed.status).toBe("failed");
 
-    const skipped = await runOpenworkCloudMcpEngineRefresh({
+    const skipped = await runJuggleWorkCloudMcpEngineRefresh({
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => refreshedHealth,
-        reconcileOpenworkCloudMcp: async () => refreshedHealth,
+        getJuggleWorkCloudMcpHealth: async () => refreshedHealth,
+        reconcileJuggleWorkCloudMcp: async () => refreshedHealth,
       },
       context,
     });
@@ -292,16 +292,16 @@ describe("JuggleWork Cloud MCP reconciler", () => {
   test("writes marker only when returned health is usable", async () => {
     const client = {
       baseUrl: scope.serverBaseUrl,
-      getOpenworkCloudMcpHealth: async () => health({ usable: false, failure: failure("cloud_status_missing") }),
-      reconcileOpenworkCloudMcp: async () => health({ usable: false, failure: failure("cloud_status_missing") }),
+      getJuggleWorkCloudMcpHealth: async () => health({ usable: false, failure: failure("cloud_status_missing") }),
+      reconcileJuggleWorkCloudMcp: async () => health({ usable: false, failure: failure("cloud_status_missing") }),
     };
 
-    await runOpenworkCloudMcpReconciler({ mode: "repair", client, context, mintToken: async () => token, force: true, refreshMarginMs: 1 });
+    await runJuggleWorkCloudMcpReconciler({ mode: "repair", client, context, mintToken: async () => token, force: true, refreshMarginMs: 1 });
     expect(readCloudMcpSyncMarker(scope)).toBeNull();
 
-    await runOpenworkCloudMcpReconciler({
+    await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
-      client: { ...client, reconcileOpenworkCloudMcp: async () => health({ usable: true }) },
+      client: { ...client, reconcileJuggleWorkCloudMcp: async () => health({ usable: true }) },
       context,
       mintToken: async () => token,
       force: true,
@@ -312,16 +312,16 @@ describe("JuggleWork Cloud MCP reconciler", () => {
 
   test("auth failures remint exactly once", async () => {
     let mintCount = 0;
-    const posts: OpenworkCloudMcpReconcilePayload[] = [];
-    const result = await runOpenworkCloudMcpReconciler({
+    const posts: JuggleWorkCloudMcpReconcilePayload[] = [];
+    const result = await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async (_workspaceId, payload) => {
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async (_workspaceId, payload) => {
           posts.push(payload);
           return posts.length === 1
-            ? health({ usable: false, failure: failure("openwork_cloud_token_expired") })
+            ? health({ usable: false, failure: failure("jugglework_cloud_token_expired") })
             : health({ usable: true });
         },
       },
@@ -340,19 +340,19 @@ describe("JuggleWork Cloud MCP reconciler", () => {
   });
 
   test("membership and scope failures do not retry", async () => {
-    for (const code of ["openwork_cloud_membership_required", "openwork_cloud_scope_missing", "openwork_cloud_resource_forbidden"]) {
+    for (const code of ["jugglework_cloud_membership_required", "jugglework_cloud_scope_missing", "jugglework_cloud_resource_forbidden"]) {
       expect(isCloudMcpAuthTokenFailureCode(code)).toBe(false);
     }
     let mintCount = 0;
     let postCount = 0;
-    await runOpenworkCloudMcpReconciler({
+    await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async () => {
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async () => {
           postCount += 1;
-          return health({ usable: false, failure: failure("openwork_cloud_membership_required") });
+          return health({ usable: false, failure: failure("jugglework_cloud_membership_required") });
         },
       },
       context,
@@ -374,30 +374,30 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     // and the remint retry never fired for ~7 days.
     expect(isCloudMcpAuthTokenFailureCode("invalid_mcp_token")).toBe(true);
     expect(isCloudMcpAuthTokenFailureCode("missing_mcp_token")).toBe(true);
-    expect(isCloudMcpAuthTokenFailureCode("openwork_cloud_token_expired")).toBe(true);
+    expect(isCloudMcpAuthTokenFailureCode("jugglework_cloud_token_expired")).toBe(true);
     expect(isCloudMcpAuthTokenFailureCode("invalid_token")).toBe(true);
     // Exclusions still hold.
-    expect(isCloudMcpAuthTokenFailureCode("openwork_cloud_client_registration_required")).toBe(false);
+    expect(isCloudMcpAuthTokenFailureCode("jugglework_cloud_client_registration_required")).toBe(false);
     expect(isCloudMcpAuthTokenFailureCode("membership_not_found")).toBe(false);
     expect(isCloudMcpAuthTokenFailureCode(null)).toBe(false);
   });
 
   test("auth aliases trigger the remint retry when the primary code is unrecognized", async () => {
-    expect(isCloudMcpAuthTokenFailure({ code: "cloud_connection_failed", aliases: ["openwork_cloud_token_expired"] })).toBe(true);
+    expect(isCloudMcpAuthTokenFailure({ code: "cloud_connection_failed", aliases: ["jugglework_cloud_token_expired"] })).toBe(true);
     expect(isCloudMcpAuthTokenFailure({ code: "cloud_connection_failed", aliases: ["cloud_tools_missing"] })).toBe(false);
     expect(isCloudMcpAuthTokenFailure(null)).toBe(false);
 
     let mintCount = 0;
-    const posts: OpenworkCloudMcpReconcilePayload[] = [];
-    const result = await runOpenworkCloudMcpReconciler({
+    const posts: JuggleWorkCloudMcpReconcilePayload[] = [];
+    const result = await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
       client: {
         baseUrl: scope.serverBaseUrl,
-        getOpenworkCloudMcpHealth: async () => health({ usable: false }),
-        reconcileOpenworkCloudMcp: async (_workspaceId, payload) => {
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false }),
+        reconcileJuggleWorkCloudMcp: async (_workspaceId, payload) => {
           posts.push(payload);
           return posts.length === 1
-            ? health({ usable: false, failure: { ...failure("invalid_mcp_token"), aliases: ["openwork_cloud_token_expired"] } })
+            ? health({ usable: false, failure: { ...failure("invalid_mcp_token"), aliases: ["jugglework_cloud_token_expired"] } })
             : health({ usable: true });
         },
       },
@@ -468,7 +468,7 @@ describe("JuggleWork Cloud MCP reconciler", () => {
       ...health({ usable: false, failure: { ...failure("cloud_mcp_missing"), stage: "desired_config" } }),
       desired: {
         present: false,
-        name: "openwork-cloud",
+        name: "jugglework-cloud",
         revision: null,
         config: null,
         token: { present: false, metadata: {} },

@@ -34,7 +34,7 @@ const ROUTE_POLL_INTERVAL_MS = 50;
 
 const ROUTE_EXPRESSION = `(() => {
   try {
-    const route = window.__openworkControl?.snapshot?.().route;
+    const route = window.__juggleworkControl?.snapshot?.().route;
     if (typeof route === "string" && route.length > 0) return route;
   } catch {
     // Fall through to the browser URL while the control surface initializes.
@@ -428,7 +428,7 @@ export class EvalContext implements FlowContext {
    * (for a flow that is itself testing theme/dark-mode behavior).
    */
   async ensureLightMode(): Promise<void> {
-    await this.waitFor("Boolean(window.__openworkControl)", {
+    await this.waitFor("Boolean(window.__juggleworkControl)", {
       timeoutMs: 30_000,
       label: "control API before theme check",
     });
@@ -437,11 +437,11 @@ export class EvalContext implements FlowContext {
       return;
     }
     await this.eval(`(() => {
-      localStorage.setItem('openwork.react.settings.theme-mode', 'light');
+      localStorage.setItem('jugglework.react.settings.theme-mode', 'light');
       return true;
     })()`);
     await this.eval("location.reload()");
-    await this.waitFor("Boolean(window.__openworkControl)", {
+    await this.waitFor("Boolean(window.__juggleworkControl)", {
       timeoutMs: 30_000,
       label: "control API after forcing light mode",
     });
@@ -560,11 +560,11 @@ export class EvalContext implements FlowContext {
   }
 
   /**
-   * Execute a registered window.__openworkControl action.
+   * Execute a registered window.__juggleworkControl action.
    */
   async control(actionId: string, args?: unknown): Promise<unknown> {
     const result = await this.eval(
-      `window.__openworkControl.execute(${JSON.stringify(actionId)}, ${JSON.stringify(args ?? null)})`,
+      `window.__juggleworkControl.execute(${JSON.stringify(actionId)}, ${JSON.stringify(args ?? null)})`,
       { awaitPromise: true },
     );
     if (!isRecord(result) || result.ok !== true) {
@@ -654,9 +654,9 @@ export class EvalContext implements FlowContext {
     this.screenshotIndex += 1;
     const fileName = `${this.flowId}-${String(this.screenshotIndex).padStart(2, "0")}-${slug(name)}.png`;
     const sandbox = options.sandboxCapture === "computer-use"
-      ? (this.env.OPENWORK_EVAL_DAYTONA_SANDBOX_ID || this.env.OPENWORK_EVAL_DAYTONA_SANDBOX)?.trim() ?? null
+      ? (this.env.JUGGLEWORK_EVAL_DAYTONA_SANDBOX_ID || this.env.JUGGLEWORK_EVAL_DAYTONA_SANDBOX)?.trim() ?? null
       : options.sandboxCapture
-        ? this.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim() ?? null
+        ? this.env.JUGGLEWORK_EVAL_DAYTONA_SANDBOX?.trim() ?? null
         : null;
     const targetSelector = !sandbox && Boolean(options.targetId || options.targetUrlIncludes);
     const textTargetSelector = Boolean(options.textTargetId || options.textTargetUrlIncludes);

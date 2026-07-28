@@ -35,15 +35,15 @@ function serverConfig(root: string): ServerConfig {
 }
 
 async function withWorkspace(fn: (input: { root: string; config: ServerConfig }) => Promise<void>) {
-  const root = await mkdtemp(join(tmpdir(), "openwork-extensions-export-"));
-  const previousDb = process.env.OPENWORK_RUNTIME_DB;
-  process.env.OPENWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+  const root = await mkdtemp(join(tmpdir(), "jugglework-extensions-export-"));
+  const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+  process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
   try {
     await mkdir(join(root, ".git"), { recursive: true });
     await fn({ root, config: serverConfig(root) });
   } finally {
-    if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
-    else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+    else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -209,9 +209,9 @@ describe("POST /workspace/:id/extensions/export", () => {
 
 describe("bundled agent tool surface", () => {
   test("keeps portable export out of every chat", async () => {
-    const { OpenWorkExtensionsPreview } = await import("./opencode-plugins/openwork-extensions-preview.js");
-    const plugin = await OpenWorkExtensionsPreview();
+    const { JuggleWorkExtensionsPreview } = await import("./opencode-plugins/jugglework-extensions-preview.js");
+    const plugin = await JuggleWorkExtensionsPreview();
 
-    expect(Object.keys(plugin.tool)).not.toContain("openwork_extensions_export");
+    expect(Object.keys(plugin.tool)).not.toContain("jugglework_extensions_export");
   });
 });

@@ -80,19 +80,19 @@ const {
   systemPreferences,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
-const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
-const TAURI_APP_IDENTIFIER = "com.differentai.openwork";
-const DEV_APP_IDENTIFIER = "com.differentai.openwork.dev";
-const DESKTOP_PROTOCOL_SCHEME = "openwork";
-const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
+const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
+const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
+const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
+const DESKTOP_PROTOCOL_SCHEME = "jugglework";
+const isDevMode = process.env.JUGGLEWORK_DEV_MODE === "1";
 const APP_NAME =
-  process.env.OPENWORK_ELECTRON_APP_NAME?.trim() ||
+  process.env.JUGGLEWORK_ELECTRON_APP_NAME?.trim() ||
   (isDevMode ? "JuggleWork - Dev" : "JuggleWork");
 let currentDisplayAppName = APP_NAME;
 const APP_IDENTIFIER =
-  process.env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
+  process.env.JUGGLEWORK_ELECTRON_APP_IDENTIFIER?.trim() ||
   (isDevMode ? DEV_APP_IDENTIFIER : TAURI_APP_IDENTIFIER);
-if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
+if (process.env.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // Fresh, isolated development profiles otherwise trigger macOS's native
   // "Login" keychain prompt as soon as Chromium persists an authenticated
   // cookie. That modal blocks the entire Electron main loop and makes the demo
@@ -100,9 +100,9 @@ if (process.env.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/different-ai/openwork/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/different-ai/openwork/releases/latest";
-const DOCS_PAGE_URL = "https://openworklabs.com/docs";
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/juggleai/jugglework-desktop/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/juggleai/jugglework-desktop/releases/latest";
+const DOCS_PAGE_URL = "https://juggle.im/docs";
 const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
   docsUrl: DOCS_PAGE_URL,
@@ -150,18 +150,17 @@ function killTerminalsForWebContents(webContentsId) {
   }
 }
 
-// Production Electron shares the same on-disk state folder as the Tauri shell
-// so in-place migration is a no-op for almost every file. Dev mode uses the
-// separate dev identifier so it can run beside the production app.
+// Production and development builds use separate JuggleWork identifiers so
+// they can run alongside each other without sharing local state.
 //
-// Override via OPENWORK_ELECTRON_USERDATA so dogfooders can isolate their
-// Electron install from the real Tauri app.
+// Override via JUGGLEWORK_ELECTRON_USERDATA so dogfooders can isolate their
+// Electron install from another local JuggleWork profile.
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_IDENTIFIER);
-if (app.isPackaged && process.env.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
+if (app.isPackaged && process.env.JUGGLEWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION !== "1") {
   app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL_SCHEME);
 }
-const userDataOverride = process.env.OPENWORK_ELECTRON_USERDATA?.trim();
+const userDataOverride = process.env.JUGGLEWORK_ELECTRON_USERDATA?.trim();
 if (userDataOverride) {
   app.setPath("userData", userDataOverride);
 } else {
@@ -309,7 +308,7 @@ async function resolveArchitectureInfo() {
   const systemArch = resolveSystemArch();
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
-  const assetName = `openwork-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
+  const assetName = `jugglework-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
   const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
@@ -348,7 +347,7 @@ function brandIconWindowsPath() {
 }
 
 function defaultAppWindowsIconPath() {
-  return path.join(app.getPath("userData"), "openwork-stock.ico");
+  return path.join(app.getPath("userData"), "jugglework-stock.ico");
 }
 
 let cachedWindowsProgramsPath = null;
@@ -559,7 +558,7 @@ async function focusMainWindowFromNotification() {
 
 /**
  * @param {unknown} input
- * @returns {import("@openwork/types/desktop-ipc").DesktopNotificationResult}
+ * @returns {import("@jugglework/types/desktop-ipc").DesktopNotificationResult}
  */
 function showDesktopNotification(input) {
   if (!ElectronNotification.isSupported()) {
@@ -813,7 +812,7 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
 }
 
 // Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
-// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
+// drive the built-in browser panel.  Use JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT to
 // pin a specific port; otherwise probe for a free one starting at 9223.
 // Must resolve before app.commandLine.appendSwitch (before `ready`).
 function probePort(port) {
@@ -834,7 +833,7 @@ async function findFreeCdpPort(candidates) {
 }
 
 const explicitCdpPort = Number.parseInt(
-  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
+  process.env.JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
   10,
 );
 const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
@@ -845,8 +844,8 @@ if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 // Make the resolved port available to the embedded server so it flows into
-// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
-process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+// agent instructions via ensureJuggleWorkAgent → resolveAgentTemplate.
+process.env.JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
 
 // Apply extra Chromium flags from ELECTRON_EXTRA_LAUNCH_ARGS.
 // Used in headless/Daytona environments to pass e.g. --disable-gpu.
@@ -863,10 +862,10 @@ if (extraLaunchArgs) {
     }
   }
 }
-configureFakeMediaForTests(app, envFlagEnabled("OPENWORK_ELECTRON_FAKE_MEDIA"));
+configureFakeMediaForTests(app, envFlagEnabled("JUGGLEWORK_ELECTRON_FAKE_MEDIA"));
 const DEFAULT_DEN_BASE_URL = "https://work.juggle.im";
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:4096";
-const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("OPENWORK_FORCE_SIGNIN");
+const FORCE_DESKTOP_REQUIRE_SIGNIN = envFlagEnabled("JUGGLEWORK_FORCE_SIGNIN");
 const DEFAULT_DESKTOP_REQUIRE_SIGNIN = FORCE_DESKTOP_REQUIRE_SIGNIN;
 
 function envFlagEnabled(name) {
@@ -891,7 +890,7 @@ const IDLE_ENGINE_INFO = Object.freeze({
   lastStderr: null,
 });
 
-const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
+const IDLE_JUGGLEWORK_SERVER_INFO = Object.freeze({
   running: false,
   remoteAccessEnabled: false,
   host: null,
@@ -943,7 +942,7 @@ const connectLinkReplayGuard = createConnectLinkReplayGuard({
 
 /**
  * @param {string} rawUrl
- * @returns {import("@openwork/types/connect-link").ConnectLinkVerifyResult}
+ * @returns {import("@jugglework/types/connect-link").ConnectLinkVerifyResult}
  */
 function verifyConnectLink(rawUrl) {
   return verifyConnectLinkUrl(String(rawUrl ?? ""), {
@@ -995,8 +994,8 @@ function forwardedDeepLinks(argv) {
     .map((entry) => entry.trim())
     .filter(
       (entry) =>
-        entry.startsWith("openwork://") ||
-        entry.startsWith("openwork-dev://") ||
+        entry.startsWith("jugglework://") ||
+        entry.startsWith("jugglework-dev://") ||
         entry.startsWith("https://") ||
         entry.startsWith("http://"),
     );
@@ -1152,7 +1151,7 @@ async function disposeRuntimeBeforeQuit() {
   }
 }
 
-function assertOpenworkServerReady(info) {
+function assertJuggleWorkServerReady(info) {
   if (!info?.running) {
     throw new Error("JuggleWork server did not stay running after startup.");
   }
@@ -1224,8 +1223,8 @@ async function bootRuntimeForSelectedWorkspace() {
     workspacePath: bootWorkspaceRoot,
     name: bootWorkspace.name ?? bootWorkspace.displayName ?? null,
   }).catch(() => undefined);
-  const openworkServer = assertOpenworkServerReady(await runtimeManager.openworkServerInfo());
-  return { ok: true, skipped: false, engine, openworkServer, workspaceId: bootWorkspace.id ?? null };
+  const juggleworkServer = assertJuggleWorkServerReady(await runtimeManager.juggleworkServerInfo());
+  return { ok: true, skipped: false, engine, juggleworkServer, workspaceId: bootWorkspace.id ?? null };
 }
 
 function ensureRuntimeBootstrap() {
@@ -1522,9 +1521,9 @@ function applyNativeTheme(mode) {
 // entry here; handlers receive the ipcMain event followed by the renderer
 // arguments. The @type below asserts this registry against the shared
 // DesktopCommandMap contract (packages/types/src/desktop-ipc.ts): a missing,
-// extra, or renamed command fails `pnpm --filter @openwork/desktop
+// extra, or renamed command fails `pnpm --filter @jugglework/desktop
 // typecheck:electron`.
-/** @type {import("@openwork/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
+/** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
@@ -1553,13 +1552,13 @@ const desktopCommandHandlers = {
   "workspaceAddAuthorizedRoot": async (event, ...args) => {
       return workspaceStore.addAuthorizedRoot(args[0] ?? {});
   },
-  "workspaceOpenworkRead": async (event, ...args) => {
-      return workspaceStore.readWorkspaceOpenworkConfig(String(args[0]?.workspacePath ?? "").trim());
+  "workspaceJuggleWorkRead": async (event, ...args) => {
+      return workspaceStore.readWorkspaceJuggleWorkConfig(String(args[0]?.workspacePath ?? "").trim());
   },
-  "workspaceOpenworkWrite": async (event, ...args) => {
-      return workspaceStore.writeWorkspaceOpenworkConfig(
+  "workspaceJuggleWorkWrite": async (event, ...args) => {
+      return workspaceStore.writeWorkspaceJuggleWorkConfig(
         String(args[0]?.workspacePath ?? "").trim(),
-        args[0]?.config ?? workspaceStore.defaultWorkspaceOpenworkConfig(""),
+        args[0]?.config ?? workspaceStore.defaultWorkspaceJuggleWorkConfig(""),
       );
   },
   "workspaceExportConfig": async (event, ...args) => {
@@ -1626,9 +1625,9 @@ const desktopCommandHandlers = {
   "appBuildInfo": async (event, ...args) => {
       return {
         version: app.getVersion(),
-        gitSha: process.env.OPENWORK_GIT_SHA ?? null,
-        buildEpoch: process.env.OPENWORK_BUILD_EPOCH ?? null,
-        openworkDevMode: process.env.OPENWORK_DEV_MODE === "1",
+        gitSha: process.env.JUGGLEWORK_GIT_SHA ?? null,
+        buildEpoch: process.env.JUGGLEWORK_BUILD_EPOCH ?? null,
+        juggleworkDevMode: process.env.JUGGLEWORK_DEV_MODE === "1",
       };
   },
   "desktopNotificationShow": async (event, ...args) => {
@@ -1636,17 +1635,17 @@ const desktopCommandHandlers = {
   },
   "getUiControlBridgeInfo": async (event, ...args) => {
       try {
-        const raw = await readFile(path.join(app.getPath("userData"), "openwork-ui-control.json"), "utf8");
+        const raw = await readFile(path.join(app.getPath("userData"), "jugglework-ui-control.json"), "utf8");
         return JSON.parse(raw);
       } catch {
         return null;
       }
   },
-  "getOpenworkUiMcpCommand": async (event, ...args) => {
-      if (process.env.OPENWORK_DEV_MODE === "1") {
-        return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
+  "getJuggleWorkUiMcpCommand": async (event, ...args) => {
+      if (process.env.JUGGLEWORK_DEV_MODE === "1") {
+        return ["node", path.resolve(__dirname, "../../..", "packages/jugglework-ui-mcp/index.mjs")];
       }
-      return ["npx", "-y", "openwork-ui-mcp"];
+      return ["npx", "-y", "jugglework-ui-mcp"];
   },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
@@ -1670,9 +1669,9 @@ const desktopCommandHandlers = {
       await openComputerUseSetupApp();
       return checkComputerUsePermissions();
   },
-  "getOpenworkUiMcpEnvironment": async (event, ...args) => {
+  "getJuggleWorkUiMcpEnvironment": async (event, ...args) => {
       return {
-        OPENWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "openwork-ui-control.json"),
+        JUGGLEWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "jugglework-ui-control.json"),
       };
   },
   "getDesktopBootstrapConfig": async (event, ...args) => {
@@ -1718,7 +1717,7 @@ const desktopCommandHandlers = {
       const config = await persistConnectLinkClaims(verified.claims);
       return { ok: true, config };
   },
-  "nukeOpenworkAndOpencodeConfigPreview": async (event, ...args) => {
+  "nukeJuggleWorkAndOpencodeConfigPreview": async (event, ...args) => {
       return buildNukeManifest({
         env: process.env,
         homedir: os.homedir(),
@@ -1727,7 +1726,7 @@ const desktopCommandHandlers = {
         userDataPath: app.getPath("userData"),
       });
   },
-  "nukeOpenworkAndOpencodeConfigAndExit": async (event, ...args) => {
+  "nukeJuggleWorkAndOpencodeConfigAndExit": async (event, ...args) => {
       return executeNukeFreshStart({
         app,
         session,
@@ -1745,17 +1744,17 @@ const desktopCommandHandlers = {
   "sandboxStop": async (event, ...args) => {
       return runtimeManager.sandboxStop(String(args[0] ?? "").trim());
   },
-  "sandboxCleanupOpenworkContainers": async (event, ...args) => {
-      return runtimeManager.sandboxCleanupOpenworkContainers();
+  "sandboxCleanupJuggleWorkContainers": async (event, ...args) => {
+      return runtimeManager.sandboxCleanupJuggleWorkContainers();
   },
   "sandboxDebugProbe": async (event, ...args) => {
       return runtimeManager.sandboxDebugProbe();
   },
-  "openworkServerInfo": async (event, ...args) => {
-      return runtimeManager.openworkServerInfo();
+  "juggleworkServerInfo": async (event, ...args) => {
+      return runtimeManager.juggleworkServerInfo();
   },
-  "openworkServerRestart": async (event, ...args) => {
-      return runtimeManager.openworkServerRestart(args[0] ?? {});
+  "juggleworkServerRestart": async (event, ...args) => {
+      return runtimeManager.juggleworkServerRestart(args[0] ?? {});
   },
   "pickDirectory": async (event, ...args) => {
       const options = args[0] ?? {};
@@ -1882,8 +1881,8 @@ const desktopCommandHandlers = {
         String(args[2] ?? ""),
       );
   },
-  "resetOpenworkState": async (event, ...args) => {
-      return workspaceStore.resetOpenworkState();
+  "resetJuggleWorkState": async (event, ...args) => {
+      return workspaceStore.resetJuggleWorkState();
   },
   "resetOpencodeCache": async (event, ...args) => {
       return { removed: [], missing: [], errors: [] };
@@ -2293,7 +2292,7 @@ async function createMainWindow() {
     browserPanel.routeBlockedMainWindowNavigation(url);
   });
 
-  const startUrl = process.env.OPENWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
+  const startUrl = process.env.JUGGLEWORK_ELECTRON_START_URL?.trim() || process.env.ELECTRON_START_URL?.trim();
   if (startUrl) {
     await mainWindow.loadURL(startUrl);
   } else {
@@ -2305,26 +2304,26 @@ async function createMainWindow() {
   return mainWindow;
 }
 
-ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
+ipcMain.on("jugglework:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
-ipcMain.handle("openwork:desktop", handleDesktopInvoke);
-ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
+ipcMain.handle("jugglework:desktop", handleDesktopInvoke);
+ipcMain.handle("jugglework:shell:openExternal", async (_event, url) => {
   if (typeof url !== "string" || url.trim().length === 0) {
     return { ok: false, error: "empty url" };
   }
   return openExternalUrl(url.trim());
 });
-ipcMain.handle("openwork:shell:relaunch", async () => {
+ipcMain.handle("jugglework:shell:relaunch", async () => {
   app.relaunch();
   app.quit();
 });
-ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
-ipcMain.handle("openwork:system:microphoneStatus", async () => {
+ipcMain.handle("jugglework:system:architecture", async () => resolveArchitectureInfo());
+ipcMain.handle("jugglework:system:microphoneStatus", async () => {
   if (process.platform !== "darwin") return { platform: process.platform, status: "not-mac" };
   return { platform: process.platform, status: systemPreferences.getMediaAccessStatus("microphone") };
 });
-ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
+ipcMain.handle("jugglework:system:askMicrophoneAccess", async () => {
   if (process.platform !== "darwin") return { platform: process.platform, granted: true, status: "not-mac" };
   const before = systemPreferences.getMediaAccessStatus("microphone");
   const granted = await systemPreferences.askForMediaAccess("microphone");
@@ -2333,7 +2332,7 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
 });
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
-ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
+ipcMain.handle("jugglework:terminal:create", async (event, options = {}) => {
   const cwd = await resolveTerminalCwd(options?.cwd);
   const cols = Number.isFinite(options?.cols) ? Math.max(20, Math.floor(options.cols)) : 80;
   const rows = Number.isFinite(options?.rows) ? Math.max(5, Math.floor(options.rows)) : 24;
@@ -2348,7 +2347,7 @@ ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
       ...process.env,
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
-      OPENWORK_TERMINAL: "1",
+      JUGGLEWORK_TERMINAL: "1",
     },
   });
 
@@ -2356,27 +2355,27 @@ ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {
   event.sender.once("destroyed", () => killTerminalsForWebContents(event.sender.id));
   child.onData((data) => {
     if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:data", { terminalId, data });
+    event.sender.send("jugglework:terminal:data", { terminalId, data });
   });
   child.onExit(({ exitCode, signal }) => {
     terminalProcesses.delete(terminalId);
     if (event.sender.isDestroyed()) return;
-    event.sender.send("openwork:terminal:exit", { terminalId, exitCode, signal });
+    event.sender.send("jugglework:terminal:exit", { terminalId, exitCode, signal });
   });
 
   return { terminalId };
 });
-ipcMain.handle("openwork:terminal:write", (event, terminalId, data) => {
+ipcMain.handle("jugglework:terminal:write", (event, terminalId, data) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || typeof data !== "string") return;
   terminal.process.write(data);
 });
-ipcMain.handle("openwork:terminal:resize", (event, terminalId, cols, rows) => {
+ipcMain.handle("jugglework:terminal:resize", (event, terminalId, cols, rows) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal || !Number.isFinite(cols) || !Number.isFinite(rows)) return;
   terminal.process.resize(Math.max(20, Math.floor(cols)), Math.max(5, Math.floor(rows)));
 });
-ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
+ipcMain.handle("jugglework:terminal:kill", (event, terminalId) => {
   const terminal = terminalForSender(event, terminalId);
   if (!terminal) return;
   killTerminal(String(terminalId));

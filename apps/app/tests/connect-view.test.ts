@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
-import type { OpenworkCloudMcpHealth } from "../src/app/lib/openwork-server";
+import type { JuggleWorkCloudMcpHealth } from "../src/app/lib/jugglework-server";
 import {
   readyCloudMcpToolIds,
   resolveConnectViewState,
@@ -50,7 +50,7 @@ describe("resolveConnectViewState", () => {
   });
 });
 
-function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
+function cloudHealth(usable: boolean): JuggleWorkCloudMcpHealth {
   return {
     schemaVersion: 1,
     phase: usable ? "ready" : "cloud_tools_missing",
@@ -58,13 +58,13 @@ function cloudHealth(usable: boolean): OpenworkCloudMcpHealth {
     usableByCurrentModel: usable,
     connectCatalogEnabled: true,
     workspace: { id: "ws_1", type: "local", directory: "/workspace", path: "/workspace" },
-    desired: { present: true, name: "openwork-cloud", revision: "rev", config: null, token: { present: true, metadata: {} } },
+    desired: { present: true, name: "jugglework-cloud", revision: "rev", config: null, token: { present: true, metadata: {} } },
     delivery: { state: usable ? "ready" : "pending", desiredRevision: "rev", appliedRevision: usable ? "rev" : null, updatedAt: 1, appliedAt: usable ? 1 : null, lastAttemptAt: 1 },
     engine: { status: usable ? "connected" : "failed" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
-      present: usable ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability", "other_tool"] : ["openwork-cloud_search_capabilities"],
-      missing: usable ? [] : ["openwork-cloud_execute_capability"],
+      expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+      present: usable ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability", "other_tool"] : ["jugglework-cloud_search_capabilities"],
+      missing: usable ? [] : ["jugglework-cloud_execute_capability"],
       providerProjection: { checked: true, present: [], missing: [] },
     },
     pluginCanaries: { expected: [], present: [], missing: [] },
@@ -78,8 +78,8 @@ describe("Agent access card helpers", () => {
   test("returns exact Cloud tools only when health is ready", () => {
     expect(readyCloudMcpToolIds(cloudHealth(false))).toEqual([]);
     expect(readyCloudMcpToolIds(cloudHealth(true))).toEqual([
-      "openwork-cloud_search_capabilities",
-      "openwork-cloud_execute_capability",
+      "jugglework-cloud_search_capabilities",
+      "jugglework-cloud_execute_capability",
     ]);
   });
 

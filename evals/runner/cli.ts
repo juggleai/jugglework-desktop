@@ -10,7 +10,7 @@ import { scaffoldFlow } from "./voiceover.ts";
 import type { EvalMode, EvalReport, FlowStatus } from "./flow.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url));
-const FLOWS_DIR = process.env.OPENWORK_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
+const FLOWS_DIR = process.env.JUGGLEWORK_EVAL_FLOWS_DIR?.trim() || join(RUNNER_DIR, "..", "flows");
 const DEFAULT_RESULTS_DIR = join(RUNNER_DIR, "..", "results");
 const DEFAULT_CDP_CANDIDATES = ["http://127.0.0.1:9825", "http://127.0.0.1:9823"];
 
@@ -136,7 +136,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // App-less flows (requiresApp: false) don't need a CDP endpoint; only probe
   // for one when at least one selected flow drives the app.
   const needsApp = selected.some((flow) => missingEnv(flow, process.env).length === 0 && flow.requiresApp !== false);
-  const envCdp = process.env.OPENWORK_EVAL_CDP_URL?.trim();
+  const envCdp = process.env.JUGGLEWORK_EVAL_CDP_URL?.trim();
   const cdpBaseUrl = args.cdpUrl
     ?? (envCdp || (needsApp ? await resolveCdpBaseUrl(DEFAULT_CDP_CANDIDATES) : null));
 

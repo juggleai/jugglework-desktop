@@ -3,7 +3,7 @@ title: "Get started with JuggleWork Cloud"
 description: "Connect the desktop app to your JuggleWork Cloud org and unlock shared workspaces, marketplaces, and shared providers"
 ---
 
-JuggleWork Cloud requires an active subscription at [app.openworklabs.com](https://app.openworklabs.com/).
+JuggleWork Cloud requires an active subscription at [work.juggle.im](https://work.juggle.im/).
 It is intended for teams what want to share `SKILLs.md`, `MCPs` and `configs`. 
 
 
@@ -13,7 +13,7 @@ First, you should connect your desktop app with JuggleWork Cloud.
   ![JuggleWork Cloud org settings with organization identity, allowed email domains, and desktop restrictions](/images/cloud-org-settings.png)
 </Frame>
 
-1. Open [app.openworklabs.com](https://app.openworklabs.com/) in your browser.
+1. Open [work.juggle.im](https://work.juggle.im/) in your browser.
 2. Click `Create organization`.
 3. Enter your org name.
 4. Finish checkout if JuggleWork Cloud asks for billing.
@@ -25,7 +25,7 @@ Once you're there, you can configure the settings for the organization.
 
 Note: You need to be logged in as an `org_owner` in order to make modifications.
 
-1. Open the `dashboard/org_settings` [page](https://app.openworklabs.com/dashboard/org-settings) in the cloud app.
+1. Open the `dashboard/org_settings` [page](https://work.juggle.im/dashboard/org-settings) in the cloud app.
 2. Set the name for your organization
 3. Optional: enable `Restrict allowed email domains` and add the approved domains.
 4. Optional: change any `Desktop restrictions` that should apply after people sign in from the desktop app.
@@ -39,12 +39,12 @@ Next, you want to make sure you can sign in the desktop app.
 1. Open `Settings -> Cloud`.
 2. Click `Sign in`.
 3. Finish sign-in in your browser.
-4. If the browser does not return to JuggleWork automatically, click `Paste sign-in code`, paste the `openwork://den-auth?...` link or one-time code from JuggleWork Cloud, then click `Finish sign-in`.
+4. If the browser does not return to JuggleWork automatically, click `Paste sign-in code`, paste the `jugglework://den-auth?...` link or one-time code from JuggleWork Cloud, then click `Finish sign-in`.
 
 ## Cloud URL used by the desktop app
 
 The desktop app uses a single Cloud URL: the Den web `baseUrl`. The hosted
-default is `https://app.openworklabs.com`.
+default is `https://work.juggle.im`.
 
 All Cloud API and MCP traffic is derived from that one URL through the web app
 proxy:
@@ -54,7 +54,7 @@ proxy:
 
 The desktop app does not store or read a separate API URL. On startup it reads
 the Cloud URL from `desktop-bootstrap.json`; if that file is missing, it falls
-back to `https://app.openworklabs.com`. When you change the Cloud URL in
+back to `https://work.juggle.im`. When you change the Cloud URL in
 `Settings -> Cloud`, JuggleWork writes the new `baseUrl` back to the bootstrap
 file so the next launch uses the same source of truth.
 

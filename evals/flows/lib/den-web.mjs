@@ -3,11 +3,11 @@
  */
 
 export function denWebUrl() {
-  return (process.env.OPENWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
+  return (process.env.JUGGLEWORK_EVAL_DEN_WEB_URL ?? "").trim().replace(/\/+$/, "");
 }
 
 export function denApiUrl() {
-  return (process.env.OPENWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
+  return (process.env.JUGGLEWORK_EVAL_DEN_API_URL ?? "").trim().replace(/\/+$/, "");
 }
 
 export async function denApiFetch(path, options = {}) {

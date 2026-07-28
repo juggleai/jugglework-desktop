@@ -30,8 +30,8 @@ function resolveAppVersion(app) {
   return _cachedAppVersion;
 }
 const ELECTRON_UPDATER_FEEDS = Object.freeze({
-  stable: "https://github.com/different-ai/openwork/releases/latest/download",
-  alpha: "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
+  stable: "https://github.com/juggleai/jugglework-desktop/releases/latest/download",
+  alpha: "https://github.com/juggleai/jugglework-desktop/releases/download/alpha-macos-latest",
 });
 
 function normalizeElectronUpdaterChannel(value) {
@@ -159,7 +159,7 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
   if (comparison <= 0) {
     throw new Error("Target update version must be newer than the installed version.");
   }
-  return `https://github.com/different-ai/openwork/releases/download/v${normalizedTarget}`;
+  return `https://github.com/juggleai/jugglework-desktop/releases/download/v${normalizedTarget}`;
 }
 
 function updaterChannelState(app, channel, targetVersion = null) {
@@ -203,7 +203,7 @@ function runDefaults(args) {
 
 // Squirrel.Mac's `ShipIt` helper (which swaps the .app on macOS) reads its
 // options from this NSUserDefaults domain.
-const SHIP_IT_DEFAULTS_DOMAIN = "com.differentai.openwork.ShipIt";
+const SHIP_IT_DEFAULTS_DOMAIN = "com.juggleai.jugglework.ShipIt";
 
 // Squirrel.Mac defaults to moving the *entire* app bundle through a temp
 // directory. On repeat installs that move can leave the staged bundle missing,
@@ -293,7 +293,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         // Forward download progress to the renderer so the UI can show
         // incremental bytes instead of staying stuck at 0.
         autoUpdaterInstance.on("download-progress", (info) => {
-          sendToRenderer("openwork:updater:download-progress", {
+          sendToRenderer("jugglework:updater:download-progress", {
             bytesPerSecond: info.bytesPerSecond ?? 0,
             percent: info.percent ?? 0,
             transferred: info.transferred ?? 0,
@@ -310,12 +310,12 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     return autoUpdaterInstance;
   }
 
-  ipcMain.handle("openwork:updater:getChannel", async () => {
+  ipcMain.handle("jugglework:updater:getChannel", async () => {
     const channel = await readElectronUpdaterChannel(app);
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:setChannel", async (_event, rawChannel) => {
+  ipcMain.handle("jugglework:updater:setChannel", async (_event, rawChannel) => {
     const channel = await writeElectronUpdaterChannel(app, rawChannel);
     checkedUpdateVersion = null;
     checkedUpdateTargetVersion = null;
@@ -331,7 +331,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("openwork:updater:check", async (_event, rawChannel, rawTargetVersion) => {
+  ipcMain.handle("jugglework:updater:check", async (_event, rawChannel, rawTargetVersion) => {
     if (rawChannel !== undefined) {
       await writeElectronUpdaterChannel(app, rawChannel);
     }
@@ -378,7 +378,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     }
   });
 
-  ipcMain.handle("openwork:updater:download", async () => {
+  ipcMain.handle("jugglework:updater:download", async () => {
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
     try {
@@ -413,7 +413,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     }
   });
 
-  ipcMain.handle("openwork:updater:installAndRestart", async () => {
+  ipcMain.handle("jugglework:updater:installAndRestart", async () => {
     if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };

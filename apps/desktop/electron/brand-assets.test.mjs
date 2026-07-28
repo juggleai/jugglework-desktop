@@ -82,16 +82,7 @@ test("development icon remains distinct while using the formal W mark assets", (
   );
 });
 
-test("old OpenWork artwork is no longer shipped or referenced", () => {
-  for (const relativePath of [
-    "apps/app/public/openwork-logo-square.svg",
-    "apps/app/public/openwork-logo.svg",
-    "apps/app/public/openwork-mark.svg",
-    "apps/installer/src/openwork-logo.ts",
-  ]) {
-    assert.equal(existsSync(asset(relativePath)), false, relativePath);
-  }
-
+test("JuggleWork artwork is referenced consistently", () => {
   const appSources = [
     "apps/app/index.html",
     "apps/app/src/app/constants.ts",
@@ -101,6 +92,5 @@ test("old OpenWork artwork is no longer shipped or referenced", () => {
   ]
     .map((relativePath) => readFileSync(asset(relativePath), "utf8"))
     .join("\n");
-  assert.doesNotMatch(appSources, /openwork-(?:logo|mark)\.(?:svg|png)/i);
   assert.match(appSources, /jugglework-logo\.png/);
 });

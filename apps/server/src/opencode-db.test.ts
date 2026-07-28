@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { resolveOpencodeDbPath, seedOpencodeSessionMessages } from "./opencode-db.js";
 
 async function createDb(): Promise<{ path: string; dispose: () => void }> {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-opencode-db-"));
+  const dir = await mkdtemp(join(tmpdir(), "jugglework-opencode-db-"));
   await mkdir(dir, { recursive: true });
   const dbPath = join(dir, "opencode-test.db");
   const db = new Database(dbPath);
@@ -122,7 +122,7 @@ describe.skipIf(!betterSqliteAvailable)("seedOpencodeSessionMessages", () => {
 
 describe("resolveOpencodeDbPath", () => {
   test("prefers an existing XDG opencode.db when present", async () => {
-    const xdg = await mkdtemp(join(tmpdir(), "openwork-opencode-xdg-"));
+    const xdg = await mkdtemp(join(tmpdir(), "jugglework-opencode-xdg-"));
     const dir = join(xdg, "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });
@@ -147,27 +147,27 @@ describe("resolveOpencodeDbPath", () => {
     }
   });
 
-  test("finds orchestrator-managed OpenCode dbs under OPENWORK_DATA_DIR", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-data-"));
-    const dir = join(root, "openwork-dev-data", "xdg", "data", "opencode");
+  test("finds orchestrator-managed OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-orchestrator-data-"));
+    const dir = join(root, "jugglework-dev-data", "xdg", "data", "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });
     await writeFile(file, "", "utf8");
 
-    const previousDataDir = process.env.OPENWORK_DATA_DIR;
+    const previousDataDir = process.env.JUGGLEWORK_DATA_DIR;
     const previousXdg = process.env.XDG_DATA_HOME;
     const previousChannel = process.env.OPENCODE_CHANNEL;
     const previousDb = process.env.OPENCODE_DB;
     try {
-      process.env.OPENWORK_DATA_DIR = root;
+      process.env.JUGGLEWORK_DATA_DIR = root;
       delete process.env.XDG_DATA_HOME;
       process.env.OPENCODE_CHANNEL = "local";
       delete process.env.OPENCODE_DB;
 
       expect(resolveOpencodeDbPath()).toBe(file);
     } finally {
-      if (previousDataDir === undefined) delete process.env.OPENWORK_DATA_DIR;
-      else process.env.OPENWORK_DATA_DIR = previousDataDir;
+      if (previousDataDir === undefined) delete process.env.JUGGLEWORK_DATA_DIR;
+      else process.env.JUGGLEWORK_DATA_DIR = previousDataDir;
       if (previousXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = previousXdg;
       if (previousChannel === undefined) delete process.env.OPENCODE_CHANNEL;
@@ -177,27 +177,27 @@ describe("resolveOpencodeDbPath", () => {
     }
   });
 
-  test("finds legacy orchestrator-managed OpenCode dbs under OPENWORK_DATA_DIR", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-data-"));
+  test("finds legacy orchestrator-managed OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-orchestrator-data-"));
     const dir = join(root, "opencode-dev", "ws-test", "xdg", "data", "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });
     await writeFile(file, "", "utf8");
 
-    const previousDataDir = process.env.OPENWORK_DATA_DIR;
+    const previousDataDir = process.env.JUGGLEWORK_DATA_DIR;
     const previousXdg = process.env.XDG_DATA_HOME;
     const previousChannel = process.env.OPENCODE_CHANNEL;
     const previousDb = process.env.OPENCODE_DB;
     try {
-      process.env.OPENWORK_DATA_DIR = root;
+      process.env.JUGGLEWORK_DATA_DIR = root;
       delete process.env.XDG_DATA_HOME;
       process.env.OPENCODE_CHANNEL = "local";
       delete process.env.OPENCODE_DB;
 
       expect(resolveOpencodeDbPath()).toBe(file);
     } finally {
-      if (previousDataDir === undefined) delete process.env.OPENWORK_DATA_DIR;
-      else process.env.OPENWORK_DATA_DIR = previousDataDir;
+      if (previousDataDir === undefined) delete process.env.JUGGLEWORK_DATA_DIR;
+      else process.env.JUGGLEWORK_DATA_DIR = previousDataDir;
       if (previousXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = previousXdg;
       if (previousChannel === undefined) delete process.env.OPENCODE_CHANNEL;

@@ -43,7 +43,7 @@ type UploadedChatAttachment = {
   file: AttachmentFile;
 };
 
-const WORKSPACE_INBOX_ROOT = ".opencode/openwork/inbox";
+const WORKSPACE_INBOX_ROOT = ".opencode/jugglework/inbox";
 
 const EXTENSION_MIME_TYPES: Record<string, string> = {
   jpg: "image/jpeg",

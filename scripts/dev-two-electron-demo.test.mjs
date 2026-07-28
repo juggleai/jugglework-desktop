@@ -37,21 +37,21 @@ test("finds stale launchers and profile processes while excluding the current re
 test("uses a non-production temporary demo root by default", () => {
   const root = resolveDemoRoot({});
 
-  assert.equal(root, path.join(os.tmpdir(), "openwork-two-electron-demo"));
-  assert.notEqual(root, path.join(os.homedir(), ".openwork"));
+  assert.equal(root, path.join(os.tmpdir(), "jugglework-two-electron-demo"));
+  assert.notEqual(root, path.join(os.homedir(), ".jugglework"));
 });
 
 test("honors an explicit demo root", () => {
   assert.equal(
     resolveDemoRoot({
-      OPENWORK_ELECTRON_DEMO_ROOT: " /tmp/openwork-custom-demo "
+      JUGGLEWORK_ELECTRON_DEMO_ROOT: " /tmp/jugglework-custom-demo "
     }),
-    "/tmp/openwork-custom-demo"
+    "/tmp/jugglework-custom-demo"
   );
 });
 
 test("creates fresh, independent folders for every demo launch", async context => {
-  const testRoot = await mkdtemp(path.join(os.tmpdir(), "openwork-demo-test-"));
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), "jugglework-demo-test-"));
   context.after(() => rm(testRoot, { recursive: true, force: true }));
 
   const first = await createDemoRun(testRoot);
@@ -76,7 +76,7 @@ test("creates fresh, independent folders for every demo launch", async context =
 });
 
 test("reopens the same prepared profile pair without falling back to another profile", async context => {
-  const testRoot = await mkdtemp(path.join(os.tmpdir(), "openwork-demo-reopen-test-"));
+  const testRoot = await mkdtemp(path.join(os.tmpdir(), "jugglework-demo-reopen-test-"));
   context.after(() => rm(testRoot, { recursive: true, force: true }));
   const prepared = await createDemoRun(testRoot);
   const reopened = existingDemoRun(prepared.runRoot);
@@ -86,7 +86,7 @@ test("reopens the same prepared profile pair without falling back to another pro
 
 test("reset removes all prior demo runs from the configured root", async context => {
   const testRoot = await mkdtemp(
-    path.join(os.tmpdir(), "openwork-demo-reset-test-")
+    path.join(os.tmpdir(), "jugglework-demo-reset-test-")
   );
   context.after(() => rm(testRoot, { recursive: true, force: true }));
   const run = await createDemoRun(testRoot);
@@ -98,7 +98,7 @@ test("reset removes all prior demo runs from the configured root", async context
 
 test("points each Electron instance at its own profile folders", async context => {
   const testRoot = await mkdtemp(
-    path.join(os.tmpdir(), "openwork-demo-env-test-")
+    path.join(os.tmpdir(), "jugglework-demo-env-test-")
   );
   context.after(() => rm(testRoot, { recursive: true, force: true }));
   const run = await createDemoRun(testRoot);
@@ -110,32 +110,32 @@ test("points each Electron instance at its own profile folders", async context =
   const adminEnv = demoEnv(profile, run.admin, "5273", "9923");
   const consumerEnv = demoEnv(profile, run.consumer, "5274", "9924");
 
-  assert.equal(adminEnv.OPENWORK_ELECTRON_USERDATA, run.admin.userDataDir);
-  assert.equal(adminEnv.OPENWORK_DATA_DIR, run.admin.dataDir);
+  assert.equal(adminEnv.JUGGLEWORK_ELECTRON_USERDATA, run.admin.userDataDir);
+  assert.equal(adminEnv.JUGGLEWORK_DATA_DIR, run.admin.dataDir);
   assert.equal(adminEnv.HOME, run.admin.homeDir);
   assert.equal(adminEnv.XDG_CONFIG_HOME, run.admin.configHome);
   assert.equal(adminEnv.XDG_DATA_HOME, run.admin.dataHome);
   assert.equal(adminEnv.XDG_CACHE_HOME, run.admin.cacheHome);
   assert.equal(adminEnv.XDG_STATE_HOME, run.admin.stateHome);
-  assert.equal(adminEnv.OPENWORK_ENV_STORE, run.admin.envStorePath);
+  assert.equal(adminEnv.JUGGLEWORK_ENV_STORE, run.admin.envStorePath);
   assert.equal(adminEnv.OPENCODE_CONFIG_DIR, run.admin.opencodeConfigDir);
   assert.equal(adminEnv.APPDATA, run.admin.appDataDir);
   assert.equal(adminEnv.LOCALAPPDATA, run.admin.localAppDataDir);
-  assert.equal(adminEnv.OPENWORK_DEV_MODE, "1");
-  assert.equal(adminEnv.OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
-  assert.equal(adminEnv.OPENWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION, "1");
+  assert.equal(adminEnv.JUGGLEWORK_DEV_MODE, "1");
+  assert.equal(adminEnv.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN, "1");
+  assert.equal(adminEnv.JUGGLEWORK_ELECTRON_DISABLE_PROTOCOL_REGISTRATION, "1");
   assert.equal(
-    consumerEnv.OPENWORK_ELECTRON_USERDATA,
+    consumerEnv.JUGGLEWORK_ELECTRON_USERDATA,
     run.consumer.userDataDir
   );
-  assert.equal(consumerEnv.OPENWORK_DATA_DIR, run.consumer.dataDir);
+  assert.equal(consumerEnv.JUGGLEWORK_DATA_DIR, run.consumer.dataDir);
   assert.notEqual(
-    adminEnv.OPENWORK_ELECTRON_USERDATA,
-    consumerEnv.OPENWORK_ELECTRON_USERDATA
+    adminEnv.JUGGLEWORK_ELECTRON_USERDATA,
+    consumerEnv.JUGGLEWORK_ELECTRON_USERDATA
   );
-  assert.notEqual(adminEnv.OPENWORK_DATA_DIR, consumerEnv.OPENWORK_DATA_DIR);
+  assert.notEqual(adminEnv.JUGGLEWORK_DATA_DIR, consumerEnv.JUGGLEWORK_DATA_DIR);
   assert.notEqual(adminEnv.HOME, consumerEnv.HOME);
   assert.notEqual(adminEnv.XDG_CONFIG_HOME, consumerEnv.XDG_CONFIG_HOME);
-  assert.notEqual(adminEnv.OPENWORK_ENV_STORE, consumerEnv.OPENWORK_ENV_STORE);
+  assert.notEqual(adminEnv.JUGGLEWORK_ENV_STORE, consumerEnv.JUGGLEWORK_ENV_STORE);
   assert.notEqual(adminEnv.OPENCODE_CONFIG_DIR, consumerEnv.OPENCODE_CONFIG_DIR);
 });

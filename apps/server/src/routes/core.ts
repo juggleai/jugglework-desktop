@@ -8,7 +8,7 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readJuggleWorkConnectSkillCatalog, renderJuggleWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -145,7 +145,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   // Dev log sink: append browser console + error events to a file that an
   // operator (or an AI driver) can tail. Unauth on purpose because this is
   // scoped to the dev host and needs to work before clients finish wiring
-  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
+  // tokens; it is also a no-op when JUGGLEWORK_DEV_LOG_FILE is unset.
   addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
     const target = resolveDevLogPath();
     if (!target) {
@@ -217,7 +217,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsResponse(TOY_UI_JS);
   });
 
-  addRoute(routes, "GET", "/ui/assets/openwork-mark.svg", "none", async () => {
+  addRoute(routes, "GET", "/ui/assets/jugglework-mark.svg", "none", async () => {
     if (!resolveToyUiEnabled()) {
       throw new ApiError(404, "ui_disabled", "Toy UI is disabled");
     }
@@ -324,13 +324,13 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
-    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
-    const skills = await readOpenWorkConnectSkillCatalog(config);
+    // Connect skills are server/account-scoped (jugglework-cloud on the host), not per-workspace.
+    const skills = await readJuggleWorkConnectSkillCatalog(config);
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
       skills,
-      instruction: renderOpenWorkConnectSkillInstruction(skills),
+      instruction: renderJuggleWorkConnectSkillInstruction(skills),
     });
   });
 

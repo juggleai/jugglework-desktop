@@ -8,4 +8,4 @@ The supplied `jugglework-logo.png` is the approved source artwork.
 
 3. 安装器显示新的 JuggleWork Logo。
 
-4. macOS、Windows、Linux 安装包使用一致的新图标，不再出现旧 OpenWork Logo。
+4. macOS、Windows、Linux 安装包使用一致的新图标，不再出现旧 JuggleWork Logo。

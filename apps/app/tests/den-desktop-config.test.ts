@@ -5,7 +5,7 @@ import {
   resolveDesktopPolicyDocumentWrite,
   selectEffectiveOnboardingPromptConfig,
   selectEffectiveOnboardingPrompts,
-} from "@openwork/types/den/desktop-policies";
+} from "@jugglework/types/den/desktop-policies";
 import { createDenClient, normalizeDenDesktopConfig } from "../src/app/lib/den";
 
 const originalFetch = globalThis.fetch;

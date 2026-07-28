@@ -16,11 +16,11 @@ const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i;
 const UTC_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
-const GOOGLE_WORKSPACE_CLIENT_ID_ENV = "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID";
+const GOOGLE_WORKSPACE_CLIENT_ID_ENV = "JUGGLEWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_ID";
 const GOOGLE_WORKSPACE_CLIENT_SECRET_ENV = "GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET";
-const LEGACY_GOOGLE_WORKSPACE_CLIENT_SECRET_ENV = "OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET";
-const GOOGLE_WORKSPACE_TOKEN_BROKER_URL_ENV = "OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL";
-const GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT_ENV = "OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT";
+const LEGACY_GOOGLE_WORKSPACE_CLIENT_SECRET_ENV = "JUGGLEWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET";
+const GOOGLE_WORKSPACE_TOKEN_BROKER_URL_ENV = "JUGGLEWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL";
+const GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT_ENV = "JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT";
 const GOOGLE_WORKSPACE_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000;
 const GOOGLE_WORKSPACE_SCOPES = [
@@ -299,7 +299,7 @@ function readStringField(value: unknown, key: string): string {
 }
 
 function configDir(config: ServerConfig): string {
-  return dirname(config.configPath?.trim() || resolve(homedir(), ".config", "openwork", "server.json"));
+  return dirname(config.configPath?.trim() || resolve(homedir(), ".config", "jugglework", "server.json"));
 }
 
 function googleWorkspaceCredentials() {
@@ -334,7 +334,7 @@ function googleWorkspaceVaultKeyPath(config: ServerConfig): string {
 }
 
 function googleWorkspacePlainTextVaultEnabled() {
-  return process.env.OPENWORK_DEV_MODE === "1" && process.env[GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT_ENV] === "1";
+  return process.env.JUGGLEWORK_DEV_MODE === "1" && process.env[GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT_ENV] === "1";
 }
 
 function googleWorkspaceVaultMode() {
@@ -356,7 +356,7 @@ function createGoogleWorkspacePkce() {
 }
 
 async function googleWorkspaceVaultKey(config: ServerConfig): Promise<Buffer> {
-  const envKey = process.env.OPENWORK_ENCRYPTION_KEY?.trim();
+  const envKey = process.env.JUGGLEWORK_ENCRYPTION_KEY?.trim();
   if (envKey) return createHash("sha256").update(envKey).digest();
 
   const keyPath = googleWorkspaceVaultKeyPath(config);
@@ -785,7 +785,7 @@ function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; s
     body,
   ].filter((line): line is string => typeof line === "string").join("\r\n");
 
-  const boundary = `openwork-${randomBytes(16).toString("hex")}`;
+  const boundary = `jugglework-${randomBytes(16).toString("hex")}`;
   return [
     ...headers,
     "MIME-Version: 1.0",
@@ -1307,7 +1307,7 @@ export async function googleWorkspaceRunScopeSmokeTest(config: ServerConfig) {
   if (!email) throw new Error("Google account email is unavailable.");
   await fetchGoogleJson("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1", { headers: { Authorization: `Bearer ${accessToken}` } });
   const createdAt = new Date().toISOString();
-  const driveBoundary = `openwork_${randomBytes(8).toString("hex")}`;
+  const driveBoundary = `jugglework_${randomBytes(8).toString("hex")}`;
   const driveFile = await fetchGoogleJson("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": `multipart/related; boundary=${driveBoundary}` },

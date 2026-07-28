@@ -1,4 +1,4 @@
-import { openworkCloudMcpInlineReconnectSchema } from "@openwork/types/den/mcp-connection-action"
+import { juggleworkCloudMcpInlineReconnectSchema } from "@jugglework/types/den/mcp-connection-action"
 
 export type ToolErrorAttribution = {
   label: string
@@ -17,9 +17,9 @@ export type ChatToolReconnectProgress =
   | { phase: "authorization_opened"; authorizeUrl: string }
 export type ChatToolReconnectResult = "connected"
 
-const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+const JUGGLEWORK_CLOUD_CAPABILITY_TOOLS = new Set([
+  "jugglework-cloud_search_capabilities",
+  "jugglework-cloud_execute_capability",
 ])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -78,7 +78,7 @@ export function reconnectActionFromChatToolResult(
   // capability tools may turn a structured Den response into a UI action.
   // Discovery is included because it performs a live connection probe before
   // the agent can safely proceed to execution.
-  if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (!JUGGLEWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
 
   const parsed = parseResultRecord(result)
   if (!parsed) return null
@@ -94,7 +94,7 @@ export function reconnectActionFromChatToolResult(
   ]
   const reconnectTargets = new Map<string, { connectionId: string; connectionName: string }>()
   for (const connectionStatus of candidates) {
-    const parsedStatus = openworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
+    const parsedStatus = juggleworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
     if (!parsedStatus.success) continue
     const { connectionId, connectionName } = parsedStatus.data
     reconnectTargets.set(connectionId, { connectionId, connectionName })

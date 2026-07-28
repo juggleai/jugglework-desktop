@@ -18,12 +18,12 @@ const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // We refuse writes to these and strip them when reading for injection, so a
 // tampered file cannot shadow auth credentials, token paths, or process
 // identity.
-const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
+const RESERVED_PREFIXES = ["JUGGLEWORK_", "OPENCODE_"] as const;
 const PERSISTABLE_INTERNAL_KEYS = new Set([
-  "OPENWORK_API_KEY",
-  "OPENWORK_MODELS_API_KEY",
-  "OPENWORK_INFERENCE_BASE_URL",
-  "OPENWORK_MODELS_BASE_URL",
+  "JUGGLEWORK_API_KEY",
+  "JUGGLEWORK_MODELS_API_KEY",
+  "JUGGLEWORK_INFERENCE_BASE_URL",
+  "JUGGLEWORK_MODELS_BASE_URL",
 ]);
 
 export type EnvRecord = {
@@ -54,15 +54,15 @@ function isInternalEnvKey(key: string): boolean {
 // Do NOT key this off ServerConfig.configPath — the shell resolves the path
 // before the server config exists, and must agree with us byte-for-byte.
 export function resolveDefaultEnvStorePath(): string {
-  const override = (process.env.OPENWORK_ENV_STORE ?? "").trim();
+  const override = (process.env.JUGGLEWORK_ENV_STORE ?? "").trim();
   if (override) return resolve(override);
 
   if (platform() === "win32") {
     const appData = (process.env.APPDATA ?? "").trim();
     const root = appData || join(homedir(), "AppData", "Roaming");
-    return join(root, "openwork", "env.json");
+    return join(root, "jugglework", "env.json");
   }
-  return join(homedir(), ".config", "openwork", "env.json");
+  return join(homedir(), ".config", "jugglework", "env.json");
 }
 
 function parseRecord(raw: unknown): EnvRecord | null {

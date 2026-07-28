@@ -1,4 +1,4 @@
-export const DEFAULT_OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download"
+export const DEFAULT_JUGGLEWORK_DOWNLOAD_URL = "https://juggle.im/download"
 
 export type DesktopCapability = {
   title: string

@@ -4,12 +4,12 @@ sidebarTitle: "Overview"
 description: "The JuggleWork MCP server is a hosted endpoint that lets your AI agent use JuggleWork from Claude Code, Codex, Claude Desktop, Cursor, VS Code, or any MCP client."
 ---
 
-import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
+import { JuggleWorkConnectInstaller } from "/snippets/jugglework-connect-installer.jsx";
 
 The JuggleWork Connect MCP server lets your AI agent use the JuggleWork capabilities your organization has made available to you. The public hosted endpoint is:
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 This guide is for connecting an external MCP client to JuggleWork. To connect
@@ -19,9 +19,9 @@ JuggleWork desktop app, use
 
 Your client opens a browser, you sign in to JuggleWork, choose the organization to authorize, and the client stores the OAuth token for that organization.
 
-`app.openworklabs.com/api/den` is an internal same-origin desktop proxy used by JuggleWork first-party flows. Do not paste it into external MCP clients.
+`work.juggle.im/api/den` is an internal same-origin desktop proxy used by JuggleWork first-party flows. Do not paste it into external MCP clients.
 
-<OpenWorkConnectInstaller />
+<JuggleWorkConnectInstaller />
 
 ## Set up your client
 
@@ -70,10 +70,10 @@ Add this MCP entry to your OpenCode config:
 ```json
 {
   "mcp": {
-    "openwork": {
+    "jugglework": {
       "type": "remote",
       "enabled": true,
-      "url": "https://api.openworklabs.com/mcp/agent",
+      "url": "https://work.juggle.im/jwork/api/mcp/agent",
       "oauth": {}
     }
   }
@@ -83,17 +83,17 @@ Add this MCP entry to your OpenCode config:
 Then authenticate:
 
 ```sh
-opencode mcp auth openwork
+opencode mcp auth jugglework
 ```
 
 If OpenCode runs on a remote machine but the browser opens locally, follow
-[Connect JuggleWork MCP from a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+[Connect JuggleWork MCP from a remote machine](/cloud/run-in-the-cloud/connect-jugglework-mcp-remote-machine).
 
 To reconnect or switch organizations, remove the old token and authenticate again:
 
 ```sh
-opencode mcp logout openwork
-opencode mcp auth openwork
+opencode mcp logout jugglework
+opencode mcp auth jugglework
 ```
 
 Full guide: [JuggleWork MCP for OpenCode](/model-context-protocol/opencode).
@@ -105,15 +105,15 @@ Codex is setup-only for this PR until its native OAuth flow is rerun on this exa
 Add JuggleWork, then log in:
 
 ```sh
-codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
-codex mcp login openwork
+codex mcp add jugglework --url https://work.juggle.im/jwork/api/mcp/agent
+codex mcp login jugglework
 ```
 
 To reconnect or switch organizations, log out and log in again:
 
 ```sh
-codex mcp logout openwork
-codex mcp login openwork
+codex mcp logout jugglework
+codex mcp login jugglework
 ```
 
 Full guide: [JuggleWork MCP for Codex](/model-context-protocol/codex).
@@ -123,7 +123,7 @@ Full guide: [JuggleWork MCP for Codex](/model-context-protocol/codex).
 Paste the JuggleWork Connect endpoint where Cursor asks for the remote MCP server URL, then start OAuth from Cursor's connection prompt:
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 Cursor Web/Agents use an HTTPS OAuth callback. Cursor Desktop OAuth uses the private-use callback `cursor://anysphere.cursor-mcp/oauth/callback`, which JuggleWork accepts through an exact allowlist with PKCE S256 enforced, so intercepted authorization codes cannot be redeemed without the code verifier.
@@ -135,7 +135,7 @@ Full guide: [JuggleWork MCP for Cursor](/model-context-protocol/cursor).
 Open ChatGPT `Settings > MCP servers` ([open settings](https://chatgpt.com/#settings/Connectors)), paste the JuggleWork Connect endpoint, and start OAuth from ChatGPT's connection prompt:
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 Full guide: [JuggleWork MCP for ChatGPT](/model-context-protocol/chatgpt).
@@ -168,10 +168,10 @@ Org policy still applies: invitations respect seat limits and domain rules, and 
 
 JuggleWork Connect is a remote Streamable HTTP MCP server with OAuth:
 
-- The protected resource is exactly `https://api.openworklabs.com/mcp/agent`.
+- The protected resource is exactly `https://work.juggle.im/jwork/api/mcp/agent`.
 - Clients discover OAuth metadata with RFC9728 protected-resource discovery.
-- The authorization server and browser sign-in origin is `https://app.openworklabs.com/api/auth`.
-- OAuth authorize and token requests must include exactly one `resource` value: `https://api.openworklabs.com/mcp/agent`.
+- The authorization server and browser sign-in origin is `https://work.juggle.im/api/auth`.
+- OAuth authorize and token requests must include exactly one `resource` value: `https://work.juggle.im/jwork/api/mcp/agent`.
 - Clients that need registration use dynamic client registration as a fallback during discovery.
 - PKCE is required for public/dynamic clients, and only the `S256` code challenge method is supported.
 - Redirect URIs must be HTTPS callbacks or HTTP loopback callbacks such as `http://127.0.0.1:<port>/callback`. Private-use callback schemes are not accepted for public OAuth clients, except exact allowlisted callbacks for known native clients — currently Cursor Desktop's `cursor://anysphere.cursor-mcp/oauth/callback` — with PKCE S256 enforced.
@@ -180,7 +180,7 @@ JuggleWork Connect is a remote Streamable HTTP MCP server with OAuth:
 
 Clients normally refresh automatically. The values matter when diagnosing reconnects:
 
-- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://app.openworklabs.com/api/auth`, the audience is exactly `https://api.openworklabs.com/mcp/agent`, and access tokens expire after 45 minutes.
+- Public OAuth access tokens are JWTs signed and validated with EdDSA. The issuer is exactly `https://work.juggle.im/api/auth`, the audience is exactly `https://work.juggle.im/jwork/api/mcp/agent`, and access tokens expire after 45 minutes.
 - Refresh tokens are opaque rotating grants with a 30-day inactivity window and a 30-second rotation overlap for near-simultaneous refreshes.
 - Each refresh revokes the previous refresh grant; because JuggleWork stores only token hashes, a replay during the overlap can issue another successor instead of returning prior plaintext.
 - Successor grants remain normal rotating grants. If an old refresh grant is replayed after the overlap, expired, or revoked, the client may receive `invalid_grant` and the client/user refresh-token family is revoked. Reconnect by logging out of the MCP entry and authenticating again.
@@ -199,7 +199,7 @@ Availability is governed by organization membership, role, policy, and exposure 
 
 ## Troubleshooting
 
-- **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://api.openworklabs.com/mcp/agent`.
+- **401 missing or invalid token**: run the client's auth/login command again. Confirm the client points to `https://work.juggle.im/jwork/api/mcp/agent`.
 - **403 membership or scope error**: confirm you selected the right organization and still have membership and required permissions there.
 - **`invalid_grant`**: the refresh grant was expired, revoked, or replayed after the 30-second rotation overlap. Run logout, then auth/login again.
 - **429 rate limit**: wait for the response's `Retry-After` value before retrying.

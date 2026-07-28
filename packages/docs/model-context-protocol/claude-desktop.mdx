@@ -18,12 +18,12 @@ context.
 ## Server URL
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 OAuth sign-in uses your JuggleWork account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free JuggleWork account](https://app.openworklabs.com?mode=sign-up).
+[free JuggleWork account](https://work.juggle.im?mode=sign-up).
 
 ## Connect
 
@@ -34,7 +34,7 @@ pinned into the token. If you do not have an account, create a
 3. Name it `JuggleWork` and set the URL to:
 
    ```text
-   https://api.openworklabs.com/mcp/agent
+   https://work.juggle.im/jwork/api/mcp/agent
    ```
 
 4. Click `Connect`, then finish the browser sign-in and choose your
@@ -49,9 +49,9 @@ For Claude Desktop builds without custom connectors, open `Settings` >
 ```json
 {
   "mcpServers": {
-    "openwork": {
+    "jugglework": {
       "command": "npx",
-      "args": ["-y", "mcp-remote@latest", "https://api.openworklabs.com/mcp/agent"]
+      "args": ["-y", "mcp-remote@latest", "https://work.juggle.im/jwork/api/mcp/agent"]
     }
   }
 }
@@ -62,7 +62,7 @@ JuggleWork accepts. Restart Claude Desktop after editing the config.
 
 ## Switch organizations
 
-Remove the stored MCP auth token for `openwork`, then connect again and choose
+Remove the stored MCP auth token for `jugglework`, then connect again and choose
 the organization you want during browser sign-in.
 
 <Note>

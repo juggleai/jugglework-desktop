@@ -17,31 +17,31 @@ capability names instead of loading hundreds of tool definitions into context.
 ## Server URL
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 OAuth sign-in uses your JuggleWork account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free JuggleWork account](https://app.openworklabs.com?mode=sign-up).
+[free JuggleWork account](https://work.juggle.im?mode=sign-up).
 
 ## Setup
 
 1. Add JuggleWork Connect as a remote HTTP MCP server:
 
    ```sh
-   claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent
+   claude mcp add --transport http jugglework https://work.juggle.im/jwork/api/mcp/agent
    ```
 
    Add `-s user` to make it available in every project.
 
 2. Open Claude Code and run `/mcp`.
 
-3. Select `openwork`, then follow the browser sign-in and choose your
+3. Select `jugglework`, then follow the browser sign-in and choose your
    organization.
 
 ## Switch organizations
 
-Run `/mcp` inside Claude Code, select `openwork`, then clear or
+Run `/mcp` inside Claude Code, select `jugglework`, then clear or
 re-authenticate the connection. The next browser sign-in lets you pick a new
 organization.
 

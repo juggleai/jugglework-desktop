@@ -111,7 +111,7 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
   test("cloud-managed key predicate guards re-import vs manual clobber", () => {
     expect(isCloudManagedProviderKey(LPR_ID)).toBe(true);
     expect(isCloudManagedProviderKey("lpr_anything")).toBe(true);
-    expect(isCloudManagedProviderKey("openwork")).toBe(true);
+    expect(isCloudManagedProviderKey("jugglework")).toBe(true);
     expect(isCloudManagedProviderKey("openai")).toBe(false);
     expect(isCloudManagedProviderKey("anthropic")).toBe(false);
   });
@@ -152,10 +152,10 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(persistEnd).toBeGreaterThan(persistStart);
 
     const persistSource = source.slice(persistStart, persistEnd);
-    expect(persistSource).toContain("const config = await readWorkspaceOpenworkConfigRecord();");
+    expect(persistSource).toContain("const config = await readWorkspaceJuggleWorkConfigRecord();");
     expect(persistSource).toContain("const cloudImports = readWorkspaceCloudImports(config);");
     expect(persistSource).toContain("const nextConfig = withWorkspaceCloudImports(config");
-    expect(persistSource).toContain("const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);");
+    expect(persistSource).toContain("const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);");
     expect(persistSource).toContain('setStateField("importedCloudProviders", nextProviders);');
     expect(source).not.toContain("refreshDesktop" + "CloudSync");
     expect(source).not.toContain("getResource" + "Snapshot");

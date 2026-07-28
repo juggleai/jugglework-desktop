@@ -1144,7 +1144,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   const initialConfig = useMemo(
     () => ({
-      namespace: "openwork-react-session-composer",
+      namespace: "jugglework-react-session-composer",
       onError(error: Error) {
         throw error;
       },

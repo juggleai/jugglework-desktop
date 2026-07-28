@@ -9,7 +9,7 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
   return {
     version: 1,
     kind: "connection_action",
-    source: "openwork-cloud",
+    source: "jugglework-cloud",
     connectionId,
     connectionName,
     authType: "oauth",
@@ -18,7 +18,7 @@ function reconnectStatus(connectionId = "emc_knowledge", connectionName = "Knowl
     actor: "member",
     action: {
       type: "reconnect",
-      surface: "openwork_your_connections",
+      surface: "jugglework_your_connections",
       retry: "search_capabilities",
       label: "Reconnect in Your Connections",
     },
@@ -103,7 +103,7 @@ describe("chat tool error attribution", () => {
       connectionStatus: reconnectStatus(),
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -118,7 +118,7 @@ describe("chat tool error attribution", () => {
       }],
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toEqual({
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_search_capabilities", output)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -133,7 +133,7 @@ describe("chat tool error attribution", () => {
       },
     })
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", errorText)).toEqual({
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_execute_capability", errorText)).toEqual({
       connectionId: "emc_knowledge",
       connectionName: "Knowledge Hub",
       label: "Reconnect",
@@ -151,14 +151,14 @@ describe("chat tool error attribution", () => {
         actor: "organization_admin",
         action: {
           type: "inspect_connection",
-          surface: "openwork_organization_connections",
+          surface: "jugglework_organization_connections",
           retry: "search_capabilities",
         },
       },
     })
 
     expect(reconnectActionFromChatToolResult("malicious_execute_capability", reconnectPayload)).toBeNull()
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", providerPayload)).toBeNull()
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_execute_capability", providerPayload)).toBeNull()
   })
 
   test("does not guess between multiple reconnect targets in one discovery result", () => {
@@ -169,7 +169,7 @@ describe("chat tool error attribution", () => {
       })),
     }
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_search_capabilities", output)).toBeNull()
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_search_capabilities", output)).toBeNull()
   })
 
   test("rejects unversioned, shared, and admin-owned action shapes", () => {
@@ -181,12 +181,12 @@ describe("chat tool error attribution", () => {
       actor: "organization_admin",
       action: {
         type: "reconnect",
-        surface: "openwork_organization_connections",
+        surface: "jugglework_organization_connections",
         retry: "search_capabilities",
       },
     }
 
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: unversioned })).toBeNull()
-    expect(reconnectActionFromChatToolResult("openwork-cloud_execute_capability", { connectionStatus: shared })).toBeNull()
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_execute_capability", { connectionStatus: unversioned })).toBeNull()
+    expect(reconnectActionFromChatToolResult("jugglework-cloud_execute_capability", { connectionStatus: shared })).toBeNull()
   })
 })

@@ -5,12 +5,12 @@ import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, List
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { OPENWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
+import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
-import { isOpenWorkExtensionEnabled, isOpenWorkExtensionHidden, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
@@ -48,8 +48,8 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
     contribution.type === "session-side-panel" || contribution.type === "session-rail-item"
   ) === true;
-  if (hasSessionSurface) return isOpenWorkExtensionEnabled(entry);
-  return !entry.defaultEnabled || isOpenWorkExtensionEnabled(entry);
+  if (hasSessionSurface) return isJuggleWorkExtensionEnabled(entry);
+  return !entry.defaultEnabled || isJuggleWorkExtensionEnabled(entry);
 }
 
 type ComposerProps = {
@@ -69,7 +69,7 @@ type ComposerProps = {
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
-  openWorkModelsEntitled?: boolean;
+  juggleWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
@@ -113,13 +113,13 @@ type ComposerProps = {
   topAccessory?: ReactNode;
 };
 
-const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
-const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
+const FLUSH_PROMPT_EVENT = "jugglework:flushPromptDraft";
+const FOCUS_PROMPT_EVENT = "jugglework:focusPrompt";
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
-const DEFAULT_AGENT_NAME = "openwork";
+const DEFAULT_AGENT_NAME = "jugglework";
 
 function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
@@ -250,7 +250,7 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
 }
 
 function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
-  return origin !== "openwork-connect";
+  return origin !== "jugglework-connect";
 }
 
 function extensionIcon(entry: McpDirectoryInfo, size = 16) {
@@ -523,10 +523,10 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -765,7 +765,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       origin: "local" as const,
     })),
     ...skills.filter((skill) =>
-      skill.origin === "openwork-connect" || !localCommandSkillNames.has(skill.name)
+      skill.origin === "jugglework-connect" || !localCommandSkillNames.has(skill.name)
     ),
   ];
   const pluginSections = importedPlugins
@@ -774,9 +774,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activePlugin = toolMenuSection.startsWith("plugin:")
     ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
     : null;
-  const composerExtensions = OPENWORK_EXTENSION_CATALOG.filter((entry) =>
+  const composerExtensions = JUGGLEWORK_EXTENSION_CATALOG.filter((entry) =>
     !builtInExtensionsDisabled &&
-    !isOpenWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
+    !isJuggleWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
   );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 
@@ -818,7 +818,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     const skill = typeof input === "string"
       ? { name: input, path: "", origin: "local" as const }
       : input;
-    if (skill.origin === "openwork-connect") {
+    if (skill.origin === "jugglework-connect") {
       const prompt = t("composer.connect_skill_prompt", {
         name: skill.name,
         marketplace: skill.marketplaceName ?? "assigned",
@@ -1514,7 +1514,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                         ) : null}
                                       </div>
                                       {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
-                                      {skill.origin === "openwork-connect" ? (
+                                      {skill.origin === "jugglework-connect" ? (
                                         <div className="truncate text-[10px] text-gray-9">
                                           {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
                                         </div>
@@ -1550,7 +1550,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                         </div>
                                       </div>
                                       <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "openwork-connect"
+                                        {entry.origin === "jugglework-connect"
                                           ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
                                             || entry.config.url
                                             || "Remote MCP"
@@ -1708,7 +1708,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     if (!props.steering) props.onModelChange(model);
                   }}
                   disabled={props.steering}
-                  openWorkModelsEntitled={props.openWorkModelsEntitled}
+                  juggleWorkModelsEntitled={props.juggleWorkModelsEntitled}
                 />
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>

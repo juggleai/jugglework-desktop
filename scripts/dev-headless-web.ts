@@ -64,9 +64,9 @@ const readBool = (value: string | undefined) => {
 const silent = process.argv.includes("--silent");
 
 const autoBuildEnabled =
-  process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
+  process.env.JUGGLEWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
     ? true
-    : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
+    : readBool(process.env.JUGGLEWORK_DEV_HEADLESS_WEB_AUTOBUILD);
 
 const runCommand = (command: string, args: string[]) =>
   new Promise<void>((resolve, reject) => {
@@ -116,50 +116,50 @@ const shutdown = (
 
 await ensureTmp();
 
-const remoteAccessEnabled = readBool(process.env.OPENWORK_REMOTE_ACCESS);
+const remoteAccessEnabled = readBool(process.env.JUGGLEWORK_REMOTE_ACCESS);
 const host = remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 const viteHost = process.env.VITE_HOST ?? process.env.HOST ?? host;
-const publicHost = process.env.OPENWORK_PUBLIC_HOST ?? null;
+const publicHost = process.env.JUGGLEWORK_PUBLIC_HOST ?? null;
 const clientHost = publicHost ?? (host === "0.0.0.0" ? "127.0.0.1" : host);
-const workspace = process.env.OPENWORK_WORKSPACE ?? cwd;
-const openworkPort = await resolvePort(process.env.OPENWORK_PORT, "127.0.0.1");
-const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
-const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
-const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
-const openworkServerBin = path.join(
+const workspace = process.env.JUGGLEWORK_WORKSPACE ?? cwd;
+const juggleworkPort = await resolvePort(process.env.JUGGLEWORK_PORT, "127.0.0.1");
+const webPort = await resolvePort(process.env.JUGGLEWORK_WEB_PORT, "127.0.0.1");
+const juggleworkToken = process.env.JUGGLEWORK_TOKEN ?? randomUUID();
+const juggleworkHostToken = process.env.JUGGLEWORK_HOST_TOKEN ?? randomUUID();
+const juggleworkServerBin = path.join(
   cwd,
-  "apps/server/dist/bin/openwork-server",
+  "apps/server/dist/bin/jugglework-server",
 );
 
-const ensureOpenworkServer = async () => {
+const ensureJuggleWorkServer = async () => {
   try {
-    await access(openworkServerBin);
+    await access(juggleworkServerBin);
   } catch {
     if (!autoBuildEnabled) {
       logLine(
-        `[dev:headless-web] Missing JuggleWork server binary at ${openworkServerBin}`,
+        `[dev:headless-web] Missing JuggleWork server binary at ${juggleworkServerBin}`,
       );
       logLine(
-        "[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
+        "[dev:headless-web] Auto-build disabled (JUGGLEWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)",
       );
       logLine(
-        "[dev:headless-web] Run: pnpm --filter openwork-server build:bin",
+        "[dev:headless-web] Run: pnpm --filter jugglework-server build:bin",
       );
       logLine(
-        "[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
+        "[dev:headless-web] Or unset/enable JUGGLEWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.",
       );
       process.exit(1);
     }
 
     logLine(
-      `[dev:headless-web] Missing JuggleWork server binary at ${openworkServerBin}`,
+      `[dev:headless-web] Missing JuggleWork server binary at ${juggleworkServerBin}`,
     );
     logLine(
-      "[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin",
+      "[dev:headless-web] Auto-building: pnpm --filter jugglework-server build:bin",
     );
     try {
-      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
-      await access(openworkServerBin);
+      await runCommand("pnpm", ["--filter", "jugglework-server", "build:bin"]);
+      await access(juggleworkServerBin);
     } catch (error) {
       logLine(
         `[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -169,38 +169,38 @@ const ensureOpenworkServer = async () => {
   }
 };
 
-const openworkUrl = `http://${clientHost}:${openworkPort}`;
+const juggleworkUrl = `http://${clientHost}:${juggleworkPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
   PORT: String(webPort),
-  VITE_OPENWORK_URL: process.env.VITE_OPENWORK_URL ?? openworkUrl,
-  VITE_OPENWORK_PORT: process.env.VITE_OPENWORK_PORT ?? String(openworkPort),
-  VITE_OPENWORK_TOKEN: process.env.VITE_OPENWORK_TOKEN ?? openworkToken,
+  VITE_JUGGLEWORK_URL: process.env.VITE_JUGGLEWORK_URL ?? juggleworkUrl,
+  VITE_JUGGLEWORK_PORT: process.env.VITE_JUGGLEWORK_PORT ?? String(juggleworkPort),
+  VITE_JUGGLEWORK_TOKEN: process.env.VITE_JUGGLEWORK_TOKEN ?? juggleworkToken,
 };
 const headlessEnv = {
   ...process.env,
-  OPENWORK_WORKSPACE: workspace,
-  OPENWORK_HOST: host,
-  OPENWORK_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",
-  OPENWORK_PORT: String(openworkPort),
-  OPENWORK_TOKEN: openworkToken,
-  OPENWORK_HOST_TOKEN: openworkHostToken,
-  OPENWORK_SERVER_BIN: openworkServerBin,
-  OPENWORK_SIDECAR_SOURCE: process.env.OPENWORK_SIDECAR_SOURCE ?? "external",
+  JUGGLEWORK_WORKSPACE: workspace,
+  JUGGLEWORK_HOST: host,
+  JUGGLEWORK_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",
+  JUGGLEWORK_PORT: String(juggleworkPort),
+  JUGGLEWORK_TOKEN: juggleworkToken,
+  JUGGLEWORK_HOST_TOKEN: juggleworkHostToken,
+  JUGGLEWORK_SERVER_BIN: juggleworkServerBin,
+  JUGGLEWORK_SIDECAR_SOURCE: process.env.JUGGLEWORK_SIDECAR_SOURCE ?? "external",
 };
 
-await ensureOpenworkServer();
+await ensureJuggleWorkServer();
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
-logLine(`[dev:headless-web] JuggleWork server: ${openworkUrl}`);
+logLine(`[dev:headless-web] JuggleWork server: ${juggleworkUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);
-logLine("[dev:headless-web] OPENWORK_TOKEN: [REDACTED]");
-logLine("[dev:headless-web] OPENWORK_HOST_TOKEN: [REDACTED]");
+logLine("[dev:headless-web] JUGGLEWORK_TOKEN: [REDACTED]");
+logLine("[dev:headless-web] JUGGLEWORK_HOST_TOKEN: [REDACTED]");
 logLine(
   `[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`,
 );
@@ -212,7 +212,7 @@ const webProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "@openwork/app",
+    "@jugglework/app",
     "exec",
     "vite",
     "--host",
@@ -229,7 +229,7 @@ const headlessProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "openwork-orchestrator",
+    "jugglework-orchestrator",
     "dev",
     "--",
     "start",
@@ -239,8 +239,8 @@ const headlessProcess = spawnLogged(
     "auto",
     "--allow-external",
     ...(remoteAccessEnabled ? ["--remote-access"] : []),
-    "--openwork-port",
-    String(openworkPort),
+    "--jugglework-port",
+    String(juggleworkPort),
   ],
   path.join(tmpDir, "dev-headless.log"),
   headlessEnv,

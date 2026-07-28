@@ -1,10 +1,10 @@
 import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 
 const FLOW_ID = "den-download-link-match-allowed-versions";
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_TOKEN = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() || "";
-const MEMBER_TOKEN = process.env.OPENWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
-const LATEST_WINDOWS_INSTALLER_URL = "https://github.com/different-ai/openwork/releases/latest/download/OpenWork-Installer-win-x64.exe";
+const DEN_API_URL = cleanBaseUrl(process.env.JUGGLEWORK_EVAL_DEN_API_URL);
+const DEN_TOKEN = process.env.JUGGLEWORK_EVAL_DEN_TOKEN?.trim() || "";
+const MEMBER_TOKEN = process.env.JUGGLEWORK_EVAL_MEMBER_DEN_TOKEN?.trim() || DEN_TOKEN;
+const LATEST_WINDOWS_INSTALLER_URL = "https://github.com/juggleai/jugglework-desktop/releases/latest/download/JuggleWork-Installer-win-x64.exe";
 const ALLOWED_VERSIONS = ["0.17.37", "0.17.38"];
 const SELECTED_VERSION = "0.17.38";
 const DISALLOWED_VERSION = "0.17.39";
@@ -144,7 +144,7 @@ export default {
   title: "Organization install links download the highest allowed desktop version",
   kind: "user-facing",
   requiresApp: false,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_TOKEN"],
+  requiredEnv: ["JUGGLEWORK_EVAL_DEN_API_URL", "JUGGLEWORK_EVAL_DEN_TOKEN"],
   steps: [
     {
       name: "Frame 1 — Admin restricts desktop versions",
@@ -185,7 +185,7 @@ export default {
     {
       name: "Frame 3 — Download selects the highest allowed version",
       run: async (ctx) => {
-        await ctx.prove("Clicking download returns OpenWork 0.17.38 instead of the disallowed 0.17.39 release", {
+        await ctx.prove("Clicking download returns JuggleWork 0.17.38 instead of the disallowed 0.17.39 release", {
           voiceover: vo[2],
           action: async () => {
             state.restrictedDownload = await fetchInstallerDownload(state.memberInstallToken);

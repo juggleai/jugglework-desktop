@@ -77,7 +77,7 @@ type MarketplacePackageRow = {
 
 type BuiltInMarketplaceRow = {
   source: "built-in";
-  marketplaceId: "openwork-builtins";
+  marketplaceId: "jugglework-builtins";
   marketplaceName: string;
   entry: McpDirectoryInfo;
   status: MarketplacePackageStatus;
@@ -155,7 +155,7 @@ function pluginComposition(plugin: DenOrgPlugin) {
 }
 
 function isCloudBuiltInPlugin(plugin: DenOrgPlugin) {
-  return plugin.extension?.sourceFormat === "openwork-builtin";
+  return plugin.extension?.sourceFormat === "jugglework-builtin";
 }
 
 function pluginManifestSearchText(plugin: DenOrgPlugin) {
@@ -283,7 +283,7 @@ export function CloudMarketplacesView({
       const active = item?.active ?? enablement?.active ?? isBuiltInConnected?.(entry) ?? false;
       return {
         source: "built-in",
-        marketplaceId: "openwork-builtins",
+        marketplaceId: "jugglework-builtins",
         marketplaceName: "JuggleWork Built-ins",
         entry,
         active,
@@ -341,7 +341,7 @@ export function CloudMarketplacesView({
 
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
-      ...(builtInRows.length > 0 ? [{ id: "openwork-builtins", name: "JuggleWork Built-ins" }] : []),
+      ...(builtInRows.length > 0 ? [{ id: "jugglework-builtins", name: "JuggleWork Built-ins" }] : []),
       ...(includeCloudMarketplaceRows ? marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })) : []),
       ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: "Organization MCP Connections" }] : []),
     ] : [],

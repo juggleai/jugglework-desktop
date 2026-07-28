@@ -18,7 +18,7 @@ function workspaceDirectoryCandidates(workspace) {
     .filter(Boolean);
 }
 
-export function selectOpenworkWorkspaceForConnection(list, directory) {
+export function selectJuggleWorkWorkspaceForConnection(list, directory) {
   const items = Array.isArray(list?.items)
     ? list.items
     : Array.isArray(list?.workspaces)
@@ -35,10 +35,10 @@ export function selectOpenworkWorkspaceForConnection(list, directory) {
   return (activeId ? items.find((item) => trim(item?.id) === activeId) : null) ?? items[0] ?? null;
 }
 
-export function openworkWorkspaceDisplayName(workspace) {
+export function juggleworkWorkspaceDisplayName(workspace) {
   return (
     trim(workspace?.displayName) ||
-    trim(workspace?.openworkWorkspaceName) ||
+    trim(workspace?.juggleworkWorkspaceName) ||
     trim(workspace?.name) ||
     trim(workspace?.id) ||
     null

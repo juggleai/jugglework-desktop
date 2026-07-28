@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import type { McpDirectoryInfo } from "../../../app/constants";
 import { extensionContribution } from "../../../app/extensions";
-import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
+import type { JuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import type { LocalProviderInstallInput } from "./openai-image-extension";
 
 /**
@@ -10,8 +10,8 @@ import type { LocalProviderInstallInput } from "./openai-image-extension";
  * Each extension picks what it needs; unused fields are ignored.
  */
 export type ExtensionConfigContext = {
-  openworkServerClient?: OpenworkServerClient | null;
-  hostOpenworkServerClient?: OpenworkServerClient | null;
+  juggleworkServerClient?: JuggleWorkServerClient | null;
+  hostJuggleWorkServerClient?: JuggleWorkServerClient | null;
   extensionConnections?: Record<string, boolean>;
   onExtensionConnectionChange?: (extensionId: string, connected: boolean) => void;
   restartLocalServer?: () => Promise<boolean>;
@@ -50,10 +50,10 @@ export type ExtensionConfigFactory = (ctx: ExtensionConfigContext) => ReactNode;
 
 export type ExtensionRuntimeContext = Pick<
   ExtensionConfigContext,
-  "openworkServerClient" | "extensionConnections" | "onExtensionConnectionChange"
+  "juggleworkServerClient" | "extensionConnections" | "onExtensionConnectionChange"
 >;
 
-export type OpenWorkExtensionRuntime = {
+export type JuggleWorkExtensionRuntime = {
   id: string;
   settingsPanel?: ExtensionConfigFactory;
   settingsPanelRefs?: string[];
@@ -61,13 +61,13 @@ export type OpenWorkExtensionRuntime = {
 };
 
 const registry = new Map<string, ExtensionConfigFactory>();
-const runtimeRegistry = new Map<string, OpenWorkExtensionRuntime>();
+const runtimeRegistry = new Map<string, JuggleWorkExtensionRuntime>();
 
 export function registerExtensionConfig(id: string, factory: ExtensionConfigFactory) {
   registry.set(id, factory);
 }
 
-export function registerExtensionRuntime(runtime: OpenWorkExtensionRuntime) {
+export function registerExtensionRuntime(runtime: JuggleWorkExtensionRuntime) {
   runtimeRegistry.set(runtime.id, runtime);
   if (runtime.settingsPanel) {
     registerExtensionConfig(runtime.id, runtime.settingsPanel);

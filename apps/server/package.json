@@ -1,17 +1,17 @@
 {
-  "name": "openwork-server",
+  "name": "jugglework-server",
   "version": "0.17.40",
   "description": "Filesystem-backed API for JuggleWork remote clients",
   "type": "module",
   "bin": {
-    "openwork-server": "bin/openwork-server.mjs"
+    "jugglework-server": "bin/jugglework-server.mjs"
   },
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
+    "dev": "JUGGLEWORK_DEV_MODE=1 bun src/cli.ts",
     "test": "bun test",
     "test:artifacts": "bun test src/artifact-files.e2e.test.ts src/workspace-init.test.ts src/server.normalizeWorkspaceRelativePath.test.ts",
-    "build": "tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
-    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
+    "build": "tsc -p tsconfig.json && bun build src/opencode-plugins/jugglework-extensions-preview.ts src/opencode-plugins/jugglework-capabilities-knowledge.ts src/opencode-plugins/jugglework-office-attachments.ts src/opencode-plugins/jugglework-anthropic-adaptive-thinking.ts src/opencode-plugins/jugglework-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
+    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/jugglework-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -24,15 +24,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/juggleai/jugglework-desktop.git",
     "directory": "apps/server"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/apps/server",
+  "homepage": "https://github.com/juggleai/jugglework-desktop/tree/dev/apps/server",
   "bugs": {
-    "url": "https://github.com/different-ai/openwork/issues"
+    "url": "https://github.com/juggleai/jugglework-desktop/issues"
   },
   "keywords": [
-    "openwork",
+    "jugglework",
     "server",
     "opencode",
     "headless",
@@ -55,7 +55,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@openwork/types": "workspace:*",
+    "@jugglework/types": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.2",

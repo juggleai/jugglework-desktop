@@ -68,13 +68,13 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.7
         version: 1.18.7
-      '@openwork/install-config':
+      '@jugglework/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
-      '@openwork/types':
+      '@jugglework/types':
         specifier: workspace:*
         version: link:../../packages/types
-      '@openwork/ui':
+      '@jugglework/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@paper-design/shaders-react':
@@ -244,7 +244,7 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@openwork/types':
+      '@jugglework/types':
         specifier: workspace:*
         version: link:../../packages/types
       electron:
@@ -259,7 +259,7 @@ importers:
 
   apps/installer:
     dependencies:
-      '@openwork/install-config':
+      '@jugglework/install-config':
         specifier: workspace:*
         version: link:../../packages/install-config
       webview-bun:
@@ -277,7 +277,7 @@ importers:
       '@opentui/solid':
         specifier: 0.1.77
         version: 0.1.77(solid-js@1.9.9)(stage-js@1.0.0-alpha.17)(typescript@5.9.3)(web-tree-sitter@0.25.10)
-      openwork-server:
+      jugglework-server:
         specifier: 0.17.40
         version: link:../server
       solid-js:
@@ -336,7 +336,7 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@openwork/types':
+      '@jugglework/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@types/better-sqlite3':
@@ -357,7 +357,7 @@ importers:
 
   apps/ui-demo:
     dependencies:
-      '@openwork/ui':
+      '@jugglework/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       react:
@@ -385,7 +385,7 @@ importers:
 
   packages/connect-link:
     dependencies:
-      '@openwork/types':
+      '@jugglework/types':
         specifier: workspace:*
         version: link:../types
       zod:
@@ -498,9 +498,9 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/openwork-bootstrap: {}
+  packages/jugglework-bootstrap: {}
 
-  packages/openwork-ui-mcp:
+  packages/jugglework-ui-mcp:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0

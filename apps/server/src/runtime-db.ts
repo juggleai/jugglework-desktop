@@ -22,10 +22,10 @@ export type RuntimeNodeSqliteDatabase = {
 export type RuntimeSqliteDatabase = RuntimeBunSqliteDatabase | RuntimeNodeSqliteDatabase;
 
 export function runtimeDbPath(config: ServerConfig): string {
-  const override = process.env.OPENWORK_RUNTIME_DB?.trim();
+  const override = process.env.JUGGLEWORK_RUNTIME_DB?.trim();
   if (override) return resolve(override);
   const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
+  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "jugglework");
   return join(configDir, "runtime.sqlite");
 }
 

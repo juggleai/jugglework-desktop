@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
+import { desktopPolicyKeys } from "@jugglework/types/den/desktop-policies";
 
 import {
   checkDesktopAppRestriction,
@@ -28,13 +28,13 @@ import {
   type DenDesktopConfig,
 } from "../../../app/lib/den";
 import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
-import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
+import { createJuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
 } from "../../../app/lib/den-session-events";
 import { isDesktopRuntime } from "../../../app/lib/runtime-env";
-import { resolveOpenworkConnection } from "../../shell/openwork-connection";
+import { resolveJuggleWorkConnection } from "../../shell/jugglework-connection";
 import { useDenAuth } from "./den-auth-provider";
 import {
   bootstrapBrandingFromDesktopConfig,
@@ -60,7 +60,7 @@ const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
 
 const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
 const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
-const DESKTOP_CONFIG_CACHE_PREFIX = "openwork.den.desktopConfig:";
+const DESKTOP_CONFIG_CACHE_PREFIX = "jugglework.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
   "allowedDesktopVersions",
@@ -368,10 +368,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     let cancelled = false;
 
     void (async () => {
-      const connection = await resolveOpenworkConnection();
+      const connection = await resolveJuggleWorkConnection();
       if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
       lastPushedConnectEnabledRef.current = connectEnabled;
-      await createOpenworkServerClient({
+      await createJuggleWorkServerClient({
         baseUrl: connection.normalizedBaseUrl,
         token: connection.resolvedToken,
         hostToken: connection.resolvedHostToken,
@@ -392,17 +392,17 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         normalizeDenDesktopConfig(configPayload),
       );
     };
-    Object.defineProperty(window, "__openworkApplyDesktopConfig", { value: bridge, configurable: true });
+    Object.defineProperty(window, "__juggleworkApplyDesktopConfig", { value: bridge, configurable: true });
     const refreshBridge = (configPayload: unknown) => {
       devRefreshDesktopConfigRef.current = normalizeDenDesktopConfig(configPayload);
     };
-    Object.defineProperty(window, "__openworkSetDesktopConfigRefreshResult", {
+    Object.defineProperty(window, "__juggleworkSetDesktopConfigRefreshResult", {
       value: refreshBridge,
       configurable: true,
     });
     return () => {
-      Object.defineProperty(window, "__openworkApplyDesktopConfig", { value: undefined, configurable: true });
-      Object.defineProperty(window, "__openworkSetDesktopConfigRefreshResult", { value: undefined, configurable: true });
+      Object.defineProperty(window, "__juggleworkApplyDesktopConfig", { value: undefined, configurable: true });
+      Object.defineProperty(window, "__juggleworkSetDesktopConfigRefreshResult", { value: undefined, configurable: true });
     };
   }, [applyDesktopConfigActions]);
 

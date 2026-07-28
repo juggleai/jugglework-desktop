@@ -6,11 +6,11 @@ import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import type {
-  OpenworkCloudMcpEngineRefresh,
-  OpenworkCloudMcpHealth,
-  OpenworkCloudMcpProviderModelContext,
-  OpenworkServerClient,
-} from "@/app/lib/openwork-server";
+  JuggleWorkCloudMcpEngineRefresh,
+  JuggleWorkCloudMcpHealth,
+  JuggleWorkCloudMcpProviderModelContext,
+  JuggleWorkServerClient,
+} from "@/app/lib/jugglework-server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -49,11 +49,11 @@ import {
   SettingsStatusBadge,
 } from "../settings-section";
 import {
-  OPENWORK_CLOUD_EXPECTED_TOOLS,
+  JUGGLEWORK_CLOUD_EXPECTED_TOOLS,
   clearCloudMcpDisabledIntent,
   cloudMcpDisplaySummary,
-  runOpenworkCloudMcpEngineRefresh,
-  runOpenworkCloudMcpReconciler,
+  runJuggleWorkCloudMcpEngineRefresh,
+  runJuggleWorkCloudMcpReconciler,
   type CloudMcpOperationContext,
 } from "../../connections/cloud-mcp-reconciler";
 import {
@@ -100,10 +100,10 @@ export type ConnectViewProps = {
   session: ConnectSession;
   marketplaceItems?: ExtensionItem[];
   refreshMarketplaceItems?: () => Promise<unknown> | void;
-  openworkClient: OpenworkServerClient | null;
+  juggleworkClient: JuggleWorkServerClient | null;
   workspaceId: string | null;
-  currentModel: OpenworkCloudMcpProviderModelContext | null;
-  onCloudMcpHealthChange?: (health: OpenworkCloudMcpHealth | null) => void;
+  currentModel: JuggleWorkCloudMcpProviderModelContext | null;
+  onCloudMcpHealthChange?: (health: JuggleWorkCloudMcpHealth | null) => void;
   orgMcpConnections: ReturnType<typeof useOrgMcpConnections>;
 };
 
@@ -130,9 +130,9 @@ function ManageInDenButton() {
 }
 
 function buildCloudMcpContext(input: {
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   workspaceId: string | null;
-  currentModel: OpenworkCloudMcpProviderModelContext | null;
+  currentModel: JuggleWorkCloudMcpProviderModelContext | null;
 }): CloudMcpOperationContext | null {
   const workspaceId = input.workspaceId?.trim() ?? "";
   const serverBaseUrl = input.client?.baseUrl.trim() ?? "";
@@ -151,24 +151,24 @@ function buildCloudMcpContext(input: {
   };
 }
 
-export function readyCloudMcpToolIds(health: OpenworkCloudMcpHealth | null): string[] {
+export function readyCloudMcpToolIds(health: JuggleWorkCloudMcpHealth | null): string[] {
   if (!health?.usable) return [];
-  return health.tools.present.filter((tool) => OPENWORK_CLOUD_EXPECTED_TOOLS.some((expected) => expected === tool));
+  return health.tools.present.filter((tool) => JUGGLEWORK_CLOUD_EXPECTED_TOOLS.some((expected) => expected === tool));
 }
 
 function AgentAccessCard(props: {
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   workspaceId: string | null;
-  currentModel: OpenworkCloudMcpProviderModelContext | null;
-  onHealthChange?: (health: OpenworkCloudMcpHealth | null) => void;
+  currentModel: JuggleWorkCloudMcpProviderModelContext | null;
+  onHealthChange?: (health: JuggleWorkCloudMcpHealth | null) => void;
 }) {
   const cloudSession = useCloudSession();
-  const [health, setHealth] = useState<OpenworkCloudMcpHealth | null>(null);
+  const [health, setHealth] = useState<JuggleWorkCloudMcpHealth | null>(null);
   const [busy, setBusy] = useState<"test" | "repair" | "refresh" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [lastEngineRefresh, setLastEngineRefresh] = useState<OpenworkCloudMcpEngineRefresh | null>(null);
+  const [lastEngineRefresh, setLastEngineRefresh] = useState<JuggleWorkCloudMcpEngineRefresh | null>(null);
   const context = buildCloudMcpContext(props);
   const userState = context ? readCloudMcpUserState(context) : null;
   const signedIn = cloudSession.isSignedIn && Boolean(cloudSession.authToken.trim());
@@ -181,7 +181,7 @@ function AgentAccessCard(props: {
     health,
   });
 
-  const updateHealth = (next: OpenworkCloudMcpHealth | null) => {
+  const updateHealth = (next: JuggleWorkCloudMcpHealth | null) => {
     setHealth(next);
     props.onHealthChange?.(next);
   };
@@ -194,7 +194,7 @@ function AgentAccessCard(props: {
       // probe: verify the Cloud endpoint directly from the JuggleWork server as
       // well, so a failure can be attributed to the endpoint, the network
       // path, or the engine — not just reported as the engine's cached state.
-      const result = await runOpenworkCloudMcpReconciler({
+      const result = await runJuggleWorkCloudMcpReconciler({
         mode: "health",
         client: props.client,
         context: { ...context, trigger: "desktop-connect-test" },
@@ -215,7 +215,7 @@ function AgentAccessCard(props: {
     setBusy("refresh");
     setError(null);
     try {
-      const result = await runOpenworkCloudMcpEngineRefresh({
+      const result = await runJuggleWorkCloudMcpEngineRefresh({
         client: props.client,
         context: { ...context, trigger: "desktop-connect-engine-refresh" },
       });
@@ -261,7 +261,7 @@ function AgentAccessCard(props: {
     setError(null);
     try {
       clearCloudMcpDisabledIntent(context);
-      const result = await runOpenworkCloudMcpReconciler({
+      const result = await runJuggleWorkCloudMcpReconciler({
         mode: "repair",
         client: props.client,
         context: { ...context, trigger: "desktop-connect-repair" },
@@ -288,7 +288,7 @@ function AgentAccessCard(props: {
     let cancelled = false;
     setBusy("test");
     setError(null);
-    void runOpenworkCloudMcpReconciler({
+    void runJuggleWorkCloudMcpReconciler({
       mode: "health",
       client: props.client,
       context: { ...context, trigger: "desktop-connect-autocheck" },
@@ -315,7 +315,7 @@ function AgentAccessCard(props: {
     let cancelled = false;
     const retryAfterReconnect = () => {
       if (window.navigator.onLine === false) return;
-      void runOpenworkCloudMcpReconciler({
+      void runJuggleWorkCloudMcpReconciler({
         mode: "repair",
         client,
         context: { ...context, trigger: "desktop-connect-online-retry" },
@@ -439,8 +439,8 @@ function AgentAccessCard(props: {
 }
 
 function AgentAccessAdvanced(props: {
-  health: OpenworkCloudMcpHealth | null;
-  engineRefresh: OpenworkCloudMcpEngineRefresh | null;
+  health: JuggleWorkCloudMcpHealth | null;
+  engineRefresh: JuggleWorkCloudMcpEngineRefresh | null;
   open: boolean;
   onToggle: () => void;
   busyLabel: "test" | "repair" | "refresh" | null;
@@ -862,10 +862,10 @@ function ConnectOrganizationList(props: {
 function ConnectActivePanel(props: {
   connections: DenExternalMcpConnection[];
   marketplaceItems: ExtensionItem[];
-  openworkClient: OpenworkServerClient | null;
+  juggleworkClient: JuggleWorkServerClient | null;
   workspaceId: string | null;
-  currentModel: OpenworkCloudMcpProviderModelContext | null;
-  onCloudMcpHealthChange?: (health: OpenworkCloudMcpHealth | null) => void;
+  currentModel: JuggleWorkCloudMcpProviderModelContext | null;
+  onCloudMcpHealthChange?: (health: JuggleWorkCloudMcpHealth | null) => void;
   loading: boolean;
   error: string | null;
   connectingId: string | null;
@@ -879,7 +879,7 @@ function ConnectActivePanel(props: {
   return (
     <SettingsSection>
       <AgentAccessCard
-        client={props.openworkClient}
+        client={props.juggleworkClient}
         workspaceId={props.workspaceId}
         currentModel={props.currentModel}
         onHealthChange={props.onCloudMcpHealthChange}
@@ -967,7 +967,7 @@ export function ConnectView(props: ConnectViewProps) {
         <ConnectActivePanel
           connections={orgMcpConnections.connections}
           marketplaceItems={marketplaceItems}
-          openworkClient={props.openworkClient}
+          juggleworkClient={props.juggleworkClient}
           workspaceId={props.workspaceId}
           currentModel={props.currentModel}
           onCloudMcpHealthChange={props.onCloudMcpHealthChange}

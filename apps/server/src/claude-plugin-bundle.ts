@@ -50,11 +50,11 @@ export type ClaudePluginBundle = {
 };
 
 function githubApiBase(): string {
-  return (process.env.OPENWORK_GITHUB_API_BASE?.trim() || "https://api.github.com").replace(/\/+$/, "");
+  return (process.env.JUGGLEWORK_GITHUB_API_BASE?.trim() || "https://api.github.com").replace(/\/+$/, "");
 }
 
 function githubRawBase(): string {
-  return (process.env.OPENWORK_GITHUB_RAW_BASE?.trim() || "https://raw.githubusercontent.com").replace(/\/+$/, "");
+  return (process.env.JUGGLEWORK_GITHUB_RAW_BASE?.trim() || "https://raw.githubusercontent.com").replace(/\/+$/, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -99,7 +99,7 @@ export function parseClaudePluginSource(input: string): ClaudePluginSource {
 
 async function fetchGithubJson(url: string): Promise<unknown> {
   const response = await externalFetch(url, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "openwork-server" },
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "jugglework-server" },
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {
@@ -111,7 +111,7 @@ async function fetchGithubJson(url: string): Promise<unknown> {
 
 async function fetchGithubText(url: string): Promise<string> {
   const response = await externalFetch(url, {
-    headers: { Accept: "text/plain", "User-Agent": "openwork-server" },
+    headers: { Accept: "text/plain", "User-Agent": "jugglework-server" },
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) {

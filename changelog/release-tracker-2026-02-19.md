@@ -853,7 +853,7 @@ Turns the hosted worker page into a simpler list-detail picker and adds one-clic
 
 #### Main changes
 - Reworked hosted workers into a clearer list-detail connect view with status and action panels.
-- Added `openwork://connect-remote` deep links so the desktop app can open remote-connect details directly.
+- Added `jugglework://connect-remote` deep links so the desktop app can open remote-connect details directly.
 - Kept manual URL and token copy available when one-click open is unavailable.
 
 #### Lines of code changed since previous release

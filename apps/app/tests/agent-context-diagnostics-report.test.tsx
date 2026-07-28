@@ -6,7 +6,7 @@ import {
   agentContextDiagnosticsReportSchema,
   type AgentContextDiagnosticCheck,
   type AgentContextDiagnosticsReport,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@jugglework/types/agent-context-diagnostics";
 
 import { serializeAgentContextDiagnosticsReport } from "../src/app/lib/agent-context-diagnostics";
 import {
@@ -38,7 +38,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
         : "observed",
     code: passiveEngineCheckIds.has(id) ? `${id}-not-queried` : `${id}-ok`,
     message: passiveEngineCheckIds.has(id) ? `${id} intentionally not queried.` : `${id} verified.`,
-    owner: "openwork-server",
+    owner: "jugglework-server",
     action: "No action required.",
     details: id === "cloud-tool-catalog"
       ? {
@@ -67,8 +67,8 @@ function healthyReport(): AgentContextDiagnosticsReport {
     checks,
     agent: {
       evidenceSource: "configured-intent",
-      defaultAgent: "openwork",
-      configuredOpenworkAgent: {
+      defaultAgent: "jugglework",
+      configuredJuggleWorkAgent: {
         state: "present",
         mode: "primary",
         prompt: {
@@ -86,11 +86,11 @@ function healthyReport(): AgentContextDiagnosticsReport {
           deniedRelevantToolCount: null,
         },
       },
-      pluginLabels: ["openwork-extensions-preview", "openwork-capabilities-knowledge"],
+      pluginLabels: ["jugglework-extensions-preview", "jugglework-capabilities-knowledge"],
     },
     mcps: [
       {
-        name: "openwork-cloud",
+        name: "jugglework-cloud",
         source: "config.global",
         type: "remote",
         enabled: true,
@@ -103,7 +103,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
         liveEngineStatus: "unavailable",
       },
       {
-        name: "openwork-cloud",
+        name: "jugglework-cloud",
         source: "config.remote",
         type: "remote",
         enabled: true,
@@ -171,7 +171,7 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain("Expected");
     expect(html).toContain("Client observed");
     expect(html).toContain("Observed");
-    expect(html).toContain("openwork-extensions-preview");
+    expect(html).toContain("jugglework-extensions-preview");
     expect(html).toContain("config.remote");
     expect(html).toContain("Registration record: Connected");
     expect(html).toContain("Configured default-agent intent");
@@ -206,7 +206,7 @@ describe("AgentContextDiagnosticsReportView", () => {
 
   test("announces false context markers and diagnostic errors without relying on color", () => {
     const report = healthyReport();
-    report.agent.configuredOpenworkAgent.prompt.markers.memoryBank = false;
+    report.agent.configuredJuggleWorkAgent.prompt.markers.memoryBank = false;
     const reportHtml = renderToStaticMarkup(
       <AgentContextDiagnosticsReportView report={report} copied={false} copying={false} onCopy={() => {}} />,
     );
@@ -248,7 +248,7 @@ describe("AgentContextDiagnosticsReportView", () => {
 
   test("renders and serializes an effective ask rule as approval required", () => {
     const report = healthyReport();
-    report.agent.configuredOpenworkAgent.connectToolPermissions.searchCapabilities = "approval-required";
+    report.agent.configuredJuggleWorkAgent.connectToolPermissions.searchCapabilities = "approval-required";
 
     const html = renderToStaticMarkup(
       <AgentContextDiagnosticsReportView report={report} copied={false} copying={false} onCopy={() => {}} />,
@@ -376,7 +376,7 @@ describe("AgentContextDiagnosticsReportView", () => {
   });
 
   test("does not export the obsolete client cloud-catalog probe contract", async () => {
-    const contract = await import("@openwork/types/agent-context-diagnostics");
+    const contract = await import("@jugglework/types/agent-context-diagnostics");
     expect("agentContextCloudCatalogProbeSchema" in contract).toBe(false);
     expect("agentContextCloudCatalogProbeCodeSchema" in contract).toBe(false);
   });

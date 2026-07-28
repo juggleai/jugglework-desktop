@@ -25,11 +25,11 @@ function normalizeScope(value: unknown): TokenScope | null {
 }
 
 function resolveTokenStorePath(config: ServerConfig): string {
-  const override = (process.env.OPENWORK_TOKEN_STORE ?? "").trim();
+  const override = (process.env.JUGGLEWORK_TOKEN_STORE ?? "").trim();
   if (override) return resolve(override);
 
   const configPath = config.configPath?.trim();
-  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "openwork");
+  const configDir = configPath ? dirname(configPath) : join(homedir(), ".config", "jugglework");
   return join(configDir, "tokens.json");
 }
 

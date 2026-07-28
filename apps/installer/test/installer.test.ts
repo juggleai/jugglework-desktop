@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { installConfigUrlFor } from "@openwork/install-config"
+import { installConfigUrlFor } from "@jugglework/install-config"
 
 import {
   appleScriptString,
@@ -49,7 +49,7 @@ describe("mac DMG layout helpers", () => {
       "-out",
       "/tmp/root/.background/bg.tiff",
     ])
-    expect(buildReadWriteDmgArgs({ sourceFolder: "/tmp/root", outputPath: "/tmp/openwork.rw.dmg" })).toEqual([
+    expect(buildReadWriteDmgArgs({ sourceFolder: "/tmp/root", outputPath: "/tmp/jugglework.rw.dmg" })).toEqual([
       "create",
       "-format",
       "UDRW",
@@ -58,11 +58,11 @@ describe("mac DMG layout helpers", () => {
       "-srcfolder",
       "/tmp/root",
       "-ov",
-      "/tmp/openwork.rw.dmg",
+      "/tmp/jugglework.rw.dmg",
     ])
-    expect(buildCompressedDmgArgs({ inputPath: "/tmp/openwork.rw.dmg", outputPath: "/tmp/JuggleWork.dmg" })).toEqual([
+    expect(buildCompressedDmgArgs({ inputPath: "/tmp/jugglework.rw.dmg", outputPath: "/tmp/JuggleWork.dmg" })).toEqual([
       "convert",
-      "/tmp/openwork.rw.dmg",
+      "/tmp/jugglework.rw.dmg",
       "-format",
       "UDZO",
       "-ov",
@@ -78,43 +78,43 @@ describe("mac DMG layout helpers", () => {
 
 describe("desktopBootstrapPath", () => {
   test("honors the explicit override", () => {
-    expect(desktopBootstrapPath({ OPENWORK_DESKTOP_BOOTSTRAP_PATH: "/tmp/custom.json" }, "darwin")).toBe("/tmp/custom.json")
+    expect(desktopBootstrapPath({ JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH: "/tmp/custom.json" }, "darwin")).toBe("/tmp/custom.json")
   })
 
   test("prefers XDG_CONFIG_HOME on every platform", () => {
-    expect(desktopBootstrapPath({ XDG_CONFIG_HOME: "/xdg" }, "linux")).toBe(path.join("/xdg", "openwork", "desktop-bootstrap.json"))
-    expect(desktopBootstrapPath({ XDG_CONFIG_HOME: "/xdg" }, "win32")).toBe(path.join("/xdg", "openwork", "desktop-bootstrap.json"))
+    expect(desktopBootstrapPath({ XDG_CONFIG_HOME: "/xdg" }, "linux")).toBe(path.join("/xdg", "jugglework", "desktop-bootstrap.json"))
+    expect(desktopBootstrapPath({ XDG_CONFIG_HOME: "/xdg" }, "win32")).toBe(path.join("/xdg", "jugglework", "desktop-bootstrap.json"))
   })
 
   test("uses LOCALAPPDATA on Windows and ~/.config elsewhere", () => {
     expect(desktopBootstrapPath({ LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" }, "win32")).toBe(
-      path.join("C:\\Users\\u\\AppData\\Local", "openwork", "desktop-bootstrap.json"),
+      path.join("C:\\Users\\u\\AppData\\Local", "jugglework", "desktop-bootstrap.json"),
     )
-    expect(desktopBootstrapPath({}, "darwin")).toBe(path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json"))
+    expect(desktopBootstrapPath({}, "darwin")).toBe(path.join(os.homedir(), ".config", "jugglework", "desktop-bootstrap.json"))
   })
 
   test("resolves the legacy bootstrap path under ~/.config on every platform", () => {
     expect(legacyDesktopBootstrapPath({ HOME: "/Users/u" }, "darwin")).toBe(
-      path.join("/Users/u", ".config", "openwork", "desktop-bootstrap.json"),
+      path.join("/Users/u", ".config", "jugglework", "desktop-bootstrap.json"),
     )
     expect(legacyDesktopBootstrapPath({ USERPROFILE: "C:\\Users\\u" }, "win32")).toBe(
-      path.join("C:\\Users\\u", ".config", "openwork", "desktop-bootstrap.json"),
+      path.join("C:\\Users\\u", ".config", "jugglework", "desktop-bootstrap.json"),
     )
   })
 })
 
 describe("releaseAssetFor", () => {
   test("resolves per-platform asset names", () => {
-    expect(releaseAssetFor("v0.17.7", "darwin", "arm64").fileName).toBe("openwork-mac-arm64-0.17.7.dmg")
-    expect(releaseAssetFor("0.17.7", "darwin", "x64").fileName).toBe("openwork-mac-x64-0.17.7.dmg")
-    expect(releaseAssetFor("0.17.7", "win32", "x64").fileName).toBe("openwork-win-x64-0.17.7.exe")
-    expect(releaseAssetFor("0.17.7", "linux", "x64").fileName).toBe("openwork-linux-x86_64-0.17.7.AppImage")
-    expect(releaseAssetFor("0.17.7", "linux", "arm64").fileName).toBe("openwork-linux-arm64-0.17.7.AppImage")
+    expect(releaseAssetFor("v0.17.7", "darwin", "arm64").fileName).toBe("jugglework-mac-arm64-0.17.7.dmg")
+    expect(releaseAssetFor("0.17.7", "darwin", "x64").fileName).toBe("jugglework-mac-x64-0.17.7.dmg")
+    expect(releaseAssetFor("0.17.7", "win32", "x64").fileName).toBe("jugglework-win-x64-0.17.7.exe")
+    expect(releaseAssetFor("0.17.7", "linux", "x64").fileName).toBe("jugglework-linux-x86_64-0.17.7.AppImage")
+    expect(releaseAssetFor("0.17.7", "linux", "arm64").fileName).toBe("jugglework-linux-arm64-0.17.7.AppImage")
   })
 
   test("builds the release download URL from the version tag", () => {
     expect(releaseAssetFor("0.17.7", "darwin", "arm64").url).toBe(
-      "https://github.com/different-ai/openwork/releases/download/v0.17.7/openwork-mac-arm64-0.17.7.dmg",
+      "https://github.com/juggleai/jugglework-desktop/releases/download/v0.17.7/jugglework-mac-arm64-0.17.7.dmg",
     )
   })
 
@@ -126,8 +126,8 @@ describe("releaseAssetFor", () => {
 
 describe("windowsInstalledExePath", () => {
   test("reports the installed electron-builder package directory", () => {
-    const temp = mkdtempSync(path.join(os.tmpdir(), "openwork-installed-path-"))
-    const installed = path.join(temp, "Programs", "@openworkdesktop", "JuggleWork.exe")
+    const temp = mkdtempSync(path.join(os.tmpdir(), "jugglework-installed-path-"))
+    const installed = path.join(temp, "Programs", "@juggleworkdesktop", "JuggleWork.exe")
     mkdirSync(path.dirname(installed), { recursive: true })
     writeFileSync(installed, "")
     try {
@@ -141,18 +141,18 @@ describe("windowsInstalledExePath", () => {
 describe("resolveInstallerConfig", () => {
   test("reads env overrides and normalizes URLs", async () => {
     const { config, source } = await resolveInstallerConfig({ env: {
-      OPENWORK_INSTALLER_APP_NAME: "Acme Work",
-      OPENWORK_INSTALLER_CLIENT_NAME: "Acme Corp",
-      OPENWORK_INSTALLER_WEB_URL: "https://openwork.acme.com/",
-      OPENWORK_INSTALLER_API_URL: "https://openwork-api.acme.com",
-      OPENWORK_INSTALLER_REQUIRE_SIGNIN: "true",
+      JUGGLEWORK_INSTALLER_APP_NAME: "Acme Work",
+      JUGGLEWORK_INSTALLER_CLIENT_NAME: "Acme Corp",
+      JUGGLEWORK_INSTALLER_WEB_URL: "https://jugglework.acme.com/",
+      JUGGLEWORK_INSTALLER_API_URL: "https://jugglework-api.acme.com",
+      JUGGLEWORK_INSTALLER_REQUIRE_SIGNIN: "true",
     } })
     expect(source).toBe("env")
     expect(config).toEqual({
       appName: "Acme Work",
       clientName: "Acme Corp",
-      webUrl: "https://openwork.acme.com",
-      apiUrl: "https://openwork-api.acme.com",
+      webUrl: "https://jugglework.acme.com",
+      apiUrl: "https://jugglework-api.acme.com",
       logoUrl: null,
       requireSignin: true,
     })
@@ -160,19 +160,19 @@ describe("resolveInstallerConfig", () => {
 
   test("accepts an optional logo URL and rejects non-http logos", async () => {
     const { config } = await resolveInstallerConfig({ env: {
-      OPENWORK_INSTALLER_CLIENT_NAME: "Acme",
-      OPENWORK_INSTALLER_WEB_URL: "https://openwork.acme.com",
-      OPENWORK_INSTALLER_API_URL: "https://openwork-api.acme.com",
-      OPENWORK_INSTALLER_LOGO_URL: "https://acme.com/logo.svg",
+      JUGGLEWORK_INSTALLER_CLIENT_NAME: "Acme",
+      JUGGLEWORK_INSTALLER_WEB_URL: "https://jugglework.acme.com",
+      JUGGLEWORK_INSTALLER_API_URL: "https://jugglework-api.acme.com",
+      JUGGLEWORK_INSTALLER_LOGO_URL: "https://acme.com/logo.svg",
     } })
     expect(config.logoUrl).toBe("https://acme.com/logo.svg")
     await expect(
       resolveInstallerConfig({
         env: {
-        OPENWORK_INSTALLER_CLIENT_NAME: "Acme",
-        OPENWORK_INSTALLER_WEB_URL: "https://openwork.acme.com",
-        OPENWORK_INSTALLER_API_URL: "https://openwork-api.acme.com",
-        OPENWORK_INSTALLER_LOGO_URL: "file:///etc/passwd",
+        JUGGLEWORK_INSTALLER_CLIENT_NAME: "Acme",
+        JUGGLEWORK_INSTALLER_WEB_URL: "https://jugglework.acme.com",
+        JUGGLEWORK_INSTALLER_API_URL: "https://jugglework-api.acme.com",
+        JUGGLEWORK_INSTALLER_LOGO_URL: "file:///etc/passwd",
         },
       }),
     ).rejects.toThrow()
@@ -185,9 +185,9 @@ describe("resolveInstallerConfig", () => {
   test("prefers env overrides over pasted install links", async () => {
     const resolution = await resolveInstallerConfig({
       env: {
-        OPENWORK_INSTALLER_CLIENT_NAME: "Env",
-        OPENWORK_INSTALLER_WEB_URL: "https://env.example.com",
-        OPENWORK_INSTALLER_API_URL: "https://env-api.example.com",
+        JUGGLEWORK_INSTALLER_CLIENT_NAME: "Env",
+        JUGGLEWORK_INSTALLER_WEB_URL: "https://env.example.com",
+        JUGGLEWORK_INSTALLER_API_URL: "https://env-api.example.com",
       },
       installLink: "not an install link",
     })
@@ -314,7 +314,7 @@ describe("resolve-link API", () => {
       const response = await fetch(`${installerServer.url}api/resolve-link`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-installer-token": installerServer.token },
-        body: JSON.stringify({ installLink: "https://github.com/different-ai/openwork/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe" }),
+        body: JSON.stringify({ installLink: "https://github.com/juggleai/jugglework-desktop/releases/download/v0.17.39/JuggleWork-Installer-win-x64.exe" }),
       })
 
       expect(response.status).toBe(400)
@@ -406,7 +406,7 @@ describe("resolve-link API", () => {
 
 describe("writeBootstrapConfig", () => {
   test("migrates a legacy organization config instead of replacing it with hosted defaults", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jugglework-installer-test-"))
     const env = {
       LOCALAPPDATA: path.join(dir, "LocalAppData"),
       USERPROFILE: path.join(dir, "profile"),
@@ -417,11 +417,11 @@ describe("writeBootstrapConfig", () => {
       mkdirSync(path.dirname(target), { recursive: true })
       mkdirSync(path.dirname(legacy), { recursive: true })
       writeFileSync(target, JSON.stringify({
-        baseUrl: "https://app.openworklabs.com/api/den/",
+        baseUrl: "https://work.juggle.im/api/den/",
         writtenAt: "2026-07-10T13:00:00.000Z",
       }))
       writeFileSync(legacy, JSON.stringify({
-        baseUrl: "https://openwork.organization.internal.example",
+        baseUrl: "https://jugglework.organization.internal.example",
         apiBaseUrl: "https://api.organization.internal.example",
         handoff: { grant: "drop-me" },
         prepared: { orgId: "org_example" },
@@ -429,13 +429,13 @@ describe("writeBootstrapConfig", () => {
         writtenAt: "2026-07-09T12:00:00.000Z",
       }))
       const written = writeBootstrapConfig(
-        { appName: "JuggleWork", clientName: "Hosted", webUrl: "https://app.openworklabs.com/", apiUrl: "https://api.openworklabs.com/", requireSignin: false, logoUrl: null },
+        { appName: "JuggleWork", clientName: "Hosted", webUrl: "https://work.juggle.im/", apiUrl: "https://work.juggle.im/", requireSignin: false, logoUrl: null },
         env,
         "win32",
       )
       expect(written).toBe(target)
       const parsed = JSON.parse(readFileSync(target, "utf8"))
-      expect(parsed.baseUrl).toBe("https://openwork.organization.internal.example")
+      expect(parsed.baseUrl).toBe("https://jugglework.organization.internal.example")
       expect(parsed.apiBaseUrl).toBe("https://api.organization.internal.example")
       expect(parsed.handoff).toBeUndefined()
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
@@ -448,7 +448,7 @@ describe("writeBootstrapConfig", () => {
   })
 
   test("keeps a canonical organization config across repeated hosted reinstalls", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jugglework-installer-test-"))
     const env = {
       LOCALAPPDATA: path.join(dir, "LocalAppData"),
       USERPROFILE: path.join(dir, "profile"),
@@ -457,7 +457,7 @@ describe("writeBootstrapConfig", () => {
     try {
       mkdirSync(path.dirname(target), { recursive: true })
       writeFileSync(target, JSON.stringify({
-        baseUrl: "https://openwork.organization.internal.example",
+        baseUrl: "https://jugglework.organization.internal.example",
         apiBaseUrl: "https://api.organization.internal.example",
         handoff: { grant: "drop-me" },
         prepared: { orgId: "org_example" },
@@ -466,8 +466,8 @@ describe("writeBootstrapConfig", () => {
       const hostedConfig = {
         appName: "JuggleWork",
         clientName: "Hosted",
-        webUrl: "https://api.openworklabs.com/v1/",
-        apiUrl: "https://api.openworklabs.com/",
+        webUrl: "https://work.juggle.im/v1/",
+        apiUrl: "https://work.juggle.im/",
         requireSignin: false,
         logoUrl: null,
       }
@@ -476,7 +476,7 @@ describe("writeBootstrapConfig", () => {
       writeBootstrapConfig(hostedConfig, env, "win32")
 
       const parsed = JSON.parse(readFileSync(target, "utf8"))
-      expect(parsed.baseUrl).toBe("https://openwork.organization.internal.example")
+      expect(parsed.baseUrl).toBe("https://jugglework.organization.internal.example")
       expect(parsed.apiBaseUrl).toBe("https://api.organization.internal.example")
       expect(parsed.handoff).toBeUndefined()
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
@@ -487,7 +487,7 @@ describe("writeBootstrapConfig", () => {
   })
 
   test("replaces an installed hosted default with a custom organization config", () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-test-"))
+    const dir = mkdtempSync(path.join(os.tmpdir(), "jugglework-installer-test-"))
     const env = {
       LOCALAPPDATA: path.join(dir, "LocalAppData"),
       USERPROFILE: path.join(dir, "profile"),
@@ -496,8 +496,8 @@ describe("writeBootstrapConfig", () => {
     try {
       mkdirSync(path.dirname(target), { recursive: true })
       writeFileSync(target, JSON.stringify({
-        baseUrl: "https://app.openworklabs.com/api/den/",
-        apiBaseUrl: "https://api.openworklabs.com/",
+        baseUrl: "https://work.juggle.im/api/den/",
+        apiBaseUrl: "https://work.juggle.im/",
         prepared: { orgId: "org_example" },
         claimLinks: [{ id: "claim_example" }],
       }))
@@ -506,21 +506,21 @@ describe("writeBootstrapConfig", () => {
         {
           appName: "Example Org Work",
           clientName: "Example Org",
-          webUrl: "https://openwork.custom.internal.example",
+          webUrl: "https://jugglework.custom.internal.example",
           apiUrl: "https://api.custom.internal.example",
           requireSignin: true,
-          logoUrl: "https://openwork.custom.internal.example/assets/wordmark.svg",
+          logoUrl: "https://jugglework.custom.internal.example/assets/wordmark.svg",
         },
         env,
         "win32",
       )
 
       const parsed = JSON.parse(readFileSync(target, "utf8"))
-      expect(parsed.baseUrl).toBe("https://openwork.custom.internal.example")
+      expect(parsed.baseUrl).toBe("https://jugglework.custom.internal.example")
       expect(parsed.apiBaseUrl).toBe("https://api.custom.internal.example")
       expect(parsed.requireSignin).toBe(true)
       expect(parsed.brandAppName).toBe("Example Org Work")
-      expect(parsed.brandLogoUrl).toBe("https://openwork.custom.internal.example/assets/wordmark.svg")
+      expect(parsed.brandLogoUrl).toBe("https://jugglework.custom.internal.example/assets/wordmark.svg")
       expect(parsed.prepared).toEqual({ orgId: "org_example" })
       expect(parsed.claimLinks).toEqual([{ id: "claim_example" }])
     } finally {
@@ -531,7 +531,7 @@ describe("writeBootstrapConfig", () => {
 
 describe("removableInstallerBundlePath", () => {
   const homeDir = "/Users/example"
-  const executablePath = "Contents/MacOS/openwork-installer"
+  const executablePath = "Contents/MacOS/jugglework-installer"
 
   test("allows only the installer app bundle in common writable locations", () => {
     expect(removableInstallerBundlePath(`/Applications/Install JuggleWork.app/${executablePath}`, homeDir, "darwin")).toBe(

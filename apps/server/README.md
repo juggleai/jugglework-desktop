@@ -1,20 +1,20 @@
 # JuggleWork Server
 
-Filesystem-backed API for JuggleWork remote clients. This package provides the JuggleWork server layer described in `apps/app/pr/openwork-server.md` and is intentionally independent from the desktop app.
+Filesystem-backed API for JuggleWork remote clients. This package provides the JuggleWork server layer described in `apps/app/pr/jugglework-server.md` and is intentionally independent from the desktop app.
 
 ## Quick start
 
 ```bash
-npm install -g openwork-server
-openwork-server --workspace /path/to/workspace --approval auto
+npm install -g jugglework-server
+jugglework-server --workspace /path/to/workspace --approval auto
 ```
 
-`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+`jugglework-server` ships as a compiled binary, so Bun is not required at runtime.
 
 Or from source:
 
 ```bash
-pnpm --filter openwork-server dev -- \
+pnpm --filter jugglework-server dev -- \
   --workspace /path/to/workspace \
   --approval auto
 ```
@@ -25,7 +25,7 @@ Add `--verbose` to print resolved config details on startup. Use `--version` to 
 
 ## Config file
 
-Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).
+Defaults to `~/.config/jugglework/server.json` (override with `JUGGLEWORK_SERVER_CONFIG` or `--config`).
 
 ```json
 {
@@ -47,33 +47,33 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 
 ## Environment variables
 
-- `OPENWORK_SERVER_CONFIG` path to config JSON
-- `OPENWORK_HOST` / `OPENWORK_PORT`
-- `OPENWORK_TOKEN` client bearer token
-- `OPENWORK_HOST_TOKEN` host approval token
-- `OPENWORK_APPROVAL_MODE` (`manual` | `auto`)
-- `OPENWORK_APPROVAL_TIMEOUT_MS`
-- `OPENWORK_WORKSPACES` (JSON array or comma-separated list of paths)
-- `OPENWORK_CORS_ORIGINS` (comma-separated list or `*`)
-- `OPENWORK_OPENCODE_BASE_URL`
-- `OPENWORK_OPENCODE_DIRECTORY`
-- `OPENWORK_OPENCODE_USERNAME`
-- `OPENWORK_OPENCODE_PASSWORD`
+- `JUGGLEWORK_SERVER_CONFIG` path to config JSON
+- `JUGGLEWORK_HOST` / `JUGGLEWORK_PORT`
+- `JUGGLEWORK_TOKEN` client bearer token
+- `JUGGLEWORK_HOST_TOKEN` host approval token
+- `JUGGLEWORK_APPROVAL_MODE` (`manual` | `auto`)
+- `JUGGLEWORK_APPROVAL_TIMEOUT_MS`
+- `JUGGLEWORK_WORKSPACES` (JSON array or comma-separated list of paths)
+- `JUGGLEWORK_CORS_ORIGINS` (comma-separated list or `*`)
+- `JUGGLEWORK_OPENCODE_BASE_URL`
+- `JUGGLEWORK_OPENCODE_DIRECTORY`
+- `JUGGLEWORK_OPENCODE_USERNAME`
+- `JUGGLEWORK_OPENCODE_PASSWORD`
 
 Token management (scoped tokens):
 
-- `OPENWORK_TOKEN_STORE` path to token store JSON (default: alongside `server.json`)
+- `JUGGLEWORK_TOKEN_STORE` path to token store JSON (default: alongside `server.json`)
 
 File injection / artifacts:
 
-- `OPENWORK_INBOX_ENABLED` (`1` | `0`)
-- `OPENWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
-- `OPENWORK_OUTBOX_ENABLED` (`1` | `0`)
+- `JUGGLEWORK_INBOX_ENABLED` (`1` | `0`)
+- `JUGGLEWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
+- `JUGGLEWORK_OUTBOX_ENABLED` (`1` | `0`)
 
 Sandbox advertisement (for capability discovery):
 
-- `OPENWORK_SANDBOX_ENABLED` (`1` | `0`)
-- `OPENWORK_SANDBOX_BACKEND` (`docker` | `container` | `none`)
+- `JUGGLEWORK_SANDBOX_ENABLED` (`1` | `0`)
+- `JUGGLEWORK_SANDBOX_BACKEND` (`docker` | `container` | `none`)
 
 ## Endpoints
 
@@ -110,7 +110,7 @@ Token management (host/owner auth):
 
 Inbox/outbox:
 
-- `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
+- `POST /workspace/:id/inbox` (multipart upload into `.opencode/jugglework/inbox/`)
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
 - `POST /workspace/:id/files/sessions`
@@ -139,7 +139,7 @@ All writes are gated by host approval.
 
 Host APIs accept either:
 
-- `X-OpenWork-Host-Token: <token>` (legacy host token), or
+- `X-JuggleWork-Host-Token: <token>` (legacy host token), or
 - `Authorization: Bearer <token>` where the token scope is `owner`.
 
 Approvals endpoints:
@@ -147,4 +147,4 @@ Approvals endpoints:
 - `GET /approvals`
 - `POST /approvals/:id` with `{ "reply": "allow" | "deny" }`
 
-Set `OPENWORK_APPROVAL_MODE=auto` to auto-approve during local development.
+Set `JUGGLEWORK_APPROVAL_MODE=auto` to auto-approve during local development.

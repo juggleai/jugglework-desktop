@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { t } from "@/i18n";
 import {
   EnvironmentVariableProvider,
@@ -60,7 +60,7 @@ type EnvItem = EnvironmentVariableItem;
 type EnvironmentEditorState = EnvironmentEditorDraft | null;
 
 export type EnvironmentViewProps = {
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   isRemoteWorkspace: boolean;
   onApplyChanges?: () => Promise<ApplyEnvironmentChangesResult>;
   applyBlocked?: boolean;
@@ -114,7 +114,7 @@ function EnvironmentViewContent(props: EnvironmentViewProps) {
 }
 
 type EnvironmentSettingsPanelProps = {
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   isRemoteWorkspace: boolean;
   canEdit: boolean;
   runtimeKey?: string | null;

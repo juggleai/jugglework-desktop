@@ -1,15 +1,15 @@
 import type { WorkspaceConnectionState } from "../../../app/types";
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import {
-  createOpenworkServerClient,
-  normalizeOpenworkServerUrl,
-  parseOpenworkWorkspaceIdFromUrl,
-  type OpenworkServerClient,
-} from "../../../app/lib/openwork-server";
+  createJuggleWorkServerClient,
+  normalizeJuggleWorkServerUrl,
+  parseJuggleWorkWorkspaceIdFromUrl,
+  type JuggleWorkServerClient,
+} from "../../../app/lib/jugglework-server";
 import { redactTokenLikeText } from "../../../app/utils";
 
 export type RemoteWorkspaceConnectionTarget = {
-  kind: "openwork";
+  kind: "jugglework";
   baseUrl: string;
   endpointLabel: string;
   token: string;
@@ -29,9 +29,9 @@ export type RemoteWorkspaceConnectionResult = {
 type TestOptions = {
   now?: () => number;
   createClient?: (target: RemoteWorkspaceConnectionTarget) => Pick<
-    OpenworkServerClient,
+    JuggleWorkServerClient,
     "health" | "capabilities" | "status" | "listWorkspaces"
-  > | Promise<Pick<OpenworkServerClient, "health" | "capabilities" | "status" | "listWorkspaces">>;
+  > | Promise<Pick<JuggleWorkServerClient, "health" | "capabilities" | "status" | "listWorkspaces">>;
 };
 
 function trim(value: string | null | undefined) {
@@ -59,7 +59,7 @@ function endpointLabel(baseUrl: string) {
   }
 }
 
-function stripOpenworkWorkspaceMount(baseUrl: string) {
+function stripJuggleWorkWorkspaceMount(baseUrl: string) {
   try {
     const url = new URL(baseUrl);
     const segments = url.pathname.split("/").filter(Boolean);
@@ -104,7 +104,7 @@ function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
 }
 
 function remoteSupportMessage(message: string) {
-  return `${message} Upgrade the JuggleWork host and try again. If this continues, contact team@openworklabs.com.`;
+  return `${message} Upgrade the JuggleWork host and try again. If this continues, contact team@juggle.im.`;
 }
 
 export function redactRemoteDiagnosticText(value: string): string {
@@ -117,11 +117,11 @@ export function getRemoteWorkspaceConnectionKey(workspace: WorkspaceInfo): strin
     workspace.workspaceType,
     workspace.remoteType ?? "",
     trim(workspace.baseUrl),
-    trim(workspace.openworkHostUrl),
-    trim(workspace.openworkWorkspaceId),
-    trim(workspace.openworkToken),
-    trim(workspace.openworkClientToken),
-    trim(workspace.openworkHostToken),
+    trim(workspace.juggleworkHostUrl),
+    trim(workspace.juggleworkWorkspaceId),
+    trim(workspace.juggleworkToken),
+    trim(workspace.juggleworkClientToken),
+    trim(workspace.juggleworkHostToken),
   ].join("\u001f");
 }
 
@@ -129,20 +129,20 @@ function displayWorkspaceName(workspace: unknown) {
   if (!workspace || typeof workspace !== "object") return "";
   const value = workspace as {
     displayName?: string | null;
-    openworkWorkspaceName?: string | null;
+    juggleworkWorkspaceName?: string | null;
     name?: string | null;
     id?: string | null;
   };
   return (
     trim(value.displayName) ||
-    trim(value.openworkWorkspaceName) ||
+    trim(value.juggleworkWorkspaceName) ||
     trim(value.name) ||
     trim(value.id)
   );
 }
 
 function defaultCreateClient(target: RemoteWorkspaceConnectionTarget) {
-  return createOpenworkServerClient({
+  return createJuggleWorkServerClient({
     baseUrl: target.baseUrl,
     token: target.token || undefined,
   });
@@ -160,7 +160,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     };
   }
 
-  if (workspace.remoteType && workspace.remoteType !== "openwork") {
+  if (workspace.remoteType && workspace.remoteType !== "jugglework") {
     return {
       ok: false,
       state: {
@@ -171,7 +171,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     };
   }
 
-  const rawHostUrl = trim(workspace.openworkHostUrl) || trim(workspace.baseUrl);
+  const rawHostUrl = trim(workspace.juggleworkHostUrl) || trim(workspace.baseUrl);
   if (!rawHostUrl) {
     return {
       ok: false,
@@ -183,7 +183,7 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
     };
   }
 
-  const normalizedHostUrl = normalizeOpenworkServerUrl(rawHostUrl);
+  const normalizedHostUrl = normalizeJuggleWorkServerUrl(rawHostUrl);
   if (!normalizedHostUrl || !isValidHttpEndpoint(normalizedHostUrl)) {
     return {
       ok: false,
@@ -196,20 +196,20 @@ export function resolveRemoteWorkspaceConnectionTarget(workspace: WorkspaceInfo)
   }
 
   const workspaceId =
-    trim(workspace.openworkWorkspaceId) ||
-    parseOpenworkWorkspaceIdFromUrl(normalizedHostUrl) ||
-    parseOpenworkWorkspaceIdFromUrl(trim(workspace.baseUrl)) ||
+    trim(workspace.juggleworkWorkspaceId) ||
+    parseJuggleWorkWorkspaceIdFromUrl(normalizedHostUrl) ||
+    parseJuggleWorkWorkspaceIdFromUrl(trim(workspace.baseUrl)) ||
     null;
-  const hostBaseUrl = stripOpenworkWorkspaceMount(normalizedHostUrl);
+  const hostBaseUrl = stripJuggleWorkWorkspaceMount(normalizedHostUrl);
   const token =
-    trim(workspace.openworkToken) ||
-    trim(workspace.openworkClientToken) ||
-    trim(workspace.openworkHostToken);
+    trim(workspace.juggleworkToken) ||
+    trim(workspace.juggleworkClientToken) ||
+    trim(workspace.juggleworkHostToken);
 
   return {
     ok: true,
     target: {
-      kind: "openwork",
+      kind: "jugglework",
       baseUrl: hostBaseUrl,
       endpointLabel: endpointLabel(hostBaseUrl),
       token,

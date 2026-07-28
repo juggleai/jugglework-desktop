@@ -1,17 +1,17 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDown, ChevronRight, Loader2, Mic2, MicOff, Radio, SendHorizontal, Sparkles, Square, X } from "lucide-react";
-import { PaperGrainGradient } from "@openwork/ui/react";
+import { PaperGrainGradient } from "@jugglework/ui/react";
 
 import { desktopFetch } from "@/app/lib/desktop";
-import type { OpenworkServerClient, OpenworkSessionMessage } from "@/app/lib/openwork-server";
+import type { JuggleWorkServerClient, JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { publishInspectorSlice, recordInspectorEvent } from "@/app/lib/app-inspector";
-import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
+import { useControlAction, type JuggleWorkControlAction } from "../../../shell/control/control-provider";
 
 type VoiceStatus = "idle" | "connecting" | "listening" | "muted" | "speaking" | "error";
 
@@ -36,7 +36,7 @@ type VoiceRuntimeSnapshot = {
 };
 
 type VoicePanelProps = {
-  client: OpenworkServerClient | null;
+  client: JuggleWorkServerClient | null;
   workspaceId: string | null;
   sessionId: string | null;
   onClose: () => void;
@@ -50,9 +50,9 @@ const VOICE_SUGGESTIONS = [
   "Send the current composer prompt",
 ];
 const TOOL_LABELS: Record<string, string> = {
-  openwork_snapshot: "Checking JuggleWork",
-  openwork_list_actions: "Listing controls",
-  openwork_execute_action: "Running UI action",
+  jugglework_snapshot: "Checking JuggleWork",
+  jugglework_list_actions: "Listing controls",
+  jugglework_execute_action: "Running UI action",
 };
 
 const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
@@ -161,7 +161,7 @@ function voiceAudioArgument(args: unknown) {
   return typeof args.pcm16Base64 === "string" ? args.pcm16Base64.trim() : "";
 }
 
-function messageText(message: OpenworkSessionMessage) {
+function messageText(message: JuggleWorkSessionMessage) {
   return message.parts
     .flatMap((part) => {
       if (part.type !== "text") return [];
@@ -173,7 +173,7 @@ function messageText(message: OpenworkSessionMessage) {
     .trim();
 }
 
-function buildVoiceSessionContext(messages: OpenworkSessionMessage[]) {
+function buildVoiceSessionContext(messages: JuggleWorkSessionMessage[]) {
   const transcript = messages.flatMap((message, index) => {
     const role = message.info.role;
     if (role !== "user" && role !== "assistant") return [];
@@ -200,7 +200,7 @@ function buildVoiceSessionContext(messages: OpenworkSessionMessage[]) {
     .slice(0, 6_000);
 }
 
-async function loadVoiceSessionContext(client: OpenworkServerClient, workspaceId: string | null, sessionId: string | null) {
+async function loadVoiceSessionContext(client: JuggleWorkServerClient, workspaceId: string | null, sessionId: string | null) {
   if (!workspaceId || !sessionId) return "";
   try {
     const response = await client.getSessionMessages(workspaceId, sessionId, { limit: 40 });
@@ -249,7 +249,7 @@ function setRealtimeDiagnostics(text: string) {
 }
 
 async function requestMacMicrophoneAccess() {
-  const ask = window.__OPENWORK_ELECTRON__?.system?.askMicrophoneAccess;
+  const ask = window.__JUGGLEWORK_ELECTRON__?.system?.askMicrophoneAccess;
   if (!ask) return true;
   const result = await ask();
   if (result.platform !== "darwin") return true;
@@ -258,13 +258,13 @@ async function requestMacMicrophoneAccess() {
   return result.granted;
 }
 
-async function executeOpenWorkTool(name: string, args: Record<string, unknown>) {
-  const control = window.__openworkControl;
+async function executeJuggleWorkTool(name: string, args: Record<string, unknown>) {
+  const control = window.__juggleworkControl;
   if (!control) return { ok: false, error: "JuggleWork control surface is not available." };
 
-  if (name === "openwork_snapshot") return { ok: true, snapshot: control.snapshot() };
-  if (name === "openwork_list_actions") return { ok: true, actions: control.listActions() };
-  if (name === "openwork_execute_action") {
+  if (name === "jugglework_snapshot") return { ok: true, snapshot: control.snapshot() };
+  if (name === "jugglework_list_actions") return { ok: true, actions: control.listActions() };
+  if (name === "jugglework_execute_action") {
     const actionId = typeof args.actionId === "string" ? args.actionId.trim() : "";
     if (!actionId) return { ok: false, error: "Missing actionId." };
     const actionArgs = isRecord(args.args) ? args.args : {};
@@ -488,7 +488,7 @@ export function VoicePanel(props: VoicePanelProps) {
       const callId = readString(event, "call_id");
       const args = parseJsonRecord(readString(event, "arguments"));
       addEntry("tool", toolName, { toolName });
-      const output = await executeOpenWorkTool(toolName, args);
+      const output = await executeJuggleWorkTool(toolName, args);
       if (isRecord(output) && output.ok === false) {
         const error = typeof output.error === "string" ? output.error : "Tool failed.";
         addEntry("tool", error, { toolName, error: true });
@@ -670,7 +670,7 @@ export function VoicePanel(props: VoicePanelProps) {
     const text = voiceTextArgument(args);
     setVoiceRuntimeSnapshot((current) => ({ ...current, latestUserTranscript: text }));
     addEntry("user", text);
-    window.dispatchEvent(new CustomEvent("openwork:voice-transcript", { detail: { text } }));
+    window.dispatchEvent(new CustomEvent("jugglework:voice-transcript", { detail: { text } }));
     recordInspectorEvent("voice.inject_transcript", { sessionId: props.sessionId, text });
     return { ok: true, transcript: text };
   }, [addEntry, props.sessionId]);
@@ -696,7 +696,7 @@ export function VoicePanel(props: VoicePanelProps) {
     return dispose;
   }, [assistantPreview, connected, entries, latestUserTranscript, micDiagnostics, micMuted, props.sessionId, realtimeDiagnostics, status, statusText, textCommand.length]);
 
-  const startAction = useMemo<OpenworkControlAction>(() => ({
+  const startAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.start",
     label: "Start Voice Mode",
     description: "Connect the Voice Mode panel to OpenAI Realtime and start listening.",
@@ -707,7 +707,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [connected, props.client, startVoice, status]);
   useControlAction(startAction);
 
-  const stopAction = useMemo<OpenworkControlAction>(() => ({
+  const stopAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.stop",
     label: "Stop Voice Mode",
     description: "Disconnect the active Voice Mode Realtime session.",
@@ -718,7 +718,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [connected, stopVoice]);
   useControlAction(stopAction);
 
-  const muteAction = useMemo<OpenworkControlAction>(() => ({
+  const muteAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.toggle_mute",
     label: micMuted ? "Unmute Voice Mode" : "Mute Voice Mode",
     description: "Toggle the microphone track without closing the Realtime session.",
@@ -730,7 +730,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [connected, micMuted, toggleMic]);
   useControlAction(muteAction);
 
-  const injectTranscriptAction = useMemo<OpenworkControlAction>(() => ({
+  const injectTranscriptAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.inject_transcript",
     label: "Inject a voice transcript",
     description: "Deterministic eval hook: add a transcript to Voice Mode and place it in the composer.",
@@ -743,7 +743,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [injectTranscript]);
   useControlAction(injectTranscriptAction);
 
-  const sendTextAction = useMemo<OpenworkControlAction>(() => ({
+  const sendTextAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.send_text",
     label: "Send text through Voice Mode",
     description: "Send a deterministic text command through the active OpenAI Realtime voice session.",
@@ -756,7 +756,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [sendTextCommand]);
   useControlAction(sendTextAction);
 
-  const injectAudioAction = useMemo<OpenworkControlAction>(() => ({
+  const injectAudioAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.inject_audio",
     label: "Inject voice audio",
     description: "Deterministic eval hook: send PCM16 audio through the active OpenAI Realtime input buffer.",
@@ -768,7 +768,7 @@ export function VoicePanel(props: VoicePanelProps) {
   }), [injectAudio]);
   useControlAction(injectAudioAction);
 
-  const statusAction = useMemo<OpenworkControlAction>(() => ({
+  const statusAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "voice.status",
     label: "Read Voice Mode status",
     description: "Return the Voice Mode runtime state for tests and agents.",

@@ -17,7 +17,7 @@ You need:
 - A JuggleWork organization with the Enterprise SSO entitlement.
 - Owner or admin access in that JuggleWork organization.
 - Admin access to a Microsoft Entra enterprise application.
-- The final JuggleWork auth origin, for example `https://app.openworklabs.com`.
+- The final JuggleWork auth origin, for example `https://work.juggle.im`.
 
 ## 1. Create the Entra enterprise app
 
@@ -33,9 +33,9 @@ Set:
 
 | Entra field | Value |
 | --- | --- |
-| Identifier (Entity ID) | The JuggleWork auth origin, for example `https://app.openworklabs.com` |
-| Reply URL (Assertion Consumer Service URL) | The ACS URL JuggleWork shows after saving SAML, for example `https://app.openworklabs.com/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` |
-| Sign on URL | The org-specific JuggleWork **Sign-in URL** shown after saving SAML, for example `https://app.openworklabs.com/sso/<org-slug>` |
+| Identifier (Entity ID) | The JuggleWork auth origin, for example `https://work.juggle.im` |
+| Reply URL (Assertion Consumer Service URL) | The ACS URL JuggleWork shows after saving SAML, for example `https://work.juggle.im/api/auth/sso/saml2/sp/acs/jugglework-sso-<org-id>` |
+| Sign on URL | The org-specific JuggleWork **Sign-in URL** shown after saving SAML, for example `https://work.juggle.im/sso/<org-slug>` |
 | Relay State | Leave blank |
 
 The Entity ID must be the JuggleWork auth origin. Do not use the Entra tenant
@@ -91,7 +91,7 @@ original external email address.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `AADSTS700016: Application with identifier 'https://app.openworklabs.com' was not found` | Entra's Entity ID does not match JuggleWork's SAML issuer | Set **Identifier (Entity ID)** to the JuggleWork auth origin |
+| `AADSTS700016: Application with identifier 'https://work.juggle.im' was not found` | Entra's Entity ID does not match JuggleWork's SAML issuer | Set **Identifier (Entity ID)** to the JuggleWork auth origin |
 | `/?error=saml_error&error_description=Invalid%20SAML%20response` | Entra is signing with a different certificate than the one saved in JuggleWork, or assertions are not signed | Confirm **Signing Option** is `Sign SAML assertion`, then paste Entra's active **Certificate (Base64)** into JuggleWork and save |
 | `/?error=unsolicited_response&error_description=IdP-initiated+SSO+not+allowed` | The deployment is running an older JuggleWork version that rejects IdP-initiated SAML | Upgrade JuggleWork, or launch from the org-specific JuggleWork **Sign-in URL** |
 | User reaches Microsoft but cannot continue | The user is not assigned to the enterprise application | Add the user under **Users and groups** |

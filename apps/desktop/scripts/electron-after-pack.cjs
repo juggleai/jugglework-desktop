@@ -6,8 +6,8 @@ const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
 const sidecarBases = [
   "opencode",
-  "openwork-server",
-  "openwork-orchestrator",
+  "jugglework-server",
+  "jugglework-orchestrator",
   "chrome-devtools-mcp",
 ];
 
@@ -56,7 +56,7 @@ function signComputerUseHelper(context) {
     throw new Error(`Missing Computer Use helper app at ${helperPath}`);
   }
 
-  const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
+  const identity = process.env.JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY
     || process.env.CSC_NAME
     || process.env.APPLE_CODESIGN_IDENTITY
     || "-";

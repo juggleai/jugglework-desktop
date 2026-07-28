@@ -4,9 +4,9 @@ import {
   derivePendingCloudPluginChanges,
   readPendingCloudSyncChanges,
 } from "../src/app/cloud/desktop-cloud-sync";
-import type { OpenworkDesktopCloudSyncChange } from "../src/app/lib/openwork-server";
+import type { JuggleWorkDesktopCloudSyncChange } from "../src/app/lib/jugglework-server";
 
-function change(input: Partial<OpenworkDesktopCloudSyncChange> & Pick<OpenworkDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): OpenworkDesktopCloudSyncChange {
+function change(input: Partial<JuggleWorkDesktopCloudSyncChange> & Pick<JuggleWorkDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): JuggleWorkDesktopCloudSyncChange {
   return {
     marketplaceId: undefined,
     pluginId: undefined,

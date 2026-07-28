@@ -57,7 +57,7 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
 
   useEffect(() => {
     let cancelled = false;
-    const bridge = window.__OPENWORK_ELECTRON__?.system?.getArchitectureInfo;
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.system?.getArchitectureInfo;
     if (!bridge) {
       dispatch({ type: "checked" });
       return;
@@ -86,12 +86,12 @@ export function ArchitectureMismatchGate({ children }: ArchitectureMismatchGateP
   const openDownload = useCallback(() => {
     const url = info?.downloadUrl || info?.releaseUrl;
     if (!url) return;
-    void window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(url);
+    void window.__JUGGLEWORK_ELECTRON__?.shell?.openExternal?.(url);
   }, [info?.downloadUrl, info?.releaseUrl]);
 
   const openRelease = useCallback(() => {
     if (!info?.releaseUrl) return;
-    void window.__OPENWORK_ELECTRON__?.shell?.openExternal?.(info.releaseUrl);
+    void window.__JUGGLEWORK_ELECTRON__?.shell?.openExternal?.(info.releaseUrl);
   }, [info?.releaseUrl]);
 
   if (!checked) return null;

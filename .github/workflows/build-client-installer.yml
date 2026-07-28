@@ -22,11 +22,11 @@ on:
         required: true
         type: string
       web_url:
-        description: "Deployment web origin (desktop-bootstrap baseUrl, e.g. https://openwork.acme.com)"
+        description: "Deployment web origin (desktop-bootstrap baseUrl, e.g. https://jugglework.acme.com)"
         required: true
         type: string
       api_url:
-        description: "Deployment Den API origin (desktop-bootstrap apiBaseUrl, e.g. https://openwork-api.acme.com)"
+        description: "Deployment Den API origin (desktop-bootstrap apiBaseUrl, e.g. https://jugglework-api.acme.com)"
         required: true
         type: string
       client_logo_url:
@@ -124,19 +124,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Build the workspace dependency's dist first: @openwork/install-config's
+          # Build the workspace dependency's dist first: @jugglework/install-config's
           # "default" export points at dist/, which a fresh checkout lacks.
           (cd packages/install-config && bun install && bun run build)
           # bun 1.3.9 on Windows can fail to create the parent-relative
           # workspace symlink (ENOENT) after installing every other package;
           # the copy fallback below repairs exactly that case.
           (cd apps/installer && bun install) || [ "${{ matrix.os_type }}" = "windows" ]
-          if [ ! -e "apps/installer/node_modules/@openwork/install-config/package.json" ]; then
-            rm -rf "apps/installer/node_modules/@openwork/install-config"
-            mkdir -p "apps/installer/node_modules/@openwork"
-            cp -R "packages/install-config" "apps/installer/node_modules/@openwork/install-config"
+          if [ ! -e "apps/installer/node_modules/@jugglework/install-config/package.json" ]; then
+            rm -rf "apps/installer/node_modules/@jugglework/install-config"
+            mkdir -p "apps/installer/node_modules/@jugglework"
+            cp -R "packages/install-config" "apps/installer/node_modules/@jugglework/install-config"
           fi
-          test -e "apps/installer/node_modules/@openwork/install-config/package.json"
+          test -e "apps/installer/node_modules/@jugglework/install-config/package.json"
 
       - name: Test
         shell: bash
@@ -172,18 +172,18 @@ jobs:
           cd apps/installer
           bun build --compile --minify --target=${{ matrix.bun_target }} \
             src/index.ts src/server-worker.ts \
-            --outfile "dist/openwork-installer"
+            --outfile "dist/jugglework-installer"
 
       - name: Smoke test (headless dry run against the client deployment)
         # Cross-compiled mac x64 output cannot run on the arm64 runner.
         if: github.event.inputs.smoke_check_deployment == 'true' && matrix.bun_target != 'bun-darwin-x64'
         shell: bash
         env:
-          OPENWORK_DESKTOP_BOOTSTRAP_PATH: ${{ runner.temp }}/smoke/desktop-bootstrap.json
+          JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH: ${{ runner.temp }}/smoke/desktop-bootstrap.json
         run: |
           cd apps/installer
-          binary=dist/openwork-installer
-          if [ "${{ matrix.os_type }}" = "windows" ]; then binary=dist/openwork-installer.exe; fi
+          binary=dist/jugglework-installer
+          if [ "${{ matrix.os_type }}" = "windows" ]; then binary=dist/jugglework-installer.exe; fi
           "$binary" --headless --dry-run
 
       # --- macOS: wrap in a .app bundle, sign, notarize ------------------
@@ -196,7 +196,7 @@ jobs:
           APP="dist/JuggleWork Installer.app"
           rm -rf "$APP"
           mkdir -p "$APP/Contents/MacOS"
-          cp dist/openwork-installer "$APP/Contents/MacOS/openwork-installer"
+          cp dist/jugglework-installer "$APP/Contents/MacOS/jugglework-installer"
           cat > "$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -204,8 +204,8 @@ jobs:
           <dict>
             <key>CFBundleName</key><string>JuggleWork Installer</string>
             <key>CFBundleDisplayName</key><string>JuggleWork Installer</string>
-            <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
-            <key>CFBundleExecutable</key><string>openwork-installer</string>
+            <key>CFBundleIdentifier</key><string>com.juggleai.jugglework.installer</string>
+            <key>CFBundleExecutable</key><string>jugglework-installer</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1</string>
@@ -273,7 +273,7 @@ jobs:
 
           codesign --force --options runtime --timestamp \
             --entitlements "$RUNNER_TEMP/entitlements.plist" \
-            --sign "$IDENTITY" "$APP/Contents/MacOS/openwork-installer"
+            --sign "$IDENTITY" "$APP/Contents/MacOS/jugglework-installer"
           codesign --force --options runtime --timestamp \
             --entitlements "$RUNNER_TEMP/entitlements.plist" \
             --sign "$IDENTITY" "$APP"
@@ -315,8 +315,8 @@ jobs:
         run: |
           set -euo pipefail
           cd apps/installer/dist
-          chmod +x openwork-installer
-          tar -czf "${{ matrix.artifact }}.tar.gz" openwork-installer
+          chmod +x jugglework-installer
+          tar -czf "${{ matrix.artifact }}.tar.gz" jugglework-installer
           mkdir -p "$RUNNER_TEMP/out"
           mv "${{ matrix.artifact }}.tar.gz" "$RUNNER_TEMP/out/"
 
@@ -327,14 +327,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/signpath-unsigned"
-          cp apps/installer/dist/openwork-installer.exe "$RUNNER_TEMP/signpath-unsigned/"
+          cp apps/installer/dist/jugglework-installer.exe "$RUNNER_TEMP/signpath-unsigned/"
 
       - name: Upload unsigned Windows installer for SignPath
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
         id: upload-unsigned-windows-installer
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-openwork-installer-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unsigned-jugglework-installer-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/signpath-unsigned/*.exe
           if-no-files-found: error
           retention-days: 1
@@ -376,16 +376,16 @@ jobs:
               echo "SignPath returned no signed executable" >&2
               exit 1
             fi
-            cp "$signed" "$RUNNER_TEMP/out/openwork-installer.exe"
+            cp "$signed" "$RUNNER_TEMP/out/jugglework-installer.exe"
           else
             echo "::warning::Packaging UNSIGNED Windows installer (sign_windows=false)."
-            cp apps/installer/dist/openwork-installer.exe "$RUNNER_TEMP/out/openwork-installer.exe"
+            cp apps/installer/dist/jugglework-installer.exe "$RUNNER_TEMP/out/jugglework-installer.exe"
           fi
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openwork-installer-${{ steps.client.outputs.slug }}-${{ matrix.artifact }}
+          name: jugglework-installer-${{ steps.client.outputs.slug }}-${{ matrix.artifact }}
           path: ${{ runner.temp }}/out/*
           if-no-files-found: error
           retention-days: 30

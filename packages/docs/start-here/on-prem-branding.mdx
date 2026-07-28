@@ -29,12 +29,12 @@ For Helm installations, set internal HTTPS names that are reachable from member 
 ```yaml
 config:
   public:
-    webOrigin: "https://openwork.example.internal"
-    apiOrigin: "https://api.openwork.example.internal"
-    desktopDenBaseUrl: "https://openwork.example.internal"
-    corsOrigins: "https://openwork.example.internal,https://api.openwork.example.internal"
-    betterAuthTrustedOrigins: "https://openwork.example.internal"
-    webAppHosts: "openwork.example.internal"
+    webOrigin: "https://jugglework.example.internal"
+    apiOrigin: "https://api.jugglework.example.internal"
+    desktopDenBaseUrl: "https://jugglework.example.internal"
+    corsOrigins: "https://jugglework.example.internal,https://api.jugglework.example.internal"
+    betterAuthTrustedOrigins: "https://jugglework.example.internal"
+    webAppHosts: "jugglework.example.internal"
 ```
 
 This maps `config.public.apiOrigin` to `DEN_API_PUBLIC_URL`. Do not set it to `localhost`, a Kubernetes service name, or an Internet hostname that air-gapped desktops cannot reach.

@@ -1,4 +1,4 @@
-import { getMcpServerName, isBuiltInOpenWorkExtension, type McpDirectoryInfo } from "../../../app/constants";
+import { getMcpServerName, isBuiltInJuggleWorkExtension, type McpDirectoryInfo } from "../../../app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "../../../app/cloud/import-state";
 import type { PendingCloudPluginChange } from "../../../app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
@@ -53,16 +53,16 @@ export type ExtensionItemBuildInput = {
 };
 
 const MCP_IMPORT_PATH_PREFIX = "opencode.jsonc#mcp.";
-const OPENWORK_PROVIDED_SKILL_NAMES = new Set([
+const JUGGLEWORK_PROVIDED_SKILL_NAMES = new Set([
   "workspace-guide",
   "skill-creator",
 ]);
 
-export function isOpenworkProvidedSkill(skill: Pick<SkillCard, "name" | "path">) {
+export function isJuggleWorkProvidedSkill(skill: Pick<SkillCard, "name" | "path">) {
   const normalizedName = skill.name.trim().toLowerCase();
   const normalizedPath = skill.path.replace(/\\/g, "/").toLowerCase();
   return normalizedPath.includes("/.opencode/skills/") &&
-    OPENWORK_PROVIDED_SKILL_NAMES.has(normalizedName);
+    JUGGLEWORK_PROVIDED_SKILL_NAMES.has(normalizedName);
 }
 
 export function isToggleControlledExtension(entry: McpDirectoryInfo) {
@@ -164,7 +164,7 @@ function childKeysForPlugin(plugin: CloudImportedPlugin) {
 }
 
 export function buildExtensionItems(input: ExtensionItemBuildInput) {
-  const builtInItems = input.quickConnect.filter(isBuiltInOpenWorkExtension).map((entry): ExtensionItem => {
+  const builtInItems = input.quickConnect.filter(isBuiltInJuggleWorkExtension).map((entry): ExtensionItem => {
     const enablement = entry.extensionManifest?.enablement
       ? evaluateEnablement(entry.extensionManifest.enablement, input.enablementContext)
       : null;
@@ -280,7 +280,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
   }
 
   const standaloneMcpEntries = input.quickConnect.filter((entry) => {
-    if (isBuiltInOpenWorkExtension(entry)) return false;
+    if (isBuiltInJuggleWorkExtension(entry)) return false;
     const serverName = getMcpServerName(entry);
     if (groupedMcpServerNames.has(serverName)) return false;
     return input.mcpServers.some((server) => server.name === serverName);
@@ -336,7 +336,7 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
       ...input.quickConnect.filter((entry) => {
-        if (isBuiltInOpenWorkExtension(entry)) return false;
+        if (isBuiltInJuggleWorkExtension(entry)) return false;
         const serverName = getMcpServerName(entry);
         if (groupedMcpServerNames.has(serverName)) return false;
         if (hasRenderableOrgEquivalent(entry)) return false;

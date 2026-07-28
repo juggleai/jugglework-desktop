@@ -4,7 +4,7 @@ description: "Run a private JuggleWork workspace host and connect the desktop ap
 ---
 
 The desktop repository supports self-hosting an individual workspace through
-`openwork-server`. Organization accounts, shared providers, and the hosted
+`jugglework-server`. Organization accounts, shared providers, and the hosted
 control plane are supplied by the separate JuggleWork server deployment.
 
 ## Run the host
@@ -19,8 +19,8 @@ docker compose up --build
 
 Configure strong values for:
 
-- `OPENWORK_TOKEN`
-- `OPENWORK_HOST_TOKEN`
+- `JUGGLEWORK_TOKEN`
+- `JUGGLEWORK_HOST_TOKEN`
 
 Persist `/workspace` for project files and `/data` for host and OpenCode state.
 Put HTTPS and your normal access controls in front of port `8787` before
@@ -31,7 +31,7 @@ exposing it outside a trusted network.
 In JuggleWork, create a remote workspace and provide:
 
 - The public JuggleWork host URL.
-- The client token configured as `OPENWORK_TOKEN`.
+- The client token configured as `JUGGLEWORK_TOKEN`.
 
 The desktop app connects to the JuggleWork host API. OpenCode remains private
 behind that API and should not be exposed directly.

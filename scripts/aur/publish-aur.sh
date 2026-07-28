@@ -21,7 +21,7 @@ if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
 fi
 
 # AUR package repo name (AUR repo = ssh://aur@aur.archlinux.org/<name>.git)
-AUR_REPO="${AUR_REPO:-openwork}"
+AUR_REPO="${AUR_REPO:-jugglework}"
 AUR_REMOTE="ssh://aur@aur.archlinux.org/${AUR_REPO}.git"
 
 if [ "${AUR_SKIP_UPDATE:-}" != "1" ]; then

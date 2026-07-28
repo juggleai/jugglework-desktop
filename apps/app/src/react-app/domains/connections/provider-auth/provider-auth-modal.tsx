@@ -49,7 +49,7 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  openwork: "JuggleWork",
+  jugglework: "JuggleWork",
   opencode: "OpenCode Zen",
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -58,7 +58,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   jugglerouter: "JuggleRouter",
 };
 
-const OPENWORK_MODELS_PROVIDER_ID = "openwork";
+const JUGGLEWORK_MODELS_PROVIDER_ID = "jugglework";
 
 export type ProviderAuthModalProps = {
   open: boolean;
@@ -79,8 +79,8 @@ export type ProviderAuthModalProps = {
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
-  showOpenWorkModelsSubscribe?: boolean;
-  onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  showJuggleWorkModelsSubscribe?: boolean;
+  onSubscribeJuggleWorkModels?: () => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -89,7 +89,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
+    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "jugglework-subscribe"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -198,22 +198,22 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       })
       .sort(compareProviders);
 
-    if (props.showOpenWorkModelsSubscribe) {
-      const connectedToOpenWork = connected.has(OPENWORK_MODELS_PROVIDER_ID);
+    if (props.showJuggleWorkModelsSubscribe) {
+      const connectedToJuggleWork = connected.has(JUGGLEWORK_MODELS_PROVIDER_ID);
       return [
         {
-          id: OPENWORK_MODELS_PROVIDER_ID,
+          id: JUGGLEWORK_MODELS_PROVIDER_ID,
           name: "JuggleWork",
           methods: [{ type: "cloud", label: "Subscribe" }],
-          connected: connectedToOpenWork,
+          connected: connectedToJuggleWork,
           env: [],
         },
-        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== OPENWORK_MODELS_PROVIDER_ID),
+        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== JUGGLEWORK_MODELS_PROVIDER_ID),
       ];
     }
 
     return nextEntries;
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showOpenWorkModelsSubscribe]);
+  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showJuggleWorkModelsSubscribe]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -533,8 +533,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setSelectedProviderId(entry.id);
 
-    if (props.showOpenWorkModelsSubscribe && entry.id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID) {
-      setView("openwork-subscribe");
+    if (props.showJuggleWorkModelsSubscribe && entry.id.trim().toLowerCase() === JUGGLEWORK_MODELS_PROVIDER_ID) {
+      setView("jugglework-subscribe");
       return;
     }
 
@@ -600,7 +600,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "openwork-subscribe") {
+    if (resolvedView === "jugglework-subscribe") {
       resetState();
       return;
     }
@@ -957,7 +957,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 </div>
               ) : null}
 
-              {resolvedView === "openwork-subscribe" && selectedEntry ? (
+              {resolvedView === "jugglework-subscribe" && selectedEntry ? (
                 <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
                   <div className="flex items-center justify-between gap-4">
                     <div>
@@ -971,7 +971,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </Button>
                   </div>
                   <div className="flex items-center justify-end">
-                    <Button onClick={() => void props.onSubscribeOpenWorkModels?.()} disabled={actionDisabled}>
+                    <Button onClick={() => void props.onSubscribeJuggleWorkModels?.()} disabled={actionDisabled}>
                       Subscribe
                     </Button>
                   </div>

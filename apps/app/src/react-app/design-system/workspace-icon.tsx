@@ -21,7 +21,7 @@ export type WorkspaceIconProps = {
 };
 
 export function WorkspaceIcon({ workspaceId, sizeClass = "size-4" }: WorkspaceIconProps) {
-  const color = PLANE_COLORS[hashString(workspaceId.trim() || "openwork") % PLANE_COLORS.length] ?? PLANE_COLORS[0];
+  const color = PLANE_COLORS[hashString(workspaceId.trim() || "jugglework") % PLANE_COLORS.length] ?? PLANE_COLORS[0];
 
   return (
     <span

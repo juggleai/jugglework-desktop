@@ -112,7 +112,7 @@ try {
 
     const verbatimDriveRoot = String.raw`\\?\C:\Users\Test\JuggleWork\starter`;
     assert.equal(toSessionTransportDirectory(verbatimDriveRoot), String.raw`C:\Users\Test\JuggleWork\starter`);
-    assert.equal(describeDirectoryScope(verbatimDriveRoot).normalized, "c:/users/test/openwork/starter");
+    assert.equal(describeDirectoryScope(verbatimDriveRoot).normalized, "c:/users/test/jugglework/starter");
   });
 
   step("round-trip invariant: every query path equals the create path (unix)", () => {

@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/install-config",
+  "name": "@jugglework/install-config",
   "private": true,
   "type": "module",
   "exports": {

@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/types",
+  "name": "@jugglework/types",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,20 +14,20 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
-    "./openwork-affordance": {
-      "types": "./src/openwork-affordance.ts",
-      "development": "./src/openwork-affordance.ts",
-      "default": "./src/openwork-affordance.ts"
+    "./jugglework-affordance": {
+      "types": "./src/jugglework-affordance.ts",
+      "development": "./src/jugglework-affordance.ts",
+      "default": "./src/jugglework-affordance.ts"
     },
-    "./openwork-context": {
-      "types": "./src/openwork-context.ts",
-      "development": "./src/openwork-context.ts",
-      "default": "./src/openwork-context.ts"
+    "./jugglework-context": {
+      "types": "./src/jugglework-context.ts",
+      "development": "./src/jugglework-context.ts",
+      "default": "./src/jugglework-context.ts"
     },
-    "./openwork-provider": {
-      "types": "./src/openwork-provider.ts",
-      "development": "./src/openwork-provider.ts",
-      "default": "./src/openwork-provider.ts"
+    "./jugglework-provider": {
+      "types": "./src/jugglework-provider.ts",
+      "development": "./src/jugglework-provider.ts",
+      "default": "./src/jugglework-provider.ts"
     },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",

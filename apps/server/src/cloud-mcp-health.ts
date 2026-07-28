@@ -11,23 +11,23 @@ import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 import { validateMcpConfig } from "./validators.js";
 
-export const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
-export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
-  "openwork-cloud_search_capabilities",
-  "openwork-cloud_execute_capability",
+export const JUGGLEWORK_CLOUD_MCP_NAME = "jugglework-cloud";
+export const JUGGLEWORK_CLOUD_EXPECTED_TOOLS = [
+  "jugglework-cloud_search_capabilities",
+  "jugglework-cloud_execute_capability",
 ] satisfies string[];
-const OPENWORK_CLOUD_DIRECT_TOOL_NAMES = [
+const JUGGLEWORK_CLOUD_DIRECT_TOOL_NAMES = [
   "search_capabilities",
   "execute_capability",
 ] satisfies string[];
-export const OPENWORK_CLOUD_PLUGIN_CANARIES = [
-  "openwork_docs_search",
-  "openwork_query",
+export const JUGGLEWORK_CLOUD_PLUGIN_CANARIES = [
+  "jugglework_docs_search",
+  "jugglework_query",
 ] satisfies string[];
 
 const POLL_DELAYS_MS = [0, 250, 750, 1500, 3000];
 function engineProbeTimeoutMs(): number {
-  return Number(process.env.OPENWORK_CLOUD_MCP_PROBE_TIMEOUT_MS ?? "") || 5_000;
+  return Number(process.env.JUGGLEWORK_CLOUD_MCP_PROBE_TIMEOUT_MS ?? "") || 5_000;
 }
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
@@ -69,14 +69,14 @@ export type CloudMcpFailureCode =
   | "opencode_unreachable"
   | "cloud_status_missing"
   | "cloud_disabled"
-  | "openwork_cloud_auth_required"
-  | "openwork_cloud_auth_invalid"
-  | "openwork_cloud_token_expired"
-  | "openwork_cloud_membership_required"
-  | "openwork_cloud_scope_missing"
-  | "openwork_cloud_resource_forbidden"
-  | "openwork_cloud_resource_not_found"
-  | "openwork_cloud_client_registration_required"
+  | "jugglework_cloud_auth_required"
+  | "jugglework_cloud_auth_invalid"
+  | "jugglework_cloud_token_expired"
+  | "jugglework_cloud_membership_required"
+  | "jugglework_cloud_scope_missing"
+  | "jugglework_cloud_resource_forbidden"
+  | "jugglework_cloud_resource_not_found"
+  | "jugglework_cloud_client_registration_required"
   | "cloud_connection_failed"
   | "cloud_registration_failed"
   | "cloud_tools_denied"
@@ -152,7 +152,7 @@ export type CloudMcpServerMetadata = {
 };
 
 export type CloudMcpCompatibilitySnapshot = {
-  openwork: {
+  jugglework: {
     serverVersion: string | null;
     app: Record<string, string | number | boolean | null> | null;
   };
@@ -214,7 +214,7 @@ export type CloudMcpHealth = {
   };
   desired: {
     present: boolean;
-    name: typeof OPENWORK_CLOUD_MCP_NAME;
+    name: typeof JUGGLEWORK_CLOUD_MCP_NAME;
     revision: string | null;
     config: RedactedCloudMcpConfig | null;
     token: CloudMcpTokenHealth;
@@ -354,7 +354,7 @@ export type CloudMcpEngineServerStatus = {
 /**
  * The engine's own view of every MCP server it tracks, read over the OpenCode
  * SDK. Support triage needs the siblings: "everything failed" points at the
- * engine host's network path, "only openwork-cloud failed" points at the Cloud
+ * engine host's network path, "only jugglework-cloud failed" points at the Cloud
  * endpoint or token, and an absent entry means the dynamic registration was
  * lost (e.g. after an engine state rebuild) and must be re-applied.
  */
@@ -701,7 +701,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud must be configured as a remote MCP endpoint.",
+      message: "jugglework-cloud must be configured as a remote MCP endpoint.",
       details: { type: typeof config.type === "string" ? config.type : null },
     };
   }
@@ -712,7 +712,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Enable Agent access in Settings → Connect",
-      message: "openwork-cloud desired config is disabled.",
+      message: "jugglework-cloud desired config is disabled.",
       aliases: ["cloud_disabled"],
       details: { enabled: config.enabled ?? null },
     };
@@ -726,7 +726,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud URL must be a valid http(s) endpoint at /mcp/agent.",
+      message: "jugglework-cloud URL must be a valid http(s) endpoint at /mcp/agent.",
       details: { url: typeof config.url === "string" ? sanitizeDiagnosticString(config.url) : null },
     };
   }
@@ -738,8 +738,8 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud desired config is missing an Authorization header.",
-      aliases: ["openwork_cloud_auth_required"],
+      message: "jugglework-cloud desired config is missing an Authorization header.",
+      aliases: ["jugglework_cloud_auth_required"],
     };
   }
 
@@ -749,8 +749,8 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud desired config must use the minted bearer token, not OAuth.",
-      aliases: ["openwork_cloud_auth_invalid"],
+      message: "jugglework-cloud desired config must use the minted bearer token, not OAuth.",
+      aliases: ["jugglework_cloud_auth_invalid"],
       details: { oauth: config.oauth === undefined ? "missing" : "configured" },
     };
   }
@@ -763,7 +763,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Choose the matching organization, then Repair and test",
-      message: "openwork-cloud token organization does not match the active organization.",
+      message: "jugglework-cloud token organization does not match the active organization.",
       details: { tokenOrganizationId, activeOrganizationId },
     };
   }
@@ -776,7 +776,7 @@ function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, met
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud desired config is not a valid remote MCP config.",
+      message: "jugglework-cloud desired config is not a valid remote MCP config.",
       details: { error: error instanceof Error ? error.message : String(error) },
     };
   }
@@ -845,7 +845,7 @@ async function readDesiredState(input: {
   connectCatalogEnabled?: boolean;
 }): Promise<CloudMcpDesiredState> {
   const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);
-  const entry = runtimeMcpMap(runtimeConfig)[OPENWORK_CLOUD_MCP_NAME];
+  const entry = runtimeMcpMap(runtimeConfig)[JUGGLEWORK_CLOUD_MCP_NAME];
   if (!entry) {
     const metadata = defaultDesiredMetadata(null, input.connectCatalogEnabled ?? false);
     return { present: false, revision: null, config: null, redactedConfig: null, metadata };
@@ -871,19 +871,19 @@ function locationParams(directory: string | null): { directory?: string } {
 }
 
 function expectedTools(): string[] {
-  return [...OPENWORK_CLOUD_EXPECTED_TOOLS];
+  return [...JUGGLEWORK_CLOUD_EXPECTED_TOOLS];
 }
 
 function expectedDirectToolNames(): string[] {
-  return [...OPENWORK_CLOUD_DIRECT_TOOL_NAMES];
+  return [...JUGGLEWORK_CLOUD_DIRECT_TOOL_NAMES];
 }
 
 function prefixedCloudToolId(name: string): string {
-  return `${OPENWORK_CLOUD_MCP_NAME}_${name}`;
+  return `${JUGGLEWORK_CLOUD_MCP_NAME}_${name}`;
 }
 
 function expectedCanaries(): string[] {
-  return [...OPENWORK_CLOUD_PLUGIN_CANARIES];
+  return [...JUGGLEWORK_CLOUD_PLUGIN_CANARIES];
 }
 
 function splitPresentMissing(ids: string[], expected: string[]): ToolSnapshot {
@@ -978,7 +978,7 @@ function opencodeRequestFailure(stage: CloudMcpFailureStage, path: string, respo
     stage,
     retryable: response.status >= 500,
     recommendedAction: response.status >= 500 ? "Retry after OpenCode is healthy" : "Update JuggleWork",
-    message: "OpenCode request failed while checking openwork-cloud MCP readiness.",
+    message: "OpenCode request failed while checking jugglework-cloud MCP readiness.",
     aliases: stage === "provider_projection" ? ["provider_projection_unavailable"] : undefined,
     details: { path, status: response.status, error },
   });
@@ -1100,7 +1100,7 @@ function directCloudAuthFailure(response: Response, payload: unknown, endpoint: 
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
       message: "The JuggleWork Cloud MCP endpoint rejected the persisted Authorization header.",
-      aliases: ["openwork_cloud_auth_invalid"],
+      aliases: ["jugglework_cloud_auth_invalid"],
       details: { endpoint, status: response.status, response: payload },
     });
   }
@@ -1111,7 +1111,7 @@ function directCloudAuthFailure(response: Response, payload: unknown, endpoint: 
       retryable: false,
       recommendedAction: "Check organization policy and resource access",
       message: "The JuggleWork Cloud MCP endpoint denied access to this resource.",
-      aliases: ["openwork_cloud_resource_forbidden"],
+      aliases: ["jugglework_cloud_resource_forbidden"],
       details: { endpoint, status: response.status, response: payload },
     });
   }
@@ -1262,7 +1262,7 @@ async function readDirectCloudTools(config: Record<string, unknown>): Promise<Di
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "openwork-server-cloud-mcp-health", version: "1.0.0" },
+            clientInfo: { name: "jugglework-server-cloud-mcp-health", version: "1.0.0" },
             protocolVersion: "2025-06-18",
           },
         },
@@ -1516,8 +1516,8 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       code: "cloud_mcp_missing",
       stage: "engine_delivery",
       retryable: true,
-      recommendedAction: "Run reconcile to register openwork-cloud with OpenCode",
-      message: "OpenCode does not report an openwork-cloud MCP status.",
+      recommendedAction: "Run reconcile to register jugglework-cloud with OpenCode",
+      message: "OpenCode does not report an jugglework-cloud MCP status.",
       aliases: ["cloud_status_missing"],
     });
   }
@@ -1526,8 +1526,8 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       code: "cloud_mcp_disabled",
       stage: "engine_delivery",
       retryable: false,
-      recommendedAction: "Enable the openwork-cloud MCP entry",
-      message: "openwork-cloud MCP is disabled.",
+      recommendedAction: "Enable the jugglework-cloud MCP entry",
+      message: "jugglework-cloud MCP is disabled.",
       aliases: ["cloud_disabled"],
     });
   }
@@ -1537,8 +1537,8 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       stage: "transport_auth",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud",
-      message: "openwork-cloud MCP needs authentication.",
-      aliases: ["openwork_cloud_auth_required"],
+      message: "jugglework-cloud MCP needs authentication.",
+      aliases: ["jugglework_cloud_auth_required"],
     });
   }
   if (status.status === "needs_client_registration") {
@@ -1547,8 +1547,8 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
       stage: "engine_delivery",
       retryable: false,
       recommendedAction: "Reconnect JuggleWork Cloud or update JuggleWork",
-      message: "openwork-cloud MCP needs OAuth client registration.",
-      aliases: ["openwork_cloud_client_registration_required"],
+      message: "jugglework-cloud MCP needs OAuth client registration.",
+      aliases: ["jugglework_cloud_client_registration_required"],
       details: { error: status.error },
     });
   }
@@ -1560,7 +1560,7 @@ function statusFailure(status: McpStatus | undefined): CloudMcpFailure {
     stage: "engine_delivery",
     retryable: true,
     recommendedAction: "Retry reconcile",
-    message: "openwork-cloud MCP is not connected.",
+    message: "jugglework-cloud MCP is not connected.",
     aliases: ["cloud_connection_failed"],
   });
 }
@@ -1581,35 +1581,35 @@ function inferFailedStatus(error: string): CloudMcpFailure {
     lower.includes("self signed") ||
     lower.includes("self-signed");
   if (!certTransport && lower.includes("expired")) {
-    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "openwork-cloud token is expired.", aliases: ["openwork_cloud_token_expired"], details: { error } });
+    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud token is expired.", aliases: ["jugglework_cloud_token_expired"], details: { error } });
   }
   if (!certTransport && (lower.includes("invalid_token") || lower.includes("unauthorized") || lower.includes("401") || lower.includes("auth"))) {
-    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "openwork-cloud authentication failed.", aliases: ["openwork_cloud_auth_invalid"], details: { error } });
+    return failure({ code: "invalid_mcp_token", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud authentication failed.", aliases: ["jugglework_cloud_auth_invalid"], details: { error } });
   }
   if (!certTransport && (lower.includes("invalid_grant") || lower.includes("session") || lower.includes("revoked"))) {
-    return failure({ code: "mcp_session_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "openwork-cloud session was revoked.", details: { error } });
+    return failure({ code: "mcp_session_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud", message: "jugglework-cloud session was revoked.", details: { error } });
   }
   if (lower.includes("membership") || lower.includes("member")) {
-    return failure({ code: "mcp_membership_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Ask an organization admin to grant access", message: "JuggleWork Cloud membership is required.", aliases: ["openwork_cloud_membership_required"], details: { error } });
+    return failure({ code: "mcp_membership_revoked", stage: "transport_auth", retryable: false, recommendedAction: "Ask an organization admin to grant access", message: "JuggleWork Cloud membership is required.", aliases: ["jugglework_cloud_membership_required"], details: { error } });
   }
   if (lower.includes("insufficient_scope") || lower.includes("scope")) {
-    return failure({ code: "insufficient_mcp_scope", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud with the required scopes", message: "openwork-cloud token is missing required scopes.", aliases: ["openwork_cloud_scope_missing"], details: { error } });
+    return failure({ code: "insufficient_mcp_scope", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud with the required scopes", message: "jugglework-cloud token is missing required scopes.", aliases: ["jugglework_cloud_scope_missing"], details: { error } });
   }
   if (lower.includes("forbidden") || lower.includes("403") || lower.includes("policy")) {
-    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Check organization policy and resource access", message: "JuggleWork Cloud denied access to this resource.", aliases: ["openwork_cloud_resource_forbidden"], details: { error } });
+    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Check organization policy and resource access", message: "JuggleWork Cloud denied access to this resource.", aliases: ["jugglework_cloud_resource_forbidden"], details: { error } });
   }
   if (lower.includes("not found") || lower.includes("404") || lower.includes("resource")) {
-    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or choose an accessible organization", message: "JuggleWork Cloud resource was not found.", aliases: ["openwork_cloud_resource_not_found"], details: { error } });
+    return failure({ code: "wrong_mcp_resource", stage: "transport_auth", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or choose an accessible organization", message: "JuggleWork Cloud resource was not found.", aliases: ["jugglework_cloud_resource_not_found"], details: { error } });
   }
   if (lower.includes("client registration")) {
-    return failure({ code: "opencode_mcp_sync_failed", stage: "engine_delivery", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or update JuggleWork", message: "openwork-cloud needs client registration.", aliases: ["openwork_cloud_client_registration_required"], details: { error } });
+    return failure({ code: "opencode_mcp_sync_failed", stage: "engine_delivery", retryable: false, recommendedAction: "Reconnect JuggleWork Cloud or update JuggleWork", message: "jugglework-cloud needs client registration.", aliases: ["jugglework_cloud_client_registration_required"], details: { error } });
   }
   return failure({
     code: "opencode_mcp_sync_failed",
     stage: "engine_delivery",
     retryable: true,
     recommendedAction: "Retry reconcile or reconnect JuggleWork Cloud",
-    message: "openwork-cloud MCP connection failed.",
+    message: "jugglework-cloud MCP connection failed.",
     aliases: ["cloud_connection_failed"],
     details: { error },
   });
@@ -1638,7 +1638,7 @@ function engineInspectionFromStatuses(statuses: Record<string, McpStatus>): Clou
     .slice(0, 50);
   return {
     checked: true,
-    cloudPresent: Boolean(statuses[OPENWORK_CLOUD_MCP_NAME]),
+    cloudPresent: Boolean(statuses[JUGGLEWORK_CLOUD_MCP_NAME]),
     serverCount: Object.keys(statuses).length,
     servers,
   };
@@ -1671,7 +1671,7 @@ async function readOpencodeVersion(opencode: WorkspaceOpencodeClient): Promise<C
   }
 }
 
-async function inspectOpenworkCloud(input: {
+async function inspectJuggleWorkCloud(input: {
   opencode: WorkspaceOpencodeClient;
   config: ServerConfig;
   workspace: WorkspaceInfo;
@@ -1706,12 +1706,12 @@ async function inspectOpenworkCloud(input: {
   }
 
   const engineInspection = engineInspectionFromStatuses(statusResult.data ?? {});
-  const cloudStatus = statusResult.data?.[OPENWORK_CLOUD_MCP_NAME];
+  const cloudStatus = statusResult.data?.[JUGGLEWORK_CLOUD_MCP_NAME];
   if (cloudStatus) {
     input.refreshRegistrationFromLiveStatus?.(
       input.config,
       input.workspace,
-      OPENWORK_CLOUD_MCP_NAME,
+      JUGGLEWORK_CLOUD_MCP_NAME,
       input.desiredConfig,
       cloudStatus.status,
     );
@@ -1873,11 +1873,11 @@ function phaseFromFailure(firstFailure: CloudMcpFailure | null): CloudMcpHealthP
     firstFailure.code === "mcp_membership_revoked" ||
     firstFailure.code === "insufficient_mcp_scope" ||
     firstFailure.code === "wrong_mcp_resource" ||
-    firstFailure.code === "openwork_cloud_auth_required" ||
-    firstFailure.code === "openwork_cloud_auth_invalid" ||
-    firstFailure.code === "openwork_cloud_token_expired"
+    firstFailure.code === "jugglework_cloud_auth_required" ||
+    firstFailure.code === "jugglework_cloud_auth_invalid" ||
+    firstFailure.code === "jugglework_cloud_token_expired"
   ) return "engine_needs_auth";
-  if (firstFailure.code === "openwork_cloud_client_registration_required") return "engine_needs_client_registration";
+  if (firstFailure.code === "jugglework_cloud_client_registration_required") return "engine_needs_client_registration";
   if (firstFailure.code === "opencode_mcp_sync_failed" || firstFailure.code === "cloud_registration_failed") return "registration_failed";
   if (firstFailure.code === "cloud_tools_denied") return "denied_by_tools";
   if (firstFailure.code === "opencode_tool_ids_unsupported") return "tool_ids_unsupported";
@@ -1893,8 +1893,8 @@ function firstFailureFromDenies(denies: McpToolDeny[]): CloudMcpFailure | null {
     code: "cloud_tools_denied",
     stage: "prerequisites",
     retryable: false,
-    recommendedAction: "Remove project/global OpenCode tool denies for openwork-cloud tools",
-    message: "OpenCode configuration denies one or more openwork-cloud tools.",
+    recommendedAction: "Remove project/global OpenCode tool denies for jugglework-cloud tools",
+    message: "OpenCode configuration denies one or more jugglework-cloud tools.",
     details: { denies },
   });
 }
@@ -1916,7 +1916,7 @@ function baseUrlConfigured(config: ServerConfig, workspace: WorkspaceInfo): bool
 
 async function pluginFileHashes(): Promise<CloudMcpCompatibilitySnapshot["pluginFileHashes"]> {
   const here = dirname(fileURLToPath(import.meta.url));
-  const names = ["openwork-extensions-preview", "openwork-capabilities-knowledge"];
+  const names = ["jugglework-extensions-preview", "jugglework-capabilities-knowledge"];
   return Promise.all(names.map(async (name) => {
     let lastError = "not found";
     for (const extension of ["ts", "js"]) {
@@ -1941,7 +1941,7 @@ async function compatibilitySnapshot(input: {
     expectedVersion: input.serverMetadata?.expectedOpencodeVersion ?? null,
   };
   return {
-    openwork: {
+    jugglework: {
       serverVersion: input.serverMetadata?.serverVersion ?? null,
       app: input.appMetadata ?? null,
     },
@@ -1959,7 +1959,7 @@ async function compatibilitySnapshot(input: {
   };
 }
 
-export async function readOpenworkCloudMcpHealth(input: {
+export async function readJuggleWorkCloudMcpHealth(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
@@ -1974,7 +1974,7 @@ export async function readOpenworkCloudMcpHealth(input: {
   const desired = await readDesiredState({ config: input.config, workspace: input.workspace, directory: input.directory });
   let delivery = cloudMcpDeliveryState.snapshot(input.workspace, input.directory, desired.revision);
   const toolDenies = desired.present
-    ? await diagnoseMcpToolDenies(input.workspace.path, OPENWORK_CLOUD_MCP_NAME, expectedTools())
+    ? await diagnoseMcpToolDenies(input.workspace.path, JUGGLEWORK_CLOUD_MCP_NAME, expectedTools())
     : [];
   const failures: CloudMcpFailure[] = [];
 
@@ -1984,7 +1984,7 @@ export async function readOpenworkCloudMcpHealth(input: {
       stage: "desired_config",
       retryable: false,
       recommendedAction: "Connect JuggleWork Cloud",
-      message: "No openwork-cloud MCP desired config is persisted for this workspace.",
+      message: "No jugglework-cloud MCP desired config is persisted for this workspace.",
       aliases: ["cloud_desired_missing"],
     }));
   }
@@ -2025,7 +2025,7 @@ export async function readOpenworkCloudMcpHealth(input: {
     failures: [],
   };
   if (desired.present && desired.config && !desired.validationProblem && input.directory && baseUrlConfigured(input.config, input.workspace)) {
-    inspection = await inspectOpenworkCloud({
+    inspection = await inspectJuggleWorkCloud({
       opencode: input.createWorkspaceOpencodeClient(input.config, input.workspace),
       config: input.config,
       workspace: input.workspace,
@@ -2065,7 +2065,7 @@ export async function readOpenworkCloudMcpHealth(input: {
     },
     desired: {
       present: desired.present,
-      name: OPENWORK_CLOUD_MCP_NAME,
+      name: JUGGLEWORK_CLOUD_MCP_NAME,
       revision: desired.revision,
       config: desired.redactedConfig,
       token: desired.metadata.token,
@@ -2117,7 +2117,7 @@ async function persistDesiredConfig(config: ServerConfig, workspaceId: string, d
     ...current,
     mcp: {
       ...runtimeMcpMap(current),
-      [OPENWORK_CLOUD_MCP_NAME]: desiredConfig,
+      [JUGGLEWORK_CLOUD_MCP_NAME]: desiredConfig,
     },
   }));
   // Connect is server/account-scoped: keep a host-level copy for catalog + skill injection.
@@ -2132,7 +2132,7 @@ function registrationFailure(failures: CloudMcpRuntimeRegistrationFailure[]): Cl
     stage: "engine_delivery",
     retryable: failures.some((item) => item.status === undefined || item.status >= 500),
     recommendedAction: "Retry reconcile after OpenCode is reachable",
-    message: "Failed to dynamically register openwork-cloud with OpenCode.",
+    message: "Failed to dynamically register jugglework-cloud with OpenCode.",
     aliases: ["cloud_registration_failed"],
     details: { failures },
   });
@@ -2159,12 +2159,12 @@ async function pollConnected(input: {
       lastFailure = statusResult.failure;
       continue;
     }
-    const cloudStatus = statusResult.data?.[OPENWORK_CLOUD_MCP_NAME];
+    const cloudStatus = statusResult.data?.[JUGGLEWORK_CLOUD_MCP_NAME];
     if (cloudStatus) {
       input.refreshRegistrationFromLiveStatus?.(
         input.config,
         input.workspace,
-        OPENWORK_CLOUD_MCP_NAME,
+        JUGGLEWORK_CLOUD_MCP_NAME,
         input.desiredConfig,
         cloudStatus.status,
       );
@@ -2188,7 +2188,7 @@ function healthWithFailure(health: CloudMcpHealth, firstFailure: CloudMcpFailure
   };
 }
 
-export async function reconcileOpenworkCloudMcp(input: {
+export async function reconcileJuggleWorkCloudMcp(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
@@ -2199,7 +2199,7 @@ export async function reconcileOpenworkCloudMcp(input: {
   registerRuntimeMcp: CloudMcpRuntimeRegistrar;
   refreshRegistrationFromLiveStatus?: CloudMcpLiveStatusObserver;
 }): Promise<CloudMcpHealth> {
-  const readHealth = () => readOpenworkCloudMcpHealth({
+  const readHealth = () => readJuggleWorkCloudMcpHealth({
     config: input.config,
     workspace: input.workspace,
     directory: input.directory,
@@ -2246,7 +2246,7 @@ export async function reconcileOpenworkCloudMcp(input: {
   }
 
   cloudMcpDeliveryState.markRegistering(input.workspace, input.directory, desiredRevision);
-  const registration = await input.registerRuntimeMcp(input.config, input.workspace, [OPENWORK_CLOUD_MCP_NAME], { throwOnFailure: false });
+  const registration = await input.registerRuntimeMcp(input.config, input.workspace, [JUGGLEWORK_CLOUD_MCP_NAME], { throwOnFailure: false });
   if (registration.failures.length > 0) {
     const registrationError = registrationFailure(registration.failures);
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, registrationError);
@@ -2278,7 +2278,7 @@ export async function reconcileOpenworkCloudMcp(input: {
   return readHealth();
 }
 
-export async function reconcilePersistedOpenworkCloudMcp(input: {
+export async function reconcilePersistedJuggleWorkCloudMcp(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
@@ -2290,11 +2290,11 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   trigger?: string;
 }): Promise<CloudMcpHealth> {
   const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);
-  const desiredConfig = runtimeMcpMap(runtimeConfig)[OPENWORK_CLOUD_MCP_NAME];
+  const desiredConfig = runtimeMcpMap(runtimeConfig)[JUGGLEWORK_CLOUD_MCP_NAME];
   if (!desiredConfig) {
-    return readOpenworkCloudMcpHealth(input);
+    return readJuggleWorkCloudMcpHealth(input);
   }
-  return reconcileOpenworkCloudMcp({
+  return reconcileJuggleWorkCloudMcp({
     ...input,
     body: {
       config: desiredConfig,
@@ -2303,7 +2303,7 @@ export async function reconcilePersistedOpenworkCloudMcp(input: {
   });
 }
 
-export function markOpenworkCloudMcpStale(workspace: WorkspaceInfo, directory: string | null): void {
+export function markJuggleWorkCloudMcpStale(workspace: WorkspaceInfo, directory: string | null): void {
   cloudMcpDeliveryState.markWorkspaceStale(workspace, directory);
 }
 
@@ -2333,7 +2333,7 @@ export type CloudMcpEngineRefreshResult = {
 // something external re-drives it. This refresh closes any wedged client
 // first (disconnect), then re-runs the persisted reconcile, which re-POSTs
 // /mcp — an unconditional fresh connect attempt on the engine side.
-export async function refreshOpenworkCloudMcpEngine(input: {
+export async function refreshJuggleWorkCloudMcpEngine(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
   directory: string | null;
@@ -2360,16 +2360,16 @@ export async function refreshOpenworkCloudMcpEngine(input: {
   });
 
   const runtimeConfig = await readRuntimeOpencodeConfig(input.config, input.workspace.id);
-  const desiredConfig = runtimeMcpMap(runtimeConfig)[OPENWORK_CLOUD_MCP_NAME];
+  const desiredConfig = runtimeMcpMap(runtimeConfig)[JUGGLEWORK_CLOUD_MCP_NAME];
   if (!desiredConfig) {
-    return finish(false, await readOpenworkCloudMcpHealth({ ...input, probe: true }), "desired_missing");
+    return finish(false, await readJuggleWorkCloudMcpHealth({ ...input, probe: true }), "desired_missing");
   }
 
   const disconnectStarted = Date.now();
   try {
     const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
     const result = await withEngineProbeTimeout(() => opencode.mcp.disconnect({
-      name: OPENWORK_CLOUD_MCP_NAME,
+      name: JUGGLEWORK_CLOUD_MCP_NAME,
       ...locationParams(input.directory),
     }));
     steps.push({
@@ -2393,7 +2393,7 @@ export async function refreshOpenworkCloudMcpEngine(input: {
   }
 
   const reapplyStarted = Date.now();
-  const health = await reconcilePersistedOpenworkCloudMcp({
+  const health = await reconcilePersistedJuggleWorkCloudMcp({
     config: input.config,
     workspace: input.workspace,
     directory: input.directory,

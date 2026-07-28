@@ -1,5 +1,5 @@
 // Desktop workspace persistence and bootstrap configuration. This module owns
-// on-disk workspace state, per-workspace openwork.json files, remote workspace
+// on-disk workspace state, per-workspace jugglework.json files, remote workspace
 // normalization/discovery, and the workspace-facing command operations.
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -7,7 +7,7 @@ import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 
 import os from "node:os";
 import path from "node:path";
 
-import { openworkWorkspaceDisplayName, selectOpenworkWorkspaceForConnection } from "./remote-workspace.mjs";
+import { juggleworkWorkspaceDisplayName, selectJuggleWorkWorkspaceForConnection } from "./remote-workspace.mjs";
 import { exportWorkspaceConfig, importWorkspaceConfig } from "./workspace-archive.mjs";
 
 const EMPTY_WORKSPACE_LIST = Object.freeze({
@@ -101,7 +101,7 @@ async function readJsonFile(targetPath, fallback) {
   }
 }
 
-// The bootstrap CLI (packages/openwork-bootstrap) and this app must agree on
+// The bootstrap CLI (packages/jugglework-bootstrap) and this app must agree on
 // where desktop-bootstrap.json lives: %LOCALAPPDATA% on Windows, XDG_CONFIG_HOME
 // (falling back to ~/.config) elsewhere. Resolved once at module load so a
 // mid-session process.env mutation (runtime.mjs buildChildEnv ->
@@ -113,17 +113,17 @@ const DEFAULT_DESKTOP_BOOTSTRAP_PATH = (() => {
     process.env.XDG_CONFIG_HOME?.trim() ||
     (process.platform === "win32" ? process.env.LOCALAPPDATA?.trim() : "") ||
     path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Local") : ".config");
-  return path.join(configHome, "openwork", "desktop-bootstrap.json");
+  return path.join(configHome, "jugglework", "desktop-bootstrap.json");
 })();
 
 // Older builds resolved the default as ~/.config on every OS, ignoring
 // LOCALAPPDATA and XDG_CONFIG_HOME. Keep reading that file when the canonical one
 // is missing so existing installs keep their deployment config.
-const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "openwork", "desktop-bootstrap.json");
+const LEGACY_DESKTOP_BOOTSTRAP_PATH = path.join(os.homedir(), ".config", "jugglework", "desktop-bootstrap.json");
 const DESKTOP_BOOTSTRAP_FILENAME = "desktop-bootstrap.json";
-const STANDARD_DESKTOP_INSTALLER_PATTERN = /^openwork-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
-const HOSTED_DESKTOP_WEB_URL = "https://app.openworklabs.com";
-const HOSTED_DESKTOP_API_URL = "https://api.openworklabs.com";
+const STANDARD_DESKTOP_INSTALLER_PATTERN = /^jugglework-(?:mac-(?:arm64|x64)-.+\.dmg|win-x64-.+\.exe)$/i;
+const HOSTED_DESKTOP_WEB_URL = "https://work.juggle.im";
+const HOSTED_DESKTOP_API_URL = "https://work.juggle.im";
 
 function bootstrapUrlOrigin(value) {
   if (typeof value !== "string" || !value.trim()) return "";
@@ -141,20 +141,20 @@ function isHostedDesktopBootstrapConfig(config) {
 
 export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSignin, forceRequireSignin }) {
   function desktopBootstrapPath() {
-    if (process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
-      return process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH.trim();
+    if (process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH?.trim()) {
+      return process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH.trim();
     }
     // Dev mode swaps process.env.HOME to the sandboxed dev-data home midway
     // through startup (runtime.mjs buildChildEnv -> Object.assign(process.env)),
     // which changes what os.homedir() returns. Resolve the dev-data home
     // deterministically so early and late IPC reads target the same file.
-    if (process.env.OPENWORK_DEV_MODE === "1") {
+    if (process.env.JUGGLEWORK_DEV_MODE === "1") {
       return path.join(
         app.getPath("userData"),
-        "openwork-dev-data",
+        "jugglework-dev-data",
         "home",
         ".config",
-        "openwork",
+        "jugglework",
         "desktop-bootstrap.json",
       );
     }
@@ -170,22 +170,22 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   function workspaceStatePath() {
-    return path.join(app.getPath("userData"), "openwork-workspaces.json");
+    return path.join(app.getPath("userData"), "jugglework-workspaces.json");
   }
 
-  function openworkServerTokenStorePath() {
-    return path.join(app.getPath("userData"), "openwork-server-tokens.json");
+  function juggleworkServerTokenStorePath() {
+    return path.join(app.getPath("userData"), "jugglework-server-tokens.json");
   }
 
-  function openworkServerConfigPath() {
-    if (process.env.OPENWORK_SERVER_CONFIG?.trim()) return path.resolve(process.env.OPENWORK_SERVER_CONFIG.trim());
-    if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "openwork", "server.json");
-    return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "openwork", "server.json");
+  function juggleworkServerConfigPath() {
+    if (process.env.JUGGLEWORK_SERVER_CONFIG?.trim()) return path.resolve(process.env.JUGGLEWORK_SERVER_CONFIG.trim());
+    if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "jugglework", "server.json");
+    return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "jugglework", "server.json");
   }
 
-  // Earlier Electron alpha builds copied Tauri's openwork-workspaces.json into
+  // Earlier Electron alpha builds copied Tauri's jugglework-workspaces.json into
   // an Electron-only workspace-state.json. Keep importing that file when the
-  // shared canonical file is missing, but write openwork-workspaces.json going
+  // shared canonical file is missing, but write jugglework-workspaces.json going
   // forward so Tauri rollback and Electron both read the same desktop state.
   function legacyElectronWorkspaceStatePath() {
     return path.join(app.getPath("userData"), "workspace-state.json");
@@ -200,7 +200,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       await mkdir(path.dirname(current), { recursive: true });
       const raw = await readFile(legacy, "utf8");
       await writeFile(current, raw, "utf8");
-      console.info("[migration] copied workspace-state.json to openwork-workspaces.json");
+      console.info("[migration] copied workspace-state.json to jugglework-workspaces.json");
       return true;
     } catch (error) {
       console.warn("[migration] legacy Electron workspace-state copy failed", error);
@@ -384,7 +384,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
   function bundleSearchRoots() {
     const roots = [];
-    const override = process.env.OPENWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
+    const override = process.env.JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR?.trim();
     if (override) roots.push(path.resolve(override));
     for (const name of ["downloads", "desktop"]) {
       try {
@@ -521,7 +521,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       legacyExists: legacyPath ? existsSync(legacyPath) : false,
       home: os.homedir(),
       envHome: process.env.HOME ?? null,
-      envOverride: process.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
+      envOverride: process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH ?? null,
       exists: existsSync(configPath),
       raw: null,
       parsed: null,
@@ -561,7 +561,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return undefined;
   }
 
-  function defaultWorkspaceOpenworkConfig(workspacePath, preset = null) {
+  function defaultWorkspaceJuggleWorkConfig(workspacePath, preset = null) {
     return {
       version: 1,
       workspace: workspacePath
@@ -610,7 +610,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
   }
 
   async function recoverWorkspacesFromTokenStore() {
-    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    const store = await readJsonFile(juggleworkServerTokenStorePath(), null);
     if (!isRecord(store) || !isRecord(store.workspaces)) return [];
 
     const candidates = [];
@@ -646,7 +646,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const workspaceKey = normalizeWorkspacePathKey(workspacePath);
     if (!workspaceKey) return;
 
-    const store = await readJsonFile(openworkServerTokenStorePath(), null);
+    const store = await readJsonFile(juggleworkServerTokenStorePath(), null);
     if (!isRecord(store) || !isRecord(store.workspaces)) return;
 
     const workspaces = { ...store.workspaces };
@@ -657,12 +657,12 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       changed = true;
     }
     if (changed) {
-      await writeJsonFileAtomic(openworkServerTokenStorePath(), { ...store, workspaces });
+      await writeJsonFileAtomic(juggleworkServerTokenStorePath(), { ...store, workspaces });
     }
   }
 
   async function recoverWorkspacesFromServerConfig() {
-    const config = await readJsonFile(openworkServerConfigPath(), null);
+    const config = await readJsonFile(juggleworkServerConfigPath(), null);
     if (!isRecord(config) || !Array.isArray(config.workspaces)) return [];
 
     const seen = new Set();
@@ -678,13 +678,13 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
 
       const baseUrl = typeof entry.baseUrl === "string" ? entry.baseUrl.trim() : "";
       const directory = typeof entry.directory === "string" && entry.directory.trim() ? entry.directory.trim() : null;
-      const remoteType = entry.remoteType === "opencode" ? "opencode" : "openwork";
-      const openworkWorkspaceId = typeof entry.openworkWorkspaceId === "string" ? entry.openworkWorkspaceId.trim() : "";
+      const remoteType = entry.remoteType === "opencode" ? "opencode" : "jugglework";
+      const juggleworkWorkspaceId = typeof entry.juggleworkWorkspaceId === "string" ? entry.juggleworkWorkspaceId.trim() : "";
       const id = typeof entry.id === "string" && entry.id.trim()
         ? entry.id.trim()
         : workspaceType === "remote"
-          ? remoteType === "openwork"
-            ? openworkRemoteWorkspaceId(baseUrl, openworkWorkspaceId)
+          ? remoteType === "jugglework"
+            ? juggleworkRemoteWorkspaceId(baseUrl, juggleworkWorkspaceId)
             : remoteWorkspaceId(baseUrl, directory)
           : localWorkspaceId(normalizedPath);
       const key = workspaceType === "remote" ? id : normalizeWorkspacePathKey(normalizedPath);
@@ -727,7 +727,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     return stableWorkspaceId(key);
   }
 
-  function parseOpenworkWorkspaceIdFromUrl(input) {
+  function parseJuggleWorkWorkspaceIdFromUrl(input) {
     const raw = String(input ?? "").trim();
     if (!raw) return null;
     try {
@@ -750,7 +750,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     }
   }
 
-  function stripOpenworkWorkspaceMount(input) {
+  function stripJuggleWorkWorkspaceMount(input) {
     const raw = String(input ?? "").trim();
     if (!raw) return null;
     try {
@@ -769,13 +769,13 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     }
   }
 
-  function openworkRemoteWorkspaceId(hostUrl, workspaceId) {
-    const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseOpenworkWorkspaceIdFromUrl(hostUrl);
+  function juggleworkRemoteWorkspaceId(hostUrl, workspaceId) {
+    const remoteWorkspaceId = String(workspaceId ?? "").trim() || parseJuggleWorkWorkspaceIdFromUrl(hostUrl);
     if (remoteWorkspaceId) return `rem_${remoteWorkspaceId}`;
-    return `rem_${createHash("sha256").update(`openwork::${hostUrl}`).digest("hex").slice(0, 12)}`;
+    return `rem_${createHash("sha256").update(`jugglework::${hostUrl}`).digest("hex").slice(0, 12)}`;
   }
 
-  async function fetchOpenworkWorkspaceList(hostUrl, token, hostToken) {
+  async function fetchJuggleWorkWorkspaceList(hostUrl, token, hostToken) {
     const url = `${String(hostUrl ?? "").replace(/\/+$/, "")}/workspaces`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -783,7 +783,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const bearerToken = String(token ?? "").trim();
     const hostAuthToken = String(hostToken ?? "").trim();
     if (bearerToken) headers.set("Authorization", `Bearer ${bearerToken}`);
-    if (hostAuthToken) headers.set("X-OpenWork-Host-Token", hostAuthToken);
+    if (hostAuthToken) headers.set("X-JuggleWork-Host-Token", hostAuthToken);
 
     try {
       const electron = await import("electron").catch(() => null);
@@ -803,9 +803,9 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     }
   }
 
-  async function discoverOpenworkWorkspace({ hostUrl, token, hostToken, directory }) {
-    const list = await fetchOpenworkWorkspaceList(hostUrl, token, hostToken);
-    return selectOpenworkWorkspaceForConnection(list, directory);
+  async function discoverJuggleWorkWorkspace({ hostUrl, token, hostToken, directory }) {
+    const list = await fetchJuggleWorkWorkspaceList(hostUrl, token, hostToken);
+    return selectJuggleWorkWorkspaceForConnection(list, directory);
   }
 
   function normalizeWorkspaceEntry(input) {
@@ -819,32 +819,32 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       baseUrl: input.baseUrl ?? null,
       directory: input.directory ?? null,
       displayName: input.displayName ?? null,
-      openworkHostUrl: input.openworkHostUrl ?? null,
-      openworkToken: input.openworkToken ?? null,
-      openworkClientToken: input.openworkClientToken ?? null,
-      openworkHostToken: input.openworkHostToken ?? null,
-      openworkWorkspaceId: input.openworkWorkspaceId ?? null,
-      openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+      juggleworkHostUrl: input.juggleworkHostUrl ?? null,
+      juggleworkToken: input.juggleworkToken ?? null,
+      juggleworkClientToken: input.juggleworkClientToken ?? null,
+      juggleworkHostToken: input.juggleworkHostToken ?? null,
+      juggleworkWorkspaceId: input.juggleworkWorkspaceId ?? null,
+      juggleworkWorkspaceName: input.juggleworkWorkspaceName ?? null,
       sandboxBackend: input.sandboxBackend ?? null,
       sandboxRunId: input.sandboxRunId ?? null,
       sandboxContainerName: input.sandboxContainerName ?? null,
     };
   }
 
-  async function readWorkspaceOpenworkConfig(workspacePath) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-    if (!(await pathExists(openworkPath))) {
-      return defaultWorkspaceOpenworkConfig(workspacePath);
+  async function readWorkspaceJuggleWorkConfig(workspacePath) {
+    const juggleworkPath = path.join(workspacePath, ".opencode", "jugglework.json");
+    if (!(await pathExists(juggleworkPath))) {
+      return defaultWorkspaceJuggleWorkConfig(workspacePath);
     }
-    const raw = await readFile(openworkPath, "utf8");
+    const raw = await readFile(juggleworkPath, "utf8");
     return JSON.parse(raw);
   }
 
-  async function writeWorkspaceOpenworkConfig(workspacePath, config) {
-    const openworkPath = path.join(workspacePath, ".opencode", "openwork.json");
-    await mkdir(path.dirname(openworkPath), { recursive: true });
-    await writeFile(openworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-    return execResult(true, `Wrote ${openworkPath}`);
+  async function writeWorkspaceJuggleWorkConfig(workspacePath, config) {
+    const juggleworkPath = path.join(workspacePath, ".opencode", "jugglework.json");
+    await mkdir(path.dirname(juggleworkPath), { recursive: true });
+    await writeFile(juggleworkPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    return execResult(true, `Wrote ${juggleworkPath}`);
   }
 
   async function writeWorkspaceState(nextState) {
@@ -886,7 +886,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     let activeId = typeof state?.activeId === "string" ? state.activeId : null;
     let workspaces = Array.isArray(state?.workspaces) ? state.workspaces : [];
     let changed = false;
-    if (!workspaceStateExists && process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
+    if (!workspaceStateExists && process.env.JUGGLEWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY !== "1") {
       const recoveredWorkspaces = await recoverWorkspacesFromKnownState();
       if (recoveredWorkspaces.length > 0) {
         const selectedWorkspace = recoveredWorkspaces[0];
@@ -904,24 +904,24 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const idMap = new Map();
     const migratedWorkspaces = workspaces.map((entry) => {
       const workspace = entry && typeof entry === "object" ? entry : normalizeWorkspaceEntry(entry ?? {});
-      if (workspace.workspaceType !== "remote" || workspace.remoteType !== "openwork") return workspace;
+      if (workspace.workspaceType !== "remote" || workspace.remoteType !== "jugglework") return workspace;
 
-      const remoteWorkspaceId = String(workspace.openworkWorkspaceId ?? "").trim()
-        || parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl)
-        || parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl);
+      const remoteWorkspaceId = String(workspace.juggleworkWorkspaceId ?? "").trim()
+        || parseJuggleWorkWorkspaceIdFromUrl(workspace.juggleworkHostUrl)
+        || parseJuggleWorkWorkspaceIdFromUrl(workspace.baseUrl);
       if (!remoteWorkspaceId) return workspace;
 
-      const hostUrl = stripOpenworkWorkspaceMount(workspace.openworkHostUrl) || stripOpenworkWorkspaceMount(workspace.baseUrl);
-      const nextId = openworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
+      const hostUrl = stripJuggleWorkWorkspaceMount(workspace.juggleworkHostUrl) || stripJuggleWorkWorkspaceMount(workspace.baseUrl);
+      const nextId = juggleworkRemoteWorkspaceId(hostUrl ?? workspace.baseUrl, remoteWorkspaceId);
       idMap.set(workspace.id, nextId);
       const nextWorkspace = {
         ...workspace,
         id: nextId,
         baseUrl: hostUrl,
-        openworkWorkspaceId: remoteWorkspaceId,
-        openworkHostUrl: hostUrl,
+        juggleworkWorkspaceId: remoteWorkspaceId,
+        juggleworkHostUrl: hostUrl,
       };
-      if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.openworkWorkspaceId !== nextWorkspace.openworkWorkspaceId || workspace.openworkHostUrl !== nextWorkspace.openworkHostUrl) {
+      if (workspace.id !== nextWorkspace.id || workspace.baseUrl !== nextWorkspace.baseUrl || workspace.juggleworkWorkspaceId !== nextWorkspace.juggleworkWorkspaceId || workspace.juggleworkHostUrl !== nextWorkspace.juggleworkHostUrl) {
         changed = true;
       }
       return nextWorkspace;
@@ -1015,7 +1015,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       workspaceType: "local",
     });
     await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceOpenworkConfig(folderPath, defaultWorkspaceOpenworkConfig(folderPath, preset));
+    await writeWorkspaceJuggleWorkConfig(folderPath, defaultWorkspaceJuggleWorkConfig(folderPath, preset));
 
     return mutateWorkspaceState((state) => {
       const key = workspacePathKey(workspace);
@@ -1036,26 +1036,26 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
       throw new Error("baseUrl must start with http:// or https://");
     }
-    const remoteType = input.remoteType === "opencode" ? "opencode" : "openwork";
+    const remoteType = input.remoteType === "opencode" ? "opencode" : "jugglework";
     const directory = typeof input.directory === "string" && input.directory.trim() ? input.directory.trim() : null;
-    const rawOpenworkHostUrl = typeof input.openworkHostUrl === "string" && input.openworkHostUrl.trim()
-      ? input.openworkHostUrl.trim()
+    const rawJuggleWorkHostUrl = typeof input.juggleworkHostUrl === "string" && input.juggleworkHostUrl.trim()
+      ? input.juggleworkHostUrl.trim()
       : null;
-    const openworkHostUrl = remoteType === "openwork"
-      ? stripOpenworkWorkspaceMount(rawOpenworkHostUrl ?? baseUrl)
-      : rawOpenworkHostUrl;
-    const openworkWorkspaceId = typeof input.openworkWorkspaceId === "string" && input.openworkWorkspaceId.trim()
-      ? input.openworkWorkspaceId.trim()
-      : remoteType === "openwork"
-        ? parseOpenworkWorkspaceIdFromUrl(rawOpenworkHostUrl) || parseOpenworkWorkspaceIdFromUrl(baseUrl)
+    const juggleworkHostUrl = remoteType === "jugglework"
+      ? stripJuggleWorkWorkspaceMount(rawJuggleWorkHostUrl ?? baseUrl)
+      : rawJuggleWorkHostUrl;
+    const juggleworkWorkspaceId = typeof input.juggleworkWorkspaceId === "string" && input.juggleworkWorkspaceId.trim()
+      ? input.juggleworkWorkspaceId.trim()
+      : remoteType === "jugglework"
+        ? parseJuggleWorkWorkspaceIdFromUrl(rawJuggleWorkHostUrl) || parseJuggleWorkWorkspaceIdFromUrl(baseUrl)
         : null;
-    let resolvedOpenworkWorkspaceId = openworkWorkspaceId;
-    let resolvedOpenworkWorkspaceName = input.openworkWorkspaceName ?? null;
-    if (remoteType === "openwork" && !resolvedOpenworkWorkspaceId) {
-      const discovered = await discoverOpenworkWorkspace({
-        hostUrl: openworkHostUrl ?? baseUrl,
-        token: input.openworkToken,
-        hostToken: input.openworkHostToken,
+    let resolvedJuggleWorkWorkspaceId = juggleworkWorkspaceId;
+    let resolvedJuggleWorkWorkspaceName = input.juggleworkWorkspaceName ?? null;
+    if (remoteType === "jugglework" && !resolvedJuggleWorkWorkspaceId) {
+      const discovered = await discoverJuggleWorkWorkspace({
+        hostUrl: juggleworkHostUrl ?? baseUrl,
+        token: input.juggleworkToken,
+        hostToken: input.juggleworkHostToken,
         directory,
       });
       if (!discovered?.id) {
@@ -1065,28 +1065,28 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
             : "JuggleWork server returned no workspaces.",
         );
       }
-      resolvedOpenworkWorkspaceId = String(discovered.id).trim();
-      resolvedOpenworkWorkspaceName = openworkWorkspaceDisplayName(discovered);
+      resolvedJuggleWorkWorkspaceId = String(discovered.id).trim();
+      resolvedJuggleWorkWorkspaceName = juggleworkWorkspaceDisplayName(discovered);
     }
-    const id = remoteType === "openwork"
-      ? openworkRemoteWorkspaceId(openworkHostUrl ?? baseUrl, resolvedOpenworkWorkspaceId)
+    const id = remoteType === "jugglework"
+      ? juggleworkRemoteWorkspaceId(juggleworkHostUrl ?? baseUrl, resolvedJuggleWorkWorkspaceId)
       : remoteWorkspaceId(baseUrl, directory);
     const workspace = normalizeWorkspaceEntry({
       id,
-      name: String(input.displayName ?? resolvedOpenworkWorkspaceName ?? "Remote workspace"),
+      name: String(input.displayName ?? resolvedJuggleWorkWorkspaceName ?? "Remote workspace"),
       displayName: input.displayName ?? null,
       path: directory ?? "",
       preset: "remote",
       workspaceType: "remote",
       remoteType,
-      baseUrl: remoteType === "openwork" ? (openworkHostUrl ?? baseUrl) : baseUrl,
+      baseUrl: remoteType === "jugglework" ? (juggleworkHostUrl ?? baseUrl) : baseUrl,
       directory,
-      openworkHostUrl,
-      openworkToken: input.openworkToken ?? null,
-      openworkClientToken: input.openworkClientToken ?? null,
-      openworkHostToken: input.openworkHostToken ?? null,
-      openworkWorkspaceId: resolvedOpenworkWorkspaceId,
-      openworkWorkspaceName: resolvedOpenworkWorkspaceName,
+      juggleworkHostUrl,
+      juggleworkToken: input.juggleworkToken ?? null,
+      juggleworkClientToken: input.juggleworkClientToken ?? null,
+      juggleworkHostToken: input.juggleworkHostToken ?? null,
+      juggleworkWorkspaceId: resolvedJuggleWorkWorkspaceId,
+      juggleworkWorkspaceName: resolvedJuggleWorkWorkspaceName,
       sandboxBackend: input.sandboxBackend ?? null,
       sandboxRunId: input.sandboxRunId ?? null,
       sandboxContainerName: input.sandboxContainerName ?? null,
@@ -1109,28 +1109,28 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       if (!existing) return state;
 
       let nextWorkspace = { ...existing, ...patch };
-      const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "openwork";
-      if (nextRemoteType === "openwork") {
-        const rawHostUrl = typeof nextWorkspace.openworkHostUrl === "string" && nextWorkspace.openworkHostUrl.trim()
-          ? nextWorkspace.openworkHostUrl.trim()
+      const nextRemoteType = nextWorkspace.remoteType === "opencode" ? "opencode" : "jugglework";
+      if (nextRemoteType === "jugglework") {
+        const rawHostUrl = typeof nextWorkspace.juggleworkHostUrl === "string" && nextWorkspace.juggleworkHostUrl.trim()
+          ? nextWorkspace.juggleworkHostUrl.trim()
           : null;
         const nextBaseUrl = String(nextWorkspace.baseUrl ?? "").trim();
-        const hostUrl = stripOpenworkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
+        const hostUrl = stripJuggleWorkWorkspaceMount(rawHostUrl ?? nextBaseUrl);
         const directory = typeof nextWorkspace.directory === "string" && nextWorkspace.directory.trim()
           ? nextWorkspace.directory.trim()
           : null;
-        const parsedWorkspaceId = parseOpenworkWorkspaceIdFromUrl(rawHostUrl) || parseOpenworkWorkspaceIdFromUrl(nextBaseUrl);
+        const parsedWorkspaceId = parseJuggleWorkWorkspaceIdFromUrl(rawHostUrl) || parseJuggleWorkWorkspaceIdFromUrl(nextBaseUrl);
         let remoteWorkspaceId = parsedWorkspaceId || (
-          typeof nextWorkspace.openworkWorkspaceId === "string" && nextWorkspace.openworkWorkspaceId.trim()
-            ? nextWorkspace.openworkWorkspaceId.trim()
+          typeof nextWorkspace.juggleworkWorkspaceId === "string" && nextWorkspace.juggleworkWorkspaceId.trim()
+            ? nextWorkspace.juggleworkWorkspaceId.trim()
             : null
         );
-        let remoteWorkspaceName = nextWorkspace.openworkWorkspaceName ?? null;
+        let remoteWorkspaceName = nextWorkspace.juggleworkWorkspaceName ?? null;
         if (!remoteWorkspaceId) {
-          const discovered = await discoverOpenworkWorkspace({
+          const discovered = await discoverJuggleWorkWorkspace({
             hostUrl: hostUrl ?? nextBaseUrl,
-            token: nextWorkspace.openworkToken,
-            hostToken: nextWorkspace.openworkHostToken,
+            token: nextWorkspace.juggleworkToken,
+            hostToken: nextWorkspace.juggleworkHostToken,
             directory,
           });
           if (!discovered?.id) {
@@ -1141,18 +1141,18 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
             );
           }
           remoteWorkspaceId = String(discovered.id).trim();
-          remoteWorkspaceName = openworkWorkspaceDisplayName(discovered);
+          remoteWorkspaceName = juggleworkWorkspaceDisplayName(discovered);
         }
-        const nextId = openworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
+        const nextId = juggleworkRemoteWorkspaceId(hostUrl ?? nextBaseUrl, remoteWorkspaceId);
         nextWorkspace = normalizeWorkspaceEntry({
           ...nextWorkspace,
           id: nextId,
           baseUrl: hostUrl ?? nextBaseUrl,
-          openworkHostUrl: hostUrl,
+          juggleworkHostUrl: hostUrl,
           directory,
-          remoteType: "openwork",
-          openworkWorkspaceId: remoteWorkspaceId,
-          openworkWorkspaceName: remoteWorkspaceName,
+          remoteType: "jugglework",
+          juggleworkWorkspaceId: remoteWorkspaceId,
+          juggleworkWorkspaceName: remoteWorkspaceName,
         });
         if (nextId !== workspaceId) {
           if (state.selectedId === workspaceId) state.selectedId = nextId;
@@ -1201,14 +1201,14 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     if (!workspacePath || !authorizedRoot) {
       throw new Error("workspacePath and folderPath are required");
     }
-    const config = await readWorkspaceOpenworkConfig(workspacePath);
+    const config = await readWorkspaceJuggleWorkConfig(workspacePath);
     if (!Array.isArray(config.authorizedRoots)) {
       config.authorizedRoots = [];
     }
     if (!config.authorizedRoots.includes(authorizedRoot)) {
       config.authorizedRoots.push(authorizedRoot);
     }
-    return writeWorkspaceOpenworkConfig(workspacePath, config);
+    return writeWorkspaceJuggleWorkConfig(workspacePath, config);
   }
 
   async function exportConfig(input = {}) {
@@ -1254,7 +1254,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     });
   }
 
-  async function resetOpenworkState() {
+  async function resetJuggleWorkState() {
     await rm(workspaceStatePath(), { force: true });
     await clearDesktopBootstrapFiles();
     return undefined;
@@ -1266,7 +1266,7 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     createWorkspace,
     clearDesktopBootstrapConfig,
     debugDesktopBootstrapConfig,
-    defaultWorkspaceOpenworkConfig,
+    defaultWorkspaceJuggleWorkConfig,
     exportConfig,
     forgetWorkspace,
     getDesktopBootstrapConfig,
@@ -1275,15 +1275,15 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     listLocalWorkspacePaths,
     migrateLegacyElectronWorkspaceStateIfNeeded,
     readDesktopBootstrapConfigSync,
-    readWorkspaceOpenworkConfig,
+    readWorkspaceJuggleWorkConfig,
     readWorkspaceState,
-    resetOpenworkState,
+    resetJuggleWorkState,
     setDesktopBootstrapConfig,
     setRuntimeActiveWorkspace,
     setSelectedWorkspace,
     updateRemoteWorkspace,
     updateWorkspaceDisplayName,
-    writeWorkspaceOpenworkConfig,
+    writeWorkspaceJuggleWorkConfig,
     writeWorkspaceState,
   };
 }

@@ -7,13 +7,13 @@ the user pastes into the installer UI (also accepted via `--install-link`). When
 an end user runs it, the installer:
 
 1. Writes `desktop-bootstrap.json` to the OS-correct config location (the same path
-   the desktop app and `openwork-bootstrap` CLI resolve), pointing the desktop app at
+   the desktop app and `jugglework-bootstrap` CLI resolve), pointing the desktop app at
    the client's deployment. Existing extra fields (handoff, claim links) are preserved.
 2. Asks the deployment's API (`GET /v1/app-version`) which desktop app version it
    supports through its `latestAppVersion` response.
 3. Downloads that exact version from the public GitHub releases and installs it
    (macOS: mounts the dmg and copies the .app into `~/Applications`; Windows: runs the
-   NSIS installer silently; Linux: installs the AppImage under `~/.local/share/openwork`
+   NSIS installer silently; Linux: installs the AppImage under `~/.local/share/jugglework`
    with a desktop entry).
 
 The UI is a small native webview window (webview-bun); if the platform webview library
@@ -32,9 +32,9 @@ screen until the user provides their JuggleWork install link.
 pnpm --dir apps/installer test
 
 # Headless dry run (no download/install; verifies config write + version + asset):
-OPENWORK_INSTALLER_CLIENT_NAME="Acme" \
-OPENWORK_INSTALLER_WEB_URL="https://openwork.acme.com" \
-OPENWORK_INSTALLER_API_URL="https://openwork-api.acme.com" \
+JUGGLEWORK_INSTALLER_CLIENT_NAME="Acme" \
+JUGGLEWORK_INSTALLER_WEB_URL="https://jugglework.acme.com" \
+JUGGLEWORK_INSTALLER_API_URL="https://jugglework-api.acme.com" \
 pnpm --dir apps/installer exec bun run src/index.ts --headless --dry-run
 
 # UI mode (uses env overrides, build config, or pasted install link):

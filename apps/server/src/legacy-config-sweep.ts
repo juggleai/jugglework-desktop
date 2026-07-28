@@ -24,12 +24,12 @@ export type LegacyConfigSweepOptions = {
   now?: Date;
 };
 
-const OPENWORK_PLUGIN_MARKERS = [
-  "openwork-extensions-preview",
-  "openwork-capabilities-knowledge",
-  "openwork-office-attachments",
-  "openwork-anthropic-adaptive-thinking",
-  "openwork-anthropic-tool-schema",
+const JUGGLEWORK_PLUGIN_MARKERS = [
+  "jugglework-extensions-preview",
+  "jugglework-capabilities-knowledge",
+  "jugglework-office-attachments",
+  "jugglework-anthropic-adaptive-thinking",
+  "jugglework-anthropic-tool-schema",
 ];
 
 const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" };
@@ -63,8 +63,8 @@ function legacyConfigTargets(homeDir: string): string[] {
   ];
 }
 
-function matchesOpenworkPlugin(value: string): boolean {
-  return value.includes("opencode-plugins/openwork-") || OPENWORK_PLUGIN_MARKERS.some((marker) => value.includes(marker));
+function matchesJuggleWorkPlugin(value: string): boolean {
+  return value.includes("opencode-plugins/jugglework-") || JUGGLEWORK_PLUGIN_MARKERS.some((marker) => value.includes(marker));
 }
 
 function parseJsoncObject(content: string): Record<string, unknown> {
@@ -90,23 +90,23 @@ export function sweepLegacyConfigContent(content: string): { content: string; re
   const removedKeys: string[] = [];
   let updated = content;
 
-  if (isRecord(parsed.mcp) && Object.hasOwn(parsed.mcp, "openwork-cloud")) {
-    updated = removeJsoncPath(updated, ["mcp", "openwork-cloud"]);
-    removedKeys.push("mcp.openwork-cloud");
+  if (isRecord(parsed.mcp) && Object.hasOwn(parsed.mcp, "jugglework-cloud")) {
+    updated = removeJsoncPath(updated, ["mcp", "jugglework-cloud"]);
+    removedKeys.push("mcp.jugglework-cloud");
   }
 
-  if (isRecord(parsed.agent) && Object.hasOwn(parsed.agent, "openwork")) {
-    updated = removeJsoncPath(updated, ["agent", "openwork"]);
-    removedKeys.push("agent.openwork");
+  if (isRecord(parsed.agent) && Object.hasOwn(parsed.agent, "jugglework")) {
+    updated = removeJsoncPath(updated, ["agent", "jugglework"]);
+    removedKeys.push("agent.jugglework");
   }
 
-  if (parsed.default_agent === "openwork") {
+  if (parsed.default_agent === "jugglework") {
     updated = removeJsoncPath(updated, ["default_agent"]);
     removedKeys.push("default_agent");
   }
 
   if (Array.isArray(parsed.plugin)) {
-    const nextPlugin = parsed.plugin.filter((entry) => typeof entry !== "string" || !matchesOpenworkPlugin(entry));
+    const nextPlugin = parsed.plugin.filter((entry) => typeof entry !== "string" || !matchesJuggleWorkPlugin(entry));
     if (nextPlugin.length !== parsed.plugin.length) {
       updated = nextPlugin.length > 0
         ? setJsoncPath(updated, ["plugin"], nextPlugin)
@@ -186,7 +186,7 @@ export async function sweepLegacyOpenCodeConfig(
       };
 
       if (swept.removedKeys.length > 0) {
-        const backupPath = `${path}.openwork-backup-${backupTimestamp(now)}`;
+        const backupPath = `${path}.jugglework-backup-${backupTimestamp(now)}`;
         await copyFile(path, backupPath);
         await writeFile(path, swept.content, "utf8");
         file.backupPath = backupPath;

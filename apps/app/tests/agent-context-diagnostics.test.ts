@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentContextDiagnosticsRequestSchema } from "@openwork/types/agent-context-diagnostics";
+import { agentContextDiagnosticsRequestSchema } from "@jugglework/types/agent-context-diagnostics";
 
 import {
   collectAgentContextDiagnosticObservations,
@@ -379,7 +379,7 @@ describe("agent diagnostics workspace trust", () => {
     })).toBe(false);
     expect(isAgentContextDiagnosticsWorkspaceAllowed({
       workspaceType: "remote",
-      remoteType: "openwork",
+      remoteType: "jugglework",
     })).toBe(true);
     expect(isAgentContextDiagnosticsWorkspaceAllowed({
       workspaceType: "remote",

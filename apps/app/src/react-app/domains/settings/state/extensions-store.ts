@@ -29,18 +29,18 @@ import {
   readOpencodeConfig,
   revealDesktopItemInDir,
   uninstallSkill as uninstallSkillCommand,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceJuggleWorkRead,
+  workspaceJuggleWorkWrite,
   writeLocalSkill,
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
 import type {
-  OpenworkClaudePluginPreview,
-  OpenworkServerCapabilities,
-  OpenworkServerClient,
-  OpenworkServerStatus,
-} from "../../../../app/lib/openwork-server";
+  JuggleWorkClaudePluginPreview,
+  JuggleWorkServerCapabilities,
+  JuggleWorkServerClient,
+  JuggleWorkServerStatus,
+} from "../../../../app/lib/jugglework-server";
 import {
   createDenClient,
   readDenSettings,
@@ -62,7 +62,7 @@ import {
   type PendingCloudPluginChange,
 } from "../../../../app/cloud/desktop-cloud-sync";
 import { notifyEvent } from "../../../shell/notifications";
-import type { OpenworkServerStore } from "../../connections/openwork-server-store";
+import type { JuggleWorkServerStore } from "../../connections/jugglework-server-store";
 
 const OPENCODE_SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const OPENCODE_MCP_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
@@ -347,11 +347,11 @@ export function createExtensionsStore(options: {
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
-  openworkServer: OpenworkServerStore;
-  openworkServerConnection?: () => {
-    openworkServerClient: OpenworkServerClient | null;
-    openworkServerStatus: OpenworkServerStatus;
-    openworkServerCapabilities: OpenworkServerCapabilities | null;
+  juggleworkServer: JuggleWorkServerStore;
+  juggleworkServerConnection?: () => {
+    juggleworkServerClient: JuggleWorkServerClient | null;
+    juggleworkServerStatus: JuggleWorkServerStatus;
+    juggleworkServerCapabilities: JuggleWorkServerCapabilities | null;
   };
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
@@ -365,7 +365,7 @@ export function createExtensionsStore(options: {
 
   let disposed = false;
   let started = false;
-  let stopOpenworkSubscription: (() => void) | null = null;
+  let stopJuggleWorkSubscription: (() => void) | null = null;
   let stopDenSessionListener: (() => void) | null = null;
   let lastWorkspaceContextKey = "";
   let snapshot: ExtensionsStoreSnapshot;
@@ -418,33 +418,33 @@ export function createExtensionsStore(options: {
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
   };
 
-  const getOpenworkServerSnapshot = () => {
-    const snapshot = options.openworkServer.getSnapshot();
-    const connection = options.openworkServerConnection?.();
-    if (!connection?.openworkServerClient) return snapshot;
+  const getJuggleWorkServerSnapshot = () => {
+    const snapshot = options.juggleworkServer.getSnapshot();
+    const connection = options.juggleworkServerConnection?.();
+    if (!connection?.juggleworkServerClient) return snapshot;
     return {
       ...snapshot,
-      openworkServerClient: connection.openworkServerClient,
-      openworkServerStatus: connection.openworkServerStatus,
-      openworkServerCapabilities: connection.openworkServerCapabilities,
+      juggleworkServerClient: connection.juggleworkServerClient,
+      juggleworkServerStatus: connection.juggleworkServerStatus,
+      juggleworkServerCapabilities: connection.juggleworkServerCapabilities,
     };
   };
 
   const resolveWorkspaceServerTarget = async () => {
-    const openworkSnapshot = getOpenworkServerSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
-    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
-      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+    const juggleworkSnapshot = getJuggleWorkServerSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    let juggleworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!juggleworkWorkspaceId && juggleworkSnapshot.juggleworkServerStatus === "connected" && juggleworkClient) {
+      juggleworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
     }
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
+    const hasJuggleWorkTarget =
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      Boolean(juggleworkClient && juggleworkWorkspaceId);
     return {
-      openworkSnapshot,
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
+      juggleworkSnapshot,
+      juggleworkClient,
+      juggleworkWorkspaceId,
+      hasJuggleWorkTarget,
     };
   };
 
@@ -489,56 +489,56 @@ export function createExtensionsStore(options: {
 
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
-  const readWorkspaceOpenworkConfigRecord = async (): Promise<Record<string, unknown>> => {
+  const readWorkspaceJuggleWorkConfigRecord = async (): Promise<Record<string, unknown>> => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.read !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.read !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const config = await openworkClient.getConfig(openworkWorkspaceId);
-      return config.openwork ?? {};
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      const config = await juggleworkClient.getConfig(juggleworkWorkspaceId);
+      return config.jugglework ?? {};
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      return await workspaceOpenworkRead({ workspacePath: root }) as unknown as Record<string, unknown>;
+      return await workspaceJuggleWorkRead({ workspacePath: root }) as unknown as Record<string, unknown>;
     }
 
     return {};
   };
 
-  const writeWorkspaceOpenworkConfigRecord = async (config: Record<string, unknown>) => {
+  const writeWorkspaceJuggleWorkConfigRecord = async (config: Record<string, unknown>) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.write !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      await juggleworkClient.patchConfig(juggleworkWorkspaceId, { jugglework: config });
       return true;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       return false;
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = (await workspaceOpenworkWrite({
+      const result = (await workspaceJuggleWorkWrite({
         workspacePath: root,
         config: config as never,
       })) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
-        throw new Error(result.stderr || result.stdout || "Failed to write .opencode/openwork.json");
+        throw new Error(result.stderr || result.stdout || "Failed to write .opencode/jugglework.json");
       }
       return true;
     }
@@ -549,17 +549,17 @@ export function createExtensionsStore(options: {
   const refreshPendingCloudPluginChanges = async (installedPlugins?: Record<string, CloudImportedPlugin>) => {
     try {
       const target = await resolveWorkspaceServerTarget();
-      if (!target.openworkClient || !target.openworkWorkspaceId) {
+      if (!target.juggleworkClient || !target.juggleworkWorkspaceId) {
         setStateField("pendingCloudPluginChanges", {});
         return;
       }
       const syncResult = await refreshDesktopCloudSync({
-        openworkClient: target.openworkClient,
-        workspaceId: target.openworkWorkspaceId,
+        juggleworkClient: target.juggleworkClient,
+        workspaceId: target.juggleworkWorkspaceId,
       }).catch(() => null);
       const changes = syncResult
         ? syncResult.changes
-        : readPendingCloudSyncChanges(await target.openworkClient.getDesktopCloudSync(target.openworkWorkspaceId));
+        : readPendingCloudSyncChanges(await target.juggleworkClient.getDesktopCloudSync(target.juggleworkWorkspaceId));
       const pending = derivePendingCloudPluginChanges({
         changes,
         installedPlugins: installedPlugins ?? snapshot.importedCloudPlugins,
@@ -601,14 +601,14 @@ export function createExtensionsStore(options: {
   const refreshImportedCloudPlugins = async () => {
     try {
       const target = await resolveWorkspaceServerTarget();
-      if (target.openworkClient && target.openworkWorkspaceId) {
-        const result = await target.openworkClient.listCloudPlugins(target.openworkWorkspaceId);
+      if (target.juggleworkClient && target.juggleworkWorkspaceId) {
+        const result = await target.juggleworkClient.listCloudPlugins(target.juggleworkWorkspaceId);
         setStateField("importedCloudMarketplaces", result.marketplaces);
         setStateField("importedCloudPlugins", result.plugins);
         void refreshPendingCloudPluginChanges(result.plugins);
         return result.plugins;
       }
-      const config = await readWorkspaceOpenworkConfigRecord();
+      const config = await readWorkspaceJuggleWorkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       setStateField("importedCloudMarketplaces", cloudImports.marketplaces);
       setStateField("importedCloudPlugins", cloudImports.plugins);
@@ -622,14 +622,14 @@ export function createExtensionsStore(options: {
   };
 
   const persistImportedCloudMarketplaces = async (nextMarketplaces: Record<string, CloudImportedMarketplace>) => {
-    const config = await readWorkspaceOpenworkConfigRecord();
+    const config = await readWorkspaceJuggleWorkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
     const nextCloudImports = {
       ...cloudImports,
       marketplaces: nextMarketplaces,
     };
     const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
-    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error("JuggleWork server unavailable. Connect to manage imported cloud marketplaces.");
     }
@@ -638,14 +638,14 @@ export function createExtensionsStore(options: {
   };
 
   const persistImportedCloudPlugins = async (nextPlugins: Record<string, CloudImportedPlugin>) => {
-    const config = await readWorkspaceOpenworkConfigRecord();
+    const config = await readWorkspaceJuggleWorkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
     const nextCloudImports = {
       ...cloudImports,
       plugins: nextPlugins,
     };
     const nextConfig = withWorkspaceCloudImports(config, nextCloudImports);
-    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error("JuggleWork server unavailable. Connect to manage imported cloud plugins.");
     }
@@ -673,18 +673,18 @@ export function createExtensionsStore(options: {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      await openworkClient.deleteSkill(openworkWorkspaceId, name);
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      await juggleworkClient.deleteSkill(juggleworkWorkspaceId, name);
       return;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       throw new Error("JuggleWork server cannot remove skills for this workspace.");
     }
 
@@ -872,7 +872,7 @@ export function createExtensionsStore(options: {
     const version = object.latestVersion;
     const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
     if (!payload) return null;
-    if (payload.openworkManaged === "den_external_mcp") {
+    if (payload.juggleworkManaged === "den_external_mcp") {
       const id = readNonEmptyString(payload.externalMcpConnectionId);
       if (id) return id;
     }
@@ -882,7 +882,7 @@ export function createExtensionsStore(options: {
     ].filter((entry): entry is Record<string, unknown> => Boolean(entry));
     for (const container of containers) {
       for (const config of Object.values(container)) {
-        if (!isRecord(config) || config.openworkManaged !== "den_external_mcp") continue;
+        if (!isRecord(config) || config.juggleworkManaged !== "den_external_mcp") continue;
         const id = readNonEmptyString(config.externalMcpConnectionId);
         if (id) return id;
       }
@@ -891,32 +891,32 @@ export function createExtensionsStore(options: {
   };
 
   const upsertPluginMcpConfig = async (name: string, config: Record<string, unknown>) => {
-    const openworkSnapshot = getOpenworkServerSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const juggleworkSnapshot = getJuggleWorkServerSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    const juggleworkWorkspaceId = options.runtimeWorkspaceId();
     if (
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      juggleworkClient &&
+      juggleworkWorkspaceId &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.mcp?.write
     ) {
-      await openworkClient.addMcp(openworkWorkspaceId, { name, config });
+      await juggleworkClient.addMcp(juggleworkWorkspaceId, { name, config });
       return;
     }
     throw new Error("JuggleWork server unavailable. Connect to import MCP servers into this workspace.");
   };
 
   const deletePluginMcpConfig = async (name: string) => {
-    const openworkSnapshot = getOpenworkServerSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = options.runtimeWorkspaceId();
+    const juggleworkSnapshot = getJuggleWorkServerSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    const juggleworkWorkspaceId = options.runtimeWorkspaceId();
     if (
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.write
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      juggleworkClient &&
+      juggleworkWorkspaceId &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.mcp?.write
     ) {
-      await openworkClient.removeMcp(openworkWorkspaceId, name);
+      await juggleworkClient.removeMcp(juggleworkWorkspaceId, name);
       return;
     }
     throw new Error("JuggleWork server unavailable. Connect to remove imported MCP servers from this workspace.");
@@ -938,16 +938,16 @@ export function createExtensionsStore(options: {
   };
 
   const writePluginWorkspaceFile = async (path: string, content: string) => {
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
     if (
-      hasOpenworkTarget &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.config?.write !== false &&
-      typeof openworkClient.writeWorkspaceFile === "function"
+      hasJuggleWorkTarget &&
+      juggleworkClient &&
+      juggleworkWorkspaceId &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.write !== false &&
+      typeof juggleworkClient.writeWorkspaceFile === "function"
     ) {
-      await openworkClient.writeWorkspaceFile(openworkWorkspaceId, { path, content, force: true });
+      await juggleworkClient.writeWorkspaceFile(juggleworkWorkspaceId, { path, content, force: true });
       return;
     }
     throw new Error("JuggleWork server unavailable. Connect to import plugin files into this workspace.");
@@ -955,16 +955,16 @@ export function createExtensionsStore(options: {
 
   const deletePluginWorkspaceFiles = async (files: Array<{ path: string; recursive?: boolean }>) => {
     if (files.length === 0) return;
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
     if (
-      hasOpenworkTarget &&
-      openworkClient &&
-      openworkWorkspaceId &&
-      openworkSnapshot.openworkServerCapabilities?.config?.write !== false &&
-      typeof openworkClient.deleteWorkspaceFiles === "function"
+      hasJuggleWorkTarget &&
+      juggleworkClient &&
+      juggleworkWorkspaceId &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.write !== false &&
+      typeof juggleworkClient.deleteWorkspaceFiles === "function"
     ) {
-      const results = await openworkClient.deleteWorkspaceFiles(openworkWorkspaceId, files);
+      const results = await juggleworkClient.deleteWorkspaceFiles(juggleworkWorkspaceId, files);
       const failed = results.filter((result) => !result.ok && result.code !== "file_not_found");
       if (failed.length > 0) {
         throw new Error(
@@ -1239,9 +1239,9 @@ export function createExtensionsStore(options: {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const resolved = await client.getOrgPluginResolved(orgId, plugin);
       const target = await resolveWorkspaceServerTarget();
-      if (target.openworkClient && target.openworkWorkspaceId) {
+      if (target.juggleworkClient && target.juggleworkWorkspaceId) {
         const marketplace = marketplaceId ? findCloudMarketplace(marketplaceId) : null;
-        const result = await target.openworkClient.installCloudPlugin(target.openworkWorkspaceId, {
+        const result = await target.juggleworkClient.installCloudPlugin(target.juggleworkWorkspaceId, {
           marketplaceId,
           marketplace,
           resolved,
@@ -1274,12 +1274,12 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function previewClaudePlugin(url: string): Promise<OpenworkClaudePluginPreview> {
+  async function previewClaudePlugin(url: string): Promise<JuggleWorkClaudePluginPreview> {
     const target = await resolveWorkspaceServerTarget();
-    if (!target.openworkClient || !target.openworkWorkspaceId) {
+    if (!target.juggleworkClient || !target.juggleworkWorkspaceId) {
       throw new Error("JuggleWork server unavailable. Connect to install plugins from GitHub.");
     }
-    const result = await target.openworkClient.previewClaudePlugin(target.openworkWorkspaceId, { url });
+    const result = await target.juggleworkClient.previewClaudePlugin(target.juggleworkWorkspaceId, { url });
     return result.preview;
   }
 
@@ -1288,10 +1288,10 @@ export function createExtensionsStore(options: {
     options.setError(null);
     try {
       const target = await resolveWorkspaceServerTarget();
-      if (!target.openworkClient || !target.openworkWorkspaceId) {
+      if (!target.juggleworkClient || !target.juggleworkWorkspaceId) {
         throw new Error("JuggleWork server unavailable. Connect to install plugins from GitHub.");
       }
-      const result = await target.openworkClient.installClaudePlugin(target.openworkWorkspaceId, { url });
+      const result = await target.juggleworkClient.installClaudePlugin(target.juggleworkWorkspaceId, { url });
       await refreshSkills({ force: true });
       await refreshImportedCloudPlugins();
       return {
@@ -1314,8 +1314,8 @@ export function createExtensionsStore(options: {
 
     try {
       const target = await resolveWorkspaceServerTarget();
-      if (target.openworkClient && target.openworkWorkspaceId) {
-        const result = await target.openworkClient.removeCloudPlugin(target.openworkWorkspaceId, pluginId);
+      if (target.juggleworkClient && target.juggleworkWorkspaceId) {
+        const result = await target.juggleworkClient.removeCloudPlugin(target.juggleworkWorkspaceId, pluginId);
         await refreshSkills({ force: true });
         await refreshCloudOrgMarketplaces({ force: true });
         void refreshPendingCloudPluginChanges();
@@ -1393,13 +1393,13 @@ export function createExtensionsStore(options: {
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.read !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.skills?.read !== false;
 
-    if (!root && !hasOpenworkTarget) {
+    if (!root && !hasJuggleWorkTarget) {
       mutateState((current) => ({
         ...current,
         skills: [],
@@ -1408,8 +1408,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const skillCacheKey = root || openworkWorkspaceId;
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      const skillCacheKey = root || juggleworkWorkspaceId;
       if (skillCacheKey !== skillsRoot) skillsLoaded = false;
       if (!optionsOverride?.force && skillsLoaded) return;
       if (refreshSkillsInFlight) return;
@@ -1418,7 +1418,7 @@ export function createExtensionsStore(options: {
       refreshSkillsAborted = false;
       try {
         setStateField("skillsStatus", null);
-        const response = await openworkClient.listSkills(openworkWorkspaceId, { includeGlobal: isLocalWorkspace });
+        const response = await juggleworkClient.listSkills(juggleworkWorkspaceId, { includeGlobal: isLocalWorkspace });
         if (refreshSkillsAborted) return;
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
@@ -1449,7 +1449,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       mutateState((current) => ({
         ...current,
         skills: [],
@@ -1558,11 +1558,11 @@ export function createExtensionsStore(options: {
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.read !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.plugins?.read !== false;
 
     if (refreshPluginsInFlight) return;
     refreshPluginsInFlight = true;
@@ -1583,17 +1583,17 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (scope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (scope === "project" && canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       mutateState((current) => ({
         ...current,
         pluginConfig: null,
-        pluginConfigPath: `opencode.json (${isRemoteWorkspace ? "remote" : "openwork"} server)`,
+        pluginConfigPath: `opencode.json (${isRemoteWorkspace ? "remote" : "jugglework"} server)`,
       }));
 
       try {
         mutateState((current) => ({ ...current, pluginStatus: null, sidebarPluginStatus: null }));
         if (refreshPluginsAborted) return;
-        const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
+        const result = await juggleworkClient.listPlugins(juggleworkWorkspaceId, { includeGlobal: false });
         if (refreshPluginsAborted) return;
         const projectItems = result.items.filter((item) => item.scope === "project");
         const list = toProjectPluginListEntries(projectItems);
@@ -1620,7 +1620,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (scope === "project" && hasOpenworkTarget) {
+    if (scope === "project" && hasJuggleWorkTarget) {
       mutateState((current) => ({
         ...current,
         pluginStatus: "JuggleWork server cannot read plugins for this workspace.",
@@ -1644,7 +1644,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isLocalWorkspace && !canUseOpenworkServer) {
+    if (!isLocalWorkspace && !canUseJuggleWorkServer) {
       mutateState((current) => ({
         ...current,
         pluginStatus: "JuggleWork server unavailable. Connect to manage plugins.",
@@ -1737,11 +1737,11 @@ export function createExtensionsStore(options: {
     const triggerName = stripPluginVersion(pluginName);
 
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.plugins?.write !== false;
 
     if (!pluginName) {
       if (isManualInput) setStateField("pluginStatus", t("skills.enter_plugin_name"));
@@ -1753,10 +1753,10 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (snapshot.pluginScope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (snapshot.pluginScope === "project" && canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       try {
         setStateField("pluginStatus", null);
-        await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        await juggleworkClient.addPlugin(juggleworkWorkspaceId, pluginName);
         options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "added" });
         if (isManualInput) setStateField("pluginInput", "");
         await refreshPlugins("project");
@@ -1766,7 +1766,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (snapshot.pluginScope === "project" && hasOpenworkTarget) {
+    if (snapshot.pluginScope === "project" && hasJuggleWorkTarget) {
       setStateField("pluginStatus", "JuggleWork server cannot write plugins for this workspace.");
       return;
     }
@@ -1833,21 +1833,21 @@ export function createExtensionsStore(options: {
     }
 
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.plugins?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.plugins?.write !== false;
 
     if (snapshot.pluginScope !== "project" && !isLocalWorkspace) {
       setStateField("pluginStatus", "Global plugins are only available for local workers.");
       return;
     }
 
-    if (snapshot.pluginScope === "project" && canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (snapshot.pluginScope === "project" && canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       try {
         setStateField("pluginStatus", null);
-        await openworkClient.removePlugin(openworkWorkspaceId, name);
+        await juggleworkClient.removePlugin(juggleworkWorkspaceId, name);
         options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
         await refreshPlugins("project");
       } catch (error) {
@@ -1856,7 +1856,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (snapshot.pluginScope === "project" && hasOpenworkTarget) {
+    if (snapshot.pluginScope === "project" && hasJuggleWorkTarget) {
       setStateField("pluginStatus", "JuggleWork server cannot write plugins for this workspace.");
       return;
     }
@@ -1948,18 +1948,18 @@ export function createExtensionsStore(options: {
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       options.setBusy(true);
       options.setError(null);
       setStateField("skillsStatus", t("skills.installing_skill_creator"));
       try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
+        await juggleworkClient.upsertSkill(juggleworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
         const message = t("skills.skill_creator_installed");
         setStateField("skillsStatus", message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1976,7 +1976,7 @@ export function createExtensionsStore(options: {
       }
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       const message = "JuggleWork server cannot write skills for this workspace.";
       setStateField("skillsStatus", message);
       return { ok: false, message };
@@ -2100,16 +2100,16 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.read !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.skills?.read !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       try {
         setStateField("skillsStatus", null);
-        const result = await openworkClient.getSkill(openworkWorkspaceId, trimmed, { includeGlobal: isLocalWorkspace });
+        const result = await juggleworkClient.getSkill(juggleworkWorkspaceId, trimmed, { includeGlobal: isLocalWorkspace });
         return { name: result.item.name, path: result.item.path, content: result.content };
       } catch (error) {
         setStateField("skillsStatus", error instanceof Error ? error.message : t("skills.failed_to_load"));
@@ -2117,7 +2117,7 @@ export function createExtensionsStore(options: {
       }
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       setStateField("skillsStatus", "JuggleWork server cannot read skills for this workspace.");
       return null;
     }
@@ -2156,18 +2156,18 @@ export function createExtensionsStore(options: {
     const root = options.selectedWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
-    const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
+    const { juggleworkSnapshot, juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget } =
       await resolveWorkspaceServerTarget();
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.skills?.write !== false;
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.skills?.write !== false;
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       options.setBusy(true);
       options.setError(null);
       setStateField("skillsStatus", null);
       try {
-        await openworkClient.upsertSkill(openworkWorkspaceId, {
+        await juggleworkClient.upsertSkill(juggleworkWorkspaceId, {
           name: trimmed,
           content: input.content,
           description: input.description,
@@ -2185,7 +2185,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       const message = "JuggleWork server cannot write skills for this workspace.";
       setStateField("skillsStatus", message);
       throw new Error(message);
@@ -2263,11 +2263,11 @@ export function createExtensionsStore(options: {
         cloudOrgMarketplacesLoaded = false;
         touch();
       };
-      window.addEventListener("openwork-den-session-updated", onDenSessionUpdated);
-      stopDenSessionListener = () => window.removeEventListener("openwork-den-session-updated", onDenSessionUpdated);
+      window.addEventListener("jugglework-den-session-updated", onDenSessionUpdated);
+      stopDenSessionListener = () => window.removeEventListener("jugglework-den-session-updated", onDenSessionUpdated);
     }
 
-    stopOpenworkSubscription = options.openworkServer.subscribe(() => {
+    stopJuggleWorkSubscription = options.juggleworkServer.subscribe(() => {
       syncFromOptions();
     });
 
@@ -2279,8 +2279,8 @@ export function createExtensionsStore(options: {
     disposed = true;
     started = false;
     abortRefreshes();
-    stopOpenworkSubscription?.();
-    stopOpenworkSubscription = null;
+    stopJuggleWorkSubscription?.();
+    stopJuggleWorkSubscription = null;
     stopDenSessionListener?.();
     stopDenSessionListener = null;
     listeners.clear();

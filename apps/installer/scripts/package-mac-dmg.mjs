@@ -15,7 +15,7 @@ import {
 } from "./dmg-layout.mjs"
 
 const appName = "Install JuggleWork.app"
-const executableName = "openwork-installer"
+const executableName = "jugglework-installer"
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const backgroundAssetDir = path.join(packageRoot, "assets", "dmg-background")
 
@@ -52,7 +52,7 @@ function writeInfoPlist(appPath) {
 <dict>
   <key>CFBundleName</key><string>Install JuggleWork</string>
   <key>CFBundleDisplayName</key><string>Install JuggleWork</string>
-  <key>CFBundleIdentifier</key><string>com.differentai.openwork.installer</string>
+  <key>CFBundleIdentifier</key><string>com.juggleai.jugglework.installer</string>
   <key>CFBundleExecutable</key><string>${executableName}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
@@ -141,12 +141,12 @@ function delay(milliseconds) {
 async function main() {
   if (process.platform !== "darwin") fail("hdiutil packaging requires macOS.")
 
-  const arch = normalizeArch(argValue("--arch") || process.env.OPENWORK_INSTALLER_ARCH || process.env.TARGET_ARCH || process.arch)
+  const arch = normalizeArch(argValue("--arch") || process.env.JUGGLEWORK_INSTALLER_ARCH || process.env.TARGET_ARCH || process.arch)
   const inputPath = path.resolve(argValue("--input") || defaultInputPath())
   const outDir = path.resolve(argValue("--out-dir") || "dist")
   const outputPath = path.resolve(argValue("--output") || path.join(outDir, `JuggleWork-Installer-${arch}.dmg`))
-  const stagingRoot = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-dmg-root-"))
-  const imageRoot = mkdtempSync(path.join(os.tmpdir(), "openwork-installer-dmg-image-"))
+  const stagingRoot = mkdtempSync(path.join(os.tmpdir(), "jugglework-installer-dmg-root-"))
+  const imageRoot = mkdtempSync(path.join(os.tmpdir(), "jugglework-installer-dmg-image-"))
   const rwImagePath = path.join(imageRoot, "JuggleWork-Installer.readwrite.dmg")
   const mountPoint = path.join(imageRoot, dmgLayout.volumeName)
   let attached = false

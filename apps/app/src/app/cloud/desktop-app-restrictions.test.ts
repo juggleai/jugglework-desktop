@@ -54,7 +54,7 @@ describe("isDesktopProviderBlocked", () => {
   });
 
   test("never hides providers the org itself published", () => {
-    for (const providerId of ["lpr_01H2X", "LPR_01H2X", "openwork"]) {
+    for (const providerId of ["lpr_01H2X", "LPR_01H2X", "jugglework"]) {
       expect(
         isDesktopProviderBlocked({
           providerId,

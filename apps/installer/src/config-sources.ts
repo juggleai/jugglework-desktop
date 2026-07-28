@@ -1,4 +1,4 @@
-import { installConfigSchema, installConfigUrlFor, type InstallConfig } from "@openwork/install-config"
+import { installConfigSchema, installConfigUrlFor, type InstallConfig } from "@jugglework/install-config"
 import { BUILD_API_URL, BUILD_APP_NAME, BUILD_CLIENT_NAME, BUILD_LOGO_URL, BUILD_REQUIRE_SIGNIN, BUILD_WEB_URL } from "./generated/build-config"
 import type { InstallerConfig } from "./config"
 
@@ -56,7 +56,7 @@ export class InstallerConfigMissingError extends Error {
 
 function warn(options: ConfigSourceOptions | undefined, message: string) {
   const logger = options?.warn ?? console.warn
-  logger(`[openwork-installer] ${message}`)
+  logger(`[jugglework-installer] ${message}`)
 }
 
 function normalizeUrl(value: string, label: string): string {
@@ -102,18 +102,18 @@ function parseRequireSignin(value: string | undefined, fallback: boolean) {
 }
 
 export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerConfig | null {
-  const appName = env.OPENWORK_INSTALLER_APP_NAME?.trim() || "JuggleWork"
-  const clientName = env.OPENWORK_INSTALLER_CLIENT_NAME?.trim() ?? ""
-  const webUrl = env.OPENWORK_INSTALLER_WEB_URL?.trim() ?? ""
-  const apiUrl = env.OPENWORK_INSTALLER_API_URL?.trim() ?? ""
-  const logoUrl = env.OPENWORK_INSTALLER_LOGO_URL?.trim() ?? ""
-  const hasEnvOverride = Boolean(clientName || webUrl || apiUrl || logoUrl || env.OPENWORK_INSTALLER_REQUIRE_SIGNIN !== undefined)
+  const appName = env.JUGGLEWORK_INSTALLER_APP_NAME?.trim() || "JuggleWork"
+  const clientName = env.JUGGLEWORK_INSTALLER_CLIENT_NAME?.trim() ?? ""
+  const webUrl = env.JUGGLEWORK_INSTALLER_WEB_URL?.trim() ?? ""
+  const apiUrl = env.JUGGLEWORK_INSTALLER_API_URL?.trim() ?? ""
+  const logoUrl = env.JUGGLEWORK_INSTALLER_LOGO_URL?.trim() ?? ""
+  const hasEnvOverride = Boolean(clientName || webUrl || apiUrl || logoUrl || env.JUGGLEWORK_INSTALLER_REQUIRE_SIGNIN !== undefined)
 
   if (!hasEnvOverride) {
     return null
   }
   if (!clientName || !webUrl || !apiUrl) {
-    throw new Error("OPENWORK_INSTALLER_CLIENT_NAME, OPENWORK_INSTALLER_WEB_URL, and OPENWORK_INSTALLER_API_URL are required when using installer env overrides")
+    throw new Error("JUGGLEWORK_INSTALLER_CLIENT_NAME, JUGGLEWORK_INSTALLER_WEB_URL, and JUGGLEWORK_INSTALLER_API_URL are required when using installer env overrides")
   }
 
   return {
@@ -122,7 +122,7 @@ export function envOverrides(env: NodeJS.ProcessEnv = process.env): InstallerCon
     webUrl: normalizeUrl(webUrl, "web URL"),
     apiUrl: normalizeUrl(apiUrl, "API URL"),
     logoUrl: logoUrl ? normalizeUrl(logoUrl, "logo URL") : null,
-    requireSignin: parseRequireSignin(env.OPENWORK_INSTALLER_REQUIRE_SIGNIN, BUILD_REQUIRE_SIGNIN),
+    requireSignin: parseRequireSignin(env.JUGGLEWORK_INSTALLER_REQUIRE_SIGNIN, BUILD_REQUIRE_SIGNIN),
   }
 }
 

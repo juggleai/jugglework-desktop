@@ -3,7 +3,7 @@
 // packages/types/src/desktop-ipc.ts (shared with the Electron main process);
 // this module re-exports them as the app-side import path.
 
-import type { WorkspaceWire } from "@openwork/types/workspace";
+import type { WorkspaceWire } from "@jugglework/types/workspace";
 
 export type {
   AppBuildInfo,
@@ -32,8 +32,8 @@ export type {
   OpencodeConfigFile,
   OpencodeExecutionEnvEntry,
   OpencodeExecutionSnapshot,
-  OpenworkDockerCleanupResult,
-  OpenworkServerInfo,
+  JuggleWorkDockerCleanupResult,
+  JuggleWorkServerInfo,
   OrchestratorDetachedHost,
   SandboxDebugProbeResult,
   SandboxDoctorResult,
@@ -42,11 +42,11 @@ export type {
   WorkspaceCreateRemoteInput,
   WorkspaceExportSummary,
   WorkspaceList,
-  WorkspaceOpenworkConfig,
+  WorkspaceJuggleWorkConfig,
   WorkspaceUpdateRemoteInput,
-} from "@openwork/types/desktop-ipc";
+} from "@jugglework/types/desktop-ipc";
 
-// Canonical wire shape shared with openwork-server and the desktop bridge.
+// Canonical wire shape shared with jugglework-server and the desktop bridge.
 // Single source of truth: packages/types/src/workspace.ts.
 export type WorkspaceInfo = WorkspaceWire;
 

@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import type { GoogleWorkspaceAuthStatus, OpenworkServerClient } from "../../../app/lib/openwork-server";
+import type { GoogleWorkspaceAuthStatus, JuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
 import { registerExtensionRuntime } from "./extension-registry";
@@ -33,7 +33,7 @@ type GoogleWorkspaceCommand = () => Promise<unknown>;
 const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
 const CONNECT_POLL_INTERVAL_MS = 1_000;
 // Must match GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID in apps/server/src/extensions/google-workspace.ts.
-const OPENWORK_BUILTIN_GOOGLE_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
+const JUGGLEWORK_BUILTIN_GOOGLE_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -95,7 +95,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, flowId: string, expiresAt: number) {
+async function waitForGoogleWorkspaceConnection(client: JuggleWorkServerClient, flowId: string, expiresAt: number) {
   while (Date.now() < expiresAt + 5_000) {
     const result = await client.googleWorkspaceConnectStatus(flowId);
     if (result.status === "connected" && result.googleWorkspace) return result.googleWorkspace;
@@ -107,7 +107,7 @@ async function waitForGoogleWorkspaceConnection(client: OpenworkServerClient, fl
   throw new Error("Google Workspace OAuth timed out.");
 }
 
-function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient, onExtensionConnectionChange, restartLocalServer }: ExtensionConfigContext) {
+function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerClient, onExtensionConnectionChange, restartLocalServer }: ExtensionConfigContext) {
   const platform = usePlatform();
   const [status, setStatus] = useState<GoogleWorkspaceAuthStatus | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
@@ -116,17 +116,17 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   const [customClientId, setCustomClientId] = useState("");
   const [customClientSecret, setCustomClientSecret] = useState("");
   const [optionalFeatures, setOptionalFeatures] = useState<Record<OptionalFeature, boolean>>({ gmailRead: false, driveFull: false, calendarWrite: false, chat: false });
-  const serverAvailable = Boolean(openworkServerClient);
-  const hostServerAvailable = Boolean(hostOpenworkServerClient);
+  const serverAvailable = Boolean(juggleworkServerClient);
+  const hostServerAvailable = Boolean(hostJuggleWorkServerClient);
   const canConnect = serverAvailable && status?.configured === true && status.vault !== "unavailable";
   const canTest = serverAvailable && status?.connected === true;
 
   const loadStatus = async (options: { clearError?: boolean } = {}) => {
-    if (!openworkServerClient) return;
+    if (!juggleworkServerClient) return;
     setBusyAction("status");
     if (options.clearError !== false) setError(null);
     try {
-      const result = normalizeGoogleWorkspaceAuthStatus(await openworkServerClient.googleWorkspaceStatus());
+      const result = normalizeGoogleWorkspaceAuthStatus(await juggleworkServerClient.googleWorkspaceStatus());
       setStatus(result);
       onExtensionConnectionChange?.("google-workspace", result.connected);
     } catch (err) {
@@ -138,10 +138,10 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
   useEffect(() => {
     void loadStatus();
-  }, [openworkServerClient]);
+  }, [juggleworkServerClient]);
 
   const runDesktopAction = async (action: Exclude<BusyAction, "status">, command: GoogleWorkspaceCommand) => {
-    if (!openworkServerClient) return;
+    if (!juggleworkServerClient) return;
     setBusyAction(action);
     setError(null);
     try {
@@ -163,23 +163,23 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
   };
 
   const connectGoogleWorkspace = async () => {
-    if (!openworkServerClient) return null;
+    if (!juggleworkServerClient) return null;
     const features = status?.customClient === true ? OPTIONAL_FEATURES.filter((feature) => optionalFeatures[feature.id]).map((feature) => feature.id) : [];
-    const flow = await openworkServerClient.googleWorkspaceConnectStart({ features });
+    const flow = await juggleworkServerClient.googleWorkspaceConnectStart({ features });
     platform.openLink(flow.authUrl);
-    return waitForGoogleWorkspaceConnection(openworkServerClient, flow.flowId, flow.expiresAt);
+    return waitForGoogleWorkspaceConnection(juggleworkServerClient, flow.flowId, flow.expiresAt);
   };
 
   const saveOauthEnv = async (entries: { key: string; value: string }[], onSaved: () => void) => {
-    if (!hostOpenworkServerClient) {
+    if (!hostJuggleWorkServerClient) {
       setError("Google OAuth settings can only be saved from the local desktop app.");
       return;
     }
     setBusyAction("save-secret");
     setError(null);
     try {
-      await hostOpenworkServerClient.upsertUserEnv(entries);
-      await hostOpenworkServerClient.setUserEnvPendingChanges(true);
+      await hostJuggleWorkServerClient.upsertUserEnv(entries);
+      await hostJuggleWorkServerClient.setUserEnvPendingChanges(true);
       onSaved();
       if (restartLocalServer) {
         const restarted = await restartLocalServer();
@@ -211,7 +211,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
       setError("Enter both the client ID and client secret from your own Google OAuth desktop client.");
       return;
     }
-    if (id === OPENWORK_BUILTIN_GOOGLE_CLIENT_ID) {
+    if (id === JUGGLEWORK_BUILTIN_GOOGLE_CLIENT_ID) {
       setError("That is the built-in JuggleWork client ID, which cannot unlock Gmail read access. Create your own OAuth client in Google Cloud Console (APIs & Services > Credentials > Create OAuth client ID > Desktop app) and paste its client ID here.");
       return;
     }
@@ -359,13 +359,13 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
                     <Button variant="outline" size="sm" disabled={Boolean(busyAction)} onClick={() => {
                       const accountId = account.accountId;
                       if (!accountId) return;
-                      void runDesktopAction("set-active", () => openworkServerClient?.googleWorkspaceSetActiveAccount(accountId) ?? Promise.resolve(null));
+                      void runDesktopAction("set-active", () => juggleworkServerClient?.googleWorkspaceSetActiveAccount(accountId) ?? Promise.resolve(null));
                     }}>
                       {busyAction === "set-active" ? <Loader2 className="size-4 animate-spin" /> : null}
                       Make default
                     </Button>
                   ) : null}
-                  <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
+                  <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => juggleworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
                     Disconnect
                   </Button>
                 </div>
@@ -380,16 +380,16 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
               {status?.connected ? "Add another Google account" : "Connect with Google"}
             </Button>
             {connectedAccounts.length > 1 ? (
-              <Button variant="destructive" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => openworkServerClient?.googleWorkspaceDisconnect() ?? Promise.resolve(null))}>
+              <Button variant="destructive" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => juggleworkServerClient?.googleWorkspaceDisconnect() ?? Promise.resolve(null))}>
                 {busyAction === "disconnect" ? <Loader2 className="size-4 animate-spin" /> : null}
                 Disconnect all
               </Button>
             ) : null}
-            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("test", () => openworkServerClient?.googleWorkspaceTestConnection() ?? Promise.resolve(null))}>
+            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("test", () => juggleworkServerClient?.googleWorkspaceTestConnection() ?? Promise.resolve(null))}>
               {busyAction === "test" ? <Loader2 className="size-4 animate-spin" /> : null}
               Test connection
             </Button>
-            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("smoke-test", () => openworkServerClient?.googleWorkspaceRunScopeSmokeTest() ?? Promise.resolve(null))}>
+            <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("smoke-test", () => juggleworkServerClient?.googleWorkspaceRunScopeSmokeTest() ?? Promise.resolve(null))}>
               {busyAction === "smoke-test" ? <Loader2 className="size-4 animate-spin" /> : null}
               Run diagnostic
             </Button>
@@ -464,7 +464,7 @@ function GoogleWorkspaceConfig({ openworkServerClient, hostOpenworkServerClient,
 
 registerExtensionRuntime({
   id: "google-workspace",
-  settingsPanelRefs: ["openwork.googleWorkspace.settings"],
+  settingsPanelRefs: ["jugglework.googleWorkspace.settings"],
   settingsPanel: (ctx) => <GoogleWorkspaceConfig {...ctx} />,
   isConnected: (_entry, ctx) => ctx.extensionConnections?.["google-workspace"] === true,
 });

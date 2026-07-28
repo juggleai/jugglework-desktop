@@ -5,12 +5,12 @@
  * that actually owns that workspace. For local workspaces that's the user's
  * local JuggleWork server. For workspaces hosted on a remote JuggleWork worker
  * (`id` starts with `rem_` and `workspaceType === "remote"`), it's the
- * `baseUrl`/`openworkHostUrl` and `openworkToken` saved on the workspace
+ * `baseUrl`/`juggleworkHostUrl` and `juggleworkToken` saved on the workspace
  * record, with the workspace addressed by its server-side id (the `rem_`
- * prefix is stripped, or `openworkWorkspaceId` is used when present).
+ * prefix is stripped, or `juggleworkWorkspaceId` is used when present).
  *
  * Always go through {@link resolveWorkspaceEndpoint} when you need:
- *   - an `OpenworkServerClient` for a workspace
+ *   - an `JuggleWorkServerClient` for a workspace
  *   - a mounted `/workspace/<id>` URL prefix
  *   - the `/opencode` URL for the OpenCode SDK
  *
@@ -21,10 +21,10 @@
 
 import type { WorkspaceInfo } from "./desktop";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  createOpenworkServerClient,
-  type OpenworkServerClient,
-} from "./openwork-server";
+  buildJuggleWorkWorkspaceBaseUrl,
+  createJuggleWorkServerClient,
+  type JuggleWorkServerClient,
+} from "./jugglework-server";
 
 export type ResolvedWorkspaceEndpoint = {
   /** Host URL of the JuggleWork server that owns this workspace (no `/workspace` mount). */
@@ -35,8 +35,8 @@ export type ResolvedWorkspaceEndpoint = {
   workspaceId: string;
   /** True when the workspace lives on a remote JuggleWork worker, not the user's local server. */
   isRemote: boolean;
-  /** OpenworkServerClient bound to {@link baseUrl}/{@link token}. */
-  client: OpenworkServerClient;
+  /** JuggleWorkServerClient bound to {@link baseUrl}/{@link token}. */
+  client: JuggleWorkServerClient;
   /** Mounted base url: `<baseUrl>/workspace/<workspaceId>`. No trailing slash. */
   mountedBaseUrl: string;
   /** OpenCode SDK base url: `<mountedBaseUrl>/opencode`. */
@@ -53,11 +53,11 @@ type WorkspaceEndpointInput = Pick<
   | "id"
   | "workspaceType"
   | "baseUrl"
-  | "openworkHostUrl"
-  | "openworkToken"
-  | "openworkClientToken"
-  | "openworkHostToken"
-  | "openworkWorkspaceId"
+  | "juggleworkHostUrl"
+  | "juggleworkToken"
+  | "juggleworkClientToken"
+  | "juggleworkHostToken"
+  | "juggleworkWorkspaceId"
 > | null | undefined;
 
 /**
@@ -80,22 +80,22 @@ export function workspaceServerId(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
   const id = workspace.id.trim();
   if (!isRemoteWorkspace(workspace)) return id;
-  const explicit = workspace.openworkWorkspaceId?.trim();
+  const explicit = workspace.juggleworkWorkspaceId?.trim();
   if (explicit) return explicit;
   return id.startsWith("rem_") ? id.slice("rem_".length) : id;
 }
 
 function pickRemoteBaseUrl(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
-  return (workspace.baseUrl ?? workspace.openworkHostUrl ?? "").trim();
+  return (workspace.baseUrl ?? workspace.juggleworkHostUrl ?? "").trim();
 }
 
 function pickRemoteToken(workspace: WorkspaceEndpointInput): string {
   if (!workspace) return "";
   return (
-    workspace.openworkToken ??
-    workspace.openworkClientToken ??
-    workspace.openworkHostToken ??
+    workspace.juggleworkToken ??
+    workspace.juggleworkClientToken ??
+    workspace.juggleworkHostToken ??
     ""
   ).trim();
 }
@@ -117,12 +117,12 @@ export function resolveWorkspaceEndpoint(
     if (!baseUrl) return null;
     const token = pickRemoteToken(workspace);
     const workspaceId = workspaceServerId(workspace);
-    const client = createOpenworkServerClient({
+    const client = createJuggleWorkServerClient({
       baseUrl,
       token: token || undefined,
     });
     const mountedBaseUrl = (
-      buildOpenworkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
+      buildJuggleWorkWorkspaceBaseUrl(baseUrl, workspaceId) ?? baseUrl
     ).replace(/\/+$/, "");
     return {
       baseUrl,
@@ -139,12 +139,12 @@ export function resolveWorkspaceEndpoint(
   if (!localBaseUrl) return null;
   const localToken = (localServer.token ?? "").trim();
   const workspaceId = workspace.id.trim();
-  const client = createOpenworkServerClient({
+  const client = createJuggleWorkServerClient({
     baseUrl: localBaseUrl,
     token: localToken || undefined,
   });
   const mountedBaseUrl = (
-    buildOpenworkWorkspaceBaseUrl(localBaseUrl, workspaceId) ?? localBaseUrl
+    buildJuggleWorkWorkspaceBaseUrl(localBaseUrl, workspaceId) ?? localBaseUrl
   ).replace(/\/+$/, "");
   return {
     baseUrl: localBaseUrl,

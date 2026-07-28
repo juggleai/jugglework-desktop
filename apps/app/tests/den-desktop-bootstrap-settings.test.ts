@@ -66,7 +66,7 @@ describe("desktop Den bootstrap settings", () => {
       value: {
         localStorage: memoryStorage(),
         dispatchEvent: () => true,
-        __OPENWORK_ELECTRON__: {
+        __JUGGLEWORK_ELECTRON__: {
           invokeDesktop: async (command: string, payload?: { baseUrl: string; requireSignin: boolean }) => {
             if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
             if (command === "setDesktopBootstrapConfig" && payload) {
@@ -92,8 +92,8 @@ describe("desktop Den bootstrap settings", () => {
   });
 
   test("reads the desktop base URL from bootstrap instead of stale localStorage", async () => {
-    window.localStorage.setItem("openwork.den.baseUrl", "https://stale.example.com");
-    window.localStorage.setItem("openwork.den.apiBaseUrl", "https://api.example.com");
+    window.localStorage.setItem("jugglework.den.baseUrl", "https://stale.example.com");
+    window.localStorage.setItem("jugglework.den.apiBaseUrl", "https://api.example.com");
 
     await initializeDenBootstrapConfig();
 
@@ -112,7 +112,7 @@ describe("desktop Den bootstrap settings", () => {
     bootstrapConfig.prepared = {
       orgId: "org_demo",
       orgName: "Different AI",
-      orgSlug: "different-ai",
+      orgSlug: "juggleai",
       skillId: "skill_demo",
       skillTitle: "Customer Briefing",
       skillsDir: "/tmp/skills",
@@ -141,7 +141,7 @@ describe("desktop Den bootstrap settings", () => {
       value: {
         localStorage: memoryStorage(),
         dispatchEvent: () => true,
-        __OPENWORK_ELECTRON__: {
+        __JUGGLEWORK_ELECTRON__: {
           meta: {
             desktopBootstrap: {
               baseUrl: "https://preload.example.com",
@@ -166,8 +166,8 @@ describe("desktop Den bootstrap settings", () => {
 
   test("saves base URL changes to bootstrap and clears legacy endpoint storage", async () => {
     await initializeDenBootstrapConfig();
-    window.localStorage.setItem("openwork.den.baseUrl", "https://stale.example.com");
-    window.localStorage.setItem("openwork.den.apiBaseUrl", "https://api.example.com");
+    window.localStorage.setItem("jugglework.den.baseUrl", "https://stale.example.com");
+    window.localStorage.setItem("jugglework.den.apiBaseUrl", "https://api.example.com");
 
     await setDenBootstrapConfig({
       baseUrl: "https://saved.example.com",
@@ -182,8 +182,8 @@ describe("desktop Den bootstrap settings", () => {
     });
 
     expect(bootstrapConfig.baseUrl).toBe("https://saved.example.com");
-    expect(window.localStorage.getItem("openwork.den.baseUrl")).toBeNull();
-    expect(window.localStorage.getItem("openwork.den.apiBaseUrl")).toBeNull();
+    expect(window.localStorage.getItem("jugglework.den.baseUrl")).toBeNull();
+    expect(window.localStorage.getItem("jugglework.den.apiBaseUrl")).toBeNull();
     expect(readDenSettings().baseUrl).toBe("https://saved.example.com");
   });
 

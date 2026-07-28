@@ -115,11 +115,11 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
             : emptyWorkspaceDisplay,
         selectedWorkspaceRoot: () => stateRef.current.selectedWorkspaceRoot,
         runtimeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
-        openworkServer: {
+        juggleworkServer: {
           getSnapshot: () => ({
-            openworkServerStatus: stateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
-            openworkServerClient: stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
-            openworkServerCapabilities: stateRef.current.selectedWorkspaceEndpoint
+            juggleworkServerStatus: stateRef.current.selectedWorkspaceEndpoint ? "connected" : "disconnected",
+            juggleworkServerClient: stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+            juggleworkServerCapabilities: stateRef.current.selectedWorkspaceEndpoint
               ? {
                   config: { read: true, write: true },
                 }

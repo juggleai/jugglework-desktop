@@ -26,7 +26,7 @@ import {
   removeMcpFromConfig,
   validateMcpServerName,
 } from "../../../app/mcp";
-import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
+import { buildJuggleWorkWorkspaceBaseUrl } from "../../../app/lib/jugglework-server";
 import type {
   Client,
   McpServerEntry,
@@ -36,7 +36,7 @@ import type {
 } from "../../../app/types";
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
-import type { OpenworkServerStore } from "./openwork-server-store";
+import type { JuggleWorkServerStore } from "./jugglework-server-store";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
@@ -46,7 +46,7 @@ import {
   clearCloudMcpDisabledIntent,
   cloudMcpDisplaySummary,
   recordCloudMcpDisabledIntent,
-  runOpenworkCloudMcpReconciler,
+  runJuggleWorkCloudMcpReconciler,
   type CloudMcpOperationContext,
 } from "./cloud-mcp-reconciler";
 
@@ -81,7 +81,7 @@ export function createConnectionsStore(options: {
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
   workspaceType: () => "local" | "remote";
-  openworkServer: OpenworkServerStore;
+  juggleworkServer: JuggleWorkServerStore;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
   setProjectDir?: (value: string) => void;
@@ -148,13 +148,13 @@ export function createConnectionsStore(options: {
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
   };
 
-  const getOpenworkSnapshot = () => options.openworkServer.getSnapshot();
+  const getJuggleWorkSnapshot = () => options.juggleworkServer.getSnapshot();
 
-  const resolveOpenworkWorkspaceId = async () => {
+  const resolveJuggleWorkWorkspaceId = async () => {
     const current = options.runtimeWorkspaceId()?.trim();
     if (current) return current;
-    const openworkSnapshot = getOpenworkSnapshot();
-    if (openworkSnapshot.openworkServerStatus !== "connected" || !openworkSnapshot.openworkServerClient) {
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
+    if (juggleworkSnapshot.juggleworkServerStatus !== "connected" || !juggleworkSnapshot.juggleworkServerClient) {
       return null;
     }
     const ensured = (await options.ensureRuntimeWorkspaceId?.())?.trim();
@@ -162,39 +162,39 @@ export function createConnectionsStore(options: {
     return options.workspaceType() === "local" ? options.selectedWorkspaceId().trim() || null : null;
   };
 
-  const resolveConfigOpenworkTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+  const resolveConfigJuggleWorkTarget = async (mode: "read" | "write") => {
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    const juggleworkWorkspaceId = await resolveJuggleWorkWorkspaceId();
+    const hasJuggleWorkTarget =
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      Boolean(juggleworkClient && juggleworkWorkspaceId);
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      juggleworkClient,
+      juggleworkWorkspaceId,
+      hasJuggleWorkTarget,
+      canUseJuggleWorkServer,
     };
   };
 
-  const resolveMcpOpenworkTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    const openworkWorkspaceId = await resolveOpenworkWorkspaceId();
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.mcp?.[mode] !== false;
+  const resolveMcpJuggleWorkTarget = async (mode: "read" | "write") => {
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    const juggleworkWorkspaceId = await resolveJuggleWorkWorkspaceId();
+    const hasJuggleWorkTarget =
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      Boolean(juggleworkClient && juggleworkWorkspaceId);
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.mcp?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      juggleworkClient,
+      juggleworkWorkspaceId,
+      hasJuggleWorkTarget,
+      canUseJuggleWorkServer,
     };
   };
 
@@ -207,14 +207,14 @@ export function createConnectionsStore(options: {
 
   const readMcpConfigFile = async (scope: "project" | "global"): Promise<OpencodeConfigFile | null> => {
     const projectDir = options.projectDir().trim();
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveConfigOpenworkTarget("read");
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveConfigJuggleWorkTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      return openworkClient.readOpencodeConfigFile(openworkWorkspaceId, scope);
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      return juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, scope);
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       return null;
     }
 
@@ -231,31 +231,31 @@ export function createConnectionsStore(options: {
       return activeClient;
     }
 
-    const openworkSnapshot = getOpenworkSnapshot();
-    const openworkBaseUrl = openworkSnapshot.openworkServerBaseUrl.trim();
-    const token = openworkSnapshot.openworkServerAuth.token?.trim();
-    if (!openworkBaseUrl || !token) {
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
+    const juggleworkBaseUrl = juggleworkSnapshot.juggleworkServerBaseUrl.trim();
+    const token = juggleworkSnapshot.juggleworkServerAuth.token?.trim();
+    if (!juggleworkBaseUrl || !token) {
       return null;
     }
 
     const mountedBaseUrl =
-      buildOpenworkWorkspaceBaseUrl(openworkBaseUrl, await resolveOpenworkWorkspaceId()) ?? openworkBaseUrl;
+      buildJuggleWorkWorkspaceBaseUrl(juggleworkBaseUrl, await resolveJuggleWorkWorkspaceId()) ?? juggleworkBaseUrl;
     activeClient = createClient(`${mountedBaseUrl.replace(/\/+$/, "")}/opencode`, undefined, {
       token,
-      mode: "openwork",
+      mode: "jugglework",
     });
     options.setClient(activeClient);
     return activeClient;
   };
 
-  const resolveWritableOpenworkTarget = async () => {
-    return resolveMcpOpenworkTarget("write");
+  const resolveWritableJuggleWorkTarget = async () => {
+    return resolveMcpJuggleWorkTarget("write");
   };
 
   const resolveCloudMcpOperationContext = async (fallbackUrl?: string | null): Promise<CloudMcpOperationContext | null> => {
     const settings = readDenSettings();
-    const workspaceId = await resolveOpenworkWorkspaceId();
-    const serverBaseUrl = getOpenworkSnapshot().openworkServerClient?.baseUrl.trim() ?? "";
+    const workspaceId = await resolveJuggleWorkWorkspaceId();
+    const serverBaseUrl = getJuggleWorkSnapshot().juggleworkServerClient?.baseUrl.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!workspaceId || !serverBaseUrl || !orgId) return null;
     return {
@@ -289,29 +289,29 @@ export function createConnectionsStore(options: {
     return resolvedProjectDir;
   };
 
-  const listMcpFromOpenworkServer = async (projectDir: string) => {
-    const openworkSnapshot = getOpenworkSnapshot();
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveMcpOpenworkTarget("read");
-    const canTryOpenworkServer = canUseOpenworkServer;
+  const listMcpFromJuggleWorkServer = async (projectDir: string) => {
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveMcpJuggleWorkTarget("read");
+    const canTryJuggleWorkServer = canUseJuggleWorkServer;
 
     recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-check", {
       workspaceType: options.workspaceType(),
       projectDir: projectDir || null,
-      openworkStatus: openworkSnapshot.openworkServerStatus,
-      hasOpenworkClient: Boolean(openworkClient),
-      openworkWorkspaceId: openworkWorkspaceId ?? null,
-      canReadMcp: openworkSnapshot.openworkServerCapabilities?.mcp?.read ?? null,
-      canTryOpenworkServer,
+      juggleworkStatus: juggleworkSnapshot.juggleworkServerStatus,
+      hasJuggleWorkClient: Boolean(juggleworkClient),
+      juggleworkWorkspaceId: juggleworkWorkspaceId ?? null,
+      canReadMcp: juggleworkSnapshot.juggleworkServerCapabilities?.mcp?.read ?? null,
+      canTryJuggleWorkServer,
     });
 
-    if (hasOpenworkTarget && !canTryOpenworkServer) {
+    if (hasJuggleWorkTarget && !canTryJuggleWorkServer) {
       throw new Error("JuggleWork server cannot read MCP config for this workspace.");
     }
 
-    if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
+    if (!canTryJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) return null;
 
-    const response = await openworkClient.listMcp(openworkWorkspaceId);
+    const response = await juggleworkClient.listMcp(juggleworkWorkspaceId);
     const next = response.items.map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
@@ -340,9 +340,9 @@ export function createConnectionsStore(options: {
     return { next, nextStatuses, engineSync };
   };
 
-  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getOpenworkUiMcpCommand", fallbackOnError = true) => {
+  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getJuggleWorkUiMcpCommand", fallbackOnError = true) => {
     try {
-      const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.(commandName);
+      const command = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.(commandName);
       if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
         return command;
       }
@@ -359,21 +359,21 @@ export function createConnectionsStore(options: {
 
   const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
     const mcpResource = extensionResource(entry.extensionManifest, "mcp");
-    if (mcpResource?.localCommandRef === "openwork.computerUseMcp") {
+    if (mcpResource?.localCommandRef === "jugglework.computerUseMcp") {
       const command = await resolveDesktopCommand("getComputerUseMcpCommand", false);
       return command ?? entry.command;
     }
-    if (mcpResource?.localCommandRef === "openwork.uiMcp" || entry.serverName === "openwork-ui") {
-      const command = await resolveDesktopCommand("getOpenworkUiMcpCommand");
+    if (mcpResource?.localCommandRef === "jugglework.uiMcp" || entry.serverName === "jugglework-ui") {
+      const command = await resolveDesktopCommand("getJuggleWorkUiMcpCommand");
       return command ?? entry.command;
     }
     return entry.command;
   };
 
   const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
-    if (entry.serverName !== "openwork-ui") return undefined;
+    if (entry.serverName !== "jugglework-ui") return undefined;
     try {
-      const environment = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+      const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
       if (environment && typeof environment === "object" && !Array.isArray(environment)) {
         return Object.fromEntries(
           Object.entries(environment).filter((entry): entry is [string, string] =>
@@ -382,7 +382,7 @@ export function createConnectionsStore(options: {
         );
       }
     } catch {
-      // Discovery fallback in openwork-ui-mcp still handles normal launches.
+      // Discovery fallback in jugglework-ui-mcp still handles normal launches.
     }
     return undefined;
   };
@@ -426,7 +426,7 @@ export function createConnectionsStore(options: {
 
     try {
       setStateField("mcpStatus", null);
-      const serverResult = await listMcpFromOpenworkServer(projectDir);
+      const serverResult = await listMcpFromJuggleWorkServer(projectDir);
       if (serverResult) {
         // Surface engine registration failures instead of leaving users
         // staring at an MCP that silently shows as disconnected.
@@ -449,8 +449,8 @@ export function createConnectionsStore(options: {
       recordPerfLog(options.developerMode(), "mcp.refresh", "server-path-error", {
         message: error instanceof Error ? error.message : String(error),
       });
-      const serverTarget = await resolveMcpOpenworkTarget("read").catch(() => null);
-      if (isRemoteWorkspace || serverTarget?.hasOpenworkTarget) {
+      const serverTarget = await resolveMcpJuggleWorkTarget("read").catch(() => null);
+      if (isRemoteWorkspace || serverTarget?.hasJuggleWorkTarget) {
         mutateState((current) => ({
           ...current,
           mcpServers: [],
@@ -517,7 +517,7 @@ export function createConnectionsStore(options: {
       // Runtime-DB MCPs (source "config.remote") only exist on the JuggleWork
       // server. Keep the last-known entries instead of silently dropping them
       // while the server is briefly unreachable (startup race) — otherwise
-      // enabled MCPs like openwork-ui render as "off".
+      // enabled MCPs like jugglework-ui render as "off".
       const fileNames = new Set(fileServers.map((entry) => entry.name));
       const runtimeServers = state.mcpServers.filter(
         (entry) => entry.source === "config.remote" && !fileNames.has(entry.name),
@@ -573,10 +573,10 @@ export function createConnectionsStore(options: {
 
   async function connectMcp(entry: McpDirectoryInfo): Promise<boolean> {
     const startedAt = perfNow();
-    const openworkSnapshot = getOpenworkSnapshot();
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && juggleworkSnapshot.juggleworkServerStatus === "connected");
     const projectDir = options.projectDir().trim();
     const entryType = entry.type ?? "remote";
 
@@ -587,26 +587,26 @@ export function createConnectionsStore(options: {
       projectDir: projectDir || null,
     });
 
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveWritableOpenworkTarget();
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveWritableJuggleWorkTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
+    if (isRemoteWorkspace && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", "JuggleWork server unavailable. MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-unavailable",
+        reason: "jugglework-server-unavailable",
       });
       return false;
     }
 
-    if (hasOpenworkTarget && !canUseOpenworkServer) {
+    if (hasJuggleWorkTarget && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", "JuggleWork server MCP config is read-only.");
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
-        reason: "openwork-server-read-only",
+        reason: "jugglework-server-read-only",
       });
       return false;
     }
 
-    if (!canUseOpenworkServer && !isDesktopRuntime()) {
+    if (!canUseJuggleWorkServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", t("mcp.desktop_required"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
@@ -614,7 +614,7 @@ export function createConnectionsStore(options: {
       return false;
     }
 
-    if (!isRemoteWorkspace && !projectDir && !canUseOpenworkServer) {
+    if (!isRemoteWorkspace && !projectDir && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace",
@@ -622,8 +622,8 @@ export function createConnectionsStore(options: {
       return false;
     }
 
-    const activeClient = canUseOpenworkServer ? options.client() ?? await ensureActiveClient().catch(() => null) : await ensureActiveClient();
-    if (!activeClient && !canUseOpenworkServer) {
+    const activeClient = canUseJuggleWorkServer ? options.client() ?? await ensureActiveClient().catch(() => null) : await ensureActiveClient();
+    if (!activeClient && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "no-active-client",
@@ -632,7 +632,7 @@ export function createConnectionsStore(options: {
     }
 
     const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
-    if (!resolvedProjectDir && !canUseOpenworkServer) {
+    if (!resolvedProjectDir && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       finishPerf(options.developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "missing-workspace-after-discovery",
@@ -647,7 +647,7 @@ export function createConnectionsStore(options: {
       mutateState((current) => ({ ...current, mcpStatus: null, mcpConnectingName: entry.name }));
 
       if (entry.serverName === CLOUD_MCP_SERVER_NAME) {
-        if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+        if (!canUseJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) {
           throw new Error("JuggleWork server is required to repair agent access to connected services.");
         }
         const context = await resolveCloudMcpOperationContext(entry.url);
@@ -655,9 +655,9 @@ export function createConnectionsStore(options: {
           throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
         }
         clearCloudMcpDisabledIntent(context);
-        const result = await runOpenworkCloudMcpReconciler({
+        const result = await runJuggleWorkCloudMcpReconciler({
           mode: "repair",
-          client: openworkClient,
+          client: juggleworkClient,
           context: { ...context, trigger: "desktop-explicit-connect" },
           mintToken: mintCloudControlMcpToken,
           force: true,
@@ -691,9 +691,9 @@ export function createConnectionsStore(options: {
       // Resolve dynamic URLs for built-in MCPs
       let resolvedUrl = entry.url;
       let resolvedHeaders: Record<string, string> | undefined;
-      if (!resolvedUrl && entry.serverName === "openwork-ui") {
+      if (!resolvedUrl && entry.serverName === "jugglework-ui") {
         try {
-          const bridgeInfo = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
+          const bridgeInfo = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getUiControlBridgeInfo");
           if (bridgeInfo?.baseUrl) {
             resolvedUrl = `${bridgeInfo.baseUrl}/mcp`;
             if (bridgeInfo.token) {
@@ -741,8 +741,8 @@ export function createConnectionsStore(options: {
         }
       }
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.addMcp(openworkWorkspaceId, {
+      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+        await juggleworkClient.addMcp(juggleworkWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
         });
@@ -786,7 +786,7 @@ export function createConnectionsStore(options: {
         }
       }
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
         // The JuggleWork server is the source of truth for workspace-scoped MCP
         // config in the React port. Avoid also calling the OpenCode SDK's MCP
         // hot-add endpoint here: when the SDK client is rooted at the aggregate
@@ -883,7 +883,7 @@ export function createConnectionsStore(options: {
   /**
    * Background reconciliation for the Den cloud MCP: when the desktop is
    * signed in to JuggleWork Cloud with an active org, keep the
-   * `openwork-cloud` MCP entry configured with a fresh first-party token.
+   * `jugglework-cloud` MCP entry configured with a fresh first-party token.
    * Quiet by design — a failed mint never opens the OAuth modal.
    *
    * `force` bypasses the freshness marker: used by the user-facing Refresh
@@ -895,11 +895,11 @@ export function createConnectionsStore(options: {
     const settings = readDenSettings();
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!orgId || !settings.authToken?.trim()) return "skipped";
-    const workspaceId = await resolveOpenworkWorkspaceId();
+    const workspaceId = await resolveJuggleWorkWorkspaceId();
     if (!workspaceId) return "skipped";
-    const openworkClient = getOpenworkSnapshot().openworkServerClient;
-    const serverBaseUrl = openworkClient?.baseUrl.trim() ?? "";
-    if (!openworkClient || !serverBaseUrl) return "skipped";
+    const juggleworkClient = getJuggleWorkSnapshot().juggleworkServerClient;
+    const serverBaseUrl = juggleworkClient?.baseUrl.trim() ?? "";
+    if (!juggleworkClient || !serverBaseUrl) return "skipped";
 
     const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === CLOUD_MCP_SERVER_NAME);
     if (!entry) return "skipped";
@@ -910,9 +910,9 @@ export function createConnectionsStore(options: {
     const configuredEntry = snapshot.mcpServers.find((server) => server.name === CLOUD_MCP_SERVER_NAME);
     if (configuredEntry?.config.enabled === false) return "skipped";
 
-    const result = await runOpenworkCloudMcpReconciler({
+    const result = await runJuggleWorkCloudMcpReconciler({
       mode: "repair",
-      client: openworkClient,
+      client: juggleworkClient,
       context: {
         ...scope,
         denAuthToken: settings.authToken,
@@ -960,38 +960,38 @@ export function createConnectionsStore(options: {
   }
 
   async function logoutMcpAuth(name: string) {
-    const openworkSnapshot = getOpenworkSnapshot();
+    const juggleworkSnapshot = getJuggleWorkSnapshot();
     const isRemoteWorkspace =
       options.workspaceType() === "remote" ||
-      (!isDesktopRuntime() && openworkSnapshot.openworkServerStatus === "connected");
+      (!isDesktopRuntime() && juggleworkSnapshot.juggleworkServerStatus === "connected");
     const projectDir = options.projectDir().trim();
 
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveWritableOpenworkTarget();
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveWritableJuggleWorkTarget();
 
-    if (isRemoteWorkspace && !canUseOpenworkServer) {
+    if (isRemoteWorkspace && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", "JuggleWork server unavailable. MCP auth is read-only.");
       return;
     }
 
-    if (hasOpenworkTarget && !canUseOpenworkServer) {
+    if (hasJuggleWorkTarget && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", "JuggleWork server MCP auth is read-only.");
       return;
     }
 
-    if (!canUseOpenworkServer && !isDesktopRuntime()) {
+    if (!canUseJuggleWorkServer && !isDesktopRuntime()) {
       setStateField("mcpStatus", t("mcp.desktop_required"));
       return;
     }
 
-    const activeClient = canUseOpenworkServer ? options.client() : await ensureActiveClient();
-    if (!activeClient && !canUseOpenworkServer) {
+    const activeClient = canUseJuggleWorkServer ? options.client() : await ensureActiveClient();
+    if (!activeClient && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", t("mcp.connect_server_first"));
       return;
     }
 
     const resolvedProjectDir = activeClient ? await resolveProjectDir(activeClient, projectDir) : projectDir;
-    if (!resolvedProjectDir && !canUseOpenworkServer) {
+    if (!resolvedProjectDir && !canUseJuggleWorkServer) {
       setStateField("mcpStatus", t("mcp.pick_workspace_first"));
       return;
     }
@@ -1000,8 +1000,8 @@ export function createConnectionsStore(options: {
     setStateField("mcpStatus", null);
 
     try {
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
+      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+        await juggleworkClient.logoutMcpAuth(juggleworkWorkspaceId, safeName);
       } else {
         if (!activeClient || !resolvedProjectDir) {
           throw new Error(t("mcp.connect_server_first"));
@@ -1037,13 +1037,13 @@ export function createConnectionsStore(options: {
     try {
       setStateField("mcpStatus", null);
 
-      const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-        await resolveWritableOpenworkTarget();
+      const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+        await resolveWritableJuggleWorkTarget();
 
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        await openworkClient.removeMcp(openworkWorkspaceId, name);
+      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+        await juggleworkClient.removeMcp(juggleworkWorkspaceId, name);
       } else {
-        if (hasOpenworkTarget) {
+        if (hasJuggleWorkTarget) {
           setStateField("mcpStatus", "JuggleWork server MCP config is read-only.");
           return;
         }
@@ -1117,15 +1117,15 @@ export function createConnectionsStore(options: {
   // from the existing reload-required popup; no extra banner here.
   async function setMcpEnabled(name: string, enabled: boolean) {
     try {
-      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-        await resolveWritableOpenworkTarget();
+      const { juggleworkClient, juggleworkWorkspaceId, canUseJuggleWorkServer } =
+        await resolveWritableJuggleWorkTarget();
 
-      if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+      if (!canUseJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) {
         setStateField("mcpStatus", t("mcp.toggle_requires_server"));
         return;
       }
 
-      await openworkClient.setMcpEnabled(openworkWorkspaceId, name, enabled);
+      await juggleworkClient.setMcpEnabled(juggleworkWorkspaceId, name, enabled);
       if (name === CLOUD_MCP_SERVER_NAME) {
         const context = await resolveCloudMcpOperationContext(null);
         if (enabled) {
@@ -1171,7 +1171,7 @@ export function createConnectionsStore(options: {
       return;
     }
 
-    if (!isDesktopRuntime() && getOpenworkSnapshot().openworkServerStatus !== "connected") {
+    if (!isDesktopRuntime() && getJuggleWorkSnapshot().juggleworkServerStatus !== "connected") {
       return;
     }
 

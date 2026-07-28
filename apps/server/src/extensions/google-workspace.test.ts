@@ -16,7 +16,7 @@ import {
 function createTestConfig(): ServerConfig {
   const tempDir = join(
     tmpdir(),
-    `openwork-google-workspace-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    `jugglework-google-workspace-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   return {
     host: "127.0.0.1",
@@ -62,11 +62,11 @@ function base64Url(text: string): string {
 }
 
 const previousEnv = {
-  devMode: process.env.OPENWORK_DEV_MODE,
-  plaintextVault: process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
+  devMode: process.env.JUGGLEWORK_DEV_MODE,
+  plaintextVault: process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
   clientSecret: process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
-  legacyClientSecret: process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
-  brokerUrl: process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
+  legacyClientSecret: process.env.JUGGLEWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET,
+  brokerUrl: process.env.JUGGLEWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL,
 };
 const previousFetch = globalThis.fetch;
 
@@ -76,27 +76,27 @@ function restoreEnv(key: string, value: string | undefined) {
 }
 
 afterEach(() => {
-  restoreEnv("OPENWORK_DEV_MODE", previousEnv.devMode);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", previousEnv.plaintextVault);
+  restoreEnv("JUGGLEWORK_DEV_MODE", previousEnv.devMode);
+  restoreEnv("JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", previousEnv.plaintextVault);
   restoreEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.clientSecret);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyClientSecret);
-  restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.brokerUrl);
+  restoreEnv("JUGGLEWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyClientSecret);
+  restoreEnv("JUGGLEWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.brokerUrl);
   globalThis.fetch = previousFetch;
 });
 
 describe("Google Workspace extension", () => {
   test("reports only the user-configurable OAuth secret as missing", async () => {
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL = "";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL = "";
     const status = await googleWorkspaceStatus(createTestConfig());
     expect(status.configured).toBe(false);
     expect(status.missing).toEqual(["GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET"]);
   });
 
   test("reads multi-account vaults and exposes active account", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -113,8 +113,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("disconnect can remove one connected account", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     globalThis.fetch = Object.assign(
       async () => new Response("{}", { status: 200 }),
@@ -134,8 +134,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_list_messages rejects accounts without the gmail.readonly scope", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -150,8 +150,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_list_messages returns message summaries", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -198,8 +198,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_get_message decodes the plain text body", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -232,8 +232,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_download_attachment decodes attachment data", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -263,8 +263,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_create_draft attaches local workspace files", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     const workspaceRoot = join(dirname(config.configPath ?? ""), "workspace");
@@ -327,8 +327,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_create_draft strips conservative markdown from prose", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -377,8 +377,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_create_reply_draft rejects accounts without the gmail.readonly scope", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -393,8 +393,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("gmail_create_reply_draft creates a threaded reply all draft", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -458,8 +458,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("calendar_create_event rejects accounts without the calendar.events scope", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -474,8 +474,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("calendar_create_event creates events when the scope is granted", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -505,8 +505,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("chat actions reject accounts without Google Chat scopes", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -524,8 +524,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("chat_send_message posts to the chat space when the scope is granted", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {
@@ -560,8 +560,8 @@ describe("Google Workspace extension", () => {
   });
 
   test("can update the active account", async () => {
-    process.env.OPENWORK_DEV_MODE = "1";
-    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.JUGGLEWORK_DEV_MODE = "1";
+    process.env.JUGGLEWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
     process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
     const config = createTestConfig();
     await writePlaintextVault(config, {

@@ -106,7 +106,7 @@ export function useModelPicker(input: UseModelPickerInput) {
     // (2) providers passed via the openModelPickerEvent from the toast.
     let seenIds: Set<string>;
     try {
-      const raw = window.localStorage.getItem("openwork.seenProviderIds");
+      const raw = window.localStorage.getItem("jugglework.seenProviderIds");
       seenIds = new Set(raw ? JSON.parse(raw) : []);
     } catch {
       seenIds = new Set();
@@ -131,7 +131,7 @@ export function useModelPicker(input: UseModelPickerInput) {
           isConnected: true,
           isRecommended: isNew,
           source:
-            /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "openwork"
+            /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "jugglework"
               ? ("cloud" as const)
               : undefined,
         });

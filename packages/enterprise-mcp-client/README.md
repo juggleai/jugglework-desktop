@@ -1,4 +1,4 @@
-# `@openwork/enterprise-mcp-client`
+# `@jugglework/enterprise-mcp-client`
 
 Reference implementation for server-side remote MCP consumption in JuggleWork.
 

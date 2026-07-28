@@ -5,7 +5,7 @@ set -euo pipefail
 # This centralizes the graphics-safe Chromium flags and optional secret-volume
 # env loading used by Daytona evals.
 
-cd "${OPENWORK_WORKSPACE_DIR:-/workspace}"
+cd "${JUGGLEWORK_WORKSPACE_DIR:-/workspace}"
 
 if [ "${1:-}" = "--detach" ]; then
   shift
@@ -20,7 +20,7 @@ script_path, log_path, *args = sys.argv[1:]
 log = open(log_path, "ab", buffering=0)
 subprocess.Popen(
     ["bash", script_path, *args],
-    cwd=os.environ.get("OPENWORK_WORKSPACE_DIR", "/workspace"),
+    cwd=os.environ.get("JUGGLEWORK_WORKSPACE_DIR", "/workspace"),
     env=os.environ.copy(),
     stdin=subprocess.DEVNULL,
     stdout=log,
@@ -61,9 +61,9 @@ fi
 export DISPLAY="${DISPLAY:-:99}"
 export ELECTRON_DISABLE_SANDBOX="${ELECTRON_DISABLE_SANDBOX:-1}"
 export ELECTRON_EXTRA_LAUNCH_ARGS="${ELECTRON_EXTRA_LAUNCH_ARGS:-$DAYTONA_ELECTRON_EXTRA_LAUNCH_ARGS}"
-export OPENWORK_REACT_DEVTOOLS="${OPENWORK_REACT_DEVTOOLS:-0}"
-export OPENWORK_DEV_MODE="${OPENWORK_DEV_MODE:-1}"
-export OPENWORK_ELECTRON_REMOTE_DEBUG_PORT="${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9825}"
-export OPENWORK_ELECTRON_FAKE_MEDIA="${OPENWORK_ELECTRON_FAKE_MEDIA:-0}"
+export JUGGLEWORK_REACT_DEVTOOLS="${JUGGLEWORK_REACT_DEVTOOLS:-0}"
+export JUGGLEWORK_DEV_MODE="${JUGGLEWORK_DEV_MODE:-1}"
+export JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT="${JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT:-9825}"
+export JUGGLEWORK_ELECTRON_FAKE_MEDIA="${JUGGLEWORK_ELECTRON_FAKE_MEDIA:-0}"
 
-exec pnpm --filter @openwork/desktop dev:electron
+exec pnpm --filter @jugglework/desktop dev:electron

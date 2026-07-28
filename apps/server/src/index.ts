@@ -2,7 +2,7 @@
  * Library entry point for the JuggleWork server.
  *
  * ```ts
- * import { startEmbeddedServer } from "openwork-server";
+ * import { startEmbeddedServer } from "jugglework-server";
  *
  * const handle = await startEmbeddedServer({
  *   host: "127.0.0.1",

@@ -75,9 +75,9 @@ const updatePackageJson = async (nextVersion) => {
   tauriData.version = nextVersion;
   orchestratorData.version = nextVersion;
 
-  // Ensure openwork-orchestrator uses the same openwork-server version.
+  // Ensure jugglework-orchestrator uses the same jugglework-server version.
   orchestratorData.dependencies = orchestratorData.dependencies ?? {};
-  orchestratorData.dependencies["openwork-server"] = nextVersion;
+  orchestratorData.dependencies["jugglework-server"] = nextVersion;
 
   serverData.version = nextVersion;
   if (!isDryRun) {

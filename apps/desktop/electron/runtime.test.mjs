@@ -10,9 +10,9 @@ import {
   denModelsCatalogUrl,
   embeddedServerImportUrl,
   prioritizeWorkspacePaths,
-  resolveOpenworkServerConfigPath,
+  resolveJuggleWorkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
-  selectStickyOpenworkPortWorkspace,
+  selectStickyJuggleWorkPortWorkspace,
   snapshotEngineState,
 } from "./runtime.mjs";
 
@@ -48,17 +48,17 @@ describe("seedWorkspacePathsForEmbeddedServer", () => {
   });
 });
 
-describe("selectStickyOpenworkPortWorkspace", () => {
+describe("selectStickyJuggleWorkPortWorkspace", () => {
   it("uses the requested workspace even when server config owns workspace loading", () => {
     assert.equal(
-      selectStickyOpenworkPortWorkspace(["/workspace/current"], []),
+      selectStickyJuggleWorkPortWorkspace(["/workspace/current"], []),
       "/workspace/current",
     );
   });
 
   it("falls back to server workspace paths when no requested path is available", () => {
     assert.equal(
-      selectStickyOpenworkPortWorkspace([], ["/workspace/from-server"]),
+      selectStickyJuggleWorkPortWorkspace([], ["/workspace/from-server"]),
       "/workspace/from-server",
     );
   });
@@ -88,7 +88,7 @@ describe("commandMatchesPackagedSidecar", () => {
 
 describe("embeddedServerImportUrl", () => {
   it("returns the same file URL for unchanged metadata", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    const dir = await mkdtemp(path.join(os.tmpdir(), "jugglework-runtime-"));
     try {
       const embeddedPath = path.join(dir, "embedded.js");
       await writeFile(embeddedPath, "export const value = 1;\n");
@@ -108,7 +108,7 @@ describe("embeddedServerImportUrl", () => {
   });
 
   it("changes when the file metadata changes", async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), "openwork-runtime-"));
+    const dir = await mkdtemp(path.join(os.tmpdir(), "jugglework-runtime-"));
     try {
       const embeddedPath = path.join(dir, "embedded.js");
       await writeFile(embeddedPath, "export const value = 1;\n");
@@ -123,25 +123,25 @@ describe("embeddedServerImportUrl", () => {
   });
 
   it("falls back to the plain file URL if stat fails", () => {
-    const missingPath = path.join(os.tmpdir(), "openwork-missing-embedded.js");
+    const missingPath = path.join(os.tmpdir(), "jugglework-missing-embedded.js");
 
     assert.equal(embeddedServerImportUrl(missingPath), pathToFileURL(missingPath).href);
   });
 });
 
-describe("resolveOpenworkServerConfigPath", () => {
+describe("resolveJuggleWorkServerConfigPath", () => {
   it("respects explicit server config path", () => {
     assert.equal(
-      resolveOpenworkServerConfigPath({ OPENWORK_SERVER_CONFIG: "/tmp/openwork/server.json" }),
-      "/tmp/openwork/server.json",
+      resolveJuggleWorkServerConfigPath({ JUGGLEWORK_SERVER_CONFIG: "/tmp/jugglework/server.json" }),
+      "/tmp/jugglework/server.json",
     );
   });
 
   it("uses XDG config home on Unix", () => {
     if (process.platform === "win32") return;
     assert.equal(
-      resolveOpenworkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
-      "/tmp/xdg/openwork/server.json",
+      resolveJuggleWorkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
+      "/tmp/xdg/jugglework/server.json",
     );
   });
 });
@@ -176,12 +176,12 @@ describe("snapshotEngineState", () => {
 describe("denModelsCatalogUrl", () => {
   it("points the engine at the connected deployment's catalog", () => {
     for (const baseUrl of [
-      "https://work.juggle.im",
-      "https://work.juggle.im/",
-      "https://work.juggle.im/jwork",
-      "https://work.juggle.im/jwork/api",
+      "https://juggle.example.test",
+      "https://juggle.example.test/",
+      "https://juggle.example.test/jwork",
+      "https://juggle.example.test/jwork/api",
     ]) {
-      assert.equal(denModelsCatalogUrl(baseUrl), "https://work.juggle.im/jwork/models");
+      assert.equal(denModelsCatalogUrl(baseUrl), "https://juggle.example.test/jwork/models");
     }
   });
 
@@ -193,8 +193,8 @@ describe("denModelsCatalogUrl", () => {
   });
 
   it("leaves the public mirror in place for the hosted cloud", () => {
-    assert.equal(denModelsCatalogUrl("https://app.openworklabs.com"), null);
-    assert.equal(denModelsCatalogUrl("https://app.openworklabs.com/api/den"), null);
+    assert.equal(denModelsCatalogUrl("https://work.juggle.im"), null);
+    assert.equal(denModelsCatalogUrl("https://work.juggle.im/api/den"), null);
   });
 
   it("returns null rather than a broken URL for unusable input", () => {

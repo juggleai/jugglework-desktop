@@ -5,22 +5,22 @@ import type { DenExternalMcpConnection } from "../src/app/lib/den";
 import type { McpServerEntry } from "../src/app/types";
 import {
   buildExtensionItems,
-  isOpenworkProvidedSkill,
+  isJuggleWorkProvidedSkill,
 } from "../src/react-app/domains/settings/extension-items";
 
 const connectedBuiltIn: McpDirectoryInfo = {
-  id: "openwork-browser",
+  id: "jugglework-browser",
   name: "JuggleWork Browser",
-  serverName: "openwork-browser",
+  serverName: "jugglework-browser",
   description: "Connected by default.",
   oauth: false,
   kind: "extension",
   extensionManifest: {
     schemaVersion: 1,
-    id: "openwork-browser",
+    id: "jugglework-browser",
     name: "JuggleWork Browser",
     description: "Connected by default.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     resources: [],
   },
 };
@@ -37,7 +37,7 @@ const availableBuiltIn: McpDirectoryInfo = {
     id: "computer-use",
     name: "Computer Use",
     description: "Marketplace-only until installed.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     resources: [],
   },
 };
@@ -77,11 +77,11 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
 
 describe("extension item projection", () => {
   test("attributes only current JuggleWork-provided local skills", () => {
-    expect(isOpenworkProvidedSkill({
+    expect(isJuggleWorkProvidedSkill({
       name: "skill-creator",
       path: "/workspace/.opencode/skills/skill-creator/SKILL.md",
     })).toBe(true);
-    expect(isOpenworkProvidedSkill({
+    expect(isJuggleWorkProvidedSkill({
       name: "workspace-guide",
       path: String.raw`C:\workspace\.opencode\skills\workspace-guide\SKILL.md`,
     })).toBe(true);
@@ -93,7 +93,7 @@ describe("extension item projection", () => {
       "plugin-creator",
       "customer-creator",
     ]) {
-      expect(isOpenworkProvidedSkill({
+      expect(isJuggleWorkProvidedSkill({
         name,
         path: `/workspace/.opencode/skills/${name}/SKILL.md`,
       })).toBe(false);

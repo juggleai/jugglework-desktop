@@ -20,16 +20,16 @@ JuggleWorkは、エージェントワークフローを再現可能なプロダ�
 
 ## 代替UI
 - **JuggleWork Orchestrator（CLIホスト）**: デスクトップUIなしでOpenCode + JuggleWorkサーバーを実行します。
-  - インストール: `npm install -g openwork-orchestrator`
-  - 実行: `openwork start --workspace /path/to/workspace --approval auto`
+  - インストール: `npm install -g jugglework-orchestrator`
+  - 実行: `jugglework start --workspace /path/to/workspace --approval auto`
   - ドキュメント: [apps/orchestrator/README.md](../apps/orchestrator/README.md)
 
 ## クイックスタート
 
-デスクトップアプリを[openworklabs.com/download](https://openworklabs.com/download)からダウンロードするか、最新の[GitHubリリース](https://github.com/different-ai/openwork/releases)を取得するか、以下の手順でソースからインストールしてください。
+デスクトップアプリを[juggle.im/download](https://juggle.im/download)からダウンロードするか、最新の[GitHubリリース](https://github.com/juggleai/jugglework-desktop/releases)を取得するか、以下の手順でソースからインストールしてください。
 
 - macOSおよびLinux向けのダウンロードが直接利用可能です。
-- Windowsへのアクセスは現在、[openworklabs.com/pricing#windows-support](https://openworklabs.com/pricing#windows-support)の有料サポートプランで提供されています。
+- Windowsへのアクセスは現在、[juggle.im/pricing#windows-support](https://juggle.im/pricing#windows-support)の有料サポートプランで提供されています。
 - ホステッドJuggleWork Cloudワーカーは、チェックアウト後にWebアプリから起動し、デスクトップアプリから`Add a worker` -> `Connect remote`で接続します。
 
 ## なぜJuggleWorkか
@@ -95,7 +95,7 @@ pnpm install --frozen-lockfile
 
 which bun
 bun --version
-pnpm --filter @openwork/desktop exec tauri --version
+pnpm --filter @jugglework/desktop exec tauri --version
 ```
 
 ### インストール
@@ -112,7 +112,7 @@ JuggleWorkは現在 `apps/app`（UI）と `apps/desktop`（デスクトップシ
 pnpm dev
 ```
 
-`pnpm dev` は自動的に `OPENWORK_DEV_MODE=1` を有効にするため、デスクトップ開発では個人のグローバル設定/認証/データの代わりに分離されたOpenCode状態を使用します。
+`pnpm dev` は自動的に `JUGGLEWORK_DEV_MODE=1` を有効にするため、デスクトップ開発では個人のグローバル設定/認証/データの代わりに分離されたOpenCode状態を使用します。
 
 ### 実行（Web UIのみ）
 
@@ -132,7 +132,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 ## アーキテクチャ（概要）
 
 - **ホストモード**では、JuggleWorkはローカルホストスタックを実行し、UIをそれに接続します。
-  - デフォルトランタイム: `openwork`（`openwork-orchestrator` からインストール）。`opencode` と `openwork-server` をオーケストレーションします。
+  - デフォルトランタイム: `jugglework`（`jugglework-orchestrator` からインストール）。`opencode` と `jugglework-server` をオーケストレーションします。
   - フォールバックランタイム: `direct`。デスクトップアプリが直接 `opencode serve --hostname 127.0.0.1 --port <free-port>` を起動します。
 
 プロジェクトフォルダを選択すると、JuggleWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
@@ -188,11 +188,11 @@ pnpm test:e2e
 JuggleWorkがWebKitGTKエラー（`Failed to create GBM buffer` など）で起動時にクラッシュする場合は、起動前にdmabufまたはコンポジティングを無効にしてください。以下のいずれかの環境変数フラグを試してください。
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+WEBKIT_DISABLE_DMABUF_RENDERER=1 jugglework
 ```
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
+WEBKIT_DISABLE_COMPOSITING_MODE=1 jugglework
 ```
 
 ## セキュリティに関する注意
@@ -226,7 +226,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## チーム・企業向け
 
-組織でのJuggleWork利用に興味がありますか？ぜひお聞かせください — [ben@openworklabs.com](mailto:ben@openworklabs.com) までユースケースについてご連絡ください。
+組織でのJuggleWork利用に興味がありますか？ぜひお聞かせください — [ben@juggle.im](mailto:ben@juggle.im) までユースケースについてご連絡ください。
 
 ## ライセンス
 

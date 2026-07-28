@@ -76,7 +76,7 @@ jobs:
 
           app="$mount_dir/JuggleWork Installer.app"
           test -d "$app"
-          test ! -e "$mount_dir/openwork-installer.json"
+          test ! -e "$mount_dir/jugglework-installer.json"
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl --assess --type execute --verbose=2 "$app"
           xcrun stapler validate "$RUNNER_TEMP/$asset"

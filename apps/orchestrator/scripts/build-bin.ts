@@ -11,14 +11,14 @@ type VersionInfo = {
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const targetDir = resolve(root, "dist");
 
-const serverBin = resolve(root, "..", "server", "dist", "bin", "openwork-server");
+const serverBin = resolve(root, "..", "server", "dist", "bin", "jugglework-server");
 
 const serverPkg = JSON.parse(
   await readFile(resolve(root, "..", "server", "package.json"), "utf8"),
 ) as { version: string };
 
 await mkdir(targetDir, { recursive: true });
-await copyFile(serverBin, resolve(targetDir, "openwork-server"));
+await copyFile(serverBin, resolve(targetDir, "jugglework-server"));
 
 const sha256 = async (path: string) => {
   const data = await readFile(path);
@@ -26,9 +26,9 @@ const sha256 = async (path: string) => {
 };
 
 const versions = {
-  "openwork-server": {
+  "jugglework-server": {
     version: serverPkg.version,
-    sha256: await sha256(resolve(targetDir, "openwork-server")),
+    sha256: await sha256(resolve(targetDir, "jugglework-server")),
   },
 } as Record<string, VersionInfo>;
 

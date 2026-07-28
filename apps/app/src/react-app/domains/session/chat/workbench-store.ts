@@ -1,15 +1,15 @@
-import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
+import type { JuggleWorkSessionRef } from "@jugglework/types/jugglework-context";
 import { create } from "zustand";
 
 export type WorkbenchPane = "primary" | "secondary";
-export type WorkbenchSessionTab = OpenworkSessionRef;
+export type WorkbenchSessionTab = JuggleWorkSessionRef;
 
 export type WorkbenchSnapshot = {
   revision: number;
   workspaceId: string | null;
   workspaceTitle: string | null;
   primarySessionId: string | null;
-  tabs: OpenworkSessionRef[];
+  tabs: JuggleWorkSessionRef[];
   splitSessionId: string | null;
   focusedPane: WorkbenchPane;
 };
@@ -18,7 +18,7 @@ export type SyncWorkbenchInput = {
   workspaceId: string;
   workspaceTitle?: string;
   primarySessionId: string | null;
-  sessions: OpenworkSessionRef[];
+  sessions: JuggleWorkSessionRef[];
   sessionsKnown: boolean;
 };
 
@@ -32,7 +32,7 @@ const initialWorkbenchSnapshot: WorkbenchSnapshot = {
   focusedPane: "primary",
 };
 
-function sameTabs(left: OpenworkSessionRef[], right: OpenworkSessionRef[]) {
+function sameTabs(left: JuggleWorkSessionRef[], right: JuggleWorkSessionRef[]) {
   return left.length === right.length && left.every((tab, index) => {
     const other = right[index];
     return other?.workspaceId === tab.workspaceId
@@ -91,9 +91,9 @@ export function syncWorkbenchSnapshot(
   });
 }
 
-export function openWorkbenchTab(
+export function juggleWorkbenchTab(
   current: WorkbenchSnapshot,
-  tab: OpenworkSessionRef,
+  tab: JuggleWorkSessionRef,
 ): WorkbenchSnapshot {
   const tabs = current.workspaceId === tab.workspaceId ? [...current.tabs] : [];
   if (!tabs.some((entry) => entry.sessionId === tab.sessionId)) {
@@ -161,7 +161,7 @@ export function focusWorkbenchPane(
 
 type WorkbenchStore = WorkbenchSnapshot & {
   sync: (input: SyncWorkbenchInput) => void;
-  openTab: (tab: OpenworkSessionRef) => void;
+  openTab: (tab: JuggleWorkSessionRef) => void;
   closeTab: (sessionId: string) => void;
   setSplit: (sessionId: string | null) => void;
   focusPane: (pane: WorkbenchPane) => void;
@@ -170,7 +170,7 @@ type WorkbenchStore = WorkbenchSnapshot & {
 export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
   ...initialWorkbenchSnapshot,
   sync: (input) => set((state) => syncWorkbenchSnapshot(state, input)),
-  openTab: (tab) => set((state) => openWorkbenchTab(state, tab)),
+  openTab: (tab) => set((state) => juggleWorkbenchTab(state, tab)),
   closeTab: (sessionId) => set((state) => closeWorkbenchTab(state, sessionId)),
   setSplit: (sessionId) => set((state) => setWorkbenchSplit(state, sessionId)),
   focusPane: (pane) => set((state) => focusWorkbenchPane(state, pane)),

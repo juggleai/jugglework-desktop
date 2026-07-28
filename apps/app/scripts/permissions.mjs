@@ -75,8 +75,8 @@ try {
   }
 
   // Try to trigger an external-directory permission request deterministically.
-  const externalPath = "/tmp/openwork-permission-test.txt";
-  await writeFile(externalPath, "openwork permission test\n", "utf8");
+  const externalPath = "/tmp/jugglework-permission-test.txt";
+  await writeFile(externalPath, "jugglework permission test\n", "utf8");
 
   try {
     await client.file.read({ path: externalPath });

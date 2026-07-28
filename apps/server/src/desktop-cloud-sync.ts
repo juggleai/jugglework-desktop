@@ -237,8 +237,8 @@ function readImportedPlugins(value: unknown): Record<string, CloudImportedPlugin
   return plugins;
 }
 
-export function readWorkspaceCloudImports(openwork: Record<string, unknown>): WorkspaceCloudImports {
-  const cloudImports = isRecord(openwork.cloudImports) ? openwork.cloudImports : {};
+export function readWorkspaceCloudImports(jugglework: Record<string, unknown>): WorkspaceCloudImports {
+  const cloudImports = isRecord(jugglework.cloudImports) ? jugglework.cloudImports : {};
   return {
     providers: readImportedProviders(cloudImports.providers),
     marketplaces: readImportedMarketplaces(cloudImports.marketplaces),
@@ -296,8 +296,8 @@ function readDesktopCloudSyncEntry(contextKey: string, value: unknown): DesktopC
   };
 }
 
-export function readDesktopCloudSyncState(openwork: Record<string, unknown>): DesktopCloudSyncState {
-  const raw = isRecord(openwork.desktopCloudSync) ? openwork.desktopCloudSync : {};
+export function readDesktopCloudSyncState(jugglework: Record<string, unknown>): DesktopCloudSyncState {
+  const raw = isRecord(jugglework.desktopCloudSync) ? jugglework.desktopCloudSync : {};
   const rawEntries = isRecord(raw.entries) ? raw.entries : {};
   const entries: Record<string, DesktopCloudSyncEntry> = {};
   for (const [key, entry] of Object.entries(rawEntries)) {
@@ -458,14 +458,14 @@ function diffInstalledCloudResources(
 
 export function syncDesktopCloudResources(input: {
   now?: number;
-  openwork: Record<string, unknown>;
+  jugglework: Record<string, unknown>;
   snapshot: ResourceSnapshot;
 }) {
   const now = input.now ?? Date.now();
-  const state = readDesktopCloudSyncState(input.openwork);
+  const state = readDesktopCloudSyncState(input.jugglework);
   const key = contextKey(input.snapshot);
   const previousEntry = state.entries[key] ?? null;
-  const changes = diffInstalledCloudResources(readWorkspaceCloudImports(input.openwork), input.snapshot, now);
+  const changes = diffInstalledCloudResources(readWorkspaceCloudImports(input.jugglework), input.snapshot, now);
   const entry: DesktopCloudSyncEntry = {
     contextKey: key,
     fetchedAt: now,
@@ -486,8 +486,8 @@ export function syncDesktopCloudResources(input: {
 
   return {
     changes,
-    openwork: {
-      ...input.openwork,
+    jugglework: {
+      ...input.jugglework,
       desktopCloudSync: nextState,
     },
     state: nextState,

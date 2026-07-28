@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import {
-  readOpenworkCloudMcpHealth,
+  readJuggleWorkCloudMcpHealth,
   type CloudMcpHealth,
   type CloudMcpLiveStatusObserver,
   type CloudMcpProviderModelContext,
@@ -22,14 +22,14 @@ import { ensureDir } from "./utils.js";
 const CONNECT_STATE_FILE = "connect-state.json";
 const CONNECT_STATE_MAX_BYTES = 16 * 1024;
 const CONNECT_SNAPSHOT_MAX_RUNTIME_ROWS = 100;
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+const JUGGLEWORK_CLOUD_MCP_NAME = "jugglework-cloud";
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 type PersistedConnectState = {
   connectEnabled: boolean;
   updatedAt: number;
   /**
-   * Server-scoped JuggleWork Connect (`openwork-cloud`) MCP desired config.
+   * Server-scoped JuggleWork Connect (`jugglework-cloud`) MCP desired config.
    * Connect is identity/org scoped, not per-workspace — workspace runtime
    * copies remain for engine registration, but catalog/skill injection reads
    * this host-level entry.
@@ -177,12 +177,12 @@ export async function writeConnectState(config: ServerConfig, state: { connectEn
   });
 }
 
-/** Read the host-level openwork-cloud MCP config used for Connect catalog/skills. */
+/** Read the host-level jugglework-cloud MCP config used for Connect catalog/skills. */
 export async function readConnectCloudMcp(config: ServerConfig): Promise<Record<string, unknown> | null> {
   return (await readConnectState(config)).cloudMcp;
 }
 
-/** Persist the host-level openwork-cloud MCP config (server-scoped Connect). */
+/** Persist the host-level jugglework-cloud MCP config (server-scoped Connect). */
 export async function writeConnectCloudMcp(
   config: ServerConfig,
   cloudMcp: Record<string, unknown> | null,
@@ -261,7 +261,7 @@ async function resolveCloudHealth(config: ServerConfig, options: ConnectSnapshot
       },
     };
   }
-  const cloudHealth = await readOpenworkCloudMcpHealth({
+  const cloudHealth = await readJuggleWorkCloudMcpHealth({
     config,
     workspace: resolved.workspace,
     directory: resolved.directory,
@@ -361,7 +361,7 @@ async function inspectConnectRuntime(
     if (inspection.status === "unreadable" || inspection.status === "invalid-row") {
       return { cloudMcpPresent: false, complete: false };
     }
-    if (Object.hasOwn(runtimeMcpMap(inspection.config), OPENWORK_CLOUD_MCP_NAME)) {
+    if (Object.hasOwn(runtimeMcpMap(inspection.config), JUGGLEWORK_CLOUD_MCP_NAME)) {
       return { cloudMcpPresent: true, complete: true };
     }
     if (inspection.status === "database-missing" || inspection.status === "table-missing") {

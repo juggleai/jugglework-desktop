@@ -26,7 +26,7 @@ async function read(relativePath: string) {
 
 export default defineFlow({
   id: FLOW_ID,
-  title: "JuggleWork replaces the visible OpenWork brand without breaking compatibility",
+  title: "JuggleWork replaces the visible JuggleWork brand without breaking compatibility",
   kind: "user-facing",
   steps: [
     {
@@ -35,7 +35,7 @@ export default defineFlow({
         await ctx.prove("The running desktop app identifies itself as JuggleWork", {
           voiceover: vo[0],
           action: async () => {
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__juggleworkControl)", {
               timeoutMs: 60_000,
               label: "JuggleWork control API",
             });
@@ -67,12 +67,12 @@ export default defineFlow({
               "Window title and configured application name both equal JuggleWork",
               identity,
             );
-            await ctx.expectNoText("OpenWork");
+            await ctx.expectNoText("JuggleWork");
           },
           screenshot: {
             name: "jugglework-desktop-identity",
             requireText: ["Branding", "JuggleWork"],
-            rejectText: ["OpenWork"],
+            rejectText: ["JuggleWork"],
             hashIncludes: "/settings/shell",
           },
         });
@@ -102,15 +102,15 @@ export default defineFlow({
             };
             for (const [surface, source] of Object.entries(surfaces)) {
               const hasNewBrand = /\bJuggleWork\b/.test(source);
-              const hasOldBrand = /\bOpenWork\b/.test(source);
+              const hasOldBrand = /\bJuggleWork\b/.test(source);
               witness(
                 ctx,
                 hasNewBrand && !hasOldBrand,
-                `${surface} contains JuggleWork and no standalone OpenWork brand`,
+                `${surface} contains JuggleWork and no standalone JuggleWork brand`,
                 { hasNewBrand, hasOldBrand },
               );
             }
-            await ctx.expectNoText("OpenWork");
+            await ctx.expectNoText("JuggleWork");
             ctx.output(
               "Representative renamed surfaces",
               Object.keys(surfaces).join("\n"),
@@ -119,7 +119,7 @@ export default defineFlow({
           screenshot: {
             name: "jugglework-cloud-branding",
             requireText: ["Organization-wide settings", "JuggleWork Cloud"],
-            rejectText: ["OpenWork"],
+            rejectText: ["JuggleWork"],
             hashIncludes: "/settings/shell",
           },
         });
@@ -128,7 +128,7 @@ export default defineFlow({
     {
       name: "Existing integrations remain compatible",
       run: async (ctx) => {
-        await ctx.prove("Technical OpenWork identifiers remain unchanged for compatibility", {
+        await ctx.prove("Technical JuggleWork identifiers remain unchanged for compatibility", {
           voiceover: vo[2],
           action: async () => {
             await ctx.navigateHash("/settings/advanced");
@@ -141,23 +141,23 @@ export default defineFlow({
             const desktopRuntime = await read("apps/desktop/electron/runtime.mjs");
             const englishUi = await read("apps/app/src/i18n/locales/en.ts");
             const compatibility = {
-              packageScope: appPackage.includes('"name": "@openwork/app"'),
-              environment: rootPackage.includes("OPENWORK_DEV_MODE"),
-              deepLink: desktopMain.includes('entry.startsWith("openwork://")'),
-              configStorage: desktopRuntime.includes('".openwork", "openwork-orchestrator"'),
-              existingDomain: desktopMain.includes("openworklabs.com"),
-              visibleProtocolHelp: englishUi.includes("openwork://"),
+              packageScope: appPackage.includes('"name": "@jugglework/app"'),
+              environment: rootPackage.includes("JUGGLEWORK_DEV_MODE"),
+              deepLink: desktopMain.includes('entry.startsWith("jugglework://")'),
+              configStorage: desktopRuntime.includes('".jugglework", "jugglework-orchestrator"'),
+              existingDomain: desktopMain.includes("juggle.im"),
+              visibleProtocolHelp: englishUi.includes("jugglework://"),
             };
             for (const [identifier, preserved] of Object.entries(compatibility)) {
               witness(ctx, preserved, `${identifier} compatibility identifier is preserved`);
             }
-            await ctx.expectNoText("OpenWork");
+            await ctx.expectNoText("JuggleWork");
             ctx.output("Preserved compatibility identifiers", JSON.stringify(compatibility, null, 2));
           },
           screenshot: {
             name: "jugglework-compatible-settings",
             requireText: ["Advanced"],
-            rejectText: ["OpenWork"],
+            rejectText: ["JuggleWork"],
             hashIncludes: "/settings/advanced",
           },
         });
@@ -174,16 +174,16 @@ export default defineFlow({
           },
           assert: async () => {
             await ctx.expectHashIncludes("/settings/appearance");
-            await ctx.expectNoText("OpenWork");
+            await ctx.expectNoText("JuggleWork");
             const ready = await ctx.eval(
-              `document.title === "JuggleWork" && Boolean(window.__openworkControl)`,
+              `document.title === "JuggleWork" && Boolean(window.__juggleworkControl)`,
             );
             witness(ctx, ready, "The live JuggleWork window and control API are ready");
           },
           screenshot: {
             name: "jugglework-verified-settings",
             requireText: ["Appearance"],
-            rejectText: ["OpenWork"],
+            rejectText: ["JuggleWork"],
             hashIncludes: "/settings/appearance",
           },
         });

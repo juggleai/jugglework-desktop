@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readDenSettings } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
 import type {
-  OpenworkCloudMcpProviderModelContext,
-  OpenworkServerClient,
-} from "../../../app/lib/openwork-server";
+  JuggleWorkCloudMcpProviderModelContext,
+  JuggleWorkServerClient,
+} from "../../../app/lib/jugglework-server";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import type { DenAuthStatus } from "../cloud/den-auth-provider";
 import {
@@ -29,15 +29,15 @@ import {
 } from "./use-session-mcp-maintenance";
 
 type CloudMcpSubmitReadinessClient = Pick<
-  OpenworkServerClient,
-  "baseUrl" | "getOpenworkCloudMcpHealth" | "reconcileOpenworkCloudMcp" | "listMcp"
+  JuggleWorkServerClient,
+  "baseUrl" | "getJuggleWorkCloudMcpHealth" | "reconcileJuggleWorkCloudMcp" | "listMcp"
 >;
 
 type UseCloudMcpSubmitReadinessInput = {
   cloudAuthStatus: DenAuthStatus;
   client: CloudMcpSubmitReadinessClient | null;
   workspaceId: string | null;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: JuggleWorkCloudMcpProviderModelContext;
 };
 
 type CloudMcpSubmitInput = {
@@ -53,7 +53,7 @@ export type CloudMcpSubmitReadiness = {
 function missingContextIssue(input: {
   client: CloudMcpSubmitReadinessClient | null;
   workspaceId: string;
-  providerModel?: OpenworkCloudMcpProviderModelContext;
+  providerModel?: JuggleWorkCloudMcpProviderModelContext;
 }): CloudMcpSubmissionIssue {
   if (!input.client || !input.workspaceId) {
     return {
@@ -247,7 +247,7 @@ export function useCloudMcpSubmitReadiness(
         }
         const result = await ensureCloudMcpSubmissionReadiness({
           providerModel,
-          check: () => client.getOpenworkCloudMcpHealth(activeWorkspaceId, providerModel),
+          check: () => client.getJuggleWorkCloudMcpHealth(activeWorkspaceId, providerModel),
           repair: async () => {
             const repaired = await syncCloudControlMcpInBackground({
               client,

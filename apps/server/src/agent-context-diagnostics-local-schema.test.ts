@@ -4,7 +4,7 @@ import {
   agentContextDiagnosticsReportSchema as sharedReportSchema,
   agentContextDiagnosticsRequestSchema as sharedRequestSchema,
   type AgentContextDiagnosticsRequest,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@jugglework/types/agent-context-diagnostics";
 
 import {
   agentContextDiagnosticsReportSchema as localReportSchema,
@@ -38,14 +38,14 @@ const validRequest: AgentContextDiagnosticsRequest = {
 };
 
 const workspace: WorkspaceInfo = {
-  id: "remote_openwork_schema_parity",
+  id: "remote_jugglework_schema_parity",
   name: "Remote JuggleWork schema parity",
   path: "",
   preset: "starter",
   workspaceType: "remote",
-  remoteType: "openwork",
-  baseUrl: "https://remote-openwork.invalid",
-  openworkHostUrl: "https://remote-openwork.invalid",
+  remoteType: "jugglework",
+  baseUrl: "https://remote-jugglework.invalid",
+  juggleworkHostUrl: "https://remote-jugglework.invalid",
 };
 
 const config: ServerConfig = {
@@ -91,7 +91,7 @@ describe("agent context diagnostics server-local schema parity", () => {
     const reportWithCanonicalMcp = {
       ...report,
       mcps: [{
-        name: "openwork-cloud",
+        name: "jugglework-cloud",
         source: "config.remote",
         type: "remote",
         enabled: true,
@@ -194,7 +194,7 @@ describe("agent context diagnostics server-local schema parity", () => {
       {
         ...report,
         mcps: [{
-          name: "openwork-cloud",
+          name: "jugglework-cloud",
           source: "config.remote",
           type: "remote",
           enabled: true,

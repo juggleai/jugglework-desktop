@@ -11,7 +11,7 @@ const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
 const productName = "HandsFreeComputerUse";
 const helperExecutableName = "ComputerUse";
 const helperAppName = "JuggleWork Computer Use.app";
-const bundleIdentifier = "com.differentai.openwork.computer-use";
+const bundleIdentifier = "com.juggleai.jugglework.computer-use";
 
 const readArg = (name) => {
   const raw = process.argv.slice(2);
@@ -24,7 +24,7 @@ const readArg = (name) => {
 
 const hasFlag = (name) => process.argv.slice(2).includes(name);
 const outDir = resolve(readArg("--outdir") ?? join(desktopRoot, "resources", "helpers"));
-const force = hasFlag("--force") || process.env.OPENWORK_COMPUTER_USE_FORCE_BUILD === "1";
+const force = hasFlag("--force") || process.env.JUGGLEWORK_COMPUTER_USE_FORCE_BUILD === "1";
 const appPath = join(outDir, helperAppName);
 
 function run(command, args, options = {}) {
@@ -42,7 +42,7 @@ function run(command, args, options = {}) {
 }
 
 function signingIdentity() {
-  const fromEnv = process.env.OPENWORK_COMPUTER_USE_SIGN_IDENTITY;
+  const fromEnv = process.env.JUGGLEWORK_COMPUTER_USE_SIGN_IDENTITY;
   if (fromEnv) return fromEnv;
   const result = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], { encoding: "utf8" });
   if (result.status !== 0) return "-";

@@ -6,9 +6,9 @@ import { startInstallerServer } from "./server"
 
 const rawArgs = Bun.argv.slice(2)
 const args = new Set(rawArgs)
-const headless = args.has("--headless") || process.env.OPENWORK_INSTALLER_HEADLESS === "1"
-const dryRun = args.has("--dry-run") || process.env.OPENWORK_INSTALLER_DRY_RUN === "1"
-const smokeExitMs = Number.parseInt(process.env.OPENWORK_INSTALLER_SMOKE_EXIT_MS ?? "", 10)
+const headless = args.has("--headless") || process.env.JUGGLEWORK_INSTALLER_HEADLESS === "1"
+const dryRun = args.has("--dry-run") || process.env.JUGGLEWORK_INSTALLER_DRY_RUN === "1"
+const smokeExitMs = Number.parseInt(process.env.JUGGLEWORK_INSTALLER_SMOKE_EXIT_MS ?? "", 10)
 
 type ReadyServer = {
   url: string
@@ -49,7 +49,7 @@ async function runServerProcess(): Promise<never> {
     const server = startInstallerServer(resolution, () => console.log(JSON.stringify({ type: "exit" })))
     console.log(JSON.stringify({ type: "ready", url: server.url, token: server.token }))
   } catch (error) {
-    console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`[jugglework-installer] ${error instanceof Error ? error.message : String(error)}`)
     process.exit(2)
   }
   return await new Promise<never>(() => undefined)
@@ -165,13 +165,13 @@ async function startWorkerInstallerServer(): Promise<ReadyServer> {
 
 if (headless) {
   const resolution = await resolveInstallerConfig({ installLink: argValue("--install-link") }).catch((error): never => {
-    console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`[jugglework-installer] ${error instanceof Error ? error.message : String(error)}`)
     process.exit(2)
   })
 
   const { config, source } = resolution
   console.log(`${config.appName} Installer — ${config.clientName}`)
-  console.log(`[openwork-installer] Configured via ${installerConfigSourceLabel(source)}.`)
+  console.log(`[jugglework-installer] Configured via ${installerConfigSourceLabel(source)}.`)
   const result = await runInstall(config, {
     dryRun,
     onStatus: (status) => {
@@ -191,7 +191,7 @@ if (headless) {
 // resolve to Bun's virtual B:/... filesystem there and fail before the server
 // starts.
 const uiServer = await (process.platform === "win32" ? startChildInstallerServer() : startWorkerInstallerServer()).catch((error) => {
-  console.error(`[openwork-installer] ${error instanceof Error ? error.message : String(error)}`)
+  console.error(`[jugglework-installer] ${error instanceof Error ? error.message : String(error)}`)
   process.exit(2)
 })
 const ready = { url: uiServer.url, token: uiServer.token }
@@ -227,11 +227,11 @@ function openInBrowser(url: string) {
   Bun.spawn(command, { stdio: ["ignore", "ignore", "ignore"] })
 }
 
-if (process.env.OPENWORK_INSTALLER_UI === "manual") {
+if (process.env.JUGGLEWORK_INSTALLER_UI === "manual") {
   // Manual UI mode: serve the installer UI without opening any window or
   // browser (headless CI, remote debugging, UI evals). The URL is printed so
   // the operator can attach their own browser.
-  console.log(`[openwork-installer] UI ready at ${ready.url}`)
+  console.log(`[jugglework-installer] UI ready at ${ready.url}`)
   uiServer.onExit(() => void exitWhenInstallSettles())
 } else {
 try {
@@ -244,14 +244,14 @@ try {
   // Destroying inside the callback frees the executing FFI trampoline and
   // tears down the webview mid-dispatch (use-after-free; segfaults on
   // Windows, where WebView2 dispatches bindings from the Win32 message pump).
-  webview.bind("openworkInstallerExit", () => {
+  webview.bind("juggleworkInstallerExit", () => {
     const handle = webview.unsafeHandle
     if (handle) lib.symbols.webview_terminate(handle)
   })
   if (Number.isFinite(smokeExitMs) && smokeExitMs > 0) {
     // Automated smoke: drive the exact production exit path (page JS -> bound
     // FFI callback) without a human click.
-    webview.init(`setTimeout(() => { if (window.openworkInstallerExit) window.openworkInstallerExit(); }, ${smokeExitMs})`)
+    webview.init(`setTimeout(() => { if (window.juggleworkInstallerExit) window.juggleworkInstallerExit(); }, ${smokeExitMs})`)
   }
   webview.navigate(ready.url)
   webview.run()
@@ -259,10 +259,10 @@ try {
 } catch (error) {
   // Native webview unavailable (e.g. no WebkitGTK): same UI in the browser.
   if (Number.isFinite(smokeExitMs) && smokeExitMs > 0) {
-    console.error("[openwork-installer] smoke mode: native webview unavailable")
+    console.error("[jugglework-installer] smoke mode: native webview unavailable")
     process.exit(3)
   }
-  console.warn(`[openwork-installer] native window unavailable (${error instanceof Error ? error.message : String(error)}); opening browser UI`)
+  console.warn(`[jugglework-installer] native window unavailable (${error instanceof Error ? error.message : String(error)}); opening browser UI`)
   openInBrowser(ready.url)
   uiServer.onExit(() => void exitWhenInstallSettles())
 }

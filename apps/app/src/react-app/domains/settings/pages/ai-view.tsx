@@ -41,14 +41,14 @@ export type AiSettingsViewProps = {
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
-  showOpenWorkModelsSubscribe?: boolean;
+  showJuggleWorkModelsSubscribe?: boolean;
   /** Subtle fallback row when JuggleWork Models is not connected and the banner was dismissed. */
-  showOpenWorkModelsConnect?: boolean;
-  /** Den entitlement is present but local engine has no selectable openwork models yet. */
-  showOpenWorkModelsSyncing?: boolean;
-  onSubscribeOpenWorkModels?: () => void | Promise<void>;
-  onRefreshOpenWorkModels?: () => void | Promise<void>;
-  onDismissOpenWorkModels?: () => void | Promise<void>;
+  showJuggleWorkModelsConnect?: boolean;
+  /** Den entitlement is present but local engine has no selectable jugglework models yet. */
+  showJuggleWorkModelsSyncing?: boolean;
+  onSubscribeJuggleWorkModels?: () => void | Promise<void>;
+  onRefreshJuggleWorkModels?: () => void | Promise<void>;
+  onDismissJuggleWorkModels?: () => void | Promise<void>;
   cloudProvidersView?: ReactNode;
 };
 
@@ -98,19 +98,19 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
 
-        {props.showOpenWorkModelsSubscribe ? (
+        {props.showJuggleWorkModelsSubscribe ? (
           <LayoutSectionItem className="relative overflow-hidden rounded-2xl border border-blue-6 bg-blue-2/30 px-4 py-4">
             <button
               type="button"
               className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full text-blue-11 transition-colors hover:bg-blue-3/70"
-              onClick={() => void props.onDismissOpenWorkModels?.()}
+              onClick={() => void props.onDismissJuggleWorkModels?.()}
               aria-label="Dismiss JuggleWork Models banner"
             >
               <X className="size-3.5" />
             </button>
             <div className="flex flex-col gap-4 pr-8 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex min-w-0 gap-3">
-                <ProviderIcon providerId="openwork" size={22} className="mt-0.5 shrink-0 text-blue-11" />
+                <ProviderIcon providerId="jugglework" size={22} className="mt-0.5 shrink-0 text-blue-11" />
                 <div className="min-w-0 space-y-2">
                   <div>
                     <div className="text-sm font-medium text-dls-text">JuggleWork Models</div>
@@ -133,7 +133,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               </div>
               <Button
                 className="shrink-0"
-                onClick={() => void props.onSubscribeOpenWorkModels?.()}
+                onClick={() => void props.onSubscribeJuggleWorkModels?.()}
                 disabled={props.busy || props.providerAuthBusy}
               >
                 Subscribe
@@ -192,10 +192,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </div>
         ) : null}
 
-        {props.showOpenWorkModelsConnect ? (
+        {props.showJuggleWorkModelsConnect ? (
           <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
-              <ProviderIcon providerId="openwork" size={20} className="text-muted-foreground" />
+              <ProviderIcon providerId="jugglework" size={20} className="text-muted-foreground" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">JuggleWork Models</span>
@@ -210,7 +210,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             </div>
             <Button
               variant="outline"
-              onClick={() => void props.onSubscribeOpenWorkModels?.()}
+              onClick={() => void props.onSubscribeJuggleWorkModels?.()}
               disabled={props.busy || props.providerAuthBusy}
             >
               Connect
@@ -219,10 +219,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           </LayoutSectionItem>
         ) : null}
 
-        {props.showOpenWorkModelsSyncing ? (
+        {props.showJuggleWorkModelsSyncing ? (
           <LayoutSectionItem className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-6/50 bg-amber-2/20 px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
-              <ProviderIcon providerId="openwork" size={20} className="text-amber-11" />
+              <ProviderIcon providerId="jugglework" size={20} className="text-amber-11" />
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">JuggleWork Models</span>
@@ -237,7 +237,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             </div>
             <Button
               variant="outline"
-              onClick={() => void props.onRefreshOpenWorkModels?.()}
+              onClick={() => void props.onRefreshJuggleWorkModels?.()}
               disabled={props.busy || props.providerAuthBusy}
             >
               <RefreshCw className="mr-1.5 size-3.5" />

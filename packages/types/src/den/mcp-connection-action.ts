@@ -1,13 +1,13 @@
 import { z } from "zod"
 
-export const OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION = 1 as const
-export const OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND = "connection_action" as const
-export const OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE = "openwork-cloud" as const
+export const JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION = 1 as const
+export const JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_KIND = "connection_action" as const
+export const JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE = "jugglework-cloud" as const
 
-export const openworkCloudMcpConnectionActionSchema = z.object({
-  version: z.literal(OPENWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION),
-  kind: z.literal(OPENWORK_CLOUD_MCP_CONNECTION_ACTION_KIND),
-  source: z.literal(OPENWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE),
+export const juggleworkCloudMcpConnectionActionSchema = z.object({
+  version: z.literal(JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_VERSION),
+  kind: z.literal(JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_KIND),
+  source: z.literal(JUGGLEWORK_CLOUD_MCP_CONNECTION_ACTION_SOURCE),
   connectionId: z.string().min(1),
   connectionName: z.string().min(1),
   authType: z.enum(["oauth", "apikey", "none"]),
@@ -18,7 +18,7 @@ export const openworkCloudMcpConnectionActionSchema = z.object({
     "organization_admin",
     "provider_admin",
     "network_admin",
-    "openwork",
+    "jugglework",
   ]),
   action: z.object({
     type: z.enum([
@@ -28,14 +28,14 @@ export const openworkCloudMcpConnectionActionSchema = z.object({
       "inspect_connection",
       "fix_provider",
       "fix_network",
-      "contact_openwork",
+      "contact_jugglework",
     ]),
     surface: z.enum([
-      "openwork_your_connections",
-      "openwork_organization_connections",
+      "jugglework_your_connections",
+      "jugglework_organization_connections",
       "provider_admin_console",
       "network_infrastructure",
-      "openwork_support",
+      "jugglework_support",
     ]),
     retry: z.literal("search_capabilities"),
   }),
@@ -46,17 +46,17 @@ export const openworkCloudMcpConnectionActionSchema = z.object({
  * API-key, provider-admin, and support actions remain descriptive because the
  * current member may not own the credential or have permission to repair it.
  */
-export const openworkCloudMcpInlineReconnectSchema = openworkCloudMcpConnectionActionSchema.extend({
+export const juggleworkCloudMcpInlineReconnectSchema = juggleworkCloudMcpConnectionActionSchema.extend({
   authType: z.literal("oauth"),
   credentialMode: z.literal("per_member"),
   state: z.literal("reauth_required"),
   actor: z.literal("member"),
   action: z.object({
     type: z.literal("reconnect"),
-    surface: z.literal("openwork_your_connections"),
+    surface: z.literal("jugglework_your_connections"),
     retry: z.literal("search_capabilities"),
   }),
 })
 
-export type OpenworkCloudMcpConnectionAction = z.infer<typeof openworkCloudMcpConnectionActionSchema>
-export type OpenworkCloudMcpInlineReconnect = z.infer<typeof openworkCloudMcpInlineReconnectSchema>
+export type JuggleWorkCloudMcpConnectionAction = z.infer<typeof juggleworkCloudMcpConnectionActionSchema>
+export type JuggleWorkCloudMcpInlineReconnect = z.infer<typeof juggleworkCloudMcpInlineReconnectSchema>

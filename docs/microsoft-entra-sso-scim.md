@@ -11,8 +11,8 @@ wraps them with organization-scoped JuggleWork routes and policy:
 | Area | JuggleWork surface | Runtime behavior |
 |---|---|---|
 | SSO management | `/dashboard/sso`, `/v1/sso`, `/v1/sso/saml`, `/v1/sso/oidc` | One SSO connection per organization. Owners and security admins can create or replace it. |
-| SAML callback | `/api/auth/sso/saml2/sp/acs/openwork-sso-<org-id>` | Better Auth consumes the response after JuggleWork validates SAML response policy. |
-| SAML metadata | `/api/auth/sso/saml2/sp/metadata?providerId=openwork-sso-<org-id>` | Generated after the SAML connection is saved in JuggleWork. |
+| SAML callback | `/api/auth/sso/saml2/sp/acs/jugglework-sso-<org-id>` | Better Auth consumes the response after JuggleWork validates SAML response policy. |
+| SAML metadata | `/api/auth/sso/saml2/sp/metadata?providerId=jugglework-sso-<org-id>` | Generated after the SAML connection is saved in JuggleWork. |
 | SSO sign-in | `/sso/<org-slug>` | Starts SP-initiated SSO for one organization and redirects to Entra. |
 | SCIM management | `/dashboard/scim`, `/v1/scim`, `/v1/scim/token` | Owners and security admins create or rotate an org-scoped SCIM bearer token. |
 | SCIM provisioning | `/api/auth/scim/v2` | Supports SCIM user provisioning, updates, and deprovisioning. |
@@ -58,10 +58,10 @@ the Entra group object mapping disabled.
 For the JuggleWork Labs test tenant, use:
 
 - **Tenant ID**: `2b853de0-b14b-4433-90be-cced1b963647`
-- **JuggleWork SSO domain**: `omaropenworklabs.onmicrosoft.com`
+- **JuggleWork SSO domain**: `omarjuggleworklabs.onmicrosoft.com`
 - **Test users**:
-  - `omar2@omaropenworklabs.onmicrosoft.com`
-  - `omar_openworklabs.com#EXT#@omaropenworklabs.onmicrosoft.com`
+  - `omar2@omarjuggleworklabs.onmicrosoft.com`
+  - `omar_juggle.im#EXT#@omarjuggleworklabs.onmicrosoft.com`
 - **JuggleWork organization**: `Omar Azure Test`
 
 As of July 7, 2026, both test users are assigned to the **JuggleWork Labs**
@@ -123,7 +123,7 @@ For the JuggleWork Labs test tenant, the JuggleWork SAML fields are:
 
 - **IdP Issuer URL**:
   `https://sts.windows.net/2b853de0-b14b-4433-90be-cced1b963647/`
-- **Domain**: `omaropenworklabs.onmicrosoft.com`
+- **Domain**: `omarjuggleworklabs.onmicrosoft.com`
 - **SAML Entry Point**:
   `https://login.microsoftonline.com/2b853de0-b14b-4433-90be-cced1b963647/saml2`
 - **Audience URL**: leave blank unless you also set a custom Entra Identifier.

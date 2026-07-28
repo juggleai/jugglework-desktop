@@ -80,8 +80,8 @@ function createInvalidToolStream() {
 
 function hasBuiltInBrowserPrompt(haystack) {
   return (
-    haystack.includes("built-in openwork browser") ||
-    haystack.includes("openwork browser") ||
+    haystack.includes("built-in jugglework browser") ||
+    haystack.includes("jugglework browser") ||
     haystack.includes("example.com")
   );
 }
@@ -120,7 +120,7 @@ let sawBuiltInBrowserPrompt = false;
 const mockSockets = new Set();
 
 try {
-  tmpdir = await mkdtemp(path.join(os.tmpdir(), "openwork-browser-entry-"));
+  tmpdir = await mkdtemp(path.join(os.tmpdir(), "jugglework-browser-entry-"));
 
   const templateUrl = new URL("../src/app/data/commands/browser-setup.md", import.meta.url);
   const template = await readFile(templateUrl, "utf8");

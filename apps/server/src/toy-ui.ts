@@ -311,7 +311,7 @@ export const TOY_UI_HTML = `<!doctype html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>JuggleWork Toy UI</title>
-    <link rel="icon" type="image/svg+xml" href="/ui/assets/openwork-mark.svg" />
+    <link rel="icon" type="image/svg+xml" href="/ui/assets/jugglework-mark.svg" />
     <link rel="stylesheet" href="/ui/assets/toy.css" />
   </head>
   <body>
@@ -319,7 +319,7 @@ export const TOY_UI_HTML = `<!doctype html>
       <div class="top">
         <div class="title">
           <h1>JuggleWork Toy UI</h1>
-          <div class="sub">Local-first host contract harness (served by openwork-server)</div>
+          <div class="sub">Local-first host contract harness (served by jugglework-server)</div>
         </div>
         <div class="row">
           <span class="pill" id="pill-conn">disconnected</span>
@@ -460,13 +460,13 @@ export const TOY_UI_HTML = `<!doctype html>
                 <input id="file" type="file" />
                 <button class="btn" id="btn-upload">Upload to inbox</button>
               </div>
-              <div class="small">Uploads go to <span class="mono">.opencode/openwork/inbox/</span> inside the workspace.</div>
+              <div class="small">Uploads go to <span class="mono">.opencode/jugglework/inbox/</span> inside the workspace.</div>
 
               <div class="hr"></div>
 
               <div class="row">
                 <button class="btn" id="btn-artifacts">List artifacts</button>
-                <span class="small">Downloads read from <span class="mono">.opencode/openwork/outbox/</span>.</span>
+                <span class="small">Downloads read from <span class="mono">.opencode/jugglework/outbox/</span>.</span>
               </div>
               <div class="list" id="artifacts"></div>
 
@@ -520,8 +520,8 @@ const shareScopeEl = qs("#share-scope");
 const shareLabelEl = qs("#share-label");
 const tabsEl = qs("#tabs");
 
-const STORAGE_TOKEN = "openwork.toy.token";
-const STORAGE_SESSION_PREFIX = "openwork.toy.session.";
+const STORAGE_TOKEN = "jugglework.toy.token";
+const STORAGE_SESSION_PREFIX = "jugglework.toy.session.";
 
 function setPill(el, label, kind) {
   el.textContent = label;
@@ -1011,7 +1011,7 @@ function renderConnectArtifact(workspaceId, token, scope) {
   const hostUrl = location.origin;
   const workspaceUrl = hostUrl + "/w/" + encodeURIComponent(workspaceId);
   const payload = {
-    kind: "openwork.connect.v1",
+    kind: "jugglework.connect.v1",
     hostUrl: hostUrl,
     workspaceId: workspaceId,
     workspaceUrl: workspaceUrl,

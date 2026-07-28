@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import type {
-  OpenworkCloudMcpFailure,
-  OpenworkCloudMcpHealth,
-} from "../src/app/lib/openwork-server";
+  JuggleWorkCloudMcpFailure,
+  JuggleWorkCloudMcpHealth,
+} from "../src/app/lib/jugglework-server";
 import {
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
@@ -13,9 +13,9 @@ import {
   type CloudMcpSubmissionPreparationResult,
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
 
-const PROVIDER_MODEL = { provider: "openwork", model: "gpt-5" };
+const PROVIDER_MODEL = { provider: "jugglework", model: "gpt-5" };
 
-function failure(input?: Partial<OpenworkCloudMcpFailure>): OpenworkCloudMcpFailure {
+function failure(input?: Partial<JuggleWorkCloudMcpFailure>): JuggleWorkCloudMcpFailure {
   return {
     code: input?.code ?? "cloud_registration_failed",
     stage: input?.stage ?? "engine_delivery",
@@ -27,13 +27,13 @@ function failure(input?: Partial<OpenworkCloudMcpFailure>): OpenworkCloudMcpFail
 
 function health(input?: {
   usable?: boolean;
-  firstFailure?: OpenworkCloudMcpFailure | null;
+  firstFailure?: JuggleWorkCloudMcpFailure | null;
   projectionSource?: "experimental_tool" | "provider_capability";
-}): OpenworkCloudMcpHealth {
+}): JuggleWorkCloudMcpHealth {
   const usable = input?.usable ?? true;
   const projectionSource = input?.projectionSource ?? "experimental_tool";
   const projected = usable
-    ? ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"]
+    ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"]
     : [];
   const direct = usable ? ["search_capabilities", "execute_capability"] : [];
   return {
@@ -45,7 +45,7 @@ function health(input?: {
     workspace: { id: "workspace_1", type: "local", directory: "/workspace", path: "/workspace" },
     desired: {
       present: true,
-      name: "openwork-cloud",
+      name: "jugglework-cloud",
       revision: "rev_1",
       config: { type: "remote", enabled: true },
       token: { present: true, metadata: {} },
@@ -60,9 +60,9 @@ function health(input?: {
     },
     engine: { status: usable ? "connected" : "missing" },
     tools: {
-      expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+      expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
       present: projected,
-      missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+      missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
       direct: {
         checked: true,
         source: "mcp_tools_list",
@@ -83,29 +83,29 @@ function health(input?: {
             }
           : {}),
         present: projected,
-        missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+        missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
       },
     },
-    pluginCanaries: { expected: ["openwork_docs_search"], present: usable ? ["openwork_docs_search"] : [], missing: usable ? [] : ["openwork_docs_search"] },
+    pluginCanaries: { expected: ["jugglework_docs_search"], present: usable ? ["jugglework_docs_search"] : [], missing: usable ? [] : ["jugglework_docs_search"] },
     compatibility: {
-      openwork: { serverVersion: "test", app: null },
+      jugglework: { serverVersion: "test", app: null },
       opencode: { expectedVersion: "test", actualVersion: "test", probe: "ok" },
       pluginFileHashes: [],
       supportedFeatures: { dynamicMcp: true, directoryScoping: true, toolIds: true, providerToolProjection: projectionSource === "experimental_tool", pluginCanaries: true },
       experimentalToolIds: {
         checked: true,
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
         present: projected,
-        missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+        missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
         includesMcpTools: usable,
       },
       experimentalProviderTools: {
         checked: true,
         provider: PROVIDER_MODEL.provider,
         model: PROVIDER_MODEL.model,
-        expected: ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+        expected: ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
         present: projected,
-        missing: usable ? [] : ["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"],
+        missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
         includesMcpTools: projectionSource === "experimental_tool" && usable,
       },
     },
@@ -125,8 +125,8 @@ function requiredDecision(input?: {
   return decideCloudMcpSubmissionGate({
     cloudAuthStatus: input?.authStatus ?? "signed_in",
     cloudHasSessionToken: input?.hasSessionToken ?? true,
-    denBaseUrl: "https://app.openwork.test",
-    serverBaseUrl: "https://worker.openwork.test",
+    denBaseUrl: "https://app.jugglework.test",
+    serverBaseUrl: "https://worker.jugglework.test",
     orgId: "org_1",
     workspaceId: input?.workspaceId ?? "workspace_1",
     providerModel: { ...PROVIDER_MODEL, model: input?.model ?? PROVIDER_MODEL.model },
@@ -135,8 +135,8 @@ function requiredDecision(input?: {
 }
 
 function preparation(input: {
-  check: () => Promise<OpenworkCloudMcpHealth | null>;
-  repair: () => Promise<OpenworkCloudMcpHealth | null>;
+  check: () => Promise<JuggleWorkCloudMcpHealth | null>;
+  repair: () => Promise<JuggleWorkCloudMcpHealth | null>;
 }): () => Promise<CloudMcpSubmissionPreparationResult> {
   return async () => {
     const result = await ensureCloudMcpSubmissionReadiness({

@@ -5,7 +5,7 @@ import {
   workspaceUpdateRemote,
   type WorkspaceInfo,
 } from "../../../app/lib/desktop";
-import { buildOpenworkWorkspaceBaseUrl } from "../../../app/lib/openwork-server";
+import { buildJuggleWorkWorkspaceBaseUrl } from "../../../app/lib/jugglework-server";
 import { t } from "../../../i18n";
 import type { RemoteWorkspaceInput } from "./types";
 
@@ -42,16 +42,16 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
 
   const initialValues = useMemo(
     () => {
-      const hostUrl = workspace?.openworkHostUrl ?? workspace?.baseUrl ?? "";
-      const mountedUrl = workspace?.remoteType === "openwork"
-        ? buildOpenworkWorkspaceBaseUrl(hostUrl, workspace.openworkWorkspaceId) ?? hostUrl
+      const hostUrl = workspace?.juggleworkHostUrl ?? workspace?.baseUrl ?? "";
+      const mountedUrl = workspace?.remoteType === "jugglework"
+        ? buildJuggleWorkWorkspaceBaseUrl(hostUrl, workspace.juggleworkWorkspaceId) ?? hostUrl
         : hostUrl;
       return {
-        openworkHostUrl: mountedUrl,
-        openworkToken:
-          workspace?.openworkToken ??
-          workspace?.openworkClientToken ??
-          workspace?.openworkHostToken ??
+        juggleworkHostUrl: mountedUrl,
+        juggleworkToken:
+          workspace?.juggleworkToken ??
+          workspace?.juggleworkClientToken ??
+          workspace?.juggleworkHostToken ??
           "",
         directory: workspace?.directory ?? workspace?.path ?? "",
         displayName: workspace?.displayName ?? workspace?.name ?? "",
@@ -79,7 +79,7 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
   const save = useCallback(
     async (fields: RemoteWorkspaceInput) => {
       const id = workspaceId?.trim() ?? "";
-      const baseUrl = fields.openworkHostUrl?.trim() ?? "";
+      const baseUrl = fields.juggleworkHostUrl?.trim() ?? "";
       if (!id || !baseUrl) {
         setError(t("dashboard.remote_base_url_required"));
         return;
@@ -91,13 +91,13 @@ export function useRemoteWorkspaceConnectionEditor<TWorkspace extends WorkspaceI
         await workspaceUpdateRemote({
           workspaceId: id,
           baseUrl,
-          openworkHostUrl: baseUrl,
-          openworkToken: fields.openworkToken?.trim() ?? "",
-          openworkClientToken: "",
-          openworkHostToken: "",
+          juggleworkHostUrl: baseUrl,
+          juggleworkToken: fields.juggleworkToken?.trim() ?? "",
+          juggleworkClientToken: "",
+          juggleworkHostToken: "",
           displayName: fields.displayName?.trim() || null,
           directory: fields.directory?.trim() || null,
-          remoteType: "openwork",
+          remoteType: "jugglework",
         });
         await onSaved(id);
         setWorkspaceId(null);

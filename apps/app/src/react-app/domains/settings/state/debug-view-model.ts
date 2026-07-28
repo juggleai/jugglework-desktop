@@ -7,14 +7,14 @@ import {
   engineStart as engineStartCmd,
   getDesktopBootstrapConfig,
   debugDesktopBootstrapConfig,
-  nukeOpenworkAndOpencodeConfigPreview,
-  nukeOpenworkAndOpencodeConfigAndExit,
+  nukeJuggleWorkAndOpencodeConfigPreview,
+  nukeJuggleWorkAndOpencodeConfigAndExit,
   openDesktopUrl,
-  openworkServerInfo as openworkServerInfoCmd,
-  openworkServerRestart as openworkServerRestartCmd,
+  juggleworkServerInfo as juggleworkServerInfoCmd,
+  juggleworkServerRestart as juggleworkServerRestartCmd,
   pickFile,
   revealDesktopItemInDir,
-  resetOpenworkState,
+  resetJuggleWorkState,
   sandboxDebugProbe as sandboxDebugProbeCmd,
   updaterEnvironment as updaterEnvironmentCmd,
   workspaceBootstrap as workspaceBootstrapCmd,
@@ -22,7 +22,7 @@ import {
   type DesktopBootstrapConfig,
   type EngineInfo,
   type NukeManifestPreview,
-  type OpenworkServerInfo,
+  type JuggleWorkServerInfo,
   type SandboxDebugProbeResult,
 } from "../../../../app/lib/desktop";
 import { createDenClient, readDenSettings } from "../../../../app/lib/den";
@@ -33,9 +33,9 @@ import {
 import { downloadTextAsFile } from "../../../../app/lib/download";
 
 import {
-  writeOpenworkServerSettings,
-  type OpenworkRuntimeConfigStatus,
-} from "../../../../app/lib/openwork-server";
+  writeJuggleWorkServerSettings,
+  type JuggleWorkRuntimeConfigStatus,
+} from "../../../../app/lib/jugglework-server";
 import {
   clearStartupPreference,
   isDesktopRuntime,
@@ -46,30 +46,30 @@ import {
 import { t } from "../../../../i18n";
 import type { DebugViewProps } from "../pages/debug-view";
 import type { ReleaseChannel } from "../../../../app/types";
-import type { OpenworkServerStore, OpenworkServerStoreSnapshot } from "../../connections/openwork-server-store";
+import type { JuggleWorkServerStore, JuggleWorkServerStoreSnapshot } from "../../connections/jugglework-server-store";
 
 type DebugViewModelProps = Omit<DebugViewProps, "agentContextDiagnostics">;
 
-const STARTUP_PREFERENCE_KEY = "openwork.startupPreference";
-const ENGINE_SOURCE_KEY = "openwork.engineSource";
-const ENGINE_CUSTOM_BIN_KEY = "openwork.engineCustomBinPath";
-const OPENCODE_ENABLE_EXA_KEY = "openwork.opencodeEnableExa";
+const STARTUP_PREFERENCE_KEY = "jugglework.startupPreference";
+const ENGINE_SOURCE_KEY = "jugglework.engineSource";
+const ENGINE_CUSTOM_BIN_KEY = "jugglework.engineCustomBinPath";
+const OPENCODE_ENABLE_EXA_KEY = "jugglework.opencodeEnableExa";
 const NUKE_CONFIRMATION_WORD = "NUKE";
 const NUKE_SIGN_OUT_TIMEOUT_MS = 5000;
 
 type ResetModalMode = "onboarding" | "all";
 
 const ONBOARDING_LOCAL_STORAGE_KEYS = [
-  "openwork.acknowledgedProviders",
-  "openwork.orgOnboardingSeen",
-  "openwork.reloadAfterOrgOnboarding",
-  "openwork.seenProviderIds",
+  "jugglework.acknowledgedProviders",
+  "jugglework.orgOnboardingSeen",
+  "jugglework.reloadAfterOrgOnboarding",
+  "jugglework.seenProviderIds",
 ];
 
 type UseDebugViewModelOptions = {
   developerMode: boolean;
-  openworkServerStore: OpenworkServerStore;
-  openworkServerSnapshot: OpenworkServerStoreSnapshot;
+  juggleworkServerStore: JuggleWorkServerStore;
+  juggleworkServerSnapshot: JuggleWorkServerStoreSnapshot;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
   setRouteError: (value: string | null) => void;
@@ -102,7 +102,7 @@ function clearStoredString(key: string): void {
   }
 }
 
-function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
+function clearJuggleWorkLocalStorageForReset(mode: ResetModalMode): void {
   if (typeof window === "undefined") return;
   try {
     if (mode === "all") {
@@ -112,11 +112,11 @@ function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
     for (const key of ONBOARDING_LOCAL_STORAGE_KEYS) {
       window.localStorage.removeItem(key);
     }
-    const raw = window.localStorage.getItem("openwork.preferences");
+    const raw = window.localStorage.getItem("jugglework.preferences");
     if (raw) {
       const prefs = JSON.parse(raw);
       prefs.hasCompletedOnboarding = false;
-      window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
+      window.localStorage.setItem("jugglework.preferences", JSON.stringify(prefs));
     }
   } catch {
     // ignore persistence failures
@@ -207,7 +207,7 @@ function formatOpencodeBinary(info: EngineInfo | null) {
   return formatBinaryWithSource(info?.opencodeBinPath, info?.opencodeBinSource);
 }
 
-function formatManagedOpencodeBinary(info: OpenworkServerInfo | null) {
+function formatManagedOpencodeBinary(info: JuggleWorkServerInfo | null) {
   return formatBinaryWithSource(
     info?.managedOpencodeBinPath,
     info?.managedOpencodeBinSource,
@@ -221,7 +221,7 @@ function formatBinaryWithSource(path: string | null | undefined, source: string 
   return sourceLabel ? `${binary} (${sourceLabel})` : binary;
 }
 
-function describeOpenworkServer(info: OpenworkServerInfo | null) {
+function describeJuggleWorkServer(info: JuggleWorkServerInfo | null) {
   const running = Boolean(info?.running);
   return {
     ...statusPill(running),
@@ -260,8 +260,8 @@ function describeOpencodeConnect(engine: EngineInfo | null) {
 export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const {
     developerMode,
-    openworkServerStore,
-    openworkServerSnapshot,
+    juggleworkServerStore,
+    juggleworkServerSnapshot,
     runtimeWorkspaceId,
     selectedWorkspaceRoot,
     setRouteError,
@@ -274,24 +274,24 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [appBuild, setAppBuild] = useState<AppBuildInfo | null>(null);
   const [bootstrapPrepared, setBootstrapPrepared] = useState<DesktopBootstrapConfig["prepared"]>(null);
   const [bootstrapConfigDebug, setBootstrapConfigDebug] = useState<unknown>(null);
-  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<OpenworkRuntimeConfigStatus | null>(null);
+  const [runtimeConfigStatus, setRuntimeConfigStatus] = useState<JuggleWorkRuntimeConfigStatus | null>(null);
   const [runtimeConfigStatusError, setRuntimeConfigStatusError] = useState<string | null>(null);
   const [runtimeDebugStatus, setRuntimeDebugStatus] = useState<string | null>(null);
   const [sandboxProbeBusy, setSandboxProbeBusy] = useState(false);
   const [sandboxProbeResult, setSandboxProbeResult] = useState<SandboxDebugProbeResult | null>(null);
   const [sandboxProbeStatus, setSandboxProbeStatus] = useState<string | null>(null);
   const [opencodeRestarting, setOpencodeRestarting] = useState(false);
-  const [openworkServerRestarting, setOpenworkServerRestarting] = useState(false);
+  const [juggleworkServerRestarting, setJuggleWorkServerRestarting] = useState(false);
   const [opencodeServiceStatus, setOpencodeServiceStatus] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
-  const [openworkServiceStatus, setOpenworkServiceStatus] = useState<{
+  const [juggleworkServiceStatus, setJuggleWorkServiceStatus] = useState<{
     tone: "success" | "error";
     message: string;
   } | null>(null);
   const [opencodeLogStatus, setOpencodeLogStatus] = useState<string | null>(null);
-  const [openworkLogStatus, setOpenworkLogStatus] = useState<string | null>(null);
+  const [juggleworkLogStatus, setJuggleWorkLogStatus] = useState<string | null>(null);
   const [serviceRestartError, setServiceRestartError] = useState<string | null>(null);
   const [resetModalBusy, setResetModalBusy] = useState(false);
   const [nukeConfigBusy, setNukeConfigBusy] = useState(false);
@@ -367,7 +367,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   useEffect(() => {
     if (!developerMode) return;
-    const client = openworkServerSnapshot.openworkServerClient;
+    const client = juggleworkServerSnapshot.juggleworkServerClient;
     const workspaceId = runtimeWorkspaceId?.trim();
     if (!client || !workspaceId) {
       setRuntimeConfigStatus(null);
@@ -391,7 +391,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     return () => {
       cancelled = true;
     };
-  }, [developerMode, openworkServerSnapshot.openworkServerClient, runtimeWorkspaceId]);
+  }, [developerMode, juggleworkServerSnapshot.juggleworkServerClient, runtimeWorkspaceId]);
 
   useEffect(() => {
     if (!developerMode || !isDesktopRuntime()) return;
@@ -425,13 +425,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       appVersionLabel: appBuild?.version ?? "—",
       appCommitLabel: appBuild?.gitSha ?? "—",
       opencodeVersionLabel: engineInfoState?.baseUrl ? "managed" : "—",
-      openworkServerVersionLabel: openworkServerSnapshot.openworkServerDiagnostics?.version ?? "—",
+      juggleworkServerVersionLabel: juggleworkServerSnapshot.juggleworkServerDiagnostics?.version ?? "—",
     }),
     [
       appBuild?.gitSha,
       appBuild?.version,
       engineInfoState?.baseUrl,
-      openworkServerSnapshot.openworkServerDiagnostics?.version,
+      juggleworkServerSnapshot.juggleworkServerDiagnostics?.version,
     ],
   );
 
@@ -440,13 +440,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       collectedAt: new Date().toISOString(),
       app: appBuild ?? null,
       engine: engineInfoState,
-      openworkServer: {
-        hostInfo: openworkServerSnapshot.openworkServerHostInfo,
-        diagnostics: openworkServerSnapshot.openworkServerDiagnostics,
-        capabilities: openworkServerSnapshot.openworkServerCapabilities,
-        settings: openworkServerSnapshot.openworkServerSettings,
-        status: openworkServerSnapshot.openworkServerStatus,
-        url: openworkServerSnapshot.openworkServerUrl,
+      juggleworkServer: {
+        hostInfo: juggleworkServerSnapshot.juggleworkServerHostInfo,
+        diagnostics: juggleworkServerSnapshot.juggleworkServerDiagnostics,
+        capabilities: juggleworkServerSnapshot.juggleworkServerCapabilities,
+        settings: juggleworkServerSnapshot.juggleworkServerSettings,
+        status: juggleworkServerSnapshot.juggleworkServerStatus,
+        url: juggleworkServerSnapshot.juggleworkServerUrl,
       },
       runtimeWorkspaceId,
       selectedWorkspaceRoot,
@@ -456,12 +456,12 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     appBuild,
     bootstrapPrepared,
     engineInfoState,
-    openworkServerSnapshot.openworkServerCapabilities,
-    openworkServerSnapshot.openworkServerDiagnostics,
-    openworkServerSnapshot.openworkServerHostInfo,
-    openworkServerSnapshot.openworkServerSettings,
-    openworkServerSnapshot.openworkServerStatus,
-    openworkServerSnapshot.openworkServerUrl,
+    juggleworkServerSnapshot.juggleworkServerCapabilities,
+    juggleworkServerSnapshot.juggleworkServerDiagnostics,
+    juggleworkServerSnapshot.juggleworkServerHostInfo,
+    juggleworkServerSnapshot.juggleworkServerSettings,
+    juggleworkServerSnapshot.juggleworkServerStatus,
+    juggleworkServerSnapshot.juggleworkServerUrl,
     runtimeWorkspaceId,
     selectedWorkspaceRoot,
   ]);
@@ -476,9 +476,9 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   );
 
   const engineCard = useMemo(() => describeEngine(engineInfoState), [engineInfoState]);
-  const openworkCard = useMemo(
-    () => describeOpenworkServer(openworkServerSnapshot.openworkServerHostInfo),
-    [openworkServerSnapshot.openworkServerHostInfo],
+  const juggleworkCard = useMemo(
+    () => describeJuggleWorkServer(juggleworkServerSnapshot.juggleworkServerHostInfo),
+    [juggleworkServerSnapshot.juggleworkServerHostInfo],
   );
   const opencodeConnectCard = useMemo(
     () => describeOpencodeConnect(engineInfoState),
@@ -497,7 +497,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const onExportRuntimeDebugReport = useCallback(async () => {
     try {
       downloadTextAsFile(
-        `openwork-runtime-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+        `jugglework-runtime-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
         runtimeDebugReportJson,
         "application/json",
       );
@@ -524,7 +524,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const onExportDeveloperLog = useCallback(async () => {
     try {
       downloadTextAsFile(
-        `openwork-developer-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `jugglework-developer-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         developerLog.join("\n"),
         "text/plain",
       );
@@ -591,7 +591,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
 
   useEffect(() => {
     if (!developerMode || !isElectronRuntime()) return;
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.updater;
     if (!bridge?.getChannel) return;
     let cancelled = false;
     void bridge.getChannel()
@@ -614,7 +614,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setElectronAlphaUpdaterStatus("Electron alpha updates are macOS-only for now.");
       return;
     }
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.updater;
     if (!bridge?.setChannel) {
       setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
       return;
@@ -640,7 +640,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       setElectronAlphaUpdaterStatus("Electron update checks are available only in the Electron desktop app.");
       return;
     }
-    const bridge = window.__OPENWORK_ELECTRON__?.updater;
+    const bridge = window.__JUGGLEWORK_ELECTRON__?.updater;
     if (!bridge?.check) {
       setElectronAlphaUpdaterStatus("Electron updater bridge is unavailable.");
       return;
@@ -736,7 +736,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       );
     }
 
-    // Collect ALL local workspace paths so openwork-server is started with
+    // Collect ALL local workspace paths so jugglework-server is started with
     // --workspace <path> for every registered local workspace. Mirrors the
     // Solid reference (context/workspace.ts::resolveWorkspacePaths) so that
     // `client.listWorkspaces()` later returns the full set, not just the
@@ -761,15 +761,15 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       runtime: "direct",
       workspacePaths,
       opencodeEnableExa: readOpencodeEnableExa(),
-      openworkRemoteAccess:
-        optionsRef.current.openworkServerSnapshot.openworkServerSettings
+      juggleworkRemoteAccess:
+        optionsRef.current.juggleworkServerSnapshot.juggleworkServerSettings
           .remoteAccessEnabled === true,
     });
 
-    // engine_start restarts openwork-server on a NEW port and lets that server
+    // engine_start restarts jugglework-server on a NEW port and lets that server
     // manage OpenCode. Re-read host info and persist the fresh URL/token.
     try {
-      const hostInfo = (await openworkServerInfoCmd()) as {
+      const hostInfo = (await juggleworkServerInfoCmd()) as {
         baseUrl?: string;
         ownerToken?: string;
         clientToken?: string;
@@ -778,7 +778,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         remoteAccessEnabled?: boolean;
       } | null;
       if (hostInfo?.baseUrl) {
-        writeOpenworkServerSettings({
+        writeJuggleWorkServerSettings({
           urlOverride: hostInfo.baseUrl,
           token: hostInfo.ownerToken?.trim() || hostInfo.clientToken?.trim() || undefined,
           hostToken: hostInfo.hostToken?.trim() || undefined,
@@ -786,17 +786,17 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
           remoteAccessEnabled: hostInfo.remoteAccessEnabled === true,
         });
         if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+          window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
         }
       }
     } catch {
       // best-effort: if this fails, the host-info poller will catch up in ~10s.
     }
 
-    await openworkServerStore.reconnectOpenworkServer();
+    await juggleworkServerStore.reconnectJuggleWorkServer();
     await refreshEngineInfo();
     return info;
-  }, [openworkServerStore, refreshEngineInfo]);
+  }, [juggleworkServerStore, refreshEngineInfo]);
 
   const onRestartOpencode = useCallback(async () => {
     if (!isDesktopRuntime()) return;
@@ -822,34 +822,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, [bootFullEngineStack, pushDeveloperLog]);
 
-  const onRestartOpenworkServer = useCallback(async () => {
+  const onRestartJuggleWorkServer = useCallback(async () => {
     if (!isDesktopRuntime()) return;
-    setOpenworkServerRestarting(true);
-    setOpenworkServiceStatus(null);
+    setJuggleWorkServerRestarting(true);
+    setJuggleWorkServiceStatus(null);
     setServiceRestartError(null);
     try {
-      await openworkServerRestartCmd({
-        remoteAccessEnabled: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      await juggleworkServerRestartCmd({
+        remoteAccessEnabled: juggleworkServerSnapshot.juggleworkServerSettings.remoteAccessEnabled === true,
       });
-      setOpenworkServiceStatus({
+      setJuggleWorkServiceStatus({
         tone: "success",
         message: t("settings.restart_succeeded_template", { service: "JuggleWork server" }),
       });
-      pushDeveloperLog("Restarted openwork-server");
-      await openworkServerStore.reconnectOpenworkServer();
+      pushDeveloperLog("Restarted jugglework-server");
+      await juggleworkServerStore.reconnectJuggleWorkServer();
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
-      setOpenworkServiceStatus({
+      setJuggleWorkServiceStatus({
         tone: "error",
         message: `${t("settings.restart_failed_template", { service: "JuggleWork server" })} ${message}`,
       });
       setServiceRestartError(message);
     } finally {
-      setOpenworkServerRestarting(false);
+      setJuggleWorkServerRestarting(false);
     }
   }, [
-    openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled,
-    openworkServerStore,
+    juggleworkServerSnapshot.juggleworkServerSettings.remoteAccessEnabled,
+    juggleworkServerStore,
     pushDeveloperLog,
   ]);
 
@@ -887,7 +887,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
     try {
       downloadTextAsFile(
-        `openwork-opencode-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `jugglework-opencode-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         text,
         "text/plain",
       );
@@ -897,39 +897,39 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     }
   }, [engineInfoState?.lastStderr, engineInfoState?.lastStdout, formatServiceLogs]);
 
-  const onCopyOpenworkLogs = useCallback(async () => {
-    const info = openworkServerSnapshot.openworkServerHostInfo;
+  const onCopyJuggleWorkLogs = useCallback(async () => {
+    const info = juggleworkServerSnapshot.juggleworkServerHostInfo;
     const text = formatServiceLogs(info?.lastStdout, info?.lastStderr);
     if (!text) {
-      setOpenworkLogStatus(t("settings.no_logs_captured"));
+      setJuggleWorkLogStatus(t("settings.no_logs_captured"));
       return;
     }
     try {
       await navigator.clipboard.writeText(text);
-      setOpenworkLogStatus(t("settings.copied_service_logs", { service: "JuggleWork server" }));
+      setJuggleWorkLogStatus(t("settings.copied_service_logs", { service: "JuggleWork server" }));
     } catch (error) {
-      setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
+      setJuggleWorkLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
-  }, [formatServiceLogs, openworkServerSnapshot.openworkServerHostInfo]);
+  }, [formatServiceLogs, juggleworkServerSnapshot.juggleworkServerHostInfo]);
 
-  const onExportOpenworkLogs = useCallback(async () => {
-    const info = openworkServerSnapshot.openworkServerHostInfo;
+  const onExportJuggleWorkLogs = useCallback(async () => {
+    const info = juggleworkServerSnapshot.juggleworkServerHostInfo;
     const text = formatServiceLogs(info?.lastStdout, info?.lastStderr);
     if (!text) {
-      setOpenworkLogStatus(t("settings.no_logs_captured"));
+      setJuggleWorkLogStatus(t("settings.no_logs_captured"));
       return;
     }
     try {
       downloadTextAsFile(
-        `openwork-server-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
+        `jugglework-server-${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         text,
         "text/plain",
       );
-      setOpenworkLogStatus(t("settings.exported_developer_log"));
+      setJuggleWorkLogStatus(t("settings.exported_developer_log"));
     } catch (error) {
-      setOpenworkLogStatus(error instanceof Error ? error.message : safeStringify(error));
+      setJuggleWorkLogStatus(error instanceof Error ? error.message : safeStringify(error));
     }
-  }, [formatServiceLogs, openworkServerSnapshot.openworkServerHostInfo]);
+  }, [formatServiceLogs, juggleworkServerSnapshot.juggleworkServerHostInfo]);
 
   const [resetStatus, setResetStatus] = useState<string | null>(null);
 
@@ -945,15 +945,15 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       }
       setResetModalBusy(true);
       setResetStatus(null);
-      void resetOpenworkState(mode)
+      void resetJuggleWorkState(mode)
         .then(async () => {
-          clearOpenworkLocalStorageForReset(mode);
+          clearJuggleWorkLocalStorageForReset(mode);
           setResetStatus(
             mode === "all"
               ? "Reset JuggleWork state. Restart the app to see changes."
               : "Reset onboarding state. Restart the app to see changes.",
           );
-          pushDeveloperLog(`reset_openwork_state mode=${mode}`);
+          pushDeveloperLog(`reset_jugglework_state mode=${mode}`);
         })
         .catch((error) => {
           setRouteError(error instanceof Error ? error.message : safeStringify(error));
@@ -970,7 +970,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap: true });
+      const preview = await nukeJuggleWorkAndOpencodeConfigPreview({ preserveBootstrap: true });
       setNukeManifestPreview(preview);
       setNukeConfirmationText("");
       setNukePreserveBootstrap(true);
@@ -988,7 +988,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukePreviewBusy(true);
     setNukeConfigStatus(null);
     try {
-      const preview = await nukeOpenworkAndOpencodeConfigPreview({ preserveBootstrap });
+      const preview = await nukeJuggleWorkAndOpencodeConfigPreview({ preserveBootstrap });
       setNukeManifestPreview(preview);
     } catch (error) {
       setNukePreserveBootstrap(!preserveBootstrap);
@@ -1003,13 +1003,13 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     setNukeDialogOpen(false);
   }, [nukeConfigBusy]);
 
-  const onConfirmNukeOpenworkAndOpencodeConfig = useCallback(async () => {
+  const onConfirmNukeJuggleWorkAndOpencodeConfig = useCallback(async () => {
     if (!isDesktopRuntime() || nukeConfirmationText.trim().toUpperCase() !== NUKE_CONFIRMATION_WORD) return;
     setNukeConfigBusy(true);
     setNukeConfigStatus(null);
     try {
       await revokeDenSessionBeforeNuke();
-      await nukeOpenworkAndOpencodeConfigAndExit({ preserveBootstrap: nukePreserveBootstrap });
+      await nukeJuggleWorkAndOpencodeConfigAndExit({ preserveBootstrap: nukePreserveBootstrap });
     } catch (error) {
       setNukeConfigStatus(error instanceof Error ? error.message : safeStringify(error));
       setNukeConfigBusy(false);
@@ -1031,8 +1031,8 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       anyActiveRuns: false,
       startupPreference: "server",
       startupLabel:
-        openworkServerSnapshot.openworkServerStatus === "connected"
-          ? t("settings.openwork_server_label")
+        juggleworkServerSnapshot.juggleworkServerStatus === "connected"
+          ? t("settings.jugglework_server_label")
           : t("status.disconnected_label"),
       runtimeSummary,
       runtimeDebugReportJson,
@@ -1088,34 +1088,34 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       startupStatus,
       workspaceDebugEventsStatus,
       opencodeRestarting,
-      openworkServerRestarting,
+      juggleworkServerRestarting,
       opencodeServiceStatus,
-      openworkServiceStatus,
+      juggleworkServiceStatus,
       opencodeLogStatus,
-      openworkLogStatus,
+      juggleworkLogStatus,
       onCopyOpencodeLogs,
       onExportOpencodeLogs,
-      onCopyOpenworkLogs,
-      onExportOpenworkLogs,
+      onCopyJuggleWorkLogs,
+      onExportJuggleWorkLogs,
       serviceRestartError,
       onRestartOpencode,
-      onRestartOpenworkServer,
+      onRestartJuggleWorkServer,
       engineCard,
       opencodeConnectCard,
-      openworkCard,
-      openworkServerDiagnostics: openworkServerSnapshot.openworkServerDiagnostics,
+      juggleworkCard,
+      juggleworkServerDiagnostics: juggleworkServerSnapshot.juggleworkServerDiagnostics,
       runtimeWorkspaceId,
-      openworkServerCapabilities: openworkServerSnapshot.openworkServerCapabilities,
+      juggleworkServerCapabilities: juggleworkServerSnapshot.juggleworkServerCapabilities,
       pendingPermissions: {},
       events: [],
       workspaceDebugEvents: [],
       safeStringify,
       onClearWorkspaceDebugEvents,
-      openworkAuditEntries: openworkServerSnapshot.openworkAuditEntries,
-      openworkAuditStatus: auditStatusPill(openworkServerSnapshot.openworkAuditStatus),
-      openworkAuditError: openworkServerSnapshot.openworkAuditError,
+      juggleworkAuditEntries: juggleworkServerSnapshot.juggleworkAuditEntries,
+      juggleworkAuditStatus: auditStatusPill(juggleworkServerSnapshot.juggleworkAuditStatus),
+      juggleworkAuditError: juggleworkServerSnapshot.juggleworkAuditError,
       opencodeConnectStatus: null,
-      opencodeDevModeEnabled: appBuild?.openworkDevMode === true,
+      opencodeDevModeEnabled: appBuild?.juggleworkDevMode === true,
       nukeConfigBusy,
       nukeConfigStatus,
       nukePreviewBusy,
@@ -1127,10 +1127,10 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onCloseNukeDialog,
       onSetNukeConfirmationText: setNukeConfirmationText,
       onSetNukePreserveBootstrap,
-      onConfirmNukeOpenworkAndOpencodeConfig,
+      onConfirmNukeJuggleWorkAndOpencodeConfig,
     }),
     [
-      appBuild?.openworkDevMode,
+      appBuild?.juggleworkDevMode,
       developerLog,
       developerLogStatus,
       developerMode,
@@ -1165,7 +1165,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onExportRuntimeDebugReport,
       onInstallElectronPreviewFromTauri,
       onCheckElectronAlphaUpdates,
-      onConfirmNukeOpenworkAndOpencodeConfig,
+      onConfirmNukeJuggleWorkAndOpencodeConfig,
       onOpenElectronPreviewRelease,
       onOpenNukeDialog,
       onOpenResetModal,
@@ -1175,7 +1175,7 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onRevealElectronMigrationBackup,
       onResetStartupPreference,
       onRestartOpencode,
-      onRestartOpenworkServer,
+      onRestartJuggleWorkServer,
       onRunSandboxDebugProbe,
       onSetElectronAlphaUpdaterChannel,
       onSetElectronMigrationSha512,
@@ -1183,26 +1183,26 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       onSetEngineSource,
       onStopHost,
       onCopyOpencodeLogs,
-      onCopyOpenworkLogs,
+      onCopyJuggleWorkLogs,
       onExportOpencodeLogs,
-      onExportOpenworkLogs,
+      onExportJuggleWorkLogs,
       opencodeConnectCard,
       opencodeLogStatus,
       opencodeRestarting,
       opencodeServiceStatus,
-      openworkCard,
-      openworkLogStatus,
-      openworkServiceStatus,
-      openworkServerRestarting,
+      juggleworkCard,
+      juggleworkLogStatus,
+      juggleworkServiceStatus,
+      juggleworkServerRestarting,
       resetStatus,
       startupStatus,
       workspaceDebugEventsStatus,
-      openworkServerSnapshot.openworkAuditEntries,
-      openworkServerSnapshot.openworkAuditError,
-      openworkServerSnapshot.openworkAuditStatus,
-      openworkServerSnapshot.openworkServerCapabilities,
-      openworkServerSnapshot.openworkServerDiagnostics,
-      openworkServerSnapshot.openworkServerStatus,
+      juggleworkServerSnapshot.juggleworkAuditEntries,
+      juggleworkServerSnapshot.juggleworkAuditError,
+      juggleworkServerSnapshot.juggleworkAuditStatus,
+      juggleworkServerSnapshot.juggleworkServerCapabilities,
+      juggleworkServerSnapshot.juggleworkServerDiagnostics,
+      juggleworkServerSnapshot.juggleworkServerStatus,
       resetModalBusy,
       runtimeConfigStatus,
       runtimeConfigStatusError,

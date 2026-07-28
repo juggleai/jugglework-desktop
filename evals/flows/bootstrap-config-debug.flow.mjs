@@ -7,19 +7,19 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 const FLOW_ID = "bootstrap-config-debug";
 const vo = await loadVoiceoverParagraphs(FLOW_ID);
 
-const INITIAL_BASE_URL = "https://app.openworklabs.com";
+const INITIAL_BASE_URL = "https://work.juggle.im";
 const SAVED_BASE_URL = "https://bootstrap-debug.example.test";
 const SAVED_ORG_SERVER_TEXT = `Current organization server: ${SAVED_BASE_URL}`;
-const DEFAULT_ORG_SERVER_TEXT = "Using standard OpenWork Cloud.";
+const DEFAULT_ORG_SERVER_TEXT = "Using standard JuggleWork Cloud.";
 
 function bootstrapPath(ctx) {
-  const rawPath = ctx.env.OPENWORK_DESKTOP_BOOTSTRAP_PATH?.trim();
-  ctx.assert(Boolean(rawPath), "OPENWORK_DESKTOP_BOOTSTRAP_PATH must be set so this flow never touches the real user config.");
+  const rawPath = ctx.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH?.trim();
+  ctx.assert(Boolean(rawPath), "JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH must be set so this flow never touches the real user config.");
 
   const resolvedPath = resolve(rawPath);
   const home = os.homedir();
   const unsafePrefixes = [
-    resolve(home, ".config", "openwork"),
+    resolve(home, ".config", "jugglework"),
     resolve(home, "Library"),
   ];
   const unsafe = unsafePrefixes.some((prefix) => resolvedPath === prefix || resolvedPath.startsWith(`${prefix}/`));
@@ -59,18 +59,18 @@ async function bootstrapFileExists(ctx) {
 
 async function reloadCleanSettingsShell(ctx) {
   await ctx.eval(`(() => {
-    localStorage.removeItem("openwork.developerMode");
-    localStorage.removeItem("openwork.den.baseUrl");
-    localStorage.removeItem("openwork.den.apiBaseUrl");
-    localStorage.removeItem("openwork.den.authToken");
-    localStorage.removeItem("openwork.den.activeOrgId");
-    localStorage.removeItem("openwork.den.activeOrgSlug");
-    localStorage.removeItem("openwork.den.activeOrgName");
+    localStorage.removeItem("jugglework.developerMode");
+    localStorage.removeItem("jugglework.den.baseUrl");
+    localStorage.removeItem("jugglework.den.apiBaseUrl");
+    localStorage.removeItem("jugglework.den.authToken");
+    localStorage.removeItem("jugglework.den.activeOrgId");
+    localStorage.removeItem("jugglework.den.activeOrgSlug");
+    localStorage.removeItem("jugglework.den.activeOrgName");
     window.location.hash = "#/settings/advanced";
     location.reload();
     return true;
   })()`);
-  await ctx.waitFor("Boolean(window.__openworkControl)", {
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", {
     timeoutMs: 30_000,
     label: "control API after reset reload",
   });
@@ -88,7 +88,7 @@ async function enableDeveloperMode(ctx) {
     }
     return true;
   })()`);
-  await ctx.waitFor(`localStorage.getItem("openwork.developerMode") === "1"`, {
+  await ctx.waitFor(`localStorage.getItem("jugglework.developerMode") === "1"`, {
     timeoutMs: 10_000,
     label: "developer mode enabled",
   });
@@ -117,9 +117,9 @@ export default {
       run: async (ctx) => {
         const targetPath = await seedBootstrapFile(ctx);
         ctx.log(`Using isolated bootstrap config: ${targetPath}`);
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__juggleworkControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__juggleworkControl",
         });
         await reloadCleanSettingsShell(ctx);
       },
@@ -201,7 +201,7 @@ export default {
           action: async () => {
             await ctx.navigateHash("/settings/debug");
             await ctx.eval("location.reload()");
-            await ctx.waitFor("Boolean(window.__openworkControl)", {
+            await ctx.waitFor("Boolean(window.__juggleworkControl)", {
               timeoutMs: 30_000,
               label: "control API after debug reload",
             });
@@ -248,9 +248,9 @@ export default {
             })()`);
             ctx.assert(inputValue === "", `Expected the default URL to render as an empty custom URL field, got ${inputValue}`);
             ctx.assert(!(await bootstrapFileExists(ctx)), "Expected the isolated canonical bootstrap file to be removed.");
-            // With OPENWORK_DESKTOP_BOOTSTRAP_PATH set, the desktop code disables the legacy path
+            // With JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH set, the desktop code disables the legacy path
             // instead of resolving the real user's ~/.config path. Unit coverage asserts legacy removal.
-            ctx.log("Bootstrap file witness: isolated canonical file removed; legacy path is disabled under OPENWORK_DESKTOP_BOOTSTRAP_PATH.");
+            ctx.log("Bootstrap file witness: isolated canonical file removed; legacy path is disabled under JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH.");
           },
           screenshot: {
             name: "advanced-org-server-url-clear-confirmed",

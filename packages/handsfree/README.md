@@ -26,13 +26,13 @@ is only used when strict mode is disabled.
 Build the native stdio server:
 
 ```bash
-pnpm --filter @openwork/handsfree check:native
+pnpm --filter @jugglework/handsfree check:native
 ```
 
 Run it as an MCP-compatible adapter:
 
 ```bash
-pnpm --filter @openwork/handsfree exec openwork-handsfree-computer-use mcp
+pnpm --filter @jugglework/handsfree exec jugglework-handsfree-computer-use mcp
 ```
 
 The core runtime is intentionally MCP-independent. `ComputerUseRuntime` exposes a small direct surface (`snapshot`, `click`, `typeText`, `pressKey`, `scroll`, `wait`, `setValue`, `performAction`); `MCPServer` is only a thin stdio wrapper.

@@ -2,12 +2,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { buildDiagnosticsBundleJson } from "../../../../app/lib/diagnostics-bundle";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  parseOpenworkWorkspaceIdFromUrl,
-  type OpenworkServerSettings,
-  type OpenworkServerStatus,
-} from "../../../../app/lib/openwork-server";
-import type { OpenworkServerInfo } from "../../../../app/lib/desktop";
+  buildJuggleWorkWorkspaceBaseUrl,
+  parseJuggleWorkWorkspaceIdFromUrl,
+  type JuggleWorkServerSettings,
+  type JuggleWorkServerStatus,
+} from "../../../../app/lib/jugglework-server";
+import type { JuggleWorkServerInfo } from "../../../../app/lib/desktop";
 import { isDesktopRuntime } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import {
@@ -24,16 +24,16 @@ export type ConfigViewProps = {
   clientConnected: boolean;
   anyActiveRuns: boolean;
 
-  openworkServerStatus: OpenworkServerStatus;
-  openworkServerUrl: string;
-  openworkServerSettings: OpenworkServerSettings;
-  openworkServerHostInfo: OpenworkServerInfo | null;
+  juggleworkServerStatus: JuggleWorkServerStatus;
+  juggleworkServerUrl: string;
+  juggleworkServerSettings: JuggleWorkServerSettings;
+  juggleworkServerHostInfo: JuggleWorkServerInfo | null;
   runtimeWorkspaceId: string | null;
 
-  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
-  resetOpenworkServerSettings: () => void;
-  testOpenworkServerConnection: (
-    next: OpenworkServerSettings,
+  updateJuggleWorkServerSettings: (next: JuggleWorkServerSettings) => void;
+  resetJuggleWorkServerSettings: () => void;
+  testJuggleWorkServerConnection: (
+    next: JuggleWorkServerSettings,
   ) => Promise<boolean>;
 
   canReloadWorkspace: boolean;
@@ -48,11 +48,11 @@ export function ConfigView(props: ConfigViewProps) {
     configLocalReducer,
     initialConfigLocalState,
   );
-  const { openworkConnection, tokenVisible, copyingField } = localState;
-  const openworkUrl = openworkConnection.url;
-  const openworkToken = openworkConnection.token;
-  const openworkTestState = openworkConnection.testState;
-  const openworkTestMessage = openworkConnection.testMessage;
+  const { juggleworkConnection, tokenVisible, copyingField } = localState;
+  const juggleworkUrl = juggleworkConnection.url;
+  const juggleworkToken = juggleworkConnection.token;
+  const juggleworkTestState = juggleworkConnection.testState;
+  const juggleworkTestMessage = juggleworkConnection.testMessage;
   const copyTimeoutRef = useRef<number | undefined>(undefined);
   const [diagnosticsBundleJson, setDiagnosticsBundleJson] = useState("");
 
@@ -60,13 +60,13 @@ export function ConfigView(props: ConfigViewProps) {
     dispatchLocal({
       type: "serverSettings",
       connection: {
-        url: props.openworkServerSettings.urlOverride ?? "",
-        token: props.openworkServerSettings.token ?? "",
+        url: props.juggleworkServerSettings.urlOverride ?? "",
+        token: props.juggleworkServerSettings.token ?? "",
         testState: "idle",
         testMessage: null,
       },
     });
-  }, [props.openworkServerSettings]);
+  }, [props.juggleworkServerSettings]);
 
   useEffect(() => {
     return () => {
@@ -76,8 +76,8 @@ export function ConfigView(props: ConfigViewProps) {
     };
   }, []);
 
-  const openworkStatusLabel = (() => {
-    switch (props.openworkServerStatus) {
+  const juggleworkStatusLabel = (() => {
+    switch (props.juggleworkServerStatus) {
       case "connected":
         return t("config.status_connected");
       case "limited":
@@ -87,8 +87,8 @@ export function ConfigView(props: ConfigViewProps) {
     }
   })();
 
-  const openworkStatusStyle = (() => {
-    switch (props.openworkServerStatus) {
+  const juggleworkStatusStyle = (() => {
+    switch (props.juggleworkServerStatus) {
       case "connected":
         return "bg-green-7/10 text-green-11 border-green-7/20";
       case "limited":
@@ -113,33 +113,33 @@ export function ConfigView(props: ConfigViewProps) {
   const reloadButtonDisabled =
     props.reloadBusy || Boolean(reloadAvailabilityReason);
 
-  const buildOpenworkSettings = (): OpenworkServerSettings => ({
-    ...props.openworkServerSettings,
-    urlOverride: openworkUrl.trim() || undefined,
-    token: openworkToken.trim() || undefined,
+  const buildJuggleWorkSettings = (): JuggleWorkServerSettings => ({
+    ...props.juggleworkServerSettings,
+    urlOverride: juggleworkUrl.trim() || undefined,
+    token: juggleworkToken.trim() || undefined,
   });
 
-  const hasOpenworkChanges = (() => {
-    const currentUrl = props.openworkServerSettings.urlOverride ?? "";
-    const currentToken = props.openworkServerSettings.token ?? "";
+  const hasJuggleWorkChanges = (() => {
+    const currentUrl = props.juggleworkServerSettings.urlOverride ?? "";
+    const currentToken = props.juggleworkServerSettings.token ?? "";
     return (
-      openworkUrl.trim() !== currentUrl || openworkToken.trim() !== currentToken
+      juggleworkUrl.trim() !== currentUrl || juggleworkToken.trim() !== currentToken
     );
   })();
 
   const resolvedWorkspaceId = (() => {
     const explicitId = props.runtimeWorkspaceId?.trim() ?? "";
     if (explicitId) return explicitId;
-    return parseOpenworkWorkspaceIdFromUrl(openworkUrl) ?? "";
+    return parseJuggleWorkWorkspaceIdFromUrl(juggleworkUrl) ?? "";
   })();
 
   const resolvedWorkspaceUrl = (() => {
-    const baseUrl = openworkUrl.trim();
+    const baseUrl = juggleworkUrl.trim();
     if (!baseUrl) return "";
-    return buildOpenworkWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId) ?? baseUrl;
+    return buildJuggleWorkWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId) ?? baseUrl;
   })();
 
-  const hostInfo = props.openworkServerHostInfo;
+  const hostInfo = props.juggleworkServerHostInfo;
   const hostRemoteAccessEnabled = hostInfo?.remoteAccessEnabled === true;
   const hostStatusLabel = !hostInfo?.running
     ? t("config.host_offline")
@@ -166,8 +166,8 @@ export function ConfigView(props: ConfigViewProps) {
       hostConnectUrl,
       hostConnectUrlUsesMdns,
       hostInfo,
-      openworkServerStatus: props.openworkServerStatus,
-      openworkServerUrl: props.openworkServerUrl,
+      juggleworkServerStatus: props.juggleworkServerStatus,
+      juggleworkServerUrl: props.juggleworkServerUrl,
       runtimeWorkspaceId: props.runtimeWorkspaceId,
     });
   }, [
@@ -178,11 +178,11 @@ export function ConfigView(props: ConfigViewProps) {
     props.canReloadWorkspace,
     props.clientConnected,
     props.developerMode,
-    props.openworkServerSettings.hostToken,
-    props.openworkServerSettings.token,
-    props.openworkServerSettings.urlOverride,
-    props.openworkServerStatus,
-    props.openworkServerUrl,
+    props.juggleworkServerSettings.hostToken,
+    props.juggleworkServerSettings.token,
+    props.juggleworkServerSettings.urlOverride,
+    props.juggleworkServerStatus,
+    props.juggleworkServerUrl,
     props.runtimeWorkspaceId,
   ]);
 
@@ -222,16 +222,16 @@ export function ConfigView(props: ConfigViewProps) {
   };
 
   const handleTestConnection = async () => {
-    if (openworkTestState === "testing") return;
-    const next = buildOpenworkSettings();
-    props.updateOpenworkServerSettings(next);
+    if (juggleworkTestState === "testing") return;
+    const next = buildJuggleWorkSettings();
+    props.updateJuggleWorkServerSettings(next);
     dispatchLocal({
       type: "testState",
       testState: "testing",
       testMessage: null,
     });
     try {
-      const ok = await props.testOpenworkServerConnection(next);
+      const ok = await props.testJuggleWorkServerConnection(next);
       dispatchLocal({
         type: "testState",
         testState: ok ? "success" : "error",
@@ -288,22 +288,22 @@ export function ConfigView(props: ConfigViewProps) {
       ) : null}
       <ConfigServerConnectionSection
         busy={props.busy}
-        openworkUrl={openworkUrl}
-        openworkToken={openworkToken}
-        tokenVisible={tokenVisible.openwork}
-        openworkStatusLabel={openworkStatusLabel}
-        openworkStatusStyle={openworkStatusStyle}
+        juggleworkUrl={juggleworkUrl}
+        juggleworkToken={juggleworkToken}
+        tokenVisible={tokenVisible.jugglework}
+        juggleworkStatusLabel={juggleworkStatusLabel}
+        juggleworkStatusStyle={juggleworkStatusStyle}
         resolvedWorkspaceUrl={resolvedWorkspaceUrl}
         resolvedWorkspaceId={resolvedWorkspaceId}
-        openworkTestState={openworkTestState}
-        openworkTestMessage={openworkTestMessage}
-        hasOpenworkChanges={hasOpenworkChanges}
+        juggleworkTestState={juggleworkTestState}
+        juggleworkTestMessage={juggleworkTestMessage}
+        hasJuggleWorkChanges={hasJuggleWorkChanges}
         onUrlChange={(url) => dispatchLocal({ type: "url", url })}
         onTokenChange={(token) => dispatchLocal({ type: "token", token })}
-        onToggleToken={() => dispatchLocal({ type: "toggleToken", key: "openwork" })}
+        onToggleToken={() => dispatchLocal({ type: "toggleToken", key: "jugglework" })}
         onTestConnection={handleTestConnection}
-        onSave={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
-        onReset={props.resetOpenworkServerSettings}
+        onSave={() => props.updateJuggleWorkServerSettings(buildJuggleWorkSettings())}
+        onReset={props.resetJuggleWorkServerSettings}
       />
       {!isDesktopRuntime() ? <div className="text-xs text-gray-9">{t("config.desktop_only_hint")}</div> : null}
     </section>

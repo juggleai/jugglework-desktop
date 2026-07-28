@@ -8,7 +8,7 @@ import type {
   AgentContextDiagnosticsRequest,
   AgentContextMcpEvidence,
   AgentContextToolPermission,
-} from "@openwork/types/agent-context-diagnostics";
+} from "@jugglework/types/agent-context-diagnostics";
 
 import {
   AGENT_CONTEXT_DIAGNOSTICS_SCHEMA_VERSION,
@@ -23,7 +23,7 @@ import {
   type InspectAgentDiagnosticsEngine,
 } from "./agent-context-engine-inspection.js";
 import {
-  probeOpenworkCloudCatalog,
+  probeJuggleWorkCloudCatalog,
   type CloudCatalogProbe,
 } from "./agent-context-cloud-probe.js";
 import {
@@ -38,7 +38,7 @@ import {
   type McpInventoryInspection,
 } from "./mcp.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
+import { buildJuggleWorkRuntimeConfigObjectFromSnapshot } from "./jugglework-runtime-config.js";
 import {
   inspectRuntimeOpencodeConfigState,
   runtimeMcpMap,
@@ -49,11 +49,11 @@ import type { McpItem, ServerConfig, WorkspaceInfo } from "./types.js";
 import { exists } from "./utils.js";
 import { opencodeConfigPath } from "./workspace-files.js";
 
-const OPENWORK_CLOUD_MCP_NAME = "openwork-cloud";
+const JUGGLEWORK_CLOUD_MCP_NAME = "jugglework-cloud";
 const CLOUD_MCP_TERMINAL_PATH = "/mcp/agent";
 const REQUIRED_CLOUD_TOOL_IDS = ["search_capabilities", "execute_capability"] as const;
 const REQUIRED_CLOUD_AGENT_TOOL_IDS = REQUIRED_CLOUD_TOOL_IDS.map(
-  (toolId) => `${OPENWORK_CLOUD_MCP_NAME}_${toolId}`,
+  (toolId) => `${JUGGLEWORK_CLOUD_MCP_NAME}_${toolId}`,
 );
 
 export type McpRegistrationStatus =
@@ -121,30 +121,30 @@ function assessEffectiveToolPolicy(
       unavailableReasons: ["effective_engine_snapshot_unavailable"],
     };
   }
-  const openworkAgent = snapshot.agents.find((agent) => agent.name === "openwork");
-  if (!openworkAgent) {
+  const juggleworkAgent = snapshot.agents.find((agent) => agent.name === "jugglework");
+  if (!juggleworkAgent) {
     return {
       status: "unavailable",
       decisions: {},
       deniedToolIds: [],
-      unavailableReasons: ["effective_openwork_agent_missing"],
+      unavailableReasons: ["effective_jugglework_agent_missing"],
     };
   }
   if (
-    snapshot.defaultAgent !== "openwork"
-    || openworkAgent.hidden
-    || (openworkAgent.mode !== "primary" && openworkAgent.mode !== "all")
+    snapshot.defaultAgent !== "jugglework"
+    || juggleworkAgent.hidden
+    || (juggleworkAgent.mode !== "primary" && juggleworkAgent.mode !== "all")
   ) {
     return {
       status: "unavailable",
       decisions: {},
       deniedToolIds: [],
-      unavailableReasons: ["effective_openwork_agent_unusable_as_default"],
+      unavailableReasons: ["effective_jugglework_agent_unusable_as_default"],
     };
   }
   const decisions: Record<string, EffectiveToolPolicyDecision> = {};
   for (const toolId of REQUIRED_CLOUD_AGENT_TOOL_IDS) {
-    decisions[toolId] = effectiveToolDecision(openworkAgent.permission, toolId);
+    decisions[toolId] = effectiveToolDecision(juggleworkAgent.permission, toolId);
   }
 
   const deniedToolIds = REQUIRED_CLOUD_AGENT_TOOL_IDS.filter(
@@ -294,10 +294,10 @@ async function inspectProjectAgent(workspace: WorkspaceInfo, signal?: AbortSigna
     return {
       available: true,
       defaultAgentOverride: typeof data.default_agent === "string",
-      agentConfigOverride: Object.hasOwn(agents, "openwork"),
+      agentConfigOverride: Object.hasOwn(agents, "jugglework"),
       agentFileOverride: await Promise.all([
-        exists(join(workspace.path, ".opencode", "agent", "openwork.md")),
-        exists(join(workspace.path, ".opencode", "agents", "openwork.md")),
+        exists(join(workspace.path, ".opencode", "agent", "jugglework.md")),
+        exists(join(workspace.path, ".opencode", "agents", "jugglework.md")),
       ]).then((values) => values.some(Boolean)),
     };
   } catch {
@@ -342,8 +342,8 @@ async function inspectMcpInventory(
       inventory: await inspectMcpLayersFromRuntimeSnapshot(workspace.path, runtime, {
         signal,
         toolPolicy: {
-          agentName: "openwork",
-          mcpName: OPENWORK_CLOUD_MCP_NAME,
+          agentName: "jugglework",
+          mcpName: JUGGLEWORK_CLOUD_MCP_NAME,
           toolIds: [...REQUIRED_CLOUD_AGENT_TOOL_IDS],
         },
       }),
@@ -377,7 +377,7 @@ function cloudTerminalPathEvidence(
   config: Record<string, unknown>,
 ): AgentContextMcpEvidence["path"] {
   if (
-    name !== OPENWORK_CLOUD_MCP_NAME
+    name !== JUGGLEWORK_CLOUD_MCP_NAME
     || (source !== "config.remote" && source !== "engine.config")
     || typeof config.url !== "string"
   ) return null;
@@ -457,7 +457,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       message: exact
         ? "The canonical JuggleWork Cloud catalog exposes exactly the two required capability tools."
         : "The JuggleWork Cloud catalog does not match the required two-tool contract.",
-      owner: exact ? "openwork-server" : "openwork-support",
+      owner: exact ? "jugglework-server" : "jugglework-support",
       action: exact
         ? "No action is required."
         : "Review the JuggleWork Cloud deployment and restore the canonical capability catalog.",
@@ -467,7 +467,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
   let status: AgentContextDiagnosticCheck["status"] = "failed";
   let evidenceKind: AgentContextDiagnosticCheck["evidenceKind"] = probe.performed ? "observed" : "derived";
   let message = "The selected workspace does not have a usable managed JuggleWork Cloud MCP configuration.";
-  let owner: AgentContextDiagnosticCheck["owner"] = "openwork-server";
+  let owner: AgentContextDiagnosticCheck["owner"] = "jugglework-server";
   let action = "Reconnect JuggleWork Cloud from Settings > Connect and rerun diagnostics.";
 
   switch (probe.code) {
@@ -484,11 +484,11 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       action = "Run diagnostics on the JuggleWork server that owns the workspace.";
       break;
     case "cloud_mcp_missing":
-      owner = "openwork-client";
+      owner = "jugglework-client";
       message = "The selected client workspace has no synced JuggleWork Cloud MCP entry.";
       break;
     case "cloud_mcp_disabled":
-      owner = "openwork-client";
+      owner = "jugglework-client";
       message = "The selected workspace JuggleWork Cloud MCP entry is disabled.";
       action = "Enable or reconnect JuggleWork Cloud from Settings > Connect, then rerun diagnostics.";
       break;
@@ -502,7 +502,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
     case "cloud_tool_policy_denied":
       owner = "member";
       message = "Policy evidence denies at least one required JuggleWork Cloud tool, so the cloud catalog request was not started.";
-      action = "Allow the required openwork-cloud capability tool IDs in the workspace or JuggleWork agent policy, then rerun diagnostics.";
+      action = "Allow the required jugglework-cloud capability tool IDs in the workspace or JuggleWork agent policy, then rerun diagnostics.";
       break;
     case "cloud_mcp_not_remote":
       message = "The managed JuggleWork Cloud entry is not configured as a remote MCP.";
@@ -518,7 +518,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       break;
     case "credential_missing":
     case "duplicate_authorization":
-      owner = "openwork-client";
+      owner = "jugglework-client";
       message = "The managed JuggleWork Cloud entry does not contain one unambiguous authentication value.";
       action = "Reconnect JuggleWork Cloud so the client can replace the managed credential, then rerun diagnostics.";
       break;
@@ -538,7 +538,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       action = "Reconnect JuggleWork Cloud from Settings > Connect, then rerun diagnostics.";
       break;
     case "registration_needs_client_registration":
-      owner = "openwork-server";
+      owner = "jugglework-server";
       message = "The selected engine reported that JuggleWork Cloud needs MCP client registration, so no new egress was started.";
       action = "Repair the selected engine MCP client-registration flow, then rerun diagnostics.";
       break;
@@ -583,20 +583,20 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
       break;
     case "unauthorized":
     case "forbidden":
-      owner = "openwork-client";
+      owner = "jugglework-client";
       message = "JuggleWork Cloud rejected the configured credential during the one-shot catalog request.";
       action = "Reconnect JuggleWork Cloud so the client can replace the managed credential, then rerun diagnostics.";
       break;
     case "rate_limited":
       status = "warning";
-      owner = "openwork-support";
+      owner = "jugglework-support";
       message = "JuggleWork Cloud rate-limited the one-shot catalog request.";
       action = "Wait before rerunning diagnostics; contact JuggleWork support if rate limiting persists.";
       break;
     case "probe_busy":
       status = "warning";
       evidenceKind = "unavailable";
-      owner = "openwork-server";
+      owner = "jugglework-server";
       message = "The server's bounded diagnostics probe capacity was busy, so no new egress was started.";
       action = "Wait briefly and rerun diagnostics.";
       break;
@@ -606,7 +606,7 @@ function cloudCatalogCheck(probe: CloudCatalogProbe): AgentContextDiagnosticChec
     case "jsonrpc_error":
     case "pagination_unsupported":
     case "invalid_catalog":
-      owner = "openwork-support";
+      owner = "jugglework-support";
       message = "JuggleWork Cloud returned a response that does not satisfy the bounded tools/list protocol contract.";
       action = "Review the JuggleWork Cloud deployment and restore the canonical two-tool catalog response.";
       break;
@@ -630,7 +630,7 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
       evidenceKind: "client-observed",
       code: "organization_connections_unavailable",
       message: "The client could not observe organization connection readiness.",
-      owner: "openwork-client",
+      owner: "jugglework-client",
       action: "Verify the Den session and organization access, then rerun diagnostics.",
       details: { connectionCount: 0, reportedConnectionCount: 0, truncated: false, notReadyCount: 0 },
     });
@@ -645,7 +645,7 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
       message: remotePrivacy
         ? "Local Den organization topology was intentionally omitted from the remote JuggleWork diagnostics request."
         : "Organization connection readiness was not observed for this run.",
-      owner: remotePrivacy ? "openwork-client" : "member",
+      owner: remotePrivacy ? "jugglework-client" : "member",
       action: remotePrivacy
         ? "No action is required; run diagnostics against a local workspace to include local Den organization readiness."
         : "Sign in to Den and select an organization to include organization readiness.",
@@ -686,14 +686,14 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
           ? "One or more shared organization connections need organization administrator setup or repair."
           : "The client-observed organization connections are ready.",
     owner: truncated
-      ? "openwork-client"
+      ? "jugglework-client"
       : memberAndAdminAction
       ? "member-and-organization-admin"
       : memberActionCount > 0
         ? "member"
         : organizationAdminActionCount > 0
           ? "organization-admin"
-          : "openwork-client",
+          : "jugglework-client",
     action: truncated
       ? "Review organization connection readiness in Den for the complete inventory."
       : memberAndAdminAction
@@ -793,24 +793,24 @@ function engineAgentCheck(
       durationMs,
     );
   }
-  const agent = snapshot.agents.find((candidate) => candidate.name === "openwork");
+  const agent = snapshot.agents.find((candidate) => candidate.name === "jugglework");
   return diagnosticCheck({
     id: "engine-agent",
     status: agent ? "passed" : "failed",
     evidenceKind: "observed",
-    code: agent ? "effective_openwork_agent_observed" : "effective_openwork_agent_missing",
+    code: agent ? "effective_jugglework_agent_observed" : "effective_jugglework_agent_missing",
     message: agent
       ? "The selected engine resolved the JuggleWork agent."
       : "The selected engine did not resolve a JuggleWork agent.",
-    owner: agent ? "opencode-engine" : "openwork-server",
+    owner: agent ? "opencode-engine" : "jugglework-server",
     action: agent
       ? "No action is required."
       : "Restore the JuggleWork runtime agent injection and restart the selected workspace engine.",
     details: {
       engineApiReadPerformed: true,
       effectiveAgentCount: snapshot.agents.length,
-      openworkAgentPresent: Boolean(agent),
-      openworkAgentHidden: agent?.hidden ?? null,
+      juggleworkAgentPresent: Boolean(agent),
+      juggleworkAgentHidden: agent?.hidden ?? null,
       permissionRuleCount: agent?.permission.length ?? null,
       rawPromptIncluded: false,
     },
@@ -855,7 +855,7 @@ function runtimeHealthCheck(
     evidenceKind: corrupt ? "unavailable" : "derived",
     code,
     message,
-    owner: corrupt ? "openwork-server" : engineConfigured ? "openwork-server" : "member",
+    owner: corrupt ? "jugglework-server" : engineConfigured ? "jugglework-server" : "member",
     action: status === "passed"
       ? "No action is required."
       : corrupt
@@ -922,22 +922,22 @@ export async function runAgentContextDiagnostics(input: {
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
   const runtime = runtimeInspection.config;
-  const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(runtime);
+  const expectedRuntimeConfig = buildJuggleWorkRuntimeConfigObjectFromSnapshot(runtime);
   const expectedAgents = isRecord(expectedRuntimeConfig.agent) ? expectedRuntimeConfig.agent : {};
-  const expectedAgent = isRecord(expectedAgents.openwork) ? expectedAgents.openwork : null;
-  const effectiveOpenworkAgent = effectiveEngine?.agents.find((agent) => agent.name === "openwork") ?? null;
-  const effectiveAgentModeUsable = effectiveOpenworkAgent?.mode === "primary"
-    || effectiveOpenworkAgent?.mode === "all";
+  const expectedAgent = isRecord(expectedAgents.jugglework) ? expectedAgents.jugglework : null;
+  const effectiveJuggleWorkAgent = effectiveEngine?.agents.find((agent) => agent.name === "jugglework") ?? null;
+  const effectiveAgentModeUsable = effectiveJuggleWorkAgent?.mode === "primary"
+    || effectiveJuggleWorkAgent?.mode === "all";
   const effectiveAgentUsable = Boolean(
-    effectiveOpenworkAgent
-    && effectiveEngine?.defaultAgent === "openwork"
-    && !effectiveOpenworkAgent.hidden
+    effectiveJuggleWorkAgent
+    && effectiveEngine?.defaultAgent === "jugglework"
+    && !effectiveJuggleWorkAgent.hidden
     && effectiveAgentModeUsable,
   );
   const agentEvidenceSource = effectiveEngine ? "effective-engine" as const : "configured-intent" as const;
   const reportedAgent = effectiveEngine
-    ? effectiveOpenworkAgent
-      ? { prompt: effectiveOpenworkAgent.prompt }
+    ? effectiveJuggleWorkAgent
+      ? { prompt: effectiveJuggleWorkAgent.prompt }
       : null
     : expectedAgent;
   const prompt = promptEvidence(reportedAgent);
@@ -958,7 +958,7 @@ export async function runAgentContextDiagnostics(input: {
     return label ? [label] : [];
   }))].slice(0, 100);
   const canonicalConnectPluginSpec = expectedPlugins.find(
-    (spec) => pluginLabel(spec) === "openwork-extensions-preview",
+    (spec) => pluginLabel(spec) === "jugglework-extensions-preview",
   ) ?? null;
   const canonicalPluginSpecMatched = canonicalConnectPluginSpec !== null
     && reportedPlugins.some(
@@ -1004,7 +1004,7 @@ export async function runAgentContextDiagnostics(input: {
       googleWorkspace: { legacyConfigured: false },
     };
   }
-  const selectedCloudMcpPresent = Object.hasOwn(runtimeMcpMap(runtime), OPENWORK_CLOUD_MCP_NAME);
+  const selectedCloudMcpPresent = Object.hasOwn(runtimeMcpMap(runtime), JUGGLEWORK_CLOUD_MCP_NAME);
   const branch = expectedConnectBranch(connectSnapshot);
   const crossWorkspaceSteeringDrift = connectSnapshot.cloudMcpPresent && !selectedCloudMcpPresent;
 
@@ -1018,7 +1018,7 @@ export async function runAgentContextDiagnostics(input: {
   const engineConfigItems = effectiveEngine?.mcps.map((item) => ({
     ...item,
     source: "engine.config" as const,
-    disabledByTools: item.name === OPENWORK_CLOUD_MCP_NAME
+    disabledByTools: item.name === JUGGLEWORK_CLOUD_MCP_NAME
       ? assessEffectiveToolPolicy(effectiveEngine).status === "denied" || undefined
       : undefined,
   }));
@@ -1026,7 +1026,7 @@ export async function runAgentContextDiagnostics(input: {
   const combinedInventoryItems = [...inventory.items, ...(engineConfigItems ?? [])];
   const inventoryItems = combinedInventoryItems.slice(0, 200);
   const runtimeCloudItem = combinedInventoryItems.find((item) =>
-    item.source === "config.remote" && item.name === OPENWORK_CLOUD_MCP_NAME,
+    item.source === "config.remote" && item.name === JUGGLEWORK_CLOUD_MCP_NAME,
   );
   if (
     runtimeCloudItem
@@ -1047,7 +1047,7 @@ export async function runAgentContextDiagnostics(input: {
     return inspection;
   };
   const mcps = inventoryItems.map((item) => mcpEvidence(item, registrationForItem(item).status, managedMcpNames));
-  const runtimeCloudConfig = runtimeMcpMap(runtime)[OPENWORK_CLOUD_MCP_NAME] ?? null;
+  const runtimeCloudConfig = runtimeMcpMap(runtime)[JUGGLEWORK_CLOUD_MCP_NAME] ?? null;
   const staticallyDeniedCloudAgentToolIds = new Set(inventory.toolPolicy.deniedToolIds);
   const effectiveToolPolicy = assessEffectiveToolPolicy(effectiveEngine);
   const cloudToolPolicyStatus = effectiveEngine
@@ -1078,7 +1078,7 @@ export async function runAgentContextDiagnostics(input: {
     if (decision === "ask") return "approval-required";
     return "unspecified";
   };
-  const cloudProbe = await probeOpenworkCloudCatalog({
+  const cloudProbe = await probeJuggleWorkCloudCatalog({
     workspaceId: input.workspace.id,
     workspaceType: input.workspace.workspaceType,
     runtimeConfigAvailable: runtimeInspection.status === "available",
@@ -1157,7 +1157,7 @@ export async function runAgentContextDiagnostics(input: {
       evidenceKind: "observed",
       code: "strict_request_validated",
       message: "The request matched the strict diagnostics schema and contained only safe organization summaries.",
-      owner: "openwork-server",
+      owner: "jugglework-server",
       action: "No action is required.",
       details: {
         organizationProbeStatus: request.organizationConnectionsProbe.status,
@@ -1181,7 +1181,7 @@ export async function runAgentContextDiagnostics(input: {
         : crossWorkspaceSteeringDrift
           ? "Global Connect steering sees JuggleWork Cloud, but the selected workspace does not contain that managed MCP."
           : "The expected Connect steering branch is internally consistent for the selected workspace.",
-      owner: !connectSnapshotAvailable || crossWorkspaceSteeringDrift ? "openwork-server" : "openwork-client",
+      owner: !connectSnapshotAvailable || crossWorkspaceSteeringDrift ? "jugglework-server" : "jugglework-client",
       action: !connectSnapshotAvailable
         ? "Verify the JuggleWork server runtime state and rerun diagnostics."
         : crossWorkspaceSteeringDrift
@@ -1205,24 +1205,24 @@ export async function runAgentContextDiagnostics(input: {
         ? "observed"
         : runtimeInspection.status === "available" ? "expected" : "unavailable",
       code: effectiveEngine
-        ? !effectiveOpenworkAgent
-          ? "effective_openwork_agent_missing"
-          : effectiveEngine.defaultAgent !== "openwork"
+        ? !effectiveJuggleWorkAgent
+          ? "effective_jugglework_agent_missing"
+          : effectiveEngine.defaultAgent !== "jugglework"
             ? "effective_default_agent_mismatch"
-            : effectiveOpenworkAgent.hidden
-              ? "effective_openwork_agent_hidden"
+            : effectiveJuggleWorkAgent.hidden
+              ? "effective_jugglework_agent_hidden"
               : !effectiveAgentModeUsable
-                ? "effective_openwork_agent_not_primary"
-            : "effective_openwork_agent_selected"
+                ? "effective_jugglework_agent_not_primary"
+            : "effective_jugglework_agent_selected"
         : projectOverrideDetected
           ? "configured_agent_has_override_layers"
           : "runtime_agent_intent_only",
       message: effectiveEngine
-        ? !effectiveOpenworkAgent
+        ? !effectiveJuggleWorkAgent
           ? "The effective engine configuration does not contain the JuggleWork agent."
-          : effectiveEngine.defaultAgent !== "openwork"
+          : effectiveEngine.defaultAgent !== "jugglework"
             ? "The effective engine default does not select the JuggleWork agent."
-            : effectiveOpenworkAgent.hidden
+            : effectiveJuggleWorkAgent.hidden
               ? "The effective JuggleWork agent is hidden and cannot be used as the default agent."
               : !effectiveAgentModeUsable
                 ? "The effective JuggleWork agent is subagent-only and cannot be used as the default agent."
@@ -1238,10 +1238,10 @@ export async function runAgentContextDiagnostics(input: {
           : "Check the selected workspace engine health and rerun diagnostics.",
       details: {
         configuredAgentPresent: Boolean(expectedAgent),
-        effectiveAgentPresent: effectiveEngine ? Boolean(effectiveOpenworkAgent) : null,
-        effectiveDefaultAgentIsOpenwork: effectiveEngine ? effectiveEngine.defaultAgent === "openwork" : null,
-        effectiveAgentHidden: effectiveOpenworkAgent?.hidden ?? null,
-        effectiveAgentMode: effectiveOpenworkAgent?.mode ?? null,
+        effectiveAgentPresent: effectiveEngine ? Boolean(effectiveJuggleWorkAgent) : null,
+        effectiveDefaultAgentIsJuggleWork: effectiveEngine ? effectiveEngine.defaultAgent === "jugglework" : null,
+        effectiveAgentHidden: effectiveJuggleWorkAgent?.hidden ?? null,
+        effectiveAgentMode: effectiveJuggleWorkAgent?.mode ?? null,
         effectiveAgentUsableAsDefault: effectiveEngine ? effectiveAgentUsable : null,
         projectLayersAvailable: projectAgent.available,
         projectDefaultAgentOverride: projectAgent.defaultAgentOverride,
@@ -1270,7 +1270,7 @@ export async function runAgentContextDiagnostics(input: {
           : effectiveEngine
             ? "The effective JuggleWork base prompt contains the markers but does not match the canonical configured injection."
             : "The configured JuggleWork base prompt markers are present, but its digest does not match the canonical generated injection.",
-      owner: effectiveEngine ? "opencode-engine" : "openwork-server",
+      owner: effectiveEngine ? "opencode-engine" : "jugglework-server",
       action: promptMatchesCanonicalIntent
         ? "No action is required."
         : "Restore the canonical JuggleWork runtime agent definition.",
@@ -1306,18 +1306,18 @@ export async function runAgentContextDiagnostics(input: {
           ? "Required JuggleWork Cloud tool visibility could not be verified from the effective selected-engine agent."
           : "The effective OpenCode agent policy does not deny either required JuggleWork Cloud candidate tool ID; the live engine tool registry was not read.",
       owner: cloudToolPolicyStatus === "available"
-        ? "openwork-server"
+        ? "jugglework-server"
         : cloudToolPolicyStatus === "unavailable"
           ? "opencode-engine"
           : "member",
       action: cloudToolPolicyStatus === "denied"
-        ? "Allow the denied openwork-cloud capability tool IDs in top-level or JuggleWork agent permission policy, then rerun diagnostics."
+        ? "Allow the denied jugglework-cloud capability tool IDs in top-level or JuggleWork agent permission policy, then rerun diagnostics."
         : cloudToolPolicyStatus === "unavailable"
           ? "Check the selected workspace engine health and rerun diagnostics."
           : "No policy change is required; confirm catalog and registration evidence because this policy check alone does not prove live tool presence.",
       details: {
-        searchCapabilities: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_search_capabilities`),
-        executeCapability: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_execute_capability`),
+        searchCapabilities: reportedToolPermission(`${JUGGLEWORK_CLOUD_MCP_NAME}_search_capabilities`),
+        executeCapability: reportedToolPermission(`${JUGGLEWORK_CLOUD_MCP_NAME}_execute_capability`),
         deniedRelevantToolCount: cloudToolPolicyStatus === "unavailable" ? null : deniedCloudAgentToolIds.size,
         staticPolicyScope: inventory.toolPolicy.scope,
         staticPolicyLayerStatus: inventory.toolPolicy.status,
@@ -1341,7 +1341,7 @@ export async function runAgentContextDiagnostics(input: {
         : effectiveEngine
           ? "The Connect steering plugin is missing from the effective engine configuration."
           : "The Connect steering plugin is missing from the configured runtime injection intent.",
-      owner: effectiveEngine ? "opencode-engine" : "openwork-server",
+      owner: effectiveEngine ? "opencode-engine" : "jugglework-server",
       action: canonicalPluginSpecMatched
         ? "No action is required."
         : "Restore the canonical JuggleWork runtime plugin bundle.",
@@ -1391,7 +1391,7 @@ export async function runAgentContextDiagnostics(input: {
               : "The server-managed runtime and selected project/global MCP sources were inventoried without claiming complete OpenCode resolution.",
       owner: effectiveEngine
         ? "opencode-engine"
-        : layerHealthProblem ? "member" : inventory.collisions.length > 0 ? "member" : "openwork-server",
+        : layerHealthProblem ? "member" : inventory.collisions.length > 0 ? "member" : "jugglework-server",
       action: effectiveEngine
         ? inventoryTotal > 200
           ? "Reduce the configured MCP count or inspect the engine and JuggleWork runtime sources directly."
@@ -1412,7 +1412,7 @@ export async function runAgentContextDiagnostics(input: {
         globalLayerStatus: inventory.layerStatus.global,
         inventoryScope: effectiveEngine
           ? "engine-merged-config-plus-runtime-managed-injection"
-          : "bounded-openwork-sources",
+          : "bounded-jugglework-sources",
         completeDynamicMcpStateClaimed: false,
         engineConfigMcpCount: engineConfigItems?.length ?? 0,
         runtimeManagedMcpCount: inventory.items.filter((item) => item.source === "config.remote").length,
@@ -1462,7 +1462,7 @@ export async function runAgentContextDiagnostics(input: {
           : remoteMcps.length > 0
             ? "Every enabled JuggleWork-managed MCP has a current connected registration result; configured-disabled entries are not treated as injected tools."
             : "No server-managed MCP registration was available to inspect.",
-      owner: failedRegistrationCount > 0 || missingRegistrationCount > 0 ? "opencode-engine" : "openwork-server",
+      owner: failedRegistrationCount > 0 || missingRegistrationCount > 0 ? "opencode-engine" : "jugglework-server",
       action: failedRegistrationCount > 0 || missingRegistrationCount > 0
         ? staleRegistrationFailure
           ? "The engine is reachable and this evidence is stale; rerun diagnostics. No repair is needed unless it persists."
@@ -1507,7 +1507,7 @@ export async function runAgentContextDiagnostics(input: {
       evidenceKind: "derived",
       code: "sanitized_allowlist_report",
       message: "The report contains only allowlisted evidence and excludes credential-bearing or raw material; diagnostics did not directly request mutations, provider operations, or capability calls.",
-      owner: "openwork-server",
+      owner: "jugglework-server",
       action: engineApiReadPerformed
         ? "Be aware that reading a cold engine may initialize configured bootstrap or plugin hooks whose side effects this report does not inspect."
         : "No action is required.",
@@ -1551,23 +1551,23 @@ export async function runAgentContextDiagnostics(input: {
         effectiveEngine ? effectiveEngine.defaultAgent : expectedRuntimeConfig.default_agent,
         160,
       ) || null,
-      configuredOpenworkAgent: {
+      configuredJuggleWorkAgent: {
         state: effectiveEngine
-          ? effectiveOpenworkAgent ? "present" : "missing"
+          ? effectiveJuggleWorkAgent ? "present" : "missing"
           : expectedAgent?.disable === true
             ? "configured-disabled"
             : expectedAgent
               ? "present"
               : "missing",
-        mode: effectiveOpenworkAgent
-          ? effectiveOpenworkAgent.mode
+        mode: effectiveJuggleWorkAgent
+          ? effectiveJuggleWorkAgent.mode
           : expectedAgent?.mode === "subagent" || expectedAgent?.mode === "primary" || expectedAgent?.mode === "all"
             ? expectedAgent.mode
             : null,
         prompt,
         connectToolPermissions: {
-          searchCapabilities: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_search_capabilities`),
-          executeCapability: reportedToolPermission(`${OPENWORK_CLOUD_MCP_NAME}_execute_capability`),
+          searchCapabilities: reportedToolPermission(`${JUGGLEWORK_CLOUD_MCP_NAME}_search_capabilities`),
+          executeCapability: reportedToolPermission(`${JUGGLEWORK_CLOUD_MCP_NAME}_execute_capability`),
           deniedRelevantToolCount: cloudToolPolicyStatus === "unavailable" ? null : deniedCloudAgentToolIds.size,
         },
       },

@@ -1,5 +1,5 @@
 extends: electron-builder.yml
-appId: com.differentai.openwork.demo.admin
+appId: com.juggleai.jugglework.demo.admin
 productName: JuggleWork Demo A
 protocols: []
 directories:

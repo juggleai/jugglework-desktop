@@ -7,7 +7,7 @@
  * Consumer: apps/app/src/app/lib/desktop.ts — the `desktopBridge` Proxy and
  * its named exports derive per-command signatures from `DesktopCommandMap`.
  *
- * Every command sent over the `openwork:desktop` channel has exactly one
+ * Every command sent over the `jugglework:desktop` channel has exactly one
  * entry here: `args` is the tuple the renderer passes, `result` what the
  * main process resolves. Results marked `unknown` are not yet modeled —
  * tighten them instead of widening call sites.
@@ -62,7 +62,7 @@ export type DesktopNotificationResult =
   | { ok: true }
   | { ok: false; reason: string };
 
-export type OpenworkServerInfo = {
+export type JuggleWorkServerInfo = {
   running: boolean;
   remoteAccessEnabled: boolean;
   host: string | null;
@@ -121,7 +121,7 @@ export type OpencodeCommandDraft = {
   subtask?: boolean;
 };
 
-export type WorkspaceOpenworkConfig = {
+export type WorkspaceJuggleWorkConfig = {
   version: number;
   workspace?: {
     name?: string | null;
@@ -139,7 +139,7 @@ export type AppBuildInfo = {
   version: string;
   gitSha?: string | null;
   buildEpoch?: string | null;
-  openworkDevMode?: boolean;
+  juggleworkDevMode?: boolean;
   os?: string | null;
   arch?: string | null;
 };
@@ -182,7 +182,7 @@ export type DesktopBootstrapConfig = {
 };
 
 export type OrchestratorDetachedHost = {
-  openworkUrl: string;
+  juggleworkUrl: string;
   token: string;
   ownerToken?: string | null;
   hostToken: string;
@@ -217,7 +217,7 @@ export type SandboxDoctorResult = {
   } | null;
 };
 
-export type OpenworkDockerCleanupResult = {
+export type JuggleWorkDockerCleanupResult = {
   candidates: string[];
   removed: string[];
   errors: string[];
@@ -344,15 +344,15 @@ export type WorkspaceCreateInput = {
 
 export type WorkspaceCreateRemoteInput = {
   baseUrl: string;
-  remoteType?: "openwork" | "opencode" | null;
+  remoteType?: "jugglework" | "opencode" | null;
   directory?: string | null;
   displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
+  juggleworkHostUrl?: string | null;
+  juggleworkToken?: string | null;
+  juggleworkClientToken?: string | null;
+  juggleworkHostToken?: string | null;
+  juggleworkWorkspaceId?: string | null;
+  juggleworkWorkspaceName?: string | null;
   sandboxBackend?: string | null;
   sandboxRunId?: string | null;
   sandboxContainerName?: string | null;
@@ -400,12 +400,12 @@ export type DesktopCommandMap = {
     args: [input: { workspacePath: string; folderPath?: string; authorizedRoot?: string }];
     result: unknown;
   };
-  workspaceOpenworkRead: {
+  workspaceJuggleWorkRead: {
     args: [input: { workspacePath: string }];
-    result: WorkspaceOpenworkConfig;
+    result: WorkspaceJuggleWorkConfig;
   };
-  workspaceOpenworkWrite: {
-    args: [input: { workspacePath: string; config: WorkspaceOpenworkConfig }];
+  workspaceJuggleWorkWrite: {
+    args: [input: { workspacePath: string; config: WorkspaceJuggleWorkConfig }];
     result: unknown;
   };
   workspaceExportConfig: {
@@ -456,9 +456,9 @@ export type DesktopCommandMap = {
     result: DesktopNotificationResult;
   };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
-  getOpenworkUiMcpCommand: { args: []; result: string[] };
+  getJuggleWorkUiMcpCommand: { args: []; result: string[] };
   getComputerUseMcpCommand: { args: []; result: string[] };
-  getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
+  getJuggleWorkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
   // Computer use
   checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };
@@ -484,20 +484,20 @@ export type DesktopCommandMap = {
     args: [rawUrl: string];
     result: { ok: true; config: DesktopBootstrapConfig } | ConnectLinkVerifyFailure;
   };
-  nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
-  nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
+  nukeJuggleWorkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
+  nukeJuggleWorkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
 
   // Sandbox
   sandboxDoctor: { args: []; result: SandboxDoctorResult };
   sandboxStop: { args: [runId: string]; result: unknown };
-  sandboxCleanupOpenworkContainers: { args: []; result: OpenworkDockerCleanupResult };
+  sandboxCleanupJuggleWorkContainers: { args: []; result: JuggleWorkDockerCleanupResult };
   sandboxDebugProbe: { args: []; result: SandboxDebugProbeResult };
 
-  // Openwork server sidecar
-  openworkServerInfo: { args: []; result: OpenworkServerInfo };
-  openworkServerRestart: {
+  // JuggleWork server sidecar
+  juggleworkServerInfo: { args: []; result: JuggleWorkServerInfo };
+  juggleworkServerRestart: {
     args: [options?: Record<string, unknown>];
-    result: OpenworkServerInfo;
+    result: JuggleWorkServerInfo;
   };
 
   // Dialogs
@@ -551,7 +551,7 @@ export type DesktopCommandMap = {
    * the renderer's localStorage cleanup is mode-scoped. Follow-up: decide
    * whether "onboarding" should preserve desktop workspace state.
    */
-  resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
+  resetJuggleWorkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
   resetOpencodeCache: { args: []; result: CacheResetResult };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
   setWindowDecorations: { args: [decorated: boolean]; result: unknown };

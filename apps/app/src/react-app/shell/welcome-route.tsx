@@ -22,16 +22,16 @@ import { AttributionStep, type AttributionSource } from "../domains/onboarding/a
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "../domains/workspace/types";
 import {
-  getOpenWorkModelsActionUrl,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  markOpenWorkModelsStartupPromoShown,
-} from "../domains/cloud/openwork-models-promo";
+  getJuggleWorkModelsActionUrl,
+  hideJuggleWorkModelsPromo,
+  useJuggleWorkModelsPromoEligibility,
+  markJuggleWorkModelsStartupPromoShown,
+} from "../domains/cloud/jugglework-models-promo";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
-import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../../app/lib/openwork-server";
+import { buildJuggleWorkWorkspaceBaseUrl, createJuggleWorkServerClient } from "../../app/lib/jugglework-server";
 import { buildDenAuthUrl, clearDenSession, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import {
   denSettingsChangedEvent,
@@ -39,7 +39,7 @@ import {
 } from "../../app/lib/den-session-events";
 import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimension } from "./session-memory";
 import { workspaceSessionRoute } from "./workspace-routes";
-import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
+import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
 import { saveControlPlaneUrl } from "../domains/settings/cloud/control-plane-url";
 
 function folderNameFromPath(path: string) {
@@ -50,7 +50,7 @@ function folderNameFromPath(path: string) {
 
 function focusPromptSoon() {
   if (typeof window === "undefined") return;
-  const focus = () => window.dispatchEvent(new Event("openwork:focusPrompt"));
+  const focus = () => window.dispatchEvent(new Event("jugglework:focusPrompt"));
   [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
 }
 
@@ -136,7 +136,7 @@ export function WelcomeRoute() {
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
   const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
-  const showOpenWorkModelsPromo = useOpenWorkModelsPromoEligibility();
+  const showJuggleWorkModelsPromo = useJuggleWorkModelsPromoEligibility();
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -190,14 +190,14 @@ export function WelcomeRoute() {
         let sessionToken = "";
         try {
           const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-            await resolveOpenworkConnection();
+            await resolveJuggleWorkConnection();
           if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
-            const openworkClient = createOpenworkServerClient({
+            const juggleworkClient = createJuggleWorkServerClient({
               baseUrl: normalizedBaseUrl,
               token: resolvedToken || undefined,
               hostToken: resolvedHostToken || undefined,
             });
-            list = await openworkClient.createLocalWorkspace({
+            list = await juggleworkClient.createLocalWorkspace({
               folderPath: folder,
               name: workspaceName,
               preset: "starter",
@@ -224,12 +224,12 @@ export function WelcomeRoute() {
           writeActiveWorkspaceId(createdId);
         }
         if (targetWorkspace) {
-          await ensureDesktopLocalOpenworkConnection({
+          await ensureDesktopLocalJuggleWorkConnection({
             route: "session",
             workspace: targetWorkspace,
             allWorkspaces: list.workspaces,
           }).catch(() => undefined);
-          const fresh = await resolveOpenworkConnection().catch(() => null);
+          const fresh = await resolveJuggleWorkConnection().catch(() => null);
           if (fresh?.normalizedBaseUrl && fresh.resolvedToken) {
             sessionBaseUrl = fresh.normalizedBaseUrl;
             sessionToken = fresh.resolvedToken;
@@ -239,9 +239,9 @@ export function WelcomeRoute() {
           try {
             const workspacePath = targetWorkspace?.path?.trim() || folder;
             const session = unwrap(await createClient(
-              `${(buildOpenworkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
+              `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,
-              { token: sessionToken, mode: "openwork" },
+              { token: sessionToken, mode: "jugglework" },
             ).session.create({ directory: workspacePath || undefined }));
             targetSessionId = session.id;
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
@@ -276,20 +276,20 @@ export function WelcomeRoute() {
 
   const handleCreateRemote = useCallback(
     async (input: {
-      openworkHostUrl?: string | null;
-      openworkToken?: string | null;
+      juggleworkHostUrl?: string | null;
+      juggleworkToken?: string | null;
       directory?: string | null;
       displayName?: string | null;
     }) => {
-      const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
+      const baseUrlValue = input.juggleworkHostUrl?.trim() ?? "";
       if (!baseUrlValue) return false;
       dispatch({ type: "remote:start" });
       try {
-        const remoteType: "openwork" = "openwork";
+        const remoteType: "jugglework" = "jugglework";
         const payload = {
           baseUrl: baseUrlValue,
-          openworkHostUrl: baseUrlValue,
-          openworkToken: input.openworkToken?.trim() || null,
+          juggleworkHostUrl: baseUrlValue,
+          juggleworkToken: input.juggleworkToken?.trim() || null,
           displayName: input.displayName?.trim() || null,
           directory: input.directory?.trim() || null,
           remoteType,
@@ -300,9 +300,9 @@ export function WelcomeRoute() {
         } else {
           try {
             const { normalizedBaseUrl, resolvedToken, resolvedHostToken } =
-              await resolveOpenworkConnection();
+              await resolveJuggleWorkConnection();
             if (normalizedBaseUrl && (resolvedToken || resolvedHostToken)) {
-              list = await createOpenworkServerClient({
+              list = await createJuggleWorkServerClient({
                 baseUrl: normalizedBaseUrl,
                 token: resolvedToken || undefined,
                 hostToken: resolvedHostToken || undefined,
@@ -438,20 +438,20 @@ export function WelcomeRoute() {
       />
       {state.providerStep ? (
         <ProviderSelectionStep
-          showOpenWorkModels={showOpenWorkModelsPromo}
-          onOpenWorkModels={() => {
+          showJuggleWorkModels={showJuggleWorkModelsPromo}
+          onJuggleWorkModels={() => {
             // Land on the JuggleWork Models value-prop page when already
             // signed in to Den; otherwise start sign-up. Previously this
             // always opened a bare sign-up page — payment before value.
-            platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
+            platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
               : "/session";
             dispatch({ type: "attribution-step", route });
           }}
           onBringYourOwn={() => {
-            markOpenWorkModelsStartupPromoShown();
-            hideOpenWorkModelsPromo();
+            markJuggleWorkModelsStartupPromoShown();
+            hideJuggleWorkModelsPromo();
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
               : "/session";

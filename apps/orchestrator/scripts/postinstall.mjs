@@ -28,17 +28,17 @@ function detect() {
 
 function packageName() {
   const { platform, arch } = detect()
-  return `openwork-orchestrator-${platform}-${arch}`
+  return `jugglework-orchestrator-${platform}-${arch}`
 }
 
 function binaryName() {
   const { platform } = detect()
-  return platform === "windows" ? "openwork.exe" : "openwork"
+  return platform === "windows" ? "jugglework.exe" : "jugglework"
 }
 
 function fallbackAssetName() {
   const { platform, arch } = detect()
-  return `openwork-bun-${platform}-${arch}${platform === "windows" ? ".exe" : ""}`
+  return `jugglework-bun-${platform}-${arch}${platform === "windows" ? ".exe" : ""}`
 }
 
 function fallbackBinaryPath() {
@@ -49,17 +49,17 @@ function readOwnVersion() {
   const pkg = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"))
   const version = String(pkg.version || "").trim()
   if (!version) {
-    throw new Error("openwork-orchestrator: package version is missing")
+    throw new Error("jugglework-orchestrator: package version is missing")
   }
   return version
 }
 
 function resolveFallbackBaseUrl(version) {
-  const override = String(process.env.OPENWORK_ORCHESTRATOR_DOWNLOAD_BASE_URL || "").trim()
+  const override = String(process.env.JUGGLEWORK_ORCHESTRATOR_DOWNLOAD_BASE_URL || "").trim()
   if (override) {
     return override.replace(/\/$/, "")
   }
-  return `https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v${version}`
+  return `https://github.com/juggleai/jugglework-desktop/releases/download/jugglework-orchestrator-v${version}`
 }
 
 async function downloadFallbackBinary() {
@@ -68,7 +68,7 @@ async function downloadFallbackBinary() {
   const url = `${resolveFallbackBaseUrl(version)}/${asset}`
   const destination = fallbackBinaryPath()
 
-  console.log(`openwork-orchestrator: downloading fallback binary ${asset}`)
+  console.log(`jugglework-orchestrator: downloading fallback binary ${asset}`)
   const response = await fetch(url)
   if (!response.ok) {
     throw new Error(`download failed (${response.status} ${response.statusText}) from ${url}`)
@@ -77,22 +77,22 @@ async function downloadFallbackBinary() {
   const buffer = Buffer.from(await response.arrayBuffer())
   mkdirSync(dirname(destination), { recursive: true })
   writeFileSync(destination, buffer)
-  if (binaryName() !== "openwork.exe") {
+  if (binaryName() !== "jugglework.exe") {
     chmodSync(destination, 0o755)
   }
 
-  console.log(`openwork-orchestrator: installed fallback binary at ${destination}`)
+  console.log(`jugglework-orchestrator: installed fallback binary at ${destination}`)
 }
 
 async function main() {
   try {
     const pkg = packageName()
     require.resolve(`${pkg}/package.json`)
-    console.log(`openwork-orchestrator: verified platform package: ${pkg}`)
+    console.log(`jugglework-orchestrator: verified platform package: ${pkg}`)
     return
   } catch {
     if (existsSync(fallbackBinaryPath())) {
-      console.log(`openwork-orchestrator: using existing fallback binary at ${fallbackBinaryPath()}`)
+      console.log(`jugglework-orchestrator: using existing fallback binary at ${fallbackBinaryPath()}`)
       return
     }
   }
@@ -103,7 +103,7 @@ async function main() {
     const pkg = packageName()
     const message = error instanceof Error ? error.message : String(error)
     console.error(
-      `openwork-orchestrator: failed to locate platform binary package (${pkg}).\n` +
+      `jugglework-orchestrator: failed to locate platform binary package (${pkg}).\n` +
         `Your package manager may have skipped optionalDependencies, or the package asset is unavailable.\n` +
         `Fallback download failed: ${message}\n` +
         `Try installing it manually: npm i -g ${pkg}`,

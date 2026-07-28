@@ -55,7 +55,7 @@ export const DEFAULT_SHELL_CONFIG: ShellConfig = {
 /*  Persistence                                                        */
 /* ------------------------------------------------------------------ */
 
-const STORAGE_KEY = "openwork.shell-config";
+const STORAGE_KEY = "jugglework.shell-config";
 
 function readShellConfig(): ShellConfig {
   if (typeof window === "undefined") return DEFAULT_SHELL_CONFIG;

@@ -7,17 +7,17 @@ import { SUGGESTED_PLUGINS } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import {
-  createOpenworkServerClient,
-  isLoopbackOpenworkServerUrl,
-  readOpenworkServerSettings,
-  OpenworkServerError,
-  type OpenworkCloudMcpHealth,
-  type OpenworkCloudMcpProviderModelContext,
-  type OpenworkServerCapabilities,
-  type OpenworkServerClient,
-  type OpenworkWorkspaceInfo,
-} from "@/app/lib/openwork-server";
-import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
+  createJuggleWorkServerClient,
+  isLoopbackJuggleWorkServerUrl,
+  readJuggleWorkServerSettings,
+  JuggleWorkServerError,
+  type JuggleWorkCloudMcpHealth,
+  type JuggleWorkCloudMcpProviderModelContext,
+  type JuggleWorkServerCapabilities,
+  type JuggleWorkServerClient,
+  type JuggleWorkWorkspaceInfo,
+} from "@/app/lib/jugglework-server";
+import { buildJuggleWorkEnvRuntimeKey } from "@/app/lib/jugglework-env-runtime";
 import {
   collectAgentContextDiagnosticObservations,
   isAgentContextDiagnosticsWorkspaceAllowed,
@@ -57,9 +57,9 @@ import {
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
-import { cleanupOpenworkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
+import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
-import { createOpenworkServerStore, useOpenworkServerStoreSnapshot } from "@/react-app/domains/connections/openwork-server-store";
+import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@/react-app/domains/connections/jugglework-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
@@ -68,11 +68,11 @@ import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 import "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/computer-use-config";
 import "@/react-app/domains/settings/browser-extension-config";
-import "@/react-app/domains/settings/openwork-voice-config";
+import "@/react-app/domains/settings/jugglework-voice-config";
 import "@/react-app/domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
-import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
+import { isJuggleWorkExtensionEnabled, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
@@ -101,15 +101,15 @@ import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view
 import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
-import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
+import { useControlAction, type JuggleWorkControlAction } from "./control/control-provider";
 import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import {
-  openworkServerInfo,
-  openworkServerRestart,
+  juggleworkServerInfo,
+  juggleworkServerRestart,
   engineStart,
   engineRestart,
   pickDirectory,
@@ -133,12 +133,12 @@ import {
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
-  hasOpenWorkModelsAvailable,
-  hideOpenWorkModelsPromo,
-  useOpenWorkModelsPromoEligibility,
-  isOpenWorkModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
-} from "@/react-app/domains/cloud/openwork-models-promo";
+  hasJuggleWorkModelsAvailable,
+  hideJuggleWorkModelsPromo,
+  useJuggleWorkModelsPromoEligibility,
+  isJuggleWorkModelsPromoHidden,
+  juggleWorkModelsPromoChangedEvent,
+} from "@/react-app/domains/cloud/jugglework-models-promo";
 import {
   isDesktopRuntime,
   isElectronRuntime,
@@ -163,8 +163,8 @@ import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picke
 import type { ModelRef } from "@/app/types";
 import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
-import { ensureDesktopLocalOpenworkConnection } from "./desktop-local-openwork";
-import { resolveOpenworkConnection } from "./openwork-connection";
+import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
+import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { notifyAlert } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
@@ -188,8 +188,8 @@ import {
   type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 
-const ROUTE_OPENWORK_CAPABILITIES: OpenworkServerCapabilities = {
-  skills: { read: true, write: true, source: "openwork" },
+const ROUTE_JUGGLEWORK_CAPABILITIES: JuggleWorkServerCapabilities = {
+  skills: { read: true, write: true, source: "jugglework" },
   plugins: { read: true, write: true },
   mcp: { read: true, write: true },
   commands: { read: true, write: true },
@@ -197,7 +197,7 @@ const ROUTE_OPENWORK_CAPABILITIES: OpenworkServerCapabilities = {
 };
 
 async function reloadEngineOrRestartDesktop(
-  client: Pick<OpenworkServerClient, "reloadEngine">,
+  client: Pick<JuggleWorkServerClient, "reloadEngine">,
   workspaceId: string,
   afterRestart?: () => Promise<void>,
 ): Promise<void> {
@@ -205,7 +205,7 @@ async function reloadEngineOrRestartDesktop(
     await client.reloadEngine(workspaceId);
   } catch (error) {
     const unreachable =
-      error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
+      error instanceof JuggleWorkServerError && error.code === "opencode_engine_unreachable";
     if (!unreachable || !isDesktopRuntime()) {
       throw error;
     }
@@ -214,13 +214,13 @@ async function reloadEngineOrRestartDesktop(
   }
 }
 
-function isOpenWorkCloudProvider(provider: {
+function isJuggleWorkCloudProvider(provider: {
   providerId?: string | null;
   source?: string | null;
   sourceProviderId?: string | null;
 }) {
   return [provider.providerId, provider.source, provider.sourceProviderId].some(
-    (value) => value?.trim().toLowerCase() === "openwork",
+    (value) => value?.trim().toLowerCase() === "jugglework",
   );
 }
 
@@ -261,9 +261,9 @@ function reconcileSelectedWorkspaceId(
   return serverList.activeId?.trim() || desktopSelectedId || workspaces[0]?.id || "";
 }
 
-const SETTINGS_HIDE_TITLEBAR_KEY = "openwork.react.settings.hide-titlebar";
-const SETTINGS_UPDATE_AUTO_CHECK_KEY = "openwork.react.settings.update-auto-check";
-const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-download";
+const SETTINGS_HIDE_TITLEBAR_KEY = "jugglework.react.settings.hide-titlebar";
+const SETTINGS_UPDATE_AUTO_CHECK_KEY = "jugglework.react.settings.update-auto-check";
+const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "jugglework.react.settings.update-auto-download";
 
 export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
@@ -409,7 +409,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [navigate, props.embedded, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
-  const [openworkClient, setOpenworkClient] = useState<OpenworkServerClient | null>(null);
+  const [juggleworkClient, setJuggleWorkClient] = useState<JuggleWorkServerClient | null>(null);
   const [activeClient, setActiveClient] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
@@ -427,7 +427,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("openwork.developerMode") === "1";
+    return window.localStorage.getItem("jugglework.developerMode") === "1";
   });
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
@@ -468,7 +468,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [userEnvKeys, setUserEnvKeys] = useState<string[]>([]);
-  const [cloudMcpHealth, setCloudMcpHealth] = useState<OpenworkCloudMcpHealth | null>(null);
+  const [cloudMcpHealth, setCloudMcpHealth] = useState<JuggleWorkCloudMcpHealth | null>(null);
   const emptyWorkspaceDisplay = useMemo<WorkspaceDisplay>(
     () => ({
       id: "",
@@ -487,10 +487,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     selectedWorkspaceRoot: "",
     selectedWorkspaceType: "local" as "local" | "remote",
     runtimeWorkspaceId: null as string | null,
-    openworkServerClient: null as OpenworkServerClient | null,
-    selectedWorkspaceOpenworkClient: null as OpenworkServerClient | null,
-    openworkServerStatus: "disconnected" as "connected" | "disconnected",
-    openworkServerCapabilities: null as OpenworkServerCapabilities | null,
+    juggleworkServerClient: null as JuggleWorkServerClient | null,
+    selectedWorkspaceJuggleWorkClient: null as JuggleWorkServerClient | null,
+    juggleworkServerStatus: "disconnected" as "connected" | "disconnected",
+    juggleworkServerCapabilities: null as JuggleWorkServerCapabilities | null,
     selectedWorkspaceDisplay: emptyWorkspaceDisplay as WorkspaceDisplay,
     providerItems: [] as ProviderListItem[],
     providerDefaults: {} as Record<string, string>,
@@ -528,7 +528,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             preset: "starter",
             workspaceType: selectedWorkspace.workspaceType ?? "local",
             displayName: selectedWorkspace.displayNameResolved,
-            openworkWorkspaceName: selectedWorkspace.openworkWorkspaceName,
+            juggleworkWorkspaceName: selectedWorkspace.juggleworkWorkspaceName,
           }
         : emptyWorkspaceDisplay,
     [emptyWorkspaceDisplay, selectedWorkspace],
@@ -547,10 +547,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     selectedWorkspaceRoot,
     selectedWorkspaceType: selectedWorkspace?.workspaceType ?? "local",
     runtimeWorkspaceId: selectedWorkspace?.id ?? null,
-    openworkServerClient: openworkClient,
-    selectedWorkspaceOpenworkClient: openworkClient,
-    openworkServerStatus: openworkClient ? "connected" : "disconnected",
-    openworkServerCapabilities: openworkClient ? ROUTE_OPENWORK_CAPABILITIES : null,
+    juggleworkServerClient: juggleworkClient,
+    selectedWorkspaceJuggleWorkClient: juggleworkClient,
+    juggleworkServerStatus: juggleworkClient ? "connected" : "disconnected",
+    juggleworkServerCapabilities: juggleworkClient ? ROUTE_JUGGLEWORK_CAPABILITIES : null,
     selectedWorkspaceDisplay,
     providerItems: providers,
     providerDefaults,
@@ -577,17 +577,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [sessionsByWorkspaceId],
   );
 
-  const openworkServerStore = useMemo(
+  const juggleworkServerStore = useMemo(
     () =>
-      createOpenworkServerStore({
+      createJuggleWorkServerStore({
         startupPreference: () => {
           // In desktop mode, loopback URLs are ephemeral local runtime details.
           // Only non-loopback stored URLs indicate an explicit remote/manual
           // server connection preference.
           if (!isDesktopRuntime()) return "server";
-          const stored = readOpenworkServerSettings();
+          const stored = readJuggleWorkServerSettings();
           const storedUrl = stored.urlOverride?.trim() ?? "";
-          return storedUrl && !isLoopbackOpenworkServerUrl(storedUrl) ? "server" : "local";
+          return storedUrl && !isLoopbackJuggleWorkServerUrl(storedUrl) ? "server" : "local";
         },
         documentVisible: () => typeof document === "undefined" || document.visibilityState === "visible",
         developerMode: () => routeStateRef.current.developerMode,
@@ -597,9 +597,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         restartLocalServer: async () => {
           if (!isDesktopRuntime()) return false;
           try {
-            await openworkServerRestart({
+            await juggleworkServerRestart({
               remoteAccessEnabled:
-                readOpenworkServerSettings().remoteAccessEnabled === true,
+                readJuggleWorkServerSettings().remoteAccessEnabled === true,
             });
             return true;
           } catch {
@@ -619,7 +619,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceId: () => routeStateRef.current.selectedWorkspaceId,
         selectedWorkspaceRoot: () => routeStateRef.current.selectedWorkspaceRoot,
         workspaceType: () => routeStateRef.current.selectedWorkspaceType,
-        openworkServer: openworkServerStore,
+        juggleworkServer: juggleworkServerStore,
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         ensureRuntimeWorkspaceId: async () =>
           routeStateRef.current.runtimeWorkspaceId?.trim() ||
@@ -628,7 +628,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         developerMode: () => routeStateRef.current.developerMode,
         markReloadRequired: reloadCoordinator.markReloadRequired,
       }),
-    [openworkServerStore, reloadCoordinator.markReloadRequired],
+    [juggleworkServerStore, reloadCoordinator.markReloadRequired],
   );
   refreshMcpServersRef.current = connectionsStore.refreshMcpServers;
   notifyMcpReloadingRef.current = connectionsStore.notifyMcpReloading;
@@ -650,7 +650,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           routeStateRef.current.runtimeWorkspaceId?.trim() ||
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
-        openworkServer: openworkServerStore,
+        juggleworkServer: juggleworkServerStore,
         setProviders,
         setProviderDefaults,
         setProviderConnectedIds,
@@ -664,7 +664,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           });
         },
       }),
-    [checkDesktopRestriction, openworkServerStore, reloadCoordinator.markReloadRequired],
+    [checkDesktopRestriction, juggleworkServerStore, reloadCoordinator.markReloadRequired],
   );
   const extensionsStore = useMemo(
     () =>
@@ -674,11 +674,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceId: () => routeStateRef.current.selectedWorkspaceId,
         selectedWorkspaceRoot: () => routeStateRef.current.selectedWorkspaceRoot,
         workspaceType: () => routeStateRef.current.selectedWorkspaceType,
-        openworkServer: openworkServerStore,
-        openworkServerConnection: () => ({
-          openworkServerClient: routeStateRef.current.openworkServerClient,
-          openworkServerStatus: routeStateRef.current.openworkServerStatus,
-          openworkServerCapabilities: routeStateRef.current.openworkServerCapabilities,
+        juggleworkServer: juggleworkServerStore,
+        juggleworkServerConnection: () => ({
+          juggleworkServerClient: routeStateRef.current.juggleworkServerClient,
+          juggleworkServerStatus: routeStateRef.current.juggleworkServerStatus,
+          juggleworkServerCapabilities: routeStateRef.current.juggleworkServerCapabilities,
         }),
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         ensureRuntimeWorkspaceId: async () =>
@@ -695,42 +695,42 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         },
         markReloadRequired: reloadCoordinator.markReloadRequired,
       }),
-    [openworkServerStore, reloadCoordinator.markReloadRequired],
+    [juggleworkServerStore, reloadCoordinator.markReloadRequired],
   );
-  const openworkServerSnapshot = useOpenworkServerStoreSnapshot(openworkServerStore);
+  const juggleworkServerSnapshot = useJuggleWorkServerStoreSnapshot(juggleworkServerStore);
   const connectionsSnapshot = useConnectionsStoreSnapshot(connectionsStore);
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
-  const openworkServerStatusForMcp = openworkServerSnapshot.openworkServerStatus;
+  const juggleworkServerStatusForMcp = juggleworkServerSnapshot.juggleworkServerStatus;
   useEffect(() => {
-    if (openworkServerStatusForMcp !== "connected") return;
-    // The first MCP read races the openwork-server store's initial health
+    if (juggleworkServerStatusForMcp !== "connected") return;
+    // The first MCP read races the jugglework-server store's initial health
     // check (a fresh store always starts "disconnected"), so it falls back
     // to config files where server-runtime (config.remote) entries — notably
     // the cloud control MCP — don't exist. Without this re-read the built-in
     // cards show "Tap to connect" until the next full remount even though
     // the entries are configured and healthy.
     void connectionsStore.refreshMcpServers();
-  }, [connectionsStore, openworkServerStatusForMcp]);
+  }, [connectionsStore, juggleworkServerStatusForMcp]);
 
   const cleanupCloudMcpForSignOut = useCallback(async (settings: DenSettings) => {
-    const client = routeStateRef.current.selectedWorkspaceOpenworkClient;
+    const client = routeStateRef.current.selectedWorkspaceJuggleWorkClient;
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!client || !workspaceId || !orgId) return;
     // Settings only has a safe, exact OpenCode client/directory for the active
     // workspace here, so sign-out cleanup is intentionally scoped to that
     // workspace instead of guessing across every configured worker.
-    await cleanupOpenworkCloudMcpAfterSignOut({
+    await cleanupJuggleWorkCloudMcpAfterSignOut({
       context: {
         denBaseUrl: settings.baseUrl,
         serverBaseUrl: client.baseUrl,
         workspaceId,
         orgId,
       },
-      openworkClient: client,
+      juggleworkClient: client,
       opencodeClient: routeStateRef.current.activeClient,
       directory: routeStateRef.current.selectedWorkspaceRoot,
     });
@@ -775,45 +775,45 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     void refreshConnectCapabilities();
   }, [refreshConnectCapabilities, route.tab]);
 
-  const hasOpenWorkCloudProvider = useMemo(
+  const hasJuggleWorkCloudProvider = useMemo(
     () =>
-      providerAuthSnapshot.cloudOrgProviders.some(isOpenWorkCloudProvider) ||
-      Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
+      providerAuthSnapshot.cloudOrgProviders.some(isJuggleWorkCloudProvider) ||
+      Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isJuggleWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  const [openWorkModelsPromoHidden, setOpenWorkModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
+  const [juggleWorkModelsPromoHidden, setJuggleWorkModelsPromoHidden] = useState(isJuggleWorkModelsPromoHidden);
+  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
   // Entitled = Den/import says JuggleWork Models is included. Available = local
-  // engine actually exposes selectable openwork models.
-  const openWorkModelsEntitled = cloudSession.isSignedIn && hasOpenWorkCloudProvider;
-  const openWorkModelsAvailable = hasOpenWorkModelsAvailable({
+  // engine actually exposes selectable jugglework models.
+  const juggleWorkModelsEntitled = cloudSession.isSignedIn && hasJuggleWorkCloudProvider;
+  const juggleWorkModelsAvailable = hasJuggleWorkModelsAvailable({
     providerConnectedIds,
     providers,
   });
-  const showOpenWorkModelsSyncing = openWorkModelsEntitled && !openWorkModelsAvailable;
-  const showOpenWorkModelsSubscribe =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    !openWorkModelsPromoHidden;
-  const showOpenWorkModelsConnect =
-    openWorkModelsPromoEligible &&
-    !openWorkModelsEntitled &&
-    !openWorkModelsAvailable &&
-    openWorkModelsPromoHidden;
+  const showJuggleWorkModelsSyncing = juggleWorkModelsEntitled && !juggleWorkModelsAvailable;
+  const showJuggleWorkModelsSubscribe =
+    juggleWorkModelsPromoEligible &&
+    !juggleWorkModelsEntitled &&
+    !juggleWorkModelsAvailable &&
+    !juggleWorkModelsPromoHidden;
+  const showJuggleWorkModelsConnect =
+    juggleWorkModelsPromoEligible &&
+    !juggleWorkModelsEntitled &&
+    !juggleWorkModelsAvailable &&
+    juggleWorkModelsPromoHidden;
 
   useEffect(() => {
-    const handlePromoChanged = () => setOpenWorkModelsPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
+    const handlePromoChanged = () => setJuggleWorkModelsPromoHidden(isJuggleWorkModelsPromoHidden());
+    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
+    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
-  const dismissOpenWorkModelsPromo = useCallback(() => {
-    hideOpenWorkModelsPromo();
-    setOpenWorkModelsPromoHidden(true);
+  const dismissJuggleWorkModelsPromo = useCallback(() => {
+    hideJuggleWorkModelsPromo();
+    setJuggleWorkModelsPromoHidden(true);
   }, []);
 
-  const subscribeToOpenWorkModels = useCallback(() => {
+  const subscribeToJuggleWorkModels = useCallback(() => {
     providerAuthStore.closeProviderAuthModal();
     const accountPath = selectedWorkspaceId
       ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account")
@@ -824,7 +824,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }, 0);
   }, [cloudSession.baseUrl, navigate, platform, providerAuthStore, selectedWorkspaceId]);
 
-  const refreshOpenWorkModels = useCallback(async () => {
+  const refreshJuggleWorkModels = useCallback(async () => {
     await providerAuthStore.runCloudProviderSync("settings_cloud_opened");
     await providerAuthStore.refreshProviders();
   }, [providerAuthStore]);
@@ -855,8 +855,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const shareWorkspaceState = useShareWorkspaceState({
     workspaces,
-    openworkServerHostInfo: openworkServerSnapshot.openworkServerHostInfo,
-    openworkServerSettings: openworkServerSnapshot.openworkServerSettings,
+    juggleworkServerHostInfo: juggleworkServerSnapshot.juggleworkServerHostInfo,
+    juggleworkServerSettings: juggleworkServerSnapshot.juggleworkServerSettings,
     engineInfo: null,
     exportWorkspaceBusy,
     openLink: (url) => platform.openLink(url),
@@ -865,8 +865,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const debugViewProps = useDebugViewModel({
     developerMode,
-    openworkServerStore,
-    openworkServerSnapshot,
+    juggleworkServerStore,
+    juggleworkServerSnapshot,
     runtimeWorkspaceId: selectedWorkspace?.id ?? null,
     selectedWorkspaceRoot,
     setRouteError: (message) => {
@@ -911,7 +911,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
-  routeStateRef.current.selectedWorkspaceOpenworkClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
+  routeStateRef.current.selectedWorkspaceJuggleWorkClient = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
 
   const opencodeClient = useMemo(() => {
     if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
@@ -920,7 +920,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       selectedWorkspaceRoot || undefined,
       {
         token: selectedWorkspaceEndpoint.token,
-        mode: "openwork",
+        mode: "jugglework",
       },
     );
   }, [selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
@@ -942,13 +942,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onOpen: handleModelPickerOpen,
     onLoadError: handleModelPickerLoadError,
   });
-  const currentCloudMcpModel = useMemo<OpenworkCloudMcpProviderModelContext | null>(() => {
+  const currentCloudMcpModel = useMemo<JuggleWorkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";
     const model = local.prefs.defaultModel?.modelID.trim() ?? "";
     return provider && model ? { provider, model } : null;
   }, [local.prefs.defaultModel]);
   const refreshCloudMcpHealth = useCallback(async () => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
       setCloudMcpHealth(null);
@@ -956,10 +956,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
     // probe: the Advanced page refresh should verify the Cloud endpoint
     // directly (outside the engine), not just report the engine's cached state.
-    const health = await client.getOpenworkCloudMcpHealth(workspaceId, currentCloudMcpModel ?? undefined, { probe: true });
+    const health = await client.getJuggleWorkCloudMcpHealth(workspaceId, currentCloudMcpModel ?? undefined, { probe: true });
     setCloudMcpHealth(health);
     return health;
-  }, [currentCloudMcpModel, openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  }, [currentCloudMcpModel, juggleworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
   const { commandPaletteOpen, setCommandPaletteOpen } = useCommandPaletteShortcut(!props.embedded);
   const paletteSessionOptions = useMemo(
     () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
@@ -988,10 +988,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -1012,7 +1012,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, []);
 
   useEffect(() => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
     if (!client) {
       setGoogleWorkspaceConnected(false);
       return;
@@ -1030,23 +1030,23 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [openworkClient, selectedWorkspaceEndpoint]);
+  }, [juggleworkClient, selectedWorkspaceEndpoint]);
 
   useEffect(() => {
-    if (!openworkClient) {
+    if (!juggleworkClient) {
       setUserEnvKeys([]);
       return;
     }
     let cancelled = false;
-    void openworkClient.listUserEnvKeys()
+    void juggleworkClient.listUserEnvKeys()
       .then((response) => { if (!cancelled) setUserEnvKeys(response.keys); })
       .catch(() => { if (!cancelled) setUserEnvKeys([]); });
     return () => { cancelled = true; };
-  }, [openworkClient]);
+  }, [juggleworkClient]);
 
   const installOpenAiImageExtension = useCallback(async (apiKey: string) => {
     const resolvedApiKey = apiKey.trim();
-    if (!openworkClient) {
+    if (!juggleworkClient) {
       setImageExtensionError("JuggleWork server is not connected.");
       return;
     }
@@ -1059,7 +1059,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setImageExtensionStatus(null);
     setImageExtensionError(null);
     try {
-      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
+      await juggleworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
       setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
       setImageExtensionStatus("Saved OPENAI_API_KEY. Agents can use JuggleWork extension actions for image generation.");
     } catch (error) {
@@ -1067,10 +1067,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setImageExtensionBusy(false);
     }
-  }, [openworkClient]);
+  }, [juggleworkClient]);
 
   const generateOpenAiTestImage = useCallback(async (input: { apiKey: string; prompt: string }) => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     const apiKey = input.apiKey.trim();
     const prompt = input.prompt.trim();
@@ -1091,8 +1091,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setImageGenerationStatus(null);
     setImageGenerationError(null);
     try {
-      if (openworkClient) {
-        await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: apiKey }]);
+      if (juggleworkClient) {
+        await juggleworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: apiKey }]);
         setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
       }
       const response = await client.callExtensionAction({
@@ -1115,11 +1115,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setImageGenerationBusy(false);
     }
-  }, [openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
+  }, [juggleworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint, selectedWorkspaceRoot]);
 
   const saveVoiceApiKey = useCallback(async (apiKey: string) => {
     const resolvedApiKey = apiKey.trim();
-    if (!openworkClient || !resolvedApiKey) {
+    if (!juggleworkClient || !resolvedApiKey) {
       setVoiceError("OpenAI API key is required.");
       return;
     }
@@ -1127,7 +1127,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setVoiceStatus(null);
     setVoiceError(null);
     try {
-      await openworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
+      await juggleworkClient.upsertUserEnv([{ key: "OPENAI_API_KEY", value: resolvedApiKey }]);
       setUserEnvKeys((current) => Array.from(new Set([...current, "OPENAI_API_KEY"])));
       setVoiceStatus("Saved OPENAI_API_KEY for Voice Mode.");
     } catch (error) {
@@ -1135,10 +1135,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setVoiceBusy(false);
     }
-  }, [openworkClient]);
+  }, [juggleworkClient]);
 
   const testVoiceSession = useCallback(async () => {
-    if (!openworkClient) {
+    if (!juggleworkClient) {
       setVoiceError("JuggleWork server is not connected.");
       return;
     }
@@ -1146,17 +1146,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setVoiceStatus(null);
     setVoiceError(null);
     try {
-      const session = await openworkClient.createVoiceRealtimeSession();
+      const session = await juggleworkClient.createVoiceRealtimeSession();
       setVoiceStatus(`Realtime ready with ${session.model} (${session.tools.length} JuggleWork tools).`);
     } catch (error) {
       setVoiceError(describeRouteError(error));
     } finally {
       setVoiceBusy(false);
     }
-  }, [openworkClient]);
+  }, [juggleworkClient]);
 
   const installLocalProvider = useCallback(async (input: LocalProviderInstallInput) => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     const modelId = input.modelId.trim();
     if (!client || !workspaceId) {
@@ -1194,7 +1194,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
       await refreshProviderListQueries(getReactQueryClient());
       try {
-        window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+        window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
       } catch {
         // ignore browser event dispatch failures
       }
@@ -1204,7 +1204,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setLocalProviderBusy(false);
     }
-  }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
+  }, [local, juggleworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
 
   useEffect(() => {
     local.setUi((previous) => ({ ...previous, view: "settings", tab: route.tab }));
@@ -1250,10 +1250,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           desktopWorkspaces = workspacesRef.current;
         }
       }
-      const { normalizedBaseUrl, resolvedToken, resolvedHostToken } = await resolveOpenworkConnection();
+      const { normalizedBaseUrl, resolvedToken, resolvedHostToken } = await resolveJuggleWorkConnection();
 
       if (!normalizedBaseUrl || !resolvedToken) {
-        setOpenworkClient(null);
+        setJuggleWorkClient(null);
         setBaseUrl("");
         setToken("");
         setWorkspaces(desktopWorkspaces);
@@ -1267,7 +1267,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return;
       }
 
-      const client = createOpenworkServerClient({
+      const client = createJuggleWorkServerClient({
         baseUrl: normalizedBaseUrl,
         token: resolvedToken,
         hostToken: resolvedHostToken || undefined,
@@ -1323,7 +1323,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }),
       );
 
-      setOpenworkClient(client);
+      setJuggleWorkClient(client);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
       setWorkspaces(nextWorkspaces);
@@ -1382,16 +1382,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
-    if (!openworkClient || !workspaceId) {
+    if (!juggleworkClient || !workspaceId) {
       toast.error(t("app.error_connect_first"));
       return false;
     }
 
-    await reloadEngineOrRestartDesktop(openworkClient, workspaceId, refreshRouteState);
+    await reloadEngineOrRestartDesktop(juggleworkClient, workspaceId, refreshRouteState);
     await refreshProviderListQueries(getReactQueryClient());
 
     try {
-      window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
+      window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
     } catch {
       // ignore browser event dispatch failures
     }
@@ -1401,11 +1401,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     void pollMcpServersAfterReloadRef.current?.();
 
     return true;
-  }, [openworkClient, refreshRouteState, selectedWorkspaceId]);
+  }, [juggleworkClient, refreshRouteState, selectedWorkspaceId]);
 
   useEffect(() => {
     return reloadCoordinator.registerWorkspaceReloadControls({
-      canReloadWorkspaceEngine: () => Boolean(openworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
+      canReloadWorkspaceEngine: () => Boolean(juggleworkClient && (selectedWorkspace?.id || selectedWorkspaceId)),
       reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
       activeSessions: () => activeReloadBlockingSessions,
       stopSession: async (sessionId) => {
@@ -1416,7 +1416,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [
     activeClient,
     activeReloadBlockingSessions,
-    openworkClient,
+    juggleworkClient,
     reloadCoordinator,
     reloadWorkspaceEngineFromUi,
     selectedWorkspace?.id,
@@ -1523,7 +1523,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     if (loading) return;
-    if (openworkClient) {
+    if (juggleworkClient) {
       reconnectAttemptedWorkspaceIdRef.current = "";
       return;
     }
@@ -1532,7 +1532,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!workspaceId || reconnectAttemptedWorkspaceIdRef.current === workspaceId) return;
     reconnectAttemptedWorkspaceIdRef.current = workspaceId;
 
-    void ensureDesktopLocalOpenworkConnection({
+    void ensureDesktopLocalJuggleWorkConnection({
       route: "settings",
       workspace: selectedWorkspace,
       allWorkspaces: workspaces,
@@ -1546,27 +1546,27 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         dedupeKey: "server-reconnect",
       });
     });
-  }, [loading, openworkClient, selectedWorkspace, workspaces]);
+  }, [loading, juggleworkClient, selectedWorkspace, workspaces]);
 
   useEffect(() => {
     void refreshRouteState();
     const handleSettingsChange = () => {
       void refreshRouteState();
     };
-    window.addEventListener("openwork-server-settings-changed", handleSettingsChange);
+    window.addEventListener("jugglework-server-settings-changed", handleSettingsChange);
     return () => {
-      window.removeEventListener("openwork-server-settings-changed", handleSettingsChange);
+      window.removeEventListener("jugglework-server-settings-changed", handleSettingsChange);
     };
   }, [refreshRouteState]);
 
   // Load auto-compaction state from OpenCode config on workspace change.
   useEffect(() => {
-    if (!openworkClient || !selectedWorkspaceId) return;
+    if (!juggleworkClient || !selectedWorkspaceId) return;
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
     let cancelled = false;
     (async () => {
       try {
-        const config = await openworkClient.getConfig(workspaceId);
+        const config = await juggleworkClient.getConfig(workspaceId);
         if (cancelled) return;
         const compaction = config.opencode?.compaction;
         const auto = compaction && typeof compaction === "object" && "auto" in compaction
@@ -1579,17 +1579,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     })();
     return () => { cancelled = true; };
-  }, [openworkClient, selectedWorkspaceId]);
+  }, [juggleworkClient, selectedWorkspaceId]);
 
   const toggleAutoCompactContext = useCallback(async () => {
     if (autoCompactContextBusy) return;
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!openworkClient || !workspaceId) return;
+    if (!juggleworkClient || !workspaceId) return;
     const next = !autoCompactContext;
     setAutoCompactContext(next);
     setAutoCompactContextBusy(true);
     try {
-      await openworkClient.patchConfig(workspaceId, {
+      await juggleworkClient.patchConfig(workspaceId, {
         opencode: { compaction: { auto: next } },
       });
       reloadCoordinator.markReloadRequired("config", {
@@ -1602,10 +1602,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setAutoCompactContextBusy(false);
     }
-  }, [autoCompactContext, autoCompactContextBusy, openworkClient, reloadCoordinator, selectedWorkspaceId]);
+  }, [autoCompactContext, autoCompactContextBusy, juggleworkClient, reloadCoordinator, selectedWorkspaceId]);
 
   useEffect(() => {
-    openworkServerStore.start();
+    juggleworkServerStore.start();
     connectionsStore.start();
     providerAuthStore.start();
     extensionsStore.start();
@@ -1614,11 +1614,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       extensionsStore.dispose();
       providerAuthStore.dispose();
       connectionsStore.dispose();
-      openworkServerStore.dispose();
+      juggleworkServerStore.dispose();
     };
-  }, [connectionsStore, extensionsStore, openworkServerStore, providerAuthStore]);
+  }, [connectionsStore, extensionsStore, juggleworkServerStore, providerAuthStore]);
 
-  const refreshMarketplaceAction = useMemo<OpenworkControlAction>(() => ({
+  const refreshMarketplaceAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "extensions.refresh-marketplace",
     label: "Refresh marketplace extensions",
     description: "Force a fresh sync of organization marketplace plugins from the cloud.",
@@ -1645,7 +1645,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [providerAuthStore, route.tab]);
 
   useEffect(() => {
-    openworkServerStore.syncFromOptions();
+    juggleworkServerStore.syncFromOptions();
     connectionsStore.syncFromOptions();
     providerAuthStore.syncFromOptions();
     extensionsStore.syncFromOptions();
@@ -1653,7 +1653,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     activeClient,
     connectionsStore,
     extensionsStore,
-    openworkServerStore,
+    juggleworkServerStore,
     providerAuthStore,
     selectedWorkspace?.id,
     selectedWorkspace?.workspaceType,
@@ -1682,7 +1682,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const workspaceType = selectedWorkspace?.workspaceType ?? "local";
   const isRemoteWorkspace = workspaceType === "remote";
   const canWriteWorkspacePlugins =
-    !isRemoteWorkspace || openworkServerSnapshot.openworkServerCanWritePlugins;
+    !isRemoteWorkspace || juggleworkServerSnapshot.juggleworkServerCanWritePlugins;
   const pluginsAccessHint =
     isRemoteWorkspace && !canWriteWorkspacePlugins ? t("app.plugins_hint_readonly") : null;
   const defaultModelLabel = local.prefs.defaultModel
@@ -1720,8 +1720,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       : [],
   );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
-  const openworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
-    (server) => server.name === "openwork-cloud",
+  const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
+    (server) => server.name === "jugglework-cloud",
   )?.config.url ?? null;
 
   // Build enablement context from all available runtime state.
@@ -1749,7 +1749,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       isToggleEnabled: (ref: string) => {
         const catalog = connectionsStore.quickConnect;
         const match = catalog.find((e: { id?: string; serverName?: string }) => (e.id ?? e.serverName) === ref);
-        return match ? isOpenWorkExtensionEnabled(match) : false;
+        return match ? isJuggleWorkExtensionEnabled(match) : false;
       },
     };
   }, [computerUsePermissions, connectionsSnapshot, extensionStateVersion, providerConnectedIds, userEnvKeys]);
@@ -1757,20 +1757,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const restartExtensionLocalServer = useCallback(async () => {
     if (!isDesktopRuntime()) return false;
     try {
-      await openworkServerRestart({
+      await juggleworkServerRestart({
         remoteAccessEnabled:
-          readOpenworkServerSettings().remoteAccessEnabled === true,
+          readJuggleWorkServerSettings().remoteAccessEnabled === true,
       });
-      await openworkServerStore.reconnectOpenworkServer();
+      await juggleworkServerStore.reconnectJuggleWorkServer();
       await refreshRouteState();
       return true;
     } catch {
       return false;
     }
-  }, [openworkServerStore, refreshRouteState]);
+  }, [juggleworkServerStore, refreshRouteState]);
   const extensionController = useSettingsExtensionController({
-    openworkServerClient: selectedWorkspaceEndpoint?.client ?? openworkClient,
-    hostOpenworkServerClient: openworkClient,
+    juggleworkServerClient: selectedWorkspaceEndpoint?.client ?? juggleworkClient,
+    hostJuggleWorkServerClient: juggleworkClient,
     enablementContext,
     mcpServers: connectionsSnapshot.mcpServers,
     mcpConnectingName: connectionsSnapshot.mcpConnectingName,
@@ -1831,7 +1831,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     loaded: orgMcpConnections.loaded,
     error: orgMcpConnections.error,
   });
-  const diagnosticsClient = selectedWorkspaceEndpoint?.client ?? openworkClient;
+  const diagnosticsClient = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
   const diagnosticsWorkspaceAllowed = isAgentContextDiagnosticsWorkspaceAllowed(selectedWorkspace);
   const diagnosticsAvailable = Boolean(
     diagnosticsClient
@@ -1839,7 +1839,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     && diagnosticsWorkspaceAllowed,
   );
   const diagnosticsUnavailableReason = selectedWorkspace?.workspaceType === "remote"
-    && selectedWorkspace.remoteType !== "openwork"
+    && selectedWorkspace.remoteType !== "jugglework"
     ? "direct-remote-opencode" as const
     : null;
   const diagnosticsWorkspaceType = selectedWorkspace?.workspaceType === "remote"
@@ -1868,7 +1868,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     token,
   ]);
   const runAgentContextDiagnostics = useCallback(async () => {
-    const client = selectedWorkspaceEndpoint?.client ?? openworkClient;
+    const client = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
     const workspaceId = runtimeWorkspaceId?.trim() ?? "";
     if (
       !client
@@ -1885,14 +1885,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     });
     return client.runAgentContextDiagnostics(workspaceId, observations);
   }, [
-    openworkClient,
+    juggleworkClient,
     organizationConnectionsProbe,
     orgMcpConnections.connections,
     runtimeWorkspaceId,
     selectedWorkspace,
     selectedWorkspaceEndpoint,
   ]);
-  const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
+  const routeJuggleWorkStatus = juggleworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
     : null;
@@ -1905,13 +1905,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       });
     }
   }, [notFoundRouteError]);
-  const routeOpenworkCapabilities: OpenworkServerCapabilities | null = openworkClient
-    ? ROUTE_OPENWORK_CAPABILITIES
+  const routeJuggleWorkCapabilities: JuggleWorkServerCapabilities | null = juggleworkClient
+    ? ROUTE_JUGGLEWORK_CAPABILITIES
     : null;
-  const environmentRuntimeKey = buildOpenworkEnvRuntimeKey({
-    baseUrl: openworkServerSnapshot.openworkServerBaseUrl || openworkServerSnapshot.openworkServerUrl,
-    pid: openworkServerSnapshot.openworkServerHostInfo?.pid ?? null,
-    port: openworkServerSnapshot.openworkServerHostInfo?.port ?? null,
+  const environmentRuntimeKey = buildJuggleWorkEnvRuntimeKey({
+    baseUrl: juggleworkServerSnapshot.juggleworkServerBaseUrl || juggleworkServerSnapshot.juggleworkServerUrl,
+    pid: juggleworkServerSnapshot.juggleworkServerHostInfo?.pid ?? null,
+    port: juggleworkServerSnapshot.juggleworkServerHostInfo?.port ?? null,
   });
 
   const handleApplyEnvironmentChanges = async () => {
@@ -1940,9 +1940,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       preferSidecar: true,
       runtime: "direct",
       workspacePaths,
-      openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      juggleworkRemoteAccess: juggleworkServerSnapshot.juggleworkServerSettings.remoteAccessEnabled === true,
     });
-    const reconnected = await openworkServerStore.reconnectOpenworkServer();
+    const reconnected = await juggleworkServerStore.reconnectJuggleWorkServer();
     if (!reconnected) {
       await refreshRouteState().catch(() => {});
       return { statusMessage: t("settings.environment.apply_refresh_failed") };
@@ -1997,11 +1997,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!trimmed) return;
     setRenameWorkspaceBusy(true);
     try {
-      if (!openworkClient) {
+      if (!juggleworkClient) {
         toast.error("JuggleWork server is unavailable. Reconnect the server before renaming workspaces.");
         return;
       }
-      await openworkClient.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
+      await juggleworkClient.updateWorkspaceDisplayName(renameWorkspaceId, trimmed);
       setRenameWorkspaceId(null);
       setRenameWorkspaceTitle("");
       await refreshRouteState();
@@ -2012,7 +2012,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setRenameWorkspaceBusy(false);
     }
-  }, [openworkClient, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
+  }, [juggleworkClient, refreshRouteState, renameWorkspaceId, renameWorkspaceTitle]);
 
   const handleRevealWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2043,8 +2043,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       const message = t("workspace_list.remove_confirm") || "Remove this workspace from the sidebar?";
       if (!window.confirm(message)) return;
     }
-    if (openworkClient) {
-      await openworkClient.deleteWorkspace(workspaceId).catch(() => undefined);
+    if (juggleworkClient) {
+      await juggleworkClient.deleteWorkspace(workspaceId).catch(() => undefined);
     }
     if (isDesktopRuntime()) {
       await workspaceForget(workspaceId).catch(() => undefined);
@@ -2058,7 +2058,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     }
     await refreshRouteState();
-  }, [openworkClient, refreshRouteState, selectedWorkspaceId, workspaces]);
+  }, [juggleworkClient, refreshRouteState, selectedWorkspaceId, workspaces]);
 
   const handleCreateWorkspace = async (preset: WorkspacePreset, folder: string | null) => {
     if (!folder) return;
@@ -2067,8 +2067,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     try {
       const workspaceName = folderNameFromPath(folder);
       let list: WorkspaceList | null = null;
-      if (openworkClient) {
-        list = await openworkClient
+      if (juggleworkClient) {
+        list = await juggleworkClient
           .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
           .catch(() => null);
       }
@@ -2090,21 +2090,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   };
 
   const handleCreateRemoteWorkspace = async (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
+    juggleworkHostUrl?: string | null;
+    juggleworkToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
   }) => {
-    const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
+    const baseUrlValue = input.juggleworkHostUrl?.trim() ?? "";
     if (!baseUrlValue) return false;
     setCreateWorkspaceRemoteBusy(true);
     setCreateWorkspaceRemoteError(null);
     try {
-      const remoteType: "openwork" = "openwork";
+      const remoteType: "jugglework" = "jugglework";
       const payload = {
         baseUrl: baseUrlValue,
-        openworkHostUrl: baseUrlValue,
-        openworkToken: input.openworkToken?.trim() || null,
+        juggleworkHostUrl: baseUrlValue,
+        juggleworkToken: input.juggleworkToken?.trim() || null,
         displayName: input.displayName?.trim() || null,
         directory: input.directory?.trim() || null,
         remoteType,
@@ -2112,8 +2112,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       let list: WorkspaceList | null = null;
       if (isDesktopRuntime()) {
         list = await workspaceCreateRemote(payload);
-      } else if (openworkClient) {
-        list = await openworkClient.createRemoteWorkspace(payload).catch(() => null);
+      } else if (juggleworkClient) {
+        list = await juggleworkClient.createRemoteWorkspace(payload).catch(() => null);
       }
       if (!list) {
         throw new Error("JuggleWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
@@ -2158,16 +2158,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             developerMode={developerMode}
             onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
             onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
-            onReportIssue={() => platform.openLink("https://github.com/different-ai/openwork/issues/new?template=bug.yml")}
+            onReportIssue={() => platform.openLink("https://github.com/juggleai/jugglework-desktop/issues/new?template=bug.yml")}
           />
         );
       case "permissions":
         return (
           <SettingsStack>
             <AuthorizedFoldersPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              openworkServerCapabilities={routeOpenworkCapabilities}
+              juggleworkServerClient={juggleworkClient}
+              juggleworkServerStatus={routeJuggleWorkStatus}
+              juggleworkServerCapabilities={routeJuggleWorkCapabilities}
               runtimeWorkspaceId={runtimeWorkspaceId}
               selectedWorkspaceRoot={selectedWorkspaceRoot}
               activeWorkspaceType={workspaceType}
@@ -2204,14 +2204,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
-              ...(openWorkModelsEntitled || openWorkModelsAvailable ? ["openwork"] : []),
+              ...(juggleWorkModelsEntitled || juggleWorkModelsAvailable ? ["jugglework"] : []),
             ])}
-            showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-            showOpenWorkModelsConnect={showOpenWorkModelsConnect}
-            showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
-            onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
-            onRefreshOpenWorkModels={refreshOpenWorkModels}
-            onDismissOpenWorkModels={dismissOpenWorkModelsPromo}
+            showJuggleWorkModelsSubscribe={showJuggleWorkModelsSubscribe}
+            showJuggleWorkModelsConnect={showJuggleWorkModelsConnect}
+            showJuggleWorkModelsSyncing={showJuggleWorkModelsSyncing}
+            onSubscribeJuggleWorkModels={subscribeToJuggleWorkModels}
+            onRefreshJuggleWorkModels={refreshJuggleWorkModels}
+            onDismissJuggleWorkModels={dismissJuggleWorkModelsPromo}
             cloudProvidersView={
               <CloudProvidersView
                 embedded
@@ -2310,7 +2310,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   void connectionsStore.removeMcp(name);
                 }}
                 setMcpEnabled={
-                  routeOpenworkStatus === "connected" && routeOpenworkCapabilities?.mcp?.write
+                  routeJuggleWorkStatus === "connected" && routeJuggleWorkCapabilities?.mcp?.write
                     ? (name, enabled) => connectionsStore.setMcpEnabled(name, enabled)
                     : undefined
                 }
@@ -2356,7 +2356,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <ConnectView
             developerMode={developerMode}
             session={denSession}
-            openworkClient={selectedWorkspaceEndpoint?.client ?? openworkClient}
+            juggleworkClient={selectedWorkspaceEndpoint?.client ?? juggleworkClient}
             workspaceId={runtimeWorkspaceId}
             currentModel={currentCloudMcpModel}
             onCloudMcpHealthChange={setCloudMcpHealth}
@@ -2384,22 +2384,22 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             busy={busy}
             clientConnected={Boolean(opencodeClient)}
             opencodeConnectStatus={null}
-            openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
+            juggleworkServerStatus={juggleworkServerSnapshot.juggleworkServerStatus}
             developerMode={developerMode}
             toggleDeveloperMode={() => setDeveloperMode((current) => {
               const next = !current;
-              try { window.localStorage.setItem("openwork.developerMode", next ? "1" : "0"); } catch {}
+              try { window.localStorage.setItem("jugglework.developerMode", next ? "1" : "0"); } catch {}
               return next;
             })}
             opencodeDevModeEnabled={false}
             openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
-            cloudMcpUrl={openworkCloudMcpUrl}
-            canMigrateRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
+            cloudMcpUrl={juggleworkCloudMcpUrl}
+            canMigrateRuntimeConfig={Boolean(juggleworkClient && selectedWorkspaceId)}
             migrateRuntimeConfig={async () => {
-              if (!openworkClient || !selectedWorkspaceId) {
+              if (!juggleworkClient || !selectedWorkspaceId) {
                 throw new Error("Select a workspace before migrating legacy runtime config.");
               }
-              const result = await openworkClient.migrateRuntimeConfig(selectedWorkspaceId);
+              const result = await juggleworkClient.migrateRuntimeConfig(selectedWorkspaceId);
               if (result.migrated) {
                 void connectionsStore.refreshMcpServers();
                 void extensionsStore.refreshPlugins();
@@ -2407,10 +2407,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               return { migrated: result.migrated, keys: result.keys };
             }}
             getRuntimeConfigStatus={async () => {
-              if (!openworkClient || !selectedWorkspaceId) {
+              if (!juggleworkClient || !selectedWorkspaceId) {
                 throw new Error("Select a workspace to inspect runtime config.");
               }
-              return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
+              return juggleworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
             }}
             cloudMcpHealth={cloudMcpHealth}
             refreshCloudMcpHealth={refreshCloudMcpHealth}
@@ -2458,7 +2458,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <RecoveryView
             anyActiveRuns={false}
-            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
+            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/jugglework.json` : ""}
             resetConfigBusy={resetConfigBusy}
             onResetAppConfigDefaults={() => {}}
             configActionStatus={configActionStatus}
@@ -2467,13 +2467,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onRepairOpencodeCache={() => {}}
             dockerCleanupBusy={false}
             dockerCleanupResult={null}
-            onCleanupOpenworkDockerContainers={() => {}}
+            onCleanupJuggleWorkDockerContainers={() => {}}
           />
         );
       case "environment":
         return (
           <EnvironmentView
-            client={openworkServerSnapshot.openworkServerClient}
+            client={juggleworkServerSnapshot.juggleworkServerClient}
             isRemoteWorkspace={isRemoteWorkspace}
             onApplyChanges={isDesktopRuntime() && !isRemoteWorkspace ? handleApplyEnvironmentChanges : undefined}
             applyBlocked={activeReloadBlockingSessions.length > 0}
@@ -2513,7 +2513,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceColor={selectedWorkspaceColor}
         workspaces={workspaceOptions}
         onSelectWorkspace={handleSelectSettingsWorkspace}
-        headerStatus={routeOpenworkStatus}
+        headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
         compact={props.embedded}
@@ -2578,8 +2578,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        showOpenWorkModelsSubscribe={showOpenWorkModelsSubscribe}
-        onSubscribeOpenWorkModels={subscribeToOpenWorkModels}
+        showJuggleWorkModelsSubscribe={showJuggleWorkModelsSubscribe}
+        onSubscribeJuggleWorkModels={subscribeToJuggleWorkModels}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <CreateWorkspaceModal

@@ -281,9 +281,9 @@ async function waitForServerListening(child, logStream) {
   });
 }
 
-async function startOpenworkServer(paths, serverPort, opencodeBin) {
+async function startJuggleWorkServer(paths, serverPort, opencodeBin) {
   await mkdir(paths.workspaceRoot, { recursive: true });
-  await mkdir(paths.xdgOpenwork, { recursive: true });
+  await mkdir(paths.xdgJuggleWork, { recursive: true });
   await mkdir(paths.home, { recursive: true });
   await mkdir(paths.logs, { recursive: true });
   const serverLog = join(paths.logs, "server.log");
@@ -295,9 +295,9 @@ async function startOpenworkServer(paths, serverPort, opencodeBin) {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
-      OPENWORK_MANAGE_OPENCODE: "1",
-      OPENWORK_OPENCODE_BIN: opencodeBin,
-      OPENWORK_SERVER_CONFIG: join(paths.xdgOpenwork, "server.json"),
+      JUGGLEWORK_MANAGE_OPENCODE: "1",
+      JUGGLEWORK_OPENCODE_BIN: opencodeBin,
+      JUGGLEWORK_SERVER_CONFIG: join(paths.xdgJuggleWork, "server.json"),
       XDG_CONFIG_HOME: paths.xdg,
       HOME: paths.home,
     },
@@ -356,7 +356,7 @@ async function pollHealedHealth(baseUrl, workspaceId) {
   const started = Date.now();
   let last = null;
   while (Date.now() - started < 30_000) {
-    last = await serverJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health`);
+    last = await serverJson(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/jugglework-cloud/health`);
     if (isHealthConnected(last)) return last;
     await sleep(1000);
   }
@@ -420,26 +420,26 @@ async function writeFinalJson(value) {
 }
 
 async function main() {
-  for (const name of ["DEN_API_LOCAL", "OPENWORK_OPENCODE_BIN", "REPRO_DIR"]) envString(name);
+  for (const name of ["DEN_API_LOCAL", "JUGGLEWORK_OPENCODE_BIN", "REPRO_DIR"]) envString(name);
   const denApiUrl = stripTrailingSlashes(envString("DEN_API_LOCAL"));
-  const opencodeBin = envString("OPENWORK_OPENCODE_BIN");
+  const opencodeBin = envString("JUGGLEWORK_OPENCODE_BIN");
   const reproDir = envString("REPRO_DIR");
   const delayMs = envDelayMs();
   const activeWindowMs = windowMs();
   const serverPort = envPort("SERVER_PORT", 8790);
   const proxyPort = envPort("PROXY_PORT", 8791);
-  const paths = { workspaceRoot: join(reproDir, "ws"), xdg: join(reproDir, "xdg"), xdgOpenwork: join(reproDir, "xdg", "openwork"), home: join(reproDir, "home"), logs: join(reproDir, "logs") };
+  const paths = { workspaceRoot: join(reproDir, "ws"), xdg: join(reproDir, "xdg"), xdgJuggleWork: join(reproDir, "xdg", "jugglework"), home: join(reproDir, "home"), logs: join(reproDir, "logs") };
 
   const den = await bootstrapDen(denApiUrl);
   const proxy = await startDelayProxy(denApiUrl, proxyPort);
-  const openwork = await startOpenworkServer(paths, serverPort, opencodeBin);
-  const workspaces = await serverJson(openwork.baseUrl, "/workspaces");
+  const jugglework = await startJuggleWorkServer(paths, serverPort, opencodeBin);
+  const workspaces = await serverJson(jugglework.baseUrl, "/workspaces");
   const workspaceId = firstWorkspaceId(workspaces);
   log(`Using workspace ${workspaceId}`);
 
   const reconcilePayload = {
     workspaceId,
-    name: "openwork-cloud",
+    name: "jugglework-cloud",
     config: {
       type: "remote",
       url: `http://127.0.0.1:${proxyPort}/mcp/agent`,
@@ -457,35 +457,35 @@ async function main() {
     trigger: "repro-engine-mcp-evidence",
   };
 
-  log("PHASE 1: seeding delayed openwork-cloud reconcile");
+  log("PHASE 1: seeding delayed jugglework-cloud reconcile");
   const armed = await armProxy(proxyPort, delayMs, activeWindowMs);
   const armedUntilMs = Number(own(armed, "armedUntilMs"));
   if (!Number.isFinite(armedUntilMs)) throw new Error(`Proxy arm response did not include armedUntilMs: ${JSON.stringify(armed)}`);
-  const seedReconcile = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`, {
+  const seedReconcile = await serverJson(jugglework.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/jugglework-cloud/reconcile`, {
     method: "POST",
     body: JSON.stringify(reconcilePayload),
   });
-  const seedMcp = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
-  const seedHealth = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/health`);
+  const seedMcp = await serverJson(jugglework.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
+  const seedHealth = await serverJson(jugglework.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp/jugglework-cloud/health`);
 
   log("PHASE 2: waiting for delayed Den MCP handshake to heal live engine state");
   await sleep(armedUntilMs + 8000 - Date.now());
-  const healedHealth = await pollHealedHealth(openwork.baseUrl, workspaceId);
-  const healedMcp = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
+  const healedHealth = await pollHealedHealth(jugglework.baseUrl, workspaceId);
+  const healedMcp = await serverJson(jugglework.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/mcp`);
 
   log("PHASE 3: collecting agent-context diagnostics");
   const diagnosticsRequest = {
     organizationConnectionsProbe: { status: "observed", code: null, totalCount: 0, truncated: false },
     organizationConnections: [],
   };
-  const diagnosticsReport = await serverJson(openwork.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/diagnostics/agent-context`, {
+  const diagnosticsReport = await serverJson(jugglework.baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/diagnostics/agent-context`, {
     method: "POST",
     body: JSON.stringify(diagnosticsRequest),
   });
   const checks = Array.isArray(own(diagnosticsReport, "checks")) ? own(diagnosticsReport, "checks") : [];
   const engineMcpSyncCheck = checks.find((check) => own(check, "id") === "engine-mcp-sync") ?? null;
   const mcps = Array.isArray(own(diagnosticsReport, "mcps")) ? own(diagnosticsReport, "mcps") : [];
-  const openworkCloudSyncStatuses = mcps.filter((mcp) => own(mcp, "name") === "openwork-cloud").map((mcp) => ({
+  const juggleworkCloudSyncStatuses = mcps.filter((mcp) => own(mcp, "name") === "jugglework-cloud").map((mcp) => ({
     name: own(mcp, "name"), source: own(mcp, "source"), type: own(mcp, "type"), enabled: own(mcp, "enabled"),
     syncStatus: own(mcp, "syncStatus"), liveEngineStatus: own(mcp, "liveEngineStatus"),
   }));
@@ -498,7 +498,7 @@ async function main() {
     phases: {
       seed: { reconcile: seedReconcile, mcp: seedMcp, health: seedHealth },
       healed: { mcp: healedMcp, health: healedHealth },
-      diagnostics: { engineMcpSyncCheck, openworkCloudSyncStatuses, firstFailedCheck: own(diagnosticsReport, "firstFailedCheck") ?? null, overall: own(diagnosticsReport, "overall") ?? null },
+      diagnostics: { engineMcpSyncCheck, juggleworkCloudSyncStatuses, firstFailedCheck: own(diagnosticsReport, "firstFailedCheck") ?? null, overall: own(diagnosticsReport, "overall") ?? null },
     },
     proxyHolds: proxy.holds,
     contradictionReproduced,

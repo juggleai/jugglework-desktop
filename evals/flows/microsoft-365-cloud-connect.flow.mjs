@@ -23,14 +23,14 @@ import {
 
 const vo = await loadVoiceoverParagraphs("microsoft-365-cloud-connect");
 
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
-const MOCK_SERVER_URL = (process.env.OPENWORK_EVAL_CLOUD_CONNECT_MOCK_URL ?? "http://127.0.0.1:3979")
+const ADMIN_EMAIL = process.env.JUGGLEWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.JUGGLEWORK_EVAL_DEMO_PASSWORD?.trim() || "JuggleWorkDemo123!";
+const MOCK_SERVER_URL = (process.env.JUGGLEWORK_EVAL_CLOUD_CONNECT_MOCK_URL ?? "http://127.0.0.1:3979")
   .trim()
   .replace(/\/+$/, "");
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
 const CLIENT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-const CLIENT_SECRET = "openwork-microsoft-mock-secret";
+const CLIENT_SECRET = "jugglework-microsoft-mock-secret";
 const MICROSOFT_DEFAULT_FEATURES = ["mailRead", "calendarRead", "filesRead"];
 const MICROSOFT_SCOPES = ["Mail.Read", "Calendars.Read", "Files.Read"];
 const MICROSOFT_EXTENDED_FEATURES = [
@@ -223,7 +223,7 @@ export default {
   title: "Admins choose delegated Microsoft 365 capabilities; members connect, use them, reconnect for changes, and disconnect safely",
   kind: "user-facing",
   preserveTheme: true,
-  requiredEnv: ["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DEN_WEB_URL"],
+  requiredEnv: ["JUGGLEWORK_EVAL_DEN_API_URL", "JUGGLEWORK_EVAL_DEN_WEB_URL"],
   steps: [
     {
       name: "Setup: mock services are healthy and the demo owner starts disconnected",
@@ -241,8 +241,8 @@ export default {
         witness(ctx, reset.ok, "The Cloud Connect service mock starts from a clean request log.", { status: reset.status });
 
         state.adminSession = await signInApi(ADMIN_EMAIL, ADMIN_PASSWORD);
-        if (!state.adminSession && ctx.env.OPENWORK_EVAL_DEN_TOKEN?.trim()) {
-          state.adminSession = ctx.env.OPENWORK_EVAL_DEN_TOKEN.trim();
+        if (!state.adminSession && ctx.env.JUGGLEWORK_EVAL_DEN_TOKEN?.trim()) {
+          state.adminSession = ctx.env.JUGGLEWORK_EVAL_DEN_TOKEN.trim();
         }
         witness(ctx, Boolean(state.adminSession), `The demo owner can sign in as ${ADMIN_EMAIL}.`);
 
@@ -373,7 +373,7 @@ export default {
             await ctx.expectText("Microsoft 365 is connected");
             ctx.switchBack();
             const closed = await fetch(`${ctx.cdpBaseUrl.replace(/\/$/, "")}/json/close/${encodeURIComponent(oauthTab.id)}`).catch(() => null);
-            witness(ctx, Boolean(closed?.ok), "The completed OAuth popup closes before returning to OpenWork.", {
+            witness(ctx, Boolean(closed?.ok), "The completed OAuth popup closes before returning to JuggleWork.", {
               status: closed?.status ?? null,
             });
           },
@@ -638,7 +638,7 @@ export default {
             });
             const file = await authenticatedApi("/v1/capabilities/microsoft-365/drive-files", {
               method: "PUT",
-              body: JSON.stringify({ path: "OpenWork/permission-parity.txt", content: "Microsoft 365 permission parity verified." }),
+              body: JSON.stringify({ path: "JuggleWork/permission-parity.txt", content: "Microsoft 365 permission parity verified." }),
             });
             const chats = await authenticatedApi("/v1/capabilities/microsoft-365/teams-chats?maxResults=5");
             const chatId = chats.body.chats?.[0]?.id;
@@ -649,8 +649,8 @@ export default {
             });
             witness(
               ctx,
-              draft.response.ok && draft.body.draft?.id === "draft-openwork-test"
-                && event.response.ok && event.body.event?.id === "event-openwork-test"
+              draft.response.ok && draft.body.draft?.id === "draft-jugglework-test"
+                && event.response.ok && event.body.event?.id === "event-jugglework-test"
                 && file.response.ok && file.body.file?.id === "file-permission-parity",
               "The reconnected member can create an Outlook draft and calendar event and write a bounded OneDrive text file.",
               {
@@ -661,7 +661,7 @@ export default {
             );
             witness(
               ctx,
-              chats.response.ok && chatId === "chat-openwork-test"
+              chats.response.ok && chatId === "chat-jugglework-test"
                 && messages.response.ok && messages.body.messages?.[0]?.id === "teams-message-existing"
                 && sent.response.ok && sent.body.message?.id === "teams-message-sent",
               "The reconnected member can find an existing Teams chat, read it, and send one message without creating a chat.",
@@ -677,8 +677,8 @@ export default {
               ctx,
               requests.some((request) => request.path === "/graph/v1.0/me/messages" && request.method === "POST")
                 && requests.some((request) => request.path === "/graph/v1.0/me/events" && request.method === "POST")
-                && requests.some((request) => request.path === "/graph/v1.0/me/drive/root:/OpenWork/permission-parity.txt:/content" && request.method === "PUT")
-                && requests.some((request) => request.path === "/graph/v1.0/chats/chat-openwork-test/messages" && request.method === "POST"),
+                && requests.some((request) => request.path === "/graph/v1.0/me/drive/root:/JuggleWork/permission-parity.txt:/content" && request.method === "PUT")
+                && requests.some((request) => request.path === "/graph/v1.0/chats/chat-jugglework-test/messages" && request.method === "POST"),
               "The end-to-end proof reaches the deterministic Microsoft Graph mutation endpoints with the expected HTTP methods.",
               requests.map((request) => ({ method: request.method, path: request.path })),
             );

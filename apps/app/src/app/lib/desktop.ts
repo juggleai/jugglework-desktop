@@ -3,13 +3,13 @@ import { nativeDeepLinkEvent } from "./deep-link-bridge";
 export type * from "./desktop-types";
 export type {
   EngineInfo,
-  OpenworkServerInfo,
+  JuggleWorkServerInfo,
   EngineDoctorResult,
   WorkspaceInfo,
   WorkspaceList,
   WorkspaceExportSummary,
   OpencodeCommandDraft,
-  WorkspaceOpenworkConfig,
+  WorkspaceJuggleWorkConfig,
   AppBuildInfo,
   BrandIconApplyResult,
   BrandIconState,
@@ -17,7 +17,7 @@ export type {
   EvalRelaunchResult,
   OrchestratorDetachedHost,
   SandboxDoctorResult,
-  OpenworkDockerCleanupResult,
+  JuggleWorkDockerCleanupResult,
   SandboxDebugProbeResult,
   ExecResult,
   LocalSkillCard,
@@ -62,7 +62,7 @@ export type BrowserProxyState = {
 
 declare global {
   interface Window {
-    __OPENWORK_ELECTRON__?: {
+    __JUGGLEWORK_ELECTRON__?: {
       invokeDesktop?: <C extends DesktopCommandName>(
         command: C,
         ...args: DesktopCommandArgs<C>
@@ -190,7 +190,7 @@ async function invokeElectronHelper<C extends DesktopCommandName>(
   command: C,
   ...args: DesktopCommandArgs<C>
 ): Promise<DesktopCommandResult<C>> {
-  const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+  const invokeDesktop = window.__JUGGLEWORK_ELECTRON__?.invokeDesktop;
   if (!invokeDesktop) {
     throw new Error(`Electron desktop helper is unavailable: ${command}`);
   }
@@ -239,7 +239,7 @@ export const desktopBridge = new Proxy(electronBridge, {
     if (cached) return cached;
 
     const fn = async (...args: unknown[]) => {
-      const invokeDesktop = window.__OPENWORK_ELECTRON__?.invokeDesktop;
+      const invokeDesktop = window.__JUGGLEWORK_ELECTRON__?.invokeDesktop;
       if (!invokeDesktop) {
         throw new Error(`Electron desktop helper is unavailable: ${prop}`);
       }
@@ -258,7 +258,7 @@ export const desktopBridge = new Proxy(electronBridge, {
 
 // ---------------------------------------------------------------------------
 // desktopFetch — proxies non-loopback requests through the Electron main
-// process. Loopback hosts (the local opencode/openwork server) use the
+// process. Loopback hosts (the local opencode/jugglework server) use the
 // renderer's own fetch, which works against same-machine services. Cross-origin
 // requests that need CORS headers the target does not send (e.g. the Den API on
 // a different control plane) should instead use `desktopFetchViaMain` directly.
@@ -364,7 +364,7 @@ export async function desktopFetchAgentContextDiagnostics(
 // ---------------------------------------------------------------------------
 
 export async function openDesktopUrl(url: string): Promise<void> {
-  const openExternal = window.__OPENWORK_ELECTRON__?.shell?.openExternal;
+  const openExternal = window.__JUGGLEWORK_ELECTRON__?.shell?.openExternal;
   if (openExternal) {
     const result = await openExternal(url);
     if (result && result.ok === false) {
@@ -401,18 +401,18 @@ export async function applyBrandAppName(appName: string | null): Promise<string>
 }
 
 export async function applyBrandIcon(url: string | null): Promise<BrandIconApplyResult> {
-  const apply = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.apply : undefined;
+  const apply = typeof window !== "undefined" ? window.__JUGGLEWORK_ELECTRON__?.brandIcon?.apply : undefined;
   if (!apply) return { ok: false, reason: "bridge-unavailable" };
   return apply(url);
 }
 
 export async function getBrandIconState(): Promise<BrandIconState | null> {
-  const getState = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.brandIcon?.getState : undefined;
+  const getState = typeof window !== "undefined" ? window.__JUGGLEWORK_ELECTRON__?.brandIcon?.getState : undefined;
   return getState ? getState() : null;
 }
 
 export async function evalRelaunchDesktopApp(): Promise<EvalRelaunchResult> {
-  const relaunch = typeof window !== "undefined" ? window.__OPENWORK_ELECTRON__?.dev?.evalRelaunch : undefined;
+  const relaunch = typeof window !== "undefined" ? window.__JUGGLEWORK_ELECTRON__?.dev?.evalRelaunch : undefined;
   if (!relaunch) {
     throw new Error("Electron eval relaunch helper is unavailable.");
   }
@@ -437,7 +437,7 @@ export async function openDesktopWithApp(target: string, appPath: string): Promi
 }
 
 export async function relaunchDesktopApp(): Promise<void> {
-  await window.__OPENWORK_ELECTRON__?.shell?.relaunch?.();
+  await window.__JUGGLEWORK_ELECTRON__?.shell?.relaunch?.();
 }
 
 export async function getDesktopHomeDir(): Promise<string> {
@@ -462,7 +462,7 @@ export async function subscribeDesktopDeepLinks(
     }
   };
   window.addEventListener(nativeDeepLinkEvent, listener as EventListener);
-  const initialUrls = window.__OPENWORK_ELECTRON__?.meta?.initialDeepLinks;
+  const initialUrls = window.__JUGGLEWORK_ELECTRON__?.meta?.initialDeepLinks;
   if (Array.isArray(initialUrls) && initialUrls.length > 0) {
     handler(initialUrls);
   }
@@ -473,7 +473,7 @@ export async function subscribeDesktopDeepLinks(
 
 export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | null | undefined {
   if (typeof window === "undefined") return undefined;
-  return window.__OPENWORK_ELECTRON__?.meta?.desktopBootstrap;
+  return window.__JUGGLEWORK_ELECTRON__?.meta?.desktopBootstrap;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,8 +493,8 @@ const {
   workspaceAddAuthorizedRoot,
   workspaceExportConfig,
   workspaceImportConfig,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceJuggleWorkRead,
+  workspaceJuggleWorkWrite,
   opencodeCommandList,
   opencodeCommandWrite,
   opencodeCommandDelete,
@@ -507,15 +507,15 @@ const {
   setDesktopBootstrapConfig,
   connectLinkVerify,
   connectLinkAccept,
-  nukeOpenworkAndOpencodeConfigPreview,
-  nukeOpenworkAndOpencodeConfigAndExit,
+  nukeJuggleWorkAndOpencodeConfigPreview,
+  nukeJuggleWorkAndOpencodeConfigAndExit,
   orchestratorStartDetached,
   sandboxDoctor,
   sandboxStop,
-  sandboxCleanupOpenworkContainers,
+  sandboxCleanupJuggleWorkContainers,
   sandboxDebugProbe,
-  openworkServerInfo,
-  openworkServerRestart,
+  juggleworkServerInfo,
+  juggleworkServerRestart,
   runtimeBootstrap,
   engineInfo,
   engineDoctor,
@@ -533,7 +533,7 @@ const {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
-  resetOpenworkState,
+  resetJuggleWorkState,
   resetOpencodeCache,
   opencodeMcpAuth,
   setWindowDecorations,
@@ -552,8 +552,8 @@ export {
   workspaceAddAuthorizedRoot,
   workspaceExportConfig,
   workspaceImportConfig,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceJuggleWorkRead,
+  workspaceJuggleWorkWrite,
   opencodeCommandList,
   opencodeCommandWrite,
   opencodeCommandDelete,
@@ -566,15 +566,15 @@ export {
   setDesktopBootstrapConfig,
   connectLinkVerify,
   connectLinkAccept,
-  nukeOpenworkAndOpencodeConfigPreview,
-  nukeOpenworkAndOpencodeConfigAndExit,
+  nukeJuggleWorkAndOpencodeConfigPreview,
+  nukeJuggleWorkAndOpencodeConfigAndExit,
   orchestratorStartDetached,
   sandboxDoctor,
   sandboxStop,
-  sandboxCleanupOpenworkContainers,
+  sandboxCleanupJuggleWorkContainers,
   sandboxDebugProbe,
-  openworkServerInfo,
-  openworkServerRestart,
+  juggleworkServerInfo,
+  juggleworkServerRestart,
   runtimeBootstrap,
   engineInfo,
   engineDoctor,
@@ -592,7 +592,7 @@ export {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
-  resetOpenworkState,
+  resetJuggleWorkState,
   resetOpencodeCache,
   opencodeMcpAuth,
   setWindowDecorations,

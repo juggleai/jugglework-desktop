@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { OpenworkServerClient } from "../src/app/lib/openwork-server";
+import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import type { WorkspaceInfo } from "../src/app/lib/desktop";
 import { getWorkspaceTaskLoadErrorDisplay } from "../src/app/utils";
 import {
@@ -18,14 +18,14 @@ function workspace(overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
     path: "",
     preset: "remote",
     workspaceType: "remote",
-    remoteType: "openwork",
-    openworkHostUrl: "https://worker.example.com/w/ws_remote",
-    openworkToken: "ow-token",
+    remoteType: "jugglework",
+    juggleworkHostUrl: "https://worker.example.com/w/ws_remote",
+    juggleworkToken: "ow-token",
     ...overrides,
   };
 }
 
-function client(overrides: Partial<OpenworkServerClient> = {}): OpenworkServerClient {
+function client(overrides: Partial<JuggleWorkServerClient> = {}): JuggleWorkServerClient {
   return {
     baseUrl: "https://worker.example.com/w/ws_remote",
     token: "ow-token",
@@ -52,7 +52,7 @@ function client(overrides: Partial<OpenworkServerClient> = {}): OpenworkServerCl
       tokenSource: { client: "file", host: "file" },
     }),
     capabilities: async () => ({
-      skills: { read: true, write: true, source: "openwork" },
+      skills: { read: true, write: true, source: "jugglework" },
       plugins: { read: true, write: true },
       mcp: { read: true, write: true },
       commands: { read: true, write: true },
@@ -71,7 +71,7 @@ function client(overrides: Partial<OpenworkServerClient> = {}): OpenworkServerCl
       activeId: "ws_remote",
     }),
     ...overrides,
-  } as OpenworkServerClient;
+  } as JuggleWorkServerClient;
 }
 
 function serverError(status: number, code: string, message: string) {
@@ -82,8 +82,8 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
   test("builds a host-scoped JuggleWork target from saved worker credentials", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
-        openworkHostUrl: "https://worker.example.com",
-        openworkWorkspaceId: "ws_remote",
+        juggleworkHostUrl: "https://worker.example.com",
+        juggleworkWorkspaceId: "ws_remote",
       }),
     );
 
@@ -106,7 +106,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
   test("fails fast when a remote worker has no endpoint", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
-        openworkHostUrl: "",
+        juggleworkHostUrl: "",
         baseUrl: "",
       }),
     );
@@ -120,7 +120,7 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
   test("fails fast when a remote worker endpoint is invalid", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
-        openworkHostUrl: "not a url",
+        juggleworkHostUrl: "not a url",
       }),
     );
 
@@ -134,8 +134,8 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         remoteType: "opencode",
-        openworkHostUrl: "",
-        openworkToken: "",
+        juggleworkHostUrl: "",
+        juggleworkToken: "",
         baseUrl: "https://opencode.example.com",
       }),
     );
@@ -150,8 +150,8 @@ describe("resolveRemoteWorkspaceConnectionTarget", () => {
     const target = resolveRemoteWorkspaceConnectionTarget(
       workspace({
         remoteType: "opencode",
-        openworkHostUrl: "https://worker.example.com/w/ws_remote",
-        openworkToken: "owt_secret",
+        juggleworkHostUrl: "https://worker.example.com/w/ws_remote",
+        juggleworkToken: "owt_secret",
         baseUrl: "https://opencode.example.com",
       }),
     );
@@ -178,7 +178,7 @@ describe("testRemoteWorkspaceConnection", () => {
   });
 
   test("reports a missing token after proving the worker endpoint is reachable", async () => {
-    const result = await testRemoteWorkspaceConnection(workspace({ openworkToken: "" }), {
+    const result = await testRemoteWorkspaceConnection(workspace({ juggleworkToken: "" }), {
       createClient: () => client(),
     });
 
@@ -186,7 +186,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token is missing");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("reports unhealthy health responses as endpoint failures", async () => {
@@ -201,14 +201,14 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("unhealthy response");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("uses fallback JuggleWork tokens saved on older workspace records", async () => {
     const result = await testRemoteWorkspaceConnection(
       workspace({
-        openworkToken: "",
-        openworkClientToken: "legacy-client-token",
+        juggleworkToken: "",
+        juggleworkClientToken: "legacy-client-token",
       }),
       {
         createClient: (target) => {
@@ -235,7 +235,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("reports a missing workspace separately from a dead worker", async () => {
@@ -252,14 +252,14 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Workspace ws_remote was not found");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("uses workspace list when the saved remote target is not workspace-scoped", async () => {
     const result = await testRemoteWorkspaceConnection(
       workspace({
-        openworkHostUrl: "https://worker.example.com",
-        openworkWorkspaceId: "",
+        juggleworkHostUrl: "https://worker.example.com",
+        juggleworkWorkspaceId: "",
         baseUrl: "",
       }),
       {
@@ -282,8 +282,8 @@ describe("testRemoteWorkspaceConnection", () => {
   test("reports rejected credentials from the workspace list fallback", async () => {
     const result = await testRemoteWorkspaceConnection(
       workspace({
-        openworkHostUrl: "https://worker.example.com",
-        openworkWorkspaceId: "",
+        juggleworkHostUrl: "https://worker.example.com",
+        juggleworkWorkspaceId: "",
         baseUrl: "",
       }),
       {
@@ -300,7 +300,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Token was rejected by worker.example.com");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("reports unauthorized workspace status separately from bad credentials", async () => {
@@ -317,7 +317,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("is not authorized");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("reports endpoint reachability failures from the health probe", async () => {
@@ -334,7 +334,7 @@ describe("testRemoteWorkspaceConnection", () => {
     expect(result.state.status).toBe("error");
     expect(result.state.message).toContain("Cannot reach worker.example.com");
     expect(result.state.message).toContain("Upgrade the JuggleWork host");
-    expect(result.state.message).toContain("team@openworklabs.com");
+    expect(result.state.message).toContain("team@juggle.im");
   });
 
   test("redacts token-like values from diagnostic error messages", async () => {
@@ -370,8 +370,8 @@ describe("remote diagnostic identity", () => {
   });
 
   test("changes when connection credentials change", () => {
-    const before = getRemoteWorkspaceConnectionKey(workspace({ openworkToken: "old-token" }));
-    const after = getRemoteWorkspaceConnectionKey(workspace({ openworkToken: "new-token" }));
+    const before = getRemoteWorkspaceConnectionKey(workspace({ juggleworkToken: "old-token" }));
+    const after = getRemoteWorkspaceConnectionKey(workspace({ juggleworkToken: "new-token" }));
 
     expect(before).not.toBe(after);
   });

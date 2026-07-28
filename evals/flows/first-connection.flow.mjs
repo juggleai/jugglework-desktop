@@ -18,19 +18,19 @@ import { loadVoiceoverParagraphs } from "../runner/voiceover.mjs";
 // The runner fails this flow if the narration drifts from that script.
 const vo = await loadVoiceoverParagraphs("first-connection");
 
-const DEN_API_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_API_URL);
-const DEN_WEB_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_DEN_WEB_URL);
-const ADMIN_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_ADMIN);
-const INVITEE_CDP_URL = cleanBaseUrl(process.env.OPENWORK_EVAL_WEB_CDP_INVITEE);
-const INSTALLER_BIN = process.env.OPENWORK_EVAL_INSTALLER_BIN?.trim() ?? "";
-const MARK_VERIFIED_CMD = process.env.OPENWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
-const ADMIN_EMAIL = process.env.OPENWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
-const ADMIN_PASSWORD = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
+const DEN_API_URL = cleanBaseUrl(process.env.JUGGLEWORK_EVAL_DEN_API_URL);
+const DEN_WEB_URL = cleanBaseUrl(process.env.JUGGLEWORK_EVAL_DEN_WEB_URL);
+const ADMIN_CDP_URL = cleanBaseUrl(process.env.JUGGLEWORK_EVAL_WEB_CDP_ADMIN);
+const INVITEE_CDP_URL = cleanBaseUrl(process.env.JUGGLEWORK_EVAL_WEB_CDP_INVITEE);
+const INSTALLER_BIN = process.env.JUGGLEWORK_EVAL_INSTALLER_BIN?.trim() ?? "";
+const MARK_VERIFIED_CMD = process.env.JUGGLEWORK_EVAL_MARK_VERIFIED_CMD?.trim() || "";
+const ADMIN_EMAIL = process.env.JUGGLEWORK_EVAL_DEMO_EMAIL?.trim() || "alex@acme.test";
+const ADMIN_PASSWORD = process.env.JUGGLEWORK_EVAL_DEMO_PASSWORD?.trim() || "JuggleWorkDemo123!";
 const RUN_TAG = Date.now().toString(36);
-const MEMBER_EMAIL = process.env.OPENWORK_EVAL_MEMBER_EMAIL?.trim() || `riley.first.connection+${RUN_TAG}@acme.test`;
-const MEMBER_PASSWORD = process.env.OPENWORK_EVAL_MEMBER_PASSWORD?.trim() || "OpenWorkDemo123!";
-const BOOTSTRAP_PATH = process.env.OPENWORK_EVAL_BOOTSTRAP_PATH?.trim()
-  || path.join(makeTempDir("openwork-first-connection-bootstrap-"), "desktop-bootstrap.json");
+const MEMBER_EMAIL = process.env.JUGGLEWORK_EVAL_MEMBER_EMAIL?.trim() || `riley.first.connection+${RUN_TAG}@acme.test`;
+const MEMBER_PASSWORD = process.env.JUGGLEWORK_EVAL_MEMBER_PASSWORD?.trim() || "JuggleWorkDemo123!";
+const BOOTSTRAP_PATH = process.env.JUGGLEWORK_EVAL_BOOTSTRAP_PATH?.trim()
+  || path.join(makeTempDir("jugglework-first-connection-bootstrap-"), "desktop-bootstrap.json");
 
 const state = {
   desktopClient: null,
@@ -62,13 +62,13 @@ export default {
   title: "An invited teammate follows one Acme install link from dashboard copy to verified desktop connection",
   kind: "user-facing",
   requiredEnv: [
-    "OPENWORK_EVAL_DEN_API_URL",
-    "OPENWORK_EVAL_DEN_TOKEN",
-    "OPENWORK_EVAL_DEN_WEB_URL",
-    "OPENWORK_EVAL_WEB_CDP_ADMIN",
-    "OPENWORK_EVAL_WEB_CDP_INVITEE",
-    "OPENWORK_EVAL_INSTALLER_BIN",
-    "OPENWORK_EVAL_MARK_VERIFIED_CMD",
+    "JUGGLEWORK_EVAL_DEN_API_URL",
+    "JUGGLEWORK_EVAL_DEN_TOKEN",
+    "JUGGLEWORK_EVAL_DEN_WEB_URL",
+    "JUGGLEWORK_EVAL_WEB_CDP_ADMIN",
+    "JUGGLEWORK_EVAL_WEB_CDP_INVITEE",
+    "JUGGLEWORK_EVAL_INSTALLER_BIN",
+    "JUGGLEWORK_EVAL_MARK_VERIFIED_CMD",
   ],
   steps: [
     {
@@ -78,7 +78,7 @@ export default {
         await withClient(ctx, ADMIN_CDP_URL, async () => {
           await ctx.prove("Alex copies a workspace install link from the dashboard and the token resolves to Acme's required sign-in config", {
             voiceover: vo[0],
-            // "On the OpenWork dashboard home, the admin clicks Download for this workspace"
+            // "On the JuggleWork dashboard home, the admin clicks Download for this workspace"
             action: async () => {
               await ensureAdminToken(ctx);
               await ensureOrgId(ctx);
@@ -145,9 +145,9 @@ export default {
               });
             },
             assert: async () => {
-              await ctx.expectText("Download OpenWork for Acme Robotics");
+              await ctx.expectText("Download JuggleWork for Acme Robotics");
               await ctx.expectText("Apple Silicon (M1+)");
-              await ctx.expectText("Download the OpenWork installer");
+              await ctx.expectText("Download the JuggleWork installer");
               await ctx.expectText("Open the installer and paste this link:");
               await ctx.expectText("Sign in");
               await ctx.expectText("Waiting for sign-in");
@@ -166,7 +166,7 @@ export default {
             },
             screenshot: {
               name: "invitee-acme-install-checklist",
-              requireText: ["Download OpenWork for Acme Robotics", "Download the OpenWork installer", "Open the installer and paste this link:", "Waiting for sign-in"],
+              requireText: ["Download JuggleWork for Acme Robotics", "Download the JuggleWork installer", "Open the installer and paste this link:", "Waiting for sign-in"],
             },
           });
         }, { targetId: state.installPageTargetId });
@@ -186,7 +186,7 @@ export default {
                 ctx.output("mac-installer-redirect", JSON.stringify(state.frame3DownloadRedirect, null, 2));
 
                 state.frame3BareRun = runBareInstallerWithoutConfig();
-                state.frame3Ui = await startInstallerUi("openwork-first-connection-bare-ui-");
+                state.frame3Ui = await startInstallerUi("jugglework-first-connection-bare-ui-");
                 await navigateToAbsolute(ctx, state.frame3Ui.url);
                 await ctx.waitForText("Paste your install link", { timeoutMs: 30_000 });
                 await ctx.waitForText("It's in the copy box on your team's install page", { timeoutMs: 30_000 });
@@ -198,7 +198,7 @@ export default {
 
                 const run = requireBareNoConfigRun(state.frame3BareRun);
                 witness(ctx, run.missing.status === 2, "Bare --headless --dry-run exits setup-required without an install link", run.missing.combined);
-                witness(ctx, run.missing.combined.includes("Paste an OpenWork install link"), "The bare headless installer asks for an OpenWork install link", run.missing.combined);
+                witness(ctx, run.missing.combined.includes("Paste an JuggleWork install link"), "The bare headless installer asks for an JuggleWork install link", run.missing.combined);
                 const writtenBootstraps = run.bootstrapPaths.filter((candidate) => existsSync(candidate));
                 witness(ctx, writtenBootstraps.length === 0, "Bare --headless --dry-run writes no desktop bootstrap, so it cannot default to the wrong server", { bootstrapPaths: run.bootstrapPaths, writtenBootstraps });
                 ctx.output("bare-installer-setup-required", run.missing.combined);
@@ -231,18 +231,18 @@ export default {
               // "They paste the link and the installer confirms the team and server, then installs"
               action: async () => {
                 state.frame4InstallerRun = runInstallerWithInstallLink();
-                state.frame4Ui = await startInstallerUi("openwork-first-connection-link-ui-");
+                state.frame4Ui = await startInstallerUi("jugglework-first-connection-link-ui-");
                 await navigateToAbsolute(ctx, state.frame4Ui.url);
                 await ctx.waitForText("Paste your install link", { timeoutMs: 30_000 });
                 await ctx.waitForText("It's in the copy box on your team's install page", { timeoutMs: 30_000 });
                 await ctx.fill("#install-link", requireStateValue(state.installPageUrl, "install page URL"));
                 await clickExactText(ctx, "Continue", "button");
-                await ctx.waitForText("This sets up OpenWork for Acme Robotics", { timeoutMs: 30_000 });
+                await ctx.waitForText("This sets up JuggleWork for Acme Robotics", { timeoutMs: 30_000 });
               },
               assert: async () => {
                 const run = requireInstallLinkRun(state.frame4InstallerRun);
                 witness(ctx, run.withLink.status === 0, "The bare installer dry-run succeeds when Acme's install link is supplied", run.withLink.combined);
-                witness(ctx, run.withLink.stdout.includes("OpenWork Installer — Acme Robotics"), "The --install-link dry-run resolves to Acme Robotics", run.withLink.stdout);
+                witness(ctx, run.withLink.stdout.includes("JuggleWork Installer — Acme Robotics"), "The --install-link dry-run resolves to Acme Robotics", run.withLink.stdout);
                 witness(ctx, run.withLink.stdout.includes("Configured via install link"), "The --install-link dry-run reports the install-link configuration source", run.withLink.stdout);
                 witness(ctx, run.withLink.stdout.includes("Dry run ok"), "The --install-link dry-run checks the organization-supported app version", run.withLink.stdout);
                 const bootstrap = readBootstrapConfig(ctx, run.bootstrapPath);
@@ -250,14 +250,14 @@ export default {
                 witness(ctx, cleanBaseUrl(bootstrap.parsed.apiBaseUrl) === cleanBaseUrl(state.installConfig.apiUrl), "The --install-link bootstrap apiBaseUrl matches Acme's API URL", bootstrap.parsed);
                 witness(ctx, bootstrap.parsed.requireSignin === true, "The --install-link dry-run writes a required sign-in bootstrap", bootstrap.parsed);
 
-                await ctx.expectText("This sets up OpenWork for Acme Robotics");
+                await ctx.expectText("This sets up JuggleWork for Acme Robotics");
                 await ctx.expectText(new URL(state.installConfig.webUrl).host);
                 await ctx.expectText("Configured via install link");
                 await ctx.expectText("Install");
                 await ctx.screenshot("installer-confirms-acme-after-paste", {
                   claim: "Pasting Acme's install link lets the installer confirm the team and server before installing.",
                   voiceover: vo[3],
-                  requireText: ["This sets up OpenWork for Acme Robotics", new URL(state.installConfig.webUrl).host, "Configured via install link", "Install"],
+                  requireText: ["This sets up JuggleWork for Acme Robotics", new URL(state.installConfig.webUrl).host, "Configured via install link", "Install"],
                 });
 
                 const expired = await prepareExpiredInstallLink(ctx);
@@ -286,39 +286,39 @@ export default {
       name: "Frame 5",
       run: async (ctx) => {
         useDesktopClient(ctx);
-        await ctx.prove("A plain first-run desktop asks whether to use OpenWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server", {
+        await ctx.prove("A plain first-run desktop asks whether to use JuggleWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server", {
           voiceover: vo[4],
-          // "Suppose someone skips all that and installs the plain OpenWork app instead: "
+          // "Suppose someone skips all that and installs the plain JuggleWork app instead: "
           action: async () => {
             await ensureDesktopReady(ctx);
             await captureOriginalDesktopBootstrap(ctx);
             await resetDesktopToDefaultBootstrap(ctx);
             await ctx.eval(`(() => {
-              const raw = localStorage.getItem('openwork.preferences');
+              const raw = localStorage.getItem('jugglework.preferences');
               const prefs = raw ? JSON.parse(raw) : {};
               prefs.hasCompletedOnboarding = false;
-              localStorage.setItem('openwork.preferences', JSON.stringify(prefs));
+              localStorage.setItem('jugglework.preferences', JSON.stringify(prefs));
               location.hash = '#/welcome';
               location.reload();
               return true;
             })()`);
             await ensureDesktopReady(ctx);
-            await ctx.waitForText("Use OpenWork Cloud", { timeoutMs: 45_000 });
+            await ctx.waitForText("Use JuggleWork Cloud", { timeoutMs: 45_000 });
             await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"welcome-join-org\"]'))", {
               timeoutMs: 30_000,
               label: "welcome join organization fork",
             });
-            await ctx.expectText("Use OpenWork Cloud");
+            await ctx.expectText("Use JuggleWork Cloud");
             await ctx.expectText("Join your organization");
             await clickSelector(ctx, '[data-testid="welcome-join-org"]', "join organization fork");
             await ctx.waitForText("Join your organization", { timeoutMs: 20_000 });
             await ctx.fill("#join-organization-input", requireStateValue(state.installPageUrl, "install page URL"));
             await clickExactText(ctx, "Connect", "button");
             await ctx.waitForText(`Connected to ${new URL(state.installConfig.webUrl).host}`, { timeoutMs: 30_000 });
-            await ctx.waitForText("Sign in to OpenWork", { timeoutMs: 60_000 });
+            await ctx.waitForText("Sign in to JuggleWork", { timeoutMs: 60_000 });
           },
           assert: async () => {
-            await ctx.expectText("Sign in to OpenWork");
+            await ctx.expectText("Sign in to JuggleWork");
             const bootstrap = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
             witness(ctx, bootstrap?.requireSignin === true, "Pasting the install link writes a required sign-in bootstrap", bootstrap);
             witness(ctx, cleanBaseUrl(bootstrap?.baseUrl) === cleanBaseUrl(state.installConfig.webUrl), "The desktop bootstrap points at Acme's web server", bootstrap);
@@ -327,9 +327,9 @@ export default {
             witness(ctx, String(serverText).includes(serverHost), "The forced sign-in surface shows Acme's organization server", serverText);
             ctx.output("desktop-bootstrap-after-welcome-paste", JSON.stringify(bootstrap, null, 2));
             await ctx.screenshot("plain-desktop-join-org-paste-forced-signin", {
-              claim: "A plain first-run desktop asks whether to use OpenWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server.",
+              claim: "A plain first-run desktop asks whether to use JuggleWork Cloud or join an organization, and pasting Acme's link binds it to Acme's server.",
               voiceover: vo[4],
-              requireText: ["Welcome to OpenWork", "Sign in to OpenWork", `Connected to ${serverHost}`],
+              requireText: ["Welcome to JuggleWork", "Sign in to JuggleWork", `Connected to ${serverHost}`],
               rejectText: ["Pick a folder"],
             });
           },
@@ -345,9 +345,9 @@ export default {
           // "The desktop opens sign-in for Acme Robotics with the browser handling the ha"
           action: async () => {
             await ensureDesktopReady(ctx);
-            await ctx.waitForText("Sign in to OpenWork", { timeoutMs: 60_000 });
+            await ctx.waitForText("Sign in to JuggleWork", { timeoutMs: 60_000 });
             await stubDesktopExternalOpenCapture(ctx);
-            await clickExactText(ctx, "Sign in to OpenWork", "button");
+            await clickExactText(ctx, "Sign in to JuggleWork", "button");
             state.browserSignInUrl = await ctx.waitFor(
               `(() => {
                 const captured = typeof window.__capturedBrowserSigninUrl === 'string'
@@ -368,16 +368,16 @@ export default {
               await navigateToAbsolute(ctx, requireStateValue(state.browserSignInUrl, "browser sign-in URL"));
               await signInOnCurrentDenWebPage(ctx, MEMBER_EMAIL, MEMBER_PASSWORD, { captureDesktopHandoff: true });
               state.copiedDesktopUrl = await ctx.waitFor(
-                "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('openwork://den-auth') && window.__capturedSignin",
-                { timeoutMs: 45_000, label: "captured browser-minted OpenWork sign-in link" },
+                "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('jugglework://den-auth') && window.__capturedSignin",
+                { timeoutMs: 45_000, label: "captured browser-minted JuggleWork sign-in link" },
               );
               state.copiedDesktopGrant = new URL(state.copiedDesktopUrl).searchParams.get("grant") ?? "";
-              witness(ctx, state.copiedDesktopGrant.length > 0, "The browser-minted OpenWork URL carries a handoff grant", redactUrlParam(state.copiedDesktopUrl, "grant"));
+              witness(ctx, state.copiedDesktopGrant.length > 0, "The browser-minted JuggleWork URL carries a handoff grant", redactUrlParam(state.copiedDesktopUrl, "grant"));
             }, { targetId: state.authTargetId });
 
             useDesktopClient(ctx);
-            await deliverDeepLinkToDesktop(ctx, requireStateValue(state.copiedDesktopUrl, "browser-minted OpenWork sign-in URL"));
-            await ctx.waitFor("(localStorage.getItem('openwork.den.activeOrgName') ?? '').includes('Acme Robotics')", {
+            await deliverDeepLinkToDesktop(ctx, requireStateValue(state.copiedDesktopUrl, "browser-minted JuggleWork sign-in URL"));
+            await ctx.waitFor("(localStorage.getItem('jugglework.den.activeOrgName') ?? '').includes('Acme Robotics')", {
               timeoutMs: 60_000,
               label: "desktop signed into Acme",
             });
@@ -408,7 +408,7 @@ export default {
             });
             const afterMismatchBootstrap = await invokeDesktop(ctx, "getDesktopBootstrapConfig");
             witness(ctx, cleanBaseUrl(afterMismatchBootstrap?.baseUrl) === cleanBaseUrl(state.installConfig.webUrl), "Cancel leaves the desktop bootstrap on Acme's server", afterMismatchBootstrap);
-            witness(ctx, (await ctx.eval("localStorage.getItem('openwork.den.activeOrgName') ?? ''")).includes("Acme Robotics"), "Cancel leaves the active organization as Acme Robotics", await ctx.eval("localStorage.getItem('openwork.den.activeOrgName') ?? ''"));
+            witness(ctx, (await ctx.eval("localStorage.getItem('jugglework.den.activeOrgName') ?? ''")).includes("Acme Robotics"), "Cancel leaves the active organization as Acme Robotics", await ctx.eval("localStorage.getItem('jugglework.den.activeOrgName') ?? ''"));
             ctx.output("desktop-signin-and-mismatch-guard", JSON.stringify({
               browserSignInUrl: state.browserSignInUrl,
               copiedDesktopUrl: redactUrlParam(state.copiedDesktopUrl, "grant"),
@@ -418,7 +418,7 @@ export default {
           },
           screenshot: {
             name: "desktop-stays-on-acme-after-cancel",
-            requireText: ["OpenWork Cloud", "Acme Robotics", "Sign out"],
+            requireText: ["JuggleWork Cloud", "Acme Robotics", "Sign out"],
             rejectText: ["Switch organization server?", "Something went wrong"],
           },
         });
@@ -430,7 +430,7 @@ export default {
         await withClient(ctx, INVITEE_CDP_URL, async () => {
           await ctx.prove("The browser handoff and original install page both flip to Connected for Acme Robotics", {
             voiceover: vo[6],
-            // "Back on the install page, step three flips to Connected — OpenWork is set up"
+            // "Back on the install page, step three flips to Connected — JuggleWork is set up"
             action: async () => {
               await withClient(ctx, INVITEE_CDP_URL, async () => {
                 await ctx.waitFor("Boolean(document.querySelector('[data-testid=\"desktop-connected\"]'))", {
@@ -444,14 +444,14 @@ export default {
             },
             assert: async () => {
               await ctx.expectText("Connected");
-              await ctx.expectText("OpenWork is set up for Acme Robotics");
+              await ctx.expectText("JuggleWork is set up for Acme Robotics");
               const connected = await ctx.eval("document.querySelector('[data-testid=\"install-connected\"]')?.textContent ?? ''");
               witness(ctx, String(connected).includes("Connected") && String(connected).includes("Acme Robotics"), "Step three on the install page reports Connected for Acme Robotics", connected);
               ctx.output("desktop-handoff-status", JSON.stringify({ grant: state.copiedDesktopGrant ? "[captured]" : "", installPageReloaded: state.usedInstallPageReload }, null, 2));
             },
             screenshot: {
               name: "install-page-connected-to-acme",
-              requireText: ["Download the OpenWork installer", "Open the installer and paste this link:", "Connected", "OpenWork is set up for Acme Robotics"],
+              requireText: ["Download the JuggleWork installer", "Open the installer and paste this link:", "Connected", "JuggleWork is set up for Acme Robotics"],
             },
           });
         }, { targetId: state.installPageTargetId });
@@ -615,8 +615,8 @@ async function ensureAdminToken(ctx) {
     state.adminToken = signedIn.body.token;
     return state.adminToken;
   }
-  const token = process.env.OPENWORK_EVAL_DEN_TOKEN?.trim() ?? "";
-  ctx.assert(token.length > 0, `Admin sign-in failed and OPENWORK_EVAL_DEN_TOKEN is missing: ${signedIn.response.status}`);
+  const token = process.env.JUGGLEWORK_EVAL_DEN_TOKEN?.trim() ?? "";
+  ctx.assert(token.length > 0, `Admin sign-in failed and JUGGLEWORK_EVAL_DEN_TOKEN is missing: ${signedIn.response.status}`);
   state.adminToken = token;
   return token;
 }
@@ -709,7 +709,7 @@ async function ensureMemberAccount(ctx) {
 function markEmailVerified(ctx, email) {
   ctx.assert(
     MARK_VERIFIED_CMD.length > 0,
-    "Invitation acceptance requires a verified email; set OPENWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
+    "Invitation acceptance requires a verified email; set JUGGLEWORK_EVAL_MARK_VERIFIED_CMD (shell template with {email}).",
   );
   execSync(MARK_VERIFIED_CMD.replaceAll("{email}", email), { stdio: "ignore" });
 }
@@ -741,7 +741,7 @@ async function signInToDenWeb(ctx, email, password) {
 async function signInOnCurrentDenWebPage(ctx, email, password, { captureDesktopHandoff = false } = {}) {
   await ctx.waitFor(
     `document.body.innerText.includes('Sign in')
-      || document.body.innerText.includes('Start using OpenWork')
+      || document.body.innerText.includes('Start using JuggleWork')
       || Boolean(document.querySelector('input[type="email"], input[name="email"]'))`,
     { timeoutMs: 45_000, label: "sign-in screen" },
   );
@@ -773,7 +773,7 @@ async function signInOnCurrentDenWebPage(ctx, email, password, { captureDesktopH
   await clickLastExactText(ctx, "Sign in", "button");
   if (captureDesktopHandoff) {
     await ctx.waitFor(
-      "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('openwork://den-auth')",
+      "typeof window.__capturedSignin === 'string' && window.__capturedSignin.startsWith('jugglework://den-auth')",
       { timeoutMs: 45_000, label: "desktop handoff URL captured" },
     );
   }
@@ -870,7 +870,7 @@ async function stubDesktopHandoffFetchCapture(ctx) {
         try {
           const payload = await response.clone().json();
           window.__capturedSigninPayload = payload;
-          if (typeof payload?.openworkUrl === 'string') window.__capturedSignin = payload.openworkUrl;
+          if (typeof payload?.juggleworkUrl === 'string') window.__capturedSignin = payload.juggleworkUrl;
         } catch {}
       }
       return response;
@@ -880,7 +880,7 @@ async function stubDesktopHandoffFetchCapture(ctx) {
       Object.defineProperty(window.location, 'assign', {
         configurable: true,
         value(url) {
-          if (String(url).startsWith('openwork://')) {
+          if (String(url).startsWith('jugglework://')) {
             window.__capturedSignin = String(url);
             return undefined;
           }
@@ -895,13 +895,13 @@ async function stubDesktopHandoffFetchCapture(ctx) {
 }
 
 async function ensureDesktopReady(ctx) {
-  await ctx.waitFor("Boolean(window.__openworkControl)", { timeoutMs: 60_000, label: "desktop control API" });
-  await ctx.waitFor("Boolean(window.__OPENWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
+  await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs: 60_000, label: "desktop control API" });
+  await ctx.waitFor("Boolean(window.__JUGGLEWORK_ELECTRON__?.invokeDesktop)", { timeoutMs: 60_000, label: "desktop bridge" });
 }
 
 async function invokeDesktop(ctx, command, input) {
   await ensureDesktopReady(ctx);
-  return ctx.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input ?? null)})`, { awaitPromise: true });
+  return ctx.eval(`window.__JUGGLEWORK_ELECTRON__.invokeDesktop(${JSON.stringify(command)}, ${JSON.stringify(input ?? null)})`, { awaitPromise: true });
 }
 
 async function captureOriginalDesktopBootstrap(ctx) {
@@ -922,14 +922,14 @@ async function resetDesktopDenSession(ctx) {
   await ctx.eval(`(() => {
     document.querySelector('[role="alertdialog"] button')?.click();
     for (const key of [
-      'openwork.den.authToken',
-      'openwork.den.activeOrgId',
-      'openwork.den.activeOrgSlug',
-      'openwork.den.activeOrgName',
+      'jugglework.den.authToken',
+      'jugglework.den.activeOrgId',
+      'jugglework.den.activeOrgSlug',
+      'jugglework.den.activeOrgName',
     ]) {
       localStorage.removeItem(key);
     }
-    window.dispatchEvent(new CustomEvent('openwork-den-session-updated', { detail: { status: 'signed_out' } }));
+    window.dispatchEvent(new CustomEvent('jugglework-den-session-updated', { detail: { status: 'signed_out' } }));
     return true;
   })()`);
 }
@@ -937,9 +937,9 @@ async function resetDesktopDenSession(ctx) {
 async function stubDesktopExternalOpenCapture(ctx) {
   await ctx.eval(`(() => {
     window.__capturedBrowserSigninUrl = '';
-    window.__OPENWORK_ELECTRON__ = window.__OPENWORK_ELECTRON__ || {};
-    window.__OPENWORK_ELECTRON__.shell = window.__OPENWORK_ELECTRON__.shell || {};
-    window.__OPENWORK_ELECTRON__.shell.openExternal = async (url) => {
+    window.__JUGGLEWORK_ELECTRON__ = window.__JUGGLEWORK_ELECTRON__ || {};
+    window.__JUGGLEWORK_ELECTRON__.shell = window.__JUGGLEWORK_ELECTRON__.shell || {};
+    window.__JUGGLEWORK_ELECTRON__.shell.openExternal = async (url) => {
       window.__capturedBrowserSigninUrl = String(url);
       return { ok: true };
     };
@@ -947,14 +947,14 @@ async function stubDesktopExternalOpenCapture(ctx) {
   })()`);
 }
 
-async function deliverDeepLinkToDesktop(ctx, openworkUrl) {
+async function deliverDeepLinkToDesktop(ctx, juggleworkUrl) {
   await ctx.eval(`(() => {
-    const url = ${JSON.stringify(openworkUrl)};
-    window.__OPENWORK__ = window.__OPENWORK__ || {};
-    const pending = window.__OPENWORK__.deepLinks || [];
-    window.__OPENWORK__.deepLinks = [...pending, url];
-    window.dispatchEvent(new CustomEvent('openwork:deep-link-native', { detail: [url] }));
-    window.dispatchEvent(new CustomEvent('openwork:deep-link', { detail: { urls: [url] } }));
+    const url = ${JSON.stringify(juggleworkUrl)};
+    window.__JUGGLEWORK__ = window.__JUGGLEWORK__ || {};
+    const pending = window.__JUGGLEWORK__.deepLinks || [];
+    window.__JUGGLEWORK__.deepLinks = [...pending, url];
+    window.dispatchEvent(new CustomEvent('jugglework:deep-link-native', { detail: [url] }));
+    window.dispatchEvent(new CustomEvent('jugglework:deep-link', { detail: { urls: [url] } }));
     return true;
   })()`);
 }
@@ -966,7 +966,7 @@ async function completeDesktopSignedInJourney(ctx) {
       || document.body.innerText.includes("No resources have been configured for this organization yet.")
       || location.hash.includes('/session')
       || location.hash.includes('/workspace/')
-      || document.body.innerText.includes("OpenWork Cloud")`,
+      || document.body.innerText.includes("JuggleWork Cloud")`,
     { timeoutMs: 60_000, label: "post-sign-in desktop surface" },
   );
 
@@ -989,7 +989,7 @@ async function completeDesktopSignedInJourney(ctx) {
   }
 
   await ctx.navigateHash("/settings/cloud-account");
-  await ctx.waitForText("OpenWork Cloud", { timeoutMs: 45_000 });
+  await ctx.waitForText("JuggleWork Cloud", { timeoutMs: 45_000 });
   await ctx.waitForText("Sign out", { timeoutMs: 45_000 });
   await ctx.expectText("Acme Robotics", { timeoutMs: 45_000 });
   await ctx.expectText(MEMBER_EMAIL, { timeoutMs: 45_000 });
@@ -1056,8 +1056,8 @@ async function fetchAndVerifyMacInstallerRedirect(ctx) {
   });
   const location = response.headers.get("location") ?? "";
   const releaseTag = await expectedInstallerReleaseTag(ctx);
-  const fileName = "OpenWork-Installer-mac-arm64.dmg";
-  const expectedLocation = `https://github.com/different-ai/openwork/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
+  const fileName = "JuggleWork-Installer-mac-arm64.dmg";
+  const expectedLocation = `https://github.com/juggleai/jugglework-desktop/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
   const parsedLocation = location ? new URL(location) : null;
 
   return {
@@ -1076,12 +1076,12 @@ async function fetchAndVerifyMacInstallerRedirect(ctx) {
   };
 }
 
-async function startInstallerUi(tempPrefix, { binaryName = "openwork-installer" } = {}) {
+async function startInstallerUi(tempPrefix, { binaryName = "jugglework-installer" } = {}) {
   const tempDir = makeTempDir(tempPrefix);
   const installerPath = copyInstallerTo(tempDir, binaryName);
   const child = spawn(installerPath, [], {
     cwd: tempDir,
-    env: sanitizedInstallerEnv({ OPENWORK_INSTALLER_UI: "manual" }),
+    env: sanitizedInstallerEnv({ JUGGLEWORK_INSTALLER_UI: "manual" }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -1111,14 +1111,14 @@ function isolatedInstallerHome(tempDir) {
   return {
     env: { XDG_CONFIG_HOME: xdgConfigHome, HOME: home },
     bootstrapPaths: [
-      path.join(xdgConfigHome, "openwork", "desktop-bootstrap.json"),
-      path.join(home, ".config", "openwork", "desktop-bootstrap.json"),
+      path.join(xdgConfigHome, "jugglework", "desktop-bootstrap.json"),
+      path.join(home, ".config", "jugglework", "desktop-bootstrap.json"),
     ],
   };
 }
 
 function runBareInstallerWithoutConfig() {
-  const tempDir = makeTempDir("openwork-first-connection-bare-");
+  const tempDir = makeTempDir("jugglework-first-connection-bare-");
   const installerPath = copyInstallerTo(tempDir);
   const isolated = isolatedInstallerHome(tempDir);
   const missing = runInstaller(installerPath, ["--headless", "--dry-run"], sanitizedInstallerEnv(isolated.env), tempDir);
@@ -1127,7 +1127,7 @@ function runBareInstallerWithoutConfig() {
 
 function runInstallerWithInstallLink() {
   const installLink = requireStateValue(state.installPageUrl, "install page URL");
-  const tempDir = makeTempDir("openwork-first-connection-link-");
+  const tempDir = makeTempDir("jugglework-first-connection-link-");
   const installerPath = copyInstallerTo(tempDir);
   const isolated = isolatedInstallerHome(tempDir);
   const bootstrapPath = BOOTSTRAP_PATH;
@@ -1135,7 +1135,7 @@ function runInstallerWithInstallLink() {
   const withLink = runInstaller(
     installerPath,
     ["--headless", "--dry-run", "--install-link", installLink],
-    sanitizedInstallerEnv({ ...isolated.env, OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath }),
+    sanitizedInstallerEnv({ ...isolated.env, JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath }),
     tempDir,
   );
   return { withLink, bootstrapPath };
@@ -1159,14 +1159,14 @@ function runInstaller(installerPath, args, env, cwd) {
 function sanitizedInstallerEnv(overrides = {}) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("OPENWORK_INSTALLER_") || key === "OPENWORK_DESKTOP_BOOTSTRAP_PATH") {
+    if (key.startsWith("JUGGLEWORK_INSTALLER_") || key === "JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH") {
       delete env[key];
     }
   }
   return { ...env, ...overrides };
 }
 
-function copyInstallerTo(directory, binaryName = "openwork-installer") {
+function copyInstallerTo(directory, binaryName = "jugglework-installer") {
   const installerPath = path.join(directory, binaryName);
   copyFileSync(INSTALLER_BIN, installerPath);
   chmodSync(installerPath, 0o755);
@@ -1197,8 +1197,8 @@ function revokeInstallLinkToken(ctx, token) {
   const sql = "UPDATE install_link SET revoked_at = CURRENT_TIMESTAMP(3) WHERE token_hash = "
     + JSON.stringify(tokenHash);
   const commands = [
-    ["mysql", ["-uroot", "-ppassword", "openwork_den", "-e", sql]],
-    ["docker", ["exec", "openwork-web-local-mysql", "mysql", "-uroot", "-ppassword", "openwork_den", "-e", sql]],
+    ["mysql", ["-uroot", "-ppassword", "jugglework_den", "-e", sql]],
+    ["docker", ["exec", "jugglework-web-local-mysql", "mysql", "-uroot", "-ppassword", "jugglework_den", "-e", sql]],
   ];
   const attempts = commands.map(([command, args]) => {
     const result = spawnSync(command, args, { encoding: "utf8" });
@@ -1219,7 +1219,7 @@ async function resolveLinkInInstallerUi(ctx, installLink) {
 }
 
 function buildMismatchedDenAuthUrl() {
-  const url = new URL("openwork://den-auth");
+  const url = new URL("jugglework://den-auth");
   url.searchParams.set("grant", `bogus-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
   url.searchParams.set("denBaseUrl", "https://other-server.example/api/den");
   return url.toString();

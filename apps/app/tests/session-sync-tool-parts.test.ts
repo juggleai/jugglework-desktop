@@ -13,7 +13,7 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
-import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
+import { parseJuggleWorkSessionCreateResult } from "../src/components/tools/jugglework-session-create";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -122,7 +122,7 @@ describe("tool part mapper", () => {
   });
 
   test("parses session creation output for rich chat rendering", () => {
-    expect(parseOpenWorkSessionCreateResult(JSON.stringify({
+    expect(parseJuggleWorkSessionCreateResult(JSON.stringify({
       ok: true,
       workspaceId: "workspace-a",
       workspace: "Research",
@@ -163,7 +163,7 @@ describe("tool part mapper", () => {
   });
 
   test("session sync defers empty in-progress write tools until input arrives", () => {
-    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
     const release = trackWorkspaceSessionSync(syncInput, "session-a");
 
@@ -215,7 +215,7 @@ describe("tool part mapper", () => {
     const syncInput = {
       workspaceId: "workspace-a",
       baseUrl: "http://127.0.0.1:1234",
-      openworkToken: "token",
+      juggleworkToken: "token",
       onSessionCreated: (session: Session) => createdIds.push(session.id),
       onSessionDeleted: (sessionId: string) => deletedIds.push(sessionId),
     };

@@ -13,7 +13,7 @@ import {
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
-import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
+import { keepJuggleWorkRuntimeConfigFileFresh, writeJuggleWorkRuntimeConfigFile } from "./jugglework-runtime-config.js";
 import pkg from "../package.json" with { type: "json" };
 
 const args = parseCliArgs(process.argv.slice(2));
@@ -38,25 +38,25 @@ if (!config.readOnly) {
   await ensureLocalWorkspaceFiles(config.workspaces);
 }
 
-if (!config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1") {
+if (!config.opencodeBaseUrl && process.env.JUGGLEWORK_MANAGE_OPENCODE === "1") {
   const workspace = findManagedEngineWorkspace(config.workspaces);
   if (workspace) {
     // Server-managed config file: the engine re-reads it from disk on every
-    // instance rebuild, and keepOpenworkRuntimeConfigFileFresh rewrites it
+    // instance rebuild, and keepJuggleWorkRuntimeConfigFileFresh rewrites it
     // on every runtime-DB write — so disposes always pick up current state.
-    const runtimeConfigPath = await writeOpenworkRuntimeConfigFile(config, workspace.id);
-    keepOpenworkRuntimeConfigFileFresh(config, workspace.id);
-    const managedOpencodeCwd = process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
+    const runtimeConfigPath = await writeJuggleWorkRuntimeConfigFile(config, workspace.id);
+    keepJuggleWorkRuntimeConfigFileFresh(config, workspace.id);
+    const managedOpencodeCwd = process.env.JUGGLEWORK_MANAGED_OPENCODE_CWD?.trim() || workspace.path;
     await mkdir(managedOpencodeCwd, { recursive: true });
     managedOpencode = await createManagedOpencodeServer({
-      bin: process.env.OPENWORK_OPENCODE_BIN,
+      bin: process.env.JUGGLEWORK_OPENCODE_BIN,
       cwd: managedOpencodeCwd,
       excludedPorts: [config.port],
       env: {
-        ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-        ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-        OPENWORK_SERVER_URL: serverUrl,
-        OPENWORK_SERVER_TOKEN: config.token,
+        ...(process.env.JUGGLEWORK_DEV_MODE ? { JUGGLEWORK_DEV_MODE: process.env.JUGGLEWORK_DEV_MODE } : {}),
+        ...(process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY ? { JUGGLEWORK_UI_CONTROL_DISCOVERY: process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY } : {}),
+        JUGGLEWORK_SERVER_URL: serverUrl,
+        JUGGLEWORK_SERVER_TOKEN: config.token,
         OPENCODE_CONFIG: runtimeConfigPath,
       },
     });

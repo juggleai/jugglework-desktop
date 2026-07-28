@@ -15,9 +15,9 @@ RUN /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun
 
 WORKDIR /workspace
 
-RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
-  && mkdir -p /workspace/.openwork-daytona \
-  && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.openwork-daytona/pnpm-lock.sha256 \
+RUN git clone --depth 1 --branch dev https://github.com/juggleai/jugglework-desktop.git . \
+  && mkdir -p /workspace/.jugglework-daytona \
+  && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.jugglework-daytona/pnpm-lock.sha256 \
   && /usr/local/share/nvm/current/bin/npm cache clean --force \
   && git gc --prune=now \
   && rm -rf /root/.cache /root/.npm \

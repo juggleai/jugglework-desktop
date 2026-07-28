@@ -1,7 +1,7 @@
 const { ipcRenderer } = require("electron");
 
 function dismissMenuOverlay() {
-  ipcRenderer.send("openwork:menu-overlay:dismiss");
+  ipcRenderer.send("jugglework:menu-overlay:dismiss");
 }
 
 function installDismissListeners() {

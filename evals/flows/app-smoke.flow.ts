@@ -20,9 +20,9 @@ export default defineFlow({
     {
       name: "Automation control API becomes available",
       run: async (ctx) => {
-        await ctx.waitFor("Boolean(window.__openworkControl)", {
+        await ctx.waitFor("Boolean(window.__juggleworkControl)", {
           timeoutMs: 30_000,
-          label: "window.__openworkControl",
+          label: "window.__juggleworkControl",
         });
       },
     },
@@ -30,7 +30,7 @@ export default defineFlow({
       name: "App reports a known route",
       run: async (ctx) => {
         const route = await ctx.waitFor(
-          "window.__openworkControl.snapshot().route",
+          "window.__juggleworkControl.snapshot().route",
           { label: "control snapshot route" },
         );
         ctx.log(`route: ${JSON.stringify(route)}`);

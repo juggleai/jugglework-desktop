@@ -23,7 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
+import { isBuiltInJuggleWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
 import type { CloudImportedPlugin } from "../../../../app/cloud/import-state";
@@ -52,13 +52,13 @@ import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
 import { canDisconnectNativeProviderAccount } from "../../connections/native-provider-connections";
-import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
+import type { JuggleWorkClaudePluginPreview } from "../../../../app/lib/jugglework-server";
 import {
-  isOpenWorkExtensionEnabled,
-  isOpenWorkExtensionHidden,
-  OPENWORK_EXTENSION_STATE_CHANGED,
-  setOpenWorkExtensionEnabled,
-  setOpenWorkExtensionHidden,
+  isJuggleWorkExtensionEnabled,
+  isJuggleWorkExtensionHidden,
+  JUGGLEWORK_EXTENSION_STATE_CHANGED,
+  setJuggleWorkExtensionEnabled,
+  setJuggleWorkExtensionHidden,
 } from "../extension-state";
 import {
   initialMcpViewLocalState,
@@ -81,7 +81,7 @@ export type SkillItem = {
   trigger?: string;
   path: string;
   content?: string;
-  origin?: "local" | "openwork-connect";
+  origin?: "local" | "jugglework-connect";
   marketplaceName?: string;
   pluginName?: string;
 };
@@ -129,7 +129,7 @@ export type McpViewProps = {
   /** Organization policy restriction for JuggleWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
-  previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
+  previewClaudePlugin?: (url: string) => Promise<JuggleWorkClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
   installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
@@ -197,8 +197,8 @@ const serviceIcon = (name: string) => {
   if (lower.includes("devtools")) {
     return MonitorSmartphone;
   }
-  if (lower.includes("openwork") && lower.includes("cloud")) return Cloud;
-  if (lower.includes("openwork") && lower.includes("ui")) return MonitorSmartphone;
+  if (lower.includes("jugglework") && lower.includes("cloud")) return Cloud;
+  if (lower.includes("jugglework") && lower.includes("ui")) return MonitorSmartphone;
   return Plug2;
 };
 
@@ -212,7 +212,7 @@ const serviceColor = (name: string) => {
   if (lower.includes("devtools")) {
     return "text-amber-11";
   }
-  if (lower.includes("openwork")) return "text-gray-12";
+  if (lower.includes("jugglework")) return "text-gray-12";
   return "text-dls-secondary";
 };
 
@@ -226,7 +226,7 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("devtools")) {
     return "bg-amber-3 border-amber-6";
   }
-  if (lower.includes("openwork")) return "bg-gray-3 border-gray-6";
+  if (lower.includes("jugglework")) return "bg-gray-3 border-gray-6";
   return "bg-dls-hover border-dls-border";
 };
 
@@ -256,8 +256,8 @@ export function McpView(props: McpViewProps) {
   const [detailConnectMcp, setDetailConnectMcp] = useState<McpServerEntry | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<CloudImportedPlugin | null>(null);
   const [detailOrgMcpItem, setDetailOrgMcpItem] = useState<ExtensionItem | null>(null);
-  const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
-  const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
+  const [juggleworkUiMcpCommand, setJuggleWorkUiMcpCommand] = useState<string[] | null>(null);
+  const [juggleworkUiMcpEnvironment, setJuggleWorkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
   const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionFilter>("all");
@@ -305,10 +305,10 @@ export function McpView(props: McpViewProps) {
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+    window.addEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
     window.addEventListener("storage", refresh);
     return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
+      window.removeEventListener(JUGGLEWORK_EXTENSION_STATE_CHANGED, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -317,25 +317,25 @@ export function McpView(props: McpViewProps) {
     if (!isDesktopRuntime()) return;
     void (async () => {
       try {
-        const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpCommand");
+        const command = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpCommand");
         if (Array.isArray(command) && command.every((part) => typeof part === "string")) {
-          setOpenworkUiMcpCommand(command);
+          setJuggleWorkUiMcpCommand(command);
         }
-        const environment = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getOpenworkUiMcpEnvironment");
+        const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
         if (environment && typeof environment === "object" && !Array.isArray(environment)) {
-          setOpenworkUiMcpEnvironment(Object.fromEntries(
+          setJuggleWorkUiMcpEnvironment(Object.fromEntries(
             Object.entries(environment).filter((entry): entry is [string, string] =>
               typeof entry[0] === "string" && typeof entry[1] === "string"
             ),
           ));
         }
-        const computerUseCommand = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
+        const computerUseCommand = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
         if (Array.isArray(computerUseCommand) && computerUseCommand.every((part) => typeof part === "string")) {
           setComputerUseMcpCommand(computerUseCommand);
         }
       } catch {
-        setOpenworkUiMcpCommand(null);
-        setOpenworkUiMcpEnvironment(null);
+        setJuggleWorkUiMcpCommand(null);
+        setJuggleWorkUiMcpEnvironment(null);
         setComputerUseMcpCommand(null);
       }
     })();
@@ -409,13 +409,13 @@ export function McpView(props: McpViewProps) {
       );
     });
 
-  // Auto-configured built-ins like openwork-cloud remain active but hidden from
+  // Auto-configured built-ins like jugglework-cloud remain active but hidden from
   // Your apps until Show hidden reveals the row for disable/remove.
   const visibleMcpServers = showHidden
     ? props.mcpServers
     : props.mcpServers.filter((entry) => {
         const match = resolveQuickConnectMatch(entry.name);
-        return !match || !isOpenWorkExtensionHidden(match);
+        return !match || !isJuggleWorkExtensionHidden(match);
       });
 
   const displayName = (name: string) => resolveQuickConnectMatch(name)?.name ?? name;
@@ -438,7 +438,7 @@ export function McpView(props: McpViewProps) {
   };
 
   const launchCommandForEntry = (entry: McpDirectoryInfo) => {
-    if (entry.serverName === "openwork-ui") return openworkUiMcpCommand ?? undefined;
+    if (entry.serverName === "jugglework-ui") return juggleworkUiMcpCommand ?? undefined;
     if (entry.serverName === "computer-use") return computerUseMcpCommand ?? entry.command;
     return entry.command;
   };
@@ -455,11 +455,11 @@ export function McpView(props: McpViewProps) {
   const connectedCount = props.mcpServers.filter(
     (entry) => resolveStatus(entry) === "connected",
   ).length;
-  const hiddenCount = quickConnectList.filter((entry) => isOpenWorkExtensionHidden(entry)).length +
-    (props.installedSkills ?? []).filter((skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))).length +
-    (props.installedPlugins ?? []).filter((plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)).length;
+  const hiddenCount = quickConnectList.filter((entry) => isJuggleWorkExtensionHidden(entry)).length +
+    (props.installedSkills ?? []).filter((skill) => isJuggleWorkExtensionHidden(getSkillHiddenId(skill))).length +
+    (props.installedPlugins ?? []).filter((plugin) => isJuggleWorkExtensionHidden(`plugin:${plugin.pluginId}`)).length;
   const policyHiddenBuiltInCount = props.builtInExtensionsDisabled
-    ? quickConnectList.filter((entry) => isBuiltInOpenWorkExtension(entry) && !isOpenWorkExtensionHidden(entry)).length
+    ? quickConnectList.filter((entry) => isBuiltInJuggleWorkExtension(entry) && !isJuggleWorkExtensionHidden(entry)).length
     : 0;
   const hiddenOrPolicyCount = hiddenCount + policyHiddenBuiltInCount;
 
@@ -580,7 +580,7 @@ export function McpView(props: McpViewProps) {
         skillCount={skillCount}
         entries={
           quickConnectList.filter((entry) => {
-            if (!showHidden && (isOpenWorkExtensionHidden(entry) || (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)))) return false;
+            if (!showHidden && (isJuggleWorkExtensionHidden(entry) || (props.builtInExtensionsDisabled && isBuiltInJuggleWorkExtension(entry)))) return false;
             if (filter === "skill") return false;
             if (filter === "mcp" && (entry.kind ?? "mcp") !== "mcp" && entry.kind !== "ui-control") return false;
             if (!search.trim()) return true;
@@ -590,7 +590,7 @@ export function McpView(props: McpViewProps) {
         }
         installedSkills={
           (props.installedSkills ?? []).filter((skill) => {
-            if (!showHidden && isOpenWorkExtensionHidden(getSkillHiddenId(skill))) return false;
+            if (!showHidden && isJuggleWorkExtensionHidden(getSkillHiddenId(skill))) return false;
             if (filter === "mcp") return false;
             if (!search.trim()) return true;
             const q = search.toLowerCase();
@@ -612,7 +612,7 @@ export function McpView(props: McpViewProps) {
         availableConnectMcpStatuses={props.availableConnectMcpStatuses ?? {}}
         installedPlugins={
           (props.installedPlugins ?? []).filter((plugin) => {
-            if (!showHidden && isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
+            if (!showHidden && isJuggleWorkExtensionHidden(`plugin:${plugin.pluginId}`)) return false;
             if (filter === "mcp" || filter === "skill") return false;
             if (!search.trim()) return true;
             const q = search.toLowerCase();
@@ -633,20 +633,20 @@ export function McpView(props: McpViewProps) {
         }
         busy={props.busy}
         connectingName={props.mcpConnectingName}
-        isEntryHidden={(entry) => isOpenWorkExtensionHidden(entry)}
-        isSkillHidden={(skill) => isOpenWorkExtensionHidden(getSkillHiddenId(skill))}
-        isPluginHidden={(plugin) => isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`)}
+        isEntryHidden={(entry) => isJuggleWorkExtensionHidden(entry)}
+        isSkillHidden={(skill) => isJuggleWorkExtensionHidden(getSkillHiddenId(skill))}
+        isPluginHidden={(plugin) => isJuggleWorkExtensionHidden(`plugin:${plugin.pluginId}`)}
         disabledReasonForEntry={(entry) =>
-          props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
+          props.builtInExtensionsDisabled && isBuiltInJuggleWorkExtension(entry)
             ? builtInExtensionDisabledReason
             : null
         }
         isConfigured={(entry) => {
-          if (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)) return false;
+          if (props.builtInExtensionsDisabled && isBuiltInJuggleWorkExtension(entry)) return false;
           const result = enablementForEntry(entry);
           if (result) return result.active;
           // Fallback for entries without enablement context.
-          if (isToggleOnlyExtension(entry)) return isOpenWorkExtensionEnabled(entry);
+          if (isToggleOnlyExtension(entry)) return isJuggleWorkExtensionEnabled(entry);
           if (entry.kind === "extension" && !isMcpBackedExtension(entry)) return props.isExtensionConnected?.(entry) ?? false;
           return isQuickConnectConfigured(entry);
         }}
@@ -657,7 +657,7 @@ export function McpView(props: McpViewProps) {
         onSkillDetail={(skill) => {
           setDetailSkill(skill);
           setDetailSkillContent(skill.content ?? null);
-          if (!skill.content && skill.origin !== "openwork-connect" && props.readSkill) {
+          if (!skill.content && skill.origin !== "jugglework-connect" && props.readSkill) {
             void props.readSkill(skill.name).then((result) => {
               if (result?.content) {
                 setDetailSkillContent(result.content);
@@ -763,14 +763,14 @@ export function McpView(props: McpViewProps) {
       {detailEntry ? (() => {
         const extensionConfigSlot = props.configSlotForEntry?.(detailEntry) ?? null;
         const hasConfigSlot = extensionConfigSlot !== null;
-        const hidden = isOpenWorkExtensionHidden(detailEntry);
-        const disabledReason = props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(detailEntry)
+        const hidden = isJuggleWorkExtensionHidden(detailEntry);
+        const disabledReason = props.builtInExtensionsDisabled && isBuiltInJuggleWorkExtension(detailEntry)
           ? builtInExtensionDisabledReason
           : null;
         const isConnected = disabledReason
           ? false
           : isToggleOnlyExtension(detailEntry)
-          ? isOpenWorkExtensionEnabled(detailEntry)
+          ? isJuggleWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
           ? props.isExtensionConnected?.(detailEntry) ?? false
           : isQuickConnectConfigured(detailEntry);
@@ -793,33 +793,33 @@ export function McpView(props: McpViewProps) {
             resourceLabels={isGoogleWorkspace ? [] : extensionResourceLabels(detailEntry)}
             contributionLabels={isGoogleWorkspace ? [] : extensionContributionLabels(detailEntry)}
             launchCommand={launchCommandForEntry(detailEntry)}
-            environment={detailEntry.serverName === "openwork-ui" ? openworkUiMcpEnvironment ?? undefined : undefined}
+            environment={detailEntry.serverName === "jugglework-ui" ? juggleworkUiMcpEnvironment ?? undefined : undefined}
             url={typeof detailEntry.url === "string" ? detailEntry.url : undefined}
             oauth={detailEntry.oauth}
             configSlot={disabledReason ? null : extensionConfigSlot}
             showEnablementCard={!isGoogleWorkspace}
             onConnect={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) ? () => {
-              setOpenWorkExtensionEnabled(detailEntry, true);
+              setJuggleWorkExtensionEnabled(detailEntry, true);
               setDetailEntry(null);
             } : hasConfigSlot ? undefined : () => {
               props.connectMcp(detailEntry);
               setDetailEntry(null);
             }}
             onUninstall={disabledReason ? undefined : isToggleOnlyExtension(detailEntry) && isConnected ? () => {
-              setOpenWorkExtensionEnabled(detailEntry, false);
+              setJuggleWorkExtensionEnabled(detailEntry, false);
             } : isQuickConnectConfigured(detailEntry) ? () => {
               const slug = getMcpIdentityKey(detailEntry);
               props.removeMcp(slug);
               setDetailEntry(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(detailEntry, true)}
-            onShow={() => setOpenWorkExtensionHidden(detailEntry, false)}
+            onHide={() => setJuggleWorkExtensionHidden(detailEntry, true)}
+            onShow={() => setJuggleWorkExtensionHidden(detailEntry, false)}
           />
         );
       })() : null}
 
       {detailSkill ? (() => {
-        const hidden = isOpenWorkExtensionHidden(getSkillHiddenId(detailSkill));
+        const hidden = isJuggleWorkExtensionHidden(getSkillHiddenId(detailSkill));
         return (
           <ExtensionDetailModal
             open={!!detailSkill}
@@ -828,20 +828,20 @@ export function McpView(props: McpViewProps) {
             description={detailSkill.description ?? "Installed skill"}
             kind="skill"
             connected={true}
-            connectedLabel={detailSkill.origin === "openwork-connect" ? "Available through JuggleWork Connect" : undefined}
+            connectedLabel={detailSkill.origin === "jugglework-connect" ? "Available through JuggleWork Connect" : undefined}
             hidden={hidden}
-            path={detailSkill.origin === "openwork-connect" ? undefined : detailSkill.path}
+            path={detailSkill.origin === "jugglework-connect" ? undefined : detailSkill.path}
             trigger={detailSkill.trigger}
             contentPreview={detailSkillContent ?? undefined}
-            onReveal={detailSkill.path && detailSkill.origin !== "openwork-connect" ? () => {
+            onReveal={detailSkill.path && detailSkill.origin !== "jugglework-connect" ? () => {
               void revealDesktopItemInDir(detailSkill.path);
             } : undefined}
-            onUninstall={props.uninstallSkill && detailSkill.origin !== "openwork-connect" ? () => {
+            onUninstall={props.uninstallSkill && detailSkill.origin !== "jugglework-connect" ? () => {
               props.uninstallSkill?.(detailSkill.name);
               setDetailSkill(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
-            onShow={() => setOpenWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
+            onHide={() => setJuggleWorkExtensionHidden(getSkillHiddenId(detailSkill), true)}
+            onShow={() => setJuggleWorkExtensionHidden(getSkillHiddenId(detailSkill), false)}
           />
         );
       })() : null}
@@ -869,7 +869,7 @@ export function McpView(props: McpViewProps) {
       ) : null}
 
       {detailPlugin ? (() => {
-        const hidden = isOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`);
+        const hidden = isJuggleWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`);
         return (
           <ExtensionDetailModal
             open={!!detailPlugin}
@@ -883,8 +883,8 @@ export function McpView(props: McpViewProps) {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               setDetailPlugin(null);
             } : undefined}
-            onHide={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
-            onShow={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
+            onHide={() => setJuggleWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
+            onShow={() => setJuggleWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
           />
         );
       })() : null}
@@ -1044,7 +1044,7 @@ function McpQuickConnectSection(props: {
               description={skill.description ?? "Installed skill"}
               kind="skill"
               connected={true}
-              connectedLabel={skill.origin === "openwork-connect" ? "Available" : undefined}
+              connectedLabel={skill.origin === "jugglework-connect" ? "Available" : undefined}
               hidden={hidden}
               actionLabel="View details"
               onClick={() => props.onSkillDetail?.(skill)}

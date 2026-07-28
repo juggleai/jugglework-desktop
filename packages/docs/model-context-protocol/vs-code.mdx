@@ -17,22 +17,22 @@ capability names instead of loading hundreds of tool definitions into context.
 ## Server URL
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 OAuth sign-in uses your JuggleWork account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free JuggleWork account](https://app.openworklabs.com?mode=sign-up).
+[free JuggleWork account](https://work.juggle.im?mode=sign-up).
 
 ## Setup
 
 Run this command:
 
 ```sh
-code --add-mcp '{"name":"openwork","type":"http","url":"https://api.openworklabs.com/mcp/agent"}'
+code --add-mcp '{"name":"jugglework","type":"http","url":"https://work.juggle.im/jwork/api/mcp/agent"}'
 ```
 
-Then open the Command Palette and run `MCP: List Servers` > `openwork` >
+Then open the Command Palette and run `MCP: List Servers` > `jugglework` >
 `Start Server`. Follow the sign-in prompt and choose your organization.
 
 ## Manual setup
@@ -43,20 +43,20 @@ Open the Command Palette and run `MCP: Open User Configuration`, or edit
 ```json
 {
   "servers": {
-    "openwork": {
+    "jugglework": {
       "type": "http",
-      "url": "https://api.openworklabs.com/mcp/agent"
+      "url": "https://work.juggle.im/jwork/api/mcp/agent"
     }
   }
 }
 ```
 
-Then run `MCP: List Servers` > `openwork` > `Start Server`, and follow the
+Then run `MCP: List Servers` > `jugglework` > `Start Server`, and follow the
 sign-in prompt.
 
 ## Switch organizations
 
-Remove the stored MCP auth token for `openwork`, then start the server again
+Remove the stored MCP auth token for `jugglework`, then start the server again
 and choose the organization you want during browser sign-in.
 
 <Note>

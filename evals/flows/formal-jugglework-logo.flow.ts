@@ -280,8 +280,8 @@ export default defineFlow({
           },
           assert: async () => {
             ctx.assert(installerSource.includes('<img class="logo" src="/jugglework-logo.png" alt="JuggleWork" />'), "The production installer template does not identify the JuggleWork logo asset.");
-            ctx.assert(!installerSource.includes("#267CE8"), "The production installer template still contains the old OpenWork blue SVG artwork.");
-            pass(ctx, "The production installer template uses the JuggleWork logo and excludes the old OpenWork SVG color signature", INSTALLER_UI);
+            ctx.assert(!installerSource.includes("#267CE8"), "The production installer template still contains the old JuggleWork blue SVG artwork.");
+            pass(ctx, "The production installer template uses the JuggleWork logo and excludes the old JuggleWork SVG color signature", INSTALLER_UI);
           },
           screenshot: {
             name: "frame-3-installer-identity",

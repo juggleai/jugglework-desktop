@@ -36,15 +36,15 @@ JuggleWork 围绕一个核心理念设计：让您可以轻松地将智能体工
 ## 其他界面
 
 - **Owpenbot (WhatsApp 机器人)**：为运行中的 OpenCode 服务器提供的轻量级 WhatsApp 桥接器。安装方法：
-  - `curl -fsSL https://raw.githubusercontent.com/different-ai/owpenbot/dev/install.sh | bash`
+  - `curl -fsSL https://raw.githubusercontent.com/juggleai/jugglework-desktop/dev/install.sh | bash`
   - 运行 `owpenbot setup`，然后 `owpenbot whatsapp login`，接着 `owpenbot start`
-  - 完整设置：https://github.com/different-ai/owpenbot/blob/dev/README.md
+  - 完整设置：https://github.com/juggleai/jugglework-desktop/blob/dev/README.md
 - **Openwrk (CLI 主机)**：无需桌面 UI 即可运行 OpenCode + JuggleWork 服务器。使用 `npm install -g openwrk` 安装。
   - 文档：[apps/orchestrator/README.md](../apps/orchestrator/README.md)
 
 
 ## 快速开始
-在此处下载 dmg：https://github.com/different-ai/openwork/releases（或按照下面的说明从源代码安装）
+在此处下载 dmg：https://github.com/juggleai/jugglework-desktop/releases（或按照下面的说明从源代码安装）
 
 ## 为什么选择 JuggleWork
 
@@ -171,11 +171,11 @@ pnpm test:e2e
 如果 JuggleWork 在启动时因 WebKitGTK 错误（如 `Failed to create GBM buffer`）而崩溃，请在启动前禁用 dmabuf 或合成。尝试以下环境标志之一。
 
 ```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+WEBKIT_DISABLE_DMABUF_RENDERER=1 jugglework
 ```
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
+WEBKIT_DISABLE_COMPOSITING_MODE=1 jugglework
 ```
 
 ## 安全说明

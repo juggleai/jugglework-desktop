@@ -1,0 +1,114 @@
+import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
+import { JuggleWorkCapabilitiesKnowledge } from "./jugglework-capabilities-knowledge.js";
+
+describe("JuggleWork capabilities knowledge plugin", () => {
+  test("injects current JuggleWork Connect guidance", async () => {
+    const plugin = await JuggleWorkCapabilitiesKnowledge();
+    const output = { system: [] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    const knowledge = output.system.join("\n");
+    expect(knowledge).toContain("https://work.juggle.im/jwork/api/mcp/agent");
+    expect(knowledge).toContain("work.juggle.im/api/den");
+    expect(knowledge).toContain("internal same-origin desktop proxy");
+    expect(knowledge).toContain("OpenCode is verified");
+    expect(knowledge).toContain("Codex is setup-only");
+    expect(knowledge).toContain("cursor://anysphere.cursor-mcp/oauth/callback");
+    expect(knowledge).toContain("Settings > MCP servers");
+    expect(knowledge).toContain("https://work.juggle.im/api/auth");
+    expect(knowledge).toContain("RFC9728 discovery");
+    expect(knowledge).toContain("PKCE S256");
+    expect(knowledge).toContain("opencode mcp auth jugglework");
+    expect(knowledge).toContain("codex mcp login jugglework");
+    expect(knowledge).toContain("search_capabilities");
+    expect(knowledge).toContain("execute_capability");
+    expect(knowledge).toContain("JWTs signed and validated with EdDSA");
+    expect(knowledge).toContain("30-day inactivity window");
+    expect(knowledge).toContain("reference_id");
+    expect(knowledge).toContain("JuggleWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill.");
+    expect(knowledge).toContain("require the user to sign in to JuggleWork first");
+    expect(knowledge).toContain("Runtime steering from the JuggleWork extensions plugin is the source of truth");
+    expect(knowledge).toContain("retrieve the listed remote `create-skill` skill with its exact capability");
+    expect(knowledge).toContain("Follow the separate runtime `Skill creation:` instruction");
+    expect(knowledge).not.toContain("create custom skills in `.opencode/skills/`");
+    expect(knowledge).not.toContain("First call `jugglework-cloud_search_capabilities`");
+    expect(knowledge).not.toContain("then call `jugglework-cloud_execute_capability`");
+    expect(knowledge).toContain("Settings > Connect");
+    expect(knowledge).toContain("custom or local MCP server");
+    expect(knowledge).not.toContain("Access tokens are opaque");
+    expect(knowledge).not.toContain("https://work.juggle.im/jwork/api/mcp`");
+    expect(knowledge).not.toContain("jugglework-ui-mcp");
+    expect(knowledge).not.toContain("jugglework_extensions_export");
+  });
+
+  test("retrieves Slack connection guidance from bundled docs", async () => {
+    process.env.JUGGLEWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await JuggleWorkCapabilitiesKnowledge();
+    const search = await plugin.tool.jugglework_docs_search.execute({ query: "how can i connect slack", limit: 3 });
+
+    expect(search).toContain("start-here/connect-your-stack/connect-slack-mcp.mdx");
+    expect(search).toContain("Connect Slack as a custom MCP");
+
+    const read = await plugin.tool.jugglework_docs_read.execute({
+      path: "start-here/connect-your-stack/connect-slack-mcp.mdx",
+    });
+
+    expect(read).toContain("https://mcp.slack.com/mcp");
+    expect(read).toContain("Advanced OAuth");
+    expect(read).toContain("http://127.0.0.1:19876/mcp/oauth/callback");
+    expect(read).toContain("search:read.public");
+  });
+
+  test("retrieves the Connect-first member flow from bundled docs", async () => {
+    process.env.JUGGLEWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await JuggleWorkCapabilitiesKnowledge();
+    const search = await plugin.tool.jugglework_docs_search.execute({ query: "connect gmail calendar slack", limit: 3 });
+
+    expect(search).toContain("start-here/connect-your-stack/connect-services.mdx");
+
+    const read = await plugin.tool.jugglework_docs_read.execute({
+      path: "start-here/connect-your-stack/connect-services.mdx",
+    });
+
+    expect(read).toContain("Settings` > `Connect");
+    expect(read).toContain("Needs your sign-in");
+    expect(read).toContain("Ready to use");
+    expect(read).toContain("advanced path for a custom or local server");
+  });
+
+  test("does not expose the retired local skill import guide", async () => {
+    process.env.JUGGLEWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await JuggleWorkCapabilitiesKnowledge();
+    const search = await plugin.tool.jugglework_docs_search.execute({ query: "import a skill", limit: 10 });
+
+    expect(search).not.toContain("start-here/do-work-with-it/import-a-skill.mdx");
+  });
+
+  test("reads current Cloud MCP endpoint and proxy guidance from bundled docs", async () => {
+    process.env.JUGGLEWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
+
+    const plugin = await JuggleWorkCapabilitiesKnowledge();
+    const read = await plugin.tool.jugglework_docs_read.execute({
+      path: "cloud/run-in-the-cloud/cloud-mcp.mdx",
+    });
+
+    expect(read).toContain("https://work.juggle.im/jwork/api/mcp/agent");
+    expect(read).toContain("work.juggle.im/api/den");
+    expect(read).toContain("internal same-origin desktop proxy");
+    expect(read).toContain("OpenCode | Verified");
+    expect(read).toContain("Codex | Setup only");
+    expect(read).toContain("Cursor | Setup only");
+    expect(read).toContain("opencode mcp logout jugglework");
+    expect(read).toContain("codex mcp logout jugglework");
+    expect(read).toContain("X-Request-Id");
+    expect(read).toContain("reference_id");
+    expect(read).toContain("JWTs signed and validated with EdDSA");
+    expect(read).not.toContain("JWKS");
+    expect(read).not.toContain("~/.cursor/mcp.json");
+  });
+});

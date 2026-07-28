@@ -18,10 +18,10 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   engineRestart,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
+  workspaceJuggleWorkRead,
+  workspaceJuggleWorkWrite,
 } from "../../../../app/lib/desktop";
-import { OpenworkServerError } from "../../../../app/lib/openwork-server";
+import { JuggleWorkServerError } from "../../../../app/lib/jugglework-server";
 import type {
   Client,
   ProviderListItem,
@@ -34,19 +34,19 @@ import {
 } from "../../../../app/utils/providers";
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ensureProviderListQuery } from "../../../infra/provider-list-query";
-import type { OpenworkServerStoreSnapshot } from "../openwork-server-store";
+import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
 
 /**
- * The slice of the openwork-server store this store actually consumes.
+ * The slice of the jugglework-server store this store actually consumes.
  * The settings route passes the full store; the session route passes a
  * lightweight endpoint-backed adapter (previously forced through `as never`).
  */
-export type ProviderAuthOpenworkServer = {
+export type ProviderAuthJuggleWorkServer = {
   getSnapshot: () => Pick<
-    OpenworkServerStoreSnapshot,
-    "openworkServerStatus" | "openworkServerClient"
+    JuggleWorkServerStoreSnapshot,
+    "juggleworkServerStatus" | "juggleworkServerClient"
   > & {
-    openworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
+    juggleworkServerCapabilities: { config?: { read?: boolean; write?: boolean } } | null;
   };
 };
 import {
@@ -169,7 +169,7 @@ type CreateProviderAuthStoreOptions = {
   selectedWorkspaceRoot: () => string;
   runtimeWorkspaceId: () => string | null;
   ensureRuntimeWorkspaceId?: () => Promise<string | null | undefined>;
-  openworkServer: ProviderAuthOpenworkServer;
+  juggleworkServer: ProviderAuthJuggleWorkServer;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -268,24 +268,24 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return Array.from(merged.values()).toSorted(compareProviders);
   };
 
-  const resolveOpenworkConfigTarget = async (mode: "read" | "write") => {
-    const openworkSnapshot = options.openworkServer.getSnapshot();
-    const openworkClient = openworkSnapshot.openworkServerClient;
-    let openworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
-    if (!openworkWorkspaceId && openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
-      openworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
+  const resolveJuggleWorkConfigTarget = async (mode: "read" | "write") => {
+    const juggleworkSnapshot = options.juggleworkServer.getSnapshot();
+    const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+    let juggleworkWorkspaceId = options.runtimeWorkspaceId()?.trim() || null;
+    if (!juggleworkWorkspaceId && juggleworkSnapshot.juggleworkServerStatus === "connected" && juggleworkClient) {
+      juggleworkWorkspaceId = (await options.ensureRuntimeWorkspaceId?.())?.trim() || null;
     }
-    const hasOpenworkTarget =
-      openworkSnapshot.openworkServerStatus === "connected" &&
-      Boolean(openworkClient && openworkWorkspaceId);
-    const canUseOpenworkServer =
-      hasOpenworkTarget &&
-      openworkSnapshot.openworkServerCapabilities?.config?.[mode] !== false;
+    const hasJuggleWorkTarget =
+      juggleworkSnapshot.juggleworkServerStatus === "connected" &&
+      Boolean(juggleworkClient && juggleworkWorkspaceId);
+    const canUseJuggleWorkServer =
+      hasJuggleWorkTarget &&
+      juggleworkSnapshot.juggleworkServerCapabilities?.config?.[mode] !== false;
     return {
-      openworkClient,
-      openworkWorkspaceId,
-      hasOpenworkTarget,
-      canUseOpenworkServer,
+      juggleworkClient,
+      juggleworkWorkspaceId,
+      hasJuggleWorkTarget,
+      canUseJuggleWorkServer,
     };
   };
 
@@ -348,36 +348,36 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return "";
   };
 
-  const mirrorOpenWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
-    if (provider.source !== "openwork" || !apiKey.trim()) return;
-    const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
-    if (!openworkClient) return;
+  const mirrorJuggleWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
+    if (provider.source !== "jugglework" || !apiKey.trim()) return;
+    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
+    if (!juggleworkClient) return;
     const baseUrl = readCloudProviderBaseUrl(provider);
-    const entries = [{ key: "OPENWORK_API_KEY", value: apiKey.trim() }];
-    if (baseUrl) entries.push({ key: "OPENWORK_INFERENCE_BASE_URL", value: baseUrl });
-    await openworkClient.upsertUserEnv(entries);
+    const entries = [{ key: "JUGGLEWORK_API_KEY", value: apiKey.trim() }];
+    if (baseUrl) entries.push({ key: "JUGGLEWORK_INFERENCE_BASE_URL", value: baseUrl });
+    await juggleworkClient.upsertUserEnv(entries);
   };
 
-  const readWorkspaceOpenworkConfigRecord = async (): Promise<
+  const readWorkspaceJuggleWorkConfigRecord = async (): Promise<
     Record<string, unknown>
   > => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("read");
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveJuggleWorkConfigTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const config = await openworkClient.getConfig(openworkWorkspaceId);
-      return config.openwork ?? {};
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      const config = await juggleworkClient.getConfig(juggleworkWorkspaceId);
+      return config.jugglework ?? {};
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       return {};
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      return (await workspaceOpenworkRead({
+      return (await workspaceJuggleWorkRead({
         workspacePath: root,
       })) as unknown as Record<string, unknown>;
     }
@@ -385,33 +385,33 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return {};
   };
 
-  const writeWorkspaceOpenworkConfigRecord = async (
+  const writeWorkspaceJuggleWorkConfigRecord = async (
     config: Record<string, unknown>,
   ) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveJuggleWorkConfigTarget("write");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      await openworkClient.patchConfig(openworkWorkspaceId, { openwork: config });
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      await juggleworkClient.patchConfig(juggleworkWorkspaceId, { jugglework: config });
       return true;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       return false;
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await workspaceOpenworkWrite({
+      const result = await workspaceJuggleWorkWrite({
         workspacePath: root,
         config: config as never,
       });
       const typed = result as { ok: boolean; stderr?: string; stdout?: string };
       if (!typed.ok) {
         throw new Error(
-          typed.stderr || typed.stdout || "Failed to write .opencode/openwork.json",
+          typed.stderr || typed.stdout || "Failed to write .opencode/jugglework.json",
         );
       }
       return true;
@@ -423,7 +423,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const refreshImportedCloudProviders = async (refreshOptions?: { strict?: boolean }) => {
     try {
       const workspaceKey = currentWorkspaceKey();
-      const config = await readWorkspaceOpenworkConfigRecord();
+      const config = await readWorkspaceJuggleWorkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       const next = cloudImports.providers;
       // Guard: don't overwrite non-empty import state with an empty read.
@@ -456,7 +456,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const persistImportedCloudProviders = async (
     nextProviders: Record<string, CloudImportedProvider>,
   ) => {
-    const config = await readWorkspaceOpenworkConfigRecord();
+    const config = await readWorkspaceJuggleWorkConfigRecord();
     const cloudImports = readWorkspaceCloudImports(config);
     const nextCloudImports = {
       ...cloudImports,
@@ -465,7 +465,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const nextConfig = withWorkspaceCloudImports(config, {
       ...nextCloudImports,
     });
-    const persisted = await writeWorkspaceOpenworkConfigRecord(nextConfig);
+    const persisted = await writeWorkspaceJuggleWorkConfigRecord(nextConfig);
     if (!persisted) {
       throw new Error(
         "JuggleWork server unavailable. Connect to manage imported cloud providers.",
@@ -479,14 +479,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("read");
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveJuggleWorkConfigTarget("read");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      return await openworkClient.readOpencodeConfigFile(openworkWorkspaceId, "project");
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      return await juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, "project");
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       throw new Error("JuggleWork server config API is unavailable for this workspace.");
     }
 
@@ -501,12 +501,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
-    const { openworkClient, openworkWorkspaceId, hasOpenworkTarget, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
+    const { juggleworkClient, juggleworkWorkspaceId, hasJuggleWorkTarget, canUseJuggleWorkServer } =
+      await resolveJuggleWorkConfigTarget("write");
 
-    if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-      const result = await openworkClient.writeOpencodeConfigFile(
-        openworkWorkspaceId,
+    if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+      const result = await juggleworkClient.writeOpencodeConfigFile(
+        juggleworkWorkspaceId,
         "project",
         content,
       ) as { ok: boolean; stderr?: string; stdout?: string };
@@ -516,7 +516,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return true;
     }
 
-    if (hasOpenworkTarget) {
+    if (hasJuggleWorkTarget) {
       throw new Error("JuggleWork server config API is unavailable for this workspace.");
     }
 
@@ -538,12 +538,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
    * is no read-modify-write race and no edit of the user's opencode.jsonc.
    */
   const patchRuntimeProviders = async (update: Record<string, unknown>) => {
-    const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-      await resolveOpenworkConfigTarget("write");
-    if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
+    const { juggleworkClient, juggleworkWorkspaceId, canUseJuggleWorkServer } =
+      await resolveJuggleWorkConfigTarget("write");
+    if (!canUseJuggleWorkServer || !juggleworkClient || !juggleworkWorkspaceId) {
       throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
     }
-    await openworkClient.patchConfig(openworkWorkspaceId, {
+    await juggleworkClient.patchConfig(juggleworkWorkspaceId, {
       opencode: { provider: update },
     });
   };
@@ -591,10 +591,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     const c = options.client();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const juggleworkSnapshot = options.juggleworkServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
-    const canUseManagedRuntime = Boolean(openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local");
+    const canUseManagedRuntime = Boolean(juggleworkSnapshot.juggleworkServerClient && workspaceId?.trim() && workspaceType === "local");
     if (!c && !canUseManagedRuntime) {
       throw new Error(t("providers.not_connected"));
     }
@@ -602,7 +602,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const next = fallbackUpdate(config);
     await updateManagedDisabledProviders({
       opencodeClient: c,
-      openworkClient: openworkSnapshot.openworkServerClient,
+      juggleworkClient: juggleworkSnapshot.juggleworkServerClient,
       workspaceId,
       workspaceType,
       disabledProviders: next.disabled_providers,
@@ -675,17 +675,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // the user's opencode.jsonc. Fall back to project config only when the
     // managed runtime endpoint is unavailable.
     const c = options.client();
-    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const juggleworkSnapshot = options.juggleworkServer.getSnapshot();
     const workspaceId = options.runtimeWorkspaceId();
     const workspaceType = options.selectedWorkspaceDisplay().workspaceType;
     const canUseManagedRuntime = Boolean(
-      openworkSnapshot.openworkServerClient && workspaceId?.trim() && workspaceType === "local",
+      juggleworkSnapshot.juggleworkServerClient && workspaceId?.trim() && workspaceType === "local",
     );
 
     if (canUseManagedRuntime || c) {
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
-        openworkClient: openworkSnapshot.openworkServerClient,
+        juggleworkClient: juggleworkSnapshot.juggleworkServerClient,
         workspaceId,
         workspaceType,
         disabledProviders: nextDisabled,
@@ -740,10 +740,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     // Runtime-managed orphans (`lpr_*` keys in the workspace runtime config).
     try {
-      const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
-        await resolveOpenworkConfigTarget("write");
-      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
-        const merged = await openworkClient.getConfig(openworkWorkspaceId);
+      const { juggleworkClient, juggleworkWorkspaceId, canUseJuggleWorkServer } =
+        await resolveJuggleWorkConfigTarget("write");
+      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
+        const merged = await juggleworkClient.getConfig(juggleworkWorkspaceId);
         const runtimeProvider = isRecord(merged.opencode) ? merged.opencode.provider : null;
         const runtimeOrphans = isRecord(runtimeProvider)
           ? Object.keys(runtimeProvider).filter((key) => /^lpr_/i.test(key))
@@ -791,7 +791,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   ) => {
     const localProviderId = getCloudManagedProviderId(provider);
     const existingImported = state.importedCloudProviders[provider.id] ?? null;
-    // `lpr_*` / `openwork` keys are owned by the cloud-import system. When the
+    // `lpr_*` / `jugglework` keys are owned by the cloud-import system. When the
     // import baseline was lost or diverged (e.g. it lives in a different file
     // than the provider block, or a prior reconcile failed mid-flight), an
     // existing cloud-managed block must be treated as a re-import to reconcile,
@@ -1225,19 +1225,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // off").
       let reloaded = false;
       try {
-        const openworkSnapshot = options.openworkServer.getSnapshot();
-        const openworkClient = openworkSnapshot.openworkServerClient;
-        if (openworkSnapshot.openworkServerStatus === "connected" && openworkClient) {
+        const juggleworkSnapshot = options.juggleworkServer.getSnapshot();
+        const juggleworkClient = juggleworkSnapshot.juggleworkServerClient;
+        if (juggleworkSnapshot.juggleworkServerStatus === "connected" && juggleworkClient) {
           const workspaceId =
             options.runtimeWorkspaceId()?.trim() ||
             (await options.ensureRuntimeWorkspaceId?.())?.trim() ||
             "";
           if (workspaceId) {
             try {
-              await openworkClient.reloadEngine(workspaceId);
+              await juggleworkClient.reloadEngine(workspaceId);
             } catch (error) {
               const unreachable =
-                error instanceof OpenworkServerError && error.code === "opencode_engine_unreachable";
+                error instanceof JuggleWorkServerError && error.code === "opencode_engine_unreachable";
               if (!unreachable || !isDesktopRuntime()) {
                 throw error;
               }
@@ -1445,22 +1445,22 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await assertCloudProviderImportSafe(provider);
 
       if (envEntries.length > 0) {
-        const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
-        if (!openworkClient) {
+        const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
+        if (!juggleworkClient) {
           throw new Error(
             `${provider.name} needs environment variables (${envEntries
               .map((entry) => entry.key)
               .join(", ")}) but the JuggleWork server is not available.`,
           );
         }
-        await openworkClient.upsertUserEnv(envEntries);
+        await juggleworkClient.upsertUserEnv(envEntries);
       }
       if (primaryApiKey) {
         await c.auth.set({
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey);
+        await mirrorJuggleWorkModelsVoiceEnv(provider, primaryApiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -1620,8 +1620,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // server target (patchRuntimeProviders throws without it). Running before
     // the target resolves made the baseline read fall back to an empty source
     // and re-import every org provider — engine dispose churn on settings open.
-    const target = await resolveOpenworkConfigTarget("write");
-    if (!target.canUseOpenworkServer || !target.openworkClient || !target.openworkWorkspaceId) {
+    const target = await resolveJuggleWorkConfigTarget("write");
+    if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
       return;
     }
 

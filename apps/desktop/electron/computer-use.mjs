@@ -16,7 +16,7 @@ const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
 
 function computerUseHelperExecutablePath() {
   const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicitBinary = process.env.JUGGLEWORK_COMPUTER_USE_BINARY?.trim();
   const candidates = [
     explicitBinary,
     appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
@@ -26,7 +26,7 @@ function computerUseHelperExecutablePath() {
 }
 
 function computerUseHelperAppPath() {
-  const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
+  const explicitApp = process.env.JUGGLEWORK_COMPUTER_USE_APP?.trim();
   const candidates = [
     explicitApp,
     process.resourcesPath ? path.join(process.resourcesPath, "helpers", COMPUTER_USE_HELPER_APP_NAME) : null,
@@ -44,10 +44,10 @@ function getComputerUseMcpCommand() {
     throw new Error("JuggleWork Computer Use is missing from this JuggleWork build.");
   }
 
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+  if (process.env.JUGGLEWORK_DEV_MODE === "1") {
+    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/jugglework-handsfree-computer-use.mjs"), "mcp"];
   }
-  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+  return ["npx", "-y", "@jugglework/handsfree", "mcp"];
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ function getComputerUseMcpCommand() {
 
 function resolveComputerUseExecutable() {
   // 1. Explicit env override.
-  const explicit = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
+  const explicit = process.env.JUGGLEWORK_COMPUTER_USE_BINARY?.trim();
   if (explicit && existsSync(explicit)) return explicit;
 
   // 2. .app bundle (packaged builds + pnpm dev).

@@ -2,22 +2,22 @@
 // types.ts re-exports it for the rest of the app.
 export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
-export type OpenWorkExtensionSourceFormat =
-  | "openwork-builtin"
-  | "openwork-extension-manifest"
+export type JuggleWorkExtensionSourceFormat =
+  | "jugglework-builtin"
+  | "jugglework-extension-manifest"
   | "claude-plugin"
   | "opencode-plugin"
   | "mcp-directory"
   | "manual";
 
-export type OpenWorkExtensionSource = {
-  format: OpenWorkExtensionSourceFormat;
+export type JuggleWorkExtensionSource = {
+  format: JuggleWorkExtensionSourceFormat;
   trusted: boolean;
   origin?: "builtin" | "den" | "workspace" | "local";
   reference?: string;
 };
 
-export type OpenWorkExtensionResourceType =
+export type JuggleWorkExtensionResourceType =
   | "skill"
   | "agent"
   | "command"
@@ -32,8 +32,8 @@ export type OpenWorkExtensionResourceType =
   | "local-service"
   | "native-binary";
 
-export type OpenWorkExtensionResource = {
-  type: OpenWorkExtensionResourceType;
+export type JuggleWorkExtensionResource = {
+  type: JuggleWorkExtensionResourceType;
   id: string;
   label?: string;
   description?: string;
@@ -43,11 +43,11 @@ export type OpenWorkExtensionResource = {
   packageName?: string;
   providerId?: string;
   mcpServerName?: string;
-  localCommandRef?: "openwork.computerUseMcp" | "openwork.uiMcp";
+  localCommandRef?: "jugglework.computerUseMcp" | "jugglework.uiMcp";
   required?: boolean;
 };
 
-export type OpenWorkExtensionContributionType =
+export type JuggleWorkExtensionContributionType =
   | "settings-panel"
   | "setup-instructions"
   | "composer-prompt"
@@ -58,8 +58,8 @@ export type OpenWorkExtensionContributionType =
   | "native-capability"
   | "test-action";
 
-export type OpenWorkExtensionContribution = {
-  type: OpenWorkExtensionContributionType;
+export type JuggleWorkExtensionContribution = {
+  type: JuggleWorkExtensionContributionType;
   ref?: string;
   label?: string;
   description?: string;
@@ -67,7 +67,7 @@ export type OpenWorkExtensionContribution = {
   location?: "settings-detail" | "composer" | "session-right-pane" | "session-rail" | "server" | "native";
 };
 
-export type OpenWorkExtensionSetup = {
+export type JuggleWorkExtensionSetup = {
   instructions?: string;
   primaryCta?: string;
   secondaryCta?: string;
@@ -75,7 +75,7 @@ export type OpenWorkExtensionSetup = {
   testActionRef?: string;
 };
 
-export type OpenWorkExtensionLifecycle = {
+export type JuggleWorkExtensionLifecycle = {
   reload?: ReloadReason[];
   detection?: string[];
 };
@@ -106,13 +106,13 @@ export type EnablementResult = {
   met: boolean;
 };
 
-export type OpenWorkExtensionManifest = {
+export type JuggleWorkExtensionManifest = {
   schemaVersion: 1;
   id: string;
   name: string;
   description: string;
   preview?: boolean;
-  source: OpenWorkExtensionSource;
+  source: JuggleWorkExtensionSource;
   icon?: {
     src?: string;
     simpleIconSlug?: string;
@@ -120,10 +120,10 @@ export type OpenWorkExtensionManifest = {
   composer?: {
     prompt: string;
   };
-  setup?: OpenWorkExtensionSetup;
-  resources: OpenWorkExtensionResource[];
-  contributions?: OpenWorkExtensionContribution[];
-  lifecycle?: OpenWorkExtensionLifecycle;
+  setup?: JuggleWorkExtensionSetup;
+  resources: JuggleWorkExtensionResource[];
+  contributions?: JuggleWorkExtensionContribution[];
+  lifecycle?: JuggleWorkExtensionLifecycle;
   /** Declarative conditions that must ALL be true for the extension to be "active". */
   enablement?: EnablementCondition[];
   defaultEnabled?: boolean;
@@ -132,30 +132,30 @@ export type OpenWorkExtensionManifest = {
 };
 
 export function extensionContribution(
-  manifest: OpenWorkExtensionManifest | undefined,
-  type: OpenWorkExtensionContributionType,
-): OpenWorkExtensionContribution | undefined {
+  manifest: JuggleWorkExtensionManifest | undefined,
+  type: JuggleWorkExtensionContributionType,
+): JuggleWorkExtensionContribution | undefined {
   return manifest?.contributions?.find((contribution) => contribution.type === type);
 }
 
 export function extensionResource(
-  manifest: OpenWorkExtensionManifest | undefined,
-  type: OpenWorkExtensionResourceType,
-): OpenWorkExtensionResource | undefined {
+  manifest: JuggleWorkExtensionManifest | undefined,
+  type: JuggleWorkExtensionResourceType,
+): JuggleWorkExtensionResource | undefined {
   return manifest?.resources.find((resource) => resource.type === type);
 }
 
-export function isTrustedBuiltInExtension(manifest: OpenWorkExtensionManifest | undefined): boolean {
+export function isTrustedBuiltInExtension(manifest: JuggleWorkExtensionManifest | undefined): boolean {
   return manifest?.source.origin === "builtin" && manifest.source.trusted;
 }
 
-export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] = [
+export const BUILT_IN_JUGGLEWORK_EXTENSION_MANIFESTS: JuggleWorkExtensionManifest[] = [
   {
     schemaVersion: 1,
-    id: "openwork-browser",
+    id: "jugglework-browser",
     name: "JuggleWork Browser",
     description: "Automate the built-in browser panel that stays visible inside JuggleWork.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use the JuggleWork Browser extension to " },
     setup: {
@@ -170,12 +170,12 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       },
     ],
     contributions: [
-      { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
-      { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
+      { type: "settings-panel", ref: "jugglework.browser.settings", location: "settings-detail" },
+      { type: "session-side-panel", ref: "jugglework.browser.panel", location: "session-right-pane" },
       { type: "composer-prompt", prompt: "Use the JuggleWork Browser extension to ", location: "composer" },
     ],
     enablement: [
-      { type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" },
+      { type: "toggle-enabled", ref: "jugglework-browser", label: "Enabled" },
     ],
     lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
     defaultEnabled: true,
@@ -186,14 +186,14 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     name: "Computer Use",
     description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
     preview: true,
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use Computer Use to " },
     setup: {
       instructions: "Computer Use is Mac only. It runs as a local MCP server backed by the macOS accessibility runtime. Grant Accessibility and Screen Recording permissions when macOS asks, then connect the MCP server in this workspace.",
       primaryCta: "Connect Computer Use MCP",
       secondaryCta: "Check macOS permissions",
-      testActionRef: "openwork.computerUse.healthCheck",
+      testActionRef: "jugglework.computerUse.healthCheck",
     },
     resources: [
       {
@@ -201,22 +201,22 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
         id: "computer-use-mcp",
         label: "Computer Use MCP",
         mcpServerName: "computer-use",
-        command: ["npx", "-y", "@openwork/handsfree", "mcp"],
-        localCommandRef: "openwork.computerUseMcp",
+        command: ["npx", "-y", "@jugglework/handsfree", "mcp"],
+        localCommandRef: "jugglework.computerUseMcp",
         required: true,
       },
       {
         type: "native-binary",
         id: "computer-use-native",
         label: "macOS accessibility runtime",
-        packageName: "@openwork/handsfree",
+        packageName: "@jugglework/handsfree",
         required: true,
       },
     ],
     contributions: [
-      { type: "setup-instructions", ref: "openwork.computerUse.setup", location: "settings-detail" },
-      { type: "native-capability", ref: "openwork.computerUse.axPermissions", label: "Accessibility and Screen Recording" },
-      { type: "test-action", ref: "openwork.computerUse.healthCheck", label: "Verify Computer Use MCP" },
+      { type: "setup-instructions", ref: "jugglework.computerUse.setup", location: "settings-detail" },
+      { type: "native-capability", ref: "jugglework.computerUse.axPermissions", label: "Accessibility and Screen Recording" },
+      { type: "test-action", ref: "jugglework.computerUse.healthCheck", label: "Verify Computer Use MCP" },
       { type: "composer-prompt", prompt: "Use Computer Use to ", location: "composer" },
     ],
     enablement: [
@@ -229,11 +229,11 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
   },
   {
     schemaVersion: 1,
-    id: "openwork-voice",
+    id: "jugglework-voice",
     name: "Voice Mode",
     description: "Talk to JuggleWork through a Realtime voice panel that drives the same semantic UI controls as JuggleWork UI MCP.",
     preview: true,
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/jugglework-logo.png" },
     composer: { prompt: "Use Voice Mode to " },
     setup: {
@@ -241,24 +241,24 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       primaryCta: "Save OpenAI key",
       secondaryCta: "Test Realtime",
       requiredEnv: ["OPENAI_REALTIME_API_KEY", "OPENAI_API_KEY"],
-      testActionRef: "openwork.voice.testRealtime",
+      testActionRef: "jugglework.voice.testRealtime",
     },
     resources: [
       { type: "secret", id: "openai-realtime-api-key", envKey: "OPENAI_REALTIME_API_KEY", required: false },
       { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "local-service", id: "openwork-voice-realtime-session", label: "Realtime client-secret minting", required: true },
+      { type: "local-service", id: "jugglework-voice-realtime-session", label: "Realtime client-secret minting", required: true },
     ],
     contributions: [
-      { type: "settings-panel", ref: "openwork.voice.settings", location: "settings-detail" },
-      { type: "session-side-panel", ref: "openwork.voice.panel", location: "session-right-pane" },
-      { type: "session-rail-item", ref: "openwork.voice.rail", label: "Voice Mode", location: "session-rail" },
+      { type: "settings-panel", ref: "jugglework.voice.settings", location: "settings-detail" },
+      { type: "session-side-panel", ref: "jugglework.voice.panel", location: "session-right-pane" },
+      { type: "session-rail-item", ref: "jugglework.voice.rail", label: "Voice Mode", location: "session-rail" },
       { type: "server-route", ref: "POST /voice/realtime/session", location: "server" },
-      { type: "control-actions", ref: "openwork.voice.controlActions" },
-      { type: "test-action", ref: "openwork.voice.testRealtime", label: "Test Realtime" },
+      { type: "control-actions", ref: "jugglework.voice.controlActions" },
+      { type: "test-action", ref: "jugglework.voice.testRealtime", label: "Test Realtime" },
       { type: "composer-prompt", prompt: "Use Voice Mode to ", location: "composer" },
     ],
     enablement: [
-      { type: "toggle-enabled", ref: "openwork-voice", label: "Enabled" },
+      { type: "toggle-enabled", ref: "jugglework-voice", label: "Enabled" },
       { type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" },
     ],
     lifecycle: { reload: ["config"], detection: ["env:OPENAI_REALTIME_API_KEY", "env:OPENAI_API_KEY"] },
@@ -269,14 +269,14 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     name: "Google Workspace",
     description: "Let JuggleWork help with meetings, selected Drive files, and Gmail drafts.",
     preview: true,
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { simpleIconSlug: "google" },
     composer: { prompt: "Use Google Workspace to " },
     setup: {
       instructions: "Connect your Google account to use Calendar, Drive, and Gmail drafts in JuggleWork.",
       primaryCta: "Connect Google Workspace",
       secondaryCta: "Test connection",
-      testActionRef: "openwork.googleWorkspace.testConnection",
+      testActionRef: "jugglework.googleWorkspace.testConnection",
     },
     resources: [
       { type: "provider", id: "google-oauth", label: "Google account", providerId: "google-workspace", required: true },
@@ -290,8 +290,8 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "tool", id: "google-chat", label: "Google Chat (opt-in)", required: false },
     ],
     contributions: [
-      { type: "settings-panel", ref: "openwork.googleWorkspace.settings", location: "settings-detail" },
-      { type: "test-action", ref: "openwork.googleWorkspace.testConnection", label: "Test Google Workspace" },
+      { type: "settings-panel", ref: "jugglework.googleWorkspace.settings", location: "settings-detail" },
+      { type: "test-action", ref: "jugglework.googleWorkspace.testConnection", label: "Test Google Workspace" },
       { type: "composer-prompt", prompt: "Use Google Workspace to ", location: "composer" },
     ],
     lifecycle: { reload: ["config"], detection: ["provider:google-workspace"] },
@@ -301,7 +301,7 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     id: "ollama",
     name: "Ollama",
     description: "Local model provider at http://localhost:11434.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    source: { format: "jugglework-builtin", origin: "builtin", trusted: true },
     icon: { src: "/ext-ollama.svg" },
     composer: { prompt: "Use the Ollama extension to " },
     setup: {
@@ -314,8 +314,8 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
       { type: "provider", id: "ollama", providerId: "ollama", packageName: "@ai-sdk/openai-compatible", required: true },
     ],
     contributions: [
-      { type: "settings-panel", ref: "openwork.ollama.settings", location: "settings-detail" },
-      { type: "test-action", ref: "openwork.ollama.listModels", label: "Check local models" },
+      { type: "settings-panel", ref: "jugglework.ollama.settings", location: "settings-detail" },
+      { type: "test-action", ref: "jugglework.ollama.listModels", label: "Check local models" },
       { type: "composer-prompt", prompt: "Use the Ollama extension to ", location: "composer" },
     ],
     enablement: [

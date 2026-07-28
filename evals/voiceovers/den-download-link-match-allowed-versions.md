@@ -6,7 +6,7 @@ The organization-wide desktop version policy applies to every member who uses th
 
 2. A non-admin signs in to the single-organization dashboard and opens the three-step installer flow.
 
-3. Clicking “Download and install” downloads OpenWork 0.17.38—the highest version permitted by the organization.
+3. Clicking “Download and install” downloads JuggleWork 0.17.38—the highest version permitted by the organization.
 
 4. If an admin pins legacy versions 0.17.26 and 0.17.27, the guided installer still downloads v0.17.37—the first release that has installer assets—instead of pointing at the missing v0.17.27 asset.
 

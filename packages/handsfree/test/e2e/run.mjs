@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
-const HELPER_APP = process.env.OPENWORK_COMPUTER_USE_HELPER
+const HELPER_APP = process.env.JUGGLEWORK_COMPUTER_USE_HELPER
   ?? join(repoRoot, "apps/desktop/resources/helpers/JuggleWork Computer Use.app");
 const PAGE = `file://${join(__dirname, "bench.html")}`;
 const CDP_PORT = Number(process.env.CU_BENCH_CDP_PORT ?? 9224);

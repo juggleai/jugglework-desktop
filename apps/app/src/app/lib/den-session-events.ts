@@ -1,7 +1,7 @@
 import type { DenSettings, DenUser } from "./den-types";
 
-export const denSessionUpdatedEvent = "openwork-den-session-updated";
-export const denSettingsChangedEvent = "openwork-den-settings-changed";
+export const denSessionUpdatedEvent = "jugglework-den-session-updated";
+export const denSettingsChangedEvent = "jugglework-den-settings-changed";
 
 export type DenSessionUpdatedDetail = {
   status?: "success" | "error" | "signed_out";

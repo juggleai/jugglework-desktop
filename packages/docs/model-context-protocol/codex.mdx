@@ -17,25 +17,25 @@ capability names instead of loading hundreds of tool definitions into context.
 ## Server URL
 
 ```text
-https://api.openworklabs.com/mcp/agent
+https://work.juggle.im/jwork/api/mcp/agent
 ```
 
 OAuth sign-in uses your JuggleWork account, and the organization you pick is
 pinned into the token. If you do not have an account, create a
-[free JuggleWork account](https://app.openworklabs.com?mode=sign-up).
+[free JuggleWork account](https://work.juggle.im?mode=sign-up).
 
 ## Setup
 
 1. Add JuggleWork Connect:
 
    ```sh
-   codex mcp add openwork --url https://api.openworklabs.com/mcp/agent
+   codex mcp add jugglework --url https://work.juggle.im/jwork/api/mcp/agent
    ```
 
 2. Log in and finish the browser sign-in:
 
    ```sh
-   codex mcp login openwork
+   codex mcp login jugglework
    ```
 
 In the Codex desktop app, open `codex://settings/connections` and paste the
@@ -46,8 +46,8 @@ server URL there instead.
 Log out, then log in again and choose the organization you want:
 
 ```sh
-codex mcp logout openwork
-codex mcp login openwork
+codex mcp logout jugglework
+codex mcp login jugglework
 ```
 
 <Note>
@@ -73,4 +73,4 @@ table.
 - Publish Notion, Linear, Slack, and other shared tools with
   [shared MCP connections](/cloud/share-with-your-team/shared-mcp-connections).
 - Connect from a remote environment with
-  [JuggleWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine).
+  [JuggleWork MCP on a remote machine](/cloud/run-in-the-cloud/connect-jugglework-mcp-remote-machine).

@@ -1,7 +1,7 @@
 import { createOpencodeClient, type Message, type Part, type Session, type Todo } from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "./desktop";
-import { createOpenworkServerClient, OpenworkServerError } from "./openwork-server";
+import { createJuggleWorkServerClient, JuggleWorkServerError } from "./jugglework-server";
 import { isDesktopRuntime } from "./runtime-env";
 
 type FieldsResult<T> =
@@ -58,7 +58,7 @@ export type OpencodeAuth = {
   username?: string;
   password?: string;
   token?: string;
-  mode?: "basic" | "openwork";
+  mode?: "basic" | "jugglework";
 };
 
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
@@ -136,7 +136,7 @@ async function postSessionRequest<T>(
   return { error, request, response };
 }
 
-function resolveOpenworkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
+function resolveJuggleWorkWorkspaceMount(baseUrl: string): { baseUrl: string; workspaceId: string } | null {
   try {
     const url = new URL(baseUrl);
     const match = url.pathname
@@ -172,7 +172,7 @@ function createSyntheticResult<T>(
   return { error: input.error, request, response };
 }
 
-async function wrapOpenworkRead<T>(
+async function wrapJuggleWorkRead<T>(
   url: string,
   read: () => Promise<T>,
   options?: { throwOnError?: boolean },
@@ -184,17 +184,17 @@ async function wrapOpenworkRead<T>(
     return createSyntheticResult(url, "GET", {
       ok: false,
       error,
-      status: error instanceof OpenworkServerError ? error.status : 500,
+      status: error instanceof JuggleWorkServerError ? error.status : 500,
     });
   }
 }
 
 function shouldFallbackToLegacySessionRead(error: unknown): boolean {
-  if (!(error instanceof OpenworkServerError)) return false;
+  if (!(error instanceof JuggleWorkServerError)) return false;
   return error.status === 404 || error.status === 405 || error.status === 501;
 }
 
-async function wrapOpenworkReadWithFallback<T>(
+async function wrapJuggleWorkReadWithFallback<T>(
   url: string,
   read: () => Promise<T>,
   fallback: () => Promise<FieldsResult<T>>,
@@ -208,7 +208,7 @@ async function wrapOpenworkReadWithFallback<T>(
       return createSyntheticResult(url, "GET", {
         ok: false,
         error,
-        status: error instanceof OpenworkServerError ? error.status : 500,
+        status: error instanceof JuggleWorkServerError ? error.status : 500,
       });
     }
     return fallback();
@@ -265,7 +265,7 @@ const encodeBasicAuth = (auth?: OpencodeAuth) => {
 };
 
 const resolveAuthHeader = (auth?: OpencodeAuth) => {
-  if (auth?.mode === "openwork" && auth.token) {
+  if (auth?.mode === "jugglework" && auth.token) {
     return `Bearer ${auth.token}`;
   }
   const encoded = encodeBasicAuth(auth);
@@ -278,7 +278,7 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
  * `fetch_read_body` IPC call blocks until the entire body is delivered, so
  * pointing it at an infinite stream freezes the webview's main thread for
  * minutes. For these endpoints we always use the webview's native fetch —
- * CORS is already wide open on the openwork/opencode stack, so there's no
+ * CORS is already wide open on the jugglework/opencode stack, so there's no
  * reason to route them through the plugin.
  */
 const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
@@ -371,10 +371,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   });
 
   const session = client.session as typeof client.session;
-  const openworkMount = auth?.mode === "openwork" ? resolveOpenworkWorkspaceMount(baseUrl) : null;
-  const openworkSessionClient =
-    openworkMount && auth?.token
-      ? createOpenworkServerClient({ baseUrl: openworkMount.baseUrl, token: auth.token })
+  const juggleworkMount = auth?.mode === "jugglework" ? resolveJuggleWorkWorkspaceMount(baseUrl) : null;
+  const juggleworkSessionClient =
+    juggleworkMount && auth?.token
+      ? createJuggleWorkServerClient({ baseUrl: juggleworkMount.baseUrl, token: auth.token })
       : null;
   // TODO(2026-04-12): remove the old-server compatibility path here once all
   // JuggleWork servers expose the workspace-scoped session read APIs.
@@ -389,7 +389,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const listOriginal = sessionOverrides.list.bind(session);
   sessionOverrides.list = (parameters?: SessionListParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!juggleworkMount || !juggleworkSessionClient) {
       return listOriginal(parameters, options);
     }
     const query = new URLSearchParams();
@@ -397,10 +397,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     if (typeof parameters?.start === "number") query.set("start", String(parameters.start));
     if (parameters?.search?.trim()) query.set("search", parameters.search.trim());
     if (typeof parameters?.limit === "number") query.set("limit", String(parameters.limit));
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions${query.size ? `?${query.toString()}` : ""}`;
-    return wrapOpenworkReadWithFallback(
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions${query.size ? `?${query.toString()}` : ""}`;
+    return wrapJuggleWorkReadWithFallback(
       url,
-      async () => (await openworkSessionClient.listSessions(openworkMount.workspaceId, parameters)).items,
+      async () => (await juggleworkSessionClient.listSessions(juggleworkMount.workspaceId, parameters)).items,
       () => listOriginal(parameters, options),
       options,
     );
@@ -408,13 +408,13 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const getOriginal = sessionOverrides.get.bind(session);
   sessionOverrides.get = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!juggleworkMount || !juggleworkSessionClient) {
       return getOriginal(parameters, options);
     }
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
-    return wrapOpenworkReadWithFallback(
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}`;
+    return wrapJuggleWorkReadWithFallback(
       url,
-      async () => (await openworkSessionClient.getSession(openworkMount.workspaceId, parameters.sessionID)).item,
+      async () => (await juggleworkSessionClient.getSession(juggleworkMount.workspaceId, parameters.sessionID)).item,
       () => getOriginal(parameters, options),
       options,
     );
@@ -422,16 +422,16 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const messagesOriginal = sessionOverrides.messages.bind(session);
   sessionOverrides.messages = (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!juggleworkMount || !juggleworkSessionClient) {
       return messagesOriginal(parameters, options);
     }
     const query = new URLSearchParams();
     if (typeof parameters.limit === "number") query.set("limit", String(parameters.limit));
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
-    return wrapOpenworkReadWithFallback(
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/messages${query.size ? `?${query.toString()}` : ""}`;
+    return wrapJuggleWorkReadWithFallback(
       url,
       async () =>
-        (await openworkSessionClient.getSessionMessages(openworkMount.workspaceId, parameters.sessionID, {
+        (await juggleworkSessionClient.getSessionMessages(juggleworkMount.workspaceId, parameters.sessionID, {
           limit: parameters.limit,
         })).items,
       () => messagesOriginal(parameters, options),
@@ -441,13 +441,13 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const todoOriginal = sessionOverrides.todo.bind(session);
   sessionOverrides.todo = (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount || !openworkSessionClient) {
+    if (!juggleworkMount || !juggleworkSessionClient) {
       return todoOriginal(parameters, options);
     }
-    const url = `${openworkMount.baseUrl}/workspace/${encodeURIComponent(openworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/snapshot`;
-    return wrapOpenworkReadWithFallback(
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/snapshot`;
+    return wrapJuggleWorkReadWithFallback(
       url,
-      async () => (await openworkSessionClient.getSessionSnapshot(openworkMount.workspaceId, parameters.sessionID)).item.todos,
+      async () => (await juggleworkSessionClient.getSessionSnapshot(juggleworkMount.workspaceId, parameters.sessionID)).item.todos,
       () => todoOriginal(parameters, options),
       options,
     );
@@ -455,7 +455,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
   sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount && !("reasoning_effort" in parameters)) {
+    if (!juggleworkMount && !("reasoning_effort" in parameters)) {
       return promptAsyncOriginal(parameters, options);
     }
     const { sessionID, directory: requestDirectory, ...body } = parameters;
@@ -468,7 +468,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const commandOriginal = sessionOverrides.command.bind(session);
   sessionOverrides.command = (parameters: CommandParameters, options?: { throwOnError?: boolean }) => {
-    if (!openworkMount && !("reasoning_effort" in parameters)) {
+    if (!juggleworkMount && !("reasoning_effort" in parameters)) {
       return commandOriginal(parameters, options);
     }
     const { sessionID, directory: requestDirectory, ...body } = parameters;

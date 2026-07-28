@@ -16,6 +16,6 @@ services:
     environment:
       DISPLAY: ":99"
       ELECTRON_DISABLE_SANDBOX: "1"
-      OPENWORK_ELECTRON_REMOTE_DEBUG_PORT: "9825"
-      OPENWORK_DEV_MODE: "1"
+      JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT: "9825"
+      JUGGLEWORK_DEV_MODE: "1"
     command: sleep infinity

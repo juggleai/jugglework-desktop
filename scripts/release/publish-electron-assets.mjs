@@ -20,7 +20,7 @@ if (!repo) {
 }
 
 const distRoot = resolve(distRootArg);
-const outputDir = resolve(process.env.RUNNER_TEMP || ".", "openwork-electron-manifests");
+const outputDir = resolve(process.env.RUNNER_TEMP || ".", "jugglework-electron-manifests");
 mkdirSync(outputDir, { recursive: true });
 
 function walk(dir) {
@@ -40,7 +40,7 @@ function isUpdaterManifest(path) {
 
 function isReleaseAsset(path) {
   if (isUpdaterManifest(path)) return false;
-  if (!basename(path).startsWith("openwork-")) return false;
+  if (!basename(path).startsWith("jugglework-")) return false;
   return /\.(AppImage|blockmap|dmg|exe|rpm|zip)$/i.test(path) || /\.tar\.gz$/i.test(path);
 }
 

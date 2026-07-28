@@ -26,7 +26,7 @@ function readArgs(argv: string[]): BuildOptions {
   const options: BuildOptions = {
     targets: [],
     outdir: resolve("dist", "bin"),
-    filename: "openwork",
+    filename: "jugglework",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -101,7 +101,7 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
     if (typeof pkg.version === "string" && pkg.version.trim()) {
-      define.__OPENWORK_ORCHESTRATOR_VERSION__ = `\"${pkg.version.trim()}\"`;
+      define.__JUGGLEWORK_ORCHESTRATOR_VERSION__ = `\"${pkg.version.trim()}\"`;
     }
   } catch {
     // ignore
@@ -114,7 +114,7 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
       typeof constants.opencodeVersion === "string" &&
       constants.opencodeVersion.trim()
     ) {
-      define.__OPENWORK_PINNED_OPENCODE_VERSION__ = `\"${constants.opencodeVersion
+      define.__JUGGLEWORK_PINNED_OPENCODE_VERSION__ = `\"${constants.opencodeVersion
         .trim()
         .replace(/^v/, "")}\"`;
     }
