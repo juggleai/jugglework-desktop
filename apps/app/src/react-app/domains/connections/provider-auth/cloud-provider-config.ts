@@ -6,6 +6,7 @@ import type {
   DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
 import type { CloudImportedProvider } from "../../../../app/cloud/import-state";
+import type { DeploymentModelCatalog } from "./deployment-model-catalog";
 
 /**
  * Pure helpers that build and reconcile the cloud-managed ("lpr_*") provider
@@ -91,10 +92,20 @@ export const getProviderModelIds = (
     })
     .sort();
 
+/**
+ * Bump when `buildCloudProviderConfig` starts writing a materially different
+ * block, so already-imported providers are rewritten once instead of keeping
+ * whatever an older build wrote. 1: model metadata is backfilled from the
+ * deployment catalog. 2: that backfill no longer reads the catalog through the
+ * HTTP cache, so blocks written from a stale catalog are rewritten.
+ */
+export const CLOUD_PROVIDER_METADATA_VERSION = 2;
+
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
   importedProvider: CloudImportedProvider,
 ) =>
+  (importedProvider.metadataVersion ?? 0) < CLOUD_PROVIDER_METADATA_VERSION ||
   importedProvider.providerId !== getCloudManagedProviderId(provider) ||
   importedProvider.sourceProviderId !== provider.providerId ||
   (importedProvider.source ?? null) !== provider.source ||
@@ -106,9 +117,39 @@ export const isCloudProviderOutOfSync = (
     getProviderModelIds(provider),
   );
 
+/**
+ * Every model field the engine reads off a workspace provider block. Anything
+ * missing here falls back to the engine's own defaults — `limit.context: 0`
+ * (which disables context accounting and compaction), zero cost, and
+ * text-only capabilities.
+ */
+const CLOUD_PROVIDER_MODEL_FIELDS = [
+  "family",
+  "release_date",
+  "attachment",
+  "reasoning",
+  "temperature",
+  "tool_call",
+  "interleaved",
+  "cost",
+  "limit",
+  "modalities",
+  "status",
+  "options",
+  "headers",
+  "provider",
+  "variants",
+] as const;
+
 export const buildCloudProviderConfig = (
   provider: DenOrgLlmProviderConnection,
+  catalog?: DeploymentModelCatalog | null,
 ): ProviderConfig => {
+  // The block is keyed by the cloud row id (`lpr_*`), which the engine cannot
+  // match against the catalog — so resolve the catalog by the provider's
+  // source id here and let it fill whatever Den did not publish.
+  const catalogModels = catalog?.[provider.providerId] ?? null;
+
   const models = Object.fromEntries(
     provider.models.map((model) => {
       const next: NonNullable<ProviderConfig["models"]>[string] = {
@@ -116,24 +157,9 @@ export const buildCloudProviderConfig = (
         name: model.name,
       };
       const raw = model.config;
-      for (const key of [
-        "family",
-        "release_date",
-        "attachment",
-        "reasoning",
-        "temperature",
-        "tool_call",
-        "interleaved",
-        "cost",
-        "limit",
-        "modalities",
-        "status",
-        "options",
-        "headers",
-        "provider",
-        "variants",
-      ] as const) {
-        const value = raw[key];
+      const catalogModel = catalogModels?.[model.id];
+      for (const key of CLOUD_PROVIDER_MODEL_FIELDS) {
+        const value = raw[key] !== undefined ? raw[key] : catalogModel?.[key];
         if (value !== undefined) {
           (next as Record<string, unknown>)[key] = value;
         }
@@ -193,12 +219,16 @@ export const buildRuntimeProviderPatch = (
   provider: DenOrgLlmProviderConnection,
   localProviderId: string,
   previousProviderId?: string | null,
+  catalog?: DeploymentModelCatalog | null,
 ): Record<string, unknown> => {
   const patch: Record<string, unknown> = {};
   if (previousProviderId && previousProviderId !== localProviderId) {
     patch[previousProviderId] = null;
   }
-  patch[localProviderId] = buildCloudProviderConfig(provider) as unknown as Record<string, unknown>;
+  patch[localProviderId] = buildCloudProviderConfig(
+    provider,
+    catalog,
+  ) as unknown as Record<string, unknown>;
   return patch;
 };
 

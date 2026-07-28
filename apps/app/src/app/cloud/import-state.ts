@@ -7,6 +7,14 @@ export type CloudImportedProvider = {
   updatedAt: string | null;
   modelIds: string[];
   importedAt: number | null;
+  /**
+   * How the provider block was written, independent of what Den published.
+   * Bumped when the desktop changes the shape it writes so an existing import
+   * is rewritten once — Den's `updatedAt` and model list are unchanged in that
+   * case, so nothing else would mark it out of sync.
+   * `null` is a pre-versioning baseline.
+   */
+  metadataVersion: number | null;
 };
 
 export type CloudImportedMarketplace = {
@@ -81,6 +89,10 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
         importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
           ? entry.importedAt
           : null,
+        metadataVersion:
+          typeof entry.metadataVersion === "number" && Number.isFinite(entry.metadataVersion)
+            ? entry.metadataVersion
+            : null,
       } satisfies CloudImportedProvider;
       return [[cloudProviderId, imported] as const];
     }),

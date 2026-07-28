@@ -9,6 +9,7 @@ import type {
 import type { CloudImportedProvider } from "../src/app/cloud/import-state";
 import {
   buildRuntimeProviderPatch,
+  CLOUD_PROVIDER_METADATA_VERSION,
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudManagedProviderKey,
@@ -70,6 +71,7 @@ const importedFrom = (
   updatedAt: provider.updatedAt,
   modelIds: getProviderModelIds(provider),
   importedAt: Date.now(),
+  metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
 });
 
 const patchModelKeys = (patch: Record<string, unknown>): string[] => {
@@ -130,6 +132,16 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
 
     // After re-import the baseline advances -> in sync again.
     expect(isCloudProviderOutOfSync(updated, importedFrom(updated))).toBe(false);
+  });
+
+  test("a baseline written before catalog backfill is rewritten once", () => {
+    const provider = makeProvider([makeModel("model-x")], "2024-02-01T00:00:00.000Z");
+
+    // Den published nothing new — only the shape the desktop writes changed,
+    // so without the version stamp the stale block would never be replaced.
+    expect(isCloudProviderOutOfSync(provider, { ...importedFrom(provider), metadataVersion: null }))
+      .toBe(true);
+    expect(isCloudProviderOutOfSync(provider, importedFrom(provider))).toBe(false);
   });
 
   test("provider baseline persistence does not refresh the desktop cloud snapshot", () => {

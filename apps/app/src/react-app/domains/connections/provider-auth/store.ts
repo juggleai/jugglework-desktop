@@ -60,6 +60,7 @@ import {
 } from "../../../../app/cloud/import-state";
 import {
   buildRuntimeProviderPatch,
+  CLOUD_PROVIDER_METADATA_VERSION,
   formatConfigWithoutCloudProvider,
   getCloudManagedProviderId,
   getCloudProviderEnv,
@@ -68,6 +69,7 @@ import {
   isCloudProviderOutOfSync,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
+import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 import { updateManagedDisabledProviders } from "../managed-engine-config";
 import {
@@ -1472,9 +1474,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
       // Cloud providers are runtime-managed: upsert (and delete a renamed
       // predecessor) via the server's per-key provider merge instead of
-      // editing the user's opencode.jsonc.
+      // editing the user's opencode.jsonc. The deployment catalog fills the
+      // model metadata Den did not publish — the `lpr_*` key means the engine
+      // will never resolve it on its own.
+      const catalog = await loadDeploymentModelCatalog(settings.baseUrl);
       await patchRuntimeProviders(
-        buildRuntimeProviderPatch(provider, localProviderId, existingImported?.providerId ?? null),
+        buildRuntimeProviderPatch(
+          provider,
+          localProviderId,
+          existingImported?.providerId ?? null,
+          catalog,
+        ),
       );
       await stripLegacyCloudProviderBlocks([localProviderId, existingImported?.providerId]);
 
@@ -1492,6 +1502,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           updatedAt: provider.updatedAt ?? null,
           modelIds: getProviderModelIds(provider),
           importedAt: Date.now(),
+          metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
         },
       };
       await persistImportedCloudProviders(nextImportedProviders);

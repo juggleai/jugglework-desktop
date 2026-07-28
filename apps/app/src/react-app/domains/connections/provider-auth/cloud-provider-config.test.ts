@@ -13,10 +13,12 @@ import type { CloudImportedProvider } from "../../../../app/cloud/import-state";
 import type { DenOrgLlmProviderConnection } from "../../../../app/lib/den";
 import {
   buildCloudProviderConfig,
+  CLOUD_PROVIDER_METADATA_VERSION,
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudProviderOutOfSync,
 } from "./cloud-provider-config";
+import type { DeploymentModelCatalog } from "./deployment-model-catalog";
 
 const UPDATED_AT = "2024-02-01T00:00:00.000Z";
 
@@ -51,6 +53,7 @@ const importedFrom = (provider: DenOrgLlmProvider): CloudImportedProvider => ({
   updatedAt: provider.updatedAt,
   modelIds: getProviderModelIds(provider),
   importedAt: 1,
+  metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
 });
 
 describe("isCloudProviderOutOfSync", () => {
@@ -129,5 +132,72 @@ describe("buildCloudProviderConfig", () => {
 
     const config = buildCloudProviderConfig(provider);
     expect(config.models).toEqual({});
+  });
+});
+
+describe("buildCloudProviderConfig catalog backfill", () => {
+  const CATALOG: DeploymentModelCatalog = {
+    jugglerouter: {
+      "claude-opus-5": {
+        limit: { context: 1000000, output: 128000 },
+        cost: { input: 5, output: 25 },
+        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+        family: "claude-opus",
+      },
+    },
+  };
+
+  const makeJuggleRouter = (
+    config: Record<string, unknown>,
+  ): DenOrgLlmProviderConnection => ({
+    // Den publishes the provider under its own row id; `providerId` is the
+    // catalog id, which is what the backfill resolves against.
+    id: "lpr_8384",
+    source: "models_dev",
+    providerId: "jugglerouter",
+    name: "JuggleRouter",
+    providerConfig: { env: ["JUGGLEROUTER_API_KEY"] },
+    hasApiKey: true,
+    models: [{ id: "claude-opus-5", name: "claude-opus-5", config, createdAt: null }],
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: UPDATED_AT,
+    apiKey: "sk-test",
+    apiKeys: null,
+  });
+
+  const modelConfig = (provider: DenOrgLlmProviderConnection, catalog?: DeploymentModelCatalog) =>
+    buildCloudProviderConfig(provider, catalog)?.models?.["claude-opus-5"] as
+      | Record<string, unknown>
+      | undefined;
+
+  test("fills metadata Den did not publish from the deployment catalog", () => {
+    const model = modelConfig(makeJuggleRouter({}), CATALOG);
+    expect(model?.limit).toEqual({ context: 1000000, output: 128000 });
+    expect(model?.cost).toEqual({ input: 5, output: 25 });
+    expect(model?.family).toBe("claude-opus");
+    // The org's own label still wins over the catalog's.
+    expect(model?.name).toBe("claude-opus-5");
+  });
+
+  test("what the org published wins over the catalog", () => {
+    const model = modelConfig(
+      makeJuggleRouter({ limit: { context: 200000, output: 64000 } }),
+      CATALOG,
+    );
+    expect(model?.limit).toEqual({ context: 200000, output: 64000 });
+    expect(model?.cost).toEqual({ input: 5, output: 25 });
+  });
+
+  test("a catalog without the provider leaves the block untouched", () => {
+    const model = modelConfig(makeJuggleRouter({}), { openrouter: {} });
+    expect(model?.limit).toBe(undefined);
+    expect(model).toEqual({ id: "claude-opus-5", name: "claude-opus-5" });
+  });
+
+  test("no catalog is the same as before the backfill", () => {
+    expect(modelConfig(makeJuggleRouter({}))).toEqual({
+      id: "claude-opus-5",
+      name: "claude-opus-5",
+    });
   });
 });

@@ -517,6 +517,22 @@ export function getDenInferenceUrl(baseUrl?: string | null): string {
   return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
+/**
+ * The provider catalog a self-hosted deployment serves at
+ * `<origin>/jwork/models/api.json` — the same payload the desktop hands the
+ * engine as `OPENCODE_MODELS_URL` (see `denModelsCatalogUrl` in
+ * `apps/desktop/electron/runtime.mjs`, which derives the same URL). Null for
+ * the hosted cloud, which serves no private catalog.
+ */
+export function getDenModelCatalogUrl(baseUrl?: string | null): string | null {
+  const effectiveBaseUrl = baseUrl ?? readDenSettings().baseUrl;
+  const origin = denOriginComparisonKey(effectiveBaseUrl);
+  if (!origin || origin === denOriginComparisonKey(HOSTED_DEFAULT_DEN_BASE_URL)) {
+    return null;
+  }
+  return `${denControlPlaneBaseUrl(resolveDenBaseUrls(effectiveBaseUrl).baseUrl)}/models/api.json`;
+}
+
 function isHostedWebAppHost(hostname: string): boolean {
   return hostname.trim().toLowerCase().startsWith("app.");
 }
