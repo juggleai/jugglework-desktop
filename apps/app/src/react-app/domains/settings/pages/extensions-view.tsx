@@ -1,9 +1,16 @@
 /** @jsxImportSource react */
-import { useMemo, type ReactNode } from "react";
-import { Cpu } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Cpu, Sparkles, Upload } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 import { PluginsView, type PluginsExtensionsStore } from "./plugins-view";
 
@@ -31,10 +38,14 @@ export type ExtensionsViewProps = {
   selectedWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   canEditPlugins: boolean;
+  canManageLocalSkills: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;
   suggestedPlugins: SuggestedPlugin[];
-  extensions: PluginsExtensionsStore;
+  extensions: PluginsExtensionsStore & {
+    importLocalSkill: () => void | Promise<void>;
+    saveSkill: (input: { name: string; content: string; description?: string }) => void | Promise<void>;
+  };
   mcpConnectedAppsCount: number;
   /** The MCP view (quick-connect grid + configured servers). Skills are injected into it. */
   mcpView: ReactNode;
@@ -45,10 +56,40 @@ export type ExtensionsViewProps = {
 };
 
 export function ExtensionsView(props: ExtensionsViewProps) {
+  const [newSkillOpen, setNewSkillOpen] = useState(false);
+  const [skillName, setSkillName] = useState("");
+  const [skillDescription, setSkillDescription] = useState("");
+  const [skillContent, setSkillContent] = useState("# When to use\n\nDescribe when this workspace-local Skill should be used.\n");
+  const [creatingSkill, setCreatingSkill] = useState(false);
   const pluginCount = useMemo(
     () => props.extensions.pluginList().length,
     [props.extensions],
   );
+
+  const createLocalSkill = async () => {
+    const name = skillName.trim();
+    if (!name) {
+      toast.error("A Skill name is required.");
+      return;
+    }
+    setCreatingSkill(true);
+    try {
+      await props.extensions.saveSkill({
+        name,
+        description: skillDescription.trim() || undefined,
+        content: skillContent,
+      });
+      toast.success("Local Skill created for this workspace.");
+      setNewSkillOpen(false);
+      setSkillName("");
+      setSkillDescription("");
+      setSkillContent("# When to use\n\nDescribe when this workspace-local Skill should be used.\n");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create the local Skill.");
+    } finally {
+      setCreatingSkill(false);
+    }
+  };
 
   return (
     <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
@@ -66,9 +107,27 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             </div>
           ) : null}
         </div>
-        <Button variant="outline" onClick={props.onRefresh}>
-          {t("common.refresh")}
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            variant="outline"
+            disabled={props.busy || !props.canManageLocalSkills}
+            onClick={() => void props.extensions.importLocalSkill()}
+          >
+            <Upload size={14} />
+            {t("skills.import_local_skill")}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={props.busy || !props.canManageLocalSkills}
+            onClick={() => setNewSkillOpen(true)}
+          >
+            <Sparkles size={14} />
+            {t("skills.create_local_skill")}
+          </Button>
+          <Button variant="outline" onClick={props.onRefresh}>
+            {t("common.refresh")}
+          </Button>
+        </div>
       </div>
 
       {/* Runtime extensions and organization-assigned capabilities share one inventory. */}
@@ -95,6 +154,52 @@ export function ExtensionsView(props: ExtensionsViewProps) {
           </div>
         </details>
       ) : null}
+
+      <Dialog open={newSkillOpen} onOpenChange={setNewSkillOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t("skills.create_local_skill")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-dls-secondary">This Skill is saved only in the selected workspace.</p>
+            <label className="grid gap-1.5 text-sm font-medium text-dls-text">
+              Name
+              <input
+                value={skillName}
+                onChange={(event) => setSkillName(event.currentTarget.value)}
+                placeholder="my-workspace-skill"
+                className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm font-normal outline-none focus:ring-2 focus:ring-dls-accent/20"
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium text-dls-text">
+              Description
+              <input
+                value={skillDescription}
+                onChange={(event) => setSkillDescription(event.currentTarget.value)}
+                placeholder="What this Skill helps with"
+                className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm font-normal outline-none focus:ring-2 focus:ring-dls-accent/20"
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium text-dls-text">
+              Instructions
+              <textarea
+                value={skillContent}
+                onChange={(event) => setSkillContent(event.currentTarget.value)}
+                rows={9}
+                className="resize-y rounded-lg border border-dls-border bg-dls-surface px-3 py-2 font-mono text-xs font-normal outline-none focus:ring-2 focus:ring-dls-accent/20"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" disabled={creatingSkill} onClick={() => setNewSkillOpen(false)}>
+                {t("common.cancel")}
+              </Button>
+              <Button disabled={creatingSkill || !skillName.trim() || !skillContent.trim()} onClick={() => void createLocalSkill()}>
+                {creatingSkill ? t("common.saving") : t("common.create")}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

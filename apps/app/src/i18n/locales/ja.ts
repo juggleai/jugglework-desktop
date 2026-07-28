@@ -1011,6 +1011,7 @@ export default {
   "sidebar.expand": "展開",
   "skills.catalog_search_placeholder": "インストール済みスキルを検索",
   "skills.create_in_chat": "チャットでスキルを作成",
+  "skills.create_local_skill": "新しいローカルSkill",
   "skills.desktop_required": "スキル管理にはデスクトップアプリが必要です。",
   "skills.enter_plugin_name": "プラグインパッケージ名を入力してください。",
   "skills.failed_load_active": "アクティブなプラグインの読み込みに失敗しました。",

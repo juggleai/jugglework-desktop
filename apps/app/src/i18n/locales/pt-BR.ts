@@ -1018,6 +1018,7 @@ export default {
   "sidebar.expand": "Expandir",
   "skills.catalog_search_placeholder": "Buscar skills instaladas",
   "skills.create_in_chat": "Criar skill no chat",
+  "skills.create_local_skill": "Criar skill local",
   "skills.desktop_required": "O gerenciamento de skills requer o app desktop.",
   "skills.enter_plugin_name": "Digite o nome do pacote do plugin.",
   "skills.failed_load_active": "Falha ao carregar plugins ativos.",

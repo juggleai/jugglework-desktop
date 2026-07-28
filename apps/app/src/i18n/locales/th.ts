@@ -1012,6 +1012,7 @@ export default {
   "sidebar.expand": "ขยาย",
   "skills.catalog_search_placeholder": "ค้นหา skill ที่ติดตั้งแล้ว",
   "skills.create_in_chat": "สร้าง skill ในแชท",
+  "skills.create_local_skill": "สร้าง skill ในเครื่อง",
   "skills.desktop_required": "การจัดการ Skills ต้องใช้แอปเดสก์ท็อป",
   "skills.enter_plugin_name": "ใส่ชื่อแพ็กเกจ plugin",
   "skills.failed_load_active": "โหลด plugins ที่ใช้งานไม่สำเร็จ",

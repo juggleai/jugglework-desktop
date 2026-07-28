@@ -2259,6 +2259,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             selectedWorkspaceRoot={selectedWorkspaceRoot}
             isRemoteWorkspace={isRemoteWorkspace}
             canEditPlugins={canWriteWorkspacePlugins}
+            canManageLocalSkills={!isRemoteWorkspace && isDesktopRuntime()}
             canUseGlobalScope={!isRemoteWorkspace}
             accessHint={pluginsAccessHint}
             suggestedPlugins={SUGGESTED_PLUGINS}

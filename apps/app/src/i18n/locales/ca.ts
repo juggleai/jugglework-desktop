@@ -1020,6 +1020,7 @@ export default {
   "sidebar.expand": "Expandir",
   "skills.catalog_search_placeholder": "Cerca Skills instal·lades",
   "skills.create_in_chat": "Crea Skills al xat",
+  "skills.create_local_skill": "Crea una Skill local",
   "skills.desktop_required": "La gestió d'Skills requereix el app d'escriptori.",
   "skills.enter_plugin_name": "Introdueix el nom d'un paquet de Plugin.",
   "skills.failed_load_active": "No s'han pogut carregar els Plugins actius.",

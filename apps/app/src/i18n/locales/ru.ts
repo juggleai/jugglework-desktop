@@ -620,6 +620,7 @@ export default {
   "sidebar.expand": "Развернуть",
   "skills.catalog_search_placeholder": "Искать установленные навыки",
   "skills.create_in_chat": "Создать навык в чате",
+  "skills.create_local_skill": "Создать локальный Skill",
   "skills.desktop_required": "Для управления навыками требуется настольное приложение.",
   "skills.enter_plugin_name": "Введите название пакета плагина.",
   "skills.failed_load_active": "Не удалось загрузить активные плагины.",

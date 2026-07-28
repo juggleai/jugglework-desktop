@@ -1610,6 +1610,7 @@ export default {
   "sidebar.expand": "Expand",
   "skills.catalog_search_placeholder": "Search installed skills",
   "skills.create_in_chat": "Create skill in chat",
+  "skills.create_local_skill": "New local Skill",
   "skills.desktop_required": "Skill management requires the desktop app.",
   "skills.enter_plugin_name": "Enter a plugin package name.",
   "skills.failed_load_active": "Failed to load active plugins.",

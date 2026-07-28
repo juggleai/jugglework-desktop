@@ -1015,6 +1015,7 @@ export default {
   "sidebar.expand": "展开",
   "skills.catalog_search_placeholder": "搜索已安装的技能",
   "skills.create_in_chat": "在聊天中创建skill",
+  "skills.create_local_skill": "新建本地skill",
   "skills.desktop_required": "Skills管理需要桌面应用。",
   "skills.enter_plugin_name": "输入插件包名称。",
   "skills.failed_load_active": "加载活动插件失败。",

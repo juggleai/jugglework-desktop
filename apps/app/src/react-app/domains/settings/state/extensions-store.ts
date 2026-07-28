@@ -2178,6 +2178,7 @@ export function createExtensionsStore(options: {
       } catch (error) {
         const message = error instanceof Error ? error.message : t("skills.unknown_error");
         options.setError(addOpencodeCacheHint(message));
+        throw error instanceof Error ? error : new Error(message);
       } finally {
         options.setBusy(false);
       }
@@ -2185,26 +2186,31 @@ export function createExtensionsStore(options: {
     }
 
     if (hasOpenworkTarget) {
-      setStateField("skillsStatus", "JuggleWork server cannot write skills for this workspace.");
-      return;
+      const message = "JuggleWork server cannot write skills for this workspace.";
+      setStateField("skillsStatus", message);
+      throw new Error(message);
     }
 
     if (!root) {
-      setStateField("skillsStatus", t("skills.pick_workspace_first"));
-      return;
+      const message = t("skills.pick_workspace_first");
+      setStateField("skillsStatus", message);
+      throw new Error(message);
     }
 
     if (isRemoteWorkspace) {
-      setStateField("skillsStatus", "JuggleWork server unavailable. Connect to edit skills.");
-      return;
+      const message = "JuggleWork server unavailable. Connect to edit skills.";
+      setStateField("skillsStatus", message);
+      throw new Error(message);
     }
     if (!isDesktopRuntime()) {
-      setStateField("skillsStatus", t("skills.desktop_required"));
-      return;
+      const message = t("skills.desktop_required");
+      setStateField("skillsStatus", message);
+      throw new Error(message);
     }
     if (!isLocalWorkspace) {
-      setStateField("skillsStatus", "Local workers are required to edit skills.");
-      return;
+      const message = "Local workers are required to edit skills.";
+      setStateField("skillsStatus", message);
+      throw new Error(message);
     }
 
     options.setBusy(true);
@@ -2213,7 +2219,9 @@ export function createExtensionsStore(options: {
     try {
       const result = (await writeLocalSkill(root, trimmed, input.content)) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
-        setStateField("skillsStatus", result.stderr || result.stdout || t("skills.unknown_error"));
+        const message = result.stderr || result.stdout || t("skills.unknown_error");
+        setStateField("skillsStatus", message);
+        throw new Error(message);
       } else {
         setStateField("skillsStatus", result.stdout || "Saved.");
         options.markReloadRequired?.("skills", { type: "skill", name: trimmed, action: "updated" });
@@ -2222,6 +2230,7 @@ export function createExtensionsStore(options: {
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       options.setBusy(false);
     }

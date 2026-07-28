@@ -1012,6 +1012,7 @@ export default {
   "sidebar.expand": "Mở rộng",
   "skills.catalog_search_placeholder": "Tìm skills đã cài",
   "skills.create_in_chat": "Tạo skill trong chat",
+  "skills.create_local_skill": "Tạo skill cục bộ",
   "skills.desktop_required": "Quản lý skills yêu cầu ứng dụng desktop.",
   "skills.enter_plugin_name": "Nhập tên gói plugin.",
   "skills.failed_load_active": "Tải plugins đang hoạt động thất bại.",
