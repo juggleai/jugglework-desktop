@@ -39,6 +39,13 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
+  /**
+   * Provider IDs parked in `disabled_providers`. They stay declared in the
+   * user's OpenCode config, so Disconnect must be undoable from here.
+   */
+  disabledProviderIds?: string[];
+  reconnectingProviderId?: string | null;
+  onReconnectProvider?: (providerId: string) => void | Promise<void>;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
   showJuggleWorkModelsSubscribe?: boolean;
@@ -243,6 +250,42 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               <RefreshCw className="mr-1.5 size-3.5" />
               Refresh models
             </Button>
+          </LayoutSectionItem>
+        ) : null}
+
+        {props.disabledProviderIds && props.disabledProviderIds.length > 0 ? (
+          <LayoutSectionItem className="gap-2 rounded-2xl border border-dashed border-dls-border px-4 py-3">
+            <div>
+              <div className="text-sm font-medium text-dls-text">
+                {t("settings.disabled_providers_title")}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {t("settings.disabled_providers_desc")}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {props.disabledProviderIds.map((providerId) => (
+                <div key={providerId} className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <ProviderIcon providerId={providerId} size={20} className="text-muted-foreground" />
+                    <span className="truncate font-mono text-xs text-muted-foreground">{providerId}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => void props.onReconnectProvider?.(providerId)}
+                    disabled={
+                      props.busy ||
+                      props.providerAuthBusy ||
+                      Boolean(props.reconnectingProviderId)
+                    }
+                  >
+                    {props.reconnectingProviderId === providerId
+                      ? t("settings.reconnecting_provider")
+                      : t("settings.reconnect_provider")}
+                  </Button>
+                </div>
+              ))}
+            </div>
           </LayoutSectionItem>
         ) : null}
 

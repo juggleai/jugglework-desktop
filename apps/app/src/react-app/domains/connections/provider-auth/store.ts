@@ -221,10 +221,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     for (const listener of listeners) listener();
    };
 
+  /** Engine-reported source of a provider currently in the provider list. */
+  const resolveProviderSource = (providerId: string) => {
+    const id = providerId.trim();
+    return options.providers().find((provider) => provider.id?.trim() === id)?.source;
+  };
+
   // Blocked either by a desktop policy flag or by the connected cloud's model
   // catalog, which narrows the engine's models.dev-wide list to what this
   // deployment supports. Providers the org itself published are exempt: an
-  // admin may publish a custom provider the catalog does not list.
+  // admin may publish a custom provider the catalog does not list. Providers
+  // the user declared in their own OpenCode config are exempt from the catalog
+  // too and fall under the `allowCustomProviders` policy instead.
   const isProviderBlocked = (providerId: string) => {
     const id = providerId.trim();
     if (state.cloudOrgProviders.some((provider) => provider.providerId.trim() === id)) {
@@ -234,6 +242,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       providerId,
       checkRestriction: options.checkDesktopAppRestriction,
       allowedModels: options.desktopAllowedModels?.(),
+      providerSource: resolveProviderSource(id),
     });
   };
 
@@ -1340,9 +1349,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     };
 
     try {
-      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
-        await ensureProjectProviderDisabledState(resolved, false);
-      }
+      // Reconnecting must undo an earlier Disconnect that parked the provider
+      // in `disabled_providers`; a no-op when it was never disabled.
+      await ensureProjectProviderDisabledState(resolved, false);
       const trimmedCode = code?.trim();
       const result = await c.provider.oauth.callback({
         providerID: resolved,
@@ -1393,9 +1402,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     setStateField("providerAuthBusy", true);
     try {
-      if (providerId.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
-        await ensureProjectProviderDisabledState(providerId, false);
-      }
+      // Reconnecting must undo an earlier Disconnect that parked the provider
+      // in `disabled_providers`; a no-op when it was never disabled.
+      await ensureProjectProviderDisabledState(providerId, false);
       await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
       await refreshProviders({ dispose: true });
       return `${t("status.connected")} ${providerId}`;
@@ -1749,27 +1758,40 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return await removeCloudProvider(trackedImport.cloudProviderId);
     }
 
+    // TIPS: credential removal only disconnects providers whose key lives in
+    // the engine's auth store. Two kinds do not:
+    //   - OpenCode Zen: built-in / env-backed, nothing to delete.
+    //   - `source: "config"`: declared in an OpenCode config file (typically
+    //     `~/.config/opencode/opencode.json`) with an inline `options.apiKey`,
+    //     so `DELETE /auth/<id>` is a no-op and the provider stays connected.
+    // Both need `disabled_providers` (runtime OPENCODE_CONFIG injection) to
+    // actually disappear. Env-backed providers keep the old behavior — the UI
+    // does not offer Disconnect for them, and disabling would fight the shell.
+    const needsDisabledFlag =
+      resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID ||
+      resolveProviderSource(resolved) === "config";
+
     try {
-      // OpenCode Zen is built-in / env-backed. Credential removal alone leaves
-      // it connected — disable it via runtime OPENCODE_CONFIG injection.
-      if (resolved.toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
-        try {
-          await removeProviderAuthCredentials(resolved);
-        } catch {
-          // Zen may have no stored credentials; disable still applies.
-        }
+      try {
+        await removeProviderAuthCredentials(resolved);
+      } catch (error) {
+        if (!needsDisabledFlag) throw error;
+        // Config-file and built-in providers usually have no stored
+        // credentials; the disable below is what actually disconnects them.
+      }
+
+      if (needsDisabledFlag) {
         await ensureProjectProviderDisabledState(resolved, true);
         await refreshProviders({ dispose: true });
         removeProviderFromState(resolved);
         return `${t("providers.disconnected_prefix")} ${resolved}`;
       }
 
-      await removeProviderAuthCredentials(resolved);
       const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        // Provider is still connected (e.g. via env var). Just remove
-        // stored credentials; do NOT add to disabled_providers.
-        return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
+        // Still connected after clearing credentials — an env var is supplying
+        // it. Do NOT add to disabled_providers; tell the user to unset it.
+        return `${t("providers.removed_credentials_prefix")} ${resolved}${t("providers.still_connected_suffix")}`;
       }
       removeProviderFromState(resolved);
       return `${t("providers.disconnected_prefix")} ${resolved}`;

@@ -90,7 +90,9 @@ function useModelOptions(open: boolean) {
   //   - `allowCustomProviders` hides providers that OpenCode does not report
   //     as connected through the provider list endpoint.
   //   - `allowedModels` narrows the engine's models.dev-wide list to the
-  //     catalog the connected cloud supports.
+  //     catalog the connected cloud supports. Providers the user declared in
+  //     their own OpenCode config are exempt (the catalog cannot list them)
+  //     and fall under `allowCustomProviders` instead.
   return React.useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
@@ -109,6 +111,7 @@ function useModelOptions(open: boolean) {
           behaviorValue: null,
           isFree: false,
           isConnected: true,
+          providerSource: provider.source,
         })),
       );
 
@@ -118,6 +121,7 @@ function useModelOptions(open: boolean) {
           model: { providerID: option.providerID, modelID: option.modelID },
           checkRestriction: checkDesktopRestriction,
           allowedModels,
+          providerSource: option.providerSource,
         })
       ) {
         return false;

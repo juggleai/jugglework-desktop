@@ -417,6 +417,12 @@ export type ModelOption = {
   isRecommended?: boolean;
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
   source?: "cloud";
+  /**
+   * Engine-reported source of the owning provider ("config" when the user
+   * declared it in an OpenCode config file). Restriction filters need it to
+   * tell a locally configured provider from a models.dev catalog entry.
+   */
+  providerSource?: ProviderListItem["source"];
 };
 
 export type SelectedSessionSnapshot = {

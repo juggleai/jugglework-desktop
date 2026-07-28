@@ -76,6 +76,20 @@ export function getConnectedProviderSnapshot(value: ProviderListResponse | null 
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * Engine-reported source of one provider in a provider-list response
+ * ("config" when the user declared it in an OpenCode config file). Returns
+ * undefined when the response does not carry that provider.
+ */
+export function getProviderSource(
+  value: ProviderListResponse | null | undefined,
+  providerId: string | null | undefined,
+): ProviderListItem["source"] | undefined {
+  const id = providerId?.trim();
+  if (!id) return undefined;
+  return (value?.all ?? []).find((provider) => provider.id === id)?.source;
+}
+
 export function isModelAvailableInConnectedProviders(
   value: ProviderListResponse | null | undefined,
   model: ModelRef | null | undefined,

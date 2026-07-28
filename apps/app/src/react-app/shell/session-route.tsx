@@ -182,6 +182,7 @@ import { SettingsSurface } from "./settings-route";
 import {
   ensureProviderListQuery,
   getConnectedProviderItems,
+  getProviderSource,
   isModelAvailableInConnectedProviders,
   refreshProviderListQueries,
   useProviderListQuery,
@@ -775,6 +776,10 @@ export function SessionRoute() {
           model: local.prefs.defaultModel,
           checkRestriction: checkDesktopRestriction,
           allowedModels,
+          providerSource: getProviderSource(
+            selectedModelProviderList,
+            local.prefs.defaultModel.providerID,
+          ),
         }) ||
         (
           selectedModelProviderList &&
@@ -1496,6 +1501,7 @@ export function SessionRoute() {
             providerId: provider.id,
             checkRestriction: checkDesktopRestriction,
             allowedModels,
+            providerSource: provider.source,
           }))
           .find((provider) => Object.keys(provider.models ?? {}).length > 0);
         const availableModelId = availableProvider ? Object.keys(availableProvider.models ?? {})[0] : undefined;

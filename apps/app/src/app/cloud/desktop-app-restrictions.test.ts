@@ -13,6 +13,8 @@ import {
 } from "./desktop-app-restrictions";
 
 const allowEverything: DesktopAppRestrictionChecker = () => false;
+const blockCustomProviders: DesktopAppRestrictionChecker = ({ restriction }) =>
+  restriction === "allowCustomProviders";
 const catalog = ["anthropic/claude-opus-4-8", "openai/gpt-5.6-terra", "jugglerouter/claude-opus-5"];
 
 describe("readDesktopAllowedModels", () => {
@@ -65,6 +67,51 @@ describe("isDesktopProviderBlocked", () => {
     }
   });
 
+  test("never hides a provider the user declared in their own OpenCode config", () => {
+    expect(
+      isDesktopProviderBlocked({
+        providerId: "zhipu",
+        checkRestriction: allowEverything,
+        allowedModels: catalog,
+        providerSource: "config",
+      }),
+    ).toBe(false);
+  });
+
+  test("gates locally configured providers on allowCustomProviders", () => {
+    expect(
+      isDesktopProviderBlocked({
+        providerId: "zhipu",
+        checkRestriction: blockCustomProviders,
+        allowedModels: catalog,
+        providerSource: "config",
+      }),
+    ).toBe(true);
+    // Org-published providers land in the runtime config too, but the policy
+    // for user-added providers must never hide them.
+    expect(
+      isDesktopProviderBlocked({
+        providerId: "lpr_01H2X",
+        checkRestriction: blockCustomProviders,
+        allowedModels: catalog,
+        providerSource: "config",
+      }),
+    ).toBe(false);
+  });
+
+  test("still applies the catalog to env- and credential-backed providers", () => {
+    for (const providerSource of ["env", "api", "custom"] as const) {
+      expect(
+        isDesktopProviderBlocked({
+          providerId: "openrouter",
+          checkRestriction: allowEverything,
+          allowedModels: catalog,
+          providerSource,
+        }),
+      ).toBe(true);
+    }
+  });
+
   test("still honours the allowZenModel policy", () => {
     expect(
       isDesktopProviderBlocked({
@@ -101,5 +148,27 @@ describe("isDesktopModelBlocked", () => {
         allowedModels: catalog,
       }),
     ).toBe(false);
+  });
+
+  test("allows every model of a locally configured provider", () => {
+    expect(
+      isDesktopModelBlocked({
+        model: { providerID: "zhipu", modelID: "glm-5.1" },
+        checkRestriction: allowEverything,
+        allowedModels: catalog,
+        providerSource: "config",
+      }),
+    ).toBe(false);
+  });
+
+  test("blocks a locally configured provider's models when allowCustomProviders is off", () => {
+    expect(
+      isDesktopModelBlocked({
+        model: { providerID: "zhipu", modelID: "glm-5.1" },
+        checkRestriction: blockCustomProviders,
+        allowedModels: catalog,
+        providerSource: "config",
+      }),
+    ).toBe(true);
   });
 });

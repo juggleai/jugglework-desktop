@@ -11,6 +11,23 @@ export type DesktopAppRestrictionChecker = (input: {
 export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
 
 /**
+ * Where the engine says a provider came from, as reported by the provider list
+ * endpoint. `config` means the user declared it themselves in an OpenCode
+ * config file (`~/.config/opencode/opencode.json`, a project `opencode.json`,
+ * or the app's runtime config).
+ */
+export type DesktopProviderSource = "env" | "api" | "config" | "custom";
+
+/**
+ * Providers the user wrote into an OpenCode config file hold the user's own
+ * credentials, so a cloud deployment's catalog can never list them. They are
+ * governed by the `allowCustomProviders` policy instead of `allowedModels`.
+ */
+function isLocallyConfiguredProviderSource(source: DesktopProviderSource | undefined) {
+  return source === "config";
+}
+
+/**
  * `<providerId>/<modelId>` entries the connected cloud supports, from the
  * `allowedModels` desktop policy. A private cloud serves the catalog it can
  * actually configure providers for, which is narrower than the public
@@ -39,6 +56,7 @@ function isAllowedByModelCatalog(input: {
   allowedModels: readonly string[] | undefined;
   providerId: string;
   modelId?: string;
+  providerSource?: DesktopProviderSource;
 }) {
   const allowedModels = input.allowedModels;
   if (!allowedModels || allowedModels.length === 0) return true;
@@ -46,6 +64,7 @@ function isAllowedByModelCatalog(input: {
   const providerId = input.providerId.trim();
   if (!providerId) return true;
   if (isCloudManagedProviderId(providerId)) return true;
+  if (isLocallyConfiguredProviderSource(input.providerSource)) return true;
 
   const modelId = input.modelId?.trim();
   if (modelId) return allowedModels.includes(`${providerId}/${modelId}`);
@@ -65,6 +84,12 @@ export function isDesktopProviderBlocked(input: {
   providerId: string;
   checkRestriction: DesktopAppRestrictionChecker;
   allowedModels?: readonly string[];
+  /**
+   * Engine-reported provider source. Pass it whenever it is known — without it
+   * a locally configured provider is judged against the cloud catalog, which
+   * can never list it.
+   */
+  providerSource?: DesktopProviderSource;
 }) {
   const providerId = input.providerId.trim().toLowerCase();
   if (!providerId) return false;
@@ -73,9 +98,21 @@ export function isDesktopProviderBlocked(input: {
     if (input.checkRestriction({ restriction: "allowZenModel" })) return true;
   }
 
+  // A provider the user configured locally is exactly what `allowCustomProviders`
+  // governs, so gate it on that policy rather than on the catalog allowlist.
+  // Org-published providers stay exempt — an admin can push one down that the
+  // catalog does not list.
+  if (
+    isLocallyConfiguredProviderSource(input.providerSource) &&
+    !isCloudManagedProviderId(input.providerId.trim())
+  ) {
+    return input.checkRestriction({ restriction: "allowCustomProviders" });
+  }
+
   return !isAllowedByModelCatalog({
     allowedModels: input.allowedModels,
     providerId: input.providerId,
+    providerSource: input.providerSource,
   });
 }
 
@@ -83,12 +120,15 @@ export function isDesktopModelBlocked(input: {
   model: ModelRef;
   checkRestriction: DesktopAppRestrictionChecker;
   allowedModels?: readonly string[];
+  /** @see isDesktopProviderBlocked */
+  providerSource?: DesktopProviderSource;
 }) {
   if (
     isDesktopProviderBlocked({
       providerId: input.model.providerID,
       checkRestriction: input.checkRestriction,
       allowedModels: input.allowedModels,
+      providerSource: input.providerSource,
     })
   ) {
     return true;
@@ -98,6 +138,7 @@ export function isDesktopModelBlocked(input: {
     allowedModels: input.allowedModels,
     providerId: input.model.providerID,
     modelId: input.model.modelID,
+    providerSource: input.providerSource,
   });
 }
 

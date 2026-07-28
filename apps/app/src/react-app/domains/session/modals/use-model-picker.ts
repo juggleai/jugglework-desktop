@@ -130,6 +130,7 @@ export function useModelPicker(input: UseModelPickerInput) {
           isFree: false,
           isConnected: true,
           isRecommended: isNew,
+          providerSource: provider.source,
           source:
             /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "jugglework"
               ? ("cloud" as const)
@@ -146,7 +147,9 @@ export function useModelPicker(input: UseModelPickerInput) {
   //   - `allowCustomProviders` hides providers that OpenCode does not report
   //     as connected through the provider list endpoint.
   //   - `allowedModels` narrows the engine's models.dev-wide list to the
-  //     catalog the connected cloud supports.
+  //     catalog the connected cloud supports. Providers the user declared in
+  //     their own OpenCode config are exempt (the catalog cannot list them)
+  //     and fall under `allowCustomProviders` instead.
   const options = useMemo(() => {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
@@ -157,6 +160,7 @@ export function useModelPicker(input: UseModelPickerInput) {
           model: { providerID: option.providerID, modelID: option.modelID },
           checkRestriction: checkDesktopRestriction,
           allowedModels,
+          providerSource: option.providerSource,
         })
       ) {
         return false;

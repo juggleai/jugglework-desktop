@@ -438,6 +438,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false),
   );
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
+  // Disconnecting a provider reloads the engine, which takes seconds. Track the
+  // in-flight provider so the row can show progress instead of looking inert.
+  const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
+  const [reconnectingProviderId, setReconnectingProviderId] = useState<string | null>(null);
+  const [providerDisconnectError, setProviderDisconnectError] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
@@ -1719,6 +1724,27 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }]
       : [],
   );
+  // Providers a Disconnect parked in `disabled_providers`. They are dropped
+  // from the engine's provider list, so the id is all we have to show — and it
+  // is the only way back for a provider declared in the user's OpenCode config.
+  // Ones the org itself blocks stay hidden; reconnecting them would be undone
+  // by the next desktop-restriction sync. TIPS: everything in this list got
+  // there because the user disconnected a provider they had configured, so
+  // judge it as `source: "config"` — that applies the `allowZenModel` and
+  // `allowCustomProviders` policies without running it past the cloud catalog,
+  // which can never list a locally configured provider.
+  const reconnectableDisabledProviderIds = disabledProviders
+    .map((id) => id.trim())
+    .filter(
+      (id) =>
+        id &&
+        !isDesktopProviderBlocked({
+          providerId: id,
+          checkRestriction: checkDesktopRestriction,
+          allowedModels,
+          providerSource: "config",
+        }),
+    );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "jugglework-cloud",
@@ -2188,20 +2214,55 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerStatusStyle={providerStatusStyle}
             providerSummary={providerSummary}
             connectedProviders={connectedProviders}
-            disconnectingProviderId={null}
+            disconnectingProviderId={disconnectingProviderId}
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectStatus={configActionStatus}
-            providerDisconnectError={null}
+            providerDisconnectError={providerDisconnectError}
             onOpenProviderAuth={handleOpenProviderAuth}
             onDisconnectProvider={async (providerId) => {
-              const message = await providerAuthStore.disconnectProvider(providerId);
-              if (typeof message === "string" && message.trim()) {
-                setConfigActionStatus(message);
+              if (disconnectingProviderId) return;
+              setDisconnectingProviderId(providerId);
+              setProviderDisconnectError(null);
+              setConfigActionStatus(null);
+              try {
+                const message = await providerAuthStore.disconnectProvider(providerId);
+                if (typeof message === "string" && message.trim()) {
+                  setConfigActionStatus(message);
+                }
+              } catch (error) {
+                setProviderDisconnectError(
+                  error instanceof Error && error.message.trim()
+                    ? error.message
+                    : t("providers.disconnect_failed"),
+                );
+              } finally {
+                setDisconnectingProviderId(null);
               }
             }}
             canDisconnectProvider={(provider) =>
               provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env"
             }
+            disabledProviderIds={reconnectableDisabledProviderIds}
+            reconnectingProviderId={reconnectingProviderId}
+            onReconnectProvider={async (providerId) => {
+              if (reconnectingProviderId) return;
+              setReconnectingProviderId(providerId);
+              setProviderDisconnectError(null);
+              setConfigActionStatus(null);
+              try {
+                await providerAuthStore.ensureProjectProviderDisabledState(providerId, false);
+                await providerAuthStore.refreshProviders({ dispose: true });
+                setConfigActionStatus(`${t("status.connected")} ${providerId}`);
+              } catch (error) {
+                setProviderDisconnectError(
+                  error instanceof Error && error.message.trim()
+                    ? error.message
+                    : t("providers.request_failed"),
+                );
+              } finally {
+                setReconnectingProviderId(null);
+              }
+            }}
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
               ...(juggleWorkModelsEntitled || juggleWorkModelsAvailable ? ["jugglework"] : []),
