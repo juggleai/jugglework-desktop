@@ -36,7 +36,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
               status: "active",
               memberCount: 2,
               updatedAt: null,
-              componentCounts: { skill: 1, mcp: 1 },
+              componentCounts: { skill: 1, command: 1, mcp: 1 },
               cloudReadiness: {
                 state: "ready",
                 hasInstructional: true,
@@ -75,6 +75,29 @@ describe("assigned JuggleWork Connect capability inventory", () => {
                 latestVersion: {
                   id: "version_skill",
                   rawSourceText: "# Escalate ticket",
+                  normalizedPayloadJson: null,
+                  sourceRevisionRef: null,
+                  createdAt: null,
+                },
+              },
+            },
+            {
+              id: "membership_command",
+              pluginId: plugin.id,
+              configObjectId: "command_1",
+              configObject: {
+                id: "command_1",
+                objectType: "command",
+                title: "Escalate support ticket",
+                description: "Create a support escalation.",
+                currentFileName: "escalate-ticket.md",
+                currentFileExtension: "md",
+                currentRelativePath: ".opencode/commands/support/escalate-ticket.md",
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_command",
+                  rawSourceText: "Escalate this ticket.",
                   normalizedPayloadJson: null,
                   sourceRevisionRef: null,
                   createdAt: null,
@@ -124,6 +147,16 @@ describe("assigned JuggleWork Connect capability inventory", () => {
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         connectCapabilityName: "plugin:plugin_1:skill_1",
+      }),
+    ]);
+    expect(inventory.commands).toEqual([
+      expect.objectContaining({
+        name: "escalate-ticket",
+        origin: "jugglework-connect",
+        marketplaceName: "Team tools",
+        pluginName: "Support kit",
+        connectPluginId: "plugin_1",
+        connectCapabilityName: "plugin:plugin_1:command_1",
       }),
     ]);
     expect(inventory.mcpServers).toEqual([

@@ -27,6 +27,7 @@ import type {
   PendingPermission,
   PendingQuestion,
   SkillCard,
+  SlashCommandOption,
   TodoItem,
 } from "@/app/types";
 import {
@@ -1277,7 +1278,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [chatStreaming, handleAbort]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
-  const loadConnectCapabilityInventory = async (): Promise<ConnectCapabilityInventory> => {
+  const loadConnectCapabilityInventory = useCallback(async (): Promise<ConnectCapabilityInventory> => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const organizationId = settings.activeOrgId?.trim() ?? "";
@@ -1304,7 +1305,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return EMPTY_CONNECT_CAPABILITY_INVENTORY;
     }
-  };
+  }, []);
+
+  const listCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
+    const localCommands = await props.listCommands();
+    try {
+      const [connect, config] = await Promise.all([
+        loadConnectCapabilityInventory(),
+        props.client.getConfig(props.workspaceId),
+      ]);
+      const importedPluginIds = new Set(Object.keys(readWorkspaceCloudImports(config.jugglework).plugins));
+      const localNames = new Set(localCommands.map((command) => command.name.trim().toLowerCase()));
+      const cloudCommands = connect.commands.filter((command) =>
+        !importedPluginIds.has(command.connectPluginId) && !localNames.has(command.name.trim().toLowerCase())
+      );
+      return [...localCommands, ...cloudCommands];
+    } catch {
+      // Cloud inventory is optional: losing access to Connect must not hide local commands.
+      return localCommands;
+    }
+  }, [loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
 
   const listSkills = async (): Promise<SkillCard[]> => {
     const connectPromise = loadConnectCapabilityInventory();
@@ -1860,7 +1880,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}
         onSelectAgent={props.onSelectAgent}
-        listCommands={props.listCommands}
+        listCommands={listCommands}
         listSkills={listSkills}
         skills={toolSkills}
         listMcp={listMcp}

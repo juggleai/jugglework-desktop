@@ -801,6 +801,18 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [menuIndex, activeItems.length]);
 
   const applyCommandSelection = (command: ComposerSlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+    if (command.origin === "jugglework-connect" && command.connectCapabilityName) {
+      const prompt = t("composer.connect_command_prompt", {
+        name: command.name,
+        marketplace: command.marketplaceName ?? "assigned",
+        capability: command.connectCapabilityName,
+      });
+      const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+      props.onDraftChange(options?.replaceSkillDraft ? prompt : `${props.draft}${separator}${prompt}`);
+      setSlashOpen(false);
+      setToolMenuOpen(false);
+      return;
+    }
     if (command.skill) {
       applySkillSelection(command.skill, options);
       return;
@@ -1130,13 +1142,22 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-3">
                         <div className="truncate text-xs font-semibold">/{command.name}</div>
-                        {command.source && command.source !== "command" ? (
+                        {command.origin === "jugglework-connect" ? (
+                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                            {t("composer.source_cloud")}
+                          </span>
+                        ) : command.source && command.source !== "command" ? (
                           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/40 text-violet-11" : "bg-cyan-3/40 text-cyan-11"}`}>
                             {command.source === "skill" ? t("composer.skill_source") : t("composer.mcps_label")}
                           </span>
                         ) : null}
                       </div>
                       {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                      {command.origin === "jugglework-connect" ? (
+                        <div className="truncate text-[10px] text-gray-9">
+                          {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
+                        </div>
+                      ) : null}
                     </div>
                   </button>
                 ))}
@@ -1479,8 +1500,20 @@ export function ReactSessionComposer(props: ComposerProps) {
                                   >
                                     <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0">
-                                      <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                      <div className="flex items-center gap-2">
+                                        <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                        {command.origin === "jugglework-connect" ? (
+                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                            {t("composer.source_cloud")}
+                                          </span>
+                                        ) : null}
+                                      </div>
                                       {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                      {command.origin === "jugglework-connect" ? (
+                                        <div className="truncate text-[10px] text-gray-9">
+                                          {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </button>
                                 ))}

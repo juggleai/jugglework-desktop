@@ -59,6 +59,10 @@ type DenSettingsExtensionsStore = {
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
   refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
+  importCloudOrgPlugin: (
+    marketplaceId: string | null,
+    plugin: DenOrgPlugin,
+  ) => Promise<{ ok: boolean; message: string; warnings: string[] }>;
   removeCloudOrgPlugin: (pluginId: string) => Promise<AsyncResult>;
 };
 
@@ -445,6 +449,24 @@ export function CloudMarketplacesView({
     [actionId, extensions],
   );
 
+  const installPlugin = React.useCallback(
+    async (marketplaceId: string, plugin: DenOrgPlugin) => {
+      if (actionId) return;
+      setActionId(plugin.id);
+      setActionError(null);
+      try {
+        const result = await extensions.importCloudOrgPlugin(marketplaceId, plugin);
+        if (!result.ok) throw new Error(result.message);
+        toast.success(result.message);
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : `Failed to install ${plugin.name}.`);
+      } finally {
+        setActionId(null);
+      }
+    },
+    [actionId, extensions],
+  );
+
   const removedUpstreamPlugins = React.useMemo(
     () => Object.values(importedPlugins).filter((plugin) => pendingChanges[plugin.pluginId] === "removed"),
     [importedPlugins, pendingChanges],
@@ -590,6 +612,7 @@ export function CloudMarketplacesView({
           onClose={() => setDetailRow(null)}
           onConnectOrgMcp={onConnectOrgMcp}
           onRemovePlugin={removePlugin}
+          onInstallPlugin={installPlugin}
         />
       ) : detailRow?.source === "built-in" ? (
         <BuiltInMarketplaceDetailModal
@@ -729,7 +752,7 @@ function MarketplaceCard(props: {
         connected
         connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
         connecting={actionBusy}
-        actionLabel={cloudBuiltIn ? t("mcp.view_details") : t("extensions.marketplace_runs_in_cloud")}
+        actionLabel={cloudBuiltIn ? t("mcp.view_details") : deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
         onClick={() => onOpenDetail(row)}
       />
     </div>
@@ -834,6 +857,7 @@ function MarketplacePackageDetailModal(props: {
   onClose: () => void;
   onConnectOrgMcp?: (connectionId: string) => void;
   onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
+  onInstallPlugin: (marketplaceId: string, plugin: DenOrgPlugin) => void | Promise<void>;
 }) {
   const {
     actionId,
@@ -846,6 +870,7 @@ function MarketplacePackageDetailModal(props: {
     onClose,
     onConnectOrgMcp,
     onRemovePlugin,
+    onInstallPlugin,
   } = props;
   const actionBusy = actionId === row.plugin.id;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
@@ -873,7 +898,7 @@ function MarketplacePackageDetailModal(props: {
       connected
       connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
       connecting={actionBusy}
-      connectLabel={t("extensions.marketplace_runs_in_cloud")}
+      connectLabel={deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
       connectingLabel="Working..."
       uninstallLabel="Remove"
       showEnablementCard={false}
@@ -890,6 +915,15 @@ function MarketplacePackageDetailModal(props: {
             <SettingsPill>{row.marketplaceName}</SettingsPill>
             {row.counts.map((label) => <SettingsPill key={label}>{label}</SettingsPill>)}
           </div>
+          {!cloudBuiltIn ? (
+            <Button
+              size="sm"
+              disabled={actionBusy}
+              onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
+            >
+              {actionBusy ? "Working..." : row.imported ? "Sync to workspace" : "Install in workspace"}
+            </Button>
+          ) : null}
           {deliveryAction === "cloud_active_local_copy" ? (
             <SettingsNotice>{t("connect.marketplace_local_copy_note")}</SettingsNotice>
           ) : null}

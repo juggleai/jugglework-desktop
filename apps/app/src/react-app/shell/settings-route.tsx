@@ -94,6 +94,7 @@ import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/f
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
+import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
@@ -2400,6 +2401,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}
                 installClaudePlugin={(url) => extensionsStore.installClaudePlugin(url)}
                 showHeader={false}
+              />
+            }
+            marketplaceView={
+              <CloudMarketplacesView
+                extensions={extensionsStore}
+                onOpenAccount={openCloudAccountSettings}
+                session={denSession}
               />
             }
 

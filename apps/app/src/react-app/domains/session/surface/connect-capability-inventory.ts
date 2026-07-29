@@ -6,7 +6,7 @@ import type {
   DenPluginCloudReadinessConnection,
   DenPluginConfigObject,
 } from "@/app/lib/den";
-import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "@/app/types";
+import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard, SlashCommandOption } from "@/app/types";
 
 type ConnectCapabilityClient = {
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
@@ -21,6 +21,7 @@ type ConnectCapabilityClient = {
 };
 
 export type ConnectCapabilityInventory = {
+  commands: ConnectCommandOption[];
   skills: ConnectSkillCard[];
   mcpServers: McpServerEntry[];
   mcpStatuses: McpStatusMap;
@@ -30,7 +31,14 @@ export type ConnectSkillCard = SkillCard & {
   content?: string;
 };
 
+export type ConnectCommandOption = SlashCommandOption & {
+  origin: "jugglework-connect";
+  connectCapabilityName: string;
+  connectPluginId: string;
+};
+
 export const EMPTY_CONNECT_CAPABILITY_INVENTORY: ConnectCapabilityInventory = {
+  commands: [],
   skills: [],
   mcpServers: [],
   mcpStatuses: {},
@@ -56,6 +64,20 @@ function marketplaceCapabilityName(pluginId: string, configObjectId: string) {
 function skillTrigger(object: DenPluginConfigObject) {
   const path = object.currentRelativePath?.replaceAll("\\", "/");
   return path?.match(/(?:^|\/)skills?\/([^/]+)\/SKILL\.md$/i)?.[1];
+}
+
+function commandName(object: DenPluginConfigObject) {
+  const path = object.currentRelativePath?.replaceAll("\\", "/") ?? "";
+  const fileName = path.match(/(?:^|\/)commands?\/.*\/([^/]+)\.md$/i)?.[1]
+    ?? path.match(/(?:^|\/)([^/]+)\.md$/i)?.[1]
+    ?? object.currentFileName?.replace(/\.md$/i, "")
+    ?? object.title;
+  const normalized = fileName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || object.id;
 }
 
 function remoteMcpSpecs(object: DenPluginConfigObject): RemoteMcpSpec[] {
@@ -123,6 +145,25 @@ function toSkill(
   };
 }
 
+function toCommand(
+  marketplace: DenOrgMarketplace,
+  plugin: DenOrgPlugin,
+  object: DenPluginConfigObject,
+): ConnectCommandOption {
+  const capability = marketplaceCapabilityName(plugin.id, object.id);
+  return {
+    id: `connect-command:${capability}`,
+    name: commandName(object),
+    description: object.description ?? undefined,
+    source: "command",
+    origin: "jugglework-connect",
+    marketplaceName: marketplace.name,
+    pluginName: plugin.name,
+    connectCapabilityName: capability,
+    connectPluginId: plugin.id,
+  };
+}
+
 function toMcpEntries(
   marketplace: DenOrgMarketplace,
   plugin: DenOrgPlugin,
@@ -175,6 +216,7 @@ export async function listAssignedConnectCapabilities(input: {
     })),
   );
 
+  const commands: ConnectCommandOption[] = [];
   const skills: SkillCard[] = [];
   const mcpServers: McpServerEntry[] = [];
   const mcpStatuses: McpStatusMap = {};
@@ -185,6 +227,9 @@ export async function listAssignedConnectCapabilities(input: {
       if (object.objectType === "skill") {
         skills.push(toSkill(marketplace, resolved.plugin, object));
       }
+      if (object.objectType === "command") {
+        commands.push(toCommand(marketplace, resolved.plugin, object));
+      }
       if (object.objectType === "mcp") {
         for (const item of toMcpEntries(marketplace, resolved.plugin, object)) {
           mcpServers.push(item.entry);
@@ -194,7 +239,8 @@ export async function listAssignedConnectCapabilities(input: {
     }
   }
 
+  commands.sort((left, right) => left.name.localeCompare(right.name));
   skills.sort((left, right) => left.name.localeCompare(right.name));
   mcpServers.sort((left, right) => left.name.localeCompare(right.name));
-  return { skills, mcpServers, mcpStatuses };
+  return { commands, skills, mcpServers, mcpStatuses };
 }

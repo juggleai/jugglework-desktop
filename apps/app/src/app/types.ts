@@ -118,6 +118,12 @@ export type SlashCommandOption = {
   name: string;
   description?: string;
   source?: "command" | "mcp" | "skill";
+  /** Metadata for a command provided by JuggleWork Connect rather than this workspace. */
+  origin?: CapabilityOrigin;
+  marketplaceName?: string;
+  pluginName?: string;
+  connectCapabilityName?: string;
+  connectPluginId?: string;
 };
 
 export type ComposerDraft = {
