@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { t } from "@/i18n";
 
 import {
   LayoutSection,
@@ -56,26 +57,26 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
 
           {/* Workspace header */}
           <circle cx="16" cy="44" r="5" fill="var(--dls-accent)" opacity="0.3" />
-          <text x="26" y="47" fontSize="6.5" fontWeight="600" fill="var(--dls-text-primary)" opacity="0.7">Workspace</text>
+          <text x="26" y="47" fontSize="6.5" fontWeight="600" fill="var(--dls-text-primary)" opacity="0.7">{t("settings.group_workspace")}</text>
 
           {/* Session list */}
           <rect x="8" y="58" width="85" height="16" rx="4" fill="var(--dls-surface)" opacity="0.6" />
-          <text x="14" y="68" fontSize="5.5" fill="var(--dls-text-primary)" opacity="0.5">Meeting brief</text>
+          <text x="14" y="68" fontSize="5.5" fill="var(--dls-text-primary)" opacity="0.5">{t("settings.shell_preview_session_1")}</text>
 
           <rect x="8" y="78" width="85" height="16" rx="4" fill="transparent" />
-          <text x="14" y="88" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">Contract review</text>
+          <text x="14" y="88" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">{t("settings.shell_preview_session_2")}</text>
 
           <rect x="8" y="98" width="85" height="16" rx="4" fill="transparent" />
-          <text x="14" y="108" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">Outreach CRM</text>
+          <text x="14" y="108" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.4">{t("settings.shell_preview_session_3")}</text>
 
           {/* New session button */}
-          <text x="14" y="130" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.3">+ New session</text>
+          <text x="14" y="130" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.3">{t("settings.shell_preview_new_session")}</text>
 
           {/* Add workspace */}
           {config.addWorkspace ? (
             <g>
               <rect x="8" y="200" width="85" height="16" rx="8" fill="var(--dls-accent)" opacity="0.15" />
-              <text x="50" y="210" textAnchor="middle" fontSize="5.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.6">Add workspace</text>
+              <text x="50" y="210" textAnchor="middle" fontSize="5.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.6">{t("settings.shell_preview_add_workspace")}</text>
             </g>
           ) : null}
         </g>
@@ -86,9 +87,9 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
         {/* Starter cards */}
         <g className="transition-all duration-300" style={{ opacity: config.starterCards ? 1 : 0 }}>
           {[
-            { x: cx + 12, icon: "\u{1F4CA}", label: "Edit a CSV" },
-            { x: cx + 12 + (cw - 36) / 3 + 6, icon: "\u{1F310}", label: "Browse web" },
-            { x: cx + 12 + ((cw - 36) / 3 + 6) * 2, icon: "\u{1F50C}", label: "Extensions" },
+            { x: cx + 12, icon: "\u{1F4CA}", label: t("settings.shell_preview_card_csv") },
+            { x: cx + 12 + (cw - 36) / 3 + 6, icon: "\u{1F310}", label: t("settings.shell_preview_card_web") },
+            { x: cx + 12 + ((cw - 36) / 3 + 6) * 2, icon: "\u{1F50C}", label: t("settings.tab_extensions") },
           ].map((card, i) => {
             const w = (cw - 36) / 3;
             return (
@@ -104,10 +105,10 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
 
         {/* Composer */}
         <rect x={cx + 10} y="196" width={cw - 20} height="22" rx="11" fill="none" stroke="var(--dls-border)" strokeWidth="0.75" />
-        <text x={cx + 24} y="210" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.3">Describe your task...</text>
+        <text x={cx + 24} y="210" fontSize="5.5" fill="var(--dls-text-secondary)" opacity="0.3">{t("settings.shell_preview_composer")}</text>
         {/* Send button */}
         <rect x={cx + cw - 42} y="200" width="24" height="14" rx="7" fill="var(--dls-accent)" opacity="0.2" />
-        <text x={cx + cw - 30} y="210" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">Run</text>
+        <text x={cx + cw - 30} y="210" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">{t("settings.shell_preview_run")}</text>
 
         {/* Model picker */}
         {config.modelPicker ? (
@@ -123,24 +124,24 @@ function ShellWireframe({ config }: { config: ShellConfig }) {
 
           {/* Status dot + label */}
           <circle cx="14" cy="242" r="2.5" fill="#28c840" opacity="0.5" />
-          <text x="22" y="245" fontSize="5.5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.5">Ready</text>
+          <text x="22" y="245" fontSize="5.5" fontWeight="500" fill="var(--dls-text-primary)" opacity="0.5">{t("settings.shell_preview_ready")}</text>
 
           {/* Cloud sign-in */}
           {config.cloudSignin ? (
             <g>
               <rect x="280" y="236" width="32" height="12" rx="6" fill="var(--dls-accent)" opacity="0.2" />
-              <text x="296" y="244" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">Sign in</text>
+              <text x="296" y="244" textAnchor="middle" fontSize="4.5" fontWeight="500" fill="var(--dls-accent)" opacity="0.5">{t("settings.shell_preview_signin")}</text>
             </g>
           ) : null}
 
           {/* Docs */}
           {config.docsButton ? (
-            <text x="326" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Docs</text>
+            <text x="326" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">{t("settings.shell_preview_docs")}</text>
           ) : null}
 
           {/* Feedback */}
           {config.feedbackButton ? (
-            <text x="350" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">Feedback</text>
+            <text x="350" y="244" fontSize="5" fill="var(--dls-text-secondary)" opacity="0.35">{t("settings.shell_preview_feedback")}</text>
           ) : null}
 
           {/* Settings gear */}
@@ -185,7 +186,7 @@ type ToggleRowProps = {
 
 function CloudOnlyBadge() {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-dls-hover size-5 justify-center text-xs font-medium text-dls-secondary" aria-label="Cloud only">
+    <span className="inline-flex items-center gap-1 rounded-md bg-dls-hover size-5 justify-center text-xs font-medium text-dls-secondary" aria-label={t("settings.shell_cloud_only")}>
       <Lock className="size-3" />
     </span>
   );
@@ -249,22 +250,22 @@ export function ShellCustomizationView() {
       {/* ---- Branding ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Branding</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("settings.shell_branding_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            Customize the name your users see across the app.
+            {t("settings.shell_branding_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>Change application name</LayoutSectionItemTitle>
+            <LayoutSectionItemTitle>{t("settings.shell_app_name_title")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>
-              Appears in the title bar, sidebar, and welcome screen.
+              {t("settings.shell_app_name_desc")}
             </LayoutSectionItemDescription>
             <LayoutSectionItemHeaderActions>
               <Field className="w-64 max-w-full gap-0">
                <FieldLabel className="sr-only" htmlFor="shell-app-name">
-                  App name
+                  {t("settings.shell_app_name_label")}
                 </FieldLabel>
                 <Input
                   id="shell-app-name"
@@ -280,7 +281,7 @@ export function ShellCustomizationView() {
           <Alert>
             <Info />
             <AlertDescription>
-              {brandAppName === "JuggleWork" ? "Your organization has not set a custom application name." : "This application name is managed by your organization."}
+              {brandAppName === "JuggleWork" ? t("settings.shell_app_name_unmanaged") : t("settings.shell_app_name_managed")}
             </AlertDescription>
           </Alert>
         </LayoutSectionItem>
@@ -291,15 +292,15 @@ export function ShellCustomizationView() {
       {/* ---- Visibility ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Layout</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("settings.shell_layout_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            Customize what's visible in the interface.
+            {t("settings.shell_layout_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <Alert>
           <AlertDescription>
-            Anything you hide is still available via the command palette (Cmd+K).
+            {t("settings.shell_layout_palette_hint")}
           </AlertDescription>
         </Alert>
 
@@ -308,37 +309,37 @@ export function ShellCustomizationView() {
         </LayoutSectionItem>
 
         <ToggleRow
-          label="Display sidebar"
-          description="Browse workspaces and past sessions from a side panel."
+          label={t("settings.shell_sidebar_label")}
+          description={t("settings.shell_sidebar_desc")}
           checked={config.sidebar}
           onChange={(v) => update({ sidebar: v })}
         />
 
         <ToggleRow
-          label="Display status bar"
-          description="Quick access to status, settings, and actions along the bottom edge."
+          label={t("settings.shell_status_bar_label")}
+          description={t("settings.shell_status_bar_desc")}
           checked={config.statusBar}
           onChange={(v) => update({ statusBar: v })}
-          warning="When hidden, the only way to access settings is via Cmd+K."
+          warning={t("settings.shell_status_bar_warning")}
         />
 
         {config.statusBar ? (
           <div className="ml-6 flex flex-col gap-3 border border-dls-border px-4 py-4 rounded-2xl -mr-4">
             <ToggleRow
-              label="Display documentation link"
-              description="Show a link to your documentation."
+              label={t("settings.shell_docs_label")}
+              description={t("settings.shell_docs_desc")}
               checked={config.docsButton}
               onChange={(value) => update({ docsButton: value })}
             />
             <ToggleRow
-              label="Display feedback button"
-              description="Show a button for submitting feedback."
+              label={t("settings.shell_feedback_label")}
+              description={t("settings.shell_feedback_desc")}
               checked={config.feedbackButton}
               onChange={(value) => update({ feedbackButton: value })}
             />
             <ToggleRow
-              label="Display cloud sign-in"
-              description="Show a sign-in prompt for users who aren't logged in."
+              label={t("settings.shell_cloud_signin_label")}
+              description={t("settings.shell_cloud_signin_desc")}
               checked={config.cloudSignin}
               onChange={(value) => update({ cloudSignin: value })}
             />
@@ -346,52 +347,52 @@ export function ShellCustomizationView() {
         ) : null}
 
         <ToggleRow
-          label="Display notifications"
-          description="A bell in the header collecting updates from JuggleWork Cloud and your workspaces."
+          label={t("settings.shell_notifications_label")}
+          description={t("settings.shell_notifications_desc")}
           checked={config.notifications}
           onChange={(v) => update({ notifications: v })}
         />
 
         <ToggleRow
-          label="Display task suggestions"
-          description="Show task suggestions to help users get started."
+          label={t("settings.shell_starter_cards_label")}
+          description={t("settings.shell_starter_cards_desc")}
           checked={config.starterCards}
           onChange={(v) => update({ starterCards: v })}
         />
 
         <ToggleRow
-          label="Display model picker"
-          description="Let users choose which AI model to use."
+          label={t("settings.shell_model_picker_label")}
+          description={t("settings.shell_model_picker_desc")}
           checked={config.modelPicker}
           onChange={(v) => update({ modelPicker: v })}
           disabled
-          unavailable="The model picker display control is not available yet."
+          unavailable={t("settings.shell_model_picker_unavailable")}
         />
 
         <ToggleRow
-          label="Display browser panel"
-          description="A built-in browser for viewing web content alongside sessions."
+          label={t("settings.shell_browser_label")}
+          description={t("settings.shell_browser_desc")}
           checked={config.browser}
           onChange={(v) => update({ browser: v })}
           disabled
-          unavailable="The browser panel display control is not available yet."
+          unavailable={t("settings.shell_browser_unavailable")}
         />
 
         <ToggleRow
-          label="Display menu bar"
-          description="Show the native desktop menu bar."
+          label={t("settings.shell_menu_bar_label")}
+          description={t("settings.shell_menu_bar_desc")}
           checked={applicationMenuVisible}
           onChange={setApplicationMenuVisible}
           className="hidden windows:flex linux:flex"
         />
 
         <ToggleRow
-          label="Display new workspace button"
-          description="Let users create or join additional workspaces."
+          label={t("settings.shell_add_workspace_label")}
+          description={t("settings.shell_add_workspace_desc")}
           checked={config.addWorkspace}
           onChange={(v) => update({ addWorkspace: v })}
           disabled
-          unavailable="The new workspace button display control is not available yet."
+          unavailable={t("settings.shell_add_workspace_unavailable")}
         />
       </LayoutSection>
 
@@ -400,46 +401,46 @@ export function ShellCustomizationView() {
       {/* ---- Cloud-managed (grayed out) ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>Organization-wide settings</LayoutSectionTitle>
+          <LayoutSectionTitle>{t("settings.shell_org_title")}</LayoutSectionTitle>
           <LayoutSectionDescription>
-            These settings are managed by your organization via JuggleWork Cloud.
+            {t("settings.shell_org_desc")}
           </LayoutSectionDescription>
         </LayoutSectionHeader>
 
         <Alert variant="warning">
           <Lock />
           <AlertDescription>
-            These settings can only be changed by your organization admin. Contact your admin to make changes.
+            {t("settings.shell_org_admin_notice")}
           </AlertDescription>
         </Alert>
 
         <ToggleRow
-          label="Settings access"
-          description="Let users open the settings panel."
+          label={t("settings.shell_settings_access_label")}
+          description={t("settings.shell_settings_access_desc")}
           checked={true}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Model restrictions"
-          description="Limit which AI models and providers users can choose from."
+          label={t("settings.shell_model_restrictions_label")}
+          description={t("settings.shell_model_restrictions_desc")}
           checked={false}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Extension restrictions"
-          description="Limit which extensions, plugins, and skills users can install."
+          label={t("settings.shell_extension_restrictions_label")}
+          description={t("settings.shell_extension_restrictions_desc")}
           checked={false}
           onChange={() => {}}
           cloudOnly
         />
 
         <ToggleRow
-          label="Enable welcome page"
-          description="A getting-started screen for first-time users."
+          label={t("settings.shell_welcome_page_label")}
+          description={t("settings.shell_welcome_page_desc")}
           checked={config.welcomePage}
           onChange={(v) => update({ welcomePage: v })}
           cloudOnly
@@ -452,7 +453,7 @@ export function ShellCustomizationView() {
       {/* ---- Reset ---- */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-dls-secondary">
-          {isDefault ? "All settings are at their defaults." : "Some settings have been customized."}
+          {isDefault ? t("settings.shell_all_defaults") : t("settings.shell_some_customized")}
         </div>
         <Button
           variant="outline"
@@ -461,7 +462,7 @@ export function ShellCustomizationView() {
           disabled={isDefault}
         >
           <RotateCcw size={12} />
-          Reset to defaults
+          {t("settings.shell_reset_defaults")}
         </Button>
       </div>
     </LayoutStack>

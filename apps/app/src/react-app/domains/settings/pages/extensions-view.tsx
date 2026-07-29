@@ -138,7 +138,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
             <Cpu size={14} />
-            <span>OpenCode Plugins</span>
+            <span>{t("extensions_view.opencode_plugins")}</span>
             <span className="text-[11px] text-dls-secondary">({pluginCount})</span>
           </summary>
           <div className="mt-3">
@@ -161,7 +161,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             <DialogTitle>{t("skills.create_local_skill")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-sm text-dls-secondary">This Skill is saved only in the selected workspace.</p>
+            <p className="text-sm text-dls-secondary">{t("extensions_view.skill_workspace_only")}</p>
             <label className="grid gap-1.5 text-sm font-medium text-dls-text">
               Name
               <input
@@ -176,7 +176,7 @@ export function ExtensionsView(props: ExtensionsViewProps) {
               <input
                 value={skillDescription}
                 onChange={(event) => setSkillDescription(event.currentTarget.value)}
-                placeholder="What this Skill helps with"
+                placeholder={t("extensions_view.description_placeholder")}
                 className="rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm font-normal outline-none focus:ring-2 focus:ring-dls-accent/20"
               />
             </label>

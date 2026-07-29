@@ -384,31 +384,31 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   const copy = async () => {
     const payload = JSON.stringify({ cloudMcpHealth: safeHealth }, null, 2);
     await navigator.clipboard.writeText(payload);
-    setCopyStatus("Copied sanitized Cloud diagnostic.");
+    setCopyStatus(t("settings.adv_copied_sanitized"));
   };
 
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("settings.adv_agent_diag_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Technical details for JuggleWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
+          {t("settings.adv_agent_diag_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>JuggleWork Cloud MCP health</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("settings.adv_cloud_health_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Use this when support needs exact runtime state. The main Connect card stays user-facing.
+            {t("settings.adv_cloud_health_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
               <RefreshCcw size={14} className={busy ? "animate-spin" : ""} />
-              Refresh
+              {t("settings.adv_refresh")}
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
-              Copy sanitized diagnostic
+              {t("settings.adv_copy_sanitized")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -417,57 +417,57 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
         {props.cloudMcpHealth ? (
           <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/60 p-3">
             <div className="grid gap-2">
-              <DiagnosticRow label="Active workspace" value={`${props.cloudMcpHealth.workspace.id} (${props.cloudMcpHealth.workspace.directory ?? "no directory"})`} />
-              <DiagnosticRow label="Desired revision" value={props.cloudMcpHealth.desired.revision ?? "none"} />
-              <DiagnosticRow label="Applied revision" value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
-              <DiagnosticRow label="Delivery" value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
-              <DiagnosticRow label="Engine status" value={props.cloudMcpHealth.engine.status} />
+              <DiagnosticRow label={t("settings.adv_row_active_workspace")} value={`${props.cloudMcpHealth.workspace.id} (${props.cloudMcpHealth.workspace.directory ?? "no directory"})`} />
+              <DiagnosticRow label={t("settings.adv_row_desired_revision")} value={props.cloudMcpHealth.desired.revision ?? "none"} />
+              <DiagnosticRow label={t("settings.adv_row_applied_revision")} value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
+              <DiagnosticRow label={t("settings.adv_row_delivery")} value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
+              <DiagnosticRow label={t("settings.adv_row_engine_status")} value={props.cloudMcpHealth.engine.status} />
               {props.cloudMcpHealth.engineInspection?.checked ? (
                 <DiagnosticRow
-                  label="Engine MCP servers"
+                  label={t("settings.adv_row_engine_mcp_servers")}
                   value={(props.cloudMcpHealth.engineInspection.servers ?? []).length
                     ? (props.cloudMcpHealth.engineInspection.servers ?? []).map((server) => `${server.name} ${server.status}${server.error ? ` (${server.error})` : ""}`).join("; ")
                     : "none tracked"}
                 />
               ) : null}
-              <DiagnosticRow label="Provider/model" value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
-              <DiagnosticRow label="Cloud tools" value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
-              <DiagnosticRow label="Direct tools/list" value={`checked ${props.cloudMcpHealth.tools.direct.checked ? "yes" : "no"}; present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
+              <DiagnosticRow label={t("settings.adv_row_provider_model")} value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
+              <DiagnosticRow label={t("settings.adv_row_cloud_tools")} value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
+              <DiagnosticRow label={t("settings.adv_row_direct_tools_list")} value={`checked ${props.cloudMcpHealth.tools.direct.checked ? "yes" : "no"}; present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
               {props.cloudMcpHealth.tools.direct.trace ? (
                 <DiagnosticRow
-                  label="Direct probe"
+                  label={t("settings.adv_row_direct_probe")}
                   value={`${props.cloudMcpHealth.tools.direct.trace.endpoint ?? "unknown endpoint"} · ${props.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${props.cloudMcpHealth.tools.direct.trace.steps.map((step) => `${step.step} ${step.ok ? "ok" : "failed"}${step.httpStatus !== undefined ? ` (HTTP ${step.httpStatus})` : ""} ${Math.max(0, Math.round(step.latencyMs))}ms`).join(" → ") || "no steps"}`}
                 />
               ) : null}
               {props.cloudMcpHealth.firstFailure ? (
                 <DiagnosticRow
-                  label="First failure"
+                  label={t("settings.adv_row_first_failure")}
                   value={`${props.cloudMcpHealth.firstFailure.code} (stage ${props.cloudMcpHealth.firstFailure.stage}; ${props.cloudMcpHealth.firstFailure.retryable ? "retryable" : "not retryable"}): ${props.cloudMcpHealth.firstFailure.message}`}
                 />
               ) : null}
-              <DiagnosticRow label="Plugin canaries" value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
-              <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
+              <DiagnosticRow label={t("settings.adv_row_plugin_canaries")} value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
+              <DiagnosticRow label={t("settings.adv_row_safe_capabilities")} value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
               {compatibility ? (
                 <>
-                  <DiagnosticRow label="JuggleWork versions" value={`server ${formatMaybe(compatibility.jugglework.serverVersion)}; app ${formatMetadataRecord(compatibility.jugglework.app)}`} />
-                  <DiagnosticRow label="OpenCode compatibility" value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
-                  <DiagnosticRow label="Feature probes" value={formatSupportedFeatures(compatibility.supportedFeatures)} />
-                  <DiagnosticRow label="Experimental tool IDs" value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
-                  <DiagnosticRow label="Experimental provider tools" value={formatMcpToolExposure(compatibility.experimentalProviderTools)} />
-                  <DiagnosticRow label="Plugin hashes" value={formatPluginHashes(compatibility.pluginFileHashes)} />
+                  <DiagnosticRow label={t("settings.adv_row_jugglework_versions")} value={`server ${formatMaybe(compatibility.jugglework.serverVersion)}; app ${formatMetadataRecord(compatibility.jugglework.app)}`} />
+                  <DiagnosticRow label={t("settings.adv_row_opencode_compat")} value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
+                  <DiagnosticRow label={t("settings.adv_row_feature_probes")} value={formatSupportedFeatures(compatibility.supportedFeatures)} />
+                  <DiagnosticRow label={t("settings.adv_row_experimental_tool_ids")} value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
+                  <DiagnosticRow label={t("settings.adv_row_experimental_provider_tools")} value={formatMcpToolExposure(compatibility.experimentalProviderTools)} />
+                  <DiagnosticRow label={t("settings.adv_row_plugin_hashes")} value={formatPluginHashes(compatibility.pluginFileHashes)} />
                 </>
               ) : null}
-              <DiagnosticRow label="Live verification" value={props.cloudMcpHealth.checkedAt} />
+              <DiagnosticRow label={t("settings.adv_row_live_verification")} value={props.cloudMcpHealth.checkedAt} />
             </div>
             <details className="rounded-lg bg-gray-3 p-2">
-              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show sanitized health JSON</summary>
+              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("settings.adv_show_health_json")}</summary>
               <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
                 {JSON.stringify(safeHealth, null, 2)}
               </pre>
             </details>
           </div>
         ) : (
-          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
+          <SettingsNotice>{t("settings.adv_no_cloud_health")}</SettingsNotice>
         )}
       </LayoutSectionItem>
     </LayoutSection>
@@ -523,29 +523,29 @@ function RuntimeConfigSummary(props: { config: Record<string, unknown> }) {
   const mcps = countRecord(config.mcp);
   const permissions = countRecord(config.permission);
   const disabledProviders = countArray(config.disabled_providers);
-  const defaultAgent = typeof config.default_agent === "string" ? config.default_agent : "not set";
+  const defaultAgent = typeof config.default_agent === "string" ? config.default_agent : t("settings.adv_not_set");
 
   return (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
       <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
-        <div className="text-[10px] uppercase tracking-wide text-gray-8">Default agent</div>
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">{t("settings.adv_summary_default_agent")}</div>
         <div className="mt-1 truncate font-mono text-[11px] text-gray-12" title={defaultAgent}>{defaultAgent}</div>
       </div>
       <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
-        <div className="text-[10px] uppercase tracking-wide text-gray-8">Providers / models</div>
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">{t("settings.adv_summary_providers_models")}</div>
         <div className="mt-1 font-mono text-[11px] text-gray-12">{providers} providers, {models} models</div>
       </div>
       <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
-        <div className="text-[10px] uppercase tracking-wide text-gray-8">Agents / plugins</div>
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">{t("settings.adv_summary_agents_plugins")}</div>
         <div className="mt-1 font-mono text-[11px] text-gray-12">{agents} agents, {plugins} plugins</div>
       </div>
       <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2">
-        <div className="text-[10px] uppercase tracking-wide text-gray-8">MCP / permissions</div>
+        <div className="text-[10px] uppercase tracking-wide text-gray-8">{t("settings.adv_summary_mcp_permissions")}</div>
         <div className="mt-1 font-mono text-[11px] text-gray-12">{mcps} MCPs, {permissions} permission keys</div>
       </div>
       {disabledProviders ? (
         <div className="rounded-lg border border-gray-6 bg-gray-2/60 p-2 sm:col-span-2 lg:col-span-4">
-          <div className="text-[10px] uppercase tracking-wide text-gray-8">Disabled providers</div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-8">{t("settings.adv_summary_disabled_providers")}</div>
           <div className="mt-1 font-mono text-[11px] text-gray-12">{disabledProviders}</div>
         </div>
       ) : null}
@@ -568,12 +568,12 @@ function RuntimeConfigSourceBlock(props: {
         <div className="font-medium text-gray-12">{props.title}</div>
         <div className="text-[11px] text-gray-9">{props.description}</div>
         {props.path ? <div className="mt-1 break-all font-mono text-[11px] text-gray-8">{props.path}</div> : null}
-        {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? "Found" : "Not found"}</div> : null}
+        {props.exists !== undefined ? <div className="text-[11px] text-gray-9">{props.exists ? t("settings.adv_found") : t("settings.adv_not_found")}</div> : null}
         <div className="text-[11px] text-gray-9">Keys: {formatKeys(props.keys)}</div>
       </div>
       <RuntimeConfigSummary config={safeConfig} />
       <details className="rounded-lg bg-gray-3 p-2">
-        <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show raw JSON</summary>
+        <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("settings.adv_show_raw_json")}</summary>
         <pre className="mt-2 max-h-56 overflow-auto font-mono text-[11px] text-gray-11">
           {JSON.stringify(safeConfig, null, 2)}
         </pre>
@@ -590,15 +590,15 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
+        <LayoutSectionTitle>{t("settings.adv_config_sources_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>
-          Inspect what JuggleWork controls at runtime versus what belongs to your workspace config. This works through the JuggleWork server and does not require the OpenCode engine to be healthy.
+          {t("settings.adv_config_sources_desc")}
         </LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Move JuggleWork-managed config</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("settings.adv_move_managed_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
             Moves older JuggleWork-owned runtime keys from `.opencode/jugglework.json` and safe JuggleWork-managed keys from `opencode.jsonc` into the runtime database.
           </LayoutSectionItemDescription>
@@ -611,7 +611,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               disabled={props.busy || props.configStatusBusy || !props.canMigrate}
             >
               <RefreshCcw size={14} className={props.configStatusBusy ? "animate-spin" : ""} />
-              Refresh
+              {t("settings.adv_refresh")}
             </Button>
             <Button
               type="button"
@@ -621,7 +621,7 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               disabled={props.busy || props.migrationBusy || !props.canMigrate}
             >
               <Database size={14} />
-              {props.migrationBusy ? "Migrating..." : "Migrate"}
+              {props.migrationBusy ? t("settings.adv_migrating") : t("settings.adv_migrate")}
             </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
@@ -630,13 +630,13 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
             <div className="space-y-2 rounded-xl border border-blue-6/50 bg-blue-2/40 p-3">
-              <div className="font-medium text-gray-12">Desired JuggleWork runtime config</div>
+              <div className="font-medium text-gray-12">{t("settings.adv_desired_runtime_title")}</div>
               <div className="text-[11px] text-gray-9">
-                This is the JuggleWork-built config object requested for the runtime database and injected safely by the server. Sensitive headers are redacted here.
+                {t("settings.adv_desired_runtime_desc")}
               </div>
               <RuntimeConfigSummary config={effectiveRuntimeConfig ?? {}} />
               <details className="rounded-lg bg-gray-3 p-2">
-                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show desired JSON</summary>
+                <summary className="cursor-pointer text-[11px] font-medium text-gray-11">{t("settings.adv_show_desired_json")}</summary>
                 <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
                   {JSON.stringify(effectiveRuntimeConfig, null, 2)}
                 </pre>
@@ -645,47 +645,47 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
             {props.configStatus.sources ? (
               <div className="space-y-3">
                 <div>
-                  <div className="font-medium text-gray-12">OpenCode source breakdown</div>
+                  <div className="font-medium text-gray-12">{t("settings.adv_source_breakdown_title")}</div>
                   <div className="text-[11px] text-gray-9">
-                    OpenCode also reads its own project and global config files. JuggleWork injects the runtime config separately; for JuggleWork-managed keys, the injected config is the source to inspect.
+                    {t("settings.adv_source_breakdown_desc")}
                   </div>
                 </div>
                 <RuntimeConfigSourceBlock
-                  title="Project opencode config"
-                  description="Workspace-level OpenCode config owned by the user/project."
+                  title={t("settings.adv_source_project_title")}
+                  description={t("settings.adv_source_project_desc")}
                   path={props.configStatus.sources.projectOpencode.path}
                   exists={props.configStatus.sources.projectOpencode.exists}
                   keys={props.configStatus.sources.projectOpencode.keys}
                   config={props.configStatus.sources.projectOpencode.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="Global opencode config"
-                  description="User-level OpenCode config under ~/.config/opencode."
+                  title={t("settings.adv_source_global_title")}
+                  description={t("settings.adv_source_global_desc")}
                   path={props.configStatus.sources.globalOpencode.path}
                   exists={props.configStatus.sources.globalOpencode.exists}
                   keys={props.configStatus.sources.globalOpencode.keys}
                   config={props.configStatus.sources.globalOpencode.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="JuggleWork runtime DB"
-                  description="JuggleWork-managed runtime values stored outside workspace files."
+                  title={t("settings.adv_source_runtime_db_title")}
+                  description={t("settings.adv_source_runtime_db_desc")}
                   keys={props.configStatus.sources.runtimeDatabase.keys}
                   config={props.configStatus.sources.runtimeDatabase.config}
                 />
                 <RuntimeConfigSourceBlock
-                  title="JuggleWork injected config"
-                  description="The object JuggleWork injects into OpenCode at runtime."
+                  title={t("settings.adv_source_injected_title")}
+                  description={t("settings.adv_source_injected_desc")}
                   keys={props.configStatus.sources.injected.keys}
                   config={props.configStatus.sources.injected.config}
                 />
               </div>
             ) : null}
             <div>
-              <div className="font-medium text-gray-12">Runtime database</div>
+              <div className="font-medium text-gray-12">{t("settings.adv_runtime_database")}</div>
               <div>Stored keys: {formatKeys(props.configStatus.runtimeKeys)}</div>
             </div>
             <div>
-              <div className="font-medium text-gray-12">Legacy JuggleWork metadata</div>
+              <div className="font-medium text-gray-12">{t("settings.adv_legacy_metadata")}</div>
               <div className="break-all">{props.configStatus.legacyJuggleWork.path}</div>
               {props.configStatus.legacyJuggleWork.error ? (
                 <div className="text-amber-11">{props.configStatus.legacyJuggleWork.error}; fix this file before moving legacy config.</div>
@@ -693,14 +693,14 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               <div>Migratable keys: {formatKeys(props.configStatus.legacyJuggleWork.keys)}</div>
             </div>
             <div>
-              <div className="font-medium text-gray-12">User opencode.jsonc</div>
+              <div className="font-medium text-gray-12">{t("settings.adv_user_opencode_jsonc")}</div>
               <div className="break-all">{props.configStatus.userOpencode.path}</div>
-              <div>{props.configStatus.userOpencode.exists ? "Found" : "Not found"}</div>
+              <div>{props.configStatus.userOpencode.exists ? t("settings.adv_found") : t("settings.adv_not_found")}</div>
               <div>User-owned keys: {formatKeys(props.configStatus.userOpencode.keys)}</div>
               <div>Migratable keys: {formatKeys(props.configStatus.userOpencode.migratableKeys)}</div>
             </div>
             <div>
-              <div className="font-medium text-gray-12">Runtime DB JSON</div>
+              <div className="font-medium text-gray-12">{t("settings.adv_runtime_db_json")}</div>
               <pre className="mt-1 max-h-48 overflow-auto rounded-lg bg-gray-3 p-2 font-mono text-[11px] text-gray-11">
                 {JSON.stringify(runtimeConfig, null, 2)}
               </pre>
@@ -761,19 +761,19 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
   return (
     <LayoutSection>
       <LayoutSectionHeader>
-        <LayoutSectionTitle>Feature flags</LayoutSectionTitle>
-        <LayoutSectionDescription>Experimental controls for sandbox and workspace behaviors.</LayoutSectionDescription>
+        <LayoutSectionTitle>{t("settings.adv_feature_flags_title")}</LayoutSectionTitle>
+        <LayoutSectionDescription>{t("settings.adv_feature_flags_desc")}</LayoutSectionDescription>
       </LayoutSectionHeader>
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Create Sandbox uses microsandbox image</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>{t("settings.adv_microsandbox_title")}</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            When enabled, Create Sandbox launches the detached worker with the microsandbox image flow instead of the default Docker image flow.
+            {t("settings.adv_microsandbox_desc")}
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Switch
-              aria-label="Create Sandbox uses microsandbox image"
+              aria-label={t("settings.adv_microsandbox_title")}
               checked={props.microsandboxCreateSandboxEnabled}
               disabled={props.busy || !isDesktopRuntime()}
               onCheckedChange={props.onToggleMicrosandboxCreateSandbox}

@@ -18,6 +18,7 @@ import {
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { registerExtensionConfig } from "./extension-registry";
+import { t } from "@/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,9 +146,9 @@ export function ComputerUseConfig({
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
-        <CardTitle>Computer Use setup (Mac only)</CardTitle>
+        <CardTitle>{t("computer_use.setup_title")}</CardTitle>
         <CardDescription>
-          Computer Use only works on Mac. Connect the local MCP server and grant the macOS permissions it needs to control apps.
+          {t("computer_use.setup_desc")}
         </CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" onClick={() => void verify()} disabled={isBusy}>
@@ -167,7 +168,7 @@ export function ComputerUseConfig({
         {/* Step 1 — MCP */}
         <SetupRow
           title="1. Connect Computer Use MCP"
-          description="Adds the local Computer Use server to this workspace so Composer can use the computer-control tools."
+          description={t("computer_use.connect_desc")}
           complete={connected}
         >
           <Button
@@ -185,13 +186,13 @@ export function ComputerUseConfig({
         {/* Step 2 — Permissions */}
         <SetupRow
           title="2. Grant macOS permissions"
-          description="Opens the JuggleWork Computer Use helper. Grant both permissions there, then click Verify below."
+          description={t("computer_use.permissions_desc")}
           complete={allGranted}
         >
           <div className="flex w-full min-w-0 flex-col gap-3">
             <div className="grid gap-2">
-              <Pill label="Accessibility" granted={result?.accessibility === true} checked={result !== null} />
-              <Pill label="Screen Recording" granted={result?.screenRecording === true} checked={result !== null} />
+              <Pill label={t("computer_use.accessibility")} granted={result?.accessibility === true} checked={result !== null} />
+              <Pill label={t("computer_use.screen_recording")} granted={result?.screenRecording === true} checked={result !== null} />
             </div>
 
             <Button

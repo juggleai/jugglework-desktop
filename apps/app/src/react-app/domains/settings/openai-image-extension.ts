@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import { t } from "@/i18n";
 
 export type LocalProviderInstallInput = {
   providerId: string;
@@ -14,7 +15,7 @@ type ProviderModelConfig = NonNullable<ProviderConfig["models"]>[string];
 
 export const OLLAMA_PROVIDER_CONFIG = {
   providerId: "ollama",
-  name: "Ollama (local)",
+  get name() { return t("openai_image.ollama_local"); },
   baseURL: "http://localhost:11434/v1",
   defaultModelId: "qwen2.5-coder:7b",
 };

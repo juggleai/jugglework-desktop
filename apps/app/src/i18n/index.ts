@@ -21,21 +21,40 @@ export type Locale = Language;
  */
 export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru"];
 
+type LanguageOption = { value: Language; label: string; nativeName: string };
+
+/**
+ * 全部语言包对应的选项元数据
+ *
+ * TIPS: 这里保留所有语言，仅用于回显 —— 老用户 localStorage 里若存着 ja/ru 等，
+ * 选择器仍能正确显示当前语言，而不是空白。新选择请只从 LANGUAGE_OPTIONS 取。
+ */
+export const ALL_LANGUAGE_OPTIONS: readonly LanguageOption[] = [
+  { value: "en", label: "English", nativeName: "English" },
+  { value: "ja", label: "Japanese", nativeName: "日本語" },
+  { value: "zh", label: "Chinese (Simplified)", nativeName: "简体中文" },
+  { value: "vi", label: "Vietnamese", nativeName: "Tiếng Việt" },
+  { value: "pt-BR", label: "Portuguese (BR)", nativeName: "Português (BR)" },
+  { value: "th", label: "Thai", nativeName: "ไทย" },
+  { value: "fr", label: "French", nativeName: "Français" },
+  { value: "ca", label: "Catalan", nativeName: "Català" },
+  { value: "es", label: "Spanish", nativeName: "Español" },
+  { value: "ru", label: "Russian", nativeName: "Русский" },
+] as const;
+
+/**
+ * 界面上可供选择的语言
+ *
+ * 其余语言包并未删除，仍可正常加载与回退，只是不在选择器中提供。
+ */
+export const SELECTABLE_LANGUAGES: Language[] = ["en", "zh"];
+
 /**
  * Language options for UI - single source of truth
  */
-export const LANGUAGE_OPTIONS = [
-  { value: "en" as Language, label: "English", nativeName: "English" },
-  { value: "ja" as Language, label: "Japanese", nativeName: "日本語" },
-  { value: "zh" as Language, label: "Chinese (Simplified)", nativeName: "简体中文" },
-  { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
-  { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
-  { value: "th" as Language, label: "Thai", nativeName: "ไทย" },
-  { value: "fr" as Language, label: "French", nativeName: "Français" },
-  { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
-  { value: "es" as Language, label: "Spanish", nativeName: "Español" },
-  { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
-] as const;
+export const LANGUAGE_OPTIONS: readonly LanguageOption[] = ALL_LANGUAGE_OPTIONS.filter((option) =>
+  SELECTABLE_LANGUAGES.includes(option.value),
+);
 
 const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
 
@@ -87,6 +106,34 @@ function locale(): Language {
 }
 
 /**
+ * TIPS: `t()` is a plain function reading module state, so React cannot observe
+ * a language change on its own. This is the external-store half of the fix —
+ * `setLocale` notifies subscribers, and `useLocale()` (see `./use-locale`)
+ * turns that into a render. Without it the new strings only appear whenever
+ * some unrelated state change happens to re-render the tree, which reads as
+ * "switching the language does nothing / takes forever".
+ */
+const localeListeners = new Set<() => void>();
+
+/**
+ * 订阅语言变更（`useSyncExternalStore` 契约）
+ * @param onStoreChange 语言变更时触发的回调
+ * @returns 取消订阅函数
+ */
+export const subscribeLocale = (onStoreChange: () => void): (() => void) => {
+  localeListeners.add(onStoreChange);
+  return () => {
+    localeListeners.delete(onStoreChange);
+  };
+};
+
+/**
+ * 读取当前语言快照（`useSyncExternalStore` 契约）
+ * @returns 当前语言代码
+ */
+export const getLocaleSnapshot = (): Language => localeValue;
+
+/**
  * Set locale and persist to localStorage
  */
 export const setLocale = (newLocale: Language) => {
@@ -94,6 +141,8 @@ export const setLocale = (newLocale: Language) => {
     console.warn(`Invalid locale: ${newLocale}, falling back to "en"`);
     newLocale = "en";
   }
+
+  if (localeValue === newLocale) return;
 
   localeValue = newLocale;
 
@@ -109,6 +158,8 @@ export const setLocale = (newLocale: Language) => {
       console.warn("Failed to persist language preference:", e);
     }
   }
+
+  for (const listener of localeListeners) listener();
 };
 
 /**
@@ -192,30 +243,67 @@ export const t = (
 };
 
 /**
+ * 跟随系统语言
+ *
+ * 按 `navigator.languages` 的优先级依次匹配，命中第一个可选语言即返回。
+ * 只解析到「可选语言」（中/英）：系统若是日文等未提供选项的语言，
+ * 落到英文，避免用户被置于一个在选择器里无法切换回来的状态。
+ *
+ * TIPS: 中文按语言子标签匹配（zh-CN / zh-Hans / zh-TW …统一归到 zh），
+ * 因为当前只有简体中文一份语言包。
+ *
+ * @returns 与系统语言最匹配的界面语言
+ */
+export const detectSystemLanguage = (): Language => {
+  if (typeof navigator === "undefined") return "en";
+
+  const tags = navigator.languages?.length
+    ? navigator.languages
+    : [navigator.language].filter(Boolean);
+
+  for (const tag of tags) {
+    const primary = String(tag).toLowerCase().split("-")[0];
+    const match = SELECTABLE_LANGUAGES.find(
+      (language) => language.toLowerCase().split("-")[0] === primary,
+    );
+    if (match) return match;
+  }
+
+  return "en";
+};
+
+/**
  * Initialize locale from localStorage
  * Call this during app initialization
+ *
+ * 优先级：用户显式选择（localStorage） → 系统语言 → 英文。
+ * 系统语言的结果不写回 localStorage，这样在用户主动选择之前会一直跟随系统。
  */
 export const initLocale = (): Language => {
   if (typeof window === "undefined") {
     return "en";
   }
 
+  let resolved: Language | null = null;
+
   try {
     const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
     if (isLanguage(stored)) {
-      localeValue = stored;
-      if (typeof document !== "undefined") {
-        document.documentElement.setAttribute("lang", stored);
-      }
-      return stored;
+      resolved = stored;
     }
   } catch (e) {
     console.warn("Failed to read language preference:", e);
   }
 
-  if (typeof document !== "undefined") {
-    document.documentElement.setAttribute("lang", "en");
+  if (!resolved) {
+    resolved = detectSystemLanguage();
   }
 
-  return "en";
+  localeValue = resolved;
+
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("lang", resolved);
+  }
+
+  return resolved;
 };

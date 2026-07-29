@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
+import { t } from "@/i18n";
 
 export type JuggleWorkVoiceConfigProps = {
   busy: boolean;
@@ -51,16 +52,16 @@ export function JuggleWorkVoiceConfig(props: JuggleWorkVoiceConfigProps) {
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
-        <CardTitle>Realtime voice</CardTitle>
+        <CardTitle>{t("voice.realtime_title")}</CardTitle>
         <CardDescription>
-          Voice Mode uses OpenAI Realtime and the same JuggleWork UI control surface exposed through JuggleWork UI MCP.
+          {t("voice.realtime_desc")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {props.envKeyDetected ? (
           <Alert>
             <Mic2 />
-            <AlertTitle>OpenAI key detected</AlertTitle>
+            <AlertTitle>{t("voice.key_detected")}</AlertTitle>
             <AlertDescription>
               Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from JuggleWork environment variables.
             </AlertDescription>
@@ -69,7 +70,7 @@ export function JuggleWorkVoiceConfig(props: JuggleWorkVoiceConfigProps) {
 
         <FieldGroup className="gap-4">
           <Field>
-            <FieldLabel htmlFor="jugglework-voice-api-key">OpenAI API key</FieldLabel>
+            <FieldLabel htmlFor="jugglework-voice-api-key">{t("openai_image.api_key_label")}</FieldLabel>
             <Input
               id="jugglework-voice-api-key"
               type="password"
@@ -102,7 +103,7 @@ export function JuggleWorkVoiceConfig(props: JuggleWorkVoiceConfigProps) {
           Save key
         </Button>
         <Button variant="outline" onClick={() => void props.onTestSession()} disabled={props.busy || !props.envKeyDetected}>
-          Test Realtime
+          {t("voice.test_realtime")}
         </Button>
       </CardFooter>
     </Card>

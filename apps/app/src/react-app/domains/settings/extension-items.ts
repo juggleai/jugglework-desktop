@@ -6,6 +6,7 @@ import type { EnablementResult } from "../../../app/extensions";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
 import type { McpServerEntry, SkillCard } from "../../../app/types";
 import { connectionNeedsReconnect } from "../connections/native-provider-connections";
+import { t } from "@/i18n";
 
 export type ExtensionItemSource = "builtin" | "marketplace" | "org-connection" | "mcp-directory" | "skill";
 export type ExtensionInstallState = "available" | "installed" | "update_available";
@@ -87,17 +88,17 @@ export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnectio
 }
 
 export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
-  if (connection.credentialMode === "shared") return "One org account managed by your organization — the AI acts as it.";
-  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect your account to grant newly requested permissions.";
-  if (connection.connectedForMe) return "Connected with your own account.";
-  return "Available from your organization. Connect your own account to use it.";
+  if (connection.credentialMode === "shared") return t("extension_items.org_shared_desc");
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return t("extension_items.reconnect_desc");
+  if (connection.connectedForMe) return t("extension_items.connected_desc");
+  return t("extension_items.available_desc");
 }
 
 export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
-  if (connection.credentialMode === "shared") return "Managed by your organization";
-  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
-  if (connection.connectedForMe) return "Connected";
-  return "Connect your account";
+  if (connection.credentialMode === "shared") return t("extension_items.managed_label");
+  if (connection.connectedForMe && connectionNeedsReconnect(connection)) return t("extension_items.reconnect_label");
+  if (connection.connectedForMe) return t("extension_items.connected_label");
+  return t("extension_items.connect_label");
 }
 
 export function isOrgMcpConnectionItem(item: ExtensionItem): item is ExtensionItem & { orgMcpConnection: DenExternalMcpConnection } {

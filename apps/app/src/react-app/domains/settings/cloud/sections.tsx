@@ -274,7 +274,7 @@ export function MarketplacePluginsSection({
   const selectedRows = selectedMarketplace ? rowsByMarketplace[selectedMarketplace.marketplace.id] ?? [] : [];
   const visibleRows = useSearch({ items: selectedRows, keys: pluginSearchKeys, query: searchQuery });
   const pluginGroups = [
-    { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
+    { value: "available", label: t("cloud_sections.available"), rows: visibleRows.filter((row) => row.status === "available") },
     { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
     { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
   ].filter((group) => group.rows.length > 0);
@@ -287,7 +287,7 @@ export function MarketplacePluginsSection({
             Marketplaces & Plugins
           </SettingsSectionHeaderTitle>
           <SettingsSectionHeaderDescription>
-            Browse organization marketplaces and import plugin files into this workspace.
+            {t("cloud_sections.plugins_desc")}
           </SettingsSectionHeaderDescription>
         </SettingsSectionHeaderContent>
         <SettingsSectionHeaderActions>
@@ -338,7 +338,7 @@ export function MarketplacePluginsSection({
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.currentTarget.value)}
             />
-            <FieldDescription className="sr-only">Search for a plugin.</FieldDescription>
+            <FieldDescription className="sr-only">{t("cloud_sections.search_plugin")}</FieldDescription>
           </Field>
 
           <TabsContent value={selectedMarketplace?.marketplace.id}>
@@ -368,11 +368,11 @@ export function MarketplacePluginsSection({
             ) : null}
 
             {selectedRows.length > 0 && visibleRows.length === 0 ? (
-              <SettingsListEmptyState>No plugins match your search.</SettingsListEmptyState>
+              <SettingsListEmptyState>{t("cloud_sections.no_plugins_match")}</SettingsListEmptyState>
             ) : null}
 
             {selectedMarketplace && selectedRows.length === 0 ? (
-              <SettingsListEmptyState>This marketplace does not have plugins yet.</SettingsListEmptyState>
+              <SettingsListEmptyState>{t("cloud_sections.marketplace_no_plugins")}</SettingsListEmptyState>
             ) : null}
           </TabsContent>
         </Tabs>
@@ -408,7 +408,7 @@ export function CloudProvidersSection({
   const [searchQuery, setSearchQuery] = React.useState("");
   const visibleRows = useSearch({ items: rows, keys: nameSearchKeys, query: searchQuery });
   const providerGroups = [
-    { value: "available", label: "Available", rows: visibleRows.filter((row) => row.status === "available") },
+    { value: "available", label: t("cloud_sections.available"), rows: visibleRows.filter((row) => row.status === "available") },
     { value: "out_of_sync", label: t("den.out_of_sync_badge"), rows: visibleRows.filter((row) => row.status === "out_of_sync") },
     { value: "imported", label: t("den.imported_badge"), rows: visibleRows.filter((row) => row.status === "imported") },
     { value: "removed_from_cloud", label: t("den.removed_from_cloud_badge"), rows: visibleRows.filter((row) => row.status === "removed_from_cloud") },
@@ -453,7 +453,7 @@ export function CloudProvidersSection({
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.currentTarget.value)}
             />
-            <FieldDescription className="sr-only">Search for a provider.</FieldDescription>
+            <FieldDescription className="sr-only">{t("cloud_sections.search_provider")}</FieldDescription>
           </Field>
 
           {visibleRows.length > 0 ? (
@@ -483,7 +483,7 @@ export function CloudProvidersSection({
               ))}
             </Accordion>
           ) : (
-            <SettingsListEmptyState>No providers match your search.</SettingsListEmptyState>
+            <SettingsListEmptyState>{t("cloud_sections.no_providers_match")}</SettingsListEmptyState>
           )}
         </>
       ) : null}

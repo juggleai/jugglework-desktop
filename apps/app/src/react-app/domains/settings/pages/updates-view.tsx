@@ -31,8 +31,8 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "../settings-section";
 
 const RELEASE_CHANNEL_OPTIONS: { label: string; value: ReleaseChannel }[] = [
-  { label: "Stable", value: "stable" },
-  { label: "Alpha", value: "alpha" },
+  { get label() { return t("updates.channel_stable"); }, value: "stable" },
+  { get label() { return t("updates.channel_alpha"); }, value: "alpha" },
 ];
 
 type UpdateDownloadProgressProps = {
@@ -110,7 +110,7 @@ export function UpdatesView(props: UpdatesViewProps) {
       {props.appVersion ? (
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>Current version</LayoutSectionItemTitle>
+            <LayoutSectionItemTitle>{t("updates.current_version")}</LayoutSectionItemTitle>
             <LayoutSectionItemDescription className="font-mono">v{props.appVersion}</LayoutSectionItemDescription>
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
@@ -240,9 +240,9 @@ export function UpdatesView(props: UpdatesViewProps) {
           {props.alphaChannelSupported && props.releaseChannel ? (
             <LayoutSectionItem>
               <LayoutSectionItemHeader>
-                <LayoutSectionItemTitle>Release channel</LayoutSectionItemTitle>
+                <LayoutSectionItemTitle>{t("updates.release_channel")}</LayoutSectionItemTitle>
                 <LayoutSectionItemDescription>
-                  Stable gets fully tested releases. Alpha includes the very latest changes but may be less polished (macOS only).
+                  {t("updates.release_channel_desc")}
                 </LayoutSectionItemDescription>
                 <LayoutSectionItemHeaderActions>
                   <Select
@@ -255,7 +255,7 @@ export function UpdatesView(props: UpdatesViewProps) {
                     }}
                     disabled={!props.onReleaseChannelChange}
                   >
-                    <SelectTrigger aria-label="Release channel" className="w-48">
+                    <SelectTrigger aria-label={t("updates.release_channel")} className="w-48">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

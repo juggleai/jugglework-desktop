@@ -96,7 +96,7 @@ export function CloudAccountSection({
       ) : orgsBusy ? (
         <div className="flex items-center gap-2 text-sm text-dls-secondary">
           <Loader2 size={14} className="animate-spin" />
-          Loading organizations...
+          {t("cloud_account.loading_orgs")}
         </div>
       ) : null}
 
@@ -150,7 +150,7 @@ function OrgPicker({
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-sm text-dls-secondary">
         <Loader2 size={20} className="animate-spin" />
-        Loading your organizations...
+        {t("cloud_account.loading_your_orgs")}
       </div>
     );
   }
@@ -173,15 +173,15 @@ function OrgPicker({
   return (
     <div className="flex flex-col gap-3">
       <div className="text-sm font-medium text-dls-text">
-        Select an organization
+        {t("cloud_account.select_org")}
       </div>
       <div className="text-xs text-dls-secondary">
-        Choose the organization to use with this workspace. Sign out to switch later.
+        {t("cloud_account.select_org_desc")}
       </div>
       {orgs.length > 10 ? (
         <Input
-          aria-label="Search organizations"
-          placeholder="Search organizations..."
+          aria-label={t("cloud_account.search_orgs")}
+          placeholder={t("cloud_account.search_orgs_placeholder")}
           value={query}
           className="h-auto rounded-xl border-dls-border bg-dls-surface px-4 py-2.5 text-sm text-dls-text shadow-none placeholder:text-dls-secondary focus-visible:border-dls-text/30 focus-visible:ring-0 dark:bg-dls-surface"
           onChange={(event) => updateQuery(event.target.value)}
@@ -210,7 +210,7 @@ function OrgPicker({
       </div>
       {filtered.length === 0 && query.trim() ? (
         <div className="text-sm text-dls-secondary">
-          No organizations match your search.
+          {t("cloud_account.no_orgs_match")}
         </div>
       ) : null}
       {hasMore ? (
@@ -222,7 +222,7 @@ function OrgPicker({
             className="rounded-xl border-dls-border text-dls-text hover:bg-dls-hover"
             onClick={showMore}
           >
-            Show more
+            {t("cloud_account.show_more")}
           </Button>
           <div className="text-xs text-dls-secondary">
             Showing {visible.length} of {filtered.length} organizations

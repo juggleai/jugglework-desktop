@@ -29,35 +29,29 @@ export type GeneralSettingsViewProps = {
   onReportIssue: () => void;
 };
 
-type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
-  | { title: string; desc: string }
-  | { titleKey: string; descKey: string }
-);
+type SettingsCardDefinition = {
+  tab: SettingsTab;
+  icon: typeof Sparkles;
+  titleKey: string;
+  descKey: string;
+};
 
 const workspaceCards: SettingsCardDefinition[] = [
-  { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
+  { tab: "preferences", icon: Cog, titleKey: "settings.tab_preferences", descKey: "settings.tab_description_preferences" },
+  { tab: "permissions", icon: FolderLock, titleKey: "settings.tab_permissions", descKey: "settings.tab_description_permissions" },
   { tab: "extensions", icon: Puzzle, titleKey: "settings.tab_extensions", descKey: "settings.tab_description_extensions" },
-  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
+  { tab: "advanced", icon: Wrench, titleKey: "settings.tab_advanced", descKey: "settings.card_desc_advanced" },
 ];
 
 const globalCards: SettingsCardDefinition[] = [
-  { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
-  { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "JuggleWork Cloud account and organization." },
+  { tab: "ai", icon: Sparkles, titleKey: "settings.tab_ai", descKey: "settings.tab_description_ai" },
+  { tab: "cloud-account", icon: Cloud, titleKey: "settings.card_title_cloud", descKey: "settings.card_desc_cloud" },
   { tab: "connect", icon: Cable, titleKey: "settings.tab_connect", descKey: "settings.tab_description_connect" },
-  { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
-  { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
-  { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
-  { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
+  { tab: "appearance", icon: Paintbrush, titleKey: "settings.tab_appearance", descKey: "settings.card_desc_appearance" },
+  { tab: "environment", icon: Terminal, titleKey: "settings.tab_environment", descKey: "settings.card_desc_environment" },
+  { tab: "updates", icon: RefreshCcw, titleKey: "settings.tab_updates", descKey: "settings.card_desc_updates" },
+  { tab: "recovery", icon: ShieldCheck, titleKey: "settings.tab_recovery", descKey: "settings.card_desc_recovery" },
 ];
-
-function cardTitle(card: SettingsCardDefinition) {
-  return "titleKey" in card ? t(card.titleKey) : card.title;
-}
-
-function cardDescription(card: SettingsCardDefinition) {
-  return "descKey" in card ? t(card.descKey) : card.desc;
-}
 
 function SettingsCard(props: {
   icon: typeof Sparkles;
@@ -89,15 +83,15 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Workspace
+          {t("settings.group_workspace")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {workspaceCards.map((card) => (
             <SettingsCard
               key={card.tab}
               icon={card.icon}
-              title={cardTitle(card)}
-              desc={cardDescription(card)}
+              title={t(card.titleKey)}
+              desc={t(card.descKey)}
               onClick={() => props.onNavigateTab(card.tab)}
             />
           ))}
@@ -107,15 +101,15 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Global
+          {t("settings.group_global")}
         </div>
         <div className="grid grid-cols-2 gap-2">
           {globalCards.map((card) => (
             <SettingsCard
               key={card.tab}
               icon={card.icon}
-              title={cardTitle(card)}
-              desc={cardDescription(card)}
+              title={t(card.titleKey)}
+              desc={t(card.descKey)}
               onClick={() => props.onNavigateTab(card.tab)}
             />
           ))}
@@ -125,7 +119,7 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
       {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
-          Help
+          {t("settings.group_help")}
         </div>
         <div className="rounded-2xl border border-dls-border bg-dls-surface p-4">
           <div className="space-y-3">

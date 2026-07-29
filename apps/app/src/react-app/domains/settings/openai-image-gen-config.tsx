@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
+import { t } from "@/i18n";
 
 export type OpenAiImageGenConfigProps = {
   busy: boolean;
@@ -54,14 +55,14 @@ export function OpenAiImageGenConfig(props: OpenAiImageGenConfigProps) {
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
-        <CardTitle>Configuration</CardTitle>
-        <CardDescription>Connect OpenAI image generation with an OpenAI API key.</CardDescription>
+        <CardTitle>{t("ext.configuration")}</CardTitle>
+        <CardDescription>{t("openai_image.config_desc")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {props.envKeyDetected ? (
           <Alert variant="warning">
             <Image />
-            <AlertTitle>API key found in environment</AlertTitle>
+            <AlertTitle>{t("openai_image.key_from_env")}</AlertTitle>
             <AlertDescription>
               An existing OPENAI_API_KEY was detected. The key you save here will take precedence.
             </AlertDescription>
@@ -70,7 +71,7 @@ export function OpenAiImageGenConfig(props: OpenAiImageGenConfigProps) {
 
         <FieldGroup className="gap-4">
           <Field>
-            <FieldLabel htmlFor="openai-image-api-key">OpenAI API key</FieldLabel>
+            <FieldLabel htmlFor="openai-image-api-key">{t("openai_image.api_key_label")}</FieldLabel>
             <Input
               id="openai-image-api-key"
               type="password"
@@ -112,7 +113,7 @@ export function OpenAiImageGenConfig(props: OpenAiImageGenConfigProps) {
           onClick={() => void props.onTestGenerate({ apiKey, prompt: DEFAULT_PROMPT })}
           disabled={props.busy || !canSubmit}
         >
-          Generate test image
+          {t("openai_image.generate_test")}
         </Button>
       </CardFooter>
     </Card>

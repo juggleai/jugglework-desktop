@@ -356,7 +356,7 @@ function AgentAccessCard(props: {
       <SettingsInset className="flex flex-col gap-3 bg-dls-surface sm:flex-row sm:items-center sm:justify-between" data-testid="agent-access-card">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-base font-semibold text-dls-text">Agent access ready</div>
+            <div className="text-base font-semibold text-dls-text">{t("connect.agent_access_ready")}</div>
             <SettingsStatusBadge label={summary.statusLabel} tone={summary.tone} />
           </div>
           <div className="text-sm text-dls-secondary">
@@ -377,9 +377,9 @@ function AgentAccessCard(props: {
     <SettingsInset className="space-y-4 bg-dls-surface" data-testid="agent-access-card">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-1">
-          <div className="text-base font-semibold text-dls-text">Agent access to connected services</div>
+          <div className="text-base font-semibold text-dls-text">{t("connect.agent_access_title")}</div>
           <div className="max-w-[62ch] text-sm text-dls-secondary">
-            Lets agents use the exact JuggleWork Cloud tools for this active workspace and organization.
+            {t("connect.agent_access_desc")}
           </div>
         </div>
         <SettingsStatusBadge label={summary.statusLabel} tone={summary.tone} />
@@ -387,18 +387,18 @@ function AgentAccessCard(props: {
 
       <div className="grid gap-2 text-sm text-dls-secondary sm:grid-cols-2">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">First issue</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">{t("connect.first_issue")}</div>
           <div className="mt-1 text-dls-text">{summary.stageLabel}</div>
         </div>
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">Recommended action</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">{t("connect.recommended_action")}</div>
           <div className="mt-1 text-dls-text">{summary.recommendedAction}</div>
         </div>
       </div>
 
       {health?.usable ? (
         <div className="space-y-2 rounded-xl border border-green-6/30 bg-green-2 p-3 text-sm text-green-11">
-          <div className="font-medium">Cloud tools verified for this workspace</div>
+          <div className="font-medium">{t("connect.cloud_tools_verified")}</div>
           <div className="flex flex-wrap gap-2 font-mono text-xs">
             {readyTools.map((tool) => <span key={tool} className="rounded-md bg-green-3 px-2 py-1">{tool}</span>)}
           </div>
@@ -475,7 +475,7 @@ function AgentAccessAdvanced(props: {
               {props.busyLabel === "refresh" ? "Refreshing engine…" : "Refresh engine connection"}
             </Button>
             <Button variant="outline" size="sm" disabled={!props.health} onClick={props.onCopy}>
-              Copy sanitized diagnostic
+              {t("connect.copy_sanitized_diagnostic")}
             </Button>
           </div>
           <div className="text-xs text-dls-secondary">
@@ -499,11 +499,11 @@ function AgentAccessAdvanced(props: {
               ))}
             </div>
           ) : (
-            <div className="text-xs text-dls-secondary">Run Test now to load diagnostics for this workspace.</div>
+            <div className="text-xs text-dls-secondary">{t("connect.run_test_hint")}</div>
           )}
           {traceLines.length ? (
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Direct probe steps</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">{t("connect.direct_probe_steps")}</div>
               <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
                 {traceLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
               </div>
@@ -511,7 +511,7 @@ function AgentAccessAdvanced(props: {
           ) : null}
           {refreshLines.length ? (
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">Last engine refresh</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-dls-secondary">{t("connect.last_engine_refresh")}</div>
               <div className="mt-1 space-y-0.5 font-mono text-xs text-dls-text">
                 {refreshLines.map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}
               </div>

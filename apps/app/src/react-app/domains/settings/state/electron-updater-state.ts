@@ -393,7 +393,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (result.reason === "unavailable") {
         setUpdateStatus({
           state: "idle",
-          message: "Auto-updates are available in packaged builds only.",
+          message: t("settings.updates_packaged_only"),
         });
         return;
       }

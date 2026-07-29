@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { t } from "@/i18n";
 import type { GoogleWorkspaceAuthStatus, JuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import { usePlatform } from "../../kernel/platform";
 import type { ExtensionConfigContext } from "./extension-registry";
@@ -24,10 +25,10 @@ type BusyAction = "status" | "connect" | "disconnect" | "set-active" | "test" | 
 type OptionalFeature = "gmailRead" | "driveFull" | "calendarWrite" | "chat";
 
 const OPTIONAL_FEATURES: { id: OptionalFeature; label: string; description: string }[] = [
-  { id: "gmailRead", label: "Read Gmail", description: "Read your Gmail messages and threads." },
-  { id: "driveFull", label: "Full Google Drive access", description: "Search, read, and edit all files in your Drive, not just files created through JuggleWork." },
-  { id: "calendarWrite", label: "Create calendar events", description: "Create events on your Google Calendar." },
-  { id: "chat", label: "Google Chat", description: "List spaces, read messages, and send messages in Google Chat." },
+  { id: "gmailRead", get label() { return t("gw.feature_gmail_read"); }, get description() { return t("gw.feature_gmail_read_desc"); } },
+  { id: "driveFull", get label() { return t("gw.feature_drive_full"); }, get description() { return t("gw.feature_drive_full_desc"); } },
+  { id: "calendarWrite", get label() { return t("gw.feature_calendar_write"); }, get description() { return t("gw.feature_calendar_write_desc"); } },
+  { id: "chat", get label() { return t("gw.feature_chat"); }, get description() { return t("gw.feature_chat_desc"); } },
 ];
 type GoogleWorkspaceCommand = () => Promise<unknown>;
 const DESKTOP_ACTION_TIMEOUT_MS = 6 * 60 * 1000;
@@ -234,26 +235,26 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       {!serverAvailable ? (
         <Alert variant="warning">
           <ShieldCheck />
-          <AlertTitle>JuggleWork server required</AlertTitle>
-          <AlertDescription>Start JuggleWork server to connect Google Workspace.</AlertDescription>
+          <AlertTitle>{t("gw.server_required_title")}</AlertTitle>
+          <AlertDescription>{t("gw.server_required_desc")}</AlertDescription>
         </Alert>
       ) : null}
 
       {status?.connected ? (
         <Alert>
           <CheckCircle2 />
-          <AlertTitle>Connected to Google Workspace</AlertTitle>
+          <AlertTitle>{t("gw.connected_title")}</AlertTitle>
           <AlertDescription>
-            {connectedAccounts.length === 1 && connectedAccounts[0]?.email ? `Signed in as ${connectedAccounts[0].email}.` : `${connectedAccounts.length} Google accounts connected.`}
+            {connectedAccounts.length === 1 && connectedAccounts[0]?.email ? t("gw.signed_in_as", { email: connectedAccounts[0].email }) : t("gw.accounts_connected", { count: connectedAccounts.length })}
             {status.testStatus ? ` ${status.testStatus}` : ""}
           </AlertDescription>
         </Alert>
       ) : (
         <Alert variant="warning">
           <ShieldCheck />
-          <AlertTitle>Connect Google Workspace</AlertTitle>
+          <AlertTitle>{t("gw.connect_title")}</AlertTitle>
           <AlertDescription>
-            Let JuggleWork use your calendar, selected Drive files, and Gmail drafts when you ask it to.
+            {t("gw.connect_desc")}
           </AlertDescription>
         </Alert>
       )}
@@ -261,17 +262,17 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       {status && !status.configured ? (
         <Alert variant="warning">
           <XCircle />
-          <AlertTitle>Google OAuth client not configured</AlertTitle>
-          <AlertDescription>Add your Google OAuth desktop client secret to connect Google Workspace.</AlertDescription>
+          <AlertTitle>{t("gw.oauth_not_configured_title")}</AlertTitle>
+          <AlertDescription>{t("gw.oauth_not_configured_desc")}</AlertDescription>
         </Alert>
       ) : null}
 
       {status && !status.configured ? (
         <Card variant="outline" size="sm">
           <CardHeader>
-            <CardTitle>Set up Google OAuth</CardTitle>
+            <CardTitle>{t("gw.setup_title")}</CardTitle>
             <CardDescription>
-              Use a Google Cloud OAuth desktop client. JuggleWork already includes the desktop client ID; paste the matching client secret here.
+              {t("gw.setup_desc")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -279,17 +280,17 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
               type="password"
               value={clientSecret}
               onChange={(event) => setClientSecret(event.target.value)}
-              placeholder="Google OAuth desktop client secret"
+              placeholder={t("gw.client_secret_placeholder")}
               autoComplete="off"
             />
             <p className="text-xs leading-relaxed text-muted-foreground">
-              The secret is saved locally in JuggleWork environment settings and applied after the local server restarts.
+              {t("gw.secret_storage_note")}
             </p>
           </CardContent>
           <CardFooter>
             <Button disabled={busyAction === "save-secret" || !clientSecret.trim() || !hostServerAvailable} onClick={() => void saveGoogleClientSecret()}>
               {busyAction === "save-secret" ? <Loader2 className="size-4 animate-spin" /> : null}
-              Save and apply
+              {t("gw.save_and_apply")}
             </Button>
           </CardFooter>
         </Card>
@@ -298,15 +299,15 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       {status?.vault === "unavailable" ? (
         <Alert variant="destructive">
           <XCircle />
-          <AlertTitle>Encrypted token vault unavailable</AlertTitle>
-          <AlertDescription>JuggleWork cannot securely save your Google connection on this machine right now.</AlertDescription>
+          <AlertTitle>{t("gw.vault_unavailable_title")}</AlertTitle>
+          <AlertDescription>{t("gw.vault_unavailable_desc")}</AlertDescription>
         </Alert>
       ) : null}
 
       {error || status?.error ? (
         <Alert variant="destructive">
           <XCircle />
-          <AlertTitle>Google Workspace error</AlertTitle>
+          <AlertTitle>{t("gw.error_title")}</AlertTitle>
           <AlertDescription>{error ?? status?.error}</AlertDescription>
         </Alert>
       ) : null}
@@ -314,33 +315,33 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
       {status?.smokeTest ? (
         <Alert>
           <CheckCircle2 />
-          <AlertTitle>Scope smoke test complete</AlertTitle>
-          <AlertDescription>Calendar, Drive, and Gmail draft access were verified.</AlertDescription>
+          <AlertTitle>{t("gw.smoke_test_title")}</AlertTitle>
+          <AlertDescription>{t("gw.smoke_test_desc")}</AlertDescription>
         </Alert>
       ) : null}
 
       <Card variant="outline" size="sm">
         <CardHeader>
-          <CardTitle>What JuggleWork can do</CardTitle>
+          <CardTitle>{t("gw.capabilities_title")}</CardTitle>
           <CardDescription>
-            Connect Google Workspace so JuggleWork can help with meeting prep, selected files, and draft emails.
+            {t("gw.capabilities_desc")}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-border bg-card p-3">
             <CalendarDays className="mb-2 size-4 text-blue-11" />
-            <div className="text-sm font-medium text-card-foreground">Calendar read</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">List upcoming events and provide meeting context.</div>
+            <div className="text-sm font-medium text-card-foreground">{t("gw.cap_calendar")}</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("gw.cap_calendar_desc")}</div>
           </div>
           <div className="rounded-2xl border border-border bg-card p-3">
             <MailPlus className="mb-2 size-4 text-red-11" />
-            <div className="text-sm font-medium text-card-foreground">Gmail drafts</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Create draft emails only. No send tool in Phase 1.</div>
+            <div className="text-sm font-medium text-card-foreground">{t("gw.cap_gmail")}</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("gw.cap_gmail_desc")}</div>
           </div>
           <div className="rounded-2xl border border-border bg-card p-3">
             <FileText className="mb-2 size-4 text-green-11" />
-            <div className="text-sm font-medium text-card-foreground">Selected Drive files</div>
-            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">Read files explicitly selected or created through JuggleWork.</div>
+            <div className="text-sm font-medium text-card-foreground">{t("gw.cap_drive")}</div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("gw.cap_drive_desc")}</div>
           </div>
         </CardContent>
       </Card>
@@ -362,11 +363,11 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
                       void runDesktopAction("set-active", () => juggleworkServerClient?.googleWorkspaceSetActiveAccount(accountId) ?? Promise.resolve(null));
                     }}>
                       {busyAction === "set-active" ? <Loader2 className="size-4 animate-spin" /> : null}
-                      Make default
+                      {t("gw.make_default")}
                     </Button>
                   ) : null}
                   <Button variant="destructive" size="sm" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => juggleworkServerClient?.googleWorkspaceDisconnect(account.accountId) ?? Promise.resolve(null))}>
-                    Disconnect
+                    {t("gw.disconnect")}
                   </Button>
                 </div>
               </div>
@@ -382,16 +383,16 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
             {connectedAccounts.length > 1 ? (
               <Button variant="destructive" disabled={Boolean(busyAction)} onClick={() => void runDesktopAction("disconnect", () => juggleworkServerClient?.googleWorkspaceDisconnect() ?? Promise.resolve(null))}>
                 {busyAction === "disconnect" ? <Loader2 className="size-4 animate-spin" /> : null}
-                Disconnect all
+                {t("gw.disconnect_all")}
               </Button>
             ) : null}
             <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("test", () => juggleworkServerClient?.googleWorkspaceTestConnection() ?? Promise.resolve(null))}>
               {busyAction === "test" ? <Loader2 className="size-4 animate-spin" /> : null}
-              Test connection
+              {t("gw.test_connection")}
             </Button>
             <Button variant="outline" disabled={Boolean(busyAction) || !canTest} onClick={() => void runDesktopAction("smoke-test", () => juggleworkServerClient?.googleWorkspaceRunScopeSmokeTest() ?? Promise.resolve(null))}>
               {busyAction === "smoke-test" ? <Loader2 className="size-4 animate-spin" /> : null}
-              Run diagnostic
+              {t("gw.run_diagnostic")}
             </Button>
           </div>
         </CardFooter>
@@ -399,38 +400,38 @@ function GoogleWorkspaceConfig({ juggleworkServerClient, hostJuggleWorkServerCli
 
       <Accordion>
         <AccordionItem value="advanced">
-          <AccordionTrigger>Advanced</AccordionTrigger>
+          <AccordionTrigger>{t("gw.advanced")}</AccordionTrigger>
           <AccordionContent className="space-y-4">
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Use your own Google OAuth client to unlock extra permissions, like reading Gmail, full Drive access, creating calendar events, and Google Chat.
+              {t("gw.advanced_desc")}
             </p>
             {status?.customClient ? (
               <Alert>
                 <CheckCircle2 />
-                <AlertTitle>Using your own Google OAuth client</AlertTitle>
-                <AlertDescription>Extra permissions below are available.</AlertDescription>
+                <AlertTitle>{t("gw.custom_client_title")}</AlertTitle>
+                <AlertDescription>{t("gw.custom_client_desc")}</AlertDescription>
               </Alert>
             ) : (
               <div className="space-y-3">
                 <Input
                   value={customClientId}
                   onChange={(event) => setCustomClientId(event.target.value)}
-                  placeholder="Your Google OAuth desktop client ID"
+                  placeholder={t("gw.custom_client_id_placeholder")}
                   autoComplete="off"
                 />
                 <Input
                   type="password"
                   value={customClientSecret}
                   onChange={(event) => setCustomClientSecret(event.target.value)}
-                  placeholder="Your Google OAuth desktop client secret"
+                  placeholder={t("gw.custom_client_secret_placeholder")}
                   autoComplete="off"
                 />
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Create a desktop OAuth client in Google Cloud Console, then paste its client ID and secret. They are saved locally in JuggleWork environment settings and applied after the local server restarts.
+                  {t("gw.custom_client_note")}
                 </p>
                 <Button disabled={busyAction === "save-secret" || !customClientId.trim() || !customClientSecret.trim() || !hostServerAvailable} onClick={() => void saveCustomOauthClient()}>
                   {busyAction === "save-secret" ? <Loader2 className="size-4 animate-spin" /> : null}
-                  Save and apply
+                  {t("gw.save_and_apply")}
                 </Button>
               </div>
             )}

@@ -28,6 +28,7 @@ import type { ExtensionKind } from "@/app/constants";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
 import { resolveExtensionIconUrl } from "./extension-icon-src";
 import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
+import { t } from "@/i18n";
 
 export type ExtensionDetailModalProps = {
   open: boolean;
@@ -387,7 +388,7 @@ export function ExtensionDetailModal({
                     <span className="text-muted-foreground">Status</span>
                     <span className={cn("font-medium", connected ? "text-green-11" : "text-muted-foreground")}>
                       {connected
-                        ? connectedLabel ?? (kind === "skill" || kind === "plugin" ? "Installed" : "Connected")
+                        ? connectedLabel ?? (kind === "skill" || kind === "plugin" ? t("ext_card.installed") : t("ext_card.connected"))
                         : connecting
                           ? connectingLabel
                           : disconnectedLabel ?? (kind === "skill" || kind === "plugin" ? "Not installed" : "Not connected")}

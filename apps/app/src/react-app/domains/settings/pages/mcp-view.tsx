@@ -531,7 +531,7 @@ export function McpView(props: McpViewProps) {
 
       {props.builtInExtensionsDisabled ? (
         <div className="rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
-          Built-in JuggleWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
+          {t("mcp.builtins_blocked_by_org")}
         </div>
       ) : null}
 
@@ -550,7 +550,7 @@ export function McpView(props: McpViewProps) {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
           <input
             className="w-full rounded-lg border border-dls-border bg-dls-surface py-2 pl-9 pr-3 text-xs text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-            placeholder="Search extensions..."
+            placeholder={t("mcp.search_extensions_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
           />
@@ -909,7 +909,7 @@ export function McpView(props: McpViewProps) {
             showEnablementCard={false}
             configSlot={(
               <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">Shared by your organization</span>
+                <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{t("mcp.shared_by_org")}</span>
                 <span className="rounded-full border border-dls-border bg-dls-hover px-2 py-1 text-xs text-dls-secondary">{connection.credentialMode === "shared" ? "Org account" : "Your account"}</span>
               </div>
             )}
@@ -949,7 +949,7 @@ function McpCustomAppCard(props: { onOpen: () => void; onOpenGithubImport?: () =
           {props.onOpenGithubImport ? (
             <Button variant="outline" onClick={props.onOpenGithubImport}>
               <Download size={14} />
-              From GitHub
+              {t("mcp.from_github")}
             </Button>
           ) : null}
           <Button onClick={props.onOpen}>
@@ -1028,7 +1028,7 @@ function McpQuickConnectSection(props: {
               preview={entry.preview}
               disabledReason={disabledReason}
               disabled={props.busy}
-              actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
+              actionLabel={configured ? t("mcp.view_details") : t("mcp.tap_to_connect")}
               onClick={() => props.onDetail(entry)}
             />
           );
@@ -1046,7 +1046,7 @@ function McpQuickConnectSection(props: {
               connected={true}
               connectedLabel={skill.origin === "jugglework-connect" ? "Available" : undefined}
               hidden={hidden}
-              actionLabel="View details"
+              actionLabel={t("mcp.view_details")}
               onClick={() => props.onSkillDetail?.(skill)}
             />
           );
@@ -1068,7 +1068,7 @@ function McpQuickConnectSection(props: {
               kind="mcp"
               connected={status === "connected"}
               connectedLabel={status === "connected" ? "Available" : undefined}
-              actionLabel="View details"
+              actionLabel={t("mcp.view_details")}
               onClick={() => props.onConnectMcpDetail?.(entry)}
             />
           );
@@ -1085,7 +1085,7 @@ function McpQuickConnectSection(props: {
               kind="extension"
               connected={true}
               hidden={hidden}
-              actionLabel="View details"
+              actionLabel={t("mcp.view_details")}
               onClick={() => props.onPluginDetail?.(plugin)}
             />
           );
@@ -1105,7 +1105,7 @@ function McpQuickConnectSection(props: {
                 connected={true}
                 connectedLabel={orgMcpConnectionActionLabel(connection)}
                 beta
-                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : "View details"}
+                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.view_details")}
                 onClick={() => props.onOrgMcpDetail?.(item)}
               />
               {canDisconnect ? (
@@ -1126,8 +1126,8 @@ function McpQuickConnectSection(props: {
         {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.availableConnectMcpServers ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.installedOrgMcpItems ?? []).length === 0 ? (
           <div className="col-span-full rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
             <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
-            <div className="text-sm font-medium text-dls-secondary">No extensions found</div>
-            <div className="mt-1 text-xs text-dls-secondary/60">Try a different search or filter, or add an MCP server.</div>
+            <div className="text-sm font-medium text-dls-secondary">{t("mcp.no_extensions_found")}</div>
+            <div className="mt-1 text-xs text-dls-secondary/60">{t("mcp.no_extensions_hint")}</div>
           </div>
         ) : null}
       </div>

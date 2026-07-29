@@ -70,7 +70,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     url,
     kind = "mcp",
     connected: connectedProp = false,
-    connectedLabel = "Connected",
+    connectedLabel = t("ext_card.connected"),
     enablement,
     connecting = false,
     disabled = false,

@@ -341,9 +341,9 @@ export function CloudMarketplacesView({
 
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
-      ...(builtInRows.length > 0 ? [{ id: "jugglework-builtins", name: "JuggleWork Built-ins" }] : []),
+      ...(builtInRows.length > 0 ? [{ id: "jugglework-builtins", name: t("marketplace.builtins_name") }] : []),
       ...(includeCloudMarketplaceRows ? marketplaces.map((marketplace) => ({ id: marketplace.marketplace.id, name: marketplace.marketplace.name })) : []),
-      ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: "Organization MCP Connections" }] : []),
+      ...(orgMcpRows.length > 0 ? [{ id: "org-mcp-connections", name: t("marketplace.org_mcp_connections") }] : []),
     ] : [],
     [builtInRows.length, canShowRows, includeCloudMarketplaceRows, marketplaces, orgMcpRows.length],
   );
@@ -473,7 +473,7 @@ export function CloudMarketplacesView({
       {!isSignedIn ? (
         <SettingsNotice>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>You can use JuggleWork without an account. Sign in to JuggleWork Cloud to load the Marketplace, including JuggleWork's built-in extensions and any organization marketplaces.</span>
+            <span>{t("marketplace.signin_hint")}</span>
             <Button size="sm" onClick={onOpenAccount}>
               {t("skills.share_team_sign_in")}
             </Button>
@@ -486,7 +486,7 @@ export function CloudMarketplacesView({
       ) : null}
 
       {busy ? (
-        <SettingsNotice>Loading marketplace extensions...</SettingsNotice>
+        <SettingsNotice>{t("marketplace.loading_extensions")}</SettingsNotice>
       ) : null}
 
       {removedUpstreamPlugins.map((plugin) => (
@@ -509,7 +509,7 @@ export function CloudMarketplacesView({
         <SettingsListSearchInput
           value={search}
           onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder="Search marketplace extensions..."
+          placeholder={t("marketplace.search_placeholder")}
         />
         <div className="flex flex-wrap items-center gap-2">
           {(["all", "available", "installed", "update_available"] as const).map((filter) => (
@@ -534,7 +534,7 @@ export function CloudMarketplacesView({
                   value={marketplaceFilter}
                   onChange={(event) => setMarketplaceFilter(event.currentTarget.value)}
                 >
-                  <option value="all">All marketplaces</option>
+                  <option value="all">{t("marketplace.all_marketplaces")}</option>
                   {marketplaceOptions.map((marketplace) => (
                     <option key={marketplace.id} value={marketplace.id}>{marketplace.name}</option>
                   ))}
@@ -552,7 +552,7 @@ export function CloudMarketplacesView({
       ) : null}
 
       {displayRows.length > 0 && visibleRows.length === 0 ? (
-        <SettingsListEmptyState>No marketplace extensions match your search or filters.</SettingsListEmptyState>
+        <SettingsListEmptyState>{t("marketplace.no_match")}</SettingsListEmptyState>
       ) : null}
 
       {visibleRows.length > 0 ? (
@@ -692,7 +692,7 @@ function MarketplaceCard(props: {
           connectedLabel={orgMcpConnectionActionLabel(row.connection)}
           beta
           connecting={actionBusy}
-          actionLabel={actionBusy ? "Waiting for browser..." : disconnecting ? t("mcp.org_connection_disconnecting_action") : ready ? "View details" : orgMcpConnectionActionLabel(row.connection)}
+          actionLabel={actionBusy ? t("mcp.waiting_for_browser") : disconnecting ? t("mcp.org_connection_disconnecting_action") : ready ? t("mcp.view_details") : orgMcpConnectionActionLabel(row.connection)}
           onClick={() => onOpenDetail(row)}
         />
         {canDisconnect ? (
@@ -729,7 +729,7 @@ function MarketplaceCard(props: {
         connected
         connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
         connecting={actionBusy}
-        actionLabel={cloudBuiltIn ? "View details" : t("extensions.marketplace_runs_in_cloud")}
+        actionLabel={cloudBuiltIn ? t("mcp.view_details") : t("extensions.marketplace_runs_in_cloud")}
         onClick={() => onOpenDetail(row)}
       />
     </div>
@@ -800,7 +800,7 @@ function OrgMcpConnectionDetailModal(props: {
       beta
       connecting={connecting || props.disconnecting}
       connectLabel={orgMcpConnectionActionLabel(row.connection)}
-      connectingLabel="Waiting for browser..."
+      connectingLabel={t("mcp.waiting_for_browser")}
       uninstallLabel={t("mcp.org_connection_disconnect_action")}
       url={row.connection.url}
       oauth={row.connection.authType === "oauth"}
@@ -810,12 +810,12 @@ function OrgMcpConnectionDetailModal(props: {
       configSlot={(
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
-            <SettingsPill>Shared by your organization</SettingsPill>
+            <SettingsPill>{t("marketplace.shared_by_org")}</SettingsPill>
             <SettingsPill>{row.connection.credentialMode === "shared" ? "Org account" : "Your account"}</SettingsPill>
             <SettingsPill>MCP</SettingsPill>
           </div>
           <SettingsNotice>
-            JuggleWork stores this sign-in in the organization cloud. Once connected, your desktop agent can use the tools through JuggleWork Cloud Control.
+            {t("marketplace.org_signin_note")}
           </SettingsNotice>
         </div>
       )}
@@ -894,7 +894,7 @@ function MarketplacePackageDetailModal(props: {
             <SettingsNotice>{t("connect.marketplace_local_copy_note")}</SettingsNotice>
           ) : null}
           <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Composition</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.composition")}</div>
             <div className="mt-2 grid gap-2">
               {row.composition.map((entry) => (
                 <div key={entry.type} className="flex items-center justify-between text-sm">
@@ -908,7 +908,7 @@ function MarketplacePackageDetailModal(props: {
             <SettingsNotice tone="error">{resolveError}</SettingsNotice>
           ) : null}
           {resolving ? (
-            <SettingsNotice>Loading extension contents...</SettingsNotice>
+            <SettingsNotice>{t("marketplace.loading_contents")}</SettingsNotice>
           ) : null}
           {missingImportedConnectionCount > 0 ? (
             <SettingsNotice tone="error">
@@ -917,7 +917,7 @@ function MarketplacePackageDetailModal(props: {
           ) : null}
           {importedConnections.length > 0 ? (
             <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Cloud MCP connections</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.cloud_mcp_connections")}</div>
               <div className="mt-3 grid gap-2">
                 {importedConnections.map((connection) => {
                   const ready = isOrgMcpConnectionReady(connection);
@@ -938,7 +938,7 @@ function MarketplacePackageDetailModal(props: {
                             disabled={connecting}
                             onClick={() => onConnectOrgMcp(connection.id)}
                           >
-                            {connecting ? "Waiting for browser..." : "Connect account"}
+                            {connecting ? t("mcp.waiting_for_browser") : "Connect account"}
                           </Button>
                         ) : null}
                       </div>
@@ -950,7 +950,7 @@ function MarketplacePackageDetailModal(props: {
           ) : null}
           {resolved ? (
             <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Extension contents</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.extension_contents")}</div>
               {resolved.memberships.length > 0 ? resolved.memberships.map((membership) => {
                 const object = membership.configObject;
                 const version = object?.latestVersion ?? null;
@@ -973,7 +973,7 @@ function MarketplacePackageDetailModal(props: {
                   </details>
                 );
               }) : (
-                <SettingsNotice>This extension does not expose detailed contents yet.</SettingsNotice>
+                <SettingsNotice>{t("marketplace.no_detailed_contents")}</SettingsNotice>
               )}
             </div>
           ) : null}

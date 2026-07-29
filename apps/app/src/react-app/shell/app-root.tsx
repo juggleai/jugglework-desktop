@@ -18,6 +18,7 @@ import {
 import { evalRelaunchDesktopApp } from "../../app/lib/desktop";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
+import { useLocale } from "../../i18n/use-locale";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
@@ -312,6 +313,10 @@ let appOpenedCaptured = false;
 
 export function AppRoot() {
   useDesktopFontZoomBehavior();
+
+  // TIPS: 订阅语言，切换后立刻重渲染整棵树；不加 key，避免卸载重挂载导致
+  // 会话重连与本地 UI 状态丢失。
+  useLocale();
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {

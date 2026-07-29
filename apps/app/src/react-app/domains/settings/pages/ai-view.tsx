@@ -111,7 +111,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               type="button"
               className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full text-blue-11 transition-colors hover:bg-blue-3/70"
               onClick={() => void props.onDismissJuggleWorkModels?.()}
-              aria-label="Dismiss JuggleWork Models banner"
+              aria-label={t("ai.dismiss_banner")}
             >
               <X className="size-3.5" />
             </button>
@@ -122,7 +122,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                   <div>
                     <div className="text-sm font-medium text-dls-text">JuggleWork Models</div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      Hosted frontier models for JuggleWork tasks without managing provider API keys.
+                      {t("ai.jugglework_models_banner_desc")}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 text-[11px] text-blue-11">
@@ -134,7 +134,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pricing is handled through JuggleWork Cloud. You can continue using organization models or your own providers.
+                    {t("ai.jugglework_models_pricing")}
                   </p>
                 </div>
               </div>
@@ -207,11 +207,11 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm font-medium text-dls-text">JuggleWork Models</span>
                   <span className="shrink-0 rounded-full border border-dls-border bg-dls-sidebar/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                    Not connected
+                    {t("ai.not_connected")}
                   </span>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  Hosted frontier models without managing API keys.
+                  {t("ai.jugglework_models_short_desc")}
                 </div>
               </div>
             </div>
@@ -238,7 +238,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                   </span>
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  Your plan includes JuggleWork Models, but they are not ready in this workspace yet.
+                  {t("ai.jugglework_models_not_ready")}
                 </div>
               </div>
             </div>
@@ -248,7 +248,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
               disabled={props.busy || props.providerAuthBusy}
             >
               <RefreshCw className="mr-1.5 size-3.5" />
-              Refresh models
+              {t("ai.refresh_models")}
             </Button>
           </LayoutSectionItem>
         ) : null}

@@ -576,7 +576,7 @@ export function createExtensionsStore(options: {
           notifyEvent({
             kind: "cloud",
             severity: "info",
-            title: "Extension update available",
+            title: t("notifications.extension_update_available"),
             body: `${pluginLabel} has been updated`,
             dedupeKey: `plugin-update:${pluginId}`,
             action: { type: "open-extensions-marketplace" },
@@ -586,7 +586,7 @@ export function createExtensionsStore(options: {
           notifyEvent({
             kind: "cloud",
             severity: "warning",
-            title: "Extension removed by admin",
+            title: t("notifications.extension_removed_by_admin"),
             body: `${pluginLabel} is no longer available`,
             dedupeKey: `plugin-removed:${pluginId}`,
             action: { type: "open-extensions-marketplace" },
@@ -1193,7 +1193,7 @@ export function createExtensionsStore(options: {
               notifyEvent({
                 kind: "cloud",
                 severity: "info",
-                title: "New extension available",
+                title: t("notifications.new_extension_available"),
                 body: `${plugin.name ?? plugin.id} was added to ${marketplaceName}`,
                 dedupeKey: `new-marketplace-plugin:${plugin.id}`,
                 action: { type: "open-extensions-marketplace", pluginName: plugin.name ?? plugin.id },
