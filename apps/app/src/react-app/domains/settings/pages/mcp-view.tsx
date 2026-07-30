@@ -571,7 +571,11 @@ export function McpView(props: McpViewProps) {
             size="xs"
             onClick={() => setShowHidden((current) => !current)}
           >
-            {showHidden ? "Showing hidden" : hiddenOrPolicyCount > 0 ? `Show hidden (${hiddenOrPolicyCount})` : "Show hidden"}
+            {showHidden
+              ? t("mcp.showing_hidden")
+              : hiddenOrPolicyCount > 0
+                ? t("mcp.show_hidden_count").replace("{count}", String(hiddenOrPolicyCount))
+                : t("mcp.show_hidden")}
           </Button>
         </div>
       </div>
