@@ -30,3 +30,4 @@ export const juggleworkCapabilitiesKnowledgePluginPath = () => juggleworkPluginP
 export const juggleworkAnthropicAdaptiveThinkingPluginPath = () => juggleworkPluginPath("jugglework-anthropic-adaptive-thinking");
 export const juggleworkAnthropicToolSchemaPluginPath = () => juggleworkPluginPath("jugglework-anthropic-tool-schema");
 export const juggleworkOfficeAttachmentsPluginPath = () => juggleworkPluginPath("jugglework-office-attachments");
+export const juggleworkSafeGrepPluginPath = () => juggleworkPluginPath("jugglework-safe-grep");

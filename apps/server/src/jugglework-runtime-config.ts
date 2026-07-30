@@ -21,6 +21,7 @@ import {
   juggleworkAnthropicAdaptiveThinkingPluginPath,
   juggleworkAnthropicToolSchemaPluginPath,
   juggleworkOfficeAttachmentsPluginPath,
+  juggleworkSafeGrepPluginPath,
 } from "./jugglework-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -125,6 +126,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       juggleworkOfficeAttachmentsPluginPath(),
       juggleworkAnthropicAdaptiveThinkingPluginPath(),
       juggleworkAnthropicToolSchemaPluginPath(),
+      juggleworkSafeGrepPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
