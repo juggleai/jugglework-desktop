@@ -86,6 +86,13 @@ import {
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import {
+  clearSessionModelChoice,
+  resolveSessionModelChoice,
+  setSessionModelChoice,
+  setSessionVariantChoice,
+  useSessionModelChoices,
+} from "@/react-app/kernel/session-model-store";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/chat/session-page";
 import {
@@ -467,12 +474,57 @@ export function SessionRoute() {
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
-  const cloudMcpProviderModel = useMemo(() => local.prefs.defaultModel
+  // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
+  // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
+  const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
+  /**
+   * 解析某个会话实际生效的模型与推理档位
+   * @param sessionId 会话 id，null 表示还没有选中会话
+   * @returns 该会话生效的模型与推理档位
+   */
+  const resolveModelForSession = useCallback(
+    (sessionId: string | null) => resolveSessionModelChoice({
+      choices: sessionModelChoices,
+      sessionId,
+      defaultModel: local.prefs.defaultModel,
+      defaultVariant: local.prefs.modelVariant ?? null,
+    }),
+    [local.prefs.defaultModel, local.prefs.modelVariant, sessionModelChoices],
+  );
+  const { model: activeModel, variant: activeModelVariant } = useMemo(
+    () => resolveModelForSession(selectedSessionId),
+    [resolveModelForSession, selectedSessionId],
+  );
+  // TIPS: 模型选择的落点 —— 有会话时只写该会话（互不影响）；没有会话时（命令面板等
+  // 入口）才更新全局默认模型，它只是「没单独选过模型的会话」的兜底值。
+  const applyModelSelection = useCallback((next: ModelRef, sessionId: string | null) => {
+    if (sessionId && selectedWorkspaceId) {
+      setSessionModelChoice(selectedWorkspaceId, sessionId, next);
+      return;
+    }
+    local.setPrefs((previous) => ({
+      ...previous,
+      defaultModel: next,
+      modelVariant:
+        previous.defaultModel?.providerID === next.providerID &&
+        previous.defaultModel.modelID === next.modelID
+          ? previous.modelVariant
+          : null,
+    }));
+  }, [local.setPrefs, selectedWorkspaceId]);
+  const applyModelVariantSelection = useCallback((value: string | null, sessionId: string | null) => {
+    if (sessionId && selectedWorkspaceId) {
+      setSessionVariantChoice(selectedWorkspaceId, sessionId, value);
+      return;
+    }
+    local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
+  }, [local.setPrefs, selectedWorkspaceId]);
+  const cloudMcpProviderModel = useMemo(() => activeModel
     ? {
-        provider: local.prefs.defaultModel.providerID,
-        model: local.prefs.defaultModel.modelID,
+        provider: activeModel.providerID,
+        model: activeModel.modelID,
       }
-    : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
+    : undefined, [activeModel?.modelID, activeModel?.providerID]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
     client: selectedWorkspaceEndpoint?.client ?? null,
@@ -696,11 +748,11 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     directory: selectedWorkspaceRoot || undefined,
   });
-  const { providerCatalog, modelVariantLabel, modelBehaviorOptions, modelVariantValue } =
+  const { describeModel, modelVariantLabel, modelBehaviorOptions, modelVariantValue } =
     useModelBehavior({
       providerList: providerListQuery.data,
-      defaultModel: local.prefs.defaultModel,
-      modelVariant: local.prefs.modelVariant ?? null,
+      defaultModel: activeModel,
+      modelVariant: activeModelVariant,
     });
   const {
     store: sessionProviderAuthStore,
@@ -732,43 +784,54 @@ export function SessionRoute() {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
   });
-  const selectedModelUsesCloudProvider = Boolean(
-    local.prefs.defaultModel && isCloudManagedProviderKey(local.prefs.defaultModel.providerID),
-  );
-  const selectedModelProviderList = selectedModelUsesCloudProvider
-    ? cloudProviderList
-    : providerListQuery.data;
-  const selectedModelUnavailable = Boolean(
-    selectedWorkspaceId &&
-      opencodeClient &&
-      !loading &&
-      local.prefs.defaultModel &&
-      (!selectedModelUsesCloudProvider || cloudProviderSyncReady) &&
+  // 触发模型选择器的那个面板对应的会话；null 表示落到当前选中的会话。
+  const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);
+  const modelPickerTargetSessionId = modelPickerSessionId ?? selectedSessionId;
+  /**
+   * 判断某个模型在当前工作区是否不可用（被组织策略拦截，或所属 provider 未连接）
+   * @param model 待检查的模型，null 视为可用（还没选模型时不报错）
+   * @returns true 表示该模型当前不可用
+   */
+  const isModelUnavailable = useCallback((model: ModelRef | null) => {
+    if (!model || !selectedWorkspaceId || !opencodeClient || loading) return false;
+
+    const usesCloudProvider = isCloudManagedProviderKey(model.providerID);
+    // 云端 provider 的连接状态同步完成前不下结论，避免误报「模型不可用」。
+    if (usesCloudProvider && !cloudProviderSyncReady) return false;
+
+    const providerList = usesCloudProvider ? cloudProviderList : providerListQuery.data;
+    return Boolean(
+      isDesktopModelBlocked({
+        model,
+        checkRestriction: checkDesktopRestriction,
+        allowedModels,
+        providerSource: getProviderSource(providerList, model.providerID),
+      }) ||
       (
-        isDesktopModelBlocked({
-          model: local.prefs.defaultModel,
-          checkRestriction: checkDesktopRestriction,
-          allowedModels,
-          providerSource: getProviderSource(
-            selectedModelProviderList,
-            local.prefs.defaultModel.providerID,
-          ),
-        }) ||
-        (
-          selectedModelProviderList &&
-          checkDesktopRestriction({ restriction: "allowCustomProviders" }) &&
-          !selectedModelProviderList.connected.some(
-            (providerId) => providerId.trim() === local.prefs.defaultModel?.providerID.trim(),
-          )
-        ) ||
-        (
-          selectedModelProviderList &&
-          !isModelAvailableInConnectedProviders(selectedModelProviderList, local.prefs.defaultModel)
+        providerList &&
+        checkDesktopRestriction({ restriction: "allowCustomProviders" }) &&
+        !providerList.connected.some(
+          (providerId) => providerId.trim() === model.providerID.trim(),
         )
+      ) ||
+      (
+        providerList &&
+        !isModelAvailableInConnectedProviders(providerList, model)
       ),
-  );
-  const selectedModelUnavailableKey = selectedModelUnavailable && local.prefs.defaultModel
-    ? `${local.prefs.defaultModel.providerID}:${local.prefs.defaultModel.modelID}`
+    );
+  }, [
+    allowedModels,
+    checkDesktopRestriction,
+    cloudProviderList,
+    cloudProviderSyncReady,
+    loading,
+    opencodeClient,
+    providerListQuery.data,
+    selectedWorkspaceId,
+  ]);
+  const selectedModelUnavailable = isModelUnavailable(activeModel);
+  const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
+    ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
   const autoOpenedUnavailableModelRef = useRef<string | null>(null);
 
@@ -780,13 +843,14 @@ export function SessionRoute() {
     if (autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
 
     autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
+    setModelPickerSessionId(null);
     modelPicker.setQuery("");
     modelPicker.setRecentProviderIds(new Set());
     modelPicker.setCompactOpen(false);
     modelPicker.setOpen(true);
   }, [modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
 
-  const hasUsableModel = Boolean(local.prefs.defaultModel && !selectedModelUnavailable);
+  const hasUsableModel = Boolean(activeModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
   );
@@ -877,8 +941,8 @@ export function SessionRoute() {
     };
   }, [opencodeBaseUrl, opencodeClient, selectedWorkspaceRoot, denSessionVersion]);
 
-  const modelLabel = local.prefs.defaultModel
-    ? resolveModelDisplayName(local.prefs.defaultModel.modelID)
+  const modelLabel = activeModel
+    ? resolveModelDisplayName(activeModel.modelID)
     : t("session.default_model");
 
   const listSlashCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
@@ -950,7 +1014,7 @@ export function SessionRoute() {
       },
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
-      selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
+      selectedModel: activeModel ?? { providerID: "", modelID: "" },
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
@@ -958,14 +1022,42 @@ export function SessionRoute() {
         }
       },
       onModelChange: (model: ModelRef) => {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: model,
-          modelVariant: previous.defaultModel?.providerID === model.providerID && previous.defaultModel.modelID === model.modelID
-            ? previous.modelVariant
-            : null,
-        }));
+        applyModelSelection(model, selectedSessionId);
         modelPicker.setCompactOpen(false);
+      },
+      // TIPS: 分屏时同时挂载两个 SessionSurface，两个面板必须各自展示/修改自己那个
+      // 会话的模型，所以模型相关的 props 由 SessionPage 按面板会话 id 现算覆盖。
+      resolveSessionModelProps: (paneSessionId: string) => {
+        const { model, variant } = resolveModelForSession(paneSessionId);
+        const behavior = describeModel(model, variant);
+        return {
+          selectedModel: model ?? { providerID: "", modelID: "" },
+          modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
+          modelUnavailable: isModelUnavailable(model),
+          modelVariant: behavior.modelVariantValue,
+          modelVariantLabel: behavior.modelVariantLabel,
+          modelBehaviorOptions: behavior.modelBehaviorOptions,
+          // 下拉只在触发它的那个面板展开，避免分屏时两个面板同时弹出。
+          modelPickerOpen: modelPicker.compactOpen && modelPickerSessionId === paneSessionId,
+          onModelPickerOpenChange: (open: boolean) => {
+            setModelPickerSessionId(open ? paneSessionId : null);
+            modelPicker.setCompactOpen(open);
+            if (open) {
+              void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+            }
+          },
+          onModelClick: () => {
+            setModelPickerSessionId(paneSessionId);
+            modelPicker.setQuery("");
+            modelPicker.setOpen(true);
+          },
+          onModelChange: (next: ModelRef) => {
+            applyModelSelection(next, paneSessionId);
+            modelPicker.setCompactOpen(false);
+          },
+          onChangeModel: (next: ModelRef) => applyModelSelection(next, paneSessionId),
+          onModelVariantChange: (value: string | null) => applyModelVariantSelection(value, paneSessionId),
+        };
       },
       providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
@@ -978,7 +1070,11 @@ export function SessionRoute() {
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
         }
-        if (selectedModelUnavailable) throw new Error("Selected model is unavailable. Choose another model before sending.");
+        // 用目标会话自己的模型发送（分屏时两个面板的会话可能用不同模型）。
+        const targetChoice = resolveModelForSession(targetSessionId);
+        const targetModel = targetChoice.model;
+        const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
+        if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -991,8 +1087,8 @@ export function SessionRoute() {
               attachment_count: draft.attachments.length,
               text_length: text.length,
               workspace_type: selectedWorkspace?.workspaceType ?? "unknown",
-              provider_id: local.prefs.defaultModel?.providerID ?? null,
-              model_id: local.prefs.defaultModel?.modelID ?? null,
+              provider_id: targetModel?.providerID ?? null,
+              model_id: targetModel?.modelID ?? null,
             });
             markTaskRunStart(targetSessionId);
             // Den org adoption signals (auth-gated inside; no-op when signed out).
@@ -1033,9 +1129,9 @@ export function SessionRoute() {
             const result = await opencodeClient.session.promptAsync({
               sessionID: targetSessionId,
               parts,
-              model: local.prefs.defaultModel ?? undefined,
+              model: targetModel ?? undefined,
               agent: selectedAgent ?? undefined,
-              ...(modelVariantValue ? { variant: modelVariantValue } : {}),
+              ...(targetVariant ? { variant: targetVariant } : {}),
               ...(envSystemContext ? { system: envSystemContext } : {}),
             });
             if (result.error) {
@@ -1055,7 +1151,7 @@ export function SessionRoute() {
       modelVariant: modelVariantValue,
       modelBehaviorOptions,
       onModelVariantChange: (value: string | null) => {
-        local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
+        applyModelVariantSelection(value, selectedSessionId);
       },
       agentLabel: selectedAgent ? selectedAgent.charAt(0).toUpperCase() + selectedAgent.slice(1) : t("session.default_agent"),
       selectedAgent,
@@ -1115,14 +1211,8 @@ export function SessionRoute() {
           }
         })();
       },
-      onChangeModel: (model: { providerID: string; modelID: string }) => {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: model,
-          modelVariant: previous.defaultModel?.providerID === model.providerID && previous.defaultModel.modelID === model.modelID
-            ? previous.modelVariant
-            : null,
-        }));
+      onChangeModel: (model: ModelRef) => {
+        applyModelSelection(model, selectedSessionId);
       },
       environmentRuntimeKey,
       onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
@@ -1130,7 +1220,12 @@ export function SessionRoute() {
         : undefined,
     };
   }, [
+    activeModel,
+    applyModelSelection,
+    applyModelVariantSelection,
     client,
+    describeModel,
+    isModelUnavailable,
     modelPicker.compactOpen,
     handleOpenSettings,
     hasUsableModel,
@@ -1140,11 +1235,13 @@ export function SessionRoute() {
     listAgents,
     listSlashCommands,
     modelBehaviorOptions,
+    modelPickerSessionId,
     cloudMcpSubmissionState,
     modelLabel,
     modelVariantLabel,
     modelVariantValue,
     navigate,
+    resolveModelForSession,
     opencodeBaseUrl,
     opencodeClient,
     providerConnectedIds,
@@ -1477,14 +1574,18 @@ export function SessionRoute() {
           return { ok: false, error: "No available connected model found for eval recovery." };
         }
 
-        const unavailableModel = nextEvalUnavailableModel(local.prefs.defaultModel);
+        const unavailableModel = nextEvalUnavailableModel(activeModel);
         modelPicker.setQuery("");
         modelPicker.setRecentProviderIds(new Set());
+        // 同时改全局默认与当前会话，保证不论当前会话是否已固定模型都会生效。
         local.setPrefs((previous) => ({
           ...previous,
           defaultModel: unavailableModel,
           modelVariant: null,
         }));
+        if (selectedSessionId && selectedWorkspaceId) {
+          setSessionModelChoice(selectedWorkspaceId, selectedSessionId, unavailableModel);
+        }
 
         return {
           unavailableModel,
@@ -1499,7 +1600,7 @@ export function SessionRoute() {
         };
       },
     };
-  }, [allowedModels, checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
+  }, [activeModel, allowedModels, checkDesktopRestriction, disabledProviderIds, local, modelPicker.setQuery, modelPicker.setRecentProviderIds, opencodeBaseUrl, opencodeClient, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
   useControlAction(seedUnavailableModelControlAction);
 
   const seedActiveSessionSidebarControlAction = useMemo<JuggleWorkControlAction | null>(() => {
@@ -2263,6 +2364,7 @@ export function SessionRoute() {
               const endpoint = endpointForWorkspace(selectedWorkspace);
               if (!endpoint) return;
               await endpoint.client.deleteSession(endpoint.workspaceId, sessionId);
+              clearSessionModelChoice(selectedWorkspaceId, sessionId);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }
@@ -2329,6 +2431,7 @@ export function SessionRoute() {
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
       onOpenModelPicker={() => {
+        setModelPickerSessionId(null);
         modelPicker.setQuery("");
         modelPicker.setRecentProviderIds(new Set());
         window.requestAnimationFrame(() => modelPicker.setOpen(true));
@@ -2373,16 +2476,11 @@ export function SessionRoute() {
       query={modelPicker.query}
       setQuery={modelPicker.setQuery}
       subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE : undefined}
-      target="default"
-      current={local.prefs.defaultModel ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
+      target={modelPickerTargetSessionId ? "session" : "default"}
+      current={resolveModelForSession(modelPickerTargetSessionId).model ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
       onSelect={(next: ModelRef) => {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: next,
-          modelVariant: previous.defaultModel?.providerID === next.providerID && previous.defaultModel.modelID === next.modelID
-            ? previous.modelVariant
-            : null,
-        }));
+        applyModelSelection(next, modelPickerTargetSessionId);
+        setModelPickerSessionId(null);
         modelPicker.setOpen(false);
         focusPromptSoon();
       }}
@@ -2418,7 +2516,7 @@ export function SessionRoute() {
         modelPicker.setOpen(false);
         handleOpenSettings("/settings/general");
       }}
-      onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); }}
+      onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); setModelPickerSessionId(null); }}
     />
     </WorkspaceProvider>
   );

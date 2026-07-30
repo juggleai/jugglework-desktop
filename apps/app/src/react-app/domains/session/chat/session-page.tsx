@@ -146,10 +146,34 @@ export type SessionPageSidebarProps = {
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
 };
 
+/** 模型相关的会话级 props：同一时刻可能有两个面板，各自展示/修改自己会话的模型 */
+export type SessionModelSurfaceProps = Pick<
+  SessionSurfaceProps,
+  | "selectedModel"
+  | "modelLabel"
+  | "modelUnavailable"
+  | "modelVariant"
+  | "modelVariantLabel"
+  | "modelBehaviorOptions"
+  | "modelPickerOpen"
+  | "onModelPickerOpenChange"
+  | "onModelClick"
+  | "onModelChange"
+  | "onChangeModel"
+  | "onModelVariantChange"
+>;
+
 export type SessionPageSurfaceProps = Omit<
   SessionSurfaceProps,
   "client" | "workspaceId" | "sessionId" | "opencodeBaseUrl" | "juggleworkToken" | "isControlTarget"
->;
+> & {
+  /**
+   * 按面板所属会话计算模型相关 props
+   * @param sessionId 该面板渲染的会话 id
+   * @returns 覆盖到 SessionSurface 上的模型 props
+   */
+  resolveSessionModelProps?: (sessionId: string) => SessionModelSurfaceProps;
+};
 
 export type SessionPageProps = {
   selectedSessionId: string | null;
@@ -1264,6 +1288,7 @@ export function SessionPage(props: SessionPageProps) {
                         // must come from the resolved workspace endpoint passed by
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
+                        {...(props.surface!.resolveSessionModelProps?.(props.selectedSessionId!) ?? {})}
                         client={props.juggleworkServerClient!}
                         environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
@@ -1292,6 +1317,7 @@ export function SessionPage(props: SessionPageProps) {
                       >
                         <SessionSurface
                           {...props.surface!}
+                          {...(props.surface!.resolveSessionModelProps?.(splitSessionId!) ?? {})}
                           client={props.juggleworkServerClient!}
                           environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}

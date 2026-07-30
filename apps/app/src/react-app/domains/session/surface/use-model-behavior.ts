@@ -2,7 +2,7 @@
 // the active default model — what the composer renders as its variant pill.
 // Extracted verbatim from session-route.tsx; the catalog is also consumed by
 // the model picker's lazy option loader until that moves into its own hook.
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import type { ModelRef, ProviderListItem } from "@/app/types";
@@ -38,32 +38,41 @@ export function useModelBehavior(input: UseModelBehaviorInput) {
     setProviderCatalog(next);
   }, [providerList]);
 
-  // Compute behavior (reasoning/thinking variant) options for the current
-  // default model.
-  const { modelVariantLabel, modelBehaviorOptions, modelVariantValue } = useMemo(() => {
-    const variant = modelVariant ?? null;
-    if (!defaultModel) {
+  /**
+   * 计算任意「模型 + 推理档位」组合的展示信息
+   * @param model 模型引用，null 表示尚未选择模型
+   * @param variant 推理档位，null 表示该模型的默认档位
+   * @returns 档位文案、可选档位列表，以及针对该模型消毒后的档位值
+   */
+  const describeModel = useCallback((model: ModelRef | null, variant: string | null) => {
+    if (!model) {
       return {
         modelVariantLabel: t("settings.default_label"),
         modelBehaviorOptions: emptyModelBehaviorOptions,
-        modelVariantValue: null,
+        modelVariantValue: null as string | null,
       };
     }
-    const model = providerCatalog[defaultModel.providerID]?.[defaultModel.modelID];
-    if (!model) {
+    const entry = providerCatalog[model.providerID]?.[model.modelID];
+    if (!entry) {
       return {
         modelVariantLabel: variant ?? t("settings.default_label"),
         modelBehaviorOptions: emptyModelBehaviorOptions,
         modelVariantValue: variant,
       };
     }
-    const summary = getModelBehaviorSummary(defaultModel.providerID, model, variant);
+    const summary = getModelBehaviorSummary(model.providerID, entry, variant);
     return {
       modelVariantLabel: summary.label,
       modelBehaviorOptions: summary.options,
       modelVariantValue: summary.value,
     };
-  }, [defaultModel, modelVariant, providerCatalog]);
+  }, [providerCatalog]);
 
-  return { providerCatalog, modelVariantLabel, modelBehaviorOptions, modelVariantValue };
+  // Behavior (reasoning/thinking variant) options for the session's active model.
+  const { modelVariantLabel, modelBehaviorOptions, modelVariantValue } = useMemo(
+    () => describeModel(defaultModel, modelVariant ?? null),
+    [defaultModel, describeModel, modelVariant],
+  );
+
+  return { providerCatalog, describeModel, modelVariantLabel, modelBehaviorOptions, modelVariantValue };
 }
