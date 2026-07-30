@@ -17,6 +17,20 @@ struct ComputerUsePermissionStatus {
 }
 
 enum ComputerUsePermissions {
+    /// The outer JuggleWork.app is the responsible application when this
+    /// helper is spawned by JuggleWork. Return that bundle for drag-to-add
+    /// instructions so users do not grant the nested helper by mistake.
+    static var responsibleAppURL: URL {
+        var cursor = Bundle.main.bundleURL.deletingLastPathComponent()
+        while cursor.path != "/" {
+            if cursor.pathExtension.caseInsensitiveCompare("app") == .orderedSame {
+                return cursor
+            }
+            cursor.deleteLastPathComponent()
+        }
+        return Bundle.main.bundleURL
+    }
+
     /// Non-prompting check — safe to call on a timer / from HTTP polling.
     static func status() -> ComputerUsePermissionStatus {
         ComputerUsePermissionStatus(
@@ -125,7 +139,7 @@ final class PermissionSetupViewController: NSViewController {
         titleField.alignment = .center
 
         let subtitleField = wrappingField(
-            "Grant two permissions so agents can see and control apps in the background.",
+            "Grant JuggleWork two permissions so agents can see and control apps in the background.",
             size: 13
         )
         subtitleField.textColor = .secondaryLabelColor
@@ -163,7 +177,7 @@ final class PermissionSetupViewController: NSViewController {
         let step = StepCircle(number: "1")
         let title = textField("Accessibility", size: 15, weight: .semibold)
         let body = wrappingField(
-            "Allows agents to interact with UI controls, click buttons, and type text entirely in the background.",
+            "Allows JuggleWork agents to interact with UI controls, click buttons, and type text entirely in the background.",
             size: 13
         )
         body.textColor = .secondaryLabelColor
@@ -186,14 +200,14 @@ final class PermissionSetupViewController: NSViewController {
         let step = StepCircle(number: "2")
         let title = textField("Screen Recording", size: 15, weight: .semibold)
         let body = wrappingField(
-            "Lets agents see what is on screen. If macOS does not prompt automatically, drag the app icon below into the Screen Recording list.",
+            "Grant the main JuggleWork app—not JuggleWork Computer Use. If macOS does not prompt automatically, drag JuggleWork.app below into the Screen Recording list.",
             size: 13
         )
         body.textColor = .secondaryLabelColor
 
         let dragFlow = makeDragFlowView()
 
-        let reqBtn = NSButton(title: "Request Screen Recording", target: self, action: #selector(requestScreenRecording))
+        let reqBtn = NSButton(title: "Request for JuggleWork", target: self, action: #selector(requestScreenRecording))
         reqBtn.bezelStyle = .rounded
         reqBtn.controlSize = .regular
         srGrantButton = reqBtn
@@ -216,13 +230,14 @@ final class PermissionSetupViewController: NSViewController {
     private func makeDragFlowView() -> NSView {
         // Large draggable app icon
         let iconView = DraggableAppIconView(frame: .zero)
-        iconView.image = NSApplication.shared.applicationIconImage
+        iconView.permissionAppURL = ComputerUsePermissions.responsibleAppURL
+        iconView.image = NSWorkspace.shared.icon(forFile: ComputerUsePermissions.responsibleAppURL.path)
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.widthAnchor.constraint(equalToConstant: 56).isActive = true
         iconView.heightAnchor.constraint(equalToConstant: 56).isActive = true
 
-        let dragHint = textField("Drag me", size: 10)
+        let dragHint = textField("JuggleWork.app", size: 10)
         dragHint.textColor = .tertiaryLabelColor
         dragHint.alignment = .center
 
@@ -241,7 +256,7 @@ final class PermissionSetupViewController: NSViewController {
         row.distribution = NSStackView.Distribution.fill
 
         let hint = wrappingField(
-            "Drag this icon into the Screen Recording list in Privacy & Security, then enable it.",
+            "Enable “JuggleWork” in Privacy & Security. An existing “JuggleWork Computer Use” entry is not sufficient.",
             size: 11
         )
         hint.textColor = .secondaryLabelColor
@@ -543,6 +558,8 @@ final class PrivacyDropZoneView: NSView {
 /// NSImageView that initiates a drag session carrying the app bundle URL,
 /// so it can be dropped into System Settings > Privacy & Security > Screen Recording.
 final class DraggableAppIconView: NSImageView, NSDraggingSource {
+    var permissionAppURL = Bundle.main.bundleURL
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -574,9 +591,8 @@ final class DraggableAppIconView: NSImageView, NSDraggingSource {
 
     override func mouseDown(with event: NSEvent) {
         guard let image else { return }
-        let appURL = Bundle.main.bundleURL
         let item = NSPasteboardItem()
-        item.setString(appURL.absoluteString, forType: .fileURL)
+        item.setString(permissionAppURL.absoluteString, forType: .fileURL)
         let dragItem = NSDraggingItem(pasteboardWriter: item)
         dragItem.setDraggingFrame(bounds, contents: image)
         beginDraggingSession(with: [dragItem], event: event, source: self)
@@ -589,5 +605,3 @@ final class DraggableAppIconView: NSImageView, NSDraggingSource {
         .copy
     }
 }
-
-

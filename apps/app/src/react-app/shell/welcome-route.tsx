@@ -21,13 +21,6 @@ import { ProviderSelectionStep } from "../domains/onboarding/provider-selection-
 import { AttributionStep, type AttributionSource } from "../domains/onboarding/attribution-step";
 import { CreateWorkspaceModal } from "../domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "../domains/workspace/types";
-import {
-  getJuggleWorkModelsActionUrl,
-  hideJuggleWorkModelsPromo,
-  useJuggleWorkModelsPromoEligibility,
-  markJuggleWorkModelsStartupPromoShown,
-} from "../domains/cloud/jugglework-models-promo";
-import { useDenAuth } from "../domains/cloud/den-auth-provider";
 import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
 import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
@@ -129,14 +122,12 @@ export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
   const platform = usePlatform();
-  const denAuth = useDenAuth();
   const [state, dispatch] = useReducer(welcomeReducer, initialWelcomeState);
   const [manualFolder, setManualFolder] = useState("");
   const [organizationServerUrl, setOrganizationServerUrl] = useState(() => readDenSettings().baseUrl);
   const [organizationServerBusy, setOrganizationServerBusy] = useState(false);
   const [organizationServerError, setOrganizationServerError] = useState<string | null>(null);
   const [joinOrganizationOpen, setJoinOrganizationOpen] = useState(false);
-  const showJuggleWorkModelsPromo = useJuggleWorkModelsPromoEligibility();
 
   // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
@@ -438,20 +429,7 @@ export function WelcomeRoute() {
       />
       {state.providerStep ? (
         <ProviderSelectionStep
-          showJuggleWorkModels={showJuggleWorkModelsPromo}
-          onJuggleWorkModels={() => {
-            // Land on the JuggleWork Models value-prop page when already
-            // signed in to Den; otherwise start sign-up. Previously this
-            // always opened a bare sign-up page — payment before value.
-            platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
-            const route = state.pendingWorkspaceId
-              ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
-              : "/session";
-            dispatch({ type: "attribution-step", route });
-          }}
           onBringYourOwn={() => {
-            markJuggleWorkModelsStartupPromoShown();
-            hideJuggleWorkModelsPromo();
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)
               : "/session";

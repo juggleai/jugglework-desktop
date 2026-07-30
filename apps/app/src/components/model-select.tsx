@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, ChevronRight, Settings2, Sparkles } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { ChevronDown, Settings2 } from "lucide-react";
 
 import type { ModelOption, ModelRef } from "@/app/types";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
@@ -17,23 +16,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
-import { usePlatform } from "@/react-app/kernel/platform";
 import {
   useCheckDesktopRestriction,
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
-import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import {
-  getJuggleWorkModelsActionUrl,
-  hasJuggleWorkModelsProvider,
-  hideJuggleWorkModelsPromo,
-  useJuggleWorkModelsPromoEligibility,
-  isJuggleWorkModelsPromoHidden,
-  JUGGLEWORK_MODEL_PREVIEWS,
-  JUGGLEWORK_MODELS_PROVIDER_ID,
-  JUGGLEWORK_MODELS_PROVIDER_NAME,
-  juggleWorkModelsPromoChangedEvent,
-} from "@/react-app/domains/cloud/jugglework-models-promo";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import {
   Command,
@@ -116,6 +102,11 @@ function useModelOptions(open: boolean) {
       );
 
     return options.filter((option) => {
+      // Hosted JuggleWork Models is no longer a desktop provider. Also hide
+      // legacy local entries that may remain in an existing OpenCode config.
+      if (option.providerID.trim().toLowerCase() === "jugglework") {
+        return false;
+      }
       if (
         isDesktopModelBlocked({
           model: { providerID: option.providerID, modelID: option.modelID },
@@ -142,19 +133,9 @@ type ModelSelectModelItem = {
   option: ModelOption;
 };
 
-type ModelSelectJuggleWorkItem = {
-  kind: "jugglework";
-  id: string;
-  title: string;
-  subtitle: string;
-};
-
-type ModelSelectItem = ModelSelectModelItem | ModelSelectJuggleWorkItem;
-
 type ModelSelectGroup = {
   value: string;
-  items: ModelSelectItem[];
-  promo: boolean;
+  items: ModelSelectModelItem[];
 };
 
 function groupByProvider(modelOptions: ModelOption[]): ModelSelectGroup[] {
@@ -181,22 +162,8 @@ function groupByProvider(modelOptions: ModelOption[]): ModelSelectGroup[] {
     .map(([providerLabel, options]) => ({
       value: providerLabel,
       items: [...options].sort((a, b) => a.option.title.localeCompare(b.option.title)),
-      promo: false,
     }))
     .sort((a, b) => a.value.localeCompare(b.value));
-}
-
-function juggleWorkModelsGroup(): ModelSelectGroup {
-  return {
-    value: JUGGLEWORK_MODELS_PROVIDER_NAME,
-    promo: true,
-    items: JUGGLEWORK_MODEL_PREVIEWS.map((model) => ({
-      kind: "jugglework",
-      id: model.id,
-      title: model.title,
-      subtitle: model.subtitle,
-    })),
-  };
 }
 
 function isSameModel(a: ModelRef, b: ModelRef) {
@@ -209,8 +176,6 @@ interface ModelSelectProps {
   onOpenChange: (open: boolean) => void;
   onChange: (model: ModelRef) => void;
   disabled?: boolean;
-  /** Den/import includes JuggleWork Models — never show Subscribe while true. */
-  juggleWorkModelsEntitled?: boolean;
 }
 
 export function ModelSelect({
@@ -219,22 +184,10 @@ export function ModelSelect({
   onOpenChange,
   onChange,
   disabled = false,
-  juggleWorkModelsEntitled = false,
 }: ModelSelectProps) {
   const [search, setSearch] = React.useState("");
-  const [promoHidden, setPromoHidden] = React.useState(isJuggleWorkModelsPromoHidden);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const modelOptions = useModelOptions(open);
-  const denAuth = useDenAuth();
-  const navigate = useNavigate();
-  const platform = usePlatform();
-  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
-
-  React.useEffect(() => {
-    const handlePromoChanged = () => setPromoHidden(isJuggleWorkModelsPromoHidden());
-    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
 
   const focusSearchInput = React.useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -264,48 +217,13 @@ export function ModelSelect({
     }),
   );
 
-  const juggleWorkModelsAvailable = React.useMemo(
-    () => hasJuggleWorkModelsProvider(modelOptions.map((option) => option.providerID)),
-    [modelOptions],
-  );
-  const showJuggleWorkModelsSyncing = juggleWorkModelsEntitled && !juggleWorkModelsAvailable;
-  const showJuggleWorkModelsPromo = React.useMemo(
-    () =>
-      juggleWorkModelsPromoEligible &&
-      !promoHidden &&
-      !juggleWorkModelsAvailable &&
-      !juggleWorkModelsEntitled,
-    [juggleWorkModelsAvailable, juggleWorkModelsEntitled, juggleWorkModelsPromoEligible, promoHidden],
-  );
-
-  const groups = React.useMemo(() => {
-    const providerGroups = groupByProvider(modelOptions);
-    return showJuggleWorkModelsPromo
-      ? [juggleWorkModelsGroup(), ...providerGroups]
-      : providerGroups;
-  }, [modelOptions, showJuggleWorkModelsPromo]);
+  const groups = React.useMemo(() => groupByProvider(modelOptions), [modelOptions]);
 
   const handleSelect = (option: ModelOption) => {
     onChange({ providerID: option.providerID, modelID: option.modelID });
     setSearch("");
     onOpenChange(false);
   };
-
-  const handleJuggleWorkModels = React.useCallback(() => {
-    onOpenChange(false);
-    setSearch("");
-    if (!denAuth.isSignedIn) {
-      navigate("/settings/cloud-account");
-    }
-    window.setTimeout(() => {
-      platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn));
-    }, 0);
-  }, [denAuth.isSignedIn, navigate, onOpenChange, platform]);
-
-  const handleHideJuggleWorkModels = React.useCallback(() => {
-    hideJuggleWorkModelsPromo();
-    setPromoHidden(true);
-  }, []);
 
   return (
     <Popover
@@ -352,66 +270,15 @@ export function ModelSelect({
             />
           </CommandHeader>
           <CommandEmpty>No models found.</CommandEmpty>
-          {showJuggleWorkModelsSyncing ? (
-            <div className="mx-1 mb-1 flex items-center gap-2 rounded-md border border-amber-6/60 bg-amber-2/40 px-2 py-1.5">
-              <ProviderIcon
-                providerId={JUGGLEWORK_MODELS_PROVIDER_ID}
-                providerName={JUGGLEWORK_MODELS_PROVIDER_NAME}
-                className="size-3.5 shrink-0 text-amber-11"
-                size={14}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium text-foreground">
-                  {JUGGLEWORK_MODELS_PROVIDER_NAME}
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  Included — syncing into this workspace…
-                </span>
-              </span>
-            </div>
-          ) : null}
           <CommandList>
             {(group: ModelSelectGroup) => (
               <CommandGroup
                 key={group.value}
                 items={group.items}
               >
-                <CommandGroupLabel className={group.promo ? "flex items-center gap-1.5 text-foreground" : undefined}>
-                  {group.promo ? <Sparkles className="size-3 text-blue-11" /> : null}
-                  {group.value}
-                </CommandGroupLabel>
+                <CommandGroupLabel>{group.value}</CommandGroupLabel>
                 <CommandCollection>
-                  {(item: ModelSelectItem) => {
-                    if (item.kind === "jugglework") {
-                      return (
-                        <CommandItem
-                          className="gap-2 border border-blue-6/50 bg-blue-2/40 data-highlighted:bg-blue-3"
-                          key={item.id}
-                          value={`${JUGGLEWORK_MODELS_PROVIDER_NAME} ${item.title} ${item.id} sign in subscribe`}
-                          onClick={handleJuggleWorkModels}
-                        >
-                          <ProviderIcon
-                            providerId={JUGGLEWORK_MODELS_PROVIDER_ID}
-                            providerName={JUGGLEWORK_MODELS_PROVIDER_NAME}
-                            className="size-3.5 text-blue-11"
-                            size={14}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-foreground">
-                              {item.title}
-                            </span>
-                            <span className="block truncate text-xs text-muted-foreground">
-                              {item.subtitle} - {denAuth.isSignedIn ? "Subscribe to add this model" : "Sign in to unlock"}
-                            </span>
-                          </span>
-                          <span className="shrink-0 rounded-full border border-blue-6 bg-blue-3 px-1.5 py-0.5 text-[10px] font-medium text-blue-11">
-                            {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
-                          </span>
-                          <ChevronRight className="size-3.5 text-blue-11" />
-                        </CommandItem>
-                      );
-                    }
-
+                  {(item: ModelSelectModelItem) => {
                     const option = item.option;
                     return (
                       <CommandItem
@@ -458,15 +325,6 @@ export function ModelSelect({
                 <Settings2 className="size-3.5" />
                 All models
               </button>
-              {showJuggleWorkModelsPromo ? (
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleHideJuggleWorkModels}
-                >
-                  Hide
-                </button>
-              ) : null}
             </div>
           </div>
         </Command>

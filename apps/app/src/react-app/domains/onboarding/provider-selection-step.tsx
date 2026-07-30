@@ -8,21 +8,14 @@ import {
   PageTitlebarRegion,
 } from "@/components/page";
 import { Button } from "@/components/ui/button";
-import { KeyRoundIcon, SkipForwardIcon, SparklesIcon } from "lucide-react";
+import { KeyRoundIcon, SkipForwardIcon } from "lucide-react";
 
 type ProviderSelectionStepProps = {
-  showJuggleWorkModels?: boolean;
-  onJuggleWorkModels: () => void;
   onBringYourOwn: () => void;
   onSkip: () => void;
 };
 
-export function ProviderSelectionStep({
-  showJuggleWorkModels = true,
-  onJuggleWorkModels,
-  onBringYourOwn,
-  onSkip,
-}: ProviderSelectionStepProps) {
+export function ProviderSelectionStep({ onBringYourOwn, onSkip }: ProviderSelectionStepProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <PageBackground />
@@ -37,24 +30,6 @@ export function ProviderSelectionStep({
         </PageHeader>
 
         <div className="space-y-3">
-          {showJuggleWorkModels ? (
-            <button
-              type="button"
-              className="flex w-full items-start gap-4 rounded-xl border border-blue-7/50 bg-blue-2/30 p-4 text-left transition-colors hover:bg-blue-3/40"
-              onClick={onJuggleWorkModels}
-            >
-              <SparklesIcon className="mt-0.5 size-5 shrink-0 text-blue-10" />
-              <div>
-                <div className="text-sm font-medium text-foreground">
-                  Use JuggleWork Models
-                </div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  Pay through JuggleWork Cloud and skip API key setup.
-                </div>
-              </div>
-            </button>
-          ) : null}
-
           <button
             type="button"
             className="flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-accent"

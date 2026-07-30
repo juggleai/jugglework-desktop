@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, shell } from "electron";
+import { app, desktopCapturer, systemPreferences } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -90,7 +90,50 @@ async function checkComputerUsePermissions() {
   if (!bin) {
     return { ok: false, accessibility: false, screenRecording: false, error: "Helper binary not found. Run pnpm dev to build it." };
   }
-  return spawnCheckPermissions(bin);
+  const helperStatus = await spawnCheckPermissions(bin);
+  // Screen Recording belongs to the responsible top-level Electron app, not
+  // the nested helper bundle. Ask Electron for the main application's status
+  // so an old grant for "JuggleWork Computer Use" cannot produce a false
+  // positive.
+  const screenRecording =
+    process.platform === "darwin" &&
+    systemPreferences.getMediaAccessStatus("screen") === "granted";
+  return {
+    ...helperStatus,
+    ok: helperStatus.accessibility === true && screenRecording,
+    screenRecording,
+  };
+}
+
+async function requestMainAppScreenRecording() {
+  if (process.platform !== "darwin") return;
+  if (systemPreferences.getMediaAccessStatus("screen") === "granted") return;
+  const bin = resolveComputerUseExecutable();
+  if (bin) {
+    await new Promise((resolve) => {
+      const child = spawn(bin, ["--request-screen-recording"], {
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 60_000,
+      });
+      child.on("error", () => resolve());
+      child.on("close", () => resolve());
+    });
+    if (systemPreferences.getMediaAccessStatus("screen") === "granted") return;
+  }
+  try {
+    // Electron has no systemPreferences.askForMediaAccess("screen") API.
+    // Keep getSources as a fallback for macOS/Electron combinations where the
+    // native request exits without showing a prompt.
+    await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 1, height: 1 },
+      fetchWindowIcons: false,
+    });
+  } catch (error) {
+    // A previous denial will not prompt again; the setup window still opens
+    // System Settings so the user can enable JuggleWork manually.
+    console.error("[ComputerUse] failed to request Screen Recording:", error);
+  }
 }
 
 function spawnCheckPermissions(bin) {
@@ -140,20 +183,20 @@ async function listRunningApps() {
 }
 
 async function openComputerUseSetupApp() {
-  // Open the GUI. Use the .app bundle if available so macOS shows it as
-  // a real app with its own dock icon and permission identity.
-  const appPath = computerUseHelperAppPath();
-  if (appPath) {
-    const result = await shell.openPath(appPath);
-    if (result) console.error("[ComputerUse] shell.openPath error:", result);
-    return;
-  }
-
-  // Fallback: spawn the raw binary (opens the same GUI).
+  // Spawn the bundled executable as a child of JuggleWork instead of opening
+  // the nested .app through LaunchServices. macOS TCC attributes both the MCP
+  // process and this setup process to their responsible parent application.
+  // LaunchServices made the setup window responsible for its own helper bundle,
+  // so it could show "Granted" while the MCP (responsible: JuggleWork) was
+  // still denied.
   const bin = resolveComputerUseExecutable();
   if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
   const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  child.on("error", (error) => {
+    console.error("[ComputerUse] failed to open setup helper:", error);
+  });
   child.unref();
+  await requestMainAppScreenRecording();
 }
 
 export {

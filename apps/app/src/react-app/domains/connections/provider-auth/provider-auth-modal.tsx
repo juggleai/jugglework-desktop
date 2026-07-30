@@ -49,7 +49,6 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
-  jugglework: "JuggleWork",
   opencode: "OpenCode Zen",
   openai: "OpenAI",
   anthropic: "Anthropic",
@@ -57,8 +56,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   jugglerouter: "JuggleRouter",
 };
-
-const JUGGLEWORK_MODELS_PROVIDER_ID = "jugglework";
 
 export type ProviderAuthModalProps = {
   open: boolean;
@@ -79,8 +76,6 @@ export type ProviderAuthModalProps = {
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
-  showJuggleWorkModelsSubscribe?: boolean;
-  onSubscribeJuggleWorkModels?: () => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -89,7 +84,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto" | "jugglework-subscribe"
+    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -198,22 +193,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       })
       .sort(compareProviders);
 
-    if (props.showJuggleWorkModelsSubscribe) {
-      const connectedToJuggleWork = connected.has(JUGGLEWORK_MODELS_PROVIDER_ID);
-      return [
-        {
-          id: JUGGLEWORK_MODELS_PROVIDER_ID,
-          name: "JuggleWork",
-          methods: [{ type: "cloud", label: "Subscribe" }],
-          connected: connectedToJuggleWork,
-          env: [],
-        },
-        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== JUGGLEWORK_MODELS_PROVIDER_ID),
-      ];
-    }
-
-    return nextEntries;
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showJuggleWorkModelsSubscribe]);
+    return nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== "jugglework");
+  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -533,11 +514,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setSelectedProviderId(entry.id);
 
-    if (props.showJuggleWorkModelsSubscribe && entry.id.trim().toLowerCase() === JUGGLEWORK_MODELS_PROVIDER_ID) {
-      setView("jugglework-subscribe");
-      return;
-    }
-
     if (entry.methods.length === 1) {
       void handleMethodSelect(entry.methods[0], entry);
       return;
@@ -600,11 +576,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "jugglework-subscribe") {
-      resetState();
-      return;
-    }
-
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
@@ -952,27 +923,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                     <Button onClick={handleCloudSubmit} disabled={actionDisabled}>
                       {props.submitting ? "Connecting..." : "Connect provider"}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              {resolvedView === "jugglework-subscribe" && selectedEntry ? (
-                <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-12">JuggleWork Models</div>
-                      <div className="text-xs text-gray-10 mt-1">
-                        Frontier intelligence, hand picked for your team&apos;s most ambitious work.
-                      </div>
-                    </div>
-                    <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
-                      Back
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-end">
-                    <Button onClick={() => void props.onSubscribeJuggleWorkModels?.()} disabled={actionDisabled}>
-                      Subscribe
                     </Button>
                   </div>
                 </div>

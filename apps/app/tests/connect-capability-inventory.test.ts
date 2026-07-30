@@ -146,7 +146,8 @@ describe("assigned JuggleWork Connect capability inventory", () => {
         origin: "jugglework-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
-        connectCapabilityName: "plugin:plugin_1:skill_1",
+        connectCapabilityName: "skill:skill_1",
+        connectPluginId: "plugin_1",
       }),
     ]);
     expect(inventory.commands).toEqual([
@@ -156,7 +157,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
         marketplaceName: "Team tools",
         pluginName: "Support kit",
         connectPluginId: "plugin_1",
-        connectCapabilityName: "plugin:plugin_1:command_1",
+        connectCapabilityName: "command:command_1",
       }),
     ]);
     expect(inventory.mcpServers).toEqual([

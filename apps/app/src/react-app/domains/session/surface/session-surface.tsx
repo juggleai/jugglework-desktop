@@ -164,8 +164,6 @@ export type SessionSurfaceProps = {
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
   selectedModel: ModelRef;
-  /** Den/import includes JuggleWork Models for this org member (not just local sync). */
-  juggleWorkModelsEntitled?: boolean;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
@@ -1327,8 +1325,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
 
   const listSkills = async (): Promise<SkillCard[]> => {
-    const connectPromise = loadConnectCapabilityInventory();
-    const response = await props.client.listSkills(props.workspaceId, { includeGlobal: true });
+    const [response, connect, config] = await Promise.all([
+      props.client.listSkills(props.workspaceId, { includeGlobal: true }),
+      loadConnectCapabilityInventory(),
+      props.client.getConfig(props.workspaceId),
+    ]);
     const localSkills = (response.items ?? []).map((skill) => ({
       name: skill.name,
       path: skill.path,
@@ -1337,8 +1338,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       scope: skill.scope,
       origin: "local",
     } satisfies SkillCard));
-    const connect = await connectPromise;
-    const next = [...localSkills, ...connect.skills];
+    const importedPluginIds = new Set(Object.keys(readWorkspaceCloudImports(config.jugglework).plugins));
+    const localSkillNames = new Set(localSkills.map((skill) => skill.name.trim().toLowerCase()));
+    const cloudSkills = connect.skills.filter((skill) =>
+      !importedPluginIds.has(skill.connectPluginId) && !localSkillNames.has(skill.name.trim().toLowerCase())
+    );
+    const next = [...localSkills, ...cloudSkills];
     setToolSkills(next);
     return next;
   };
@@ -1864,7 +1869,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
-        juggleWorkModelsEntitled={props.juggleWorkModelsEntitled}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
         onModelChange={props.onModelChange}
         attachments={attachments}

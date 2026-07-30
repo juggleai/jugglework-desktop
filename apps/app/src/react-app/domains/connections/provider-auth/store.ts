@@ -346,27 +346,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     modelCount: provider.models.length,
   });
 
-  const readCloudProviderBaseUrl = (provider: DenOrgLlmProviderConnection) => {
-    const options = provider.providerConfig.options;
-    if (options && typeof options === "object" && !Array.isArray(options)) {
-      const baseURL = "baseURL" in options ? options.baseURL : undefined;
-      if (typeof baseURL === "string" && baseURL.trim()) return baseURL.trim().replace(/\/api\/v1\/?$/, "");
-    }
-    const api = provider.providerConfig.api;
-    if (typeof api === "string" && api.trim()) return api.trim().replace(/\/api\/v1\/?$/, "");
-    return "";
-  };
-
-  const mirrorJuggleWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
-    if (provider.source !== "jugglework" || !apiKey.trim()) return;
-    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
-    if (!juggleworkClient) return;
-    const baseUrl = readCloudProviderBaseUrl(provider);
-    const entries = [{ key: "JUGGLEWORK_API_KEY", value: apiKey.trim() }];
-    if (baseUrl) entries.push({ key: "JUGGLEWORK_INFERENCE_BASE_URL", value: baseUrl });
-    await juggleworkClient.upsertUserEnv(entries);
-  };
-
   const readWorkspaceJuggleWorkConfigRecord = async (): Promise<
     Record<string, unknown>
   > => {
@@ -886,9 +865,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const request = client
       .listOrgLlmProviders(orgId)
       .then((providers) => {
-        setStateField("cloudOrgProviders", providers);
+        const supportedProviders = providers.filter((provider) =>
+          provider.source !== "jugglework" && provider.providerId.trim().toLowerCase() !== "jugglework"
+        );
+        setStateField("cloudOrgProviders", supportedProviders);
         cloudOrgProvidersLoadKey = loadKey;
-        return providers;
+        return supportedProviders;
       })
       .catch((error) => {
         setStateField("cloudOrgProviders", []);
@@ -1469,7 +1451,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorJuggleWorkModelsVoiceEnv(provider, primaryApiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {

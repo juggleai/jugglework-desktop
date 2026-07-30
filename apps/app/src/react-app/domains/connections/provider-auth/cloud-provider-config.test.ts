@@ -91,16 +91,16 @@ describe("isCloudProviderOutOfSync", () => {
 });
 
 describe("buildCloudProviderConfig", () => {
-  test("omits empty models for jugglework so catalog models can remain", () => {
+  test("keeps an empty models map for a cloud provider without models", () => {
     const provider: DenOrgLlmProviderConnection = {
-      id: "lpr_jugglework",
-      source: "jugglework",
-      providerId: "jugglework",
-      name: "JuggleWork Models",
+      id: "lpr_catalog",
+      source: "models_dev",
+      providerId: "openrouter",
+      name: "OpenRouter",
       providerConfig: {
         npm: "@openrouter/ai-sdk-provider",
-        api: "https://work.juggle.im/jwork/api/api/v1",
-        env: ["JUGGLEWORK_API_KEY"],
+        api: "https://openrouter.ai/api/v1",
+        env: ["OPENROUTER_API_KEY"],
       },
       hasApiKey: true,
       models: [],
@@ -111,8 +111,8 @@ describe("buildCloudProviderConfig", () => {
     };
 
     const config = buildCloudProviderConfig(provider);
-    expect(config.models).toBe(undefined);
-    expect(config.name).toBe("JuggleWork Models");
+    expect(config.models).toEqual({});
+    expect(config.name).toBe("OpenRouter");
   });
 
   test("keeps an empty models map for non-jugglework cloud providers", () => {

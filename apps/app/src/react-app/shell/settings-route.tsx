@@ -134,13 +134,6 @@ import {
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
-  hasJuggleWorkModelsAvailable,
-  hideJuggleWorkModelsPromo,
-  useJuggleWorkModelsPromoEligibility,
-  isJuggleWorkModelsPromoHidden,
-  juggleWorkModelsPromoChangedEvent,
-} from "@/react-app/domains/cloud/jugglework-models-promo";
-import {
   isDesktopRuntime,
   isElectronRuntime,
   isMacPlatform,
@@ -173,7 +166,7 @@ import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
-import { getDenInferenceUrl, type DenSettings } from "@/app/lib/den";
+import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
@@ -213,16 +206,6 @@ async function reloadEngineOrRestartDesktop(
     await engineRestart({});
     await afterRestart?.();
   }
-}
-
-function isJuggleWorkCloudProvider(provider: {
-  providerId?: string | null;
-  source?: string | null;
-  sourceProviderId?: string | null;
-}) {
-  return [provider.providerId, provider.source, provider.sourceProviderId].some(
-    (value) => value?.trim().toLowerCase() === "jugglework",
-  );
 }
 
 function normalizeComputerUsePermissions(value: unknown) {
@@ -780,60 +763,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (route.tab !== "extensions") return;
     void refreshConnectCapabilities();
   }, [refreshConnectCapabilities, route.tab]);
-
-  const hasJuggleWorkCloudProvider = useMemo(
-    () =>
-      providerAuthSnapshot.cloudOrgProviders.some(isJuggleWorkCloudProvider) ||
-      Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isJuggleWorkCloudProvider),
-    [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
-  );
-  const [juggleWorkModelsPromoHidden, setJuggleWorkModelsPromoHidden] = useState(isJuggleWorkModelsPromoHidden);
-  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
-  // Entitled = Den/import says JuggleWork Models is included. Available = local
-  // engine actually exposes selectable jugglework models.
-  const juggleWorkModelsEntitled = cloudSession.isSignedIn && hasJuggleWorkCloudProvider;
-  const juggleWorkModelsAvailable = hasJuggleWorkModelsAvailable({
-    providerConnectedIds,
-    providers,
-  });
-  const showJuggleWorkModelsSyncing = juggleWorkModelsEntitled && !juggleWorkModelsAvailable;
-  const showJuggleWorkModelsSubscribe =
-    juggleWorkModelsPromoEligible &&
-    !juggleWorkModelsEntitled &&
-    !juggleWorkModelsAvailable &&
-    !juggleWorkModelsPromoHidden;
-  const showJuggleWorkModelsConnect =
-    juggleWorkModelsPromoEligible &&
-    !juggleWorkModelsEntitled &&
-    !juggleWorkModelsAvailable &&
-    juggleWorkModelsPromoHidden;
-
-  useEffect(() => {
-    const handlePromoChanged = () => setJuggleWorkModelsPromoHidden(isJuggleWorkModelsPromoHidden());
-    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
-
-  const dismissJuggleWorkModelsPromo = useCallback(() => {
-    hideJuggleWorkModelsPromo();
-    setJuggleWorkModelsPromoHidden(true);
-  }, []);
-
-  const subscribeToJuggleWorkModels = useCallback(() => {
-    providerAuthStore.closeProviderAuthModal();
-    const accountPath = selectedWorkspaceId
-      ? workspaceSettingsRoute(selectedWorkspaceId, "cloud-account")
-      : "/settings/cloud-account";
-    navigate(accountPath);
-    window.setTimeout(() => {
-      platform.openLink(getDenInferenceUrl(cloudSession.baseUrl));
-    }, 0);
-  }, [cloudSession.baseUrl, navigate, platform, providerAuthStore, selectedWorkspaceId]);
-
-  const refreshJuggleWorkModels = useCallback(async () => {
-    await providerAuthStore.runCloudProviderSync("settings_cloud_opened");
-    await providerAuthStore.refreshProviders();
-  }, [providerAuthStore]);
 
   const handleOpenProviderAuth = useCallback(() => {
     if (checkDesktopRestriction({ restriction: "allowCustomProviders" })) {
@@ -1717,6 +1646,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
   const connectedProviders = providers.flatMap((provider) =>
     providerConnectedIdSet.has(provider.id) &&
+    provider.id.trim().toLowerCase() !== "jugglework" &&
     !disabledProviderIdSet.has(provider.id.trim().toLowerCase())
       ? [{
           id: provider.id,
@@ -2266,14 +2196,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
-              ...(juggleWorkModelsEntitled || juggleWorkModelsAvailable ? ["jugglework"] : []),
             ])}
-            showJuggleWorkModelsSubscribe={showJuggleWorkModelsSubscribe}
-            showJuggleWorkModelsConnect={showJuggleWorkModelsConnect}
-            showJuggleWorkModelsSyncing={showJuggleWorkModelsSyncing}
-            onSubscribeJuggleWorkModels={subscribeToJuggleWorkModels}
-            onRefreshJuggleWorkModels={refreshJuggleWorkModels}
-            onDismissJuggleWorkModels={dismissJuggleWorkModelsPromo}
             cloudProvidersView={
               <CloudProvidersView
                 embedded
@@ -2625,6 +2548,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         // not from `providers`.
         providers={providerAuthSnapshot.providerAuthProviders.filter(
           (provider) =>
+            provider.id.trim().toLowerCase() !== "jugglework" &&
             !isDesktopProviderBlocked({
               providerId: provider.id,
               checkRestriction: checkDesktopRestriction,
@@ -2635,6 +2559,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         authMethods={Object.fromEntries(
           Object.entries(providerAuthSnapshot.providerAuthMethods).filter(
             ([providerId]) =>
+              providerId.trim().toLowerCase() !== "jugglework" &&
               !isDesktopProviderBlocked({
                 providerId,
                 checkRestriction: checkDesktopRestriction,
@@ -2647,8 +2572,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        showJuggleWorkModelsSubscribe={showJuggleWorkModelsSubscribe}
-        onSubscribeJuggleWorkModels={subscribeToJuggleWorkModels}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
       />
       <CreateWorkspaceModal

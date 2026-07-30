@@ -3,6 +3,7 @@
 /// Four modes:
 ///   mcp          — run the MCP server over stdio
 ///   --check      — print permission status as JSON to stdout and exit
+///   --request-screen-recording — request Screen Recording and print status
 ///   --list-apps  — print running regular apps as JSON to stdout and exit
 ///   (default)    — open the permission setup GUI
 
@@ -24,6 +25,15 @@ case "mcp":
     }
 case "--check":
     // Fresh process → fresh TCC read → always accurate.
+    let status = ComputerUsePermissions.status()
+    let json = "{\"ok\":\(status.ok),\"accessibility\":\(status.accessibility),\"screenRecording\":\(status.screenRecording)}"
+    print(json)
+    exit(0)
+case "--request-screen-recording":
+    // When spawned by JuggleWork, macOS attributes this request to the
+    // responsible top-level application (com.juggleai.jugglework), matching
+    // the identity used by the MCP subprocess.
+    ComputerUsePermissions.request(.screenRecording)
     let status = ComputerUsePermissions.status()
     let json = "{\"ok\":\(status.ok),\"accessibility\":\(status.accessibility),\"screenRecording\":\(status.screenRecording)}"
     print(json)

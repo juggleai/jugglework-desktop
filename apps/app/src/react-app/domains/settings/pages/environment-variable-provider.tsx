@@ -11,9 +11,6 @@ const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RESERVED_PREFIXES = ["JUGGLEWORK_", "OPENCODE_"] as const;
 const PERSISTABLE_INTERNAL_KEYS = new Set([
   "JUGGLEWORK_API_KEY",
-  "JUGGLEWORK_MODELS_API_KEY",
-  "JUGGLEWORK_INFERENCE_BASE_URL",
-  "JUGGLEWORK_MODELS_BASE_URL",
 ]);
 
 export type ApplyEnvironmentChangesResult = { statusMessage?: string } | void;

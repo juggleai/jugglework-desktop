@@ -32,6 +32,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
+import { installMacCloseToHide } from "./window-close-behavior.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -2241,6 +2242,11 @@ async function createMainWindow() {
     if (process.platform === "win32") mainWindow?.setSkipTaskbar(false);
     mainWindow?.show();
     flushPendingDeepLinks();
+  });
+
+  installMacCloseToHide({
+    window: mainWindow,
+    canQuit: () => runtimeDisposedForQuit,
   });
 
   mainWindow.on("closed", () => {

@@ -19,8 +19,8 @@ afterEach(async () => {
 });
 
 describe("JuggleWork Models promo eligibility", () => {
-  test("allows promotions on the default Den URL after normalization", () => {
-    expect(isJuggleWorkModelsPromoEligibleForDenBaseUrl(`${HOSTED_DEFAULT_DEN_BASE_URL}/api/den/`)).toBe(true);
+  test("is disabled even for the legacy hosted Den URL", () => {
+    expect(isJuggleWorkModelsPromoEligibleForDenBaseUrl(`${HOSTED_DEFAULT_DEN_BASE_URL}/api/den/`)).toBe(false);
   });
 
   test("suppresses promotions for custom configured Den URLs", async () => {

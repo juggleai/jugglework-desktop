@@ -330,11 +330,11 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     ],
     // The MCP quick-connect surface ("Available apps · One-click connect")
     // needs unconfigured directory entries too — otherwise Notion, Linear,
-    // JuggleWork Cloud Control, etc. are undiscoverable for anyone who is not
-    // signed in to cloud (regression from #2008, which narrowed the section
-    // to installed entries only).
+    // JuggleWork Cloud Control, and opt-in built-ins such as Computer Use are
+    // undiscoverable. Built-ins must remain visible before their MCP and macOS
+    // permissions are configured; their detail panel is the setup surface.
     quickConnectEntries: [
-      ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
+      ...builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
       ...input.quickConnect.filter((entry) => {
         if (isBuiltInJuggleWorkExtension(entry)) return false;

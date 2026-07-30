@@ -3,7 +3,6 @@ import { INFERENCE_MODEL_ALIASES } from "@jugglework/types/den/inference";
 import {
   buildDenAuthUrl,
   getDenInferenceUrl,
-  isSelfHostedControlPlane,
   HOSTED_DEFAULT_DEN_BASE_URL,
   readDenBootstrapConfig,
   readDenSettings,
@@ -23,12 +22,9 @@ export const JUGGLEWORK_MODELS_PROMO_VISIBLE_MS = 14_000;
 export const JUGGLEWORK_MODELS_PROMO_REPEAT_MS = 6 * 60 * 60 * 1000;
 
 export function areJuggleWorkModelsPromosDisabled() {
-  if (/^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_DISABLE_JUGGLEWORK_MODELS ?? "").trim())) {
-    return true;
-  }
-  // JuggleWork Models are a hosted JuggleWork Cloud offering; self-hosted
-  // deployments should never see the upsell surfaces.
-  return isSelfHostedControlPlane();
+  // JuggleWork Models is not part of the desktop distribution. All model
+  // providers must be configured locally or supplied by the organization.
+  return true;
 }
 
 export function isJuggleWorkModelsPromoEligibleForDenBaseUrl(baseUrl: string) {

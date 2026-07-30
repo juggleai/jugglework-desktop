@@ -100,7 +100,7 @@ describe("extension item projection", () => {
     }
   });
 
-  test("keeps unconnected built-ins out of My Extensions quick connect", () => {
+  test("keeps unconnected built-ins out of My Extensions but exposes them for setup", () => {
     const result = buildExtensionItems({
       quickConnect: [connectedBuiltIn, availableBuiltIn],
       mcpServers: [],
@@ -113,6 +113,7 @@ describe("extension item projection", () => {
 
     expect(result.installedMcpEntries.map((entry) => entry.name)).toEqual(["JuggleWork Browser"]);
     expect(result.builtInItems.map((item) => item.name)).toEqual(["JuggleWork Browser", "Computer Use"]);
+    expect(result.quickConnectEntries.map((entry) => entry.name)).toEqual(["JuggleWork Browser", "Computer Use"]);
   });
 
   test("projects per-member org MCP grants as Marketplace items until connected", () => {

@@ -29,6 +29,7 @@ export type ConnectCapabilityInventory = {
 
 export type ConnectSkillCard = SkillCard & {
   content?: string;
+  connectPluginId: string;
 };
 
 export type ConnectCommandOption = SlashCommandOption & {
@@ -57,8 +58,8 @@ type RemoteMcpSpec = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-function marketplaceCapabilityName(pluginId: string, configObjectId: string) {
-  return `plugin:${pluginId}:${configObjectId}`;
+function marketplaceCapabilityName(kind: "skill" | "command" | "mcp", configObjectId: string) {
+  return `${kind}:${configObjectId}`;
 }
 
 function skillTrigger(object: DenPluginConfigObject) {
@@ -141,7 +142,8 @@ function toSkill(
     origin: "jugglework-connect",
     marketplaceName: marketplace.name,
     pluginName: plugin.name,
-    connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),
+    connectCapabilityName: marketplaceCapabilityName("skill", object.id),
+    connectPluginId: plugin.id,
   };
 }
 
@@ -150,7 +152,7 @@ function toCommand(
   plugin: DenOrgPlugin,
   object: DenPluginConfigObject,
 ): ConnectCommandOption {
-  const capability = marketplaceCapabilityName(plugin.id, object.id);
+  const capability = marketplaceCapabilityName("command", object.id);
   return {
     id: `connect-command:${capability}`,
     name: commandName(object),
@@ -181,7 +183,7 @@ function toMcpEntries(
         origin: "jugglework-connect",
         marketplaceName: marketplace.name,
         pluginName: plugin.name,
-        connectCapabilityName: marketplaceCapabilityName(plugin.id, object.id),
+        connectCapabilityName: marketplaceCapabilityName("mcp", object.id),
       },
       status: remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
     };
@@ -217,7 +219,7 @@ export async function listAssignedConnectCapabilities(input: {
   );
 
   const commands: ConnectCommandOption[] = [];
-  const skills: SkillCard[] = [];
+  const skills: ConnectSkillCard[] = [];
   const mcpServers: McpServerEntry[] = [];
   const mcpStatuses: McpStatusMap = {};
   for (const { marketplace, resolved } of resolvedPlugins) {

@@ -6,8 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ArrowRight, Check, ChevronDown, ChevronRight, RefreshCw, Search, Sparkles, Star, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Check, ChevronDown, ChevronRight, Search, Star } from "lucide-react";
 
 import {
   Dialog,
@@ -23,18 +22,6 @@ import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
 import type { ModelOption, ModelRef } from "../../../../app/types";
 import { isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { useDenAuth } from "../../cloud/den-auth-provider";
-import { usePlatform } from "../../../kernel/platform";
-import {
-  getJuggleWorkModelsActionUrl,
-  hasJuggleWorkModelsProvider,
-  hideJuggleWorkModelsPromo,
-  useJuggleWorkModelsPromoEligibility,
-  isJuggleWorkModelsPromoHidden,
-  JUGGLEWORK_MODELS_PROVIDER_ID,
-  JUGGLEWORK_MODELS_PROVIDER_NAME,
-  juggleWorkModelsPromoChangedEvent,
-} from "../../cloud/jugglework-models-promo";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
@@ -57,9 +44,6 @@ export type ModelPickerModalProps = {
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
-  /** Den entitlement present; used to avoid a false Subscribe CTA while models sync. */
-  juggleWorkModelsEntitled?: boolean;
-  onRefreshJuggleWorkModels?: () => void | Promise<void>;
 };
 
 type ProviderGroup = {
@@ -76,11 +60,6 @@ type ProviderGroup = {
 export function ModelPickerModal(props: ModelPickerModalProps) {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
-  const [promoHidden, setPromoHidden] = useState(isJuggleWorkModelsPromoHidden);
-  const denAuth = useDenAuth();
-  const navigate = useNavigate();
-  const platform = usePlatform();
-  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
 
   const disabledSet = useMemo(
     () => new Set(props.disabledProviders ?? []),
@@ -94,12 +73,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     }
   }, [props.open]);
 
-  useEffect(() => {
-    const handlePromoChanged = () => setPromoHidden(isJuggleWorkModelsPromoHidden());
-    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
-
   // Focus search
   useEffect(() => {
     if (!props.open) return;
@@ -110,8 +83,11 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   // Filter by search
   const filteredOptions = useMemo(() => {
     const q = props.query.trim().toLowerCase();
-    if (!q) return props.options;
-    return props.options.filter(
+    const options = props.options.filter(
+      (option) => option.providerID.trim().toLowerCase() !== "jugglework",
+    );
+    if (!q) return options;
+    return options.filter(
       (o) =>
         o.title.toLowerCase().includes(q) ||
         o.providerID.toLowerCase().includes(q) ||
@@ -167,7 +143,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     }
   }, [props.query, providerGroups]);
 
-  // Expand current + JuggleWork groups once they appear (options often load async).
+  // Expand the current provider once options load asynchronously.
   const autoExpandedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!props.open) {
@@ -177,8 +153,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
     const toExpand: string[] = [];
     const current = providerGroups.find((group) => group.hasCurrent);
     if (current && !autoExpandedRef.current.has(current.id)) toExpand.push(current.id);
-    const jugglework = providerGroups.find((group) => group.id === JUGGLEWORK_MODELS_PROVIDER_ID);
-    if (jugglework && !autoExpandedRef.current.has(jugglework.id)) toExpand.push(jugglework.id);
     if (toExpand.length === 0) return;
     for (const id of toExpand) autoExpandedRef.current.add(id);
     setExpandedProviders((prev) => {
@@ -194,35 +168,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  }, []);
-
-  const juggleWorkModelsAvailable = useMemo(
-    () => hasJuggleWorkModelsProvider(props.options.map((option) => option.providerID)),
-    [props.options],
-  );
-  const showJuggleWorkModelsSyncing = Boolean(props.juggleWorkModelsEntitled) && !juggleWorkModelsAvailable;
-  const showJuggleWorkModelsPromo = useMemo(
-    () =>
-      juggleWorkModelsPromoEligible &&
-      !promoHidden &&
-      !juggleWorkModelsAvailable &&
-      !props.juggleWorkModelsEntitled,
-    [juggleWorkModelsPromoEligible, juggleWorkModelsAvailable, promoHidden, props.juggleWorkModelsEntitled],
-  );
-
-  const openJuggleWorkModels = useCallback(() => {
-    props.onClose();
-    if (!denAuth.isSignedIn) {
-      navigate("/settings/cloud-account");
-    }
-    window.setTimeout(() => {
-      platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn));
-    }, 0);
-  }, [denAuth.isSignedIn, navigate, platform, props.onClose]);
-
-  const hideJuggleWorkModels = useCallback(() => {
-    hideJuggleWorkModelsPromo();
-    setPromoHidden(true);
   }, []);
 
   const handleSelect = useCallback(
@@ -268,64 +213,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               onChange={(e) => props.setQuery(e.target.value)}
             />
           </div>
-
-          {showJuggleWorkModelsSyncing ? (
-            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-amber-6/60 bg-amber-2/40">
-              <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
-                <ProviderIcon providerId={JUGGLEWORK_MODELS_PROVIDER_ID} providerName={JUGGLEWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                    <span>{JUGGLEWORK_MODELS_PROVIDER_NAME}</span>
-                  </div>
-                  <div className="truncate text-[11px] text-dls-secondary">
-                    Included on your plan — finish syncing to choose a model.
-                  </div>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0"
-                  onClick={() => void props.onRefreshJuggleWorkModels?.()}
-                >
-                  <RefreshCw className="mr-1 size-3" />
-                  Refresh
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {showJuggleWorkModelsPromo ? (
-            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-blue-6/60 bg-blue-2/60 shadow-[0_12px_30px_-20px_rgba(var(--dls-accent-rgb),0.45)]">
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-blue-3/70"
-                onClick={openJuggleWorkModels}
-              >
-                <ProviderIcon providerId={JUGGLEWORK_MODELS_PROVIDER_ID} providerName={JUGGLEWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-blue-11" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                    <Sparkles className="size-3.5 text-blue-11" />
-                    <span>{JUGGLEWORK_MODELS_PROVIDER_NAME}</span>
-                  </div>
-                  <div className="truncate text-[11px] text-dls-secondary">
-                    {denAuth.isSignedIn ? "Subscribe to use hosted frontier models in this workspace." : "Sign in to unlock hosted frontier models for your team."}
-                  </div>
-                </div>
-                <span className="flex shrink-0 items-center gap-1 rounded-full border border-blue-6 bg-blue-3 px-2 py-0.5 text-[11px] font-medium text-blue-11">
-                  {denAuth.isSignedIn ? "Subscribe" : "Sign in"}
-                  <ArrowRight className="size-3" />
-                </span>
-              </button>
-              <button
-                type="button"
-                className="flex size-9 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
-                onClick={hideJuggleWorkModels}
-                aria-label="Hide JuggleWork Models"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-          ) : null}
 
           {/* Content */}
           <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">

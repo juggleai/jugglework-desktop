@@ -128,9 +128,6 @@ import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-acc
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import { JuggleWorkModelsStartupDialog } from "@/react-app/domains/cloud/jugglework-models-startup-dialog";
-import { JUGGLEWORK_MODEL_PREVIEWS } from "@/react-app/domains/cloud/jugglework-models-promo";
-import { useJuggleWorkModelsStartupPromo } from "@/react-app/domains/cloud/use-jugglework-models-startup-promo";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -729,30 +726,6 @@ export function SessionRoute() {
   const handleModelPickerOpen = useCallback(() => {
     void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
   }, [sessionProviderAuthStore]);
-  const juggleWorkModelsEntitled = useMemo(() => {
-    if (!denAuth.isSignedIn) return false;
-    const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
-      (provider) =>
-        [provider.providerId, provider.source].some(
-          (value) => value?.trim().toLowerCase() === "jugglework",
-        ),
-    );
-    const fromImport = Object.values(sessionProviderAuthSnapshot.importedCloudProviders ?? {}).some(
-      (provider) =>
-        [provider.providerId, provider.source, provider.sourceProviderId].some(
-          (value) => value?.trim().toLowerCase() === "jugglework",
-        ),
-    );
-    return fromOrg || fromImport;
-  }, [
-    denAuth.isSignedIn,
-    sessionProviderAuthSnapshot.cloudOrgProviders,
-    sessionProviderAuthSnapshot.importedCloudProviders,
-  ]);
-  const refreshJuggleWorkModels = useCallback(async () => {
-    await sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
-    await sessionProviderAuthStore.refreshProviders();
-  }, [sessionProviderAuthStore]);
   const modelPicker = useModelPicker({
     client: opencodeClient,
     baseUrl: opencodeBaseUrl,
@@ -817,13 +790,6 @@ export function SessionRoute() {
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
   );
-
-  const juggleWorkModelsPromo = useJuggleWorkModelsStartupPromo({
-    clientReady: Boolean(opencodeClient),
-    workspaceId: selectedWorkspaceId,
-    providerConnectedIds,
-    juggleWorkModelsEntitled,
-  });
 
   const {
     activePermission,
@@ -985,7 +951,6 @@ export function SessionRoute() {
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
-      juggleWorkModelsEntitled,
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
@@ -1180,7 +1145,6 @@ export function SessionRoute() {
     modelVariantLabel,
     modelVariantValue,
     navigate,
-    juggleWorkModelsEntitled,
     opencodeBaseUrl,
     opencodeClient,
     providerConnectedIds,
@@ -2068,12 +2032,16 @@ export function SessionRoute() {
         preferredProviderId: sessionProviderAuthSnapshot.providerAuthPreferredProviderId,
         workerType: sessionProviderAuthSnapshot.providerAuthWorkerType,
         providers: sessionProviderAuthSnapshot.providerAuthProviders.filter(
-          (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction, allowedModels }),
+          (provider) =>
+            provider.id.trim().toLowerCase() !== "jugglework" &&
+            !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction, allowedModels }),
         ),
         connectedProviderIds: providerConnectedIds,
         authMethods: Object.fromEntries(
           Object.entries(sessionProviderAuthSnapshot.providerAuthMethods).filter(
-            ([providerId]) => !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction, allowedModels }),
+            ([providerId]) =>
+              providerId.trim().toLowerCase() !== "jugglework" &&
+              !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction, allowedModels }),
           ),
         ),
         onSelect: sessionProviderAuthStore.startProviderAuth,
@@ -2312,13 +2280,6 @@ export function SessionRoute() {
       notFoundMessage={routeNotFoundMessage}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />
-    <JuggleWorkModelsStartupDialog
-      open={juggleWorkModelsPromo.open}
-      isSignedIn={denAuth.isSignedIn}
-      models={JUGGLEWORK_MODEL_PREVIEWS}
-      onSubscribe={juggleWorkModelsPromo.subscribe}
-      onContinueWithout={juggleWorkModelsPromo.continueWithout}
-    />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
       onClose={() => {
@@ -2458,8 +2419,6 @@ export function SessionRoute() {
         handleOpenSettings("/settings/general");
       }}
       onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); }}
-      juggleWorkModelsEntitled={juggleWorkModelsEntitled}
-      onRefreshJuggleWorkModels={refreshJuggleWorkModels}
     />
     </WorkspaceProvider>
   );

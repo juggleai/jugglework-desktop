@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isUnpublishedUpdaterChannelError,
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
   staleUpdaterStatePaths,
@@ -84,5 +85,38 @@ describe("release channel changes", () => {
 
     preventPendingUpdaterInstall(updater);
     assert.equal(updater.autoInstallOnAppQuit, false);
+  });
+});
+
+describe("isUnpublishedUpdaterChannelError", () => {
+  it("recognizes a missing electron-updater channel manifest", () => {
+    assert.equal(
+      isUnpublishedUpdaterChannelError(
+        new Error(
+          'Cannot find channel "latest-mac.yml" update info: HttpError: 404 "method: GET"',
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      isUnpublishedUpdaterChannelError({
+        statusCode: 404,
+        message: "GET https://example.test/releases/latest/download/latest.yml",
+      }),
+      true,
+    );
+  });
+
+  it("does not hide unrelated updater failures", () => {
+    assert.equal(
+      isUnpublishedUpdaterChannelError(
+        new Error('Cannot find channel "latest-mac.yml" update info: HttpError: 401'),
+      ),
+      false,
+    );
+    assert.equal(
+      isUnpublishedUpdaterChannelError(new Error("HttpError: 404 release-notes.md")),
+      false,
+    );
   });
 });

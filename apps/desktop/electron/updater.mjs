@@ -34,6 +34,14 @@ const ELECTRON_UPDATER_FEEDS = Object.freeze({
   alpha: "https://github.com/juggleai/jugglework-desktop/releases/download/alpha-macos-latest",
 });
 
+export function isUnpublishedUpdaterChannelError(error) {
+  const message = String(error?.message ?? error ?? "");
+  const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.statusCode);
+  const isNotFound = statusCode === 404 || /\b(?:HttpError:\s*)?404\b/i.test(message);
+  const referencesChannelManifest = /\blatest(?:-[a-z0-9]+)?\.ya?ml\b/i.test(message);
+  return isNotFound && referencesChannelManifest;
+}
+
 function normalizeElectronUpdaterChannel(value) {
   if (value === "alpha" && process.platform === "darwin") return "alpha";
   return "stable";
@@ -285,7 +293,11 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         await enableSquirrelDirectContentsWrite();
         autoUpdaterInstance.on("error", (err) => {
           updateDownloaded = false;
-          console.warn("[updater] error", err);
+          if (isUnpublishedUpdaterChannelError(err)) {
+            console.info("[updater] no release manifest is published for the selected channel");
+          } else {
+            console.warn("[updater] error", err);
+          }
         });
         autoUpdaterInstance.on("update-downloaded", () => {
           updateDownloaded = true;
@@ -370,6 +382,13 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       checkedUpdateVersion = null;
       checkedUpdateTargetVersion = null;
       updateDownloaded = false;
+      if (isUnpublishedUpdaterChannelError(error)) {
+        return {
+          available: false,
+          latestVersion: resolveAppVersion(app),
+          ...updaterChannelState(app, await readElectronUpdaterChannel(app)),
+        };
+      }
       return {
         available: false,
         reason: String(error?.message ?? error),
