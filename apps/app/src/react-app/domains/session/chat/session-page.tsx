@@ -1626,7 +1626,8 @@ export function SessionPage(props: SessionPageProps) {
           </aside>
           </div>
         </SidebarInset>
-        {shellConfig.sidebar ? <SidebarTrigger className="hidden mac:absolute mac:left-[64px] top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
+        {/* 收起侧栏按钮：macOS 红绿灯右边缘约在 64px，留出一段间距再放图标，避免贴着绿灯。 */}
+        {shellConfig.sidebar ? <SidebarTrigger className="hidden mac:absolute mac:left-[80px] top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
       </SidebarProvider>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}
