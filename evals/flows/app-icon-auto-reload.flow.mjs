@@ -105,6 +105,10 @@ async function seedDesktopSession(ctx) {
       latestAppVersion: '0.17.30',
       publishedDesktopVersions: ['0.17.30'],
     });
+    // Only branding the running process cannot finish applying earns a restart
+    // prompt, and a branded app name is one of those on Windows and Linux. Pin
+    // the host so this flow exercises that path from any dev machine.
+    window.__juggleworkOnboardingPlatformEvalOverride = 'windows';
     window.__juggleworkOnboardingUpdaterEvalBridge = {
       getChannel: async () => ({ channel: 'stable', feedUrl: 'eval', currentVersion: '0.17.29' }),
       check: async () => ({
@@ -138,14 +142,13 @@ export default {
     {
       name: "Organization resources",
       run: async (ctx) => {
-        await ctx.prove("A signed-in member chooses the branded organization and reviews its resources", {
+        await ctx.prove("A signed-in member lands straight on the branded organization's resources", {
           voiceover: vo[0],
           action: async () => {
             await startBrandingServer(ctx);
             await seedDesktopSession(ctx);
-            await ctx.waitForText("Choose your organization", { timeoutMs: 45_000 });
-            await ctx.clickText(ctx.org.name, { selector: "label, [role=radio]", timeoutMs: 10_000 });
-            await ctx.clickText("Continue with organization", { timeoutMs: 10_000 });
+            // This member belongs to exactly one organization, so onboarding
+            // adopts it instead of showing a one-item picker.
             await ctx.waitForText("Continue to workspace", { timeoutMs: 45_000 });
             await ctx.waitFor("document.body.innerText.trim() !== 'Preparing workspace'", {
               timeoutMs: 45_000,
@@ -157,6 +160,7 @@ export default {
             })()`, { timeoutMs: 45_000, label: "boot overlay hidden" });
           },
           assert: async () => {
+            await ctx.expectNoText("Choose your organization");
             await ctx.expectText("You have access to the following resources");
             await ctx.expectText("Continue to workspace");
           },
@@ -197,7 +201,7 @@ export default {
           },
           screenshot: {
             name: "brand-identity-ready",
-            requireText: ["Preparing workspace identity", "checking for an application update"],
+            requireText: ["Preparing workspace identity", "Preparing workspace..."],
           },
         });
       },
@@ -208,7 +212,7 @@ export default {
         await ctx.prove("An eligible application update is downloaded before restart is offered", {
           voiceover: vo[2],
           action: async () => {
-            await ctx.waitForText("Workspace identity is ready", { timeoutMs: 60_000 });
+            await ctx.waitForText("Workspace name is ready", { timeoutMs: 60_000 });
           },
           assert: async () => {
             ctx.assert(await ctx.eval("window.__juggleworkUpdateDownloadedForOnboarding === true"), "The update was not downloaded.");
@@ -232,11 +236,11 @@ export default {
           assert: async () => {
             await ctx.expectText("Restart JuggleWork");
             await ctx.expectText("Continue without restarting");
-            await ctx.expectText("refreshes the workspace name and icon");
+            await ctx.expectText("the application name your operating system reads");
           },
           screenshot: {
             name: "one-restart-choice",
-            requireText: ["Restart JuggleWork", "Continue without restarting", "refreshes the workspace name and icon"],
+            requireText: ["Restart JuggleWork", "Continue without restarting", "the application name your operating system reads"],
           },
         });
       },
@@ -258,7 +262,7 @@ export default {
           },
           assert: async () => {
             await ctx.expectNoText("Choose your organization");
-            await ctx.expectNoText("Workspace identity is ready");
+            await ctx.expectNoText("Workspace name is ready");
             ctx.assert(
               await ctx.eval("localStorage.getItem('jugglework.den.brandingRestartResume') === null"),
               "The one-shot restart resume marker was not consumed.",
@@ -267,7 +271,7 @@ export default {
           },
           screenshot: {
             name: "workspace-after-one-restart",
-            rejectText: ["Choose your organization", "Workspace identity is ready"],
+            rejectText: ["Choose your organization", "Workspace name is ready"],
             hashIncludes: "/session",
           },
         });

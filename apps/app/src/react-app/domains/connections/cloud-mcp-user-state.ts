@@ -334,6 +334,27 @@ export function clearCloudMcpScopedMetadata(scope: CloudMcpScope) {
 }
 
 /**
+ * Drop every local cloud-MCP record, across all scopes.
+ *
+ * For a different account signing in on this machine. Scopes are keyed by
+ * deployment, org and workspace but never by user, so two accounts in the same
+ * org share a scope: the previous user's freshness marker would let their
+ * minted token stand, and their "disabled here" intent would be applied to
+ * someone else. Neither record means anything to the new account.
+ */
+export function clearAllCloudMcpLocalState() {
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    storage.removeItem(CLOUD_MCP_USER_STATE_KEY);
+    storage.removeItem(CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY);
+    storage.removeItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
+  } catch {
+    // Storage unavailable — nothing recorded, nothing to clear.
+  }
+}
+
+/**
  * Pure marker-freshness check for the cloud MCP sync marker. Extracted so
  * the margin arithmetic is unit-testable.
  */

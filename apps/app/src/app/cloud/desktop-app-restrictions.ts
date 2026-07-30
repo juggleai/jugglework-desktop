@@ -10,6 +10,30 @@ export type DesktopAppRestrictionChecker = (input: {
 
 export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
 
+/** The built-in cloud provider. Arrives with the account, never hand-connected. */
+const JUGGLEWORK_CLOUD_PROVIDER_ID = "jugglework";
+
+/**
+ * Providers the desktop never offers as a manual connection.
+ *
+ * - `jugglework`: pushed down by the cloud with the account, so there is
+ *   nothing for the user to connect.
+ * - `opencode` (OpenCode Zen): the desktop does not offer it. Distinct from the
+ *   `allowZenModel` policy, which an org uses to block Zen where it would
+ *   otherwise be available — this is the product-level decision not to present
+ *   it at all, so it holds regardless of org policy.
+ *
+ * Applies to the connect UI only. It does not disable an already-configured
+ * provider; `runDesktopAppRestrictionSyncEffects` owns that.
+ */
+export function isProviderHiddenFromConnectUi(providerId: string): boolean {
+  const resolved = providerId.trim().toLowerCase();
+  return (
+    resolved === JUGGLEWORK_CLOUD_PROVIDER_ID ||
+    resolved === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID
+  );
+}
+
 /**
  * Where the engine says a provider came from, as reported by the provider list
  * endpoint. `config` means the user declared it themselves in an OpenCode

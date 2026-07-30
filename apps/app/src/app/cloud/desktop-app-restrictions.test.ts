@@ -8,6 +8,7 @@ declare const expect: (value: unknown) => {
 import {
   isDesktopModelBlocked,
   isDesktopProviderBlocked,
+  isProviderHiddenFromConnectUi,
   readDesktopAllowedModels,
   type DesktopAppRestrictionChecker,
 } from "./desktop-app-restrictions";
@@ -170,5 +171,27 @@ describe("isDesktopModelBlocked", () => {
         providerSource: "config",
       }),
     ).toBe(true);
+  });
+});
+
+describe("isProviderHiddenFromConnectUi", () => {
+  test("hides OpenCode Zen, which the desktop does not offer", () => {
+    expect(isProviderHiddenFromConnectUi("opencode")).toBe(true);
+    expect(isProviderHiddenFromConnectUi("OpenCode")).toBe(true);
+    expect(isProviderHiddenFromConnectUi("  opencode  ")).toBe(true);
+  });
+
+  test("hides the built-in cloud provider, which arrives with the account", () => {
+    expect(isProviderHiddenFromConnectUi("jugglework")).toBe(true);
+    expect(isProviderHiddenFromConnectUi("JuggleWork")).toBe(true);
+  });
+
+  test("leaves every provider a user can actually connect", () => {
+    for (const providerId of ["openai", "anthropic", "google", "openrouter", "jugglerouter"]) {
+      expect(isProviderHiddenFromConnectUi(providerId)).toBe(false);
+    }
+    // Org-published providers are connected through the cloud path, not hidden.
+    expect(isProviderHiddenFromConnectUi("lpr_8384cdb8")).toBe(false);
+    expect(isProviderHiddenFromConnectUi("")).toBe(false);
   });
 });

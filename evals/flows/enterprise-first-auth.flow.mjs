@@ -82,31 +82,53 @@ export default {
       },
     },
     {
-      name: "Frame: choose org",
+      name: "Settle the org step",
       run: async (ctx) => {
-        await ctx.prove("New member chooses the organization during first desktop auth", {
-          action: async () => {
-            await waitForChooseOrg(ctx);
-          },
-          assert: async () => {
-            await ctx.expectText("Choose your organization");
-            await ctx.expectText(enterpriseOrgName(ctx));
-            await ctx.expectText("Continue with organization");
-            const signedIn = await desktopAuthState(ctx);
-            assertEvidence(ctx, signedIn.hasToken, "The desktop handoff persisted a Den auth token before org selection", signedIn);
-          },
-          screenshot: {
-            name: "enterprise-choose-org",
-            claim: "Before anything is clicked, the app asks the member which organization to connect.",
-            requireText: ["Choose your organization", enterpriseOrgName(ctx), "Continue with organization"],
-            rejectText: ["Something went wrong"],
-          },
-        });
+        // Resolved before the frame below so its claim and assertions can
+        // describe the journey the member actually got.
+        state.orgStep = await waitForOrgStep(ctx);
       },
     },
     {
-      name: "Click Continue with organization",
+      name: "Frame: org step",
       run: async (ctx) => {
+        const picker = state.orgStep === "picker";
+        await ctx.prove(
+          picker
+            ? "New member chooses the organization during first desktop auth"
+            : "A sole organization membership is connected without asking",
+          {
+            action: async () => {
+              // Already settled by the preceding step.
+            },
+            assert: async () => {
+              await ctx.expectText(enterpriseOrgName(ctx));
+              if (state.orgStep === "picker") {
+                await ctx.expectText("Choose your organization");
+                await ctx.expectText("Continue with organization");
+              } else {
+                await ctx.expectNoText("Choose your organization");
+              }
+              const signedIn = await desktopAuthState(ctx);
+              assertEvidence(ctx, signedIn.hasToken, "The desktop handoff persisted a Den auth token before org selection", signedIn);
+            },
+            screenshot: {
+              name: "enterprise-choose-org",
+              claim: picker
+                ? "Before anything is clicked, the app asks the member which organization to connect."
+                : "With one organization to join there is nothing to choose, so the app connects it and moves on.",
+              requireText: [enterpriseOrgName(ctx)],
+              rejectText: ["Something went wrong"],
+            },
+          },
+        );
+      },
+    },
+    {
+      name: "Leave the org step",
+      run: async (ctx) => {
+        // Nothing to click when onboarding adopted the sole organization.
+        if (state.orgStep !== "picker") return;
         await clickTextStartingWith(ctx, "Continue with organization", "button, [role=button]", 30_000);
       },
     },
@@ -227,14 +249,28 @@ async function waitForDesktopToken(ctx, juggleworkUrl) {
   }
 }
 
-async function waitForChooseOrg(ctx) {
+/**
+ * Onboarding only asks which organization to connect when the member belongs
+ * to more than one; a sole membership is adopted for them and the step is
+ * skipped. Resolve to whichever the member actually got so the frames below
+ * assert the journey they saw.
+ *
+ * @returns {Promise<"picker" | "adopted">}
+ */
+async function waitForOrgStep(ctx) {
   const orgName = enterpriseOrgName(ctx);
-  await ctx.waitFor(`(() => {
+  return await ctx.waitFor(`(() => {
     const orgName = ${JSON.stringify(orgName)};
     const text = document.body.innerText || '';
     const buttons = [...document.querySelectorAll('button, [role=button]')].map((entry) => (entry.textContent ?? '').replace(/\\s+/g, ' ').trim());
-    return text.includes('Choose your organization') && text.includes(orgName) && buttons.some((button) => button.startsWith('Continue with organization'));
-  })()`, { timeoutMs: 90_000, label: "enterprise organization chooser" });
+    if (text.includes('Choose your organization') && text.includes(orgName) && buttons.some((button) => button.startsWith('Continue with organization'))) {
+      return 'picker';
+    }
+    if (text.includes(orgName) && text.includes('You have access to the following resources.')) {
+      return 'adopted';
+    }
+    return null;
+  })()`, { timeoutMs: 90_000, label: "enterprise organization step" });
 }
 
 async function waitForOrgResources(ctx) {

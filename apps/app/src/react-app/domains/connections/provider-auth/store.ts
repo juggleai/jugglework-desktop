@@ -10,6 +10,7 @@ import { t } from "../../../../i18n";
 import {
   createDenClient,
   readDenSettings,
+  readDenUserId,
   type DenOrgLlmProvider,
   type DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
@@ -53,6 +54,12 @@ import {
   denSessionUpdatedEvent,
   type DenSessionUpdatedDetail,
 } from "../../../../app/lib/den-session-events";
+import { cleanupJuggleWorkCloudMcpAfterSignOut } from "../cloud-mcp-reconciler";
+import {
+  readWorkspaceCloudStateOwner,
+  workspaceCloudStateOwnerAction,
+  writeWorkspaceCloudStateOwner,
+} from "./workspace-cloud-owner";
 import {
   readWorkspaceCloudImports,
   withWorkspaceCloudImports,
@@ -67,6 +74,7 @@ import {
   getProviderModelIds,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
+  missingCloudProviderReloadKey,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
 import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
@@ -190,6 +198,14 @@ type MutableState = {
 };
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
+
+/**
+ * `<workspaceId>::<missing provider ids>` that already asked the reload
+ * coordinator to apply cloud providers the engine does not know about. Module
+ * scope on purpose: the session route and the settings route each build their
+ * own store, and re-marking the same recovery from both would be noise.
+ */
+let lastMissingCloudProviderReloadKey = "";
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
@@ -1601,6 +1617,138 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
   };
 
+  /**
+   * Strip everything an account left in this workspace: the `lpr_*` provider
+   * blocks and their credentials, orphan blocks an earlier cleanup missed, and
+   * the JuggleWork Cloud MCP with its account-scoped bearer token.
+   *
+   * Sign-out and account-switch both land here. The MCP removal used to live
+   * on the settings route's `onBeforeSignedOut`, which meant sign-out paths
+   * that never opened Settings (forced sign-in, control-plane change) left the
+   * previous account's token registered in the workspace. This store is
+   * started by the session route as well, so putting it here covers every
+   * path.
+   */
+  const purgeWorkspaceCloudState = async () => {
+    // Capture the import records BEFORE clearing state so the removals below
+    // can still find them.
+    const importedIds = Object.keys(state.importedCloudProviders);
+
+    for (const cloudId of importedIds) {
+      try {
+        await removeCloudProviderInternal(cloudId, { silent: true });
+      } catch {
+        // Ignore individual removal failures during cleanup
+      }
+    }
+
+    // Sweep any `lpr_*` provider keys that remain but weren't tracked in
+    // importedCloudProviders (a previous failed cleanup, or an external edit).
+    try {
+      const orphans = await sweepOrphanCloudProvidersFromConfig();
+      for (const providerId of orphans) {
+        try {
+          await removeProviderAuthCredentials(providerId);
+        } catch {
+          // Ignore auth removal failures for orphans
+        }
+      }
+      if (orphans.length > 0) {
+        options.markOpencodeConfigReloadRequired();
+      }
+    } catch {
+      // Ignore sweep failures during cleanup
+    }
+
+    await removeCloudMcpFromWorkspace();
+
+    // Clear state AFTER cleanup so the records were available during removal.
+    mutateState((current) => ({
+      ...current,
+      cloudOrgProviders: [],
+      providerAuthMethods: {},
+      importedCloudProviders: {},
+    }));
+    refreshSnapshot();
+    emitChange();
+  };
+
+  /**
+   * Remove the auto-managed cloud MCP from this workspace, both from the
+   * JuggleWork server's config and from the running engine. Its Authorization
+   * header carries a token minted for one account, and the MCP scope is keyed
+   * by deployment/org/workspace but never by user — so two accounts in the
+   * same org would otherwise silently share one token.
+   */
+  const removeCloudMcpFromWorkspace = async () => {
+    const settings = readDenSettings();
+    const target = await resolveJuggleWorkConfigTarget("write").catch(() => null);
+    const juggleworkClient = target?.canUseJuggleWorkServer ? target.juggleworkClient : null;
+    const workspaceId = target?.juggleworkWorkspaceId?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    const serverBaseUrl = juggleworkClient?.baseUrl?.trim() ?? "";
+
+    // The scope only drives local metadata cleanup; the removals below still
+    // run when it cannot be built (for example after the org id is cleared).
+    await cleanupJuggleWorkCloudMcpAfterSignOut({
+      context: {
+        denBaseUrl: settings.baseUrl,
+        serverBaseUrl,
+        workspaceId,
+        orgId,
+      },
+      juggleworkClient: juggleworkClient && workspaceId ? juggleworkClient : null,
+      opencodeClient: options.client(),
+      directory: options.selectedWorkspaceRoot(),
+    }).catch(() => undefined);
+  };
+
+  /**
+   * The import baseline records what Den published, not what the engine loaded.
+   * Cloud providers live in the server-side runtime config, which the engine
+   * only reads at startup or on reload, and the reload that follows an import
+   * is best effort — it runs right after sign-in or a relaunch, exactly when
+   * the engine is least likely to be reachable. Once the baseline is written
+   * every later sync short-circuits on `isCloudProviderOutOfSync`, so a single
+   * dropped reload would leave the workspace without its org providers until
+   * the user restarts again. Verify against the engine and let the reload
+   * coordinator apply them when they are missing.
+   */
+  const markReloadWhenEngineMissesCloudProviders = async (
+    workspaceId: string,
+    knownProviderList: ProviderListResponse | null,
+  ) => {
+    if (Object.keys(state.importedCloudProviders).length === 0) return;
+
+    // Reuse the list a reload in this pass already fetched. Otherwise read the
+    // cached one the settings and session UI render, so "missing here" is
+    // exactly what the user is looking at. Never read `options.providers()`:
+    // that React state lags a reload by a render and would report a provider
+    // missing right after importing it.
+    const providerList = knownProviderList ?? (await refreshProviders().catch(() => null));
+    // An unreadable list says nothing about the engine's config — the next
+    // sync trigger retries rather than reloading on a guess.
+    if (!providerList) return;
+
+    const reloadKey = missingCloudProviderReloadKey({
+      workspaceId,
+      imported: state.importedCloudProviders,
+      engineProviderIds: (providerList.all ?? []).map((provider) => provider.id),
+    });
+    if (!reloadKey) {
+      // Applied. Re-arm so a later failure can ask again.
+      lastMissingCloudProviderReloadKey = "";
+      return;
+    }
+
+    // One request per workspace + missing set. A reload that does not fix it
+    // leaves the key unchanged, so repeated triggers (focus, resume, opening
+    // settings) cannot turn this into a reload loop.
+    if (reloadKey === lastMissingCloudProviderReloadKey) return;
+    lastMissingCloudProviderReloadKey = reloadKey;
+    options.markOpencodeConfigReloadRequired();
+  };
+
   async function performCloudProviderSync(reason: CloudProviderSyncReason) {
     if (!hasCloudProviderSyncPrerequisites()) {
       return;
@@ -1621,6 +1769,25 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     } catch (error) {
       logCloudProviderSyncError(reason, error);
       return;
+    }
+
+    // Settle workspace ownership before reconciling. A sign-out or account
+    // switch can only purge the workspace that was active at the time; every
+    // other workspace still holds the previous account's providers and cloud
+    // MCP token until it is opened, which is here. Ordered after the baseline
+    // read so the purge sees this workspace's records, and inside the same
+    // pass as the import below so a switch cannot race a fresh import.
+    const currentUserId = readDenUserId();
+    const ownerAction = workspaceCloudStateOwnerAction({
+      storedOwnerId: readWorkspaceCloudStateOwner(target.juggleworkWorkspaceId),
+      currentUserId,
+    });
+    if (ownerAction === "purge") {
+      await purgeWorkspaceCloudState();
+      importedProviders = {};
+    }
+    if (ownerAction !== "keep") {
+      writeWorkspaceCloudStateOwner(target.juggleworkWorkspaceId, currentUserId);
     }
     const liveProviders = await refreshCloudOrgProviders({ force: true });
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
@@ -1687,9 +1854,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }
     }
 
+    let reloadedProviderList: ProviderListResponse | null = null;
     if (configChanged) {
-      await refreshProviders({ dispose: true }).catch(() => null);
+      reloadedProviderList = await refreshProviders({ dispose: true }).catch(() => null);
     }
+
+    // Runs whether or not this pass changed anything: the import that needs
+    // applying may be one an earlier pass wrote while the engine was down.
+    await markReloadWhenEngineMissesCloudProviders(
+      target.juggleworkWorkspaceId,
+      reloadedProviderList,
+    );
 
     // Notify the UI about newly imported providers so the global toast
     // can be shown regardless of which route is active.
@@ -1885,49 +2060,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           }));
           void runCloudProviderSync("sign_in");
         } else {
-          // Sign-out or error: remove all cloud-imported providers from the workspace
-          // Capture the full import records BEFORE clearing state
-          const importedProviders = { ...state.importedCloudProviders };
-          const importedIds = Object.keys(importedProviders);
-
-          // Best-effort cleanup: remove each cloud provider from opencode.jsonc
-          // BEFORE clearing state so removeCloudProviderInternal can find the records
-          void (async () => {
-            for (const cloudId of importedIds) {
-              try {
-                await removeCloudProviderInternal(cloudId, { silent: true });
-              } catch {
-                // Ignore individual removal failures during sign-out cleanup
-              }
-            }
-            // Final sweep: remove any orphan `lpr_*` provider keys that remain
-            // in opencode.jsonc but weren't tracked in importedCloudProviders
-            // (e.g. from a previous failed cleanup or external edit).
-            try {
-              const orphans = await sweepOrphanCloudProvidersFromConfig();
-              for (const providerId of orphans) {
-                try {
-                  await removeProviderAuthCredentials(providerId);
-                } catch {
-                  // Ignore auth removal failures for orphans
-                }
-              }
-              if (orphans.length > 0) {
-                options.markOpencodeConfigReloadRequired();
-              }
-            } catch {
-              // Ignore sweep failures during sign-out cleanup
-            }
-            // Clear state AFTER cleanup so the records are available during removal
-            mutateState((current) => ({
-              ...current,
-              cloudOrgProviders: [],
-              providerAuthMethods: {},
-              importedCloudProviders: {},
-            }));
-            refreshSnapshot();
-            emitChange();
-          })();
+          // Sign-out or error: this workspace keeps nothing from the session.
+          void purgeWorkspaceCloudState();
         }
       };
       window.addEventListener(

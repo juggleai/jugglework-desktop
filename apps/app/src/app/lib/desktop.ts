@@ -471,6 +471,16 @@ export async function subscribeDesktopDeepLinks(
   };
 }
 
+/**
+ * Host operating system reported by the Electron preload, or null on web.
+ * Callers use this to tell apart branding that the running process can apply
+ * from branding the startup path owns.
+ */
+export function desktopHostPlatform(): "darwin" | "linux" | "windows" | null {
+  if (typeof window === "undefined") return null;
+  return window.__JUGGLEWORK_ELECTRON__?.meta?.platform ?? null;
+}
+
 export function readInitialDesktopBootstrapConfig(): DesktopBootstrapConfig | null | undefined {
   if (typeof window === "undefined") return undefined;
   return window.__JUGGLEWORK_ELECTRON__?.meta?.desktopBootstrap;

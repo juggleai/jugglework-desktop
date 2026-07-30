@@ -98,6 +98,7 @@ import { SessionPage, type OpenSessionTab } from "@/react-app/domains/session/ch
 import {
   isDesktopModelBlocked,
   isDesktopProviderBlocked,
+  isProviderHiddenFromConnectUi,
 } from "@/app/cloud/desktop-app-restrictions";
 import {
   useCheckDesktopRestriction,
@@ -2134,14 +2135,14 @@ export function SessionRoute() {
         workerType: sessionProviderAuthSnapshot.providerAuthWorkerType,
         providers: sessionProviderAuthSnapshot.providerAuthProviders.filter(
           (provider) =>
-            provider.id.trim().toLowerCase() !== "jugglework" &&
+            !isProviderHiddenFromConnectUi(provider.id) &&
             !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction, allowedModels }),
         ),
         connectedProviderIds: providerConnectedIds,
         authMethods: Object.fromEntries(
           Object.entries(sessionProviderAuthSnapshot.providerAuthMethods).filter(
             ([providerId]) =>
-              providerId.trim().toLowerCase() !== "jugglework" &&
+              !isProviderHiddenFromConnectUi(providerId) &&
               !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction, allowedModels }),
           ),
         ),
@@ -2513,8 +2514,10 @@ export function SessionRoute() {
         } catch {}
       }}
       onOpenSettings={() => {
+        // "Connect a provider" — land on the providers page, not the settings
+        // landing tab. Same target as onOpenSettingsSection("providers").
         modelPicker.setOpen(false);
-        handleOpenSettings("/settings/general");
+        handleOpenSettings("/settings/ai");
       }}
       onClose={() => { modelPicker.setOpen(false); modelPicker.setRecentProviderIds(new Set()); setModelPickerSessionId(null); }}
     />

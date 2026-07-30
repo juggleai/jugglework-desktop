@@ -73,13 +73,18 @@ export const getCloudManagedProviderId = (
 
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
- * `lpr_*` keys (org-managed providers).
- * These keys are never hand-authored, so re-importing over an existing block
- * with one of these ids is a safe reconcile (recovers a lost import baseline)
- * rather than a clobber of a user's manual provider (#2346).
+ * `lpr_*` keys (org-managed providers) and `jugglework` (the built-in cloud
+ * provider). These keys are never hand-authored, so re-importing over an
+ * existing block with one of these ids is a safe reconcile (recovers a lost
+ * import baseline) rather than a clobber of a user's manual provider (#2346).
+ *
+ * Kept in step with the two copies that cannot import this module or predate
+ * it: `isCloudManagedProviderId` in `app/cloud/desktop-app-restrictions.ts`
+ * (sits below `react-app/`) and the inline test in
+ * `domains/session/modals/use-model-picker.ts`.
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^lpr_/i.test(providerId);
+  /^lpr_/i.test(providerId) || providerId.trim().toLowerCase() === "jugglework";
 
 
 export const getProviderModelIds = (
@@ -116,6 +121,36 @@ export const isCloudProviderOutOfSync = (
     // which otherwise made providers permanently out-of-sync.
     getProviderModelIds(provider),
   );
+
+/**
+ * `isCloudProviderOutOfSync` compares the import baseline against Den, never
+ * against the engine — so a provider stays "in sync" even when the engine never
+ * loaded it, because the engine reads cloud providers from the runtime config
+ * at startup or reload only. This answers the other question: which imported
+ * providers is the running engine missing?
+ *
+ * Returns a stable `<workspaceId>::<ids>` key so a caller can request one
+ * reload per distinct gap instead of re-requesting on every sync trigger, or
+ * null when the engine already knows all of them.
+ */
+export function missingCloudProviderReloadKey(input: {
+  workspaceId: string;
+  imported: Record<string, CloudImportedProvider>;
+  engineProviderIds: readonly string[];
+}): string | null {
+  const expected = new Set(
+    Object.values(input.imported)
+      .map((entry) => entry.providerId.trim())
+      .filter(Boolean),
+  );
+  if (expected.size === 0) return null;
+
+  const known = new Set(
+    input.engineProviderIds.map((id) => id.trim()).filter(Boolean),
+  );
+  const missing = [...expected].filter((id) => !known.has(id)).sort();
+  return missing.length > 0 ? `${input.workspaceId}::${missing.join(",")}` : null;
+}
 
 /**
  * Every model field the engine reads off a workspace provider block. Anything

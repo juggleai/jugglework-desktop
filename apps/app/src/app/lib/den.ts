@@ -42,6 +42,13 @@ const STORAGE_AUTH_TOKEN = "jugglework.den.authToken";
 const STORAGE_ACTIVE_ORG_ID = "jugglework.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "jugglework.den.activeOrgSlug";
 const STORAGE_ACTIVE_ORG_NAME = "jugglework.den.activeOrgName";
+/**
+ * Identity of the account whose local state this machine currently holds.
+ * Nothing else persisted here identifies a *user* — base URL, token and org
+ * do not — so without this the app cannot tell a re-login from a different
+ * person signing in, and no per-account cleanup can be triggered at all.
+ */
+const STORAGE_USER_ID = "jugglework.den.userId";
 export const CLOUD_MCP_SYNC_MARKER_STORAGE_KEY = "jugglework.den.mcp.sync";
 const ORG_PROXY_HEADER = "x-jugglework-legacy-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
@@ -859,6 +866,21 @@ export function readDenSettings(): DenSettings {
   };
 }
 
+export function readDenUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  return (window.localStorage.getItem(STORAGE_USER_ID) ?? "").trim() || null;
+}
+
+export function writeDenUserId(userId: string | null) {
+  if (typeof window === "undefined") return;
+  const resolved = userId?.trim() ?? "";
+  if (resolved) {
+    window.localStorage.setItem(STORAGE_USER_ID, resolved);
+  } else {
+    window.localStorage.removeItem(STORAGE_USER_ID);
+  }
+}
+
 function mergePassiveDenField(
   current: string | null | undefined,
   next: string | null | undefined,
@@ -981,6 +1003,10 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
   window.localStorage.removeItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
+  // STORAGE_USER_ID deliberately survives sign-out. It records whose local
+  // state this machine still holds, and that state (workspaces, per-workspace
+  // cloud config) outlives the session. Clearing it here would make the very
+  // case it exists for — sign out A, sign in B — look like a first sign-in.
 
   dispatchDenSettingsChanged({
     settings: readDenSettings(),

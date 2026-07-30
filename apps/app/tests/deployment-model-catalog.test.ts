@@ -4,21 +4,25 @@ import { getDenModelCatalogUrl } from "../src/app/lib/den";
 import { parseDeploymentModelCatalog } from "../src/react-app/domains/connections/provider-auth/deployment-model-catalog";
 
 describe("getDenModelCatalogUrl", () => {
+  // A self-hosted deployment. The hosted cloud is the one origin that serves
+  // no private catalog, so it cannot stand in for "the deployment's own".
+  const SELF_HOSTED = "https://den.acme.test";
+
   test("points at the deployment's own catalog", () => {
     // Same URL the engine gets as OPENCODE_MODELS_URL (denModelsCatalogUrl in
     // apps/desktop/electron/runtime.mjs), plus the file the engine fetches.
-    expect(getDenModelCatalogUrl("https://work.juggle.im")).toBe(
-      "https://work.juggle.im/jwork/models/api.json",
+    expect(getDenModelCatalogUrl(SELF_HOSTED)).toBe(
+      "https://den.acme.test/jwork/models/api.json",
     );
   });
 
   test("accepts a stored base URL that already carries the control plane path", () => {
     for (const baseUrl of [
-      "https://work.juggle.im/jwork",
-      "https://work.juggle.im/jwork/api",
-      "https://work.juggle.im/",
+      `${SELF_HOSTED}/jwork`,
+      `${SELF_HOSTED}/jwork/api`,
+      `${SELF_HOSTED}/`,
     ]) {
-      expect(getDenModelCatalogUrl(baseUrl)).toBe("https://work.juggle.im/jwork/models/api.json");
+      expect(getDenModelCatalogUrl(baseUrl)).toBe("https://den.acme.test/jwork/models/api.json");
     }
   });
 

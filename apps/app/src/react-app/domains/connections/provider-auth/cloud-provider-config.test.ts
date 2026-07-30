@@ -17,6 +17,7 @@ import {
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudProviderOutOfSync,
+  missingCloudProviderReloadKey,
 } from "./cloud-provider-config";
 import type { DeploymentModelCatalog } from "./deployment-model-catalog";
 
@@ -199,5 +200,74 @@ describe("buildCloudProviderConfig catalog backfill", () => {
       id: "claude-opus-5",
       name: "claude-opus-5",
     });
+  });
+});
+
+describe("missingCloudProviderReloadKey", () => {
+  const imported = (ids: string[]): Record<string, CloudImportedProvider> =>
+    Object.fromEntries(
+      ids.map((id) => [id, importedFrom({ ...makeProvider([makeModel("m")]), id })]),
+    );
+
+  test("returns null when the engine knows every imported provider", () => {
+    expect(missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: imported(["lpr_a", "lpr_b"]),
+      engineProviderIds: ["anthropic", "lpr_b", "lpr_a"],
+    })).toBe(null);
+  });
+
+  test("returns null when nothing was imported", () => {
+    expect(missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: {},
+      engineProviderIds: [],
+    })).toBe(null);
+  });
+
+  test("keys on the workspace and the sorted missing ids", () => {
+    // The engine loaded none of them — the reload after the import was dropped.
+    expect(missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: imported(["lpr_b", "lpr_a"]),
+      engineProviderIds: ["anthropic"],
+    })).toBe("ws_1::lpr_a,lpr_b");
+  });
+
+  test("is stable across trigger order and whitespace so one gap asks once", () => {
+    const first = missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: imported(["lpr_a", "lpr_b"]),
+      engineProviderIds: [" anthropic "],
+    });
+    const repeated = missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: imported(["lpr_b", "lpr_a"]),
+      engineProviderIds: ["anthropic"],
+    });
+    expect(first).toBe(repeated);
+  });
+
+  test("reports only the providers the engine is missing", () => {
+    expect(missingCloudProviderReloadKey({
+      workspaceId: "ws_2",
+      imported: imported(["lpr_a", "lpr_b"]),
+      engineProviderIds: ["lpr_a"],
+    })).toBe("ws_2::lpr_b");
+  });
+
+  test("separates workspaces so a per-workspace gap is not suppressed", () => {
+    const one = missingCloudProviderReloadKey({
+      workspaceId: "ws_1",
+      imported: imported(["lpr_a"]),
+      engineProviderIds: [],
+    });
+    const two = missingCloudProviderReloadKey({
+      workspaceId: "ws_2",
+      imported: imported(["lpr_a"]),
+      engineProviderIds: [],
+    });
+    expect(one).toBe("ws_1::lpr_a");
+    expect(two).toBe("ws_2::lpr_a");
   });
 });

@@ -40,6 +40,41 @@ const state = {
   copiedDesktopUrl: null,
 };
 
+/**
+ * Walk org onboarding through to the workspace, whichever steps this member is
+ * shown. Onboarding settles steps that have nothing to ask: a sole
+ * organization is adopted without the picker, and a sole AI provider is set as
+ * the default without the resource list — so neither screen is guaranteed.
+ */
+async function walkOrgOnboardingToWorkspace(ctx, orgName) {
+  const orgStep = await ctx.waitFor(`(() => {
+    const text = document.body.innerText || '';
+    if (text.includes("Choose your organization")) return "picker";
+    if (text.includes("You have access to the following resources.")) return "resources";
+    if (window.location.hash.includes("/workspace/")) return "workspace";
+    return null;
+  })()`, { timeoutMs: 45_000, label: "organization step" });
+
+  if (orgStep === "picker") {
+    await ctx.expectText(orgName);
+    await clickExactText(ctx, "Continue with organization", "button");
+  }
+
+  if (orgStep !== "workspace") {
+    const resourceStep = await ctx.waitFor(`(() => {
+      const text = document.body.innerText || '';
+      if (text.includes("Continue to workspace")) return "resources";
+      if (window.location.hash.includes("/workspace/")) return "workspace";
+      return null;
+    })()`, { timeoutMs: 45_000, label: "resource step" });
+    if (resourceStep === "resources") {
+      await clickExactText(ctx, "Continue to workspace", "button");
+    }
+  }
+
+  await ctx.waitFor("location.hash.includes('/workspace/')", { timeoutMs: 45_000, label: "workspace route" });
+}
+
 export default {
   id: "invite-to-desktop",
   title: "Invited teammates join Acme, get a desktop handoff, and receive mobile-safe download guidance",
@@ -265,14 +300,9 @@ export default {
             await ctx.waitFor("Boolean((localStorage.getItem('jugglework.den.authToken') ?? '').trim())", { timeoutMs: 60_000, label: "persisted Den auth token" });
             await ctx.waitFor("(localStorage.getItem('jugglework.den.activeOrgName') ?? '').includes('Acme Robotics')", { timeoutMs: 60_000, label: "Acme active org" });
             // The handoff sign-in routes the app into org onboarding; walk the
-            // real journey (choose org -> resources -> workspace) before
-            // asserting the signed-in account surface.
-            await ctx.waitForText("Choose your organization", { timeoutMs: 45_000 });
-            await ctx.expectText("Acme Robotics");
-            await clickExactText(ctx, "Continue with organization", "button");
-            await ctx.waitForText("You have access to the following resources.", { timeoutMs: 45_000 });
-            await clickExactText(ctx, "Continue to workspace", "button");
-            await ctx.waitFor("location.hash.includes('/workspace/')", { timeoutMs: 45_000, label: "workspace route" });
+            // real journey through to the workspace before asserting the
+            // signed-in account surface.
+            await walkOrgOnboardingToWorkspace(ctx, "Acme Robotics");
             await ctx.navigateHash("/settings/cloud-account");
             await ctx.waitForText("Sign out", { timeoutMs: 45_000 });
             await ctx.expectText("Acme Robotics", { timeoutMs: 45_000 });

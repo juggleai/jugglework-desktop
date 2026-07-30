@@ -23,6 +23,7 @@ import {
   type DenBootstrapConfig,
   type DenUser,
 } from "../../../app/lib/den";
+import { reconcileDenAccountIdentity } from "./den-account-switch";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
   denSessionUpdatedEvent,
@@ -179,6 +180,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       }).getSession();
 
       if (currentRun !== refreshTokenRef.current) return;
+
+      // Every sign-in path — settings, forced sign-in, welcome, handoff deep
+      // link — ends here with a confirmed identity, so this is the only place
+      // that can tell a re-login from a different person. Runs before the org
+      // sync so the switch is recorded and the stale local state dropped
+      // before anything reads it under the new account.
+      reconcileDenAccountIdentity(nextUser?.id);
 
       await ensureDenActiveOrganization({
         forceServerSync:

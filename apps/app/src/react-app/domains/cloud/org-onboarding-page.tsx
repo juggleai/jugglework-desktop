@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -27,7 +27,12 @@ import {
   type DenOrgMarketplace,
   type DenOrgSummary,
 } from "@/app/lib/den";
-import { applyBrandAppName, applyBrandIcon, relaunchDesktopApp } from "@/app/lib/desktop";
+import {
+  applyBrandAppName,
+  applyBrandIcon,
+  desktopHostPlatform,
+  relaunchDesktopApp,
+} from "@/app/lib/desktop";
 import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
@@ -76,8 +81,18 @@ import {
 import { useOrgListWindow } from "./use-org-list-window";
 import { useDesktopConfig } from "./desktop-config-provider";
 import {
+  autoAdvanceDefaultModel,
+  autoAdvanceOrganization,
+  buildDefaultModelSelection,
+  type DefaultModelSelection,
+} from "./onboarding-auto-advance";
+import {
+  brandingRestartReasons,
+  brandingRestartSummary,
   hasWorkspaceBranding,
   workspaceBrandingFingerprint,
+  type BrandingRestartReason,
+  type DesktopHostPlatform,
 } from "./workspace-branding-restart";
 
 const RELOAD_AFTER_ONBOARDING_KEY = "jugglework.reloadAfterOrgOnboarding";
@@ -86,16 +101,35 @@ const BRANDING_RESTART_RESUME_KEY = "jugglework.den.brandingRestartResume";
 
 type BrandingRestartState = {
   fingerprint: string;
+  reasons: BrandingRestartReason[];
   updateReady: boolean;
   warning: string | null;
 };
+
+function markBrandingApplied(fingerprint: string) {
+  try {
+    window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, fingerprint);
+  } catch {}
+}
 
 type OnboardingUpdaterBridge = NonNullable<Window["__JUGGLEWORK_ELECTRON__"]>["updater"];
 
 declare global {
   interface Window {
     __juggleworkOnboardingUpdaterEvalBridge?: OnboardingUpdaterBridge;
+    __juggleworkOnboardingPlatformEvalOverride?: DesktopHostPlatform;
   }
+}
+
+/**
+ * Which restart reasons apply depends on the host OS, so evals need to drive
+ * the branded onboarding path from whichever machine they run on.
+ */
+function onboardingHostPlatform(): DesktopHostPlatform | null {
+  if (import.meta.env.DEV && window.__juggleworkOnboardingPlatformEvalOverride) {
+    return window.__juggleworkOnboardingPlatformEvalOverride;
+  }
+  return desktopHostPlatform();
 }
 
 function onboardingUpdaterBridge(): OnboardingUpdaterBridge | undefined {
@@ -436,9 +470,11 @@ export function OrgOnboardingPage() {
       <OrganizationSelectionPage
         orgs={data.orgs}
         defaultOrganization={
+          autoAdvanceOrganization(data.orgs) ??
           data.orgs.find((org) => org.id === orgId) ??
           data.orgs[0]
         }
+        autoContinue={Boolean(autoAdvanceOrganization(data.orgs))}
         onContinue={() => setHasSelectedOrganization(true)}
       />
     );
@@ -456,11 +492,16 @@ export function ResourceSelectionPage() {
 
   const prepared = usePreparedBootstrap();
 
-  const [selectedDefault, setSelectedDefault] = useState<{
-    providerId: string;
-    modelId: string;
-    label: string;
-  } | null>(null);
+  const [selectedDefault, setSelectedDefault] = useState<DefaultModelSelection | null>(null);
+  // The commit path reads the ref, not the state. Auto-advance chooses a
+  // default and continues in the same tick, where the state update has not
+  // landed yet and a closure over `selectedDefault` would still see null —
+  // silently dropping the very default it just picked.
+  const selectedDefaultRef = useRef<DefaultModelSelection | null>(null);
+  const chooseDefault = useCallback((next: DefaultModelSelection | null) => {
+    selectedDefaultRef.current = next;
+    setSelectedDefault(next);
+  }, []);
   const [preparingBranding, setPreparingBranding] = useState(false);
   const [brandingRestart, setBrandingRestart] = useState<BrandingRestartState | null>(null);
 
@@ -496,12 +537,20 @@ export function ResourceSelectionPage() {
     }),
   });
 
-  const finishOnboarding = useCallback(() => {
+  /**
+   * Persist everything this page collected. Both ways out of onboarding — the
+   * direct route to the workspace and the branded restart — must run this, or
+   * the choices made here are dropped. localStorage carries the reload latch
+   * across a relaunch, so the engine still picks up the providers that the
+   * post-onboarding cloud sync imports.
+   */
+  const commitOnboardingSelections = useCallback(() => {
     // If user picked a default model, write it
-    if (selectedDefault) {
+    const chosenDefault = selectedDefaultRef.current;
+    if (chosenDefault) {
       writeStoredDefaultModel({
-        providerID: selectedDefault.providerId,
-        modelID: selectedDefault.modelId,
+        providerID: chosenDefault.providerId,
+        modelID: chosenDefault.modelId,
       });
     }
     // Mark all providers shown on this page as "seen" so the global
@@ -512,8 +561,12 @@ export function ResourceSelectionPage() {
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
+  }, [providers]);
+
+  const finishOnboarding = useCallback(() => {
+    commitOnboardingSelections();
     navigate("/session", { replace: true });
-  }, [navigate, providers, selectedDefault]);
+  }, [commitOnboardingSelections, navigate]);
 
   const handleContinue = useCallback(async () => {
     if (!window.__JUGGLEWORK_ELECTRON__?.shell?.relaunch) {
@@ -547,19 +600,36 @@ export function ResourceSelectionPage() {
         applyBrandIcon(desktopConfig.brandIconUrl ?? null),
       ]);
 
+      // Only interrupt onboarding for branding this process could not finish
+      // applying. A wordmark, an accent color, or an icon that landed live all
+      // take effect immediately, and the bootstrap config written above keeps
+      // them applied on the next cold start.
+      const reasons = brandingRestartReasons(desktopConfig, onboardingHostPlatform(), {
+        iconApplied: iconResult.ok,
+      });
+      if (reasons.length === 0) {
+        markBrandingApplied(fingerprint);
+        finishOnboarding();
+        return;
+      }
+
+      // Staging an update is only worth the wait when a restart is happening
+      // anyway; otherwise the background updater picks it up later.
       let updateReady = false;
-      let warning = desktopConfig.brandIconUrl && !iconResult.ok
-        ? "The workspace app icon could not be prepared."
-        : null;
+      let warning: string | null = null;
       try {
         updateReady = await stageOnboardingUpdate(desktopConfig);
       } catch (error) {
-        warning ??= error instanceof Error ? error.message : "The application update could not be prepared.";
+        warning = error instanceof Error ? error.message : "The application update could not be prepared.";
       }
-      setBrandingRestart({ fingerprint, updateReady, warning });
+      setBrandingRestart({ fingerprint, reasons, updateReady, warning });
     } catch (error) {
+      // Preparation itself failed, so there is no telling what applied. Offer
+      // the restart as the recovery path, without recording a fingerprint that
+      // would suppress the retry.
       setBrandingRestart({
         fingerprint: workspaceBrandingFingerprint(orgId, {}),
+        reasons: [],
         updateReady: false,
         warning: error instanceof Error ? error.message : "Workspace branding could not be prepared.",
       });
@@ -568,20 +638,37 @@ export function ResourceSelectionPage() {
     }
   }, [finishOnboarding, orgId, refreshFresh]);
 
+  // A single provider leaves nothing to decide: adopt exactly what its "Use as
+  // default" button would have set and continue. Waits for the query to settle
+  // so an empty in-flight list is never mistaken for "no providers", and skips
+  // the prepared-workspace path, which navigates away on its own.
+  const autoDefault = loading || error || prepared ? null : autoAdvanceDefaultModel(providers);
+  const autoAdvancedRef = useRef(false);
+  useEffect(() => {
+    if (!autoDefault || autoAdvancedRef.current) return;
+    autoAdvancedRef.current = true;
+    chooseDefault(autoDefault);
+    void handleContinue();
+  }, [autoDefault, chooseDefault, handleContinue]);
+
   const restartWithBranding = useCallback(async () => {
     if (!brandingRestart) return;
-    window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
+    // Restarting skips finishOnboarding(), so commit its side effects here.
+    // Without this the picked default model is discarded and the workspace
+    // never gets the post-onboarding engine reload.
+    commitOnboardingSelections();
+    markBrandingApplied(brandingRestart.fingerprint);
     window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
     if (brandingRestart.updateReady) {
       const result = await onboardingUpdaterBridge()?.installAndRestart?.();
       if (result?.ok) return;
     }
     await relaunchDesktopApp();
-  }, [brandingRestart, orgId]);
+  }, [brandingRestart, commitOnboardingSelections, orgId]);
 
   const continueWithoutRestart = useCallback(() => {
     if (brandingRestart) {
-      window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
+      markBrandingApplied(brandingRestart.fingerprint);
     }
     finishOnboarding();
   }, [brandingRestart, finishOnboarding]);
@@ -601,7 +688,7 @@ export function ResourceSelectionPage() {
             </div>
             <PageTitle>Preparing workspace identity</PageTitle>
             <PageDescription>
-              Applying {orgName || "your workspace"}&apos;s branding and checking for an application update.
+              Applying {orgName || "your workspace"}&apos;s branding.
             </PageDescription>
           </PageHeader>
           <PageContent>
@@ -616,6 +703,7 @@ export function ResourceSelectionPage() {
   }
 
   if (brandingRestart) {
+    const restartCopy = brandingRestartSummary(brandingRestart.reasons, orgName);
     return (
       <Page>
         <PageBackground />
@@ -625,10 +713,8 @@ export function ResourceSelectionPage() {
             <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
               <BuildingOffice2Icon className="size-7 text-foreground" />
             </div>
-            <PageTitle>Workspace identity is ready</PageTitle>
-            <PageDescription>
-              Restart JuggleWork once to finish applying {orgName || "your workspace"}&apos;s name and app icon everywhere.
-            </PageDescription>
+            <PageTitle>{restartCopy.title}</PageTitle>
+            <PageDescription>{restartCopy.description}</PageDescription>
             {brandingRestart.updateReady ? (
               <div className="mx-auto flex w-fit items-center gap-2 rounded-full border border-green-6/30 bg-green-2/30 px-3 py-1 text-xs font-semibold text-green-11">
                 <CheckCircle2 className="size-3.5" />
@@ -648,7 +734,10 @@ export function ResourceSelectionPage() {
             <details className="mx-auto w-full max-w-md rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-sm">
               <summary className="cursor-pointer font-medium">Why restart?</summary>
               <p className="mt-2 text-muted-foreground">
-                Restarting refreshes the workspace name and icon across your operating system and installs the prepared application update.
+                {restartCopy.detail}
+                {brandingRestart.updateReady
+                  ? " It also installs the application update that was just downloaded."
+                  : ""}
               </p>
             </details>
           </PageContent>
@@ -661,6 +750,35 @@ export function ResourceSelectionPage() {
               <ArrowRight data-icon="inline-end" />
             </Button>
           </PageFooter>
+        </PageContainer>
+      </Page>
+    );
+  }
+
+  // Auto-advancing: show progress rather than a list the member is about to be
+  // moved past. Placed after the branding branches above so a restart prompt
+  // still takes precedence once this step hands over.
+  if (autoDefault) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>{orgName || "Your organization"}</PageTitle>
+            <PageDescription>
+              Setting {autoDefault.label} as your default model.
+            </PageDescription>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Setting up your workspace...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
         </PageContainer>
       </Page>
     );
@@ -751,7 +869,7 @@ export function ResourceSelectionPage() {
                           key={provider.id}
                           provider={provider}
                           selectedDefault={selectedDefault}
-                          onSelectDefault={setSelectedDefault}
+                          onSelectDefault={chooseDefault}
                         />
                       ))}
                     </Section>
@@ -889,16 +1007,9 @@ function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCa
   const isSelected = selectedDefault?.providerId === localProviderId;
 
   const handleUseAsDefault = () => {
-    if (!firstModel) return;
-    if (isSelected) {
-      onSelectDefault(null);
-    } else {
-      onSelectDefault({
-        providerId: localProviderId,
-        modelId: firstModel.id,
-        label: `${resolveProviderDisplayName(provider.name || provider.providerId)} · ${firstModel.name || resolveModelDisplayName(firstModel.id)}`,
-      });
-    }
+    const selection = buildDefaultModelSelection(provider);
+    if (!selection) return;
+    onSelectDefault(isSelected ? null : selection);
   };
 
   return (
@@ -966,33 +1077,78 @@ function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCa
 interface OrganizationSelectionPageProps {
   orgs: DenOrgSummary[];
   defaultOrganization: DenOrgSummary;
+  /** Adopt `defaultOrganization` without showing the picker. */
+  autoContinue?: boolean;
   onContinue: () => void;
 }
 
 function OrganizationSelectionPage({
   orgs,
   defaultOrganization,
+  autoContinue = false,
   onContinue,
 }: OrganizationSelectionPageProps) {
   const { authToken, denClient, settings } = useDenClient();
   const [selected, setSelected] = useState(defaultOrganization);
+  const applyOrganization = useCallback((nextOrg: DenOrgSummary) => {
+    writeDenSettings({
+      ...settings,
+      authToken: authToken || null,
+      activeOrgId: nextOrg.id,
+      activeOrgSlug: nextOrg.slug,
+      activeOrgName: nextOrg.name,
+    });
+
+    onContinue();
+  }, [authToken, onContinue, settings]);
   const { error, isPending, mutate } = useMutation({
     mutationFn: async (nextOrg: DenOrgSummary) => {
       await denClient.setActiveOrganization({ organizationId: nextOrg.id });
       return nextOrg;
     },
-    onSuccess: (nextOrg) => {
-      writeDenSettings({
-        ...settings,
-        authToken: authToken || null,
-        activeOrgId: nextOrg.id,
-        activeOrgSlug: nextOrg.slug,
-        activeOrgName: nextOrg.name,
-      });
-
-      onContinue();
-    },
+    onSuccess: applyOrganization,
   });
+
+  const autoContinueStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoContinue || autoContinueStartedRef.current) return;
+    autoContinueStartedRef.current = true;
+    // Already the active org — re-entering onboarding, or resuming after the
+    // branding restart. Persist locally and move on without a server round
+    // trip that would only re-assert what is already true.
+    if (settings.activeOrgId === defaultOrganization.id) {
+      applyOrganization(defaultOrganization);
+      return;
+    }
+    mutate(defaultOrganization);
+  }, [applyOrganization, autoContinue, defaultOrganization, mutate, settings.activeOrgId]);
+
+  // While settling itself this step has nothing to ask, so it shows progress
+  // instead of a one-item radio group. A failure hands the picker back, with
+  // the error, rather than stranding the user on a spinner.
+  if (autoContinue && !error) {
+    return (
+      <Page>
+        <PageBackground />
+        <PageTitlebarRegion />
+        <PageContainer>
+          <PageHeader>
+            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
+              <BuildingOffice2Icon className="size-7 text-foreground" />
+            </div>
+            <PageTitle>{defaultOrganization.name}</PageTitle>
+            <PageDescription>Connecting your organization...</PageDescription>
+          </PageHeader>
+          <PageContent>
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Connecting...</PageLoadingDescription>
+            </PageLoading>
+          </PageContent>
+        </PageContainer>
+      </Page>
+    );
+  }
 
   return (
     <Page>

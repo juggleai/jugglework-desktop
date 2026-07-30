@@ -125,7 +125,7 @@ import {
   type WorkspaceList,
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import { isDesktopProviderBlocked, isProviderHiddenFromConnectUi } from "@/app/cloud/desktop-app-restrictions";
 import {
   useCheckDesktopRestriction,
   useDesktopAllowedModels,
@@ -712,6 +712,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     // Settings only has a safe, exact OpenCode client/directory for the active
     // workspace here, so sign-out cleanup is intentionally scoped to that
     // workspace instead of guessing across every configured worker.
+    //
+    // This is no longer the only path: the provider-auth store purges the
+    // cloud MCP on every sign-out and account switch, and settles other
+    // workspaces from their owner stamp when they are next opened. This hook
+    // stays because it runs BEFORE the session is cleared, so it still has the
+    // org id needed to drop the scoped local markers as well as the token.
     await cleanupJuggleWorkCloudMcpAfterSignOut({
       context: {
         denBaseUrl: settings.baseUrl,
@@ -2548,7 +2554,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         // not from `providers`.
         providers={providerAuthSnapshot.providerAuthProviders.filter(
           (provider) =>
-            provider.id.trim().toLowerCase() !== "jugglework" &&
+            !isProviderHiddenFromConnectUi(provider.id) &&
             !isDesktopProviderBlocked({
               providerId: provider.id,
               checkRestriction: checkDesktopRestriction,
@@ -2559,7 +2565,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         authMethods={Object.fromEntries(
           Object.entries(providerAuthSnapshot.providerAuthMethods).filter(
             ([providerId]) =>
-              providerId.trim().toLowerCase() !== "jugglework" &&
+              !isProviderHiddenFromConnectUi(providerId) &&
               !isDesktopProviderBlocked({
                 providerId,
                 checkRestriction: checkDesktopRestriction,
@@ -2672,7 +2678,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           modelPicker.setOpen(false);
         }}
         onBehaviorChange={() => {}}
-        onOpenSettings={() => {}}
+        onOpenSettings={() => {
+          // Already inside settings, so switch to the providers tab rather
+          // than leaving the button dead.
+          modelPicker.setOpen(false);
+          navigateSettingsPath("ai");
+        }}
         onClose={() => modelPicker.setOpen(false)}
       />
     </>

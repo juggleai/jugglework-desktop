@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/sonner";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
+import { isProviderHiddenFromConnectUi } from "@/app/cloud/desktop-app-restrictions";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { TextInput } from "../../../design-system/text-input";
@@ -146,19 +147,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     return normalizedId === "anthropic" || normalizedName === "anthropic";
   };
 
-  const isOpencodeZenProvider = (id: string) => id.trim().toLowerCase() === "opencode";
-
-  const OPENCODE_ZEN_KEY_URL = "https://opencode.ai/auth";
-
-  const openExternalUrl = async (url: string) => {
-    if (!url) return;
-    if (isDesktopRuntime()) {
-      await openDesktopUrl(url);
-      return;
-    }
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
   const isClaudeProMaxMethod = (method: ProviderAuthMethod) => {
     const label = method.label.toLowerCase();
     return method.type === "oauth" && (label.includes("pro/max") || label.includes("create an api key"));
@@ -193,7 +181,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       })
       .sort(compareProviders);
 
-    return nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== "jugglework");
+    // Belt and braces: the routes already strip these before passing
+    // `authMethods` in, but the modal owns what it renders.
+    return nextEntries.filter((entry) => !isProviderHiddenFromConnectUi(entry.id));
   }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
@@ -669,9 +659,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (method.type === "cloud") {
       return method.description ?? "Use the provider and credential managed by your organization.";
     }
-    if (isOpencodeZenProvider(entry.id)) {
-      return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
-    }
     return "Paste a secret key that JuggleWork stores locally on this device.";
   };
 
@@ -832,33 +819,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div>
                       <div className="text-sm font-medium text-gray-12">{selectedEntry.name}</div>
                       <div className="text-xs text-gray-10 mt-1">
-                        {isOpencodeZenProvider(selectedEntry.id)
-                          ? "Sign in to OpenCode Zen with an API key from opencode.ai/auth."
-                          : "Paste your API key to connect."}
+                        Paste your API key to connect.
                       </div>
                     </div>
                     <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
                       Back
                     </Button>
                   </div>
-                  {isOpencodeZenProvider(selectedEntry.id) ? (
-                    <div className="rounded-lg border border-indigo-5/30 bg-indigo-3/15 px-3 py-2.5 text-xs text-indigo-12 space-y-1.5">
-                      <div>
-                        OpenCode Zen gives you access to the best coding models. Free models keep working without a key.
-                      </div>
-                      <button
-                        type="button"
-                        className="text-indigo-11 hover:text-indigo-12 underline underline-offset-2 font-medium"
-                        onClick={() => void openExternalUrl(OPENCODE_ZEN_KEY_URL)}
-                      >
-                        Get an API key →
-                      </button>
-                    </div>
-                  ) : null}
                   <TextInput
                     label="API key"
                     type="password"
-                    placeholder={isOpencodeZenProvider(selectedEntry.id) ? "ock_..." : "sk-..."}
+                    placeholder="sk-..."
                     value={apiKeyInput}
                     onChange={(event) => {
                       setApiKeyInput(event.currentTarget.value);
