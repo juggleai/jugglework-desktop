@@ -1,5 +1,53 @@
 import type { SettingsTab } from "../../app/types";
 
+export type WorkspaceAppPath =
+  | { view: "session"; workspaceId: string; sessionId: string | null }
+  | { view: "settings"; workspaceId: string | null }
+  | null;
+
+function decodeRoutePart(value: string | undefined): string {
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value).trim();
+  } catch {
+    return value.trim();
+  }
+}
+
+export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
+  const modernSession = pathname.match(/^\/workspace\/([^/]+)\/session(?:\/([^/]+))?\/?$/);
+  if (modernSession) {
+    return {
+      view: "session",
+      workspaceId: decodeRoutePart(modernSession[1]),
+      sessionId: decodeRoutePart(modernSession[2]) || null,
+    };
+  }
+
+  const legacySession = pathname.match(/^\/session(?:\/([^/]+))?\/?$/);
+  if (legacySession) {
+    return {
+      view: "session",
+      workspaceId: "",
+      sessionId: decodeRoutePart(legacySession[1]) || null,
+    };
+  }
+
+  const workspaceSettings = pathname.match(/^\/workspace\/([^/]+)\/settings(?:\/.*)?$/);
+  if (workspaceSettings) {
+    return {
+      view: "settings",
+      workspaceId: decodeRoutePart(workspaceSettings[1]) || null,
+    };
+  }
+
+  if (/^\/settings(?:\/.*)?$/.test(pathname)) {
+    return { view: "settings", workspaceId: null };
+  }
+
+  return null;
+}
+
 export function workspaceSessionRoute(workspaceId: string, sessionId?: string | null) {
   const workspace = encodeURIComponent(workspaceId.trim());
   const session = sessionId?.trim();

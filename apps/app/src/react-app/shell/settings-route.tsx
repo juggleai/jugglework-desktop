@@ -2703,8 +2703,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 }
 
-export function SettingsRoute() {
-  return <SettingsSurface />;
+export function SettingsRoute(props: SettingsSurfaceProps = {}) {
+  return <SettingsSurface {...props} />;
 }
 
 export function SettingsSurface(props: SettingsSurfaceProps) {

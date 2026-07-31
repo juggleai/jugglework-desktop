@@ -410,7 +410,12 @@ async function draftToParts(
   return parts;
 }
 
-export function SessionRoute() {
+export type SessionRouteProps = {
+  routeWorkspaceId?: string;
+  routeSessionId?: string | null;
+};
+
+export function SessionRoute(props: SessionRouteProps = {}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -476,6 +481,8 @@ export function SessionRoute() {
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     developerMode,
+    routeWorkspaceId: props.routeWorkspaceId,
+    routeSessionId: props.routeSessionId,
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });

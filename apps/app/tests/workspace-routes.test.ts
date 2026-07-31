@@ -3,11 +3,39 @@ import { describe, expect, test } from "bun:test";
 import { classifyRouteSessionReadError } from "../src/react-app/shell/route-workspaces";
 import {
   mergeWorkspaceRouteSession,
+  parseWorkspaceAppPath,
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   settingsReturnRoute,
   sessionIdForLegacyWorkspaceInference,
 } from "../src/react-app/shell/workspace-routes";
+
+describe("workspace app path parsing", () => {
+  test("parses modern and legacy session routes", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/session/session-a")).toEqual({
+      view: "session",
+      workspaceId: "workspace-a",
+      sessionId: "session-a",
+    });
+    expect(parseWorkspaceAppPath("/session/session-legacy")).toEqual({
+      view: "session",
+      workspaceId: "",
+      sessionId: "session-legacy",
+    });
+  });
+
+  test("parses workspace and global settings routes", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/settings/cloud-account")).toEqual({
+      view: "settings",
+      workspaceId: "workspace-a",
+    });
+    expect(parseWorkspaceAppPath("/settings/general")).toEqual({
+      view: "settings",
+      workspaceId: null,
+    });
+    expect(parseWorkspaceAppPath("/welcome")).toBeNull();
+  });
+});
 
 describe("settings return route", () => {
   test("restores the session that opened settings", () => {
