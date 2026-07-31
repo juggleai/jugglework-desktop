@@ -167,8 +167,8 @@ import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
-import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
-import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
+import { settingsReturnRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
@@ -389,8 +389,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setEmbeddedPath(path);
       return;
     }
-    navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`);
-  }, [navigate, props.embedded, selectedWorkspaceId]);
+    navigate(
+      selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`,
+      { state: location.state },
+    );
+  }, [location.state, navigate, props.embedded, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [juggleworkClient, setJuggleWorkClient] = useState<JuggleWorkServerClient | null>(null);
@@ -2517,7 +2520,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onOpenAccount={openCloudAccountSettings}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
-        onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
+        onClose={props.onClose ?? (() => navigate(settingsReturnRoute(
+          selectedWorkspaceId,
+          navigationWorkspaceId,
+          navigationSessionId,
+          readLastSessionFor(selectedWorkspaceId),
+        )))}
         compact={props.embedded}
       >
         {settingsView}

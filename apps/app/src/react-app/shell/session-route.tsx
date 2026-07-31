@@ -244,6 +244,7 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+const UNAVAILABLE_MODEL_AUTO_OPEN_DELAY_MS = 800;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -843,18 +844,26 @@ export function SessionRoute() {
 
   useEffect(() => {
     if (!selectedModelUnavailableKey) {
+      const wasAutoOpened = autoOpenedUnavailableModelRef.current !== null;
       autoOpenedUnavailableModelRef.current = null;
+      if (wasAutoOpened && modelPicker.open) {
+        modelPicker.setOpen(false);
+      }
       return;
     }
-    if (autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
+    if (modelPicker.open || autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
 
-    autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
+    const timeout = window.setTimeout(() => {
+      autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
+      setModelPickerSessionId(null);
+      modelPicker.setQuery("");
+      modelPicker.setRecentProviderIds(new Set());
+      modelPicker.setCompactOpen(false);
+      modelPicker.setOpen(true);
+    }, UNAVAILABLE_MODEL_AUTO_OPEN_DELAY_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [modelPicker.open, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
 
   const hasUsableModel = Boolean(activeModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(

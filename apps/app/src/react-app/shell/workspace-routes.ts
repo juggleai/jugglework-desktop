@@ -8,6 +8,22 @@ export function workspaceSessionRoute(workspaceId: string, sessionId?: string | 
     : `/workspace/${workspace}/session`;
 }
 
+export function settingsReturnRoute(
+  selectedWorkspaceId?: string | null,
+  navigationWorkspaceId?: string | null,
+  navigationSessionId?: string | null,
+  rememberedSessionId?: string | null,
+) {
+  const workspaceId = selectedWorkspaceId?.trim() ?? "";
+  if (!workspaceId) return "/session";
+
+  const originalWorkspaceId = navigationWorkspaceId?.trim() ?? "";
+  const sessionId = workspaceId === originalWorkspaceId
+    ? navigationSessionId?.trim() || rememberedSessionId?.trim() || null
+    : rememberedSessionId?.trim() || null;
+  return workspaceSessionRoute(workspaceId, sessionId);
+}
+
 export function workspaceSettingsRoute(
   workspaceId: string,
   tab: SettingsTab | "extensions/mcp" | "extensions/plugins" | string = "general",

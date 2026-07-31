@@ -5,8 +5,33 @@ import {
   mergeWorkspaceRouteSession,
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
+  settingsReturnRoute,
   sessionIdForLegacyWorkspaceInference,
 } from "../src/react-app/shell/workspace-routes";
+
+describe("settings return route", () => {
+  test("restores the session that opened settings", () => {
+    expect(settingsReturnRoute("workspace-a", "workspace-a", "session-a")).toBe(
+      "/workspace/workspace-a/session/session-a",
+    );
+  });
+
+  test("returns to the selected workspace root after switching workspaces", () => {
+    expect(settingsReturnRoute("workspace-b", "workspace-a", "session-a")).toBe(
+      "/workspace/workspace-b/session",
+    );
+    expect(settingsReturnRoute("", "workspace-a", "session-a")).toBe("/session");
+  });
+
+  test("falls back to the remembered session when navigation state is missing", () => {
+    expect(settingsReturnRoute("workspace-a", null, null, "session-last")).toBe(
+      "/workspace/workspace-a/session/session-last",
+    );
+    expect(settingsReturnRoute("workspace-b", "workspace-a", "session-a", "session-b")).toBe(
+      "/workspace/workspace-b/session/session-b",
+    );
+  });
+});
 
 describe("workspace route session inference", () => {
   test("modern workspace routes do not contribute a refresh session id", () => {
