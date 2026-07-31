@@ -3,10 +3,77 @@ import { describe, expect, test } from "bun:test";
 import { classifyRouteSessionReadError } from "../src/react-app/shell/route-workspaces";
 import {
   mergeWorkspaceRouteSession,
+  parseWorkspaceAppPath,
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
+  settingsReturnRoute,
   sessionIdForLegacyWorkspaceInference,
+  workspaceAppsRoute,
 } from "../src/react-app/shell/workspace-routes";
+
+describe("workspace app path parsing", () => {
+  test("parses modern and legacy session routes", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/session/session-a")).toEqual({
+      view: "session",
+      workspaceId: "workspace-a",
+      sessionId: "session-a",
+    });
+    expect(parseWorkspaceAppPath("/session/session-legacy")).toEqual({
+      view: "session",
+      workspaceId: "",
+      sessionId: "session-legacy",
+    });
+  });
+
+  test("parses workspace and global settings routes", () => {
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/settings/cloud-account")).toEqual({
+      view: "settings",
+      workspaceId: "workspace-a",
+    });
+    expect(parseWorkspaceAppPath("/settings/general")).toEqual({
+      view: "settings",
+      workspaceId: null,
+    });
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/chat")).toEqual({
+      view: "chat",
+      workspaceId: "workspace-a",
+    });
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/apps")).toEqual({
+      view: "apps",
+      workspaceId: "workspace-a",
+    });
+    expect(parseWorkspaceAppPath("/apps")).toEqual({
+      view: "apps",
+      workspaceId: null,
+    });
+    expect(workspaceAppsRoute("workspace a")).toBe("/workspace/workspace%20a/apps");
+    expect(parseWorkspaceAppPath("/welcome")).toBeNull();
+  });
+});
+
+describe("settings return route", () => {
+  test("restores the session that opened settings", () => {
+    expect(settingsReturnRoute("workspace-a", "workspace-a", "session-a")).toBe(
+      "/workspace/workspace-a/session/session-a",
+    );
+  });
+
+  test("returns to the selected workspace root after switching workspaces", () => {
+    expect(settingsReturnRoute("workspace-b", "workspace-a", "session-a")).toBe(
+      "/workspace/workspace-b/session",
+    );
+    expect(settingsReturnRoute("", "workspace-a", "session-a")).toBe("/session");
+  });
+
+  test("falls back to the remembered session when navigation state is missing", () => {
+    expect(settingsReturnRoute("workspace-a", null, null, "session-last")).toBe(
+      "/workspace/workspace-a/session/session-last",
+    );
+    expect(settingsReturnRoute("workspace-b", "workspace-a", "session-a", "session-b")).toBe(
+      "/workspace/workspace-b/session/session-b",
+    );
+  });
+});
 
 describe("workspace route session inference", () => {
   test("modern workspace routes do not contribute a refresh session id", () => {

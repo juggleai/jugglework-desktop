@@ -33,10 +33,12 @@ import {
 } from "./settings-page";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
+import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
 export type SettingsShellProps = SettingsPageFrameProps & {
+  contentOnly?: boolean;
   selectedWorkspaceId: string;
   selectedWorkspaceName: string;
   selectedWorkspaceColor: string;
@@ -44,6 +46,12 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   headerStatus?: string;
   busyHint?: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
+  onCreateLocalWorkspace: () => void;
+  onConnectRemoteWorkspace: () => void;
+  onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
+  onOpenChat: () => void;
   onClose: () => void;
   headerLeadingSlot?: React.ReactNode;
   children: React.ReactNode;
@@ -54,6 +62,19 @@ export type SettingsShellProps = SettingsPageFrameProps & {
 
 export function SettingsShell(props: SettingsShellProps) {
   const title = getSettingsTabLabel(props.activeTab);
+
+  if (props.contentOnly) {
+    return (
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+        <div className="hidden h-10 shrink-0 border-b border-dls-border mac:block mac:titlebar-drag" />
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+          <div className="mx-auto flex w-full max-w-3xl flex-col">{props.children}</div>
+        </div>
+        {props.modalSlot}
+        {props.footer}
+      </div>
+    );
+  }
 
   if (props.compact) {
     return (
@@ -101,7 +122,11 @@ export function SettingsShell(props: SettingsShellProps) {
 
   return (
     <div className="flex h-dvh min-h-screen w-full overflow-hidden">
-      <SidebarProvider open={true} className="relative min-h-0 flex-1">
+      <SidebarProvider
+        open={true}
+        className="relative min-h-0 flex-1"
+        style={{ "--sidebar-width": `${256 + APP_NAVIGATION_RAIL_WIDTH}px` } as React.CSSProperties}
+      >
         <SettingsSidebar
           activeTab={props.activeTab}
           onSelectTab={props.onSelectTab}
@@ -112,6 +137,12 @@ export function SettingsShell(props: SettingsShellProps) {
           selectedWorkspaceColor={props.selectedWorkspaceColor}
           workspaces={props.workspaces}
           onSelectWorkspace={props.onSelectWorkspace}
+          onCreateLocalWorkspace={props.onCreateLocalWorkspace}
+          onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
+          onOpenAccount={props.onOpenAccount}
+          onOpenHome={props.onOpenHome}
+          onOpenApps={props.onOpenApps}
+          onOpenChat={props.onOpenChat}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

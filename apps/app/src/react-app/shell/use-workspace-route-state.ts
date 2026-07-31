@@ -69,6 +69,8 @@ import {
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
+  routeWorkspaceId?: string;
+  routeSessionId?: string | null;
   /** Invoked when the jugglework-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local jugglework-server host info discovered during refresh. */
@@ -85,8 +87,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const local = useLocal();
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
-  const routeWorkspaceId = params.workspaceId?.trim() || "";
-  const selectedSessionId = params.sessionId?.trim() || null;
+  const routeWorkspaceId = input.routeWorkspaceId !== undefined
+    ? input.routeWorkspaceId.trim()
+    : params.workspaceId?.trim() || "";
+  const selectedSessionId = input.routeSessionId !== undefined
+    ? input.routeSessionId?.trim() || null
+    : params.sessionId?.trim() || null;
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();

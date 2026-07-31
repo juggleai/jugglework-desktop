@@ -123,8 +123,8 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
-    dispatchLocal({ type: "reset" });
-  }, [props.open]);
+    dispatchLocal({ type: "reset", screen: props.initialScreen ?? "chooser" });
+  }, [props.initialScreen, props.open]);
 
   // Tick the "elapsed" clock while submitting.
   useEffect(() => {
@@ -189,7 +189,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
         className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden sm:max-w-xl"
       >
         <DialogHeader className="flex-row">
-          {screen !== "chooser" ? (
+          {screen !== "chooser" && (props.initialScreen ?? "chooser") === "chooser" ? (
             <Button
               onClick={() => setScreen("chooser")}
               disabled={submitting || remoteSubmitting}

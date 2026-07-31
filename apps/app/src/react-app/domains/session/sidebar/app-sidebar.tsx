@@ -37,11 +37,10 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
+import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 
 import {
   Sidebar,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarGroupContent,
@@ -685,7 +684,13 @@ export type AppSidebarProps = {
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onOpenCreateWorkspace: () => void;
+  onOpenCreateLocalWorkspace: () => void;
+  onOpenConnectRemoteWorkspace: () => void;
+  onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
+  onOpenChat: () => void;
+  onOpenSettings: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -707,6 +712,12 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
+  const selectedWorkspace = props.workspaceSessionGroups.find(
+    (group) => group.workspace.id === props.selectedWorkspaceId,
+  )?.workspace;
+  const [taskScope, setTaskScope] = React.useState<"local" | "remote">(
+    selectedWorkspace?.workspaceType === "remote" ? "remote" : "local",
+  );
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
   );
@@ -783,6 +794,14 @@ export function AppSidebar(props: AppSidebarProps) {
     expandWorkspace(id);
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
+  React.useEffect(() => {
+    const workspace = props.workspaceSessionGroups.find(
+      (group) => group.workspace.id === props.selectedWorkspaceId,
+    )?.workspace;
+    if (!workspace) return;
+    setTaskScope(workspace.workspaceType === "remote" ? "remote" : "local");
+  }, [props.selectedWorkspaceId, props.workspaceSessionGroups]);
+
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
 
@@ -853,11 +872,18 @@ export function AppSidebar(props: AppSidebarProps) {
     expandedSessionIds,
   };
 
-  const brandLogoUrl = useBrandLogoUrl();
+  const visibleWorkspaceSessionGroups = React.useMemo(
+    () => props.workspaceSessionGroups.filter((group) =>
+      taskScope === "remote"
+        ? group.workspace.workspaceType === "remote"
+        : group.workspace.workspaceType !== "remote"
+    ),
+    [props.workspaceSessionGroups, taskScope],
+  );
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
-    for (const group of props.workspaceSessionGroups) {
+    for (const group of visibleWorkspaceSessionGroups) {
       const roots = getRootSessions(partitionArchivedSessions(group.sessions).active);
       for (const session of roots) {
         sessionsById.set(session.id, { group, sessionId: session.id });
@@ -867,16 +893,39 @@ export function AppSidebar(props: AppSidebarProps) {
       const entry = sessionsById.get(sessionId);
       return entry ? [entry] : [];
     });
-  }, [pinnedIds, props.workspaceSessionGroups]);
+  }, [pinnedIds, visibleWorkspaceSessionGroups]);
   const archivedSessions = React.useMemo(() => {
     const entries: GlobalArchivedSessionEntry[] = [];
-    for (const group of props.workspaceSessionGroups) {
+    for (const group of visibleWorkspaceSessionGroups) {
       for (const session of partitionArchivedSessions(group.sessions).archived) {
         entries.push({ group, session });
       }
     }
     return entries;
-  }, [props.workspaceSessionGroups]);
+  }, [visibleWorkspaceSessionGroups]);
+
+  const selectTaskScope = React.useCallback((scope: "local" | "remote") => {
+    setTaskScope(scope);
+    const firstWorkspace = props.workspaceSessionGroups.find((group) =>
+      scope === "remote"
+        ? group.workspace.workspaceType === "remote"
+        : group.workspace.workspaceType !== "remote"
+    )?.workspace;
+    if (firstWorkspace && firstWorkspace.id !== props.selectedWorkspaceId) {
+      void props.onSelectWorkspace(firstWorkspace.id);
+    }
+  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups]);
+
+  const reorderVisibleWorkspaces = React.useCallback((visibleIds: string[]) => {
+    const orderedVisibleIds = [...visibleIds];
+    const merged = props.workspaceSessionGroups.map((group) => {
+      const visible = taskScope === "remote"
+        ? group.workspace.workspaceType === "remote"
+        : group.workspace.workspaceType !== "remote";
+      return visible ? orderedVisibleIds.shift() ?? group.workspace.id : group.workspace.id;
+    });
+    props.onReorderWorkspaces?.(merged);
+  }, [props.onReorderWorkspaces, props.workspaceSessionGroups, taskScope]);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -884,82 +933,111 @@ export function AppSidebar(props: AppSidebarProps) {
         collapsible="offcanvas"
         className="mac:**:data-[sidebar=sidebar]:bg-transparent"
       >
-        <div className="hidden h-14 mac:block mac:titlebar-drag"/>
-        {brandLogoUrl ? (
-          <div
-            data-testid="brand-logo"
-            className="flex h-14 shrink-0 items-center px-3 pb-3 pt-2 mac:pt-0"
-          >
-            <img
-              src={brandLogoUrl}
-              alt="Organization logo"
-              className="max-h-9 w-auto max-w-[140px] object-contain object-left"
-            />
-          </div>
-        ) : null}
-        {props.onOpenSessionSearch ? (
-          <SidebarHeader className="pb-2">
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  onClick={props.onOpenSessionSearch}
-                  aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
-                  className="text-sidebar-foreground/70"
-                >
-                  <Search className="size-4" />
-                  <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
-                  <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
-                    {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-                  </kbd>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarHeader>
-        ) : null}
-        <LazyMotion features={domMax}>
-          <m.div
-            layoutScroll
-            data-slot="sidebar-content"
-            data-sidebar="content"
-            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
-          >
-            {pinnedSessions.length > 0 ? (
-              <GlobalPinnedSessions entries={pinnedSessions} />
-            ) : null}
-            <Reorder.Group
-              as="div"
-              axis="y"
-              values={props.workspaceSessionGroups.map((group) => group.workspace.id)}
-              onReorder={(workspaceIds) => props.onReorderWorkspaces?.(workspaceIds)}
-              className="flex flex-col gap-px"
-            >
-              {props.workspaceSessionGroups.map((group, index) => (
-                <WorkspaceReorderItem
-                  key={group.workspace.id}
-                  group={group}
-                  className={cn(index === 0 && "mac:pt-0")}
-                  showInitialLoading={props.showInitialLoading}
-                  previewCount={previewCount(group.workspace.id)}
-                  showMoreSessions={showMoreSessions}
-                />
-              ))}
-            </Reorder.Group>
-            {archivedSessions.length > 0 ? (
-              <GlobalArchivedSessions entries={archivedSessions} />
-            ) : null}
-          </m.div>
-        </LazyMotion>
+        <div className="flex h-full min-h-0 w-full">
+          <AppNavigationRail
+            homeActive
+            onOpenAccount={props.onOpenAccount}
+            onOpenHome={props.onOpenHome}
+            onOpenApps={props.onOpenApps}
+            onCreateLocalWorkspace={props.onOpenCreateLocalWorkspace}
+            onConnectRemoteWorkspace={props.onOpenConnectRemoteWorkspace}
+            onOpenChat={props.onOpenChat}
+            onOpenSettings={props.onOpenSettings}
+          />
 
-        <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton onClick={props.onOpenCreateWorkspace}>
-                <Plus className="size-4" />
-                {t("workspace_list.add_workspace")}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
+          <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
+            <div className="hidden h-11 shrink-0 mac:block mac:titlebar-drag" />
+            <SidebarHeader className="gap-2 border-b border-dls-border px-3 pb-3 pt-3 mac:pt-1">
+              <div
+                className="grid grid-cols-2 rounded-xl bg-background/55 p-1"
+                role="tablist"
+                aria-label={t("navigation.primary")}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={taskScope === "local"}
+                  onClick={() => selectTaskScope("local")}
+                  className={cn(
+                    "h-8 rounded-lg px-2 text-xs font-medium text-dls-secondary transition-colors",
+                    taskScope === "local" && "bg-background text-dls-text shadow-sm",
+                  )}
+                >
+                  {t("navigation.local_tasks")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={taskScope === "remote"}
+                  onClick={() => selectTaskScope("remote")}
+                  className={cn(
+                    "h-8 rounded-lg px-2 text-xs font-medium text-dls-secondary transition-colors",
+                    taskScope === "remote" && "bg-background text-dls-text shadow-sm",
+                  )}
+                >
+                  {t("navigation.cloud_tasks")}
+                </button>
+              </div>
+
+              {props.onOpenSessionSearch ? (
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={props.onOpenSessionSearch}
+                      aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
+                      className="text-sidebar-foreground/70"
+                    >
+                      <Search className="size-4" />
+                      <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
+                      <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
+                        {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+                      </kbd>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              ) : null}
+            </SidebarHeader>
+
+            <LazyMotion features={domMax}>
+              <m.div
+                layoutScroll
+                data-slot="sidebar-content"
+                data-sidebar="content"
+                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
+              >
+                {pinnedSessions.length > 0 ? (
+                  <GlobalPinnedSessions entries={pinnedSessions} />
+                ) : null}
+                <Reorder.Group
+                  as="div"
+                  axis="y"
+                  values={visibleWorkspaceSessionGroups.map((group) => group.workspace.id)}
+                  onReorder={reorderVisibleWorkspaces}
+                  className="flex flex-col gap-px"
+                >
+                  {visibleWorkspaceSessionGroups.map((group) => (
+                    <WorkspaceReorderItem
+                      key={group.workspace.id}
+                      group={group}
+                      className=""
+                      showInitialLoading={props.showInitialLoading}
+                      previewCount={previewCount(group.workspace.id)}
+                      showMoreSessions={showMoreSessions}
+                    />
+                  ))}
+                </Reorder.Group>
+                {visibleWorkspaceSessionGroups.length === 0 ? (
+                  <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
+                    {t("workspace.no_tasks")}
+                  </div>
+                ) : null}
+                {archivedSessions.length > 0 ? (
+                  <GlobalArchivedSessions entries={archivedSessions} />
+                ) : null}
+              </m.div>
+            </LazyMotion>
+          </div>
+        </div>
         <SidebarRail
           className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
           style={{ cursor: "col-resize" }}

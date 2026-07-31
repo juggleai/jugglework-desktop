@@ -144,6 +144,7 @@ import {
 } from "@/app/utils";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
+import type { CreateWorkspaceScreen } from "@/react-app/domains/workspace/types";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { ShareWorkspaceModal } from "@/react-app/domains/workspace/share-workspace-modal";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
@@ -166,8 +167,8 @@ import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
-import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
-import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
+import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
@@ -329,6 +330,14 @@ function readNavigationSessionId(state: unknown): string | null {
   return typeof value === "string" ? value.trim() || null : null;
 }
 
+function readNavigationReturnPath(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const value = (state as { returnPath?: unknown }).returnPath;
+  if (typeof value !== "string") return null;
+  const path = value.trim();
+  return path.startsWith("/") && !path.startsWith("//") ? path : null;
+}
+
 function findSessionWorkspaceId(
   sessionId: string | null,
   entries: Array<{ workspaceId: string; sessions: any[] }>,
@@ -347,6 +356,7 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
 
 export type SettingsSurfaceProps = {
   embedded?: boolean;
+  contentOnly?: boolean;
   initialPath?: string;
   workspaceId?: string;
   onClose?: () => void;
@@ -369,6 +379,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const route = props.embedded ? parseSettingsPath(`/settings/${embeddedPath}`) : parseSettingsPath(location.pathname);
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
+  const navigationReturnPath = readNavigationReturnPath(location.state);
 
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
@@ -388,8 +399,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setEmbeddedPath(path);
       return;
     }
-    navigate(selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`);
-  }, [navigate, props.embedded, selectedWorkspaceId]);
+    navigate(
+      selectedWorkspaceId ? workspaceSettingsRoute(selectedWorkspaceId, path) : `/settings/${path}`,
+      { state: location.state },
+    );
+  }, [location.state, navigate, props.embedded, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [juggleworkClient, setJuggleWorkClient] = useState<JuggleWorkServerClient | null>(null);
@@ -429,6 +443,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [createWorkspaceInitialScreen, setCreateWorkspaceInitialScreen] =
+    useState<CreateWorkspaceScreen>("chooser");
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -1912,7 +1928,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     await refreshRouteState();
   };
 
-  const handleOpenCreateWorkspace = () => {
+  const openCreateWorkspace = (screen: CreateWorkspaceScreen) => {
     if (
       workspaces.length > 0 &&
       checkDesktopRestriction({ restriction: "allowMultipleWorkspaces" })
@@ -1927,6 +1943,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
     setCreateWorkspaceError(null);
     setCreateWorkspaceRemoteError(null);
+    setCreateWorkspaceInitialScreen(screen);
     setCreateWorkspaceOpen(true);
   };
 
@@ -2508,10 +2525,31 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceColor={selectedWorkspaceColor}
         workspaces={workspaceOptions}
         onSelectWorkspace={handleSelectSettingsWorkspace}
+        onCreateLocalWorkspace={() => openCreateWorkspace("local")}
+        onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
+        onOpenAccount={openCloudAccountSettings}
+        onOpenHome={props.onClose ?? (() => navigate(
+          settingsReturnRoute(
+            selectedWorkspaceId,
+            navigationWorkspaceId,
+            navigationSessionId,
+            readLastSessionFor(selectedWorkspaceId),
+          ),
+        ))}
+        onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
+        onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
-        onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
+        onClose={props.onClose ?? (() => navigate(
+          navigationReturnPath ?? settingsReturnRoute(
+            selectedWorkspaceId,
+            navigationWorkspaceId,
+            navigationSessionId,
+            readLastSessionFor(selectedWorkspaceId),
+          ),
+        ))}
         compact={props.embedded}
+        contentOnly={props.contentOnly}
       >
         {settingsView}
       </SettingsShell>
@@ -2579,6 +2617,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       />
       <CreateWorkspaceModal
         open={createWorkspaceOpen}
+        initialScreen={createWorkspaceInitialScreen}
         onClose={() => {
           setCreateWorkspaceOpen(false);
           setCreateWorkspaceError(null);
@@ -2687,8 +2726,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 }
 
-export function SettingsRoute() {
-  return <SettingsSurface />;
+export function SettingsRoute(props: SettingsSurfaceProps = {}) {
+  return <SettingsSurface {...props} />;
 }
 
 export function SettingsSurface(props: SettingsSurfaceProps) {

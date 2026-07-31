@@ -35,8 +35,7 @@ import {
   type JuggleWorkControlAction,
 } from "./control/control-provider";
 import { JuggleWorkContextPublisher } from "./jugglework-context-publisher";
-import { SessionRoute } from "./session-route";
-import { SettingsRoute } from "./settings-route";
+import { WorkspaceAppRoute } from "./workspace-app-route";
 import { ShellConfigProvider } from "./shell-config";
 import { resolveSigninGateDecision } from "./signin-gate";
 import { WelcomeRoute } from "./welcome-route";
@@ -333,58 +332,17 @@ export function AppRoot() {
                 }
               />
 
-              <Route
-                path="/session"
-                element={
-                  <DevProfiler id="SessionRoute">
-                    <SessionRoute />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/session/:sessionId"
-                element={
-                  <DevProfiler id="SessionRoute">
-                    <SessionRoute />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/workspace/:workspaceId/session"
-                element={
-                  <DevProfiler id="SessionRoute">
-                    <SessionRoute />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/workspace/:workspaceId/session/:sessionId"
-                element={
-                  <DevProfiler id="SessionRoute">
-                    <SessionRoute />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/workspace/:workspaceId/settings/*"
-                element={
-                  <DevProfiler id="SettingsRoute">
-                    <SettingsRoute />
-                  </DevProfiler>
-                }
-              />
-              <Route
-                path="/settings/*"
-                element={
-                  <DevProfiler id="SettingsRoute">
-                    <SettingsRoute />
-                  </DevProfiler>
-                }
-              />
               {/* Default + fallback: land on the session view. Users open
                   settings deliberately via the sidebar or command palette. */}
               <Route path="/" element={<Navigate to="/session" replace />} />
-              <Route path="*" element={<Navigate to="/session" replace />} />
+              <Route
+                path="*"
+                element={
+                  <DevProfiler id="WorkspaceAppRoute">
+                    <WorkspaceAppRoute />
+                  </DevProfiler>
+                }
+              />
             </Routes>
           </DenSigninGate>
         </JuggleWorkControlProvider>

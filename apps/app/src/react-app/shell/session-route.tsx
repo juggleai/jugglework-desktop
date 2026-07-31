@@ -121,7 +121,10 @@ import { appMentionInstruction } from "@/react-app/domains/session/surface/compo
 import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
-import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
+import type {
+  CreateWorkspaceOptions,
+  CreateWorkspaceScreen,
+} from "@/react-app/domains/workspace/types";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
@@ -180,7 +183,7 @@ import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -241,6 +244,7 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+const UNAVAILABLE_MODEL_AUTO_OPEN_DELAY_MS = 800;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -406,7 +410,12 @@ async function draftToParts(
   return parts;
 }
 
-export function SessionRoute() {
+export type SessionRouteProps = {
+  routeWorkspaceId?: string;
+  routeSessionId?: string | null;
+};
+
+export function SessionRoute(props: SessionRouteProps = {}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const denAuth = useDenAuth();
@@ -472,6 +481,8 @@ export function SessionRoute() {
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     developerMode,
+    routeWorkspaceId: props.routeWorkspaceId,
+    routeSessionId: props.routeSessionId,
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
@@ -556,6 +567,8 @@ export function SessionRoute() {
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [createWorkspaceInitialScreen, setCreateWorkspaceInitialScreen] =
+    useState<CreateWorkspaceScreen>("chooser");
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -838,18 +851,26 @@ export function SessionRoute() {
 
   useEffect(() => {
     if (!selectedModelUnavailableKey) {
+      const wasAutoOpened = autoOpenedUnavailableModelRef.current !== null;
       autoOpenedUnavailableModelRef.current = null;
+      if (wasAutoOpened && modelPicker.open) {
+        modelPicker.setOpen(false);
+      }
       return;
     }
-    if (autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
+    if (modelPicker.open || autoOpenedUnavailableModelRef.current === selectedModelUnavailableKey) return;
 
-    autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
+    const timeout = window.setTimeout(() => {
+      autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
+      setModelPickerSessionId(null);
+      modelPicker.setQuery("");
+      modelPicker.setRecentProviderIds(new Set());
+      modelPicker.setCompactOpen(false);
+      modelPicker.setOpen(true);
+    }, UNAVAILABLE_MODEL_AUTO_OPEN_DELAY_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [modelPicker.open, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, selectedModelUnavailableKey]);
 
   const hasUsableModel = Boolean(activeModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
@@ -971,8 +992,11 @@ export function SessionRoute() {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
+    const returnPath = workspaceId
+      ? workspaceSessionRoute(workspaceId, sessionId)
+      : legacySessionRoute(sessionId);
     writeActiveWorkspaceId(workspaceId || null);
-    navigate(target, { state: { workspaceId, sessionId } });
+    navigate(target, { state: { workspaceId, sessionId, returnPath } });
   }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
 
   const surfaceProps = useMemo(() => {
@@ -1258,7 +1282,7 @@ export function SessionRoute() {
     token,
   ]);
 
-  const handleOpenCreateWorkspace = useCallback(() => {
+  const openCreateWorkspace = useCallback((screen: CreateWorkspaceScreen) => {
     // Respect the org-level `allowMultipleWorkspaces` restriction (dev
     // #1505). If the checker returns true, the admin has disabled
     // adding further workspaces; surface a friendly notice instead of
@@ -1275,8 +1299,23 @@ export function SessionRoute() {
       return;
     }
     setCreateWorkspaceRemoteError(null);
+    setCreateWorkspaceError(null);
+    setCreateWorkspaceInitialScreen(screen);
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
+
+  const handleOpenCreateWorkspace = useCallback(
+    () => openCreateWorkspace("chooser"),
+    [openCreateWorkspace],
+  );
+  const handleOpenCreateLocalWorkspace = useCallback(
+    () => openCreateWorkspace("local"),
+    [openCreateWorkspace],
+  );
+  const handleOpenConnectRemoteWorkspace = useCallback(
+    () => openCreateWorkspace("remote"),
+    [openCreateWorkspace],
+  );
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2294,6 +2333,12 @@ export function SessionRoute() {
         onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
+        onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
+        onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
+        onOpenAccount: () => handleOpenSettings("/settings/cloud-account"),
+        onOpenHome: () => navigateToWorkspaceSession(sidebarActiveWorkspaceId, selectedSessionId),
+        onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
+        onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
         onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
@@ -2385,6 +2430,7 @@ export function SessionRoute() {
     />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
+      initialScreen={createWorkspaceInitialScreen}
       onClose={() => {
         setCreateWorkspaceOpen(false);
         setCreateWorkspaceError(null);
