@@ -38,6 +38,7 @@ import { JuggleWorkContextPublisher } from "./jugglework-context-publisher";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
+import { resolveSigninGateDecision } from "./signin-gate";
 import { WelcomeRoute } from "./welcome-route";
 
 
@@ -56,15 +57,17 @@ const subscribeToDenBootstrap = (onStoreChange: () => void) => {
 };
 
 /**
- * Forced-signin gate ported from the Solid shell.
+ * Sign-in gate.
  *
- * When the desktop bootstrap config has `requireSignin: true` (persisted by
- * the Tauri shell via `desktop-bootstrap.json`), the UI is held at `/signin`
- * until the user authenticates with Den. When sign-in is NOT required, we
- * never let users land on `/signin` — redirect them to `/session` instead.
+ * Sign-in is mandatory: no app route renders without a Den session. Anyone
+ * without one is held at `/signin`, and signing out drops the session, which
+ * lands them right back here. This is deliberately independent of
+ * `bootstrap.requireSignin` — a desktop bootstrap file must never be able to
+ * unlock the app for an anonymous user.
  *
- * While we're still checking the Den session AND sign-in is required, we
- * render nothing so the transcript/settings never flash behind the gate.
+ * `resolveSigninGateDecision` owns the routing/render rules; this component
+ * only wires them to the router. Note that `isSignedIn` still covers the
+ * `unavailable` status, so an offline user with a valid token keeps working.
  */
 function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
@@ -75,51 +78,17 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     readDenBootstrapSnapshot,
     readDenBootstrapSnapshot,
   );
-  const requireSignin = bootstrap.requireSignin;
-  const path = location.pathname.toLowerCase();
-  const onSignin = path === "/signin" || path.startsWith("/signin/");
-  const onOnboarding = path === "/onboarding" || path.startsWith("/onboarding/");
-  const hasPreparedBootstrap = Boolean(bootstrap.prepared);
-  const redirectingPreparedWorkspace =
-    denAuth.status !== "checking" &&
-    !requireSignin &&
-    !denAuth.isSignedIn &&
-    hasPreparedBootstrap &&
-    !onOnboarding;
+  const decision = resolveSigninGateDecision({
+    status: denAuth.status,
+    isSignedIn: denAuth.isSignedIn,
+    path: location.pathname,
+    hasPreparedBootstrap: Boolean(bootstrap.prepared),
+  });
+  const redirectTo = decision.redirectTo;
 
   useEffect(() => {
-    // Wait for the first auth check so we don't bounce the user between
-    // `/session` and `/signin` every navigation while we figure out if
-    // their cached token is still valid.
-    if (denAuth.status === "checking") return;
-
-    if (requireSignin) {
-      if (!denAuth.isSignedIn && !onSignin) {
-        navigate("/signin", { replace: true });
-      } else if (denAuth.isSignedIn && onSignin) {
-        // Signed in — route to onboarding so the user sees their org resources.
-        navigate("/onboarding", { replace: true });
-      }
-    } else if (onSignin) {
-      navigate("/session", { replace: true });
-    } else if (!denAuth.isSignedIn && hasPreparedBootstrap && !onOnboarding) {
-      navigate("/onboarding", { replace: true });
-    }
-
-    // If on /onboarding but not signed in, bounce to signin or session
-    if (onOnboarding && !denAuth.isSignedIn && !hasPreparedBootstrap) {
-      navigate(requireSignin ? "/signin" : "/session", { replace: true });
-    }
-  }, [
-    denAuth.isSignedIn,
-    denAuth.status,
-    hasPreparedBootstrap,
-    location,
-    navigate,
-    onOnboarding,
-    onSignin,
-    requireSignin,
-  ]);
+    if (redirectTo) navigate(redirectTo, { replace: true });
+  }, [navigate, redirectTo]);
 
   // After a fresh sign-in, navigate to the onboarding page so the
   // user sees what their org provides.
@@ -146,11 +115,12 @@ function DenSigninGate({ children }: DenSigninGateProps) {
     return () => window.removeEventListener(denSessionUpdatedEvent, handler);
   }, [navigate]);
 
-  if (requireSignin && denAuth.status === "checking") {
+  // Keep the boot overlay up until the first session check settles.
+  if (decision.render === "pending") return null;
+
+  if (decision.render === "signin") {
     return <ForcedSigninPage developerMode={false} />;
   }
-
-  if (redirectingPreparedWorkspace) return <Navigate to="/onboarding" replace />;
 
   return (
     <>
