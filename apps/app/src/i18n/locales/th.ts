@@ -395,7 +395,7 @@ export default {
   "mcp.friendly_status_paused": "หยุดชั่วคราว",
   "mcp.friendly_status_ready": "พร้อม",
   "mcp.last_synced": "ซิงค์แล้ว",
-  "navigation.chat_coming_soon": "แชท (เร็วๆ นี้)",
+  "navigation.chat": "แชท",
   "navigation.cloud_tasks": "งานบนคลาวด์",
   "navigation.local_tasks": "งานในเครื่อง",
   "navigation.primary": "การนำทางหลัก",

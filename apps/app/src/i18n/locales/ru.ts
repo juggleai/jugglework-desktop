@@ -317,7 +317,7 @@ export default {
   "mcp.friendly_status_paused": "Приостановлено",
   "mcp.friendly_status_ready": "Готово",
   "mcp.last_synced": "Синхронизировано",
-  "navigation.chat_coming_soon": "Чат (скоро)",
+  "navigation.chat": "Чат",
   "navigation.cloud_tasks": "Облачные задачи",
   "navigation.local_tasks": "Локальные задачи",
   "navigation.primary": "Основная навигация",

@@ -723,7 +723,7 @@ export default {
   "mcp.friendly_status_paused": "Paused",
   "mcp.friendly_status_ready": "Ready",
   "mcp.last_synced": "Synced",
-  "navigation.chat_coming_soon": "Chat (coming soon)",
+  "navigation.chat": "Chat",
   "navigation.cloud_tasks": "Cloud tasks",
   "navigation.local_tasks": "Local tasks",
   "navigation.primary": "Primary navigation",

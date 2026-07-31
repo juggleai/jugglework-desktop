@@ -687,6 +687,7 @@ export type AppSidebarProps = {
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
+  onOpenChat: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
@@ -935,6 +936,7 @@ export function AppSidebar(props: AppSidebarProps) {
             onOpenAccount={props.onOpenAccount}
             onCreateLocalWorkspace={props.onOpenCreateLocalWorkspace}
             onConnectRemoteWorkspace={props.onOpenConnectRemoteWorkspace}
+            onOpenChat={props.onOpenChat}
             onOpenSettings={props.onOpenSettings}
           />
 

@@ -394,7 +394,7 @@ export default {
   "mcp.friendly_status_paused": "一時停止中",
   "mcp.friendly_status_ready": "準備完了",
   "mcp.last_synced": "同期済み",
-  "navigation.chat_coming_soon": "チャット（近日公開）",
+  "navigation.chat": "チャット",
   "navigation.cloud_tasks": "クラウドタスク",
   "navigation.local_tasks": "ローカルタスク",
   "navigation.primary": "メインナビゲーション",

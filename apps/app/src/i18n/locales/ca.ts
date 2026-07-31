@@ -402,7 +402,7 @@ export default {
   "mcp.friendly_status_paused": "En pausa",
   "mcp.friendly_status_ready": "A punt",
   "mcp.last_synced": "Sincronitzat",
-  "navigation.chat_coming_soon": "Xat (properament)",
+  "navigation.chat": "Xat",
   "navigation.cloud_tasks": "Tasques al núvol",
   "navigation.local_tasks": "Tasques locals",
   "navigation.primary": "Navegació principal",

@@ -726,7 +726,7 @@ export default {
   "mcp.friendly_status_paused": "已暂停",
   "mcp.friendly_status_ready": "就绪",
   "mcp.last_synced": "已同步",
-  "navigation.chat_coming_soon": "聊天（即将推出）",
+  "navigation.chat": "聊天",
   "navigation.cloud_tasks": "云端任务",
   "navigation.local_tasks": "本地任务",
   "navigation.primary": "主导航",

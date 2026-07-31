@@ -183,7 +183,7 @@ import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -992,8 +992,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
+    const returnPath = workspaceId
+      ? workspaceSessionRoute(workspaceId, sessionId)
+      : legacySessionRoute(sessionId);
     writeActiveWorkspaceId(workspaceId || null);
-    navigate(target, { state: { workspaceId, sessionId } });
+    navigate(target, { state: { workspaceId, sessionId, returnPath } });
   }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
 
   const surfaceProps = useMemo(() => {
@@ -2333,6 +2336,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
         onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
         onOpenAccount: () => handleOpenSettings("/settings/cloud-account"),
+        onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
         onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}

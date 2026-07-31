@@ -15,9 +15,11 @@ export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
 type AppNavigationRailProps = {
   settingsActive?: boolean;
+  chatActive?: boolean;
   onOpenAccount: () => void;
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
+  onOpenChat: () => void;
   onOpenSettings: () => void;
 };
 
@@ -100,9 +102,10 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           <Orbit className="size-5" strokeWidth={1.8} />
         </RailButton>
         <RailButton
-          label={t("navigation.chat_coming_soon")}
-          disabled
-          testId="app-rail-chat-placeholder"
+          label={t("navigation.chat")}
+          active={props.chatActive}
+          onClick={props.onOpenChat}
+          testId="app-rail-chat"
         >
           <MessageCircleMore className="size-5" strokeWidth={1.8} />
         </RailButton>

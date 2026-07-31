@@ -143,6 +143,7 @@ export type SessionPageSidebarProps = {
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
+  onOpenChat: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -1048,6 +1049,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenCreateLocalWorkspace={props.sidebar.onOpenCreateLocalWorkspace}
           onOpenConnectRemoteWorkspace={props.sidebar.onOpenConnectRemoteWorkspace}
           onOpenAccount={props.sidebar.onOpenAccount}
+          onOpenChat={props.sidebar.onOpenChat}
           onOpenSettings={props.onOpenSettings}
           onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}

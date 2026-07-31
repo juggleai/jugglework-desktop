@@ -400,7 +400,7 @@ export default {
   "mcp.friendly_status_paused": "Pausado",
   "mcp.friendly_status_ready": "Pronto",
   "mcp.last_synced": "Sincronizado",
-  "navigation.chat_coming_soon": "Chat (em breve)",
+  "navigation.chat": "Chat",
   "navigation.cloud_tasks": "Tarefas na nuvem",
   "navigation.local_tasks": "Tarefas locais",
   "navigation.primary": "Navegação principal",

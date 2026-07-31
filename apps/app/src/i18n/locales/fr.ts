@@ -402,7 +402,7 @@ export default {
   "mcp.friendly_status_paused": "En pause",
   "mcp.friendly_status_ready": "Prêt",
   "mcp.last_synced": "Synchronisé",
-  "navigation.chat_coming_soon": "Discussion (bientôt disponible)",
+  "navigation.chat": "Discussion",
   "navigation.cloud_tasks": "Tâches cloud",
   "navigation.local_tasks": "Tâches locales",
   "navigation.primary": "Navigation principale",

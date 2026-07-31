@@ -264,6 +264,7 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
+  onOpenChat: () => void;
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
@@ -278,6 +279,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
         <AppNavigationRail
           settingsActive
           onOpenAccount={props.onOpenAccount}
+          onOpenChat={props.onOpenChat}
           onCreateLocalWorkspace={props.onCreateLocalWorkspace}
           onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
           onOpenSettings={() => undefined}

@@ -1,11 +1,18 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
+import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
-import { parseWorkspaceAppPath } from "./workspace-routes";
+import {
+  legacySessionRoute,
+  parseWorkspaceAppPath,
+  workspaceChatRoute,
+  workspaceSessionRoute,
+  workspaceSettingsRoute,
+} from "./workspace-routes";
 
 type RetainedSessionTarget = {
   workspaceId: string;
@@ -26,7 +33,7 @@ function initialSessionTarget(pathname: string, navigationState: unknown): Retai
 
   const navigationWorkspaceId = readNavigationValue(navigationState, "workspaceId");
   const navigationSessionId = readNavigationValue(navigationState, "sessionId");
-  const workspaceId = appPath?.view === "settings" && appPath.workspaceId
+  const workspaceId = appPath?.workspaceId
     ? appPath.workspaceId
     : navigationWorkspaceId ?? readActiveWorkspaceId() ?? "";
   const sessionId = workspaceId && workspaceId === navigationWorkspaceId
@@ -43,6 +50,7 @@ function initialSessionTarget(pathname: string, navigationState: unknown): Retai
  */
 export function WorkspaceAppRoute() {
   const location = useLocation();
+  const navigate = useNavigate();
   const appPath = useMemo(
     () => parseWorkspaceAppPath(location.pathname),
     [location.pathname],
@@ -50,18 +58,21 @@ export function WorkspaceAppRoute() {
   const [retainedSession, setRetainedSession] = useState<RetainedSessionTarget>(() => (
     initialSessionTarget(location.pathname, location.state)
   ));
+  const [chatMounted, setChatMounted] = useState(() => appPath?.view === "chat");
 
   const currentSession = appPath?.view === "session"
     ? { workspaceId: appPath.workspaceId, sessionId: appPath.sessionId }
     : null;
   const settingsWorkspaceId = appPath?.view === "settings" ? appPath.workspaceId : null;
+  const chatWorkspaceId = appPath?.view === "chat" ? appPath.workspaceId : null;
+  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId;
 
   useEffect(() => {
     const next = currentSession ?? (
-      settingsWorkspaceId && settingsWorkspaceId !== retainedSession.workspaceId
+      surfaceWorkspaceId && surfaceWorkspaceId !== retainedSession.workspaceId
         ? {
-            workspaceId: settingsWorkspaceId,
-            sessionId: readLastSessionFor(settingsWorkspaceId),
+            workspaceId: surfaceWorkspaceId,
+            sessionId: readLastSessionFor(surfaceWorkspaceId),
           }
         : null
     );
@@ -71,7 +82,11 @@ export function WorkspaceAppRoute() {
         ? current
         : next
     ));
-  }, [currentSession?.sessionId, currentSession?.workspaceId, retainedSession.workspaceId, settingsWorkspaceId]);
+  }, [currentSession?.sessionId, currentSession?.workspaceId, retainedSession.workspaceId, surfaceWorkspaceId]);
+
+  useEffect(() => {
+    if (appPath?.view === "chat") setChatMounted(true);
+  }, [appPath?.view]);
 
   if (!appPath) {
     return <Navigate to="/session" replace />;
@@ -79,12 +94,39 @@ export function WorkspaceAppRoute() {
 
   const activeSession = currentSession ?? retainedSession;
   const settingsVisible = appPath.view === "settings";
+  const chatVisible = appPath.view === "chat";
+  const sessionPath = activeSession.workspaceId
+    ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
+    : legacySessionRoute(activeSession.sessionId);
+
+  const openRetainedSessionAction = (testId: string) => {
+    navigate(sessionPath);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const selector = `[data-testid="retained-session-surface"] [data-testid="${testId}"]`;
+        document.querySelector<HTMLButtonElement>(selector)?.click();
+      });
+    });
+  };
+
+  const openChatSettings = (tab: "cloud-account" | "general") => {
+    const target = activeSession.workspaceId
+      ? workspaceSettingsRoute(activeSession.workspaceId, tab)
+      : `/settings/${tab}`;
+    navigate(target, {
+      state: {
+        workspaceId: activeSession.workspaceId || null,
+        sessionId: activeSession.sessionId,
+        returnPath: workspaceChatRoute(activeSession.workspaceId),
+      },
+    });
+  };
 
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible ? "hidden" : "h-full min-h-0"}
-        aria-hidden={settingsVisible || undefined}
+        className={settingsVisible || chatVisible ? "hidden" : "h-full min-h-0"}
+        aria-hidden={settingsVisible || chatVisible || undefined}
         data-testid="retained-session-surface"
       >
         <SessionRoute
@@ -96,6 +138,22 @@ export function WorkspaceAppRoute() {
       {settingsVisible ? (
         <div className="absolute inset-0" data-testid="workspace-settings-surface">
           <SettingsRoute workspaceId={appPath.workspaceId ?? undefined} />
+        </div>
+      ) : null}
+
+      {chatMounted || chatVisible ? (
+        <div
+          className={chatVisible ? "absolute inset-0" : "hidden"}
+          aria-hidden={!chatVisible || undefined}
+          data-testid="workspace-chat-surface"
+        >
+          <ChatPage
+            onOpenAccount={() => openChatSettings("cloud-account")}
+            onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
+            onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
+            onToggleChat={() => navigate(sessionPath)}
+            onOpenSettings={() => openChatSettings("general")}
+          />
         </div>
       ) : null}
     </div>

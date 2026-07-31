@@ -33,6 +33,10 @@ describe("workspace app path parsing", () => {
       view: "settings",
       workspaceId: null,
     });
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/chat")).toEqual({
+      view: "chat",
+      workspaceId: "workspace-a",
+    });
     expect(parseWorkspaceAppPath("/welcome")).toBeNull();
   });
 });

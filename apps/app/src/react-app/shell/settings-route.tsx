@@ -168,7 +168,7 @@ import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
-import { settingsReturnRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { settingsReturnRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
@@ -330,6 +330,14 @@ function readNavigationSessionId(state: unknown): string | null {
   return typeof value === "string" ? value.trim() || null : null;
 }
 
+function readNavigationReturnPath(state: unknown): string | null {
+  if (!state || typeof state !== "object") return null;
+  const value = (state as { returnPath?: unknown }).returnPath;
+  if (typeof value !== "string") return null;
+  const path = value.trim();
+  return path.startsWith("/") && !path.startsWith("//") ? path : null;
+}
+
 function findSessionWorkspaceId(
   sessionId: string | null,
   entries: Array<{ workspaceId: string; sessions: any[] }>,
@@ -370,6 +378,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const route = props.embedded ? parseSettingsPath(`/settings/${embeddedPath}`) : parseSettingsPath(location.pathname);
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
+  const navigationReturnPath = readNavigationReturnPath(location.state);
 
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
@@ -2518,14 +2527,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onCreateLocalWorkspace={() => openCreateWorkspace("local")}
         onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
         onOpenAccount={openCloudAccountSettings}
+        onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
-        onClose={props.onClose ?? (() => navigate(settingsReturnRoute(
-          selectedWorkspaceId,
-          navigationWorkspaceId,
-          navigationSessionId,
-          readLastSessionFor(selectedWorkspaceId),
-        )))}
+        onClose={props.onClose ?? (() => navigate(
+          navigationReturnPath ?? settingsReturnRoute(
+            selectedWorkspaceId,
+            navigationWorkspaceId,
+            navigationSessionId,
+            readLastSessionFor(selectedWorkspaceId),
+          ),
+        ))}
         compact={props.embedded}
       >
         {settingsView}

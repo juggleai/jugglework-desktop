@@ -395,7 +395,7 @@ export default {
   "mcp.friendly_status_paused": "Tạm dừng",
   "mcp.friendly_status_ready": "Sẵn sàng",
   "mcp.last_synced": "Đã đồng bộ",
-  "navigation.chat_coming_soon": "Trò chuyện (sắp ra mắt)",
+  "navigation.chat": "Trò chuyện",
   "navigation.cloud_tasks": "Tác vụ đám mây",
   "navigation.local_tasks": "Tác vụ cục bộ",
   "navigation.primary": "Điều hướng chính",
