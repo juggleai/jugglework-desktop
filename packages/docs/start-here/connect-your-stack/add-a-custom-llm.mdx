@@ -3,6 +3,14 @@ title: "Add a custom LLM"
 description: "How to connect a custom provider with JuggleWork"
 ---
 
+### From the app
+
+Open **Connect providers** (Settings → Providers, or the model picker) and pick **Custom provider**. Fill in a name, the OpenAI-compatible base URL, your API key and the model IDs the endpoint serves — one per line, optionally as `model-id = Display name`. JuggleWork writes the provider block into the workspace's `opencode.jsonc` and stores the key in OpenCode's local credential store, so the config file itself carries no secret. Works with any OpenAI-shaped gateway, relay or self-hosted proxy.
+
+The optional context/output limits enable context tracking and auto-compaction for those models; leave them empty to use the engine defaults.
+
+### By hand
+
 Because `JuggleWork` is built on `OpenCode` primitives, we support everything that you could modify in `.opencode.json`, like adding a [model](https://opencode.ai/docs/models/). However, our recommendation is to add it to `/path-to-your-workspace/.config/opencode/opencode.json` instead of modifying `~/.config/opencode/opencode.json`.
 
 Inside `/path-to-your-workspace/.config/opencode/opencode.json`:

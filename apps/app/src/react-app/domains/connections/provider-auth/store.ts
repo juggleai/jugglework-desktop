@@ -77,6 +77,13 @@ import {
   missingCloudProviderReloadKey,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
+import {
+  buildCustomProviderConfig,
+  formatConfigWithCustomProvider,
+  normalizeCustomProviderInput,
+  validateCustomProviderInput,
+  type CustomProviderInput,
+} from "./custom-provider-config";
 import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 import { updateManagedDisabledProviders } from "../managed-engine-config";
@@ -1415,6 +1422,93 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  /**
+   * Write a user-declared provider block. The workspace `opencode.jsonc` is the
+   * owner whenever we can reach it — the user wrote this provider themselves,
+   * so it should stay hand-editable and travel with the workspace. Only when
+   * there is no config file to edit (a workspace served without the config API)
+   * does it fall back to the runtime config the JuggleWork server merges in.
+   */
+  const writeCustomProviderConfig = async (
+    providerId: string,
+    config: ReturnType<typeof buildCustomProviderConfig>,
+  ) => {
+    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
+    if (configFile) {
+      const raw = configFile.content?.trim()
+        ? configFile.content
+        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+      const next = formatConfigWithCustomProvider(raw, providerId, config);
+      if (!configsAreSemanticallyEqual(raw, next)) {
+        await writeProjectConfigFile(next);
+      }
+      return;
+    }
+
+    await patchRuntimeProviders({
+      [providerId]: config as unknown as Record<string, unknown>,
+    });
+  };
+
+  /**
+   * Connect an OpenAI-compatible endpoint the user brings themselves (a relay
+   * platform, a gateway, a self-hosted proxy). Mirrors the cloud import:
+   * provider block in config, credential in the engine's auth store under the
+   * same id, then a disposing refresh so the engine picks the provider up.
+   */
+  async function connectCustomProvider(input: CustomProviderInput & { apiKey: string }) {
+    setStateField("providerAuthError", null);
+    const c = options.client();
+    if (!c) {
+      throw new Error(t("providers.not_connected"));
+    }
+
+    const normalized = normalizeCustomProviderInput(input);
+    const failWith = (message: string) => {
+      setStateField("providerAuthError", message);
+      return new Error(message);
+    };
+
+    const validationError = validateCustomProviderInput(normalized);
+    if (validationError) {
+      throw failWith(t(validationError));
+    }
+    if (options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" })) {
+      throw failWith(t("providers.custom_restricted"));
+    }
+
+    setStateField("providerAuthBusy", true);
+    try {
+      await writeCustomProviderConfig(
+        normalized.providerId,
+        buildCustomProviderConfig(normalized),
+      );
+      // Re-adding a provider that was previously disconnected must undo the
+      // `disabled_providers` entry that Disconnect parks config providers in.
+      await ensureProjectProviderDisabledState(normalized.providerId, false);
+
+      const apiKey = input.apiKey.trim();
+      if (apiKey) {
+        await c.auth.set({
+          providerID: normalized.providerId,
+          auth: { type: "api", key: apiKey },
+        });
+      }
+
+      options.markOpencodeConfigReloadRequired();
+      await refreshProviders({ dispose: true });
+      refreshSnapshot();
+      emitChange();
+      return `${t("status.connected")} ${normalized.name}`;
+    } catch (error) {
+      const message = describeProviderError(error, t("providers.custom_add_failed"));
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setStateField("providerAuthBusy", false);
+    }
+  }
+
   async function connectCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -2138,6 +2232,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,
+    connectCustomProvider,
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,

@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Loader2,
+  Plus,
   Search,
 } from "lucide-react";
 import {
@@ -23,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/sonner";
+import { t } from "@/i18n";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
@@ -30,6 +32,13 @@ import { isProviderHiddenFromConnectUi } from "@/app/cloud/desktop-app-restricti
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { TextInput } from "../../../design-system/text-input";
+import {
+  normalizeCustomProviderId,
+  normalizeCustomProviderInput,
+  parseCustomProviderModels,
+  validateCustomProviderInput,
+  type CustomProviderInput,
+} from "./custom-provider-config";
 import type {
   ProviderAuthMethod,
   ProviderAuthProvider,
@@ -49,6 +58,43 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
   methodLabel: string;
 };
 
+type CustomProviderForm = {
+  name: string;
+  providerId: string;
+  baseUrl: string;
+  apiKey: string;
+  models: string;
+  contextLimit: string;
+  outputLimit: string;
+};
+
+const EMPTY_CUSTOM_FORM: CustomProviderForm = {
+  name: "",
+  providerId: "",
+  baseUrl: "",
+  apiKey: "",
+  models: "",
+  contextLimit: "",
+  outputLimit: "",
+};
+
+/**
+ * Words that should surface the custom-provider card while filtering. The
+ * localized title and description are folded in so the card is findable by
+ * whatever the user actually sees.
+ */
+const customEntryKeywords = () =>
+  `custom provider openai compatible relay proxy gateway base url endpoint 自定义 中转 ${t(
+    "providers.custom_title",
+  )} ${t("providers.custom_card_desc")}`.toLowerCase();
+
+const readOptionalCount = (value: string): number | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed.replace(/[_,\s]/g, ""));
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+};
+
 const PROVIDER_LABELS: Record<string, string> = {
   opencode: "OpenCode Zen",
   openai: "OpenAI",
@@ -57,6 +103,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   jugglerouter: "JuggleRouter",
 };
+
+export type CustomProviderConnectInput = CustomProviderInput & { apiKey: string };
 
 export type ProviderAuthModalProps = {
   open: boolean;
@@ -71,6 +119,12 @@ export type ProviderAuthModalProps = {
   onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   onConnectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
+  /**
+   * Declare an OpenAI-compatible endpoint the user brings themselves (relay
+   * platform, gateway, self-hosted proxy). Omitted callers simply don't get the
+   * "Custom provider" entry.
+   */
+  onConnectCustomProvider?: (input: CustomProviderConnectInput) => Promise<string | void>;
   onSubmitOAuth: (
     providerId: string,
     methodIndex: number,
@@ -85,7 +139,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const isRemoteWorker = workerType === "remote";
 
   const [view, setView] = useState<
-    "list" | "method" | "api" | "cloud" | "oauth-code" | "oauth-auto"
+    "list" | "method" | "api" | "cloud" | "custom" | "oauth-code" | "oauth-auto"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [selectedCloudMethod, setSelectedCloudMethod] = useState<ProviderAuthMethod | null>(null);
@@ -99,6 +153,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
+  const [customForm, setCustomForm] = useState(EMPTY_CUSTOM_FORM);
+  const [customIdEdited, setCustomIdEdited] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
@@ -191,8 +247,26 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     [entries, selectedProviderId],
   );
 
-  const resolvedView = selectedEntry ? view : "list";
+  // The custom-provider form is the one view that has no selected entry behind
+  // it — everything else falls back to the list when the selection is gone.
+  const resolvedView = view === "custom" ? "custom" : selectedEntry ? view : "list";
   const errorMessage = localError ?? props.error;
+
+  const customEntryEnabled = Boolean(props.onConnectCustomProvider);
+  const customModels = useMemo(
+    () => parseCustomProviderModels(customForm.models),
+    [customForm.models],
+  );
+  const customProviderId = customIdEdited
+    ? customForm.providerId
+    : normalizeCustomProviderId(customForm.name);
+
+  const showCustomEntry = useMemo(() => {
+    if (!customEntryEnabled) return false;
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return customEntryKeywords().includes(query);
+  }, [customEntryEnabled, searchQuery]);
 
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -244,6 +318,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
+    setCustomForm(EMPTY_CUSTOM_FORM);
+    setCustomIdEdited(false);
   };
 
   const stopProviderPolling = () => {
@@ -540,6 +616,45 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
+  const openCustomView = () => {
+    if (actionDisabled) return;
+    setLocalError(null);
+    setSelectedProviderId(null);
+    setSelectedCloudMethod(null);
+    setView("custom");
+  };
+
+  const handleCustomSubmit = async () => {
+    if (!props.onConnectCustomProvider || actionDisabled) return;
+
+    const input = normalizeCustomProviderInput({
+      providerId: customProviderId,
+      name: customForm.name,
+      baseUrl: customForm.baseUrl,
+      models: customModels,
+      contextLimit: readOptionalCount(customForm.contextLimit),
+      outputLimit: readOptionalCount(customForm.outputLimit),
+    });
+
+    const validationError = validateCustomProviderInput(input);
+    if (validationError) {
+      setLocalError(t(validationError));
+      return;
+    }
+
+    setLocalError(null);
+    try {
+      await props.onConnectCustomProvider({ ...input, apiKey: customForm.apiKey });
+      toast.success(t("providers.custom_connected_toast", { name: input.name }), {
+        description: t("providers.custom_connected_models", { count: input.models.length }),
+      });
+      props.onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t("providers.custom_add_failed");
+      setLocalError(message);
+    }
+  };
+
   const handleCloudSubmit = async () => {
     if (!selectedCloudMethod?.cloudProviderId || actionDisabled) return;
 
@@ -599,6 +714,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const submittingLabel = () => {
     if (!props.submitting) return null;
     if (resolvedView === "api") return "Saving API key...";
+    if (resolvedView === "custom") return t("providers.custom_submitting_status");
     if (resolvedView === "cloud") return "Connecting organization provider...";
     if (resolvedView === "oauth-code") return "Verifying authorization code...";
     if (resolvedView === "oauth-auto") return "Waiting for OAuth confirmation...";
@@ -710,6 +826,33 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       className="w-full rounded-xl bg-gray-2 px-9 py-2.5 text-[13px] text-gray-12 placeholder:text-gray-9 border border-gray-6/60 focus:border-gray-8 focus:bg-gray-1 focus:outline-none transition-colors shadow-sm"
                     />
                   </div>
+
+                  {showCustomEntry ? (
+                    <button
+                      type="button"
+                      className="w-full group flex items-start gap-3.5 rounded-xl border border-dashed border-gray-6/70 px-3.5 py-3 text-left transition-all duration-200 hover:bg-gray-3/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={actionDisabled}
+                      onClick={openCustomView}
+                    >
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-gray-5/60 bg-gray-2 shadow-sm">
+                        <Plus size={16} className="text-gray-11" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-[14px] font-medium text-gray-12 truncate tracking-tight">
+                            {t("providers.custom_title")}
+                          </div>
+                          <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100 shrink-0">
+                            {t("common.add")}
+                            <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
+                          </div>
+                        </div>
+                        <div className="text-[11px] text-gray-9 mt-0.5">
+                          {t("providers.custom_card_desc")}
+                        </div>
+                      </div>
+                    </button>
+                  ) : null}
 
                   {filteredEntries.length ? (
                     filteredEntries.map((entry, index) => (
@@ -858,6 +1001,177 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         </>
                       ) : (
                         "Save key"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {resolvedView === "custom" ? (
+                <div className="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-sm font-medium text-gray-12">
+                        {t("providers.custom_title")}
+                      </div>
+                      <div className="text-xs text-gray-10 mt-1">
+                        {t("providers.custom_subtitle")}
+                      </div>
+                    </div>
+                    <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
+                      {t("common.back")}
+                    </Button>
+                  </div>
+
+                  <TextInput
+                    label={t("providers.custom_name_label")}
+                    placeholder={t("providers.custom_name_placeholder")}
+                    value={customForm.name}
+                    onChange={(event) => {
+                      const name = event.currentTarget.value;
+                      setCustomForm((current) => ({ ...current, name }));
+                      if (localError) setLocalError(null);
+                    }}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={actionDisabled}
+                  />
+
+                  <TextInput
+                    label={t("providers.custom_id_label")}
+                    placeholder="my-gateway"
+                    hint={
+                      normalizeCustomProviderId(customProviderId) !== customProviderId.trim() &&
+                      customProviderId.trim()
+                        ? t("providers.custom_id_normalized_hint", {
+                            id: normalizeCustomProviderId(customProviderId),
+                          })
+                        : t("providers.custom_id_hint")
+                    }
+                    value={customProviderId}
+                    onChange={(event) => {
+                      const providerId = event.currentTarget.value;
+                      setCustomIdEdited(true);
+                      setCustomForm((current) => ({ ...current, providerId }));
+                      if (localError) setLocalError(null);
+                    }}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    disabled={actionDisabled}
+                  />
+
+                  <TextInput
+                    label={t("providers.custom_base_url_label")}
+                    placeholder="https://api.example.com/v1"
+                    hint={t("providers.custom_base_url_hint")}
+                    value={customForm.baseUrl}
+                    onChange={(event) => {
+                      const baseUrl = event.currentTarget.value;
+                      setCustomForm((current) => ({ ...current, baseUrl }));
+                      if (localError) setLocalError(null);
+                    }}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    disabled={actionDisabled}
+                  />
+
+                  <TextInput
+                    label={t("providers.api_key_label")}
+                    type="password"
+                    placeholder="sk-..."
+                    value={customForm.apiKey}
+                    onChange={(event) => {
+                      const apiKey = event.currentTarget.value;
+                      setCustomForm((current) => ({ ...current, apiKey }));
+                      if (localError) setLocalError(null);
+                    }}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    disabled={actionDisabled}
+                  />
+
+                  <label className="block">
+                    <div className="mb-1 text-xs font-medium text-dls-secondary">
+                      {t("providers.custom_models_label")}
+                    </div>
+                    <textarea
+                      rows={4}
+                      placeholder={"gpt-4o\nclaude-sonnet-4-5 = Claude Sonnet 4.5"}
+                      value={customForm.models}
+                      onChange={(event) => {
+                        const models = event.currentTarget.value;
+                        setCustomForm((current) => ({ ...current, models }));
+                        if (localError) setLocalError(null);
+                      }}
+                      autoComplete="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      disabled={actionDisabled}
+                      className="w-full resize-y rounded-lg bg-dls-surface px-3 py-2 font-mono text-xs text-dls-text placeholder:text-dls-secondary border border-dls-border shadow-sm focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                    />
+                    <div className="mt-1 text-xs text-dls-secondary">
+                      {t("providers.custom_models_hint")}{" "}
+                      {t("providers.custom_models_detected", { count: customModels.length })}
+                    </div>
+                  </label>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <TextInput
+                      label={t("providers.custom_context_limit_label")}
+                      inputMode="numeric"
+                      placeholder="200000"
+                      value={customForm.contextLimit}
+                      onChange={(event) => {
+                        const contextLimit = event.currentTarget.value;
+                        setCustomForm((current) => ({ ...current, contextLimit }));
+                        if (localError) setLocalError(null);
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={actionDisabled}
+                    />
+                    <TextInput
+                      label={t("providers.custom_output_limit_label")}
+                      inputMode="numeric"
+                      placeholder="32000"
+                      value={customForm.outputLimit}
+                      onChange={(event) => {
+                        const outputLimit = event.currentTarget.value;
+                        setCustomForm((current) => ({ ...current, outputLimit }));
+                        if (localError) setLocalError(null);
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      disabled={actionDisabled}
+                    />
+                  </div>
+                  <div className="text-[11px] text-gray-9">
+                    {t("providers.custom_limits_hint")}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] text-gray-9">
+                      {t("providers.custom_storage_note")}
+                    </div>
+                    <Button
+                      onClick={() => void handleCustomSubmit()}
+                      disabled={
+                        actionDisabled ||
+                        !customProviderId.trim() ||
+                        !customForm.baseUrl.trim() ||
+                        customModels.length === 0
+                      }
+                    >
+                      {props.submitting ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          {t("providers.custom_submitting")}
+                        </>
+                      ) : (
+                        t("providers.custom_submit")
                       )}
                     </Button>
                   </div>

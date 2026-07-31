@@ -2193,6 +2193,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           modelPicker.setOpen(true);
           return result;
         },
+        onConnectCustomProvider: async (input) => {
+          const result = await sessionProviderAuthStore.connectCustomProvider(input);
+          modelPicker.setRecentProviderIds(new Set([input.providerId]));
+          modelPicker.setQuery("");
+          modelPicker.setOpen(true);
+          return result;
+        },
         onConnectCloudProvider: async (cloudProviderId) => {
           const result = await sessionProviderAuthStore.connectCloudProvider(cloudProviderId);
           modelPicker.setRecentProviderIds(new Set([cloudProviderId]));
