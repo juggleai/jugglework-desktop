@@ -3,6 +3,7 @@ import type { SettingsTab } from "../../app/types";
 export type WorkspaceAppPath =
   | { view: "session"; workspaceId: string; sessionId: string | null }
   | { view: "settings"; workspaceId: string | null }
+  | { view: "apps"; workspaceId: string | null }
   | { view: "chat"; workspaceId: string | null }
   | null;
 
@@ -46,6 +47,18 @@ export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
     return { view: "settings", workspaceId: null };
   }
 
+  const workspaceApps = pathname.match(/^\/workspace\/([^/]+)\/apps\/?$/);
+  if (workspaceApps) {
+    return {
+      view: "apps",
+      workspaceId: decodeRoutePart(workspaceApps[1]) || null,
+    };
+  }
+
+  if (/^\/apps\/?$/.test(pathname)) {
+    return { view: "apps", workspaceId: null };
+  }
+
   const workspaceChat = pathname.match(/^\/workspace\/([^/]+)\/chat\/?$/);
   if (workspaceChat) {
     return {
@@ -72,6 +85,11 @@ export function workspaceSessionRoute(workspaceId: string, sessionId?: string | 
 export function workspaceChatRoute(workspaceId?: string | null) {
   const workspace = workspaceId?.trim();
   return workspace ? `/workspace/${encodeURIComponent(workspace)}/chat` : "/chat";
+}
+
+export function workspaceAppsRoute(workspaceId?: string | null) {
+  const workspace = workspaceId?.trim();
+  return workspace ? `/workspace/${encodeURIComponent(workspace)}/apps` : "/apps";
 }
 
 export function settingsReturnRoute(

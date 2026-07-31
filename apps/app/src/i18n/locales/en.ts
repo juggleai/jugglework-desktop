@@ -725,6 +725,7 @@ export default {
   "mcp.last_synced": "Synced",
   "navigation.chat": "Chat",
   "navigation.cloud_tasks": "Cloud tasks",
+  "navigation.home": "Home",
   "navigation.local_tasks": "Local tasks",
   "navigation.primary": "Primary navigation",
   "navigation.settings": "Settings",

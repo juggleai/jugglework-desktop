@@ -264,6 +264,8 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
   onOpenChat: () => void;
 };
 
@@ -277,8 +279,11 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
       <div className="flex h-full min-h-0 w-full">
         <AppNavigationRail
-          settingsActive
+          appsActive={props.activeTab === "extensions"}
+          settingsActive={props.activeTab !== "extensions"}
           onOpenAccount={props.onOpenAccount}
+          onOpenHome={props.onOpenHome}
+          onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
           onCreateLocalWorkspace={props.onCreateLocalWorkspace}
           onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}

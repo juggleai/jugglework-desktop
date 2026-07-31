@@ -396,6 +396,7 @@ export default {
   "mcp.last_synced": "同期済み",
   "navigation.chat": "チャット",
   "navigation.cloud_tasks": "クラウドタスク",
+  "navigation.home": "ホーム",
   "navigation.local_tasks": "ローカルタスク",
   "navigation.primary": "メインナビゲーション",
   "navigation.settings": "設定",

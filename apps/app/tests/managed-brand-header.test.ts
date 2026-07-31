@@ -17,4 +17,21 @@ describe("managed brand navigation identity", () => {
     expect(source).toMatch(/className="flex h-full w-\[72px\] shrink-0 flex-col items-center/);
     expect(source).toMatch(/className="size-full object-cover"/);
   });
+
+  test("places Home first and Apps directly after it", () => {
+    const source = readFileSync(navigationRailPath, "utf8");
+    const avatarIndex = source.indexOf('data-testid="app-rail-account"');
+    const homeIndex = source.indexOf('testId="app-rail-home"');
+    const appsIndex = source.indexOf('testId="app-rail-apps"');
+    const localTasksIndex = source.indexOf('testId="app-rail-create-local"');
+
+    expect(avatarIndex).toBeGreaterThan(-1);
+    expect(homeIndex).toBeGreaterThan(avatarIndex);
+    expect(appsIndex).toBeGreaterThan(homeIndex);
+    expect(localTasksIndex).toBeGreaterThan(appsIndex);
+    expect(source).toContain('label={t("navigation.home")}');
+    expect(source).toContain('onClick={props.onOpenHome}');
+    expect(source).toContain('label={t("mcp.apps_title")}');
+    expect(source).toContain('onClick={props.onOpenApps}');
+  });
 });

@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import {
+  AppWindowMac,
   FilePlus2,
+  House,
   MessageCircleMore,
   Orbit,
   Settings,
@@ -14,9 +16,13 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
 type AppNavigationRailProps = {
+  homeActive?: boolean;
+  appsActive?: boolean;
   settingsActive?: boolean;
   chatActive?: boolean;
   onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
   onOpenChat: () => void;
@@ -87,6 +93,22 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       </button>
 
       <nav className="flex flex-col items-center gap-3">
+        <RailButton
+          label={t("navigation.home")}
+          active={props.homeActive}
+          onClick={props.onOpenHome}
+          testId="app-rail-home"
+        >
+          <House className="size-5" strokeWidth={1.8} />
+        </RailButton>
+        {/* <RailButton
+          label={t("mcp.apps_title")}
+          active={props.appsActive}
+          onClick={props.onOpenApps}
+          testId="app-rail-apps"
+        >
+          <AppWindowMac className="size-5" strokeWidth={1.8} />
+        </RailButton> */}
         <RailButton
           label={t("navigation.local_tasks")}
           onClick={props.onCreateLocalWorkspace}

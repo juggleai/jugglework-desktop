@@ -397,6 +397,7 @@ export default {
   "mcp.last_synced": "Đã đồng bộ",
   "navigation.chat": "Trò chuyện",
   "navigation.cloud_tasks": "Tác vụ đám mây",
+  "navigation.home": "Trang chủ",
   "navigation.local_tasks": "Tác vụ cục bộ",
   "navigation.primary": "Điều hướng chính",
   "navigation.settings": "Cài đặt",

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 
+import { AppsPage } from "./apps-page";
 import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
@@ -9,6 +10,7 @@ import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
   legacySessionRoute,
   parseWorkspaceAppPath,
+  workspaceAppsRoute,
   workspaceChatRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
@@ -59,13 +61,15 @@ export function WorkspaceAppRoute() {
     initialSessionTarget(location.pathname, location.state)
   ));
   const [chatMounted, setChatMounted] = useState(() => appPath?.view === "chat");
+  const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
 
   const currentSession = appPath?.view === "session"
     ? { workspaceId: appPath.workspaceId, sessionId: appPath.sessionId }
     : null;
   const settingsWorkspaceId = appPath?.view === "settings" ? appPath.workspaceId : null;
   const chatWorkspaceId = appPath?.view === "chat" ? appPath.workspaceId : null;
-  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId;
+  const appsWorkspaceId = appPath?.view === "apps" ? appPath.workspaceId : null;
+  const surfaceWorkspaceId = settingsWorkspaceId ?? chatWorkspaceId ?? appsWorkspaceId;
 
   useEffect(() => {
     const next = currentSession ?? (
@@ -88,6 +92,10 @@ export function WorkspaceAppRoute() {
     if (appPath?.view === "chat") setChatMounted(true);
   }, [appPath?.view]);
 
+  useEffect(() => {
+    if (appPath?.view === "apps") setAppsMounted(true);
+  }, [appPath?.view]);
+
   if (!appPath) {
     return <Navigate to="/session" replace />;
   }
@@ -95,6 +103,7 @@ export function WorkspaceAppRoute() {
   const activeSession = currentSession ?? retainedSession;
   const settingsVisible = appPath.view === "settings";
   const chatVisible = appPath.view === "chat";
+  const appsVisible = appPath.view === "apps";
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
@@ -109,7 +118,10 @@ export function WorkspaceAppRoute() {
     });
   };
 
-  const openChatSettings = (tab: "cloud-account" | "general") => {
+  const openSurfaceSettings = (
+    tab: "cloud-account" | "general",
+    returnPath: string,
+  ) => {
     const target = activeSession.workspaceId
       ? workspaceSettingsRoute(activeSession.workspaceId, tab)
       : `/settings/${tab}`;
@@ -117,7 +129,7 @@ export function WorkspaceAppRoute() {
       state: {
         workspaceId: activeSession.workspaceId || null,
         sessionId: activeSession.sessionId,
-        returnPath: workspaceChatRoute(activeSession.workspaceId),
+        returnPath,
       },
     });
   };
@@ -125,8 +137,8 @@ export function WorkspaceAppRoute() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible || chatVisible ? "hidden" : "h-full min-h-0"}
-        aria-hidden={settingsVisible || chatVisible || undefined}
+        className={settingsVisible || chatVisible || appsVisible ? "hidden" : "h-full min-h-0"}
+        aria-hidden={settingsVisible || chatVisible || appsVisible || undefined}
         data-testid="retained-session-surface"
       >
         <SessionRoute
@@ -148,11 +160,31 @@ export function WorkspaceAppRoute() {
           data-testid="workspace-chat-surface"
         >
           <ChatPage
-            onOpenAccount={() => openChatSettings("cloud-account")}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceChatRoute(activeSession.workspaceId))}
+            onOpenHome={() => navigate(sessionPath)}
+            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
             onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
             onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
             onToggleChat={() => navigate(sessionPath)}
-            onOpenSettings={() => openChatSettings("general")}
+            onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
+          />
+        </div>
+      ) : null}
+
+      {appsMounted || appsVisible ? (
+        <div
+          className={appsVisible ? "absolute inset-0" : "hidden"}
+          aria-hidden={!appsVisible || undefined}
+          data-testid="workspace-apps-surface"
+        >
+          <AppsPage
+            workspaceId={activeSession.workspaceId}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenHome={() => navigate(sessionPath)}
+            onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
+            onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
+            onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("general", workspaceAppsRoute(activeSession.workspaceId))}
           />
         </div>
       ) : null}

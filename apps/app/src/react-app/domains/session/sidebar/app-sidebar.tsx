@@ -687,6 +687,8 @@ export type AppSidebarProps = {
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -933,7 +935,10 @@ export function AppSidebar(props: AppSidebarProps) {
       >
         <div className="flex h-full min-h-0 w-full">
           <AppNavigationRail
+            homeActive
             onOpenAccount={props.onOpenAccount}
+            onOpenHome={props.onOpenHome}
+            onOpenApps={props.onOpenApps}
             onCreateLocalWorkspace={props.onOpenCreateLocalWorkspace}
             onConnectRemoteWorkspace={props.onOpenConnectRemoteWorkspace}
             onOpenChat={props.onOpenChat}

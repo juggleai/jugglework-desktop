@@ -319,6 +319,7 @@ export default {
   "mcp.last_synced": "Синхронизировано",
   "navigation.chat": "Чат",
   "navigation.cloud_tasks": "Облачные задачи",
+  "navigation.home": "Главная",
   "navigation.local_tasks": "Локальные задачи",
   "navigation.primary": "Основная навигация",
   "navigation.settings": "Настройки",

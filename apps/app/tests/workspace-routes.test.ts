@@ -8,6 +8,7 @@ import {
   removeWorkspaceRouteSession,
   settingsReturnRoute,
   sessionIdForLegacyWorkspaceInference,
+  workspaceAppsRoute,
 } from "../src/react-app/shell/workspace-routes";
 
 describe("workspace app path parsing", () => {
@@ -37,6 +38,15 @@ describe("workspace app path parsing", () => {
       view: "chat",
       workspaceId: "workspace-a",
     });
+    expect(parseWorkspaceAppPath("/workspace/workspace-a/apps")).toEqual({
+      view: "apps",
+      workspaceId: "workspace-a",
+    });
+    expect(parseWorkspaceAppPath("/apps")).toEqual({
+      view: "apps",
+      workspaceId: null,
+    });
+    expect(workspaceAppsRoute("workspace a")).toBe("/workspace/workspace%20a/apps");
     expect(parseWorkspaceAppPath("/welcome")).toBeNull();
   });
 });

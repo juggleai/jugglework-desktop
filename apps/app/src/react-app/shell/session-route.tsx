@@ -183,7 +183,7 @@ import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -2336,6 +2336,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
         onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
         onOpenAccount: () => handleOpenSettings("/settings/cloud-account"),
+        onOpenHome: () => navigateToWorkspaceSession(sidebarActiveWorkspaceId, selectedSessionId),
+        onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
         onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
         onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,

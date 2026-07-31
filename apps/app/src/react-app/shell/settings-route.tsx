@@ -168,7 +168,7 @@ import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
 import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } from "./session-memory";
-import { settingsReturnRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
 import {
@@ -356,6 +356,7 @@ function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
 
 export type SettingsSurfaceProps = {
   embedded?: boolean;
+  contentOnly?: boolean;
   initialPath?: string;
   workspaceId?: string;
   onClose?: () => void;
@@ -2527,6 +2528,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onCreateLocalWorkspace={() => openCreateWorkspace("local")}
         onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
         onOpenAccount={openCloudAccountSettings}
+        onOpenHome={props.onClose ?? (() => navigate(
+          settingsReturnRoute(
+            selectedWorkspaceId,
+            navigationWorkspaceId,
+            navigationSessionId,
+            readLastSessionFor(selectedWorkspaceId),
+          ),
+        ))}
+        onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
         onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
@@ -2539,6 +2549,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           ),
         ))}
         compact={props.embedded}
+        contentOnly={props.contentOnly}
       >
         {settingsView}
       </SettingsShell>

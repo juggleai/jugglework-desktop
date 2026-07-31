@@ -9,6 +9,8 @@ const CHAT_ENTRY_URL = typeof window !== "undefined" && window.location.protocol
 
 export type ChatPageProps = {
   onOpenAccount: () => void;
+  onOpenHome: () => void;
+  onOpenApps: () => void;
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
   onToggleChat: () => void;
@@ -23,6 +25,8 @@ export function ChatPage(props: ChatPageProps) {
       <AppNavigationRail
         chatActive
         onOpenAccount={props.onOpenAccount}
+        onOpenHome={props.onOpenHome}
+        onOpenApps={props.onOpenApps}
         onCreateLocalWorkspace={props.onCreateLocalWorkspace}
         onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
         onOpenChat={props.onToggleChat}
