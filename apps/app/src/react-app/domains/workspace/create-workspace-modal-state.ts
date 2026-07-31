@@ -18,11 +18,13 @@ export type CreateWorkspaceLocalState = {
 type CreateWorkspaceLocalAction<K extends keyof CreateWorkspaceLocalState = keyof CreateWorkspaceLocalState> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic key dispatch requires any
   | { type: "set"; key: K; value: SetStateAction<any> }
-  | { type: "reset" };
+  | { type: "reset"; screen?: CreateWorkspaceScreen };
 
-export function createInitialWorkspaceLocalState(): CreateWorkspaceLocalState {
+export function createInitialWorkspaceLocalState(
+  screen: CreateWorkspaceScreen = "chooser",
+): CreateWorkspaceLocalState {
   return {
-    screen: "chooser",
+    screen,
     selectedFolder: null,
     pickingFolder: false,
     showProgressDetails: false,
@@ -39,7 +41,7 @@ export function createWorkspaceLocalReducer(
   state: CreateWorkspaceLocalState,
   action: CreateWorkspaceLocalAction,
 ): CreateWorkspaceLocalState {
-  if (action.type === "reset") return createInitialWorkspaceLocalState();
+  if (action.type === "reset") return createInitialWorkspaceLocalState(action.screen);
   const current = state[action.key];
   const next =
     typeof action.value === "function"

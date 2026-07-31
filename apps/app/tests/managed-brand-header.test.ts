@@ -2,18 +2,19 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
-const sidebarPath = fileURLToPath(
-  new URL("../src/react-app/domains/session/sidebar/app-sidebar.tsx", import.meta.url),
+const navigationRailPath = fileURLToPath(
+  new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url),
 );
 
-describe("managed brand header", () => {
-  test("shows the brand header only when a wordmark is supplied", () => {
-    const source = readFileSync(sidebarPath, "utf8");
+describe("managed brand navigation identity", () => {
+  test("shows the managed logo in the global rail and falls back to the user initial", () => {
+    const source = readFileSync(navigationRailPath, "utf8");
 
-    expect(source).toMatch(/\{brandLogoUrl \? \([\s\S]*?data-testid="brand-logo"[\s\S]*?<img/);
+    expect(source).toMatch(/\{brandLogoUrl \? \([\s\S]*?<img[\s\S]*?src=\{brandLogoUrl\}/);
+    expect(source).toMatch(/<span aria-hidden="true">\{initial\}<\/span>/);
     expect(source).not.toContain("brand-app-name");
     expect(source).not.toContain("useBrandAppName");
-    expect(source).toMatch(/className="flex h-14 shrink-0 items-center/);
-    expect(source).toMatch(/className="max-h-9 w-auto max-w-\[140px\] object-contain object-left"/);
+    expect(source).toMatch(/className="flex h-full w-\[72px\] shrink-0 flex-col items-center/);
+    expect(source).toMatch(/className="size-full object-cover"/);
   });
 });

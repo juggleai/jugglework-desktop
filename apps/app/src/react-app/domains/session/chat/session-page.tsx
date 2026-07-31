@@ -38,6 +38,7 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
@@ -102,8 +103,6 @@ type PendingConversationHistoryNavigation = {
 type StatusBarOverrides = Pick<
   StatusBarProps,
   | "loading"
-  | "showSettingsButton"
-  | "settingsOpen"
   | "reloadBusy"
   | "reloadError"
   | "juggleWorkConnectState"
@@ -141,6 +140,8 @@ export type SessionPageSidebarProps = {
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
   onOpenCreateWorkspace: () => void;
+  onOpenCreateLocalWorkspace: () => void;
+  onOpenConnectRemoteWorkspace: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -452,7 +453,7 @@ export function SessionPage(props: SessionPageProps) {
   });
   const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
-    "--sidebar-width": `${leftSidebarWidth}px`,
+    "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px`,
   };
   useEffect(() => {
     if (sidePanelOpen) return;
@@ -1043,7 +1044,9 @@ export function SessionPage(props: SessionPageProps) {
           onTestWorkspaceConnection={props.sidebar.onTestWorkspaceConnection}
           onEditWorkspaceConnection={props.sidebar.onEditWorkspaceConnection}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
-          onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+          onOpenCreateLocalWorkspace={props.sidebar.onOpenCreateLocalWorkspace}
+          onOpenConnectRemoteWorkspace={props.sidebar.onOpenConnectRemoteWorkspace}
+          onOpenSettings={props.onOpenSettings}
           onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
@@ -1507,13 +1510,10 @@ export function SessionPage(props: SessionPageProps) {
               juggleworkServerStatus={props.juggleworkServerStatus}
               developerMode={props.developerMode}
               showConnectionStatus={Boolean(props.selectedWorkspaceId)}
-              settingsOpen={props.statusBar?.settingsOpen ?? false}
               onSendFeedback={props.onSendFeedback}
-              onOpenSettings={props.onOpenSettings}
               providerConnectedIds={props.providerConnectedIds}
               mcpConnectedCount={props.mcpConnectedCount}
               loading={props.statusBar?.loading ?? false}
-              showSettingsButton={props.statusBar?.showSettingsButton}
               reloadBusy={props.statusBar?.reloadBusy}
               reloadError={props.statusBar?.reloadError}
               juggleWorkConnectState={props.statusBar?.juggleWorkConnectState}

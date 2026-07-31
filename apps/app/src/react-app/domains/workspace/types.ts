@@ -32,6 +32,7 @@ export type CreateWorkspaceProgress = {
 
 export type CreateWorkspaceModalProps = {
   open: boolean;
+  initialScreen?: CreateWorkspaceScreen;
   onClose: () => void;
   onConfirm: (preset: WorkspacePreset, folder: string | null, options?: CreateWorkspaceOptions) => void;
   onConfirmRemote?: (input: RemoteWorkspaceInput) => Promise<boolean> | boolean | void;

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BookOpen, MessageCircleMore, Settings, Sparkles, X } from "lucide-react";
+import { ArrowRight, BookOpen, MessageCircleMore, Sparkles, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -228,13 +228,10 @@ export type StatusBarProps = {
   juggleworkServerStatus: JuggleWorkServerStatus;
   developerMode: boolean;
   showConnectionStatus?: boolean;
-  settingsOpen: boolean;
   onSendFeedback: () => void;
-  onOpenSettings: () => void;
   providerConnectedIds: string[];
   mcpConnectedCount: number;
   loading?: boolean;
-  showSettingsButton?: boolean;
   initializing?: boolean;
   reloadBusy?: boolean;
   reloadError?: string | null;
@@ -248,7 +245,6 @@ export function StatusBar(props: StatusBarProps) {
   const { config: shellConfig } = useShellConfig();
   const docsButtonRef = useRef<HTMLButtonElement>(null);
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const [juggleWorkModelsHintVisible, setJuggleWorkModelsHintVisible] = useState(false);
   const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
   const hasJuggleWorkModels = useMemo(
@@ -354,17 +350,6 @@ export function StatusBar(props: StatusBarProps) {
   }), [props.onSendFeedback]);
   useControlAction(feedbackControlAction);
 
-  const settingsControlAction = useMemo<JuggleWorkControlAction>(() => ({
-    id: "status.settings.open",
-    label: props.settingsOpen ? "Go back from settings" : "Open settings from the status bar",
-    description: "Use the visible settings button in the status bar.",
-    sideEffect: "navigation",
-    disabled: props.showSettingsButton === false,
-    targetRef: settingsButtonRef,
-    execute: props.onOpenSettings,
-  }), [props.onOpenSettings, props.settingsOpen, props.showSettingsButton]);
-  useControlAction(settingsControlAction);
-
   return (
     <div className="border-t border-border bg-background">
       <div className="flex h-8 items-center justify-between gap-3 px-4 md:px-6">
@@ -445,25 +430,6 @@ export function StatusBar(props: StatusBarProps) {
                 {t("status.feedback")}
               </span>
             </Button>
-          ) : null}
-          {props.showSettingsButton !== false ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={(
-                  <Button
-                    ref={settingsButtonRef}
-                    className="text-muted-foreground gap-2"
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={props.onOpenSettings}
-                    aria-label={props.settingsOpen ? t("status.back") : t("status.settings")}
-                  >
-                    <Settings className="size-3.5" />
-                  </Button>
-                )}
-              />
-              <TooltipContent>{t("status.settings")}</TooltipContent>
-            </Tooltip>
           ) : null}
         </div>
       </div>

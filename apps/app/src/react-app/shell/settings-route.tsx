@@ -144,6 +144,7 @@ import {
 } from "@/app/utils";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
+import type { CreateWorkspaceScreen } from "@/react-app/domains/workspace/types";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
 import { ShareWorkspaceModal } from "@/react-app/domains/workspace/share-workspace-modal";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
@@ -429,6 +430,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
   const [resetConfigBusy, setResetConfigBusy] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [createWorkspaceInitialScreen, setCreateWorkspaceInitialScreen] =
+    useState<CreateWorkspaceScreen>("chooser");
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -1912,7 +1915,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     await refreshRouteState();
   };
 
-  const handleOpenCreateWorkspace = () => {
+  const openCreateWorkspace = (screen: CreateWorkspaceScreen) => {
     if (
       workspaces.length > 0 &&
       checkDesktopRestriction({ restriction: "allowMultipleWorkspaces" })
@@ -1927,6 +1930,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
     setCreateWorkspaceError(null);
     setCreateWorkspaceRemoteError(null);
+    setCreateWorkspaceInitialScreen(screen);
     setCreateWorkspaceOpen(true);
   };
 
@@ -2508,6 +2512,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceColor={selectedWorkspaceColor}
         workspaces={workspaceOptions}
         onSelectWorkspace={handleSelectSettingsWorkspace}
+        onCreateLocalWorkspace={() => openCreateWorkspace("local")}
+        onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
@@ -2579,6 +2585,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       />
       <CreateWorkspaceModal
         open={createWorkspaceOpen}
+        initialScreen={createWorkspaceInitialScreen}
         onClose={() => {
           setCreateWorkspaceOpen(false);
           setCreateWorkspaceError(null);

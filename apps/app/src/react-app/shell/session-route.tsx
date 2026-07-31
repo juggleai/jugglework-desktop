@@ -121,7 +121,10 @@ import { appMentionInstruction } from "@/react-app/domains/session/surface/compo
 import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
-import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
+import type {
+  CreateWorkspaceOptions,
+  CreateWorkspaceScreen,
+} from "@/react-app/domains/workspace/types";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
@@ -556,6 +559,8 @@ export function SessionRoute() {
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [createWorkspaceInitialScreen, setCreateWorkspaceInitialScreen] =
+    useState<CreateWorkspaceScreen>("chooser");
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
@@ -1258,7 +1263,7 @@ export function SessionRoute() {
     token,
   ]);
 
-  const handleOpenCreateWorkspace = useCallback(() => {
+  const openCreateWorkspace = useCallback((screen: CreateWorkspaceScreen) => {
     // Respect the org-level `allowMultipleWorkspaces` restriction (dev
     // #1505). If the checker returns true, the admin has disabled
     // adding further workspaces; surface a friendly notice instead of
@@ -1275,8 +1280,23 @@ export function SessionRoute() {
       return;
     }
     setCreateWorkspaceRemoteError(null);
+    setCreateWorkspaceError(null);
+    setCreateWorkspaceInitialScreen(screen);
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
+
+  const handleOpenCreateWorkspace = useCallback(
+    () => openCreateWorkspace("chooser"),
+    [openCreateWorkspace],
+  );
+  const handleOpenCreateLocalWorkspace = useCallback(
+    () => openCreateWorkspace("local"),
+    [openCreateWorkspace],
+  );
+  const handleOpenConnectRemoteWorkspace = useCallback(
+    () => openCreateWorkspace("remote"),
+    [openCreateWorkspace],
+  );
 
   const handleOpenRenameWorkspace = useCallback((workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2294,6 +2314,8 @@ export function SessionRoute() {
         onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
+        onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
+        onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
         onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
@@ -2385,6 +2407,7 @@ export function SessionRoute() {
     />
     <CreateWorkspaceModal
       open={createWorkspaceOpen}
+      initialScreen={createWorkspaceInitialScreen}
       onClose={() => {
         setCreateWorkspaceOpen(false);
         setCreateWorkspaceError(null);

@@ -59,6 +59,7 @@ import {
 } from "./panel";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
+import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -260,6 +261,8 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   selectedWorkspaceColor: string;
   workspaces: Array<{ id: string; name: string; color: string }>;
   onSelectWorkspace: (workspaceId: string) => void;
+  onCreateLocalWorkspace: () => void;
+  onConnectRemoteWorkspace: () => void;
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
@@ -270,8 +273,16 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
 
   return (
     <Sidebar className="mac:**:data-[sidebar=sidebar]:bg-transparent">
-      <div className="hidden h-10 mac:block mac:titlebar-drag" />
-      <SidebarHeader>
+      <div className="flex h-full min-h-0 w-full">
+        <AppNavigationRail
+          settingsActive
+          onCreateLocalWorkspace={props.onCreateLocalWorkspace}
+          onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
+          onOpenSettings={() => undefined}
+        />
+        <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
+          <div className="hidden h-10 mac:block mac:titlebar-drag" />
+          <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton type="button" onClick={props.onClose}>
@@ -305,8 +316,8 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
             </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
-      </SidebarHeader>
-      <SidebarContent>
+          </SidebarHeader>
+          <SidebarContent>
         {/* Top-level hub entry */}
         <SidebarGroup>
           <SidebarGroupContent>
@@ -393,7 +404,9 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-      </SidebarContent>
+          </SidebarContent>
+        </div>
+      </div>
     </Sidebar>
   );
 }
