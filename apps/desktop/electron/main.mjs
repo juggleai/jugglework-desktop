@@ -292,6 +292,9 @@ async function resolveCorrectArchitectureDownloadUrl(arch) {
     const response = await fetch(manifestUrl, {
       headers: { Accept: "text/yaml, text/plain, */*" },
     });
+    // A source checkout or a repository without a published release has no
+    // `latest` manifest yet. That is an expected absence, not a startup error.
+    if (response.status === 404) return null;
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const selected = selectDownloadFile(parseUpdaterManifestFiles(await response.text()), arch);
     if (!selected?.url) return null;
@@ -310,14 +313,19 @@ async function resolveArchitectureInfo() {
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
   const assetName = `jugglework-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
-  const latestDownloadUrl = await resolveCorrectArchitectureDownloadUrl(targetArch);
+  const architectureMismatch = appArch !== systemArch;
+  // The manifest is only needed to offer a replacement build. Avoid delaying
+  // every normal startup (and producing release-feed noise in source builds).
+  const latestDownloadUrl = architectureMismatch
+    ? await resolveCorrectArchitectureDownloadUrl(targetArch)
+    : null;
   const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
     appArch,
     appArchLabel: archLabel(appArch),
     systemArch,
     systemArchLabel: archLabel(systemArch),
-    mismatch: appArch !== systemArch && hasCorrectArchitectureDownload,
+    mismatch: architectureMismatch && hasCorrectArchitectureDownload,
     platform: process.platform === "win32" ? "windows" : process.platform,
     version,
     downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,

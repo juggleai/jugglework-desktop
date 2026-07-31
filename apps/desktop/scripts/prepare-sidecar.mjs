@@ -441,7 +441,6 @@ if (shouldBuildOrchestrator) {
   const result = spawnSync("bun", orchestratorArgs, {
     cwd: orchestratorDir,
     stdio: "inherit",
-    shell: true,
     env: {
       ...process.env,
       NODE_ENV: "production",
