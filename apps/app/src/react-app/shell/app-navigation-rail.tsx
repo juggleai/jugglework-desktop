@@ -15,6 +15,7 @@ export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
 type AppNavigationRailProps = {
   settingsActive?: boolean;
+  onOpenAccount: () => void;
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
   onOpenSettings: () => void;
@@ -68,17 +69,20 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       aria-label={t("navigation.primary")}
       className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar/75 px-2 pb-3 pt-3 mac:pt-11"
     >
-      <div
-        className="mb-7 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dls-border bg-background text-sm font-semibold text-dls-text shadow-sm"
-        title={identity}
-        aria-label={identity}
+      <button
+        type="button"
+        className="mb-7 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dls-border bg-background text-sm font-semibold text-dls-text shadow-sm transition-colors hover:bg-dls-hover"
+        title={t("settings.tab_cloud_account")}
+        aria-label={t("settings.tab_cloud_account")}
+        onClick={props.onOpenAccount}
+        data-testid="app-rail-account"
       >
         {brandLogoUrl ? (
           <img src={brandLogoUrl} alt="" className="size-full object-cover" />
         ) : (
           <span aria-hidden="true">{initial}</span>
         )}
-      </div>
+      </button>
 
       <nav className="flex flex-col items-center gap-3">
         <RailButton

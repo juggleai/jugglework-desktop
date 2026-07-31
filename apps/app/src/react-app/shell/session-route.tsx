@@ -2316,6 +2316,7 @@ export function SessionRoute() {
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
         onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
         onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
+        onOpenAccount: () => handleOpenSettings("/settings/cloud-account"),
         onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}

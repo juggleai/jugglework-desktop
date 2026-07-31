@@ -47,6 +47,7 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateLocalWorkspace: () => void;
   onConnectRemoteWorkspace: () => void;
+  onOpenAccount: () => void;
   onClose: () => void;
   headerLeadingSlot?: React.ReactNode;
   children: React.ReactNode;
@@ -121,6 +122,7 @@ export function SettingsShell(props: SettingsShellProps) {
           onSelectWorkspace={props.onSelectWorkspace}
           onCreateLocalWorkspace={props.onCreateLocalWorkspace}
           onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
+          onOpenAccount={props.onOpenAccount}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

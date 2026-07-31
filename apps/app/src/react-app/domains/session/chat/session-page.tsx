@@ -142,6 +142,7 @@ export type SessionPageSidebarProps = {
   onOpenCreateWorkspace: () => void;
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
+  onOpenAccount: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
@@ -1046,6 +1047,7 @@ export function SessionPage(props: SessionPageProps) {
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
           onOpenCreateLocalWorkspace={props.sidebar.onOpenCreateLocalWorkspace}
           onOpenConnectRemoteWorkspace={props.sidebar.onOpenConnectRemoteWorkspace}
+          onOpenAccount={props.sidebar.onOpenAccount}
           onOpenSettings={props.onOpenSettings}
           onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
@@ -1183,7 +1185,7 @@ export function SessionPage(props: SessionPageProps) {
               {!showDelayedSessionLoadingState && canRenderReactSurface ? (
                 <div className="flex h-full min-h-0 flex-col">
                   {sessionTabs.length > 0 ? (
-                    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
+                    <div className="hidden h-10 shrink-0 items-center gap-1 border-b border-border bg-background/80 px-2 mac:backdrop-blur-xl">
                       <div className="flex shrink-0 items-center gap-0.5 pr-1" role="group" aria-label="Conversation history controls">
                         <Tooltip>
                           <TooltipTrigger

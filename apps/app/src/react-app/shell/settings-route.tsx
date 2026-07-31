@@ -2514,6 +2514,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSelectWorkspace={handleSelectSettingsWorkspace}
         onCreateLocalWorkspace={() => openCreateWorkspace("local")}
         onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
+        onOpenAccount={openCloudAccountSettings}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         onClose={props.onClose ?? (() => navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session"))}
