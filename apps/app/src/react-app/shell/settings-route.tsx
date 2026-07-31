@@ -165,7 +165,6 @@ import { useReloadCoordinator } from "./reload-coordinator";
 import { CommandPalette } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
-import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import { workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
@@ -2119,8 +2118,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <GeneralSettingsView
             onNavigateTab={(tab) => navigateSettingsPath(tab)}
             developerMode={developerMode}
-            onSendFeedback={() => platform.openLink(buildFeedbackUrl({ entrypoint: "settings" }))}
-            onJoinDiscord={() => platform.openLink("https://discord.gg/VEhNQXxYMB")}
             onReportIssue={() => platform.openLink("https://github.com/juggleai/jugglework-desktop/issues/new?template=bug.yml")}
           />
         );

@@ -47,7 +47,7 @@ body:
   - type: textarea
     id: desktop_info
     attributes:
-      label: OW version & Desktop info (optional) 
+      label: JuggleWork version & Desktop info (optional) 
       description: |
         Include OS and JuggleWork version if possible.
         JuggleWork version: Settings > General.
