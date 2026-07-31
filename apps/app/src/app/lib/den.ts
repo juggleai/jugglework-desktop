@@ -62,6 +62,16 @@ const BUILD_DEN_REQUIRE_SIGNIN =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_REQUIRE_SIGNIN === "string"
     ? /^(1|true|yes|on)$/i.test(import.meta.env.VITE_DEN_REQUIRE_SIGNIN.trim())
     : false);
+// Local-only convenience for source development. Vite loads this value from
+// `.env.development.local`, while production builds never load that file. The
+// configured token intentionally wins over persisted state so rotating an
+// expired token only requires replacing the file and restarting the dev app.
+const BUILD_DEN_DEV_AUTH_TOKEN =
+  (typeof import.meta !== "undefined" &&
+  import.meta.env?.DEV === true &&
+  typeof import.meta.env?.VITE_DEN_DEV_AUTH_TOKEN === "string"
+    ? import.meta.env.VITE_DEN_DEV_AUTH_TOKEN
+    : "").trim();
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://work.juggle.im";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
@@ -859,7 +869,10 @@ export function readDenSettings(): DenSettings {
 
   return {
     ...baseUrls,
-    authToken: (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() || null,
+    authToken:
+      BUILD_DEN_DEV_AUTH_TOKEN ||
+      (window.localStorage.getItem(STORAGE_AUTH_TOKEN) ?? "").trim() ||
+      null,
     activeOrgId: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_ID) ?? "").trim() || null,
     activeOrgSlug: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_SLUG) ?? "").trim() || null,
     activeOrgName: (window.localStorage.getItem(STORAGE_ACTIVE_ORG_NAME) ?? "").trim() || null,

@@ -193,7 +193,9 @@ async function stopAll(exitCode = 0) {
   process.exit(exitCode);
 }
 
-process.once("SIGINT", () => void stopAll(130));
+// Ctrl+C is an expected way to stop the development stack. Exit cleanly after
+// its child processes are gone so pnpm does not report a recursive-run failure.
+process.once("SIGINT", () => void stopAll(0));
 process.once("SIGTERM", () => void stopAll(143));
 
 if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
