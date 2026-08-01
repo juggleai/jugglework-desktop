@@ -4,30 +4,35 @@ This guide documents the approved cloud organization hierarchy as it exists toda
 
 ## Scope
 
-Organization roles authorize access inside one cloud workspace. They are separate from platform Den admin access: platform Den admins are allowlisted operators for Den admin routes and the den-admin MCP surface, and organization `owner` or `super-admin` roles do not grant that platform access.
+Organization roles authorize access inside one cloud workspace. They are separate from platform admin access: platform admins are allowlisted operators for admin routes and the admin MCP surface, and organization `owner` or `admin` roles do not grant that platform access.
 
-Den Web controls enforce policy in the client by hiding or disabling actions, and Den API endpoints enforce policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. Settings reads and writes are checked separately, and JuggleWork Models is an operational Models surface outside Settings.
+The web console enforces policy in the client by hiding or disabling actions, and the API enforces policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. JuggleWork Models is an operational Models surface outside Settings.
 
 ## Built-in hierarchy
 
 The built-in organization roles are ordered:
 
 1. `owner`
-2. `super-admin`
-3. `admin`
-4. `member`
+2. `admin`
+3. `member`
 
-`owner` satisfies every organization gate. `super-admin` satisfies super-admin and admin gates. `admin` satisfies admin gates. `member` satisfies member gates only.
+`owner` satisfies every organization gate. `admin` satisfies every administrative gate except the owner-only operations below. `member` satisfies member gates only.
 
-Organizations may have multiple `super-admin` and `admin` members. Each organization has exactly one protected `owner`; the owner role cannot be assigned through invitations or member role changes, and the owner member cannot be removed.
+`super-admin` no longer exists: it was merged into `admin`, which inherited its full permission set. A membership still stored as `super-admin` is read as `admin`, and `super-admin` cannot be used as a custom role name.
 
-## Ownership transfer
+Organizations may have multiple `admin` members. Each organization has exactly one protected `owner`; the owner role cannot be assigned through invitations or member role changes, and the owner member cannot be removed.
 
-Only the current `owner` can transfer ownership. The target must be an active `super-admin`. After transfer, the target becomes the sole `owner` and the previous owner becomes `super-admin`.
+## Owner-only operations
 
-## Den Web sidebar
+Three operations stay exclusive to the current `owner`:
 
-For cloud organization admins (`owner`, `super-admin`, and `admin`), the Den Web sidebar order is:
+- Creating an organization. `POST /v1/org` requires the caller to already hold an active `owner` membership in some organization; anyone else receives `403 organization_owner_required`. A user who owns no organization gets their first one from deployment bootstrap or from an existing owner adding them.
+- Deleting the organization.
+- Transferring ownership. The target must be an active `admin`. After transfer, the target becomes the sole `owner` and the previous owner becomes an `admin`.
+
+## Web console sidebar
+
+For cloud organization admins (`owner` and `admin`), the sidebar order is:
 
 - Dashboard
 - Your Connections, when enabled
@@ -55,19 +60,22 @@ Plain members have member access only: Dashboard, plus Your Connections when tha
 
 ## Role matrix
 
-| Access or operation | `owner` | `super-admin` | `admin` | `member` |
-| --- | --- | --- | --- | --- |
-| Member-level workspace access | Yes | Yes | Yes | Yes |
-| Operational mutation outside Settings | Yes | Yes | Yes | No |
-| Settings visibility and reads | Yes | Yes | Yes, read-only | No in Den Web |
-| Settings writes | Yes | Yes | No | No |
-| Member role changes | Yes, except owner | Yes, except owner | No | No |
-| Invitations | Invite assignable non-owner roles | Invite assignable non-owner roles | Invite `member` only | No |
-| Removals | Remove non-owner members | Remove non-owner members | Remove non-owner members | No |
-| Ownership transfer | Yes, to active `super-admin` | No | No | No |
+| Access or operation | `owner` | `admin` | `member` |
+| --- | --- | --- | --- |
+| Member-level workspace access | Yes | Yes | Yes |
+| Operational mutation outside Settings | Yes | Yes | No |
+| Settings visibility and reads | Yes | Yes | No in the console |
+| Settings writes | Yes | Yes | No |
+| Member role changes | Yes, except owner | Yes, except owner | No |
+| Invitations | Invite assignable non-owner roles | Invite assignable non-owner roles | No |
+| Removals | Remove non-owner members | Remove non-owner members | No |
+| Custom role management | Yes | Yes | No |
+| Organization creation | Yes | No | No |
+| Organization deletion | Yes | No | No |
+| Ownership transfer | Yes, to active `admin` | No | No |
 
-The owner is the only undeletable member role. Admins can invite members and remove non-owner members, but cannot promote or demote members, write Settings, or invite elevated roles.
+The owner is the only undeletable member role. Admins and owners share every administrative capability; the difference is limited to creating an organization, deleting it, and transferring ownership.
 
 ## Custom roles
 
-Custom roles can add delegated permissions where the Den API supports them, but they do not replace the built-in hierarchy. Built-in role names are protected, the owner role remains transfer-only, and the highest built-in role in a member's role string controls owner/super-admin/admin/member gates.
+Custom roles can add delegated permissions where the API supports them, but they do not replace the built-in hierarchy. Built-in role names are protected, the owner role remains transfer-only, and the highest built-in role in a member's role string controls owner/admin/member gates.

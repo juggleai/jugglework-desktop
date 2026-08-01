@@ -109,6 +109,19 @@ export function CloudAccountSection({
 /*  Connected org: read-only display                                   */
 /* ------------------------------------------------------------------ */
 
+// Owner and admin share every administrative capability, so an admin must not
+// be labelled as a plain member.
+function orgRoleLabel(role: DenOrgSummary["role"]): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "admin":
+      return "Admin";
+    default:
+      return "Member";
+  }
+}
+
 function ConnectedOrg({ org }: { org: DenOrgSummary }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
@@ -118,7 +131,7 @@ function ConnectedOrg({ org }: { org: DenOrgSummary }) {
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-dls-text">{org.name}</div>
         <div className="text-xs text-dls-secondary">
-          {org.role === "owner" ? "Owner" : "Member"} &middot; Connected
+          {orgRoleLabel(org.role)} &middot; Connected
         </div>
       </div>
       <Check size={16} className="shrink-0 text-green-11" />
@@ -202,7 +215,7 @@ function OrgPicker({
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium text-dls-text">{org.name}</div>
               <div className="text-xs text-dls-secondary">
-                {org.role === "owner" ? "Owner" : "Member"}
+                {orgRoleLabel(org.role)}
               </div>
             </div>
           </button>

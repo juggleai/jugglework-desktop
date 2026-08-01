@@ -9,11 +9,11 @@ JuggleWork Cloud separates org membership from team assignment. Teams are used f
 
 JuggleWork Cloud comes with three default roles:
 
-- `Owner`: full org control, including member roles and custom roles.
-- `Admin`: can invite people, manage teams, and manage most shared Cloud resources.
+- `Owner`: full org control. Only the owner can create a new organization, delete this one, or transfer ownership.
+- `Admin`: everything the owner can do inside the org — invite people, change member roles, manage teams, custom roles, and `Org settings`, and manage shared Cloud resources.
 - `Member`: can use resources shared with them but cannot manage org administration.
 
-Only `Owner` can change member roles, remove members, or create, edit, and delete custom roles.
+`Owner` and `Admin` share the same day-to-day administration. The owner role itself cannot be assigned: it moves only through ownership transfer, and the target must be an active `Admin`.
 
 ## Invite members
 
@@ -73,13 +73,13 @@ When SCIM deprovisions a user, JuggleWork retains a disconnected member record f
 4. Choose the permissions that role should have.
 5. Click `Create role`.
 
-Use `security_configuration.manage` for the identity/security operator role that manages SSO, SCIM, and organization API keys. Keep it separate from day-to-day `Admin` membership operations when your organization needs separation of duties.
+Use `security_configuration.manage` for an identity/security operator role that manages SSO, SCIM, and organization API keys without granting full `Admin` access, when your organization needs separation of duties.
 
 ## Practical access pattern
 
 A simple setup that works well for most orgs:
 
-- keep 1-2 `Owner` users
+- keep the `Owner` account with whoever should control ownership and organization creation
 - give day-to-day operators `Admin`
 - keep most people as `Member`
 - use `Teams` to decide who can see specific marketplaces or providers
@@ -87,6 +87,6 @@ A simple setup that works well for most orgs:
 ## Notes
 
 - You cannot change the org owner's role or remove the owner.
-- Owners and admins can manage teams and invitations, but only owners can handle the sensitive RBAC changes.
-- Only owners can change `Org settings`, including allowed email domains and desktop restrictions.
+- Owners and admins can both manage teams, invitations, member roles, custom roles, and `Org settings`, including allowed email domains and desktop restrictions.
+- Creating a new organization requires an `Owner` membership in an existing organization. Admins and members cannot create organizations.
 - You cannot delete a custom role while members or pending invitations still use it.
