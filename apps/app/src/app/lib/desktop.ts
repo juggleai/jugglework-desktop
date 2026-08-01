@@ -172,6 +172,22 @@ declare global {
         onData?: (callback: (payload: { terminalId: string; data: string }) => void) => () => void;
         onExit?: (callback: (payload: { terminalId: string; exitCode: number | null; signal?: number }) => void) => () => void;
       };
+      juggleChat?: {
+        setSkillEvent?: (callback: (payload: {
+          requestId: string;
+          source: string;
+          module: string;
+          action: string;
+          args?: Record<string, unknown>;
+          meta?: Record<string, unknown>;
+        }) =>
+          | { ok: true; data?: unknown }
+          | { ok: false; error?: { code?: string; message: string }; message?: string }
+          | Promise<
+              | { ok: true; data?: unknown }
+              | { ok: false; error?: { code?: string; message: string }; message?: string }
+            >) => () => void;
+      };
       meta?: {
         desktopBootstrap?: DesktopBootstrapConfig | null;
         initialDeepLinks?: string[];

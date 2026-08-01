@@ -1,0 +1,470 @@
+{
+  "router": {
+    "method": "POST",
+    "url": "http://127.0.0.1:17832/router",
+    "body_schema": {
+      "source": "string — 必填，发起请求的 skill 名（jugglechat-busserver / jugglechat-im-sdk），router 用于路由校验",
+      "module": "string — 业务模块名",
+      "action": "string — SDK 驼峰方法名",
+      "args": "object — 透传给 jim.<action>",
+      "meta": "object?",
+      "timeoutMs": "number?"
+    },
+    "response": {
+      "ok_true": "{ ok: true, data: <SDK 返回> }",
+      "ok_false": "{ ok: false, error: { code, message } }"
+    }
+  },
+  "actions": [
+    {
+      "module": "system",
+      "action": "connect",
+      "title": "连接方法",
+      "source": "connect/connection.mdx"
+    },
+    {
+      "module": "system",
+      "action": "create",
+      "title": "发起通话",
+      "source": "call/makecall.md"
+    },
+    {
+      "module": "system",
+      "action": "getSession",
+      "title": "来电监听",
+      "source": "call/receivecall.md"
+    },
+    {
+      "module": "system",
+      "action": "init",
+      "title": "初始化",
+      "source": "init.mdx"
+    },
+    {
+      "module": "system",
+      "action": "install",
+      "title": "初始化",
+      "source": "call/init.md"
+    },
+    {
+      "module": "system",
+      "action": "on",
+      "title": "聊天室监听",
+      "source": "chatroom/event.md"
+    },
+    {
+      "module": "system",
+      "action": "setConnectParams",
+      "title": "连接鉴权 (按需)",
+      "source": "connect/auth.mdx"
+    },
+    {
+      "module": "chatroom",
+      "action": "getAllChatRoomAttributes",
+      "title": "获取全部属性",
+      "source": "chatroom/get_all_kvs.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "getChatRoomAttributes",
+      "title": "获取指定属性",
+      "source": "chatroom/get_kvs.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "joinAndCreateChatroom",
+      "title": "加入并创建聊天室",
+      "source": "chatroom/joincreate.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "joinChatroom",
+      "title": "加入聊天室",
+      "source": "chatroom/join.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "quitChatroom",
+      "title": "退出聊天室",
+      "source": "chatroom/quit.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "removeChatroomAttributes",
+      "title": "删除属性",
+      "source": "chatroom/remove_kvs.md"
+    },
+    {
+      "module": "chatroom",
+      "action": "setChatroomAttributes",
+      "title": "设置属性",
+      "source": "chatroom/set_kvs.md"
+    },
+    {
+      "module": "conversation",
+      "action": "addConversationsToTag",
+      "title": "向标签里添加会话",
+      "source": "conversation/tag/add_convers.md"
+    },
+    {
+      "module": "conversation",
+      "action": "clearTotalUnreadcount",
+      "title": "清空会话未读总数",
+      "source": "conversation/unread/clear_total_unread.md"
+    },
+    {
+      "module": "conversation",
+      "action": "clearUnreadcount",
+      "title": "清空单个会话未读数",
+      "source": "conversation/unread/clear_unread.md"
+    },
+    {
+      "module": "conversation",
+      "action": "createConversationTag",
+      "title": "创建标签",
+      "source": "conversation/tag/add.md"
+    },
+    {
+      "module": "conversation",
+      "action": "destroyConversationTag",
+      "title": "销毁标签",
+      "source": "conversation/tag/destroy.md"
+    },
+    {
+      "module": "conversation",
+      "action": "disturbConversation",
+      "title": "设置单个会话免打扰",
+      "source": "conversation/operator/disturb.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getAllDisturb",
+      "title": "获取全局免打扰",
+      "source": "conversation/operator/get_disturb_all.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getConversation",
+      "title": "获取单个会话",
+      "source": "conversation/get_one.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getConversationTags",
+      "title": "获取标签列表",
+      "source": "conversation/tag/get.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getConversations",
+      "title": "获取会话列表",
+      "source": "conversation/get_all.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getDraft",
+      "title": "获取会话草稿",
+      "source": "conversation/draft/draft_get.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getTopConversations",
+      "title": "获取置顶会话",
+      "source": "conversation/operator/get_top_all.md"
+    },
+    {
+      "module": "conversation",
+      "action": "getTotalUnreadcount",
+      "title": "获取会话未读总数",
+      "source": "conversation/unread/get_total_unread.md"
+    },
+    {
+      "module": "conversation",
+      "action": "insertConversation",
+      "title": "插入指定会话",
+      "source": "conversation/operator/insert.md"
+    },
+    {
+      "module": "conversation",
+      "action": "markUnread",
+      "title": "标记会话状态",
+      "source": "conversation/operator/mark_unread.md"
+    },
+    {
+      "module": "conversation",
+      "action": "removeConversation",
+      "title": "删除指定会话",
+      "source": "conversation/operator/remove.md"
+    },
+    {
+      "module": "conversation",
+      "action": "removeConversationsFromTag",
+      "title": "从标签里删除会话",
+      "source": "conversation/tag/remove_convers.md"
+    },
+    {
+      "module": "conversation",
+      "action": "removeDraft",
+      "title": "删除会话草稿",
+      "source": "conversation/draft/draft_remove.md"
+    },
+    {
+      "module": "conversation",
+      "action": "setAllDisturb",
+      "title": "设置全局免打扰",
+      "source": "conversation/operator/set_disturb_all.md"
+    },
+    {
+      "module": "conversation",
+      "action": "setDraft",
+      "title": "设置会话草稿",
+      "source": "conversation/draft/draft_set.md"
+    },
+    {
+      "module": "conversation",
+      "action": "setTopConversation",
+      "title": "设置会话置顶",
+      "source": "conversation/operator/settop.md"
+    },
+    {
+      "module": "message",
+      "action": "addFavoriteMessages",
+      "title": "添加收藏",
+      "source": "message/favorite/add.md"
+    },
+    {
+      "module": "message",
+      "action": "addMessageReaction",
+      "title": "添加消息回应",
+      "source": "message/reaction/add.md"
+    },
+    {
+      "module": "message",
+      "action": "clearMessage",
+      "title": "清空历史消息",
+      "source": "message/histories/clear.md"
+    },
+    {
+      "module": "message",
+      "action": "getContextMessages",
+      "title": "获取消息上下文",
+      "source": "message/histories/get_context.md"
+    },
+    {
+      "module": "message",
+      "action": "getFavoriteMessages",
+      "title": "查询收藏",
+      "source": "message/favorite/query.md"
+    },
+    {
+      "module": "message",
+      "action": "getMentionMessages",
+      "title": "获取 @ 消息",
+      "source": "message/histories/get_mentions.md"
+    },
+    {
+      "module": "message",
+      "action": "getMessages",
+      "title": "获取历史消息",
+      "source": "message/histories/get_all.md"
+    },
+    {
+      "module": "message",
+      "action": "getMessagesByIds",
+      "title": "通过 Id 获取历史消息",
+      "source": "message/histories/get_by_ids.md"
+    },
+    {
+      "module": "message",
+      "action": "getTopMessage",
+      "title": "查询置顶",
+      "source": "message/settop/query.md"
+    },
+    {
+      "module": "message",
+      "action": "readMessage",
+      "title": "设置已读",
+      "source": "message/operator/read.md"
+    },
+    {
+      "module": "message",
+      "action": "recallMessage",
+      "title": "撤回消息",
+      "source": "message/operator/recall.md"
+    },
+    {
+      "module": "message",
+      "action": "registerMessage",
+      "title": "发送自定义消息",
+      "source": "message/msg_send/custom.md"
+    },
+    {
+      "module": "message",
+      "action": "removeFavoriteMessages",
+      "title": "移除收藏",
+      "source": "message/favorite/remove.md"
+    },
+    {
+      "module": "message",
+      "action": "removeMessageReaction",
+      "title": "删除消息回应",
+      "source": "message/reaction/remove.md"
+    },
+    {
+      "module": "message",
+      "action": "removeMessages",
+      "title": "删除历史消息",
+      "source": "message/histories/remove.md"
+    },
+    {
+      "module": "message",
+      "action": "searchMessages",
+      "title": "本地消息搜索",
+      "source": "message/operator/his_lc_search.md"
+    },
+    {
+      "module": "message",
+      "action": "sendFileMessage",
+      "title": "发送文件",
+      "source": "message/msg_send/send_file.md"
+    },
+    {
+      "module": "message",
+      "action": "sendImageMessage",
+      "title": "发送图片",
+      "source": "message/msg_send/send_image.md"
+    },
+    {
+      "module": "message",
+      "action": "sendMassMessage",
+      "title": "群发助手",
+      "source": "message/msg_send/send_mass.md"
+    },
+    {
+      "module": "message",
+      "action": "sendMergeMessage",
+      "title": "合并转发",
+      "source": "message/msg_send/send_merge.md"
+    },
+    {
+      "module": "message",
+      "action": "sendMessage",
+      "title": "发送消息",
+      "source": "message/msg_send/send.md"
+    },
+    {
+      "module": "message",
+      "action": "sendVideoMessage",
+      "title": "发送视频",
+      "source": "message/msg_send/send_video.md"
+    },
+    {
+      "module": "message",
+      "action": "sendVoiceMessage",
+      "title": "发送语音",
+      "source": "message/msg_send/send_voice.md"
+    },
+    {
+      "module": "message",
+      "action": "setTopMessage",
+      "title": "设置置顶",
+      "source": "message/settop/set.md"
+    },
+    {
+      "module": "message",
+      "action": "subscribeMessage",
+      "title": "消息订阅",
+      "source": "message/msg_subscribe.md"
+    },
+    {
+      "module": "message",
+      "action": "unsubscribeMessage",
+      "title": "消息订阅",
+      "source": "message/msg_subscribe.md"
+    },
+    {
+      "module": "message",
+      "action": "updateMessage",
+      "title": "修改消息",
+      "source": "message/operator/update.md"
+    },
+    {
+      "module": "message",
+      "action": "updateMessageAttr",
+      "title": "修改本地消息扩展",
+      "source": "message/operator/update_lc_attr.md"
+    },
+    {
+      "module": "moment",
+      "action": "addComment",
+      "title": "添加评论",
+      "source": "moment/commentadd.md"
+    },
+    {
+      "module": "moment",
+      "action": "addMoment",
+      "title": "添加朋友圈",
+      "source": "moment/momentadd.md"
+    },
+    {
+      "module": "moment",
+      "action": "addReaction",
+      "title": "添加点赞",
+      "source": "moment/reactionadd.md"
+    },
+    {
+      "module": "moment",
+      "action": "getComments",
+      "title": "评论列表",
+      "source": "moment/comments.md"
+    },
+    {
+      "module": "moment",
+      "action": "getMoment",
+      "title": "获取朋友圈",
+      "source": "moment/momentget.md"
+    },
+    {
+      "module": "moment",
+      "action": "getMoments",
+      "title": "朋友圈列表",
+      "source": "moment/moments.md"
+    },
+    {
+      "module": "moment",
+      "action": "getReactions",
+      "title": "点赞列表",
+      "source": "moment/reactions.md"
+    },
+    {
+      "module": "moment",
+      "action": "removeComment",
+      "title": "删除评论",
+      "source": "moment/commentremove.md"
+    },
+    {
+      "module": "moment",
+      "action": "removeMoment",
+      "title": "删除朋友圈",
+      "source": "moment/momentremove.md"
+    },
+    {
+      "module": "moment",
+      "action": "removeReaction",
+      "title": "删除点赞",
+      "source": "moment/reactionremove.md"
+    },
+    {
+      "module": "user_status",
+      "action": "getUserStatus",
+      "title": "查询状态",
+      "source": "user_status/get.md"
+    },
+    {
+      "module": "user_status",
+      "action": "subUserStatus",
+      "title": "订阅状态",
+      "source": "user_status/sub.md"
+    }
+  ]
+}

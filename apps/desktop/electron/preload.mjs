@@ -5,6 +5,51 @@ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "jugglework:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "jugglework:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
+const JUGGLECHAT_SKILL_INVOKE_CHANNEL = "jugglework:jugglechat:skill-invoke";
+const JUGGLECHAT_SKILL_REPLY_CHANNEL = "jugglework:jugglechat:skill-reply";
+
+let activeJuggleChatSkillHandler = null;
+
+function setJuggleChatSkillEvent(callback) {
+  if (activeJuggleChatSkillHandler) {
+    ipcRenderer.removeListener(JUGGLECHAT_SKILL_INVOKE_CHANNEL, activeJuggleChatSkillHandler);
+    activeJuggleChatSkillHandler = null;
+  }
+  if (typeof callback !== "function") return () => {};
+
+  const handler = async (_event, payload) => {
+    const requestId = payload?.requestId;
+    if (!requestId) return;
+
+    let envelope;
+    try {
+      envelope = await callback(payload);
+      if (!envelope || typeof envelope !== "object") {
+        envelope = {
+          ok: false,
+          error: { code: "INVALID_ENVELOPE", message: "callback must return { ok, data | error }" },
+        };
+      }
+    } catch (error) {
+      envelope = {
+        ok: false,
+        error: {
+          code: "CB_REJECTED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    ipcRenderer.send(JUGGLECHAT_SKILL_REPLY_CHANNEL, { requestId, ...envelope });
+  };
+
+  activeJuggleChatSkillHandler = handler;
+  ipcRenderer.on(JUGGLECHAT_SKILL_INVOKE_CHANNEL, handler);
+  return () => {
+    if (activeJuggleChatSkillHandler !== handler) return;
+    ipcRenderer.removeListener(JUGGLECHAT_SKILL_INVOKE_CHANNEL, handler);
+    activeJuggleChatSkillHandler = null;
+  };
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -182,6 +227,11 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
       const handler = (_event, payload) => callback(payload);
       ipcRenderer.on("jugglework:terminal:exit", handler);
       return () => ipcRenderer.removeListener("jugglework:terminal:exit", handler);
+    },
+  },
+  juggleChat: {
+    setSkillEvent(callback) {
+      return setJuggleChatSkillEvent(callback);
     },
   },
   meta: {
