@@ -28,6 +28,9 @@ import {
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
+import { installBundledJuggleChatSkills } from "./bundled-jugglechat-skills.mjs";
+import { createJuggleChatSkillBridge } from "./jugglechat-skill-bridge.mjs";
+import { startRouterServer, stopRouterServer } from "./router-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
@@ -931,6 +934,55 @@ const IDLE_ROUTER_INFO = Object.freeze({
 
 let mainWindow = null;
 const pendingDeepLinks = [];
+const juggleChatSkillBridge = createJuggleChatSkillBridge({
+  ipcMain,
+  getWindow: () => mainWindow,
+});
+let juggleChatRouterServer = null;
+
+function ensureJuggleChatRouterServer() {
+  if (juggleChatRouterServer) return juggleChatRouterServer;
+  juggleChatRouterServer = startRouterServer(juggleChatSkillBridge.invoke);
+  return juggleChatRouterServer;
+}
+
+async function stopJuggleChatRouterServer() {
+  const server = juggleChatRouterServer;
+  juggleChatRouterServer = null;
+  await stopRouterServer(server);
+  juggleChatSkillBridge.dispose();
+}
+
+function bundledJuggleChatSkillsPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "skills", "jugglechat-skills")
+    : path.resolve(__dirname, "../resources/skills/jugglechat-skills");
+}
+
+async function installJuggleChatSkills() {
+  const destinations = [path.join(globalOpencodeRoot(), "skills")];
+  if (isDevMode) {
+    destinations.push(path.join(
+      app.getPath("userData"),
+      "jugglework-dev-data",
+      "config",
+      "opencode",
+      "skills",
+    ));
+  }
+  const results = [];
+  for (const destination of destinations) {
+    const result = await installBundledJuggleChatSkills(
+      bundledJuggleChatSkillsPath(),
+      destination,
+    );
+    results.push({ destination, ...result });
+    if (!result.skipped) {
+      console.log(`[jugglechat-skills] installed to ${destination}: ${result.installed.join(", ")}`);
+    }
+  }
+  return results;
+}
 
 const browserPanel = createBrowserPanel({
   remoteDebugPort,
@@ -2234,6 +2286,7 @@ async function createMainWindow() {
       plugins: true,
     },
   });
+  ensureJuggleChatRouterServer();
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
@@ -2408,7 +2461,11 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
-    void Promise.all([disposeRuntimeBeforeQuit(), uiControlServer.stop()]).finally(() => app.quit());
+    void Promise.all([
+      disposeRuntimeBeforeQuit(),
+      uiControlServer.stop(),
+      stopJuggleChatRouterServer(),
+    ]).finally(() => app.quit());
   });
 
   app.on("second-instance", async (_event, argv) => {
@@ -2454,6 +2511,9 @@ if (!app.requestSingleInstanceLock()) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
     }
     applicationMenu.install();
+    await installJuggleChatSkills().catch((error) => {
+      console.warn("[jugglechat-skills] install failed", error);
+    });
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
 
     // Use Tauri's existing workspace state file as canonical so rollback and

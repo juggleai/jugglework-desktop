@@ -1,0 +1,2215 @@
+[
+  {
+    "file": "applications/applist.md",
+    "category": "applications",
+    "title": "应用列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/applications/list",
+      "Content-Type": "application/json"
+    },
+    "params": [],
+    "request_example": "GET /jim/applications/list?page=1&size=20&order=0 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n      {\n        \"app_id\":\"xxx\",\n        \"app_name\":\"xxx\",\n        \"app_icon\":\"xxxx\",\n        \"app_desc\":\"xxxx\",\n        \"app_url\":\"https://abc.aab.com\",\n        \"app_order\":1,\n        \"created_time\":1721234567890,\n        \"updated_time\":1721234567890\n      }\n    ],\n    \"page\":1,\n    \"size\":20\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "assistants/aianswer.md",
+    "category": "assistants",
+    "title": "智能回复",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/answer",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "conver_id",
+        "type": "string",
+        "required": "是",
+        "desc": "会话id"
+      },
+      {
+        "name": "channel_type",
+        "type": "int",
+        "required": "是",
+        "desc": "会话类型，1：单聊；2：群聊"
+      },
+      {
+        "name": "prompt_id",
+        "type": "string",
+        "required": "否",
+        "desc": "提示词id"
+      },
+      {
+        "name": "msgs",
+        "type": "array",
+        "required": "否",
+        "desc": "会话中最新的n条消息"
+      }
+    ],
+    "request_example": "POST /jim/assistants/answer HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"conver_id\":\"xx\",\n  \"channel_type\":1,\n  \"prompt_id\":\"xxx\",\n  \"msgs\":[\n    {\n      \"sender_id\":\"xx\",\n      \"content\":\"xxxxx\",\n      \"msg_time\":1741234567893\n    }\n  ]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"answer\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "assistants/promptadd.md",
+    "category": "assistants",
+    "title": "新增提示词",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/prompts/add",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "prompts",
+        "type": "string",
+        "required": "是",
+        "desc": "提示词内容(prompt)"
+      }
+    ],
+    "request_example": "POST /jim/assistants/prompts/add HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"prompts\":\"xxxxxxxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "添加失败"
+      }
+    ]
+  },
+  {
+    "file": "assistants/promptbatchdel.md",
+    "category": "assistants",
+    "title": "批量删除提示词",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/prompts/batchdel",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "ids",
+        "type": "array",
+        "required": "是",
+        "desc": "提示词ID列表"
+      }
+    ],
+    "request_example": "POST /jim/assistants/prompts/batchdel HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"ids\":[\"xxx\",\"yyy\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "删除失败"
+      }
+    ]
+  },
+  {
+    "file": "assistants/promptdel.md",
+    "category": "assistants",
+    "title": "删除提示词",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/prompts/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "id",
+        "type": "string",
+        "required": "是",
+        "desc": "提示词ID"
+      }
+    ],
+    "request_example": "POST /jim/assistants/prompts/del HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"id\":\"xxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "删除失败"
+      }
+    ]
+  },
+  {
+    "file": "assistants/promptlist.md",
+    "category": "assistants",
+    "title": "查询提示词",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/prompts/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页参数"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "一页数量，默认20"
+      }
+    ],
+    "request_example": "GET /jim/assistants/prompts/list HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n      {\n        \"id\":\"xx\",\n        \"prompts\":\"xxxxxxxx\",\n        \"created_time\":1722345674321\n      }\n    ],\n    \"offset\":\"xxx\"\n  }\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "失败"
+      }
+    ]
+  },
+  {
+    "file": "assistants/promptupdate.md",
+    "category": "assistants",
+    "title": "更新提示词",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/assistants/prompts/update",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "id",
+        "type": "string",
+        "required": "是",
+        "desc": "提示词ID"
+      },
+      {
+        "name": "prompts",
+        "type": "string",
+        "required": "是",
+        "desc": "提示词内容(prompt)"
+      }
+    ],
+    "request_example": "POST /jim/assistants/prompts/update HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"id\":\"xxx\",\n  \"prompts\":\"xxxxxxxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "更新失败"
+      }
+    ]
+  },
+  {
+    "file": "bots/botlist.md",
+    "category": "bots",
+    "title": "Bot列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/bots/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "用于分页，查询Bot列表的起始位置"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "单页数量，默认20，最大不超过50"
+      }
+    ],
+    "request_example": "GET /jim/bots/list?count=50 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"bot_id\":\"botid1\",\n            \"nickname\":\"bot1\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\"\n        },{\n            \"user_id\":\"botid2\",\n            \"nickname\":\"bot2\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\"\n        }\n    ],\n    \"offset\":\"xxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "feedbacks/addfeedback.md",
+    "category": "feedbacks",
+    "title": "上报反馈",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/feedbacks/add",
+      "Content-Type": "application/json"
+    },
+    "params": [],
+    "request_example": "POST /jim/feedbacks/add HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"category\":\"反馈分类\",\n  \"text\":\"反馈内容\",\n  \"images\":[\"https://xxxxx.jpg\"],\n  \"videos\":[\"https://xxxxx.mp3\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "files/filetoken.md",
+    "category": "files",
+    "title": "上传token",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/file_cred",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "file_type",
+        "type": "int",
+        "required": "0:默认；1:图片；2: 语音；3: 视频；4: 文件；5: 日志；",
+        "desc": ""
+      },
+      {
+        "name": "ext",
+        "type": "string",
+        "required": "文件扩展名",
+        "desc": ""
+      }
+    ],
+    "request_example": "POST /jim/file_cred HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"file_type\":0,\n  \"ext\":\"jpg\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"oss_type\":0,\n    \"qiniu_resp\":{\n      \"domain\":\"xxxxx\",\n      \"token\":\"xxxxxxx\"\n    },\n    \"pre_sign_resp\":{\n      \"url\":\"xxxxxx\",\n      \"obj_key\":\"xxx\",\n      \"policy\":\"policy\",\n      \"sign_version\":\"xxx\",\n      \"credential\":\"xxxx\",\n      \"date\":\"xxx\",\n      \"signature\":\"xxxx\"\n    }\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "friends/ confirmfriend.md",
+    "category": "friends",
+    "title": "处理好友申请",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/confirm",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "sponsor_id",
+        "type": "string",
+        "required": "是",
+        "desc": "申请人的用户id"
+      },
+      {
+        "name": "is_agree",
+        "type": "bool",
+        "required": "是",
+        "desc": "是否同意。false：拒绝；true：同意；"
+      }
+    ],
+    "request_example": "POST /jim/friends/confirm HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"sponsor_id\":\"userid1\",\n  \"is_agree\":true\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17103",
+        "desc": "好友申请已过期"
+      }
+    ]
+  },
+  {
+    "file": "friends/applyfriend.md",
+    "category": "friends",
+    "title": "申请添加好友",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/apply",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "friend_id",
+        "type": "string",
+        "required": "是",
+        "desc": "要添加好友的对方用户id"
+      }
+    ],
+    "request_example": "POST /jim/friends/apply HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"friend_id\":\"userid1\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17101",
+        "desc": "对方拒绝任何人加好友"
+      },
+      {
+        "code": "17102",
+        "desc": "好友申请重复，或对方已经是你的好友"
+      }
+    ]
+  },
+  {
+    "file": "friends/delfriend.md",
+    "category": "friends",
+    "title": "移除好友",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "friend_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "要移除好友的用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/friends/del HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"friend_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "friends/friendapplications.md",
+    "category": "friends",
+    "title": "好友申请列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/applications",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "start",
+        "type": "int",
+        "required": "否",
+        "desc": "查询列表的开始时间戳，倒序查询时，默认从当前时间开始；正序查询时，默认从0开始"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "单页数量，默认20，最大不超过50"
+      },
+      {
+        "name": "order",
+        "type": "int",
+        "required": "否",
+        "desc": "查询顺序。0：倒序；1：正序；默认0"
+      }
+    ],
+    "request_example": "GET /jim/friends/applications?start=1734407505753&count=50 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"target_user\":{ //申请发起方用户信息\n                \"user_id\":\"userid1\",\n                \"nickname\":\"user1\",\n                \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\"\n            },\n            \"is_sponsor\":true, //是否发起者\n            \"status\":1,    // 0：申请中；1：已同意；2：已拒绝；3：申请已过期\n            \"apply_time\":1734407505000   //申请发起时间\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "friends/friendlist.md",
+    "category": "friends",
+    "title": "好友列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "page",
+        "type": "int",
+        "required": "否",
+        "desc": "用于分页，起始页数，从1开始"
+      },
+      {
+        "name": "size",
+        "type": "int",
+        "required": "否",
+        "desc": "单页数量，默认20，最大不超过50"
+      },
+      {
+        "name": "order_tag",
+        "type": "string",
+        "required": "否",
+        "desc": "起始的拼音字母"
+      }
+    ],
+    "request_example": "GET /jim/friends/list?size=50&page=1&order_tag=a HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"user_id\":\"userid1\",\n            \"nickname\":\"user1\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\",\n            \"pinyin\":\"u\",\n            \"friend_info\":{\n              \"is_friend\":true,\n              \"display_name\":\"displayname\"\n            }\n        },{\n            \"user_id\":\"userid2\",\n            \"nickname\":\"user2\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\",\n            \"pinyin\":\"u\",\n            \"friend_info\":{\n              \"is_friend\":true,\n              \"display_name\":\"displayname\"\n            }\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "friends/friendsearch.md",
+    "category": "friends",
+    "title": "好友搜索",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/search",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "key",
+        "type": "string",
+        "required": "是",
+        "desc": "关键词"
+      },
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页偏移量"
+      },
+      {
+        "name": "limit",
+        "type": "number",
+        "required": "否",
+        "desc": "一页数据条数，默认100"
+      }
+    ],
+    "request_example": "POST /jim/friends/search HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"key\":\"user\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"user_id\":\"userid1\",\n            \"nickname\":\"user1\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\",\n            \"user_type\":0\n        },{\n            \"user_id\":\"userid2\",\n            \"nickname\":\"user2\",\n            \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\",\n            \"user_type\":0\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "friends/setdisplayname.md",
+    "category": "friends",
+    "title": "添加好友备注",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/friends/setdisplayname",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "friend_id",
+        "type": "string",
+        "required": "是",
+        "desc": "好友的用户id"
+      },
+      {
+        "name": "friend_display_name",
+        "type": "string",
+        "required": "是",
+        "desc": "好友备注"
+      }
+    ],
+    "request_example": "POST /jim/friends/setdisplayname HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"friend_id\":\"friend1\",\n  \"friend_display_name\":\"displayname\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupadmins/addadmin.md",
+    "category": "groups/groupadmins",
+    "title": "添加管理员",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/administrators/add",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "admin_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "管理员userid列表"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/administrators/add HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"group1\",\n  \"admin_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupadmins/deladmin.md",
+    "category": "groups/groupadmins",
+    "title": "移除管理员",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/administrators/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "admin_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "管理员userid列表"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/administrators/del HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"group1\",\n  \"admin_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupadmins/qrygroupmembers.md",
+    "category": "groups/groupadmins",
+    "title": "查询群管理员列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/administrators/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "GET /jim/groups/management/administrators/list?group_id=groupid1 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"group_id\":\"group1\",\n    \"items\":[\n      {\n        \"user_id\":\"userid1\",\n        \"nickname\":\"user1\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":2  //0:群成员；1：群主；2：群管理员\n      },{\n        \"user_id\":\"userid2\",\n        \"nickname\":\"user2\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":2  //0:群成员；1：群主；2：群管理员\n      }\n    ],\n    \"offset\":\"xxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/creategroup.md",
+    "category": "groups/groupmanage",
+    "title": "创建群组",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/create",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_name",
+        "type": "string",
+        "required": "是",
+        "desc": "群组昵称"
+      },
+      {
+        "name": "group_portrait",
+        "type": "string",
+        "required": "否",
+        "desc": "群组头像"
+      },
+      {
+        "name": "members.user_id",
+        "type": "string",
+        "required": "是",
+        "desc": "入群成员用户id"
+      }
+    ],
+    "request_example": "POST /jim/groups/create HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_name\":\"group1\",\n  \"group_portrait\":\"https://aaaa.png\",\n  \"member_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"group_id\":\"groupid1\",\n    \"group_name\":\"group1\",\n    \"group_portrait\":\"https://aaaa.png\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/dissolvegroup.md",
+    "category": "groups/groupmanage",
+    "title": "解散群组",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/dissolve",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "POST /jim/groups/dissolve HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/qrygroupinfo.md",
+    "category": "groups/groupmanage",
+    "title": "查询群信息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/info",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "GET /jim/groups/info?group_id=groupid1 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"group_id\":\"groupid1\",\n    \"group_name\":\"group1\",\n    \"group_portrait\":\"https://aaaa.png\",\n    \"member_count\":10,\n    \"members\":[\n      {\n        \"user_id\":\"userid1\",\n        \"nickname\":\"user1\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":0  //0:群成员；1：群主；2：群管理员\n      },{\n        \"user_id\":\"userid2\",\n        \"nickname\":\"user2\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":0  //0:群成员；1：群主；2：群管理员\n      }\n    ],\n    \"owner\":{\n      \"user_id\":\"userid1\",\n      \"nickname\":\"user1\",\n      \"avatar\":\"https://aaabbcc.png\"\n    },\n    \"my_role\":0, //我在本群的角色。0：普通群成员；1：群主；2：群管理员；\n    \"group_management\":{\n      \"group_mute\":0,//群禁言是否开启；\n      \"max_admin_count\":10,//群管理员最大数量；\n      \"admin_count\":2,//当前管理员数量；\n      \"group_verify_type\":0,//0：\n    },\n    \"grp_display_name\":\"grp1\"// 我的群昵称\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/qrymygroups.md",
+    "category": "groups/groupmanage",
+    "title": "查询加入的群列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/mygroups",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页偏移量，初次可以不填"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "一次返回数据条数"
+      }
+    ],
+    "request_example": "GET /jim/groups/mygroups?count=100 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[{\n      \"group_id\":\"groupid1\",\n      \"group_name\":\"group1\",\n      \"group_portrait\":\"https://xxxxxx.png\"\n    }],\n    \"offset\":\"xxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/searchmygroups.md",
+    "category": "groups/groupmanage",
+    "title": "搜索加入的群",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/mygroups/search",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "keyword",
+        "type": "string",
+        "required": "是",
+        "desc": "搜索关键词"
+      },
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页偏移量，初次可以不填"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "required": "否",
+        "desc": "一次返回数据条数"
+      }
+    ],
+    "request_example": "POST /jim/groups/mygroups/search HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"keyword\":\"group\",\n  \"limit\":100\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[{\n      \"group_id\":\"groupid1\",\n      \"group_name\":\"group1\",\n      \"group_portrait\":\"https://xxxxxx.png\"\n    }],\n    \"offset\":\"xxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupmanage/updategroup.md",
+    "category": "groups/groupmanage",
+    "title": "更新群组信息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/update",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "group_name",
+        "type": "string",
+        "required": "是",
+        "desc": "群组昵称"
+      },
+      {
+        "name": "group_portrait",
+        "type": "string",
+        "required": "否",
+        "desc": "群组头像"
+      },
+      {
+        "name": "members.user_id",
+        "type": "string",
+        "required": "是",
+        "desc": "入群成员用户id"
+      }
+    ],
+    "request_example": "POST /jim/groups/update HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"group_name\":\"group1\",\n  \"group_portrait\":\"https://aaaa.png\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/chgowner.md",
+    "category": "groups/groupsetting",
+    "title": "变更群主",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/chgowner",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "owner_id",
+        "type": "string",
+        "required": "是",
+        "desc": "新群主用户id"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/chgowner HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"owner_id\":\"userid2\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/getgrpannouncement.md",
+    "category": "groups/groupsetting",
+    "title": "查询群公告",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/getgrpannouncement",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "GET /jim/groups/getgrpannouncement HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"group_id\":\"group1\",\n    \"content\":\"xxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/grpmute.md",
+    "category": "groups/groupsetting",
+    "title": "设置群禁言",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/setmute",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "is_mute",
+        "type": "int",
+        "required": "是",
+        "desc": "0:不禁言；1：禁言；"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/setmute HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"is_mute\":1\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/setgrpannouncement.md",
+    "category": "groups/groupsetting",
+    "title": "设置群公告",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/setgrpannouncement",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "required": "是",
+        "desc": "群公告内容"
+      }
+    ],
+    "request_example": "POST /jim/groups/setgrpannouncement HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"group1\",\n  \"content\":\"xxxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/setgrpdisplayname.md",
+    "category": "groups/groupsetting",
+    "title": "设置群昵称",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/setdisplayname",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "grp_display_name",
+        "type": "string",
+        "required": "是",
+        "desc": "群昵称"
+      }
+    ],
+    "request_example": "POST /jim/groups/setdisplayname HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"group1\",\n  \"grp_display_name\":\"xxxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/setgrpmanageconf.md",
+    "category": "groups/groupsetting",
+    "title": "设置群配置",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/set",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "group_edit_msg_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      },
+      {
+        "name": "group_add_member_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      },
+      {
+        "name": "group_mention_all_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      },
+      {
+        "name": "group_top_msg_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      },
+      {
+        "name": "group_send_msg_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      },
+      {
+        "name": "group_set_msg_life_right",
+        "type": "int",
+        "required": "否",
+        "desc": "0：无权限；1：群主；2:管理员；3：群主+管理员；4：群成员；5：群主+群成员；6：管理员+群成员；7：群主+管理员+群成员"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/set HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"group_edit_msg_right\":7,\n  \"group_add_member_right\":7,\n  \"group_mention_all_right\":7,\n  \"group_top_msg_right\":7,\n  \"group_send_msg_right\":7,\n  \"group_set_msg_life_right\":7\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/setgrpmembersmute.md",
+    "category": "groups/groupsetting",
+    "title": "设置群成员禁言",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/setgrpmembersmute",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "member_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "被禁言的群成员id列表"
+      },
+      {
+        "name": "is_mute",
+        "type": "int",
+        "required": "是",
+        "desc": "0：解除禁言；1：禁言；"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/setgrpmembersmute HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"member_ids\":[\"userid1\",\"userid2\"],\n  \"is_mute\":1\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/setgrpverifytype.md",
+    "category": "groups/groupsetting",
+    "title": "设置入群验证类型",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/setgrpverifytype",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "verify_type",
+        "type": "int",
+        "required": "是",
+        "desc": "0:不需要验证；1：需要管理员确认；2：拒绝新人入群；默认0"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/setgrpverifytype HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"verify_type\":1\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/groupsetting/sethismsgvisible.md",
+    "category": "groups/groupsetting",
+    "title": "新人入群是否可查看历史消息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/management/sethismsgvisible",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "group_his_msg_visible",
+        "type": "int",
+        "required": "是",
+        "desc": "0:不可查看；1：可查看；默认0"
+      }
+    ],
+    "request_example": "POST /jim/groups/management/sethismsgvisible HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"group_his_msg_visible\":1\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/confirmapplications.md",
+    "category": "groups/membermanage",
+    "title": "审批邀请入群申请",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/grpapplications/confirm",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "application_id",
+        "type": "string",
+        "required": "是",
+        "desc": "申请的id"
+      },
+      {
+        "name": "is_agree",
+        "type": "bool",
+        "required": "是",
+        "desc": "是否同意"
+      }
+    ],
+    "request_example": "POST /jim/groups/grpapplications/confirm HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"application_id\":\"xxxxxx\",\n  \"is_agree\":true\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/delmember.md",
+    "category": "groups/membermanage",
+    "title": "移除群成员",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/members/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "member_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "邀请入群的用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/groups/members/del HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"member_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/grpapplications.md",
+    "category": "groups/membermanage",
+    "title": "入群申请列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/grpapplications",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "是",
+        "required": "群组id",
+        "desc": ""
+      },
+      {
+        "name": "start",
+        "type": "int",
+        "required": "否",
+        "desc": "查询列表的开始时间戳，倒序查询时，默认从当前时间开始；正序查询时，默认从0开始"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "单页数量，默认20，最大不超过50"
+      },
+      {
+        "name": "order",
+        "type": "int",
+        "required": "否",
+        "desc": "查询顺序。0：倒序；1：正序；默认0"
+      }
+    ],
+    "request_example": "GET /jim/groups/grpapplications?group_id=group1&start=1734407505753&count=50 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"apply_type\":1,   //0:邀请；1:主动申请；\n            \"sponsor\":{  //主动申请入群时，申请人信息\n              \"user_id\":\"userid1\"\n            },\n            \"inviter\":{  //邀请入群时，邀请人信息\n              \"user_id\":\"userid2\"\n            },\n            \"recipient\":{  //邀请入群时，被邀请人信息\n              \"user_id\":\"userid3\"\n            },\n            \"operator\":{   //处理请求的管理员信息\n              \"user_id\":\"userid4\"\n            },\n            \"status\":1,    // 0：申请中；1：同意申请；2：拒绝申请；3：申请已过期; 10：邀请中；11：同意邀请；12：拒绝邀请；13：邀请已过期；\n            \"apply_time\":1734407505000   //申请发起时间\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/invitemember.md",
+    "category": "groups/membermanage",
+    "title": "邀请入群",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/invite",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "member_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "邀请入群的用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/groups/invite HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"member_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/memberapply.md",
+    "category": "groups/membermanage",
+    "title": "申请入群",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/apply",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "POST /jim/groups/apply HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/membercheck.md",
+    "category": "groups/membermanage",
+    "title": "检查是否群成员",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/members/check",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "member_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/groups/members/check HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"member_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"group_id\":\"groupid1\",\n    \"member_exist_map\":{\n      \"userid1\":true,\n      \"userid2\":false\n    }\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/membersearch.md",
+    "category": "groups/membermanage",
+    "title": "搜索群成员",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/members/search",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "key",
+        "type": "string",
+        "required": "是",
+        "desc": "关键词"
+      },
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页偏移量"
+      },
+      {
+        "name": "limit",
+        "type": "number",
+        "required": "否",
+        "desc": "一页数据条数，默认100"
+      }
+    ],
+    "request_example": "POST /jim/groups/members/search HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\",\n  \"key\":\"user\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n      {\n        \"user_id\":\"userid1\",\n        \"nickname\":\"xxx\",\n        \"avatar\":\"xxxxxxx\",\n        \"member_type\":0\n      }\n    ],\n    \"offset\":\"xxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/qrygroupmembers.md",
+    "category": "groups/membermanage",
+    "title": "查询群成员列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/members/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "required": "否",
+        "desc": "分页数量"
+      },
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页参数"
+      }
+    ],
+    "request_example": "GET /jim/groups/members/list?group_id=groupid1&limit=20&offset=xxx HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n      {\n        \"user_id\":\"userid1\",\n        \"nickname\":\"user1\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":0  //0:群成员；1：群主；2：群管理员\n      },{\n        \"user_id\":\"userid2\",\n        \"nickname\":\"user2\",\n        \"avatar\":\"https://aaabbcc.png\",\n        \"member_type\":0,// 0:普通用户；1：机器人；\n        \"role\":0  //0:群成员；1：群主；2：群管理员\n      }\n    ],\n    \"offset\":\"xxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "groups/membermanage/quitgroup.md",
+    "category": "groups/membermanage",
+    "title": "退出群组",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/groups/quit",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "group_id",
+        "type": "string",
+        "required": "是",
+        "desc": "群组id"
+      }
+    ],
+    "request_example": "POST /jim/groups/quit HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"group_id\":\"groupid1\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/checkqr.md",
+    "category": "login",
+    "title": "检查扫码状态",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/qrcode/check",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "id",
+        "type": "string",
+        "required": "是",
+        "desc": "要检查的二维码id， 建议每3秒检查一次，扫码成功即可返回登录信息"
+      }
+    ],
+    "request_example": "POST /jim/qrcode/check HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"id\":\"xxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"authorization\":\"xxxxxxxxx\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"xxxxxxxx\",\n    \"status\":0,\n    \"im_token\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": [
+      {
+        "code": "17006",
+        "desc": "还未被扫码，继续检查"
+      },
+      {
+        "code": "17007",
+        "desc": "二维码已过期"
+      }
+    ]
+  },
+  {
+    "file": "login/confirmqr.md",
+    "category": "login",
+    "title": "扫码确认",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/qrcode/confirm",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "id",
+        "type": "string",
+        "required": "是",
+        "desc": "扫码得到的二维码id"
+      }
+    ],
+    "request_example": "POST /jim/qrcode/confirm HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"id\":\"xxxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/emaillogin.md",
+    "category": "login",
+    "title": "邮箱登录",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/email/login",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "email",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱收到的验证码"
+      }
+    ],
+    "request_example": "POST /jim/email/login HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"email\":\"xxxx@abc.com\",\n  \"code\":\"000000\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"authorization\":\"xxxxxxxxx\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"xxxxxxxx\",\n    \"status\":0,\n    \"im_token\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/emailsend.md",
+    "category": "login",
+    "title": "邮箱验证码",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/email/send",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "email",
+        "type": "string",
+        "required": "是",
+        "desc": "手机号"
+      }
+    ],
+    "request_example": "POST /jim/email/send HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"email\":\"xxxxx@abc.com\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/getloginqr.md",
+    "category": "login",
+    "title": "登录二维码",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/login/qrcode",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "email",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱收到的验证码"
+      }
+    ],
+    "request_example": "GET /jim/login/qrcode HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"id\":\"二维码唯一标识\",\n    \"qr_code\":\"二维码图片的base64数据\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/login.md",
+    "category": "login",
+    "title": "登录",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/login",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "account",
+        "type": "string",
+        "required": "否",
+        "desc": "账号，建议字母+数字组合，长度5~20位, 注：account,phone,email 三选一即可"
+      },
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "否",
+        "desc": "手机号"
+      },
+      {
+        "name": "email",
+        "type": "string",
+        "required": "否",
+        "desc": "邮箱地址"
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "required": "是",
+        "desc": "账号密码"
+      }
+    ],
+    "request_example": "POST /jim/login HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"account\":\"username\",\n  \"password\":\"xxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"authorization\":\"xxxxxxxxx\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"xxxxxxxx\",\n    \"status\":0,\n    \"im_token\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/passlogin.md",
+    "category": "login",
+    "title": "账户密码登录",
+    "request": {
+      "请求鉴权": "该接口为免登录接口，仅需携带 `appkey` 请求头；`Authorization` 不需要。登录成功后会在返回值中下发 `authorization`，供后续需要鉴权的接口使用。",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/login",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "account",
+        "type": "string",
+        "required": "否",
+        "desc": "账号，建议字母+数字组合，长度 **6~20** 位；注：`account`、`phone`、`email` 三选一即可"
+      },
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "否",
+        "desc": "手机号"
+      },
+      {
+        "name": "email",
+        "type": "string",
+        "required": "否",
+        "desc": "邮箱地址"
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "required": "是",
+        "desc": "账号密码（明文）"
+      }
+    ],
+    "request_example": "POST /jim/login HTTP/1.1\nappkey: appkey\nContent-Type: application/json\n\n{\n  \"account\":\"username\",\n  \"password\":\"123456\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"authorization\":\"xxxxxxxxx\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"xxxxxxxx\",\n    \"status\":0,\n    \"im_token\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/register.md",
+    "category": "login",
+    "title": "账号注册",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/register",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "account",
+        "type": "string",
+        "required": "否",
+        "desc": "账号，建议字母+数字组合，长度5~20位, 注：account,phone,email 三选一即可"
+      },
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "否",
+        "desc": "手机号"
+      },
+      {
+        "name": "email",
+        "type": "string",
+        "required": "否",
+        "desc": "邮箱地址"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "否",
+        "desc": "手机号和邮箱注册时必填，为收到的6位数字验证码"
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "required": "是",
+        "desc": "账号密码"
+      }
+    ],
+    "request_example": "POST /jim/register HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"account\":\"username\",\n  \"password\":\"xxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/smslogin.md",
+    "category": "login",
+    "title": "短验登录",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/sms/login",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "是",
+        "desc": "手机号"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "是",
+        "desc": "收到的短信验证码"
+      }
+    ],
+    "request_example": "POST /jim/sms/login HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"phone\":\"15212345678\",\n  \"code\":\"000000\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"authorization\":\"xxxxxxxxx\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"xxxxxxxx\",\n    \"status\":0,\n    \"im_token\":\"xxxxxxxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "login/smssend.md",
+    "category": "login",
+    "title": "短信验证码",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/sms/send",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "是",
+        "desc": "手机号"
+      }
+    ],
+    "request_example": "POST /jim/sms/send HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"phone\":\"15212345678\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "msgopt/delmsgs.md",
+    "category": "msgopt",
+    "title": "管理员删除消息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim//messages/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "from_id",
+        "type": "string",
+        "required": "是",
+        "desc": "要删除消息的发送者id"
+      },
+      {
+        "name": "target_id",
+        "type": "string",
+        "required": "是",
+        "desc": "消息的接收者，群组时为群id"
+      },
+      {
+        "name": "channel_type",
+        "type": "int",
+        "required": "是",
+        "desc": "会话类型，1：单聊；2：群聊；"
+      },
+      {
+        "name": "msgs.msg_id",
+        "type": "string",
+        "required": "是",
+        "desc": "删除消息的id"
+      }
+    ],
+    "request_example": "POST /jim/messages/recall HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"from_id\":\"userid1\",\n  \"target_id\":\"group1\",\n  \"channel_type\":2,\n  \"msgs\":[\n    {\n      \"msg_id\":\"xxxx\",\n      \"msg_time\":1731234567823\n    }\n  ]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "msgopt/recallmsg.md",
+    "category": "msgopt",
+    "title": "管理员撤回消息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim//messages/recall",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "from_id",
+        "type": "string",
+        "required": "是",
+        "desc": "要撤回消息的发送者id"
+      },
+      {
+        "name": "target_id",
+        "type": "string",
+        "required": "是",
+        "desc": "消息的接收者，群组时为群id"
+      },
+      {
+        "name": "channel_type",
+        "type": "int",
+        "required": "是",
+        "desc": "会话类型，1：单聊；2：群聊；"
+      },
+      {
+        "name": "msg_id",
+        "type": "string",
+        "required": "是",
+        "desc": "撤回消息的id"
+      },
+      {
+        "name": "msg_time",
+        "type": "int",
+        "required": "是",
+        "desc": "撤回消息的发送时间"
+      },
+      {
+        "name": "exts",
+        "type": "map",
+        "required": "否",
+        "desc": "扩展信息"
+      }
+    ],
+    "request_example": "POST /jim/messages/recall HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"from_id\":\"userid1\",\n  \"target_id\":\"group1\",\n  \"channel_type\":2,\n  \"msg_id\":\"xxxxxxxxxx\",\n  \"msg_time\":1731234567823,\n  \"exts\":{\n    \"k1\":\"v1\",\n    \"k2\":\"v2\"\n  }\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "telebots/botadd.md",
+    "category": "telebots",
+    "title": "添加Bot",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/telegrambots/add",
+      "Content-Type": "application/json"
+    },
+    "params": [],
+    "request_example": "POST /jim/telegrambots/add HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"bot_name\":\"xxxxxxxxxxxx\",\n  \"bot_token\":\"xxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": [
+      {
+        "code": "17300",
+        "desc": "添加失败"
+      }
+    ]
+  },
+  {
+    "file": "telebots/botdel.md",
+    "category": "telebots",
+    "title": "移除Bot",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/telegrambots/batchdel",
+      "Content-Type": "application/json"
+    },
+    "params": [],
+    "request_example": "POST /jim/telegrambots/batchdel HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"bot_ids\":[\"id1\",\"id2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "telebots/botlist.md",
+    "category": "telebots",
+    "title": "Bot列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/telegrambots/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "用于分页，查询Bot列表的起始位置"
+      },
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "单页数量，默认20，最大不超过50"
+      }
+    ],
+    "request_example": "GET /jim/telegrambots/list?count=50 HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"bot_id\":\"botid1\",\n            \"bot_name\":\"bot1\",\n            \"bot_token\":\"xxxxxxxx\",\n            \"created_time\":1732123456789\n        },{\n            \"user_id\":\"botid2\",\n            \"bot_name\":\"bot2\",\n            \"bot_token\":\"xxxxxxxx\",\n            \"created_time\":1751234567876\n        }\n    ],\n    \"offset\":\"xxxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "translates/translate.md",
+    "category": "translates",
+    "title": "翻译",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/translate",
+      "Content-Type": "application/json"
+    },
+    "params": [],
+    "request_example": "POST /jim/translate HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"items\":[\n    {\n        \"key\":\"xxx\",\n        \"content\":\"原文\"\n    }\n  ],\n  \"source_lang\":\"zh\",\n  \"target_lang\":\"en\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"key\":\"xxx\",\n            \"content\":\"翻译后内容\"\n        }\n    ],\n    \"source_lang\":\"zh\",\n    \"target_lang\":\"en\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/bindemail.md",
+    "category": "users",
+    "title": "绑定邮箱",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/bindemail",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "email",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "是",
+        "desc": "验证码"
+      }
+    ],
+    "request_example": "POST /jim/users/bindemail HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"email\":\"test@abc.com\",\n  \"code\":\"123456\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/bindemail_send.md",
+    "category": "users",
+    "title": "绑定邮箱-发送邮件",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/bindemail/send",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "email",
+        "type": "string",
+        "required": "是",
+        "desc": "邮箱"
+      }
+    ],
+    "request_example": "POST /jim/users/bindemail/send HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"email\":\"test@abc.com\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/bindphone.md",
+    "category": "users",
+    "title": "绑定手机号",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/bindphone",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "是",
+        "desc": "手机号"
+      },
+      {
+        "name": "code",
+        "type": "string",
+        "required": "是",
+        "desc": "验证码"
+      }
+    ],
+    "request_example": "POST /jim/users/bindphone HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"phone\":\"13812345678\",\n  \"code\":\"123456\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/bindphone_send.md",
+    "category": "users",
+    "title": "绑定手机号-发送短信",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/bindphone/send",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "phone",
+        "type": "string",
+        "required": "是",
+        "desc": "手机号"
+      }
+    ],
+    "request_example": "POST /jim/users/bindphone/send HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"phone\":\"13812345678\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/blockusers/addblockusers.md",
+    "category": "users/blockusers",
+    "title": "添加用户黑名单",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/blockusers/add",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "block_user_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "加黑的用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/users/blockusers/add HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"block_user_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/blockusers/delblockusers.md",
+    "category": "users/blockusers",
+    "title": "移除用户黑名单",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/blockusers/del",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "block_user_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "加黑的用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/users/blockusers/del HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"block_user_ids\":[\"userid1\",\"userid2\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/blockusers/qryblockusers.md",
+    "category": "users/blockusers",
+    "title": "查询黑名单用户列表",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/blockusers/list",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "count",
+        "type": "int",
+        "required": "否",
+        "desc": "分页参数，一页数据数量,默认20"
+      },
+      {
+        "name": "offset",
+        "type": "string",
+        "required": "否",
+        "desc": "分页偏移量"
+      }
+    ],
+    "request_example": "GET /jim/users/blockusers/list?count=20&offset=xxx HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n      {\n        \"user_id\":\"userid1\",\n        \"nickname\":\"user1\",\n        \"avatar\":\"https://aaabbcc.png\"\n      },{\n        \"user_id\":\"userid2\",\n        \"nickname\":\"user2\",\n        \"avatar\":\"https://aaabbcc.png\"\n      }\n    ],\n    \"offset\":\"xxx\"\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/onlinestatus.md",
+    "category": "users",
+    "title": "查询在线状态",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/onlinestatus",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "user_ids",
+        "type": "array",
+        "required": "是",
+        "desc": "用户id列表"
+      }
+    ],
+    "request_example": "POST /jim/users/onlinestatus HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"user_ids\":[\"userid1\",\"userid2\",\"userid3\"]\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"user_id\":\"userid1\",\n            \"is_online\":true\n        },{\n            \"user_id\":\"userid2\",\n            \"is_online\":false\n        },{\n            \"user_id\":\"userid3\",\n            \"is_online\":false\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/qryuserinfo.md",
+    "category": "users",
+    "title": "获取用户信息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "GET",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/info",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "user_id",
+        "type": "string",
+        "required": "是",
+        "desc": "用户id"
+      }
+    ],
+    "request_example": "GET /jim/users/info?user_id=xxx HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"user_id\":\"userid1\",\n    \"nickname\":\"user1\",\n    \"avatar\":\"https://file.juggle.im/abcdfafsdaf.png\",\n    \"phone\":\"xxxx\",\n    \"status\":1,\n    \"is_friend\":false,\n    \"settings\":{\n        \"language\":\"zh_CN\",\n        \"friend_verify_type\":1,//0:不需要验证；1：需要验证；2：拒绝被加好友；\n        \"grp_verify_type\":1,//0：不需要吧严重；2：需要验证；3：拒绝被拉入群；\n        \"undisturb\":\"{\\\"switch\\\":true,\\\"timezone\\\":\\\"shanghai\\\",\\\"rules\\\":[]}\"\n    }\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/search.md",
+    "category": "users",
+    "title": "搜索用户",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/search",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "keyword",
+        "type": "string",
+        "required": "是",
+        "desc": "对方手机号，邮箱或账号"
+      }
+    ],
+    "request_example": "POST /jim/users/search HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"keyword\":\"13812345678\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\",\n  \"data\":{\n    \"items\":[\n        {\n            \"user_id\":\"userid1\",\n            \"nickname\":\"user1\",\n            \"avatar\":\"xxxxxxx\",\n            \"is_friend\":false\n        }\n    ]\n  }\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/updpass.md",
+    "category": "users",
+    "title": "更新密码",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/updpass",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "user_id",
+        "type": "string",
+        "required": "是",
+        "desc": "用户id"
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "required": "是",
+        "desc": "旧密码，注意进行散列操作"
+      },
+      {
+        "name": "new_password",
+        "type": "string",
+        "required": "是",
+        "desc": "新密码，注意进行散列操作"
+      }
+    ],
+    "request_example": "POST /jim/users/updpass HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"user_id\":\"xxxxxxx\",\n  \"password\":\"xxxxxx\",\n  \"new_password\":\"xxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/upduserinfo.md",
+    "category": "users",
+    "title": "更新用户信息",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/update",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "user_id",
+        "type": "string",
+        "required": "是",
+        "desc": "用户id"
+      },
+      {
+        "name": "nickname",
+        "type": "string",
+        "required": "否",
+        "desc": "昵称"
+      },
+      {
+        "name": "avatar",
+        "type": "string",
+        "required": "否",
+        "desc": "头像"
+      }
+    ],
+    "request_example": "POST /jim/users/update HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"user_id\":\"userid1\",\n  \"nickname\":\"user1\",\n  \"avatar\":\"xxxxxx\"\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  },
+  {
+    "file": "users/updusersettings.md",
+    "category": "users",
+    "title": "更新用户设置",
+    "request": {
+      "请求鉴权": "接口需要增加验证 Header，请查看 鉴权说明",
+      "请求类型": "POST",
+      "请求限频": "100次/秒",
+      "请求地址": "https://请求域名/jim/users/updsettings",
+      "Content-Type": "application/json"
+    },
+    "params": [
+      {
+        "name": "language",
+        "type": "string",
+        "required": "是",
+        "desc": "推送语言"
+      },
+      {
+        "name": "friend_verify_type",
+        "type": "int",
+        "required": "是",
+        "desc": "好友验证。0：不需要验证，可直接被加好友；1：需要同意才能被加好友；2：拒绝任何人加我好友；"
+      },
+      {
+        "name": "grp_verify_type",
+        "type": "int",
+        "required": "是",
+        "desc": "进群验证。0：不需要验证，任何人都可拉我入群；1：需要我同意，才能被拉入群；2：拒绝任何人拉我入群；"
+      },
+      {
+        "name": "undisturb.switch",
+        "type": "bool",
+        "required": "否",
+        "desc": "是否开启全局免打扰，如果开启，rules中设置的时段期间，消息为免打扰状态，如果rules没设置时段，则全天免打扰"
+      },
+      {
+        "name": "undisturb.timezone",
+        "type": "string",
+        "required": "否",
+        "desc": "时段对应的时区，为空时使用服务器部署所在地的默认时区"
+      },
+      {
+        "name": "undisturb.rules.start",
+        "type": "string",
+        "required": "否",
+        "desc": "设置免打扰的开始时间，HHmm格式，24小时制"
+      },
+      {
+        "name": "undisturb.rules.end",
+        "type": "string",
+        "required": "否",
+        "desc": "设置免打扰的结束时间，HHmm格式，24小时制"
+      }
+    ],
+    "request_example": "POST /jim/users/updsettings HTTP/1.1\nappkey: appkey\nAuthorization: xxxxxxxxxxxxxxxxxx\nContent-Type: application/json\n\n{\n  \"language\":\"zh_CN\",\n  \"friend_verify_type\":1,\n  \"grp_verify_type\":1,\n  \"undisturb\":{\n    \"switch\":true,\n    \"timezone\":\"\",\n    \"rules\":[\n      {\n        \"start\":\"1100\",\n        \"end\":\"1500\"\n      }\n    ]\n  }\n}",
+    "response_example": "{\n  \"code\":0,\n  \"msg\":\"sucess\"\n}",
+    "response_codes": []
+  }
+]
