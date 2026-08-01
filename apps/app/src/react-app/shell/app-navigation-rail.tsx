@@ -55,7 +55,7 @@ function RailButton({
       onClick={onClick}
       data-testid={testId}
       className={cn(
-        "flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors",
+        "flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag",
         "hover:border-dls-border hover:bg-background hover:text-dls-text",
         active && "border-dls-border bg-background text-dls-text shadow-sm",
         disabled && "cursor-default opacity-45 hover:border-transparent hover:bg-transparent hover:text-dls-secondary",
@@ -75,11 +75,11 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   return (
     <aside
       aria-label={t("navigation.primary")}
-      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar/75 px-2 pb-3 pt-3 mac:pt-11"
+      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar/75 px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
     >
       <button
         type="button"
-        className="mb-7 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dls-border bg-background text-sm font-semibold text-dls-text shadow-sm transition-colors hover:bg-dls-hover"
+        className="mb-7 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dls-border bg-background text-sm font-semibold text-dls-text shadow-sm transition-colors hover:bg-dls-hover mac:titlebar-no-drag"
         title={t("settings.tab_cloud_account")}
         aria-label={t("settings.tab_cloud_account")}
         onClick={props.onOpenAccount}

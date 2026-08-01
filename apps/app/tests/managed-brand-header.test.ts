@@ -18,6 +18,14 @@ describe("managed brand navigation identity", () => {
     expect(source).toMatch(/className="size-full object-cover"/);
   });
 
+  test("uses rail whitespace as a window drag region without swallowing button clicks", () => {
+    const source = readFileSync(navigationRailPath, "utf8");
+
+    expect(source).toContain("mac:titlebar-drag mac:pt-11");
+    expect(source).toMatch(/data-testid=\{testId\}[\s\S]*mac:titlebar-no-drag/);
+    expect(source).toMatch(/className="[^"]*mac:titlebar-no-drag"[\s\S]*?data-testid="app-rail-account"/);
+  });
+
   test("places Home first and Apps directly after it", () => {
     const source = readFileSync(navigationRailPath, "utf8");
     const avatarIndex = source.indexOf('data-testid="app-rail-account"');
