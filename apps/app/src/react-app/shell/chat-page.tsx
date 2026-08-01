@@ -41,6 +41,7 @@ export function ChatPage(props: ChatPageProps) {
         <iframe
           src={CHAT_ENTRY_URL}
           title="Chat"
+          loading="eager"
           className="h-full w-full border-0 bg-white"
           allow="autoplay; camera; microphone; clipboard-read; clipboard-write"
           onLoad={() => setLoaded(true)}

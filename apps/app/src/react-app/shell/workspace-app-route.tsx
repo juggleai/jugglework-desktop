@@ -60,7 +60,6 @@ export function WorkspaceAppRoute() {
   const [retainedSession, setRetainedSession] = useState<RetainedSessionTarget>(() => (
     initialSessionTarget(location.pathname, location.state)
   ));
-  const [chatMounted, setChatMounted] = useState(() => appPath?.view === "chat");
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
 
   const currentSession = appPath?.view === "session"
@@ -87,10 +86,6 @@ export function WorkspaceAppRoute() {
         : next
     ));
   }, [currentSession?.sessionId, currentSession?.workspaceId, retainedSession.workspaceId, surfaceWorkspaceId]);
-
-  useEffect(() => {
-    if (appPath?.view === "chat") setChatMounted(true);
-  }, [appPath?.view]);
 
   useEffect(() => {
     if (appPath?.view === "apps") setAppsMounted(true);
@@ -153,23 +148,23 @@ export function WorkspaceAppRoute() {
         </div>
       ) : null}
 
-      {chatMounted || chatVisible ? (
-        <div
-          className={chatVisible ? "absolute inset-0" : "hidden"}
-          aria-hidden={!chatVisible || undefined}
-          data-testid="workspace-chat-surface"
-        >
-          <ChatPage
-            onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceChatRoute(activeSession.workspaceId))}
-            onOpenHome={() => navigate(sessionPath)}
-            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
-            onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
-            onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
-            onToggleChat={() => navigate(sessionPath)}
-            onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
-          />
-        </div>
-      ) : null}
+      {/* Keep Chat mounted from startup so its iframe initializes the IM SDK
+          and desktop skill bridge before the user first opens the surface. */}
+      <div
+        className={chatVisible ? "absolute inset-0" : "hidden"}
+        aria-hidden={!chatVisible || undefined}
+        data-testid="workspace-chat-surface"
+      >
+        <ChatPage
+          onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceChatRoute(activeSession.workspaceId))}
+          onOpenHome={() => navigate(sessionPath)}
+          onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+          onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
+          onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
+          onToggleChat={() => navigate(sessionPath)}
+          onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
+        />
+      </div>
 
       {appsMounted || appsVisible ? (
         <div
