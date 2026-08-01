@@ -1,5 +1,6 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
+import { redactSensitiveReasoning } from "./reasoning-redaction"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -203,6 +204,12 @@ export function getAssistantRenderGroups(
 
     if (isToolUIPart(part)) {
       groups.push({ kind: "tool", part })
+    }
+  }
+
+  for (const group of groups) {
+    if (group.kind === "reasoning") {
+      group.text = redactSensitiveReasoning(group.text)
     }
   }
 
