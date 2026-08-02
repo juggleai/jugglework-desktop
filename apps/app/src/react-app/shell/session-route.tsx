@@ -2346,7 +2346,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenHome: () => navigateToWorkspaceSession(sidebarActiveWorkspaceId, selectedSessionId),
         onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
         onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
-        onOpenSessionSearch: () => setSessionSearchOpen(true),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
       surface={surfaceProps}

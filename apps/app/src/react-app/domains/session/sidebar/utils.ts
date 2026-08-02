@@ -1,3 +1,4 @@
+import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import { isSandboxWorkspace } from "../../../../app/utils";
@@ -68,6 +69,37 @@ export const partitionArchivedSessions = (sessions: WorkspaceSessionGroup["sessi
     (isSessionArchived(session) ? archived : active).push(session);
   }
   return { active, archived };
+};
+
+/**
+ * Sessions whose title matches the sidebar filter, plus the ancestors of every
+ * match so each kept session still hangs off a root the tree can walk from.
+ * An empty query returns the input untouched.
+ */
+export const filterSessionsByTitle = (
+  sessions: WorkspaceSessionGroup["sessions"],
+  query: string,
+): WorkspaceSessionGroup["sessions"] => {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return sessions;
+
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const kept = new Set<string>();
+
+  for (const session of sessions) {
+    if (!getDisplaySessionTitle(session.title).toLocaleLowerCase().includes(needle)) continue;
+    kept.add(session.id);
+    // Ancestors already in `kept` carry their own ancestors with them.
+    let parentID = normalizeSessionParentID(session);
+    while (parentID && !kept.has(parentID)) {
+      kept.add(parentID);
+      const parent = sessionsById.get(parentID);
+      if (!parent) break;
+      parentID = normalizeSessionParentID(parent);
+    }
+  }
+
+  return sessions.filter((session) => kept.has(session.id));
 };
 
 /**

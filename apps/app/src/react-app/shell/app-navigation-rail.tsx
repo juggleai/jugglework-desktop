@@ -100,7 +100,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
 
       <nav className="flex flex-col items-center gap-3">
         <RailButton
-          label={t("navigation.home")}
+          label={t("navigation.local_workspace")}
           active={props.homeActive && taskScope === "local"}
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
@@ -116,7 +116,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           <AppWindowMac className="size-5" strokeWidth={1.8} />
         </RailButton> */}
         <RailButton
-          label={t("navigation.cloud_tasks")}
+          label={t("navigation.cloud_workspace")}
           active={props.homeActive && taskScope === "remote"}
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"

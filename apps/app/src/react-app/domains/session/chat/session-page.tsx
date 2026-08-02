@@ -147,7 +147,6 @@ export type SessionPageSidebarProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
-  onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
 };
 
@@ -1055,7 +1054,6 @@ export function SessionPage(props: SessionPageProps) {
           onOpenApps={props.sidebar.onOpenApps}
           onOpenChat={props.sidebar.onOpenChat}
           onOpenSettings={props.onOpenSettings}
-          onOpenSessionSearch={props.sidebar.onOpenSessionSearch}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
         />

@@ -31,6 +31,8 @@ export type SidebarContextValue = {
   toggleSessionExpanded: (sessionId: string) => void;
   expandedWorkspaceIds: Set<string>;
   expandedSessionIds: Set<string>;
+  /** Sidebar filter is active: every workspace stays open so matches are visible. */
+  filteringSessions: boolean;
 };
 
 export const SidebarContext = React.createContext<SidebarContextValue | null>(null);

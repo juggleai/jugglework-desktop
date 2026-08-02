@@ -19,6 +19,7 @@ import {
   Settings,
   FolderOpen,
   Tag,
+  X,
 } from "lucide-react";
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
@@ -100,6 +101,7 @@ import type { SidebarContextValue } from "./app-sidebar-provider";
 import {
   MAX_SESSIONS_PREVIEW,
   buildSessionTreeState,
+  filterSessionsByTitle,
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
@@ -692,8 +694,6 @@ export type AppSidebarProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
-  /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
-  onOpenSessionSearch?: () => void;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
@@ -714,6 +714,7 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 
 export function AppSidebar(props: AppSidebarProps) {
   const taskScope = useTaskScope();
+  const [sessionQuery, setSessionQuery] = React.useState("");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
   );
@@ -862,6 +863,14 @@ export function AppSidebar(props: AppSidebarProps) {
     props.workspaceSessionGroups,
   ]);
 
+  const trimmedSessionQuery = sessionQuery.trim();
+  const isFiltering = trimmedSessionQuery.length > 0;
+
+  // A query carries no meaning across scopes — the other list has its own sessions.
+  React.useEffect(() => {
+    setSessionQuery("");
+  }, [taskScope]);
+
   const contextValue: SidebarContextValue = {
     selectedWorkspaceId: props.selectedWorkspaceId,
     selectedSessionId: props.selectedSessionId,
@@ -891,16 +900,21 @@ export function AppSidebar(props: AppSidebarProps) {
     toggleSessionExpanded,
     expandedWorkspaceIds,
     expandedSessionIds,
+    filteringSessions: isFiltering,
   };
 
-  const visibleWorkspaceSessionGroups = React.useMemo(
-    () => props.workspaceSessionGroups.filter((group) =>
-      taskScope === "remote"
-        ? group.workspace.workspaceType === "remote"
-        : group.workspace.workspaceType !== "remote"
-    ),
-    [props.workspaceSessionGroups, taskScope],
-  );
+  // Sessions of the scope on screen, narrowed to the sidebar filter. Workspaces
+  // left without a match drop out so the list only holds results.
+  const visibleWorkspaceSessionGroups = React.useMemo(() => {
+    const inScope = props.workspaceSessionGroups.filter(
+      (group) => workspaceTaskScope(group.workspace) === taskScope,
+    );
+    if (!trimmedSessionQuery) return inScope;
+    return inScope.flatMap((group) => {
+      const sessions = filterSessionsByTitle(group.sessions, trimmedSessionQuery);
+      return sessions.length ? [{ ...group, sessions }] : [];
+    });
+  }, [props.workspaceSessionGroups, taskScope, trimmedSessionQuery]);
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
@@ -960,25 +974,38 @@ export function AppSidebar(props: AppSidebarProps) {
             <div className="hidden h-11 shrink-0 mac:block mac:titlebar-drag" />
             <SidebarHeader className="gap-2 border-b border-dls-border px-3 pb-3 pt-3 mac:pt-1">
               <div className="flex items-center gap-1.5">
-                {props.onOpenSessionSearch ? (
-                  <SidebarMenu className="min-w-0 flex-1">
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        onClick={props.onOpenSessionSearch}
-                        aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
-                        className="text-sidebar-foreground/70"
-                      >
-                        <Search className="size-4" />
-                        <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
-                        <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
-                          {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-                        </kbd>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                ) : (
-                  <div className="min-w-0 flex-1" />
-                )}
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-sidebar-foreground/50" />
+                  <Input
+                    type="search"
+                    value={sessionQuery}
+                    onChange={(event) => setSessionQuery(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape" || !sessionQuery) return;
+                      event.preventDefault();
+                      setSessionQuery("");
+                    }}
+                    placeholder={t("workspace_list.search_sessions")}
+                    aria-label={t("workspace_list.search_sessions")}
+                    className="h-8 rounded-lg pl-8 pr-8 text-sm [&::-webkit-search-cancel-button]:appearance-none"
+                  />
+                  {isFiltering ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setSessionQuery("")}
+                      aria-label={t("workspace_list.clear_session_filter")}
+                      title={t("workspace_list.clear_session_filter")}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  ) : (
+                    <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-sans text-[11px] tracking-wide text-sidebar-foreground/40">
+                      {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+                    </kbd>
+                  )}
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -1020,14 +1047,14 @@ export function AppSidebar(props: AppSidebarProps) {
                       group={group}
                       className=""
                       showInitialLoading={props.showInitialLoading}
-                      previewCount={previewCount(group.workspace.id)}
+                      previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
                       showMoreSessions={showMoreSessions}
                     />
                   ))}
                 </Reorder.Group>
                 {visibleWorkspaceSessionGroups.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
-                    {t("workspace.no_tasks")}
+                    {isFiltering ? t("workspace_list.no_matching_sessions") : t("workspace.no_tasks")}
                   </div>
                 ) : null}
                 {archivedSessions.length > 0 ? (
@@ -1088,12 +1115,14 @@ type GlobalArchivedSessionEntry = {
 };
 
 function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEntry[] }) {
+  const ctx = useSidebarContext();
   const [expanded, setExpanded] = React.useState(false);
+  const open = ctx.filteringSessions || expanded;
 
   return (
     <SidebarGroup data-global-archived-sessions className="pb-1 pt-1">
       <SidebarGroupContent>
-        <Collapsible open={expanded} onOpenChange={setExpanded} className="group/archived">
+        <Collapsible open={open} onOpenChange={setExpanded} className="group/archived">
           <CollapsibleTrigger
             render={
               <button
@@ -1340,7 +1369,8 @@ function WorkspaceSidebarGroup({
     (isRemoteWorkspace || isRemoteConnectionErrorMessage(connectionIssueMessage)) &&
     Boolean(connectionIssueMessage) &&
     (connectionState.status === "error" || group.status === "error");
-  const isExpanded = ctx.expandedWorkspaceIds.has(workspace.id);
+  // While filtering the workspace stays open — a collapsed group would hide its matches.
+  const isExpanded = ctx.filteringSessions || ctx.expandedWorkspaceIds.has(workspace.id);
   const isSelected = ctx.selectedWorkspaceId === workspace.id;
 
   const statusLabel = (() => {
@@ -1832,6 +1862,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
   forcedExpandedSessionIds: Set<string>;
   store: typeof useSessionManagementStore;
 }) {
+  const ctx = useSidebarContext();
   const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
 
   const groupPreviewCount = (groupId: string) =>
@@ -1895,8 +1926,11 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
 
   const renderGroup = (group: SessionGroupDefinition) => {
     const rows = rootRowsByGroup.get(group.id) ?? [];
-    const expanded = !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(group.id);
-    const limit = groupPreviewCount(group.id);
+    // Filtering opens every group and drops the preview cap: a match must never
+    // sit behind a collapsed header or a "show more" row.
+    const expanded = ctx.filteringSessions
+      || !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(group.id);
+    const limit = ctx.filteringSessions ? Number.MAX_SAFE_INTEGER : groupPreviewCount(group.id);
 
     return (
       <SessionGroupSection
@@ -1913,8 +1947,9 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
     );
   };
 
-  const ungroupedExpanded = !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(UNGROUPED_GROUP_ID);
-  const ungroupedLimit = groupPreviewCount(UNGROUPED_GROUP_ID);
+  const ungroupedExpanded = ctx.filteringSessions
+    || !(store.getState().groupsByWorkspace[workspaceId]?.collapsedGroupIds ?? []).includes(UNGROUPED_GROUP_ID);
+  const ungroupedLimit = ctx.filteringSessions ? Number.MAX_SAFE_INTEGER : groupPreviewCount(UNGROUPED_GROUP_ID);
   const visibleUngroupedRows = ungroupedRows.slice(0, ungroupedLimit);
   const ungroupedRemaining = Math.max(0, ungroupedRows.length - ungroupedLimit);
   const visibleUngroupedRootIds = visibleUngroupedRows.map((r) => r.session.id);
