@@ -11,8 +11,6 @@ export type ChatPageProps = {
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
-  onCreateLocalWorkspace: () => void;
-  onConnectRemoteWorkspace: () => void;
   onToggleChat: () => void;
   onOpenSettings: () => void;
 };
@@ -27,8 +25,6 @@ export function ChatPage(props: ChatPageProps) {
         onOpenAccount={props.onOpenAccount}
         onOpenHome={props.onOpenHome}
         onOpenApps={props.onOpenApps}
-        onCreateLocalWorkspace={props.onCreateLocalWorkspace}
-        onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
         onOpenChat={props.onToggleChat}
         onOpenSettings={props.onOpenSettings}
       />

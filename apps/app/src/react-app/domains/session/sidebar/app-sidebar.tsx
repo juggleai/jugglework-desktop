@@ -119,6 +119,7 @@ import {
   useWorkspaceGroups,
   type SessionGroupDefinition,
 } from "./session-management-store";
+import { setTaskScope, useTaskScope, workspaceTaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
@@ -712,12 +713,7 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
-  const selectedWorkspace = props.workspaceSessionGroups.find(
-    (group) => group.workspace.id === props.selectedWorkspaceId,
-  )?.workspace;
-  const [taskScope, setTaskScope] = React.useState<"local" | "remote">(
-    selectedWorkspace?.workspaceType === "remote" ? "remote" : "local",
-  );
+  const taskScope = useTaskScope();
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
   );
@@ -794,13 +790,38 @@ export function AppSidebar(props: AppSidebarProps) {
     expandWorkspace(id);
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
+  const syncedWorkspaceIdRef = React.useRef<string | null>(null);
+  const syncedTaskScopeRef = React.useRef(taskScope);
+
+  // Keeps the rail's task scope and the opened workspace pointing at each
+  // other: opening a session from outside the list (search, deep link) adopts
+  // that workspace's scope, while switching scope on the rail focuses the
+  // first workspace the new list contains.
   React.useEffect(() => {
-    const workspace = props.workspaceSessionGroups.find(
-      (group) => group.workspace.id === props.selectedWorkspaceId,
+    const workspaceId = props.selectedWorkspaceId.trim();
+    const selected = props.workspaceSessionGroups.find(
+      (group) => group.workspace.id === workspaceId,
     )?.workspace;
-    if (!workspace) return;
-    setTaskScope(workspace.workspaceType === "remote" ? "remote" : "local");
-  }, [props.selectedWorkspaceId, props.workspaceSessionGroups]);
+
+    if (selected && syncedWorkspaceIdRef.current !== workspaceId) {
+      syncedWorkspaceIdRef.current = workspaceId;
+      const scope = workspaceTaskScope(selected);
+      syncedTaskScopeRef.current = scope;
+      setTaskScope(scope);
+      return;
+    }
+
+    if (syncedTaskScopeRef.current === taskScope) return;
+    syncedTaskScopeRef.current = taskScope;
+    if (selected && workspaceTaskScope(selected) === taskScope) return;
+
+    const firstInScope = props.workspaceSessionGroups.find(
+      (group) => workspaceTaskScope(group.workspace) === taskScope,
+    )?.workspace;
+    if (!firstInScope) return;
+    syncedWorkspaceIdRef.current = firstInScope.id;
+    void props.onSelectWorkspace(firstInScope.id);
+  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope]);
 
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -904,17 +925,9 @@ export function AppSidebar(props: AppSidebarProps) {
     return entries;
   }, [visibleWorkspaceSessionGroups]);
 
-  const selectTaskScope = React.useCallback((scope: "local" | "remote") => {
-    setTaskScope(scope);
-    const firstWorkspace = props.workspaceSessionGroups.find((group) =>
-      scope === "remote"
-        ? group.workspace.workspaceType === "remote"
-        : group.workspace.workspaceType !== "remote"
-    )?.workspace;
-    if (firstWorkspace && firstWorkspace.id !== props.selectedWorkspaceId) {
-      void props.onSelectWorkspace(firstWorkspace.id);
-    }
-  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups]);
+  const createTaskLabel = taskScope === "remote"
+    ? t("navigation.create_cloud_task")
+    : t("navigation.create_local_task");
 
   const reorderVisibleWorkspaces = React.useCallback((visibleIds: string[]) => {
     const orderedVisibleIds = [...visibleIds];
@@ -939,8 +952,6 @@ export function AppSidebar(props: AppSidebarProps) {
             onOpenAccount={props.onOpenAccount}
             onOpenHome={props.onOpenHome}
             onOpenApps={props.onOpenApps}
-            onCreateLocalWorkspace={props.onOpenCreateLocalWorkspace}
-            onConnectRemoteWorkspace={props.onOpenConnectRemoteWorkspace}
             onOpenChat={props.onOpenChat}
             onOpenSettings={props.onOpenSettings}
           />
@@ -948,54 +959,42 @@ export function AppSidebar(props: AppSidebarProps) {
           <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
             <div className="hidden h-11 shrink-0 mac:block mac:titlebar-drag" />
             <SidebarHeader className="gap-2 border-b border-dls-border px-3 pb-3 pt-3 mac:pt-1">
-              <div
-                className="grid grid-cols-2 rounded-xl bg-background/55 p-1"
-                role="tablist"
-                aria-label={t("navigation.primary")}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={taskScope === "local"}
-                  onClick={() => selectTaskScope("local")}
-                  className={cn(
-                    "h-8 rounded-lg px-2 text-xs font-medium text-dls-secondary transition-colors",
-                    taskScope === "local" && "bg-background text-dls-text shadow-sm",
-                  )}
+              <div className="flex items-center gap-1.5">
+                {props.onOpenSessionSearch ? (
+                  <SidebarMenu className="min-w-0 flex-1">
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        onClick={props.onOpenSessionSearch}
+                        aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
+                        className="text-sidebar-foreground/70"
+                      >
+                        <Search className="size-4" />
+                        <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
+                        <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
+                          {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+                        </kbd>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                ) : (
+                  <div className="min-w-0 flex-1" />
+                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 rounded-lg text-dls-secondary hover:bg-background hover:text-dls-text"
+                  onClick={taskScope === "remote"
+                    ? props.onOpenConnectRemoteWorkspace
+                    : props.onOpenCreateLocalWorkspace}
+                  aria-label={createTaskLabel}
+                  title={createTaskLabel}
+                  data-testid={taskScope === "remote"
+                    ? "sidebar-create-cloud-task"
+                    : "sidebar-create-local-task"}
                 >
-                  {t("navigation.local_tasks")}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={taskScope === "remote"}
-                  onClick={() => selectTaskScope("remote")}
-                  className={cn(
-                    "h-8 rounded-lg px-2 text-xs font-medium text-dls-secondary transition-colors",
-                    taskScope === "remote" && "bg-background text-dls-text shadow-sm",
-                  )}
-                >
-                  {t("navigation.cloud_tasks")}
-                </button>
+                  <Plus className="size-4" />
+                </Button>
               </div>
-
-              {props.onOpenSessionSearch ? (
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      onClick={props.onOpenSessionSearch}
-                      aria-keyshortcuts={isMacPlatform() ? "Meta+Shift+F" : "Control+Shift+F"}
-                      className="text-sidebar-foreground/70"
-                    >
-                      <Search className="size-4" />
-                      <span className="flex-1 truncate">{t("workspace_list.search_sessions")}</span>
-                      <kbd className="ml-auto font-sans text-[11px] tracking-wide text-sidebar-foreground/50">
-                        {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-                      </kbd>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              ) : null}
             </SidebarHeader>
 
             <LazyMotion features={domMax}>

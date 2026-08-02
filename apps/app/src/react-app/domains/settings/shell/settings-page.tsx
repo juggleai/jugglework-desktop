@@ -261,8 +261,6 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   selectedWorkspaceColor: string;
   workspaces: Array<{ id: string; name: string; color: string }>;
   onSelectWorkspace: (workspaceId: string) => void;
-  onCreateLocalWorkspace: () => void;
-  onConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -285,8 +283,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
-          onCreateLocalWorkspace={props.onCreateLocalWorkspace}
-          onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
           onOpenSettings={() => undefined}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-sidebar">

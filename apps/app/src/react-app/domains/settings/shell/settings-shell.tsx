@@ -46,8 +46,6 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   headerStatus?: string;
   busyHint?: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
-  onCreateLocalWorkspace: () => void;
-  onConnectRemoteWorkspace: () => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -137,8 +135,6 @@ export function SettingsShell(props: SettingsShellProps) {
           selectedWorkspaceColor={props.selectedWorkspaceColor}
           workspaces={props.workspaces}
           onSelectWorkspace={props.onSelectWorkspace}
-          onCreateLocalWorkspace={props.onCreateLocalWorkspace}
-          onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
           onOpenAccount={props.onOpenAccount}
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}

@@ -159,8 +159,6 @@ export function WorkspaceAppRoute() {
           onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceChatRoute(activeSession.workspaceId))}
           onOpenHome={() => navigate(sessionPath)}
           onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
-          onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
-          onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
           onToggleChat={() => navigate(sessionPath)}
           onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
         />
@@ -176,8 +174,6 @@ export function WorkspaceAppRoute() {
             workspaceId={activeSession.workspaceId}
             onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenHome={() => navigate(sessionPath)}
-            onCreateLocalWorkspace={() => openRetainedSessionAction("app-rail-create-local")}
-            onConnectRemoteWorkspace={() => openRetainedSessionAction("app-rail-connect-remote")}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
             onOpenSettings={() => openSurfaceSettings("general", workspaceAppsRoute(activeSession.workspaceId))}
           />

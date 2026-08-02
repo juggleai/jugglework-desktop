@@ -2525,8 +2525,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         selectedWorkspaceColor={selectedWorkspaceColor}
         workspaces={workspaceOptions}
         onSelectWorkspace={handleSelectSettingsWorkspace}
-        onCreateLocalWorkspace={() => openCreateWorkspace("local")}
-        onConnectRemoteWorkspace={() => openCreateWorkspace("remote")}
         onOpenAccount={openCloudAccountSettings}
         onOpenHome={props.onClose ?? (() => navigate(
           settingsReturnRoute(

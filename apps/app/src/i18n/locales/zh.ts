@@ -728,6 +728,8 @@ export default {
   "mcp.last_synced": "已同步",
   "navigation.chat": "聊天",
   "navigation.cloud_tasks": "云端任务",
+  "navigation.create_cloud_task": "新建云端任务",
+  "navigation.create_local_task": "新建本地任务",
   "navigation.home": "首页",
   "navigation.local_tasks": "本地任务",
   "navigation.primary": "主导航",

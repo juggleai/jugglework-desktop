@@ -6,8 +6,6 @@ export type AppsPageProps = {
   workspaceId?: string | null;
   onOpenAccount: () => void;
   onOpenHome: () => void;
-  onCreateLocalWorkspace: () => void;
-  onConnectRemoteWorkspace: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
 };
@@ -20,8 +18,6 @@ export function AppsPage(props: AppsPageProps) {
         onOpenAccount={props.onOpenAccount}
         onOpenHome={props.onOpenHome}
         onOpenApps={() => undefined}
-        onCreateLocalWorkspace={props.onCreateLocalWorkspace}
-        onConnectRemoteWorkspace={props.onConnectRemoteWorkspace}
         onOpenChat={props.onOpenChat}
         onOpenSettings={props.onOpenSettings}
       />

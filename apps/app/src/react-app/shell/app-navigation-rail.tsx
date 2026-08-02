@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
 import {
   AppWindowMac,
-  FilePlus2,
   House,
   MessageCircleMore,
   Orbit,
@@ -12,10 +11,12 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
 type AppNavigationRailProps = {
+  /** Home surface is the visible one — its rail button reflects the task scope. */
   homeActive?: boolean;
   appsActive?: boolean;
   settingsActive?: boolean;
@@ -23,8 +24,6 @@ type AppNavigationRailProps = {
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
-  onCreateLocalWorkspace: () => void;
-  onConnectRemoteWorkspace: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
 };
@@ -69,6 +68,13 @@ function RailButton({
 export function AppNavigationRail(props: AppNavigationRailProps) {
   const { user } = useDenAuth();
   const brandLogoUrl = useBrandLogoUrl();
+  const taskScope = useTaskScope();
+
+  /** Home lists local tasks, the cloud button lists remote ones — same surface. */
+  const openTaskScope = (scope: "local" | "remote") => {
+    setTaskScope(scope);
+    props.onOpenHome();
+  };
   const identity = user?.name?.trim() || user?.email?.trim() || "JuggleWork";
   const initial = identity.slice(0, 1).toLocaleUpperCase();
 
@@ -95,8 +101,8 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       <nav className="flex flex-col items-center gap-3">
         <RailButton
           label={t("navigation.home")}
-          active={props.homeActive}
-          onClick={props.onOpenHome}
+          active={props.homeActive && taskScope === "local"}
+          onClick={() => openTaskScope("local")}
           testId="app-rail-home"
         >
           <House className="size-5" strokeWidth={1.8} />
@@ -110,16 +116,10 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           <AppWindowMac className="size-5" strokeWidth={1.8} />
         </RailButton> */}
         <RailButton
-          label={t("navigation.local_tasks")}
-          onClick={props.onCreateLocalWorkspace}
-          testId="app-rail-create-local"
-        >
-          <FilePlus2 className="size-5" strokeWidth={1.8} />
-        </RailButton>
-        <RailButton
           label={t("navigation.cloud_tasks")}
-          onClick={props.onConnectRemoteWorkspace}
-          testId="app-rail-connect-remote"
+          active={props.homeActive && taskScope === "remote"}
+          onClick={() => openTaskScope("remote")}
+          testId="app-rail-cloud-tasks"
         >
           <Orbit className="size-5" strokeWidth={1.8} />
         </RailButton>
