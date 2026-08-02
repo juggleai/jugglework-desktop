@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "conversation",
   "action": "getTotalUnreadcount",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 否 | 无 | 查询条件 | 1.0.0 |
-| params.conversationTypes | Array | 否 | 无 | 指定会话类型 | 1.0.0 |
-| params.ignoreConversations | Array | 否 | 无 | 忽略指定会话 | 1.0.0 |
+| args | Object | 否 | 无 | 查询条件 | 1.0.0 |
+| args.conversationTypes | Array | 否 | 无 | 指定会话类型 | 1.0.0 |
+| args.ignoreConversations | Array | 否 | 无 | 忽略指定会话 | 1.0.0 |
 
 ## 示例代码
 

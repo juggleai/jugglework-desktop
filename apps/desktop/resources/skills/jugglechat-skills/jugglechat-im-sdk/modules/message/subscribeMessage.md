@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "subscribeMessage",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| conversation | Object | 是 |  | 会话对象 | 1.7.18 |
-| conversation.conversationType | Number | 是 |  | [会话类型](../../enum/web#conversation) | 1.7.18 |
-| conversation.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.7.18 |
+| args | Object | 是 |  | 会话对象 | 1.7.18 |
+| args.conversationType | Number | 是 |  | [会话类型](../../enum/web#conversation) | 1.7.18 |
+| args.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.7.18 |
 
 ## 失败回调
 

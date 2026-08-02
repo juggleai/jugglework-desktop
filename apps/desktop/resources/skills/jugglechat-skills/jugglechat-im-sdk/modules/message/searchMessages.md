@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "searchMessages",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,16 +32,16 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 描述 | 版本 |
 |---|---|---|---|---|
-| params | Object | 是 | 消息搜索参数 | 1.0.0 |
-| params.conversationType | Number | 否 | [会话类型](../../../enum/web#conversation) | 1.0.0 |
-| params.conversationId | String | 否 | 会话 Id，传值表示搜索 “单个会话消息”，传空表示搜索 “全部会话消息” | 1.0.0 |
-| params.keywords | Array | 是 | 消息搜索关键字，最多支持 5 个，多个关键字之间是 “或” 的关系 | 1.0.0 |
-| params.senderIds | Number | 否 | 过滤指定消息发送者的消息 | 1.0.0 |
-| params.messageNames | Number | 否 | 过滤指定消息类型的消息 | 1.0.0 |
-| params.startTime | Number | 否 | 过滤指定时间段的开始时间，时间戳，单位：ms | 1.0.0 |
-| params.endTime | Number | 否 | 过滤指定时间段的结束时间，时间戳，单位：ms | 1.0.0 |
-| params.page | Number | 否 | 默认值 1，支持分页的页码，默认第一页 | 1.0.0 |
-| params.pageSize | Number | 否 | 默认值 10，每页的数据条数 | 1.0.0 |
+| args | Object | 是 | 消息搜索参数 | 1.0.0 |
+| args.conversationType | Number | 否 | [会话类型](../../../enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 否 | 会话 Id，传值表示搜索 “单个会话消息”，传空表示搜索 “全部会话消息” | 1.0.0 |
+| args.keywords | Array | 是 | 消息搜索关键字，最多支持 5 个，多个关键字之间是 “或” 的关系 | 1.0.0 |
+| args.senderIds | Number | 否 | 过滤指定消息发送者的消息 | 1.0.0 |
+| args.messageNames | Number | 否 | 过滤指定消息类型的消息 | 1.0.0 |
+| args.startTime | Number | 否 | 过滤指定时间段的开始时间，时间戳，单位：ms | 1.0.0 |
+| args.endTime | Number | 否 | 过滤指定时间段的结束时间，时间戳，单位：ms | 1.0.0 |
+| args.page | Number | 否 | 默认值 1，支持分页的页码，默认第一页 | 1.0.0 |
+| args.pageSize | Number | 否 | 默认值 10，每页的数据条数 | 1.0.0 |
 
 ## 成功回调
 

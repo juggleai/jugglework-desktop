@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "user_status",
   "action": "subUserStatus",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,8 +32,8 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 |  | 订阅参数 | 1.0.0 |
-| params.userIds | Array | 是 |  | 用户 ID 列表 | 1.0.0 |
+| args | Object | 是 |  | 订阅参数 | 1.0.0 |
+| args.userIds | Array | 是 |  | 用户 ID 列表 | 1.0.0 |
 
 ## 回调说明
 

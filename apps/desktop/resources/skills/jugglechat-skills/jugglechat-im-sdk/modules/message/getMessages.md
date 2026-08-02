@@ -24,20 +24,40 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "getMessages",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
+
+## 完整 router 调用示例（已验证）
+
+```bash
+curl -X POST http://127.0.0.1:17832/router \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source": "jugglechat-im-sdk",
+    "module": "message",
+    "action": "getMessages",
+    "args": {
+      "conversationType": 1,
+      "conversationId": "userid2",
+      "count": 20,
+      "order": 0
+    }
+  }'
+```
+
+> 注意：`args` 平铺，**不要**写成 `"args": { "params": { ... } }`。
 
 ## 参数说明
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 |  | 历史消息获取参数 | 1.0.0 |
-| params.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
-| params.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是对方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
-| params.count | Object | 否 | 20 | 历史消息获取条数，获取历史消息条数范围 1 - 20 条 | 1.0.0 |
-| params.time | Number | 否 | 0 | 从指定时间开始获取历史消息，可用于调到历史某一条消息，获取前后消息 | 1.0.0 |
-| params.order | Number | 否 | [BACKWARD](../../../enum/web) | 获取历史消息方向，BACKWARD 获取更早的历史消息 | 1.0.0 |
+| args | Object | 是 |  | 历史消息获取参数 | 1.0.0 |
+| args.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是对方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
+| args.count | Object | 否 | 20 | 历史消息获取条数，获取历史消息条数范围 1 - 20 条 | 1.0.0 |
+| args.time | Number | 否 | 0 | 从指定时间开始获取历史消息，可用于调到历史某一条消息，获取前后消息 | 1.0.0 |
+| args.order | Number | 否 | [BACKWARD](../../../enum/web) | 获取历史消息方向，BACKWARD 获取更早的历史消息 | 1.0.0 |
 
 ## 成功回调
 

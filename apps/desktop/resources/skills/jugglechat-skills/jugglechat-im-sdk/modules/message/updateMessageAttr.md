@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "updateMessageAttr",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 描述 | 版本 |
 |---|---|---|---|---|
-| message | Object | 是 | 消息搜索参数 | 1.0.0 |
-| message.tid | String | 是 | 消息的唯一标识，可在 [Message](../../../msg/message) 中获取 | 1.0.0 |
-| message.attribute | String | 是 | 可以设置 JSON 字符串用来扩展，长度 `1000` 个字符 | 1.0.0 |
+| args | Object | 是 | 消息搜索参数 | 1.0.0 |
+| args.tid | String | 是 | 消息的唯一标识，可在 [Message](../../../msg/message) 中获取 | 1.0.0 |
+| args.attribute | String | 是 | 可以设置 JSON 字符串用来扩展，长度 `1000` 个字符 | 1.0.0 |
 
 ## 失败回调
 

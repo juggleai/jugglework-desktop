@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "recallMessage",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,12 +32,12 @@ Content-Type: application/json
 
 | 名称 | 类型 | 是否必需 | 描述 | 版本 |
 |---|---|---|---|---|
-| message | Object | 是 | 消息对象，可在 [历史消息](../../histories/get_all) 获取消息 | 1.0.0 |
-| message.conversationType | Number | 是 | [会话类型](../../../../sdkintro/enum/web#conversation) | 1.0.0 |
-| message.conversationId | String | 是 | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
-| message.messageId | String | 是 | 被撤回的消息 Id | 1.0.0 |
-| message.sentTime | Number | 是 | 被撤回的消息的发送时间 | 1.0.0 |
-| message.exts | Object | 否 | 撤回消息时的扩展信息 | 1.7.0 |
+| args | Object | 是 | 消息对象，可在 [历史消息](../../histories/get_all) 获取消息 | 1.0.0 |
+| args.conversationType | Number | 是 | [会话类型](../../../../sdkintro/enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 是 | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
+| args.messageId | String | 是 | 被撤回的消息 Id | 1.0.0 |
+| args.sentTime | Number | 是 | 被撤回的消息的发送时间 | 1.0.0 |
+| args.exts | Object | 否 | 撤回消息时的扩展信息 | 1.7.0 |
 
 ## 失败回调
 

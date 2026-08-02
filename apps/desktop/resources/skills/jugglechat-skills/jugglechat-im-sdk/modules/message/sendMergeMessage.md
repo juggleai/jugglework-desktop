@@ -4,7 +4,7 @@ module: message
 action: sendMergeMessage
 title: 合并转发
 source: message/msg_send/send_merge.md
-description: 发送消息类 action。`args.message.name` 必须是 MessageType 字符串（如 `jg:merge`），不能用 MIME（如 `text/plain`）；`args.message.content` 形状取决于 `name`，见下一节「message.name 取值 + message.content 形状」。
+description: 发送消息类 action。`args.name` 必须是 MessageType 字符串（如 `jg:merge`），不能用 MIME（如 `text/plain`）；`args.content` 形状取决于 `name`，见下一节「message.name 取值 + message.content 形状」。
 ---
 
 # 合并转发
@@ -25,7 +25,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "sendMergeMessage",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -33,18 +33,18 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| message | Object | 是 |  | 消息对象 | 1.0.0 |
-| message.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
-| message.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
-| message.messages | Array | 是 |  | 合并转发的消息列表，格式见下方示例 | 1.0.0 |
-| message.previewList | Array | 是 |  | 自定义的消息内容简介，数组内容和多端约定好即可 | 1.0.0 |
-| message.title | String | 是 |  | 转发消息的标题 | 1.0.0 |
-| lifeTime | Number | 否 | 0 | 消息的销毁时间段，必须大于 `0`, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
-| lifeTimeAfterRead | Number | 否 | 0 | 消息的阅后即焚的时间段，必须大于 0, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
+| args | Object | 是 |  | 消息对象 | 1.0.0 |
+| args.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
+| args.messages | Array | 是 |  | 合并转发的消息列表，格式见下方示例 | 1.0.0 |
+| args.previewList | Array | 是 |  | 自定义的消息内容简介，数组内容和多端约定好即可 | 1.0.0 |
+| args.title | String | 是 |  | 转发消息的标题 | 1.0.0 |
+| args.lifeTime | Number | 否 | 0 | 消息的销毁时间段，必须大于 `0`, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
+| args.lifeTimeAfterRead | Number | 否 | 0 | 消息的阅后即焚的时间段，必须大于 0, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
 
 ## message.name 取值 + message.content 形状
 
-`args.message.name` 必须是下列值之一（与 im-docs `msg/*.mdx` 一致），`args.message.content` 的字段形状**完全取决于 `name` 的取值**。
+`args.name` 必须是下列值之一（与 im-docs `msg/*.mdx` 一致），`args.content` 的字段形状**完全取决于 `name` 的取值**。
 
 ### `jg:merge` — 合并转发消息
 

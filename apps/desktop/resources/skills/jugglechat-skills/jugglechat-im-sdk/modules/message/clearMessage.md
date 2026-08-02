@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "clearMessage",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,10 +32,10 @@ Content-Type: application/json
 
 | 名称 | 类型 | 是否必需 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 | - | 清理历史消息 | 1.0.0 |
-| params.conversationType | Number | 是 | - | [会话类型](../../../enum/web#conversation) | 1.0.0 |
-| params.conversationId | String | 是 | - | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
-| params.time | Number | 是 | - | 清理指定时间之前的历史消息, 清理全部可传入会话最后一条消息的 sentTime | 1.0.0 |
+| args | Object | 是 | - | 清理历史消息 | 1.0.0 |
+| args.conversationType | Number | 是 | - | [会话类型](../../../enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 是 | - | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
+| args.time | Number | 是 | - | 清理指定时间之前的历史消息, 清理全部可传入会话最后一条消息的 sentTime | 1.0.0 |
 
 ## 失败回调
 

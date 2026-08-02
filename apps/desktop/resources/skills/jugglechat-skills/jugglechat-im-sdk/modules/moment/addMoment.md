@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "moment",
   "action": "addMoment",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 | - | 朋友圈信息 | 1.9.6 |
-| params.text | String | `medias` 和 `text` 至少二选一 | - | 朋友圈文本内容，文本字数 500 字以内 | 1.9.6 |
-| params.medias | Array | `medias` 和 `text` 至少二选一 | [] | 朋友圈媒体内容，每个元素为 [Media](../moment_model) 结构 | 1.9.6 |
+| args | Object | 是 | - | 朋友圈信息 | 1.9.6 |
+| args.text | String | `medias` 和 `text` 至少二选一 | - | 朋友圈文本内容，文本字数 500 字以内 | 1.9.6 |
+| args.medias | Array | `medias` 和 `text` 至少二选一 | [] | 朋友圈媒体内容，每个元素为 [Media](../moment_model) 结构 | 1.9.6 |
 
 ## 回调说明
 

@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "conversation",
   "action": "removeConversation",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,7 +32,7 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| conversation | Object | 是 | 无 | 删除的会话，支持删除单个会话，或者传入一个会话数组 | 1.0.0 |
+| args | Object | 是 | 无 | 删除的会话，支持删除单个会话，或者传入一个会话数组 | 1.0.0 |
 
 ## 示例代码
 

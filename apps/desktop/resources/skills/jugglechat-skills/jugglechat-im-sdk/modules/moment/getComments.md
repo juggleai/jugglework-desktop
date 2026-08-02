@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "moment",
   "action": "getComments",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,10 +32,10 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| option | Object | 否 |  |  | 1.9.6 |
-| option.count | Number | 否 | 50 | 获取指定数量的评论，单次最多获取 20 条记录 | 1.9.6 |
-| option.order | Number | 否 | [获取方向](../../enum/web#comment_order) | 获取方向，支持按 `time` 获取更早的评论或者更（四声）新的评论 | 1.9.6 |
-| option.time | Number | 否 | 0 | 从指定时间点开始获取评论，可以配合 `order` 使用 | 1.9.6 |
+| args | Object | 否 |  |  | 1.9.6 |
+| args.count | Number | 否 | 50 | 获取指定数量的评论，单次最多获取 20 条记录 | 1.9.6 |
+| args.order | Number | 否 | [获取方向](../../enum/web#comment_order) | 获取方向，支持按 `time` 获取更早的评论或者更（四声）新的评论 | 1.9.6 |
+| args.time | Number | 否 | 0 | 从指定时间点开始获取评论，可以配合 `order` 使用 | 1.9.6 |
 
 ## 回调说明
 

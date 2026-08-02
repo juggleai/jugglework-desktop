@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "conversation",
   "action": "setAllDisturb",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,10 +32,10 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 | 无 |  | 1.0.0 |
-| params.type | Number | 是 | 无 | [免打扰类型](../../../enum/web#disturb) | 1.0.0 |
-| params.timezone | String | [UndisturbType.DISTURB](../../../enum/web#disturb) 时必传 | 无 | 时区字符串，例如：`Asia/Shanghai` | 1.3.0 |
-| params.times | Array | [UndisturbType.DISTURB](../../../enum/web#disturb) 时必传 | 无 | 免打扰时间段，支持设置多个，请参考示例 | 1.3.0 |
+| args | Object | 是 | 无 |  | 1.0.0 |
+| args.type | Number | 是 | 无 | [免打扰类型](../../../enum/web#disturb) | 1.0.0 |
+| args.timezone | String | [UndisturbType.DISTURB](../../../enum/web#disturb) 时必传 | 无 | 时区字符串，例如：`Asia/Shanghai` | 1.3.0 |
+| args.times | Array | [UndisturbType.DISTURB](../../../enum/web#disturb) 时必传 | 无 | 免打扰时间段，支持设置多个，请参考示例 | 1.3.0 |
 
 ## 示例代码
 

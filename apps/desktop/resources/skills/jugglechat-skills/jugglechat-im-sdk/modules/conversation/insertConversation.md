@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "conversation",
   "action": "insertConversation",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,11 +32,11 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| conversation | Object | 是 | 无 | 会话对象 | 1.0.0 |
-| conversation.conversationId | String | 是 | 无 | 会话 Id | 1.0.0 |
-| conversation.conversationType | Number | 是 | 无 | 会话类型 | 1.0.0 |
-| conversation.conversationTitle | String | 否 | 无 | 会话名称 | 1.0.0 |
-| conversation.conversationPortrait | String | 否 | 无 | 会话头像 | 1.0.0 |
+| args | Object | 是 | 无 | 会话对象 | 1.0.0 |
+| args.conversationId | String | 是 | 无 | 会话 Id | 1.0.0 |
+| args.conversationType | Number | 是 | 无 | 会话类型 | 1.0.0 |
+| args.conversationTitle | String | 否 | 无 | 会话名称 | 1.0.0 |
+| args.conversationPortrait | String | 否 | 无 | 会话头像 | 1.0.0 |
 
 ## 回调说明
 

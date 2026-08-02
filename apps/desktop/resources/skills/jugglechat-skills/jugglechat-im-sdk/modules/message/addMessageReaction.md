@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "addMessageReaction",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,11 +32,11 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| message | Object | 是 |  | 消息对象 | 1.8.0 |
-| message.conversationType | Number | 是 |  | [会话类型](/docs/client/sdkintro/enum/web/#conversation) | 1.8.0 |
-| message.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.8.0 |
-| message.messageId | String | 是 |  | 被回复的消息 Id | 1.8.0 |
-| message.reactionId | String | 是 |  | 回应消息的唯一表示，开发者可自定义，需要多端约定一致 | 1.8.0 |
+| args | Object | 是 |  | 消息对象 | 1.8.0 |
+| args.conversationType | Number | 是 |  | [会话类型](/docs/client/sdkintro/enum/web/#conversation) | 1.8.0 |
+| args.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.8.0 |
+| args.messageId | String | 是 |  | 被回复的消息 Id | 1.8.0 |
+| args.reactionId | String | 是 |  | 回应消息的唯一表示，开发者可自定义，需要多端约定一致 | 1.8.0 |
 
 ## 失败回调
 

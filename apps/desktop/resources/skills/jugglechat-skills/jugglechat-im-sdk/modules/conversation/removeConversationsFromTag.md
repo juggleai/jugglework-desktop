@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "conversation",
   "action": "removeConversationsFromTag",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| tag | Object | 是 |  | Tag 对象 | 1.7.5 |
-| tag.id | String | 是 |  | 标签 ID，开发者可自定义，最大长度 64 个字符 | 1.7.5 |
-| tag.conversations | Array | 是 |  | 会话列表，详见代码示例 | 1.7.5 |
+| args | Object | 是 |  | Tag 对象 | 1.7.5 |
+| args.id | String | 是 |  | 标签 ID，开发者可自定义，最大长度 64 个字符 | 1.7.5 |
+| args.conversations | Array | 是 |  | 会话列表，详见代码示例 | 1.7.5 |
 
 ## 失败回调
 

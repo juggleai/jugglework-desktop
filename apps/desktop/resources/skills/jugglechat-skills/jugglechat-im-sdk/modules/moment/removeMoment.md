@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "moment",
   "action": "removeMoment",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,8 +32,8 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 | - | 朋友圈信息 | 1.9.6 |
-| params.momentIds | Array | 是 | - | 要删除的朋友圈 ID 数组 | 1.9.6 |
+| args | Object | 是 | - | 朋友圈信息 | 1.9.6 |
+| args.momentIds | Array | 是 | - | 要删除的朋友圈 ID 数组 | 1.9.6 |
 
 ## 示例代码
 

@@ -1,6 +1,6 @@
 ---
 name: jugglechat-im-sdk
-description: 通过 juggleim SDK 客户端方法操作 IM（消息/会话/聊天室/朋友圈/在线状态），统一通过本地 router HTTP 端点（127.0.0.1:17832/router）派发到 Renderer 端 JIM 客户端。覆盖发送/撤回/已读/拉历史/反应/收藏/置顶等所有 jim.* SDK 方法。**重要**：发消息时 `args.message.name` 必须是 SDK MessageType 字符串（如 `"jg:text"`），不能用 MIME（如 `"text/plain"`），且 `args.message.content` 形状取决于 `name`——详见 SKILL.md 「按 message.name 取 content 形状」。
+description: 通过 juggleim SDK 客户端方法操作 IM（消息/会话/聊天室/朋友圈/在线状态），统一通过本地 router HTTP 端点（127.0.0.1:17832/router）派发到 Renderer 端 JIM 客户端。覆盖发送/撤回/已读/拉历史/反应/收藏/置顶等所有 jim.* SDK 方法。**重要**：发消息时 `args.name` 必须是 SDK MessageType 字符串（如 `"jg:text"`），不能用 MIME（如 `"text/plain"`），且 `args.content` 形状取决于 `name`——详见 SKILL.md 「按 message.name 取 content 形状」。
 ---
 
 > **【严格模式 · Strict Mode】**
@@ -8,11 +8,11 @@ description: 通过 juggleim SDK 客户端方法操作 IM（消息/会话/聊天
 > 本 skill 被命中时，**严格按下方文档字面执行**，禁止基于常识/猜测/相似 API 进行联想、补全、改写或"等价替换"：
 >
 > 1. **路由形态**：所有调用必须使用本文档规定的 `POST http://127.0.0.1:17832/router` 形态，`source` 必须是 `"jugglechat-im-sdk"` 或 `"jugglechat-busserver"`（取自本 skill 的 `name`），`module`/`action`/`args` 三件套必须严格匹配 `modules/<module>/<action>.md` 中的定义。**不要**改用直连 App Server HTTP、SDK 直调、curl、JIM CLI、GraphQL 等任何替代路径。
-> 2. **参数形状**：`args` 的字段名、嵌套层级、必填项**完全**按文档表格填，**不要**根据其他 SDK 的命名习惯"翻译"或"对齐"。例如 `conversationType` 不能写成 `conversation_type` 或 `convType`；`messageId` 不能写成 `msg_id` 或 `id`。
+> 2. **参数形状**：`args` 的字段名、嵌套层级、必填项**完全**按文档表格填，**不要**根据其他 SDK 的命名习惯"翻译"或"对齐"。例如 `conversationType` 不能写成 `conversation_type` 或 `convType`；`messageId` 不能写成 `msg_id` 或 `id`。**注意 args 平铺规则（见「关键约定」）**：参数表中 `params.xxx` / `message.xxx` / `conversation.xxx` / `chatroom.xxx` / `tag.xxx` / `option.xxx` 这类前缀是 SDK 方法**形参名**，构造 router 的 `args` 时必须**剥掉该前缀、平铺到 `args` 顶层**（`args.conversationType`），**禁止**写成 `args.params.conversationType` 或 `args.message.content` 之类；表内真实嵌套字段（如 `mentionInfo.members`、`content.file`）保留嵌套层级。
 > 3. **枚举值**：消息 `name`、`conversationType`、事件 `Event.X` 等枚举**必须**使用本文档「枚举值速查」一节的字面字符串/数字（如 `"jg:text"` 而非 `"text/plain"`、`PRIVATE=1` 而非 `"PRIVATE"`），**禁止**用同义 MIME、英文别名或 camelCase 变体。
-> 4. **content 形状**：发送消息时 `args.message.content` 的字段集**完全取决于 `message.name`**——必须按「按 message.name 取 content 形状」表的对应行填，**禁止**跨 name 复用字段（例如文本消息用 `{ content: "..." }`，不能用 `{ text: "..." }`）。
+> 4. **content 形状**：发送消息时 `args.content` 的字段集**完全取决于 `args.name`**——必须按「按 message.name 取 content 形状」表的对应行填，**禁止**跨 name 复用字段（例如文本消息用 `{ content: "..." }`，不能用 `{ text: "..." }`）。
 > 5. **skill 未覆盖的能力**：当用户请求的功能在本 skill `modules/` 下没有对应 `module/action`（含显式标注「暂未提供」的接口），**直接告知用户"该功能当前客户端/服务端未提供"**，**不要**尝试用其他 skill 的能力、通用 HTTP、`execute_code` 子进程、或自有 SDK 知识去模拟。`jugleim-*` 调用在沙箱内 `import` 会直接抛 `connection not set`，这是预期行为，不是错误。
-> 6. **冲突时的优先级**：用户口头表述与 SKILL.md 冲突时，**以 SKILL.md 为准**并向用户说明文档约束；若用户坚持按其表述执行，确认风险后再继续。
+> 6. **冲突时的优先级**：用户口头表述与 SKILL.md 冲突时，**以 SKILL.md 为准**并向用户说明文档约束；若用户坚持按其表述执行，确认风险后再继续。**文档内部冲突时**（如「参数说明」表 vs「示例代码」vs router 示例），以「示例代码」中 `jim.<action>(...)` 实参对象的形状为最高权威，其次按「完整 router 调用示例」，最后才是参数表。
 >
 > 其他与本 skill 无关的问题（闲聊、通用知识、代码任务等）不受上述约束，按常规处理即可。
 
@@ -41,7 +41,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",   // 必填：发起请求的 skill 名（router 用于路由校验）
   "module": "message",         // 业务模块
   "action": "sendMessage",     // SDK 驼峰方法名
-  "args": { /* 透传给 jim.<action> 的参数字典 */ },
+  "args": { /* 透传给 jim.<action> 的参数字典（平铺，不带形参名前缀，见「关键约定·args 平铺规则」）*/ },
   "meta": { /* 可选附加元数据 */ },
   "timeoutMs": 30000           // 可选
 }
@@ -72,10 +72,22 @@ Content-Type: application/json
 
 1. **确认 module / action**：根据用户意图从 `modules/` 下选对应文件。
 2. **构造 args**：严格按文件里的「参数说明」表格填字段；引用消息用 `messageId`，会话对象用 `conversationType` + `conversationId`。
-3. **POST /router**：`module`/`action`/`args` 三件套。
-4. **处理响应**：`ok=true` 取 `data`；`ok=false` 把 `error.message` 反馈给用户。
+3. **校验 args 形状**：构造完 `args` 后，与「示例代码」中 `jim.<action>(...)` 的实参对象逐字段比对，两者形状必须一致（参看「args 平铺规则」）。若不一致，以示例代码为准修正。
+4. **POST /router**：`module`/`action`/`args` 三件套。
+5. **处理响应**：`ok=true` 取 `data`；`ok=false` 把 `error.message` 反馈给用户。
 
 ## 关键约定
+
+- **args 平铺规则（最重要）**：router 报文的 `args` 对象**直接等于** `jim.<action>` 方法的第一个参数对象，不透传、不包一层。文档参数表里 `params.xxx` / `message.xxx` / `conversation.xxx` / `chatroom.xxx` / `tag.xxx` / `option.xxx` 前缀只是 SDK 方法**形参名**（如 `jim.getMessages(params)` 里的 `params`），**不是 args 的嵌套层**；构造 args 时剥掉该前缀、把字段**平铺**到 `args` 顶层，例如：
+
+  ```json
+  // jim.getMessages({ conversationType, conversationId, count }) —— 正确
+  "args": { "conversationType": 1, "conversationId": "userid2", "count": 20 }
+  // 错误：包了一层 params
+  "args": { "params": { "conversationType": 1 } }
+  ```
+
+  而参数表里**真实嵌套**的字段（如 `mentionInfo.members`、`content.file`、`messages[0].conversationId`、`reaction.key`）**保留嵌套层级**，对应 `args.mentionInfo.members`、`args.content.file` 等。判断准则：**以「示例代码」中 `jim.<action>(...)` 实参对象的形状为准**。
 
 - `conversationType` 用 `JIM.ConversationType` 枚举（`PRIVATE=1`、`GROUP=2`、`CHATROOM=3` 等，详见 im-docs `enum/web#conversation`）。
 - `name`（消息名）必须是 `MessageType` 枚举值字符串（`"jg:text"`、`"jg:img"` 等），**不能用 MIME 类型如 `"text/plain"`**。每个 `name` 对应的 `content` 字段形状见下方「按 message.name 取 content 形状」一节。
@@ -367,7 +379,7 @@ let {
 ```
 
 
-> **重要**：构造 `args.message.content` 时务必按上表选对应 `name` 的字段名。例如文本消息的 `content` 字段名是 `content`（`{ content: "hello" }`），不是 `text`（`{ text: "hello" }`）。`name` 也必须是 SDK 字符串枚举值，不能用 MIME（不要用 `"text/plain"`）。
+> **重要**：构造 `args.content` 时务必按上表选对应 `name` 的字段名。例如文本消息的 `content` 字段名是 `content`（`{ content: "hello" }`），不是 `text`（`{ text: "hello" }`）。`name` 也必须是 SDK 字符串枚举值，不能用 MIME（不要用 `"text/plain"`）。
 
 ## 数据模型
 

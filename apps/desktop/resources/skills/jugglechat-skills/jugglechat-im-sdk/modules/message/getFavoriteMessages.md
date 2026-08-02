@@ -24,7 +24,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "getFavoriteMessages",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -32,9 +32,9 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| params | Object | 是 |  | 参数对象 | 1.0.0 |
-| message.limit | Number | 否 | 20 | 每次查询的条数 | 1.0.0 |
-| message.offset | String | 否 | 空 | 默认为空，查询成功后会返回 `offset`，再次获取需传入返回的 `offset` | 1.0.0 |
+| args | Object | 是 |  | 参数对象 | 1.0.0 |
+| args.limit | Number | 否 | 20 | 每次查询的条数 | 1.0.0 |
+| args.offset | String | 否 | 空 | 默认为空，查询成功后会返回 `offset`，再次获取需传入返回的 `offset` | 1.0.0 |
 
 ## 成功回调
 

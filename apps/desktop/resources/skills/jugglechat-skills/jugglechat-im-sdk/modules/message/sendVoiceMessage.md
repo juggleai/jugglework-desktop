@@ -4,7 +4,7 @@ module: message
 action: sendVoiceMessage
 title: 发送语音
 source: message/msg_send/send_voice.md
-description: 发送消息类 action。`args.message.name` 必须是 MessageType 字符串（如 `jg:voice`），不能用 MIME（如 `text/plain`）；`args.message.content` 形状取决于 `name`，见下一节「message.name 取值 + message.content 形状」。
+description: 发送消息类 action。`args.name` 必须是 MessageType 字符串（如 `jg:voice`），不能用 MIME（如 `text/plain`）；`args.content` 形状取决于 `name`，见下一节「message.name 取值 + message.content 形状」。
 ---
 
 # 发送语音
@@ -25,7 +25,7 @@ Content-Type: application/json
   "source": "jugglechat-im-sdk",  // 必填：发起请求的 skill 名
   "module": "message",
   "action": "sendVoiceMessage",
-  "args": { /* 见下方参数表 */ }
+  "args": { /* args 字段见下方参数表（平铺，不含 params/message 等形参前缀层）；具体形状以「示例代码」中 jim.<action>(...) 的实参对象为准 */ }
 }
 ```
 
@@ -33,22 +33,22 @@ Content-Type: application/json
 
 | 名称 | 类型 | 必填 | 默认值 | 描述 | 版本 |
 |---|---|---|---|---|---|
-| message | Object | 是 |  | 消息对象 | 1.0.0 |
-| message.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
-| message.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
-| message.content | Object | 是 |  |  | 1.0.0 **字段形状完全取决于 `message.name`**，见下一节「message.name 取值 + message.content 形状」。 |
-| message.content.file | File | 是 |  | 音频对象 | 1.0.0 |
-| message.content.duration | String | 否 |  | 音频时长，单位：秒 | 1.0.0 |
-| message.content.type | String | 是 |  | 音频类型，透传给对端，用来自定义文件类型并展示 UI | 1.0.0 |
-| message.mentionInfo | Object | 否 | 无 | conversationType 为 `GROUP` 时有效，设置 mentionInfo 表示本条消息是 @ 消息 | 1.0.0 |
-| mentionInfo.mentionType | Number | 否 | 无 | @ 类型，详细可查看 [@ 消息枚举](../../../enum/web#mention) 说明 | 1.0.0 |
-| mentionInfo.targetIds | Array | 否 | 无 | @ 指定人列表，SDK 会优先根据 mentionType 判断消息的 @ 类型 | 1.0.0 |
-| lifeTime | Number | 否 | 0 | 消息的销毁时间段，必须大于 `0`, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
-| lifeTimeAfterRead | Number | 否 | 0 | 消息的阅后即焚的时间段，必须大于 0, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
+| args | Object | 是 |  | 消息对象 | 1.0.0 |
+| args.conversationType | Number | 是 |  | [会话类型](../../../enum/web#conversation) | 1.0.0 |
+| args.conversationId | String | 是 |  | 会话 Id，会话类型是 `PRIVATE` 时，会话 Id 是接收方的 userId，会话类型是 `GROUP` 时是群组 Id | 1.0.0 |
+| args.content | Object | 是 |  |  | 1.0.0 **字段形状完全取决于 `message.name`**，见下一节「message.name 取值 + message.content 形状」。 |
+| args.content.file | File | 是 |  | 音频对象 | 1.0.0 |
+| args.content.duration | String | 否 |  | 音频时长，单位：秒 | 1.0.0 |
+| args.content.type | String | 是 |  | 音频类型，透传给对端，用来自定义文件类型并展示 UI | 1.0.0 |
+| args.mentionInfo | Object | 否 | 无 | conversationType 为 `GROUP` 时有效，设置 mentionInfo 表示本条消息是 @ 消息 | 1.0.0 |
+| args.mentionInfo.mentionType | Number | 否 | 无 | @ 类型，详细可查看 [@ 消息枚举](../../../enum/web#mention) 说明 | 1.0.0 |
+| args.mentionInfo.targetIds | Array | 否 | 无 | @ 指定人列表，SDK 会优先根据 mentionType 判断消息的 @ 类型 | 1.0.0 |
+| args.lifeTime | Number | 否 | 0 | 消息的销毁时间段，必须大于 `0`, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
+| args.lifeTimeAfterRead | Number | 否 | 0 | 消息的阅后即焚的时间段，必须大于 0, 单位 `ms`, 例如 60s: `1 * 60 * 1000` | 1.9.0 |
 
 ## message.name 取值 + message.content 形状
 
-`args.message.name` 必须是下列值之一（与 im-docs `msg/*.mdx` 一致），`args.message.content` 的字段形状**完全取决于 `name` 的取值**。
+`args.name` 必须是下列值之一（与 im-docs `msg/*.mdx` 一致），`args.content` 的字段形状**完全取决于 `name` 的取值**。
 
 ### `jg:voice` — 语音消息
 
