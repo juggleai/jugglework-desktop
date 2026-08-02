@@ -54,6 +54,7 @@ import {
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
+import { openDevelopmentDevTools } from "./dev-tools.mjs";
 import {
   applyWindowsTaskbarIcon,
   windowsBrandAppUserModelId,
@@ -2367,6 +2368,8 @@ async function createMainWindow() {
     const devIndexPath = path.resolve(__dirname, "../../app/dist/index.html");
     await mainWindow.loadFile(app.isPackaged ? packagedIndexPath : devIndexPath);
   }
+
+  openDevelopmentDevTools(mainWindow.webContents, isDevMode);
 
   return mainWindow;
 }
