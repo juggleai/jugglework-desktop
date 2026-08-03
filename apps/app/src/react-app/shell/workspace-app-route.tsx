@@ -148,8 +148,8 @@ export function WorkspaceAppRoute() {
         </div>
       ) : null}
 
-      {/* Keep Chat mounted from startup so its iframe initializes the IM SDK
-          and desktop skill bridge before the user first opens the surface. */}
+      {/* Keep Chat mounted from startup so the React runtime initializes the IM
+          SDK and desktop skill bridge before the user first opens the surface. */}
       <div
         className={chatVisible ? "absolute inset-0" : "hidden"}
         aria-hidden={!chatVisible || undefined}
