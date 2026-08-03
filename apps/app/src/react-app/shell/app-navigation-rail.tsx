@@ -4,6 +4,8 @@ import {
   House,
   MessageCircleMore,
   Orbit,
+  Plus,
+  Search,
   Settings,
 } from "lucide-react";
 
@@ -26,6 +28,10 @@ type AppNavigationRailProps = {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
+  /** Opens the cross-workspace task search dialog when the session shell owns it. */
+  onOpenTaskSearch?: () => void;
+  /** Opens the local/remote workspace chooser when the session shell owns it. */
+  onOpenCreateWorkspace?: () => void;
 };
 
 type RailButtonProps = {
@@ -99,6 +105,24 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       </button>
 
       <nav className="flex flex-col items-center gap-3">
+        {props.onOpenTaskSearch ? (
+          <RailButton
+            label={t("workspace_list.search_sessions")}
+            onClick={props.onOpenTaskSearch}
+            testId="app-rail-task-search"
+          >
+            <Search className="size-5" strokeWidth={1.8} />
+          </RailButton>
+        ) : null}
+        {props.onOpenCreateWorkspace ? (
+          <RailButton
+            label={t("workspace.create_workspace")}
+            onClick={props.onOpenCreateWorkspace}
+            testId="app-rail-create-workspace"
+          >
+            <Plus className="size-5" strokeWidth={1.8} />
+          </RailButton>
+        ) : null}
         <RailButton
           label={t("navigation.local_workspace")}
           active={props.homeActive && taskScope === "local"}

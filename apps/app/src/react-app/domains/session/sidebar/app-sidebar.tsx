@@ -687,8 +687,10 @@ export type AppSidebarProps = {
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
+  onOpenCreateWorkspace: () => void;
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
+  onOpenTaskSearch: () => void;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenApps: () => void;
@@ -963,6 +965,8 @@ export function AppSidebar(props: AppSidebarProps) {
         <div className="flex h-full min-h-0 w-full">
           <AppNavigationRail
             homeActive
+            onOpenTaskSearch={props.onOpenTaskSearch}
+            onOpenCreateWorkspace={props.onOpenCreateWorkspace}
             onOpenAccount={props.onOpenAccount}
             onOpenHome={props.onOpenHome}
             onOpenApps={props.onOpenApps}

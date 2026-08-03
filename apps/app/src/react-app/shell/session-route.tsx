@@ -2342,6 +2342,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
         onOpenCreateLocalWorkspace: handleOpenCreateLocalWorkspace,
         onOpenConnectRemoteWorkspace: handleOpenConnectRemoteWorkspace,
+        onOpenTaskSearch: () => setSessionSearchOpen(true),
         onOpenAccount: () => handleOpenSettings("/settings/cloud-account"),
         onOpenHome: () => navigateToWorkspaceSession(sidebarActiveWorkspaceId, selectedSessionId),
         onOpenApps: () => navigate(workspaceAppsRoute(sidebarActiveWorkspaceId)),
