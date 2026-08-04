@@ -116,6 +116,11 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
   test("steers ready Connect users to verified jugglework-cloud capabilities first", () => {
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use jugglework-cloud_search_capabilities");
+    // The live tool schema is {query, limit} with additionalProperties:false —
+    // steering must never invent a filter argument the server will reject.
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("accepts only query and limit");
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("type \"mcp\"");
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("do not look for it as a local MCP server");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");

@@ -686,6 +686,18 @@ export type JuggleWorkConnectState = {
   googleWorkspace: { legacyConfigured: boolean };
 };
 
+/**
+ * JuggleWork Cloud 能力目录预检结果。
+ *
+ * @param ok 预检是否完成；false 表示无法查询（未登录 Cloud 或传输失败），不能据此判定连接不可用
+ * @param matches 目录命中的能力名称与描述
+ */
+export type JuggleWorkConnectCapabilitySearch = {
+  ok: boolean;
+  schemaVersion: 1;
+  matches: { name: string; description?: string }[];
+};
+
 export type GoogleWorkspaceConnectStart = {
   flowId: string;
   authUrl: string;
@@ -1344,6 +1356,8 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     status: 6_000,
     diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
+    // 预检要串联 MCP 握手 + 最多两次搜索，超时必须宽于常规 status 请求。
+    connectCapabilities: 15_000,
     cloudMcpHealth: 12_000,
     cloudMcpProbeHealth: 30_000,
     cloudMcpReconcile: 60_000,
@@ -1363,6 +1377,11 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+    searchConnectCapabilities: (query: string, options?: { limit?: number }) => {
+      const params = new URLSearchParams({ query });
+      if (options?.limit) params.set("limit", String(options.limit));
+      return requestJson<JuggleWorkConnectCapabilitySearch>(baseUrl, `/experimental/connect/capabilities?${params.toString()}`, { token, hostToken, timeoutMs: timeouts.connectCapabilities });
+    },
     googleWorkspaceConnectStart: (options?: { gmailRead?: boolean; features?: string[] }) => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", body: { gmailRead: options?.gmailRead === true, features: options?.features ?? [] }, timeoutMs: timeouts.status }),
     googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
     googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),

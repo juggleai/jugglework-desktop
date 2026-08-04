@@ -9,6 +9,18 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listMcpConnections: async () => [
+          {
+            id: "connection_1",
+            name: "Support search",
+            url: "https://support.example.test/mcp",
+            authType: "oauth",
+            credentialMode: "shared",
+            connected: true,
+            connectedAt: "2026-08-03T10:00:00.000Z",
+            connectedForMe: true,
+          },
+        ],
         listOrgMarketplaces: async () => [
           {
             id: "marketplace_1",
@@ -175,11 +187,52 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     expect(inventory.mcpStatuses[inventory.mcpServers[0]?.id ?? ""]).toEqual({ status: "connected" });
   });
 
+  test("includes connected standalone organization MCP connections in the session inventory", async () => {
+    const inventory = await listAssignedConnectCapabilities({
+      organizationId: "org_1",
+      client: {
+        listMcpConnections: async () => [
+          {
+            id: "github",
+            name: "GitHub",
+            url: "https://api.githubcopilot.com/mcp/",
+            authType: "oauth",
+            credentialMode: "per_member",
+            connected: true,
+            connectedAt: "2026-08-03T10:00:00.000Z",
+            connectedForMe: true,
+          },
+        ],
+        listOrgMarketplaces: async () => [],
+        getOrgMarketplaceResolved: async () => {
+          throw new Error("No marketplace should be resolved.");
+        },
+        getOrgPluginResolved: async () => {
+          throw new Error("No plugin should be resolved.");
+        },
+      },
+    });
+
+    expect(inventory.mcpServers).toEqual([
+      {
+        id: "jugglework-connect:connection:github",
+        name: "GitHub",
+        config: {
+          type: "remote",
+          url: "https://api.githubcopilot.com/mcp/",
+        },
+        origin: "jugglework-connect",
+      },
+    ]);
+    expect(inventory.mcpStatuses["jugglework-connect:connection:github"]).toEqual({ status: "connected" });
+  });
+
   test("only uses marketplaces visible to the member and ignores inactive objects", async () => {
     let resolvedMarketplaceIds: string[] = [];
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listMcpConnections: async () => [],
         listOrgMarketplaces: async () => [
           {
             id: "marketplace_active",
@@ -282,6 +335,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     const inventory = await listAssignedConnectCapabilities({
       organizationId: "org_1",
       client: {
+        listMcpConnections: async () => [],
         listOrgMarketplaces: async () => [marketplace],
         getOrgMarketplaceResolved: async () => ({
           marketplace,

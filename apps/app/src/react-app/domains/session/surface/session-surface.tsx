@@ -42,6 +42,7 @@ import type {
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
+import { expandComposerMcpTokens } from "./composer/mcp-token";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
@@ -74,6 +75,7 @@ import {
   getComposerAttachments,
   getComposerDraft,
   getComposerHistory,
+  getComposerMcpTokens,
   getComposerMentions,
   getComposerPasteParts,
   getComposerQueuedDrafts,
@@ -510,9 +512,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
+  const mcpTokens = useComposerStateStore((state) => getComposerMcpTokens(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
+  const setComposerMcpTokens = useComposerStateStore((state) => state.setMcpTokens);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
@@ -830,7 +834,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|\[mcp [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
@@ -847,6 +851,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const skillMatch = segment.match(/^\[skill (.+)\]$/);
       if (skillMatch?.[1]) {
         return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
+      }
+      const mcpMatch = segment.match(/^\[mcp (.+)\]$/);
+      if (mcpMatch?.[1]) {
+        return [{ type: "mcp", name: mcpMatch[1] } satisfies ComposerDraft["parts"][number]];
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
@@ -865,6 +873,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
     resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+    // TIPS：MCP chip 只是界面上的短标签，发送前换回选中时记录的完整调用指令，
+    // 模型才知道该走 Cloud 能力目录还是本地 MCP。
+    resolved = expandComposerMcpTokens(resolved, mcpTokens);
     for (const value of Object.keys(mentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
@@ -877,7 +888,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolvedText: resolved,
       command: slashCommand ?? undefined,
     };
-  }, [mentions, pasteParts]);
+  }, [mcpTokens, mentions, pasteParts]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -1276,14 +1287,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }), [chatStreaming, handleAbort]);
   useControlAction(props.isControlTarget ? composerStopControlAction : null);
 
-  const loadConnectCapabilityInventory = useCallback(async (): Promise<ConnectCapabilityInventory> => {
+  const loadConnectCapabilityInventory = useCallback(async (options?: { refresh?: boolean }): Promise<ConnectCapabilityInventory> => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     const organizationId = settings.activeOrgId?.trim() ?? "";
     if (!token || !organizationId) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
 
     const scope = `${settings.baseUrl}\n${organizationId}`;
-    if (connectInventoryCacheRef.current?.scope === scope) {
+    if (!options?.refresh && connectInventoryCacheRef.current?.scope === scope) {
       try {
         return await connectInventoryCacheRef.current.promise;
       } catch {
@@ -1348,8 +1359,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return next;
   };
 
+  const handleSelectMcp = useCallback((name: string, prompt: string) => {
+    setComposerMcpTokens(props.sessionId, { ...mcpTokens, [name]: prompt });
+  }, [mcpTokens, props.sessionId, setComposerMcpTokens]);
+
+  /**
+   * 预检组织 MCP 是否已在 JuggleWork Cloud 能力目录中公开。
+   *
+   * TIPS：目录是 agent 运行时唯一能看到的清单，和 Settings 里的连接列表不是同一份数据，
+   * 所以选中即注入之前必须用它验证一次；查不到（未登录/传输失败）返回 null 表示放行。
+   * search_capabilities 的入参只有 query 与 limit（additionalProperties: false），不要再加过滤字段。
+   *
+   * @param name MCP 连接名称
+   * @returns 命中的能力名称列表；预检不可用时返回 null
+   */
+  const preflightConnectMcp = useCallback(async (name: string): Promise<string[] | null> => {
+    try {
+      const result = await props.client.searchConnectCapabilities(name, { limit: 10 });
+      if (!result.ok) return null;
+      return result.matches.map((match) => match.name);
+    } catch {
+      return null;
+    }
+  }, [props.client]);
+
   const listMcp = async (): Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }> => {
-    const connectPromise = loadConnectCapabilityInventory();
+    // fix(L3): OAuth 可能在会话保持挂载时完成，按账号范围缓存会继续返回授权前清单。
+    // before: MCP 菜单复用旧 Promise；after: 每次展开菜单都刷新云端投影。
+    // TIPS：命令和技能仍复用缓存，只有对授权时效敏感的 MCP 菜单强制刷新。
+    const connectPromise = loadConnectCapabilityInventory({ refresh: true });
     const response = await props.client.listMcp(props.workspaceId);
     const localServers = (response.items ?? []).map((entry) => ({
       name: entry.name,
@@ -1888,6 +1926,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         listSkills={listSkills}
         skills={toolSkills}
         listMcp={listMcp}
+        onSelectMcp={handleSelectMcp}
+        preflightConnectMcp={preflightConnectMcp}
         mcpServers={toolMcpServers}
         mcpStatus={toolMcpStatus}
         mcpStatuses={toolMcpStatuses}

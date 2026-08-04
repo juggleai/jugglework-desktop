@@ -5,8 +5,13 @@ import { evaluateEnablement, type EnablementContext } from "../../../app/enablem
 import type { EnablementResult } from "../../../app/extensions";
 import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin } from "../../../app/lib/den";
 import type { McpServerEntry, SkillCard } from "../../../app/types";
-import { connectionNeedsReconnect } from "../connections/native-provider-connections";
+import {
+  connectionNeedsReconnect,
+  isOrgMcpConnectionReady,
+} from "../connections/native-provider-connections";
 import { t } from "@/i18n";
+
+export { isOrgMcpConnectionReady } from "../connections/native-provider-connections";
 
 export type ExtensionItemSource = "builtin" | "marketplace" | "org-connection" | "mcp-directory" | "skill";
 export type ExtensionInstallState = "available" | "installed" | "update_available";
@@ -81,10 +86,6 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   const importedObjectCount = new Set(imported.files.map((file) => file.configObjectId)).size;
   if (imported.updatedAt !== plugin.updatedAt || importedObjectCount !== plugin.memberCount) return "update_available";
   return "installed";
-}
-
-export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
-  return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
 export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {

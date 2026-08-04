@@ -13,7 +13,7 @@ export type QueuedMessagesPanelProps = {
   sending?: boolean;
 };
 
-const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\])/;
+const TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|\[mcp [^\]]+\])/;
 
 function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
@@ -79,6 +79,20 @@ function QueuedDraftContent(props: { draft: ComposerDraft }) {
           title={`Skill: ${skillMatch[1]}`}
         >
           {skillMatch[1]}
+        </span>,
+      );
+      continue;
+    }
+
+    const mcpMatch = segment.match(/^\[mcp (.+)\]$/);
+    if (mcpMatch?.[1]) {
+      nodes.push(
+        <span
+          key={key}
+          className="mx-0.5 inline-flex items-center rounded-full border border-teal-6/35 bg-teal-3/20 px-2.5 py-1 text-xs font-medium text-teal-11 align-middle"
+          title={`MCP: ${mcpMatch[1]}`}
+        >
+          {mcpMatch[1]}
         </span>,
       );
       continue;

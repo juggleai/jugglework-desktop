@@ -1798,10 +1798,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [connectionsSnapshot.mcpServers, connectionsStore.quickConnect, enablementContext, extensionController, extensionsSnapshot, extensionsStore, orgMcpConnections.connections],
   );
-  const installedOrgMcpConnectionItems = useMemo(
-    () => extensionItems.orgMcpConnectionItems.filter((item) => item.installState === "installed"),
-    [extensionItems.orgMcpConnectionItems],
-  );
   const organizationConnectionsProbe = resolveOrganizationConnectionsProbe({
     signedIn: cloudSession.isSignedIn,
     activeOrganizationId: cloudSession.activeOrganization?.id,
@@ -2329,16 +2325,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   ),
                 ]}
                 availableConnectMcpServers={connectCapabilities.mcpServers.filter(
-                  (entry) => !installedOrgMcpConnectionItems.some((item) =>
+                  (entry) => !extensionItems.orgMcpConnectionItems.some((item) =>
                     item.name.localeCompare(entry.name, undefined, { sensitivity: "accent" }) === 0
                   ),
                 )}
                 availableConnectMcpStatuses={connectCapabilities.mcpStatuses}
                 installedPlugins={extensionItems.installedCloudPlugins}
-                installedOrgMcpItems={installedOrgMcpConnectionItems}
+                orgMcpItems={extensionItems.orgMcpConnectionItems}
+                orgMcpConnectingId={orgMcpConnections.connectingId}
                 uninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
                 removeCloudPlugin={(pluginId) => { void extensionsStore.removeCloudOrgPlugin(pluginId); }}
                 orgMcpDisconnectingId={orgMcpConnections.disconnectingId}
+                connectOrgMcp={(connectionId) => { void orgMcpConnections.connect(connectionId); }}
                 disconnectOrgMcp={(connectionId) => { void orgMcpConnections.disconnect(connectionId); }}
                 readSkill={(name) => extensionsStore.readSkill(name)}
                 previewClaudePlugin={(url) => extensionsStore.previewClaudePlugin(url)}

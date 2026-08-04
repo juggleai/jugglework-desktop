@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-import { readConnectCloudMcp, writeConnectCloudMcp } from "./connect-state.js";
-import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
+import {
+  jsonRpcResult,
+  listCloudMcpCandidates,
+  mcpPost,
+  openCloudMcpSession,
+  type McpFetch,
+} from "./connect-cloud-mcp-rpc.js";
+import { writeConnectCloudMcp } from "./connect-state.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
-const JUGGLEWORK_CLOUD_MCP_NAME = "jugglework-cloud";
 const SKILL_INDEX_URI = "skill://index.json";
 const SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 const CATALOG_CACHE_TTL_MS = 30_000;
@@ -26,47 +31,10 @@ const skillIndexSchema = z.object({
 }).passthrough();
 
 export type JuggleWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][number];
-type McpFetch = (input: string, init?: RequestInit) => Promise<Response>;
 const catalogCache = new Map<string, { expiresAt: number; value: Promise<JuggleWorkConnectSkill[] | null> }>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringHeaders(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
-}
-
-function parseJsonOrText(raw: string): unknown {
-  try { return JSON.parse(raw); } catch { return raw; }
-}
-
-async function readMcpPayload(response: Response): Promise<unknown> {
-  const raw = await response.text();
-  if (!raw.trim()) return null;
-  if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return parseJsonOrText(raw);
-  for (const frame of raw.split(/\r?\n\r?\n/)) {
-    const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
-    if (data) return parseJsonOrText(data);
-  }
-  return null;
-}
-
-function jsonRpcResult(payload: unknown): Record<string, unknown> | null {
-  const record = Array.isArray(payload) ? payload.find(isRecord) : payload;
-  if (!isRecord(record) || record.error !== undefined || !isRecord(record.result)) return null;
-  return record.result;
-}
-
-async function mcpPost(fetcher: McpFetch, url: string, headers: Record<string, string>, body: unknown) {
-  const response = await fetcher(url, {
-    method: "POST",
-    headers: { accept: "application/json, text/event-stream", "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5_000),
-  });
-  return { response, payload: await readMcpPayload(response) };
 }
 
 /**
@@ -76,27 +44,9 @@ async function mcpPost(fetcher: McpFetch, url: string, headers: Record<string, s
  * so callers can fall back to another candidate config.
  */
 export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher: McpFetch): Promise<JuggleWorkConnectSkill[] | null> {
-  const url = typeof config.url === "string" ? config.url : "";
-  if (!/^https?:\/\//.test(url) || config.enabled === false) return null;
-  const baseHeaders = stringHeaders(config.headers);
-  const initialized = await mcpPost(fetcher, url, baseHeaders, {
-    id: 1,
-    jsonrpc: "2.0",
-    method: "initialize",
-    params: {
-      capabilities: {},
-      clientInfo: { name: "jugglework-server-skill-catalog", version: "1.0.0" },
-      protocolVersion: "2025-06-18",
-    },
-  });
-  if (!initialized.response.ok || !jsonRpcResult(initialized.payload)) return null;
-  const sessionHeaders = {
-    ...baseHeaders,
-    ...(initialized.response.headers.get("mcp-session-id") ? { "mcp-session-id": initialized.response.headers.get("mcp-session-id")! } : {}),
-    ...(initialized.response.headers.get("mcp-protocol-version") ? { "mcp-protocol-version": initialized.response.headers.get("mcp-protocol-version")! } : {}),
-  };
-  await mcpPost(fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
-  const resource = await mcpPost(fetcher, url, sessionHeaders, {
+  const session = await openCloudMcpSession(config, fetcher, "jugglework-server-skill-catalog");
+  if (!session) return null;
+  const resource = await mcpPost(fetcher, session.url, session.headers, {
     id: 2,
     jsonrpc: "2.0",
     method: "resources/read",
@@ -133,19 +83,7 @@ export async function readJuggleWorkConnectSkillCatalog(
   fetcher: McpFetch = externalFetch,
 ): Promise<JuggleWorkConnectSkill[]> {
   try {
-    const serverCloud = await readConnectCloudMcp(config);
-    const candidates: Array<{ cloud: Record<string, unknown>; source: "server" | "workspace" }> = [];
-    if (serverCloud) candidates.push({ cloud: serverCloud, source: "server" });
-    for (const workspace of config.workspaces) {
-      const cloud = await readRuntimeMcpConfig(config, workspace.id, JUGGLEWORK_CLOUD_MCP_NAME);
-      if (cloud) candidates.push({ cloud, source: "workspace" });
-    }
-
-    const seen = new Set<string>();
-    for (const candidate of candidates) {
-      const key = JSON.stringify(candidate.cloud);
-      if (seen.has(key)) continue;
-      seen.add(key);
+    for (const candidate of await listCloudMcpCandidates(config)) {
       const skills = await readIndexCached(candidate.cloud, fetcher);
       if (skills === null) continue;
       if (candidate.source === "workspace") {

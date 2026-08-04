@@ -31,6 +31,7 @@ import { ExtensionCard } from "../../../design-system/extension-card";
 import { ExtensionDetailModal } from "../../../design-system/extension-detail-modal";
 import {
   isOrgMcpConnectionItem,
+  isOrgMcpConnectionReady,
   orgMcpConnectionActionLabel,
   type ExtensionItem,
 } from "../extension-items";
@@ -132,9 +133,13 @@ export type McpViewProps = {
   previewClaudePlugin?: (url: string) => Promise<JuggleWorkClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
   installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
-  /** Connected org-level External MCP Connections rendered in My Extensions. */
-  installedOrgMcpItems?: ExtensionItem[];
+  /** 组织下发且允许当前成员使用的 MCP 连接器。 */
+  orgMcpItems?: ExtensionItem[];
+  /** 当前正在等待浏览器授权完成的组织 MCP 连接器 ID。 */
+  orgMcpConnectingId?: string | null;
   orgMcpDisconnectingId?: string | null;
+  /** 发起组织 MCP 连接器的成员授权流程。 */
+  connectOrgMcp?: (connectionId: string) => void;
   disconnectOrgMcp?: (connectionId: string) => void;
 };
 
@@ -255,7 +260,7 @@ export function McpView(props: McpViewProps) {
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
   const [detailConnectMcp, setDetailConnectMcp] = useState<McpServerEntry | null>(null);
   const [detailPlugin, setDetailPlugin] = useState<CloudImportedPlugin | null>(null);
-  const [detailOrgMcpItem, setDetailOrgMcpItem] = useState<ExtensionItem | null>(null);
+  const [detailOrgMcpItemId, setDetailOrgMcpItemId] = useState<string | null>(null);
   const [juggleworkUiMcpCommand, setJuggleWorkUiMcpCommand] = useState<string[] | null>(null);
   const [juggleworkUiMcpEnvironment, setJuggleWorkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
   const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
@@ -302,6 +307,12 @@ export function McpView(props: McpViewProps) {
   const configRequestId = useRef(0);
 
   const quickConnectList = props.quickConnect;
+  // fix(L3): 弹窗不能持有点击时的连接对象，否则 OAuth 轮询完成后仍会显示旧状态。
+  // before: 详情 state 保存完整对象；after: 仅保存 ID 并从最新 props 派生对象。
+  // TIPS：连接从列表移除时派生结果会自然变为空，详情弹窗同步关闭。
+  const detailOrgMcpItem = detailOrgMcpItemId
+    ? (props.orgMcpItems ?? []).find((item) => item.id === detailOrgMcpItemId) ?? null
+    : null;
 
   useEffect(() => {
     const refresh = () => setExtensionStateVersion((value) => value + 1);
@@ -626,8 +637,8 @@ export function McpView(props: McpViewProps) {
               .includes(q);
           })
         }
-        installedOrgMcpItems={
-          (props.installedOrgMcpItems ?? []).filter((item) => {
+        orgMcpItems={
+          (props.orgMcpItems ?? []).filter((item) => {
             if (!isOrgMcpConnectionItem(item)) return false;
             if (filter === "skill") return false;
             if (!search.trim()) return true;
@@ -671,7 +682,8 @@ export function McpView(props: McpViewProps) {
         }}
         onConnectMcpDetail={setDetailConnectMcp}
         onPluginDetail={setDetailPlugin}
-        onOrgMcpDetail={setDetailOrgMcpItem}
+        onOrgMcpDetail={(item) => setDetailOrgMcpItemId(item.id)}
+        orgMcpConnectingId={props.orgMcpConnectingId ?? null}
         orgMcpDisconnectingId={props.orgMcpDisconnectingId ?? null}
         disconnectOrgMcp={props.disconnectOrgMcp}
       />
@@ -895,19 +907,25 @@ export function McpView(props: McpViewProps) {
 
       {detailOrgMcpItem && isOrgMcpConnectionItem(detailOrgMcpItem) ? (() => {
         const connection = detailOrgMcpItem.orgMcpConnection;
+        const ready = isOrgMcpConnectionReady(connection);
+        const connecting = props.orgMcpConnectingId === connection.id;
         const canDisconnect = canDisconnectNativeProviderAccount(connection);
         return (
           <ExtensionDetailModal
             open={true}
-            onClose={() => setDetailOrgMcpItem(null)}
+            onClose={() => setDetailOrgMcpItemId(null)}
             name={detailOrgMcpItem.name}
             description={detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             kind="mcp"
-            connected={true}
+            connected={ready}
             connectedLabel={orgMcpConnectionActionLabel(connection)}
             beta
+            connecting={connecting}
+            connectLabel={orgMcpConnectionActionLabel(connection)}
+            connectingLabel={t("mcp.waiting_for_browser")}
             url={connection.url}
             oauth={connection.authType === "oauth"}
+            onConnect={!ready && props.connectOrgMcp ? () => props.connectOrgMcp?.(connection.id) : undefined}
             onUninstall={canDisconnect && props.disconnectOrgMcp ? () => props.disconnectOrgMcp?.(connection.id) : undefined}
             uninstallLabel={t("mcp.org_connection_disconnect_action")}
             showEnablementCard={false}
@@ -973,7 +991,7 @@ function McpQuickConnectSection(props: {
   availableConnectMcpServers?: McpServerEntry[];
   availableConnectMcpStatuses: McpStatusMap;
   installedPlugins?: CloudImportedPlugin[];
-  installedOrgMcpItems?: ExtensionItem[];
+  orgMcpItems?: ExtensionItem[];
   busy: boolean;
   connectingName: string | null;
   isEntryHidden: (entry: McpDirectoryInfo) => boolean;
@@ -989,6 +1007,7 @@ function McpQuickConnectSection(props: {
   onConnectMcpDetail?: (entry: McpServerEntry) => void;
   onPluginDetail?: (plugin: CloudImportedPlugin) => void;
   onOrgMcpDetail?: (item: ExtensionItem) => void;
+  orgMcpConnectingId: string | null;
   orgMcpDisconnectingId: string | null;
   disconnectOrgMcp?: (connectionId: string) => void;
 }) {
@@ -1095,10 +1114,19 @@ function McpQuickConnectSection(props: {
           );
         })}
 
-        {(props.installedOrgMcpItems ?? []).filter(isOrgMcpConnectionItem).map((item) => {
+        {(props.orgMcpItems ?? []).filter(isOrgMcpConnectionItem).map((item) => {
           const connection = item.orgMcpConnection;
+          const ready = isOrgMcpConnectionReady(connection);
+          const connecting = props.orgMcpConnectingId === connection.id;
           const canDisconnect = canDisconnectNativeProviderAccount(connection);
           const disconnecting = props.orgMcpDisconnectingId === connection.id;
+          const actionLabel = connecting
+            ? t("mcp.waiting_for_browser")
+            : disconnecting
+              ? t("mcp.org_connection_disconnecting_action")
+              : ready
+                ? t("mcp.view_details")
+                : orgMcpConnectionActionLabel(connection);
           return (
             <div key={item.id} className="space-y-2">
               <ExtensionCard
@@ -1106,10 +1134,11 @@ function McpQuickConnectSection(props: {
                 description={item.description ?? "Shared by your organization."}
                 kind="mcp"
                 url={connection.url}
-                connected={true}
+                connected={ready}
                 connectedLabel={orgMcpConnectionActionLabel(connection)}
                 beta
-                actionLabel={disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.view_details")}
+                connecting={connecting}
+                actionLabel={actionLabel}
                 onClick={() => props.onOrgMcpDetail?.(item)}
               />
               {canDisconnect ? (
@@ -1127,7 +1156,7 @@ function McpQuickConnectSection(props: {
           );
         })}
 
-        {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.availableConnectMcpServers ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.installedOrgMcpItems ?? []).length === 0 ? (
+        {props.entries.length === 0 && (props.installedSkills ?? []).length === 0 && (props.availableConnectMcpServers ?? []).length === 0 && (props.installedPlugins ?? []).length === 0 && (props.orgMcpItems ?? []).length === 0 ? (
           <div className="col-span-full rounded-xl border border-dashed border-dls-border px-5 py-10 text-center">
             <Unplug size={24} className="mx-auto mb-3 text-dls-secondary/30" />
             <div className="text-sm font-medium text-dls-secondary">{t("mcp.no_extensions_found")}</div>

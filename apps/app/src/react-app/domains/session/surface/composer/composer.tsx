@@ -17,10 +17,12 @@ import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
+import { composerMcpToken } from "./mcp-token";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
+  mcpSlashCommandOptions,
   skillMenuSlashCommandName,
   skillSlashCommandName,
   type ComposerSlashCommandOption,
@@ -88,6 +90,17 @@ type ComposerProps = {
   listSkills?: () => Promise<SkillCard[]>;
   skills?: SkillCard[];
   listMcp?: () => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
+  /**
+   * 记录草稿中 `[mcp <name>]` 令牌对应的完整调用指令，发送前由外层展开。
+   */
+  onSelectMcp?: (name: string, prompt: string) => void;
+  /**
+   * 预检组织 MCP 在 JuggleWork Cloud 能力目录中的可达性。
+   *
+   * @param name MCP 连接名称
+   * @returns 目录命中的能力名称；返回 null 表示预检不可用，按旧流程放行
+   */
+  preflightConnectMcp?: (name: string) => Promise<string[] | null>;
   mcpServers?: McpServerEntry[];
   mcpStatus?: string | null;
   mcpStatuses?: McpStatusMap;
@@ -294,6 +307,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>(props.mcpServers ?? []);
   const [mcpStatus, setMcpStatus] = useState<string | null>(props.mcpStatus ?? null);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>(props.mcpStatuses ?? {});
+  const [mcpPreflightKey, setMcpPreflightKey] = useState<string | null>(null);
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>(props.importedPlugins ?? []);
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
@@ -668,7 +682,6 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     if (!slashOpen && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
-    const listMcp = listMcpRef.current;
     if ((slashOpen || toolMenuSection === "skills") && (!toolMenuOpen || !toolMenuLoadRef.current.skills)) {
       let cancelled = false;
       if (toolMenuOpen) toolMenuLoadRef.current.skills = true;
@@ -696,43 +709,75 @@ export function ReactSessionComposer(props: ComposerProps) {
         }
       };
     }
-    if (toolMenuSection === "mcps" && listMcp && !toolMenuLoadRef.current.mcps) {
+    return undefined;
+  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
+
+  useEffect(() => {
+    if (!slashOpen && !toolMenuOpen) return;
+    const openId = toolMenuLoadRef.current.openId;
+    const listMcp = listMcpRef.current;
+    // fix(L3): 斜杠菜单与工具菜单必须消费同一份 MCP 清单。
+    // before: 只有展开 MCP 分区才加载；after: 输入 `/` 时也加载并参与提示。
+    if ((slashOpen || toolMenuSection === "mcps") && listMcp && (!toolMenuOpen || !toolMenuLoadRef.current.mcps)) {
       let cancelled = false;
-      toolMenuLoadRef.current.mcps = true;
+      if (toolMenuOpen) toolMenuLoadRef.current.mcps = true;
       setMcpLoading(true);
       void listMcp()
         .then((next) => {
-          if (cancelled || toolMenuLoadRef.current.openId !== openId) return;
+          if (cancelled || (toolMenuOpen && toolMenuLoadRef.current.openId !== openId)) return;
           setMcpServers(next.servers);
           setMcpStatuses(next.statuses);
           setMcpStatus(next.status);
           setMcpLoaded(true);
         })
         .catch(() => {
-          if (cancelled || toolMenuLoadRef.current.openId !== openId) return;
+          if (cancelled || (toolMenuOpen && toolMenuLoadRef.current.openId !== openId)) return;
           setMcpServers([]);
           setMcpStatuses({});
           setMcpLoaded(true);
         })
         .finally(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) setMcpLoading(false);
+          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) setMcpLoading(false);
         });
       return () => {
         cancelled = true;
       };
     }
     return undefined;
-  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
+  }, [slashOpen, toolMenuOpen, toolMenuSection]);
 
+  const connectSkillSlashItems = useMemo(() => connectSkillSlashCommandOptions(skills), [skills]);
+  // TIPS：斜杠菜单里给未就绪的 MCP 打上状态前缀，用户在选之前就知道它需要授权。
+  const mcpSlashItems = useMemo(
+    () => mcpSlashCommandOptions(mcpServers).map((item) => {
+      if (!item.mcp) return item;
+      const status = toReactMcpStatus(item.mcp.id ?? item.mcp.name, item.mcp, mcpStatuses);
+      if (status === "connected") return item;
+      return {
+        ...item,
+        description: [formatMcpStatusLabel(status), item.description].filter(Boolean).join(" — "),
+      };
+    }),
+    [mcpServers, mcpStatuses],
+  );
   const slashItems = useMemo<ComposerSlashCommandOption[]>(
-    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
-    [commands, skills],
+    () => [...commands, ...connectSkillSlashItems, ...mcpSlashItems],
+    [commands, connectSkillSlashItems, mcpSlashItems],
   );
   const slashFiltered = useMemo(() => {
     if (!slashOpen) return [];
-    if (!slashQuery) return slashItems.slice(0, 8);
+    if (!slashQuery) {
+      // TIPS：空查询为 command、skill、MCP 各保留入口，再用剩余条目补足八项。
+      const preview = [
+        ...commands.slice(0, 4),
+        ...connectSkillSlashItems.slice(0, 2),
+        ...mcpSlashItems.slice(0, 2),
+      ];
+      const previewIds = new Set(preview.map((item) => item.id));
+      return [...preview, ...slashItems.filter((item) => !previewIds.has(item.id))].slice(0, 8);
+    }
     return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [slashItems, slashOpen, slashQuery]);
+  }, [commands, connectSkillSlashItems, mcpSlashItems, slashItems, slashOpen, slashQuery]);
   const mentionFiltered = useMemo(() => {
     if (!mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
@@ -799,7 +844,109 @@ export function ReactSessionComposer(props: ComposerProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [menuIndex, activeItems.length]);
 
+  const insertMcpToken = (mcp: McpServerEntry, prompt: string, options?: { replaceDraft?: boolean }) => {
+    // TIPS：草稿里只留 `[mcp <name>]` 短令牌，完整指令交给会话层在发送前展开，
+    // 这样输入框显示的是一个 chip，而不是一整段步骤说明。
+    props.onSelectMcp?.(mcp.name, prompt);
+    const token = composerMcpToken(mcp.name);
+    if (options?.replaceDraft) {
+      props.onDraftChange(`${token} `);
+    } else {
+      const editor = editorRef.current;
+      if (editor) {
+        editor.insertMcpAtSelection(mcp.name);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}${token} `);
+      }
+    }
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
+  // TIPS：从斜杠菜单进来时草稿就是那句 `/xxx` 查询，选择被拦下也要把它清掉，
+  // 否则用户会在输入框里留下一段永远不会执行的命令文本。
+  const abortMcpSelection = (options?: { replaceDraft?: boolean }) => {
+    if (options?.replaceDraft) props.onDraftChange("");
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
+  const applyMcpSelection = async (mcp: McpServerEntry, options?: { replaceDraft?: boolean }) => {
+    const key = mcp.id ?? mcp.name;
+    if (mcp.origin !== "jugglework-connect") {
+      insertMcpToken(mcp, t("composer.local_mcp_prompt", { name: mcp.name }), options);
+      return;
+    }
+
+    // fix(L3): 组织连接器在目录里可见不代表 agent 可达，注入前先做状态门禁与目录预检，
+    // 否则模型只会拿到一段永远搜不到结果的指令。
+    const status = toReactMcpStatus(key, mcp, mcpStatuses);
+    if (status === "needs_auth" || status === "needs_client_registration") {
+      abortMcpSelection(options);
+      toast.warning(t("composer.mcp_needs_auth", { name: mcp.name }), {
+        action: props.onOpenSettingsSection
+          ? { label: t("composer.configure"), onClick: () => props.onOpenSettingsSection?.("mcps") }
+          : undefined,
+      });
+      return;
+    }
+    if (status === "failed" || status === "disabled") {
+      abortMcpSelection(options);
+      toast.error(t("composer.mcp_unavailable", { name: mcp.name, status: formatMcpStatusLabel(status) }), {
+        action: props.onOpenSettingsSection
+          ? { label: t("composer.configure"), onClick: () => props.onOpenSettingsSection?.("mcps") }
+          : undefined,
+      });
+      return;
+    }
+
+    const preflight = props.preflightConnectMcp;
+    if (!preflight) {
+      insertMcpToken(mcp, t("composer.connect_mcp_prompt", { name: mcp.name }), options);
+      return;
+    }
+
+    setMcpPreflightKey(key);
+    let capabilities: string[] | null = null;
+    try {
+      capabilities = await preflight(mcp.name);
+    } catch {
+      capabilities = null;
+    } finally {
+      setMcpPreflightKey(null);
+    }
+
+    // 预检不可用（未接入或请求失败）时退回旧指令，让模型自己去搜，不阻断用户。
+    if (capabilities === null) {
+      insertMcpToken(mcp, t("composer.connect_mcp_prompt", { name: mcp.name }), options);
+      return;
+    }
+    if (capabilities.length === 0) {
+      abortMcpSelection(options);
+      toast.error(t("composer.mcp_not_in_cloud_catalog", { name: mcp.name }), {
+        action: props.onOpenSettingsSection
+          ? { label: t("composer.configure"), onClick: () => props.onOpenSettingsSection?.("mcps") }
+          : undefined,
+      });
+      return;
+    }
+    // 命中目录时把精确能力名写进指令，模型可以直接执行，省掉一轮搜索。
+    insertMcpToken(
+      mcp,
+      t("composer.connect_mcp_prompt_resolved", {
+        name: mcp.name,
+        capabilities: capabilities.slice(0, 12).join(", "),
+      }),
+      options,
+    );
+  };
+
   const applyCommandSelection = (command: ComposerSlashCommandOption, options?: { replaceSkillDraft?: boolean }) => {
+    if (command.mcp) {
+      void applyMcpSelection(command.mcp, { replaceDraft: options?.replaceSkillDraft });
+      return;
+    }
     if (command.origin === "jugglework-connect" && command.connectCapabilityName) {
       const prompt = t("composer.connect_command_prompt", {
         name: command.name,
@@ -1126,7 +1273,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                       menuItemRefs.current[index] = element;
                     }}
                     type="button"
-                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
+                    disabled={mcpPreflightKey !== null}
+                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 disabled:opacity-60 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                     onMouseEnter={() => setMenuIndex(index)}
                     onMouseDown={(event) => {
                       event.preventDefault();
@@ -1163,7 +1311,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               </div>
             ) : (
               <div className="px-3 py-2 text-xs text-gray-10">
-                {(!commandsLoaded && commandsLoading) || skillsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+                {(!commandsLoaded && commandsLoading) || skillsLoading || mcpLoading ? t("composer.loading_commands") : t("composer.no_commands")}
               </div>
             )}
           </div>
@@ -1565,8 +1713,18 @@ export function ReactSessionComposer(props: ComposerProps) {
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
                                 {activeMcpItems.map(({ entry, status }) => (
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                  <button
+                                    key={entry.id ?? entry.name}
+                                    type="button"
+                                    disabled={mcpPreflightKey !== null}
+                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70 disabled:opacity-60"
+                                    onClick={() => void applyMcpSelection(entry)}
+                                  >
+                                    {mcpPreflightKey === (entry.id ?? entry.name) ? (
+                                      <LoaderCircle size={14} className="mt-0.5 shrink-0 animate-spin text-gray-9" />
+                                    ) : (
+                                      <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                                    )}
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
                                         <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
@@ -1591,7 +1749,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                                             : entry.config.command?.join(" ") ?? "Local MCP"}
                                       </div>
                                     </div>
-                                  </div>
+                                  </button>
                                 ))}
                               </div>
                             ) : (

@@ -1,4 +1,5 @@
 import type {
+  DenExternalMcpConnection,
   DenOrgMarketplace,
   DenOrgMarketplaceResolved,
   DenOrgPlugin,
@@ -7,9 +8,14 @@ import type {
   DenPluginConfigObject,
 } from "@/app/lib/den";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard, SlashCommandOption } from "@/app/types";
+import { isOrgMcpConnectionReady } from "@/react-app/domains/connections/native-provider-connections";
 
 type ConnectCapabilityClient = {
   listOrgMarketplaces: (organizationId: string) => Promise<DenOrgMarketplace[]>;
+  listMcpConnections: (
+    organizationId: string,
+    scope: "usable",
+  ) => Promise<DenExternalMcpConnection[]>;
   getOrgMarketplaceResolved: (
     organizationId: string,
     marketplaceId: string,
@@ -190,11 +196,39 @@ function toMcpEntries(
   });
 }
 
+function toOrgMcpEntry(connection: DenExternalMcpConnection): { entry: McpServerEntry; status: McpStatus } {
+  const id = `jugglework-connect:connection:${connection.id}`;
+  const status: McpStatus = isOrgMcpConnectionReady(connection)
+    ? { status: "connected" }
+    : connection.credentialMode === "per_member"
+      ? { status: "needs_auth" }
+      : { status: "failed", error: "Organization setup is required." };
+  return {
+    entry: {
+      id,
+      name: connection.name,
+      config: { type: "remote", url: connection.url },
+      origin: "jugglework-connect",
+    },
+    status,
+  };
+}
+
+/**
+ * 加载当前组织分配给成员的 Connect 能力清单。
+ *
+ * @param input Connect 客户端与当前组织标识
+ * @returns 会话输入框可展示的命令、技能和 MCP 能力
+ */
 export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
 }): Promise<ConnectCapabilityInventory> {
-  const marketplaces = (await input.client.listOrgMarketplaces(input.organizationId))
+  const [listedMarketplaces, orgMcpConnections] = await Promise.all([
+    input.client.listOrgMarketplaces(input.organizationId),
+    input.client.listMcpConnections(input.organizationId, "usable").catch(() => []),
+  ]);
+  const marketplaces = listedMarketplaces
     .filter((marketplace) => marketplace.status === "active")
     .sort((left, right) => left.name.localeCompare(right.name));
   const resolvedMarketplaces = await Promise.all(
@@ -222,6 +256,13 @@ export async function listAssignedConnectCapabilities(input: {
   const skills: ConnectSkillCard[] = [];
   const mcpServers: McpServerEntry[] = [];
   const mcpStatuses: McpStatusMap = {};
+  const representedConnectionIds = new Set(
+    resolvedPlugins.flatMap(({ resolved }) =>
+      (resolved.plugin.cloudReadiness?.connections ?? []).flatMap((connection) =>
+        connection.id ? [connection.id] : []
+      )
+    ),
+  );
   for (const { marketplace, resolved } of resolvedPlugins) {
     for (const membership of resolved.memberships) {
       const object = membership.configObject;
@@ -239,6 +280,15 @@ export async function listAssignedConnectCapabilities(input: {
         }
       }
     }
+  }
+
+  // TIPS：市场插件中的 MCP 已按配置对象展示；组织连接仅补齐独立连接器，并按连接 ID 去重。
+  // 这些条目用于会话能力选择，实际调用仍通过 JuggleWork Connect 的统一能力入口执行。
+  for (const connection of orgMcpConnections) {
+    if (representedConnectionIds.has(connection.id)) continue;
+    const item = toOrgMcpEntry(connection);
+    mcpServers.push(item.entry);
+    mcpStatuses[item.entry.id ?? item.entry.name] = item.status;
   }
 
   commands.sort((left, right) => left.name.localeCompare(right.name));
