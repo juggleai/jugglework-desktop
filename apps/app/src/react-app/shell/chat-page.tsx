@@ -2,7 +2,6 @@
 import type { CSSProperties } from "react";
 
 import { JuggleChatApp } from "@/react-app/domains/jugglechat/jugglechat-app";
-import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
@@ -20,7 +19,6 @@ export type ChatPageProps = {
 };
 
 export function ChatPage(props: ChatPageProps) {
-  const user = useJuggleChatStore((state) => state.user);
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
   const storedSidebarWidth = useUiStateStore((state) => state.workspaceLeftSidebarWidth);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
@@ -31,7 +29,7 @@ export function ChatPage(props: ChatPageProps) {
       storedSidebarWidth || DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
     ),
   );
-  const chatSidebarOpen = user ? sidebarOpen : true;
+  const chatSidebarOpen = sidebarOpen;
   const chatLayoutStyle = {
     "--jugglework-left-sidebar-width": `${leftSidebarWidth}px`,
   } as CSSProperties;

@@ -377,6 +377,14 @@ class JuggleChatRuntime {
       // The SDK can already be disconnected after an unauthorized event.
     }
   }
+
+  reset() {
+    this.disconnect();
+    this.client = null;
+    this.callClient = null;
+    this.initialized = null;
+    this.wiredClient = null;
+  }
 }
 
 function normalizeConversationType(args: Record<string, unknown>) {

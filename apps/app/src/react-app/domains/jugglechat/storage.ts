@@ -1,70 +1,21 @@
-import type { ChatUser, ServerSetting } from "./types";
+import { readDenIMLoginBootstrap, readDenSettings } from "@/app/lib/den";
 
-const PREFIX = "jgweb";
-const keys = {
-  user: "user_auth_token",
-  users: "users_auth",
-  server: "server_setting",
-  organization: "organ_setting",
-} as const;
+import type { ServerSetting } from "./types";
 
-function storageKey(key: string) {
-  return `${PREFIX}__${key}`;
-}
-
-export function readChatStorage<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(storageKey(key));
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as { data?: T };
-    return parsed.data ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-export function writeChatStorage<T>(key: string, value: T) {
-  localStorage.setItem(storageKey(key), JSON.stringify({ data: value }));
-}
-
-export function removeChatStorage(key: string) {
-  localStorage.removeItem(storageKey(key));
-}
-
+/**
+ * Chat connection settings are part of the unified JuggleWork session.
+ * AppKey, websocket URL, and IM token normally come from sign-in/account (or
+ * the desktop handoff exchange). Source development can override the complete
+ * IM bootstrap through the VITE_DEN_DEV_IM_* variables.
+ */
 export function getServerSetting(): ServerSetting | null {
-  const value = readChatStorage<Partial<ServerSetting>>(keys.server, {});
-  if (!value.app_key || !Array.isArray(value.app_servers) || !Array.isArray(value.im_servers)) {
-    return null;
-  }
-  return value as ServerSetting;
+  const im = readDenIMLoginBootstrap();
+  if (!im) return null;
+  const apiBaseUrl = readDenSettings().baseUrl;
+  return {
+    app_key: im.appKey,
+    app_servers: [apiBaseUrl],
+    im_servers: [im.websocketUrl],
+    api_base_url: apiBaseUrl,
+  };
 }
-
-export function setServerSetting(setting: ServerSetting) {
-  writeChatStorage(keys.server, setting);
-}
-
-export function getOrganizationId() {
-  return readChatStorage<{ organId?: string }>(keys.organization, {}).organId ?? "";
-}
-
-export function setOrganizationId(organId: string) {
-  writeChatStorage(keys.organization, { organId });
-}
-
-export function getChatUser(): ChatUser | null {
-  const value = readChatStorage<Partial<ChatUser>>(keys.user, {});
-  return value.id && value.token ? value as ChatUser : null;
-}
-
-export function setChatUser(user: ChatUser) {
-  writeChatStorage(keys.user, user);
-  const accounts = readChatStorage<ChatUser[]>(keys.users, []);
-  const next = accounts.filter((item) => item.id !== user.id);
-  next.push(user);
-  writeChatStorage(keys.users, next);
-}
-
-export function clearChatUser() {
-  removeChatStorage(keys.user);
-}
-

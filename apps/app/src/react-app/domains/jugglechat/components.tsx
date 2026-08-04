@@ -1,7 +1,6 @@
 /** @jsxImportSource react */
-import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import MD5 from "crypto-js/md5";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { isMacPlatform } from "@/app/utils";
@@ -48,35 +47,22 @@ import {
   getGroupInfo,
   getGroupMembers,
   getGroupNotice,
-  getLoginQrCode,
-  loginByAccount,
-  loginByEmail,
-  loginBySms,
-  pollLoginQrCode,
   quitGroup,
-  registerAccount,
   removeGroupAdmins,
   removeGroupMembers,
-  resolveOrganization,
   setGroupDisplayName,
   setGroupHistoryVisible,
   setGroupManagement,
   setGroupMute,
   setGroupNotice,
-  sendEmailCode,
-  sendSmsCode,
   transferGroupOwner,
   updateGroup,
   inviteGroupMembers,
 } from "./api";
-import logoUrl from "./snailchat-assets/images/login/logo.png";
-import qrCenterUrl from "./snailchat-assets/images/login/qrcode-center-icon.png";
-import qrToggleUrl from "./snailchat-assets/images/login/qr-toggle-icon.png";
 import { useJuggleCallStore } from "./call-store";
-import { getOrganizationId, getServerSetting, setOrganizationId, setServerSetting } from "./storage";
 import { juggleChatRuntime } from "./runtime";
 import { useJuggleChatStore } from "./store";
-import type { ApiEnvelope, ChatContact, ChatConversation, ChatGroupInfo, ChatGroupMember, ChatMessage, ChatUser, LoginResult } from "./types";
+import type { ApiEnvelope, ChatContact, ChatConversation, ChatGroupInfo, ChatGroupMember, ChatMessage, ChatUser } from "./types";
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -134,236 +120,6 @@ export function ChatAvatar(props: { name: string; userId?: string; src?: string;
     >
       {hasPortrait ? <img src={props.src} alt="" style={{ display: "none" }} onError={() => setFailed(true)} /> : <span className={cx("inner", colorClass)}>{initials(props.name)}</span>}
     </span>
-  );
-}
-
-function userFromLogin(data: LoginResult): ChatUser {
-  if (!data.im_token) throw new Error("登录成功，但服务端未返回 IM Token");
-  return {
-    id: data.user_id,
-    token: data.im_token,
-    authorization: data.authorization,
-    name: data.nickname || data.user_id,
-    portrait: data.avatar,
-    isUsed: true,
-  };
-}
-
-type LoginMode = "account" | "sms" | "email" | "qr" | "register";
-
-export function LoginScreen() {
-  const acceptLogin = useJuggleChatStore((state) => state.acceptLogin);
-  const globalError = useJuggleChatStore((state) => state.error);
-  const clearError = useJuggleChatStore((state) => state.clearError);
-  const [configured, setConfigured] = useState(Boolean(getServerSetting()));
-  const [editingOrganization, setEditingOrganization] = useState(!configured);
-  const [organization, setOrganization] = useState(getOrganizationId());
-  const [mode, setMode] = useState<LoginMode>("account");
-  const [account, setAccount] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
-  const [codeCountdown, setCodeCountdown] = useState(0);
-  const [qr, setQr] = useState<{ image: string; id: string } | null>(null);
-  const [qrExpired, setQrExpired] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-
-  const error = localError || globalError;
-  useEffect(() => {
-    if (!codeCountdown) return;
-    const timer = window.setInterval(() => setCodeCountdown((value) => Math.max(0, value - 1)), 1000);
-    return () => window.clearInterval(timer);
-  }, [codeCountdown]);
-
-  useEffect(() => {
-    if (mode !== "qr" || !configured) return;
-    let cancelled = false;
-    let timer = 0;
-    const load = async () => {
-      setQrExpired(false);
-      setBusy(true);
-      try {
-        const result = await getLoginQrCode();
-        if (result.code !== 0 || !result.data?.id) throw new Error(result.msg || `二维码获取失败：${result.code}`);
-        if (cancelled) return;
-        setQr({ image: result.data.qr_code, id: result.data.id });
-        const poll = async () => {
-          if (cancelled) return;
-          try {
-            const value = await pollLoginQrCode(result.data.id);
-            if (value.code === 0) {
-              await acceptLogin(userFromLogin(value.data));
-            } else if (value.code === 17006) {
-              timer = window.setTimeout(poll, 2000);
-            } else if (value.code === 17007) {
-              setQrExpired(true);
-            } else {
-              setLocalError(value.msg || `二维码登录失败：${value.code}`);
-            }
-          } catch (pollError) {
-            if (!cancelled) timer = window.setTimeout(poll, 2500);
-          }
-        };
-        timer = window.setTimeout(poll, 500);
-      } catch (loadError) {
-        if (!cancelled) setLocalError(toError(loadError));
-      } finally {
-        if (!cancelled) setBusy(false);
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [acceptLogin, configured, mode]);
-
-  const resetError = () => {
-    setLocalError(null);
-    clearError();
-  };
-
-  const handleOrganization = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!organization.trim()) return setLocalError("请输入组织 ID 或服务器 IP");
-    setBusy(true);
-    resetError();
-    try {
-      const setting = await resolveOrganization(organization);
-      setServerSetting(setting);
-      setOrganizationId(organization.trim());
-      setConfigured(true);
-      setEditingOrganization(false);
-    } catch (saveError) {
-      setLocalError(toError(saveError));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const completeLogin = async (result: ApiEnvelope<LoginResult>) => {
-    if (result.code !== 0) throw new Error(result.msg || `登录失败：${result.code}`);
-    await acceptLogin(userFromLogin(result.data));
-  };
-
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    resetError();
-    setBusy(true);
-    try {
-      if (mode === "account") {
-        if (!account.trim() || !password) throw new Error("请输入账号和密码");
-        await completeLogin(await loginByAccount(account.trim(), MD5(password).toString()));
-      } else if (mode === "sms") {
-        if (!phone.trim() || !code.trim()) throw new Error("请输入手机号和验证码");
-        await completeLogin(await loginBySms(phone.trim(), code.trim()));
-      } else if (mode === "email") {
-        if (!email.trim() || !code.trim()) throw new Error("请输入邮箱和验证码");
-        await completeLogin(await loginByEmail(email.trim(), code.trim()));
-      } else if (mode === "register") {
-        if (!account.trim() || !password) throw new Error("请输入账号和密码");
-        if (password !== confirmPassword) throw new Error("两次输入的密码不一致");
-        const result = await registerAccount(account.trim(), MD5(password).toString());
-        if (result.code !== 0) throw new Error(result.msg || `注册失败：${result.code}`);
-        setMode("account");
-        setPassword("");
-        setConfirmPassword("");
-      }
-    } catch (submitError) {
-      setLocalError(toError(submitError));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const requestCode = async () => {
-    resetError();
-    setBusy(true);
-    try {
-      const result = mode === "sms" ? await sendSmsCode(phone.trim()) : await sendEmailCode(email.trim());
-      if (result.code !== 0) throw new Error(result.msg || `验证码发送失败：${result.code}`);
-      setCodeCountdown(59);
-    } catch (sendError) {
-      setLocalError(toError(sendError));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (editingOrganization) {
-    return (
-      <div className="jg-login-newui jw-im-login">
-        <form className="jg-login-card jg-login-org-card" onSubmit={handleOrganization}>
-          <button type="button" className="jg-login-org-back" onClick={() => setEditingOrganization(false)}>
-            <ChevronLeft className="jg-login-org-back-icon" /> <span>返回</span>
-          </button>
-          <div className="jg-login-org-panel">
-            <div className="jg-login-org-title-new">填写组织信息</div>
-            <div className="jg-login-org-input-card">
-              <div className="jg-login-org-input-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M7 21V18C7 16.3431 8.34315 15 10 15H14C15.6569 15 17 16.3431 17 18V21" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 12C14.2091 12 16 10.2091 16 8C16 5.79086 14.2091 4 12 4C9.79086 4 8 5.79086 8 8C8 10.2091 9.79086 12 12 12Z" stroke="currentColor" strokeWidth="1.8" /><path d="M4 21H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
-              <input className="jg-login-org-input-new" autoFocus value={organization} onChange={(event) => { setOrganization(event.target.value); resetError(); }} placeholder="请输入组织ID" />
-            </div>
-            {error ? <div className="jg-login-error jg-login-org-error">{error}</div> : null}
-            <button className={cx("jg-login-btn jg-login-org-submit", organization.trim() && "active")} disabled={busy}>
-              {busy ? <LoaderCircle className="is-spinning" size={17} /> : null}保存并确认
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  if (mode === "register") {
-    return (
-      <div className="jg-login-newui jw-im-login">
-        <form className="jg-login-card jg-register-card" onSubmit={handleSubmit}>
-          <button type="button" className="jg-login-back jg-register-back" onClick={() => { setMode("account"); resetError(); }}><ChevronLeft className="jg-login-back-icon" /><span className="jg-login-back-text">返回</span></button>
-          <div className="jg-register-title">用户注册</div>
-          <div className="jg-login-form-group"><div className="jg-login-input"><span className="jg-login-input-icon jg-login-input-icon--user" /><input autoFocus value={account} onChange={(event) => { setAccount(event.target.value); resetError(); }} placeholder="请输入账号" /></div></div>
-          <div className="jg-login-form-group"><div className="jg-login-input"><span className="jg-login-input-icon jg-login-input-icon--password" /><input value={password} onChange={(event) => { setPassword(event.target.value); resetError(); }} type={showPassword ? "text" : "password"} placeholder="请输入密码" /><button type="button" className={cx("jg-login-input-toggle", showPassword ? "jg-login-input-toggle--eye" : "jg-login-input-toggle--eye-off")} onClick={() => setShowPassword(!showPassword)} /></div></div>
-          <div className="jg-login-form-group"><div className="jg-login-input"><span className="jg-login-input-icon jg-login-input-icon--password" /><input value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); resetError(); }} type="password" placeholder="请再次输入密码" /></div></div>
-          {error ? <div className="jg-login-error">{error}</div> : null}
-          <button className="jg-login-btn jg-register-btn" disabled={busy}>{busy ? <LoaderCircle className="is-spinning" size={17} /> : null}确认注册</button>
-          <div className="jg-login-links"><button type="button" className="jg-login-link" onClick={() => setEditingOrganization(true)}>填写组织信息</button></div>
-        </form>
-      </div>
-    );
-  }
-
-  if (mode === "qr") {
-    return (
-      <div className="jg-login-newui jw-im-login">
-        <div className="jg-login-card">
-          <div className="jg-login-qrcode-section">
-            <img src={logoUrl} className="jg-login-qrcode-logo" alt="JuggleChat" />
-            <div className="jg-login-qrcode-box"><div className="jg-login-qrcode-img" style={qr?.image ? { backgroundImage: `url(data:image/png;base64,${qr.image})` } : undefined}>{!qr?.image ? <LoaderCircle className="is-spinning" /> : null}</div><div className="jg-login-qrcode-center"><img src={qrCenterUrl} alt="" /></div>{qrExpired ? <div className="jg-login-qrcode-refresh"><button type="button" onClick={() => { setMode("account"); window.setTimeout(() => setMode("qr")); }}>刷新二维码</button></div> : null}</div>
-            <h2 className="jg-login-title">扫码登录 Juggle Chat</h2><p className="jg-login-subtitle">请使用 Juggle Chat 移动端扫描二维码</p>
-            <button type="button" className="jg-login-switch" onClick={() => setMode("account")}>切换至账号密码登录</button>
-          </div>
-          <button type="button" className="jg-login-setting-btn" onClick={() => setEditingOrganization(true)}><span className="jg-login-setting-icon" /></button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="jg-login-newui jw-im-login">
-      <form className="jg-login-card" onSubmit={handleSubmit}>
-        <img className="jg-login-logo" src={logoUrl} alt="JuggleChat" />
-        <button type="button" className="jg-login-qr-toggle" onClick={() => setMode("qr")}><img src={qrToggleUrl} alt="扫码登录" /></button>
-        <div className="jg-login-qr-hint">扫码登录更便捷</div>
-        <div className="jg-login-tabs" />
-        <div className="jg-login-form-group"><div className="jg-login-input"><span className="jg-login-input-icon jg-login-input-icon--user" /><input autoFocus value={account} onChange={(event) => { setAccount(event.target.value); resetError(); }} autoComplete="username" placeholder="请输入账号" /></div></div>
-        <div className="jg-login-form-group"><div className="jg-login-input"><span className="jg-login-input-icon jg-login-input-icon--password" /><input value={password} onChange={(event) => { setPassword(event.target.value); resetError(); }} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="请输入密码" /><button type="button" className={cx("jg-login-input-toggle", showPassword ? "jg-login-input-toggle--eye" : "jg-login-input-toggle--eye-off")} onClick={() => setShowPassword(!showPassword)} /></div></div>
-        {error ? <div className="jg-login-error">{error}</div> : null}
-        <button className="jg-login-btn" disabled={busy}>{busy ? <LoaderCircle className="is-spinning" size={17} /> : null}登录</button>
-        <div className="jg-login-links"><button type="button" className="jg-login-link" onClick={() => { setMode("register"); resetError(); }}>用户注册</button><button type="button" className="jg-login-link" onClick={() => setEditingOrganization(true)}>填写组织信息</button></div>
-      </form>
-    </div>
   );
 }
 
@@ -1856,34 +1612,163 @@ export function ContactsSurface() {
 }
 
 function CreateGroupModal({ contacts, onClose, onCreated }: { contacts: ChatContact[]; onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<ChatContact[]>([]);
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchResults, setSearchResults] = useState<ChatContact[]>([]);
+  const [showSearch, setShowSearch] = useState(false);
+
+  useEffect(() => () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  }, []);
+
+  const toggleContact = (contact: ChatContact) => {
+    setError(null);
+    setSelected((prev) => {
+      const exists = prev.some((c) => c.user_id === contact.user_id);
+      return exists ? prev.filter((c) => c.user_id !== contact.user_id) : [...prev, contact];
+    });
+  };
+
+  const removeContact = (userId: string) => {
+    setSelected((prev) => prev.filter((c) => c.user_id !== userId));
+  };
+
+  const isSelected = (userId: string) => selected.some((c) => c.user_id === userId);
+
+  const contactLabel = (contact: ChatContact) => contact.friend_display_name || contact.nickname || contact.user_id;
+
+  const groupedContacts = useMemo(() => {
+    const list = showSearch ? searchResults : contacts;
+    const map = new Map<string, ChatContact[]>();
+    for (const contact of list) {
+      const name = contactLabel(contact);
+      const letter = /^[a-z]/i.test(name) ? name[0]!.toUpperCase() : "#";
+      map.set(letter, [...(map.get(letter) ?? []), contact]);
+    }
+    return [...map.entries()].sort((a, b) => a[0] === "#" ? 1 : b[0] === "#" ? -1 : a[0].localeCompare(b[0]));
+  }, [contacts, searchResults, showSearch]);
+
+  const onSearchChange = (value: string) => {
+    setQuery(value);
+    if (!value.trim()) {
+      setShowSearch(false);
+      setSearchResults([]);
+      return;
+    }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      const keyword = value.trim().toLowerCase();
+      const results = contacts.filter((c) => contactLabel(c).toLowerCase().includes(keyword));
+      setSearchResults(results);
+      setShowSearch(true);
+    }, 300);
+  };
+
+  const groupName = useMemo(() => {
+    if (!selected.length) return "";
+    const names = selected.map(contactLabel).join(", ");
+    return names.length > 20 ? `${names.slice(0, 20)}...` : names;
+  }, [selected]);
+
   const submit = async () => {
-    if (!name.trim()) return setError("请输入群名称");
-    if (!selected.length) return setError("请至少选择一位好友");
+    if (!selected.length) return setError("请至少选择一位联系人");
     setBusy(true);
     try {
-      const result = await createGroup(name.trim(), contacts.filter((contact) => selected.includes(contact.user_id)));
-      if (result.code !== 0) throw new Error(result.msg || `创建群组失败：${result.code}`);
+      await createGroup(groupName, selected);
       onCreated();
     } catch (createError) { setError(toError(createError)); setBusy(false); }
   };
+
+  const checkboxClass = (userId: string) => {
+    if (isSelected(userId)) return "wr-checkbox-checked jw-im-checkbox-checked";
+    return "wr-checkbox-empty";
+  };
+
   return (
     <div className="jw-im-modal-backdrop" onMouseDown={onClose}>
-      <section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="jw-im-modal jw-im-create-group-modal" onMouseDown={(event) => event.stopPropagation()}>
         <header><h3>创建群组</h3><button onClick={onClose}><X size={18} /></button></header>
-        <label className="jw-im-field"><span>群名称</span><input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
-        <div className="jw-im-member-picker">
-          {contacts.map((contact) => {
-            const label = contact.friend_display_name || contact.nickname || contact.user_id;
-            const checked = selected.includes(contact.user_id);
-            return <button key={contact.user_id} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((id) => id !== contact.user_id) : [...selected, contact.user_id])}><ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>;
-          })}
+        <div className="jw-im-create-group-layout">
+          <div className="jw-im-create-group-left">
+            <div className="jw-im-create-group-search">
+              <Search size={15} />
+              <input
+                type="text"
+                placeholder="搜索成员"
+                value={query}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { setQuery(""); setShowSearch(false); setSearchResults([]); }
+                }}
+              />
+              {query ? <button type="button" className="jw-im-create-group-search-clear" onClick={() => { setQuery(""); setShowSearch(false); setSearchResults([]); }}><X size={14} /></button> : null}
+            </div>
+            <div className="jw-im-create-group-contacts">
+              {!contacts.length ? (
+                <div className="jw-im-create-group-empty">
+                  <LoaderCircle className="is-spinning" size={20} />
+                  <span>加载中...</span>
+                </div>
+              ) : groupedContacts.length === 0 ? (
+                <div className="jw-im-create-group-empty">
+                  <span>暂无搜索结果</span>
+                </div>
+              ) : (
+                groupedContacts.map(([letter, items]) => (
+                  <div className="jw-im-create-group-letter-group" key={letter}>
+                    <div className="jw-im-create-group-letter">{letter}</div>
+                    {items.map((contact) => {
+                      const label = contactLabel(contact);
+                      return (
+                        <button
+                          key={contact.user_id}
+                          className={cx("jw-im-create-group-contact", isSelected(contact.user_id) && "is-selected")}
+                          onClick={() => toggleContact(contact)}
+                        >
+                          <span className={checkboxClass(contact.user_id)} />
+                          <ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" />
+                          <span className="jw-im-create-group-contact-name">{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="jw-im-create-group-right">
+            <div className="jw-im-create-group-right-header">
+              <div className="jw-im-create-group-right-title">已选择联系人</div>
+              <div className="jw-im-create-group-right-count">
+                {selected.length === 0 ? "未选择联系人" : `已选择 (${selected.length}) 人`}
+              </div>
+            </div>
+            <div className="jw-im-create-group-right-body">
+              {selected.map((contact) => {
+                const label = contactLabel(contact);
+                return (
+                  <div className="jw-im-create-group-selected-item" key={contact.user_id}>
+                    <ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" />
+                    <span className="jw-im-create-group-selected-name">{label}</span>
+                    <button className="jw-im-create-group-selected-remove" onClick={() => removeContact(contact.user_id)} title="移除">
+                      <X size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
+            <div className="jw-im-create-group-footer">
+              <button className="jw-im-secondary-button" onClick={onClose} disabled={busy}>取消</button>
+              <button className="jw-im-primary-button" onClick={() => void submit()} disabled={busy || !selected.length}>
+                {busy ? <><LoaderCircle className="is-spinning" size={16} />创建中...</> : "确定"}
+              </button>
+            </div>
+          </div>
         </div>
-        {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
-        <button className="jw-im-primary-button" onClick={() => void submit()} disabled={busy}>{busy ? <LoaderCircle className="is-spinning" /> : <Users size={17} />}创建群组</button>
       </section>
     </div>
   );
@@ -1891,12 +1776,10 @@ function CreateGroupModal({ contacts, onClose, onCreated }: { contacts: ChatCont
 
 export function SettingsSurface() {
   const user = useJuggleChatStore((state) => state.user);
-  const logout = useJuggleChatStore((state) => state.logout);
   const setView = useJuggleChatStore((state) => state.setView);
-  const [editing, setEditing] = useState(false);
   const settingGroups: Array<Array<{ label: string; icon: string; action?: () => void; value?: string }>> = [
     [
-      { label: "通用设置", icon: "jg-setting-row-icon--general", action: () => setEditing(true) },
+      { label: "通用设置", icon: "jg-setting-row-icon--general" },
       { label: "我的收藏", icon: "jg-setting-row-icon--favorite", action: () => setView("favorites") },
       { label: "我的二维码", icon: "jg-setting-row-icon--qrcode" },
     ],
@@ -1916,26 +1799,9 @@ export function SettingsSurface() {
           <div className="jg-setting-profile-meta"><span className="jg-setting-profile-label">用户 ID</span><span className="jg-setting-profile-id">{user?.id}</span></div>
         </section>
         {settingGroups.map((group, index) => <section className="jg-setting-group" key={index}>{group.map((item) => <div className={cx("jg-setting-row", item.value && "jg-setting-row-info")} key={item.label} onClick={item.action}><div className="jg-setting-row-main"><span className={cx("jg-setting-row-icon", item.icon)} /><span className="jg-setting-row-text">{item.label}</span></div>{item.value ? <span className="jg-setting-row-value">{item.value}</span> : <span className="jg-setting-row-chevron" />}</div>)}</section>)}
-        <section className="jg-setting-group jg-setting-group-warn"><div className="jg-setting-row is-warn" onClick={logout}><div className="jg-setting-row-main"><span className="jg-setting-row-icon jg-setting-row-icon--close" /><span className="jg-setting-row-text">退出登录</span></div></div></section>
       </div></div></div>
-      {editing ? <OrganizationModal onClose={() => setEditing(false)} /> : null}
     </aside>
   );
-}
-
-function OrganizationModal({ onClose }: { onClose: () => void }) {
-  const [value, setValue] = useState(getOrganizationId());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    setBusy(true);
-    try {
-      setServerSetting(await resolveOrganization(value));
-      setOrganizationId(value.trim());
-      window.location.reload();
-    } catch (saveError) { setError(toError(saveError)); setBusy(false); }
-  };
-  return <div className="jw-im-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>更换组织</h3><button onClick={onClose}><X size={18} /></button></header><label className="jw-im-field"><span>组织 ID / IPv4</span><input value={value} onChange={(event) => setValue(event.target.value)} autoFocus /></label>{error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}<button className="jw-im-primary-button" onClick={() => void save()} disabled={busy}>{busy ? <LoaderCircle className="is-spinning" /> : <Check />}保存并重新加载</button></section></div>;
 }
 
 export function ConnectionBanner() {

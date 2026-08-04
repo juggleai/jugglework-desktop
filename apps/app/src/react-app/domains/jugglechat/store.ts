@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
-import { getFriends, getGroups } from "./api";
-import { clearChatUser, getChatUser, getServerSetting, setChatUser } from "./storage";
+import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
+import { getMembers, getTeams } from "./api";
 import { juggleChatRuntime } from "./runtime";
 import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
@@ -29,9 +29,8 @@ type JuggleChatState = {
   pinnedMessage: { message: ChatMessage; operator?: Partial<ChatUser>; createdTime?: number } | null;
   bootstrapped: boolean;
   setView: (view: ChatView) => void;
-  bootstrap: () => Promise<void>;
+  bootstrap: (identity?: DenUser | null) => Promise<void>;
   acceptLogin: (user: ChatUser) => Promise<void>;
-  logout: () => void;
   loadConversations: () => Promise<void>;
   selectConversation: (conversation: ChatConversation) => Promise<void>;
   loadEarlierMessages: () => Promise<void>;
@@ -156,14 +155,6 @@ function mergeConversations(current: ChatConversation[], incoming: ChatConversat
   });
 }
 
-function extractContacts(data: unknown): ChatContact[] {
-  if (Array.isArray(data)) return data as ChatContact[];
-  if (!data || typeof data !== "object") return [];
-  const value = data as Record<string, unknown>;
-  const list = value.items ?? value.users ?? value.friends ?? value.list;
-  return Array.isArray(list) ? list as ChatContact[] : [];
-}
-
 function errorMessage(error: unknown) {
   if (error && typeof error === "object") {
     const value = error as { error?: { msg?: string; message?: string }; message?: string; msg?: string };
@@ -183,8 +174,7 @@ function startSubscriptions() {
     } else if (state === 2 || state === 3) {
       const unauthorized = [11005, 11006, 11011, 11012].includes(Number(error?.code));
       if (unauthorized) {
-        clearChatUser();
-        useJuggleChatStore.setState({ status: "signed-out", user: null, error: "登录状态已失效，请重新登录" });
+        useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 JuggleWork" });
       } else {
         useJuggleChatStore.setState({ status: "disconnected", error: error?.message ?? null });
       }
@@ -295,16 +285,14 @@ function startSubscriptions() {
     });
   });
   window.addEventListener("jugglechat:unauthorized", () => {
-    clearChatUser();
-    releaseLocalMediaUrls(useJuggleChatStore.getState().messages);
-    useJuggleChatStore.setState({ status: "signed-out", user: null, error: "登录状态已失效，请重新登录" });
+    useJuggleChatStore.setState({ status: "error", error: "IM 登录状态已失效，请重新登录 JuggleWork" });
   });
 }
 
 export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   status: "idle",
   error: null,
-  user: getChatUser(),
+  user: null,
   view: "conversations",
   conversations: [],
   activeConversation: null,
@@ -327,20 +315,68 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     if (view === "contacts" && !get().contacts.length) void get().loadContacts();
   },
 
-  async bootstrap() {
-    if (get().bootstrapped) return;
-    set({ bootstrapped: true });
-    startSubscriptions();
-    startJuggleChatSkillBridge();
-    if (!getServerSetting()) {
-      set({ status: "signed-out", user: null });
+  async bootstrap(identity) {
+    if (!get().bootstrapped) {
+      set({ bootstrapped: true });
+      startSubscriptions();
+      startJuggleChatSkillBridge();
+    }
+    const settings = readDenSettings();
+    const im = readDenIMLoginBootstrap();
+    if (!settings.authToken) {
+      if (get().user) juggleChatRuntime.reset();
+      releaseLocalMediaUrls(get().messages);
+      set({
+        status: "signed-out",
+        user: null,
+        conversations: [],
+        conversationsInitialized: false,
+        activeConversation: null,
+        messages: [],
+        contacts: [],
+        groups: [],
+        messagesFinished: false,
+        pinnedMessage: null,
+        replyTo: null,
+        error: null,
+      });
       return;
     }
-    const user = getChatUser();
-    if (!user) {
-      set({ status: "signed-out", user: null });
+    if (!im) {
+      if (get().user) juggleChatRuntime.reset();
+      releaseLocalMediaUrls(get().messages);
+      set({
+        status: "error",
+        user: null,
+        conversations: [],
+        conversationsInitialized: false,
+        activeConversation: null,
+        messages: [],
+        messagesFinished: false,
+        contacts: [],
+        groups: [],
+        pinnedMessage: null,
+        replyTo: null,
+        error: "当前 JuggleWork 登录状态缺少 IM 凭据，请退出后重新登录",
+      });
       return;
     }
+    const user: ChatUser = {
+      id: im.imUserId,
+      token: im.token,
+      authorization: `Bearer ${settings.authToken}`,
+      name: identity?.name || identity?.account || identity?.email || im.imUserId,
+      portrait: identity?.avatar || undefined,
+      isUsed: true,
+    };
+    const currentUser = get().user;
+    const usesSameIMCredential = currentUser?.id === user.id && currentUser.token === user.token;
+    if (usesSameIMCredential && juggleChatRuntime.isConnected()) {
+      set({ user, status: "connected", error: null });
+      if (!get().conversationsInitialized) await get().loadConversations();
+      return;
+    }
+    if (currentUser && !usesSameIMCredential) juggleChatRuntime.reset();
     set({ status: "initializing", user });
     try {
       await juggleChatRuntime.connect(user);
@@ -352,7 +388,6 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   },
 
   async acceptLogin(user) {
-    setChatUser(user);
     set({ user, status: "connecting", error: null });
     try {
       await juggleChatRuntime.connect(user);
@@ -362,24 +397,6 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       set({ status: "error", error: errorMessage(error) });
       throw error;
     }
-  },
-
-  logout() {
-    juggleChatRuntime.disconnect();
-    clearChatUser();
-    releaseLocalMediaUrls(get().messages);
-    set({
-      status: "signed-out",
-      user: null,
-      conversations: [],
-      conversationsInitialized: false,
-      activeConversation: null,
-      messages: [],
-      pinnedMessage: null,
-      contacts: [],
-      groups: [],
-      error: null,
-    });
   },
 
   async loadConversations() {
@@ -447,20 +464,25 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   async loadContacts() {
     set({ loadingContacts: true });
     try {
-      const [friendsResult, groupsResult] = await Promise.all([getFriends(), getGroups()]);
-      const groupsData = groupsResult.data && typeof groupsResult.data === "object"
-        ? (groupsResult.data as Record<string, unknown>).items ?? groupsResult.data
-        : groupsResult.data;
-      const groups = (Array.isArray(groupsData) ? groupsData : []).map((item) => {
-        const group = item as Record<string, unknown>;
+      const [membersResult, teamsResult] = await Promise.all([getMembers(), getTeams()]);
+      const contacts = membersResult.members.map((member) => ({
+        user_id: member.user.imUserId,
+        member_id: member.id,
+        identity_user_id: member.user.id,
+        nickname: member.user.name || member.user.account || member.user.imUserId,
+        avatar: member.user.avatar || undefined,
+        conversationType: 1,
+        role: member.role,
+      } satisfies ChatContact)).filter((contact) => contact.user_id && contact.user_id !== get().user?.id);
+      const groups = teamsResult.teams.map((team) => {
         return {
-          user_id: String(group.group_id ?? ""),
-          nickname: String(group.group_name ?? group.group_id ?? ""),
-          avatar: group.group_portrait ? String(group.group_portrait) : undefined,
+          user_id: team.id,
+          nickname: team.name || team.id,
           conversationType: 2,
+          member_ids: team.memberIds,
         } satisfies ChatContact;
       }).filter((item) => item.user_id);
-      set({ contacts: extractContacts(friendsResult.data), groups, loadingContacts: false });
+      set({ contacts, groups, loadingContacts: false });
     } catch (error) {
       set({ loadingContacts: false, error: errorMessage(error) });
     }

@@ -1,5 +1,11 @@
-import type { ApiEnvelope, ChatGroupMember, LoginResult, ServerSetting } from "./types";
-import { getChatUser, getServerSetting } from "./storage";
+import type {
+  ApiEnvelope,
+  ChatGroupMember,
+  OrganizationMembersResult,
+  OrganizationTeamsResult,
+} from "./types";
+import { readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";
+import { getServerSetting } from "./storage";
 
 function normalizeServer(value: string) {
   const trimmed = value.trim().replace(/\/$/, "");
@@ -14,14 +20,55 @@ function apiBase() {
   return `${normalizeServer(server)}/jim`;
 }
 
+function organizationApiBase() {
+  const settings = readDenSettings();
+  if (!settings.baseUrl) throw new Error("尚未配置 JuggleWork 服务地址");
+  return resolveDenBaseUrls(settings).apiBaseUrl.replace(/\/$/, "");
+}
+
+function apiErrorMessage(payload: unknown, status: number) {
+  if (payload && typeof payload === "object") {
+    const value = payload as { message?: unknown; msg?: unknown; error?: unknown };
+    if (typeof value.message === "string" && value.message.trim()) return value.message;
+    if (typeof value.msg === "string" && value.msg.trim()) return value.msg;
+    if (typeof value.error === "string" && value.error.trim()) return value.error;
+  }
+  return `JuggleWork 服务请求失败（HTTP ${status}）`;
+}
+
+async function organizationRequest<T>(path: string, init: RequestInit = {}, authenticated = true) {
+  const settings = readDenSettings();
+  const headers = new Headers(init.headers);
+  if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
+  if (authenticated && settings.authToken) headers.set("Authorization", `Bearer ${settings.authToken}`);
+  if (authenticated && settings.activeOrgId) headers.set("x-jugglework-legacy-org-id", settings.activeOrgId);
+  const response = await fetch(`${organizationApiBase()}${path}`, { ...init, headers });
+  const text = await response.text();
+  let payload: unknown = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error(`JuggleWork 服务返回了无效数据（HTTP ${response.status}）`);
+    }
+  }
+  if (!response.ok) {
+    if (response.status === 401 && authenticated) {
+      window.dispatchEvent(new CustomEvent("jugglechat:unauthorized"));
+    }
+    throw new Error(apiErrorMessage(payload, response.status));
+  }
+  return payload as T;
+}
+
 export async function chatRequest<T>(pathOrUrl: string, init: RequestInit = {}) {
   const setting = getServerSetting();
-  const user = getChatUser();
+  const settings = readDenSettings();
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${apiBase()}/${pathOrUrl.replace(/^\//, "")}`;
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
   if (setting?.app_key) headers.set("AppKey", setting.app_key);
-  if (user?.authorization) headers.set("Authorization", user.authorization);
+  if (settings.authToken) headers.set("Authorization", `Bearer ${settings.authToken}`);
   const response = await fetch(url, { ...init, headers });
   if (response.status === 401) {
     window.dispatchEvent(new CustomEvent("jugglechat:unauthorized"));
@@ -35,58 +82,22 @@ export async function chatRequest<T>(pathOrUrl: string, init: RequestInit = {}) 
   }
 }
 
-export function loginByAccount(account: string, password: string) {
-  return chatRequest<ApiEnvelope<LoginResult>>("login", {
-    method: "POST",
-    body: JSON.stringify({ account, password }),
-  });
-}
-
-export function registerAccount(account: string, password: string) {
-  return chatRequest<ApiEnvelope>("register", {
-    method: "POST",
-    body: JSON.stringify({ account, password }),
-  });
-}
-
-export function sendSmsCode(phone: string) {
-  return chatRequest<ApiEnvelope>("sms/send", { method: "POST", body: JSON.stringify({ phone }) });
-}
-
-export function loginBySms(phone: string, code: string) {
-  return chatRequest<ApiEnvelope<LoginResult>>("sms_login", {
-    method: "POST",
-    body: JSON.stringify({ phone, code }),
-  });
-}
-
-export function sendEmailCode(email: string) {
-  return chatRequest<ApiEnvelope>("email/send", { method: "POST", body: JSON.stringify({ email }) });
-}
-
-export function loginByEmail(email: string, code: string) {
-  return chatRequest<ApiEnvelope<LoginResult>>("email/login", {
-    method: "POST",
-    body: JSON.stringify({ email, code }),
-  });
-}
-
-export function getLoginQrCode() {
-  return chatRequest<ApiEnvelope<{ qr_code: string; id: string }>>("login/qrcode", { method: "GET" });
-}
-
-export function pollLoginQrCode(id: string) {
-  return chatRequest<ApiEnvelope<LoginResult>>("login/qrcode/check", {
-    method: "POST",
-    body: JSON.stringify({ id }),
-  });
-}
-
-export function getFriends(page = 1, count = 100) {
-  return chatRequest<ApiEnvelope<{ items?: unknown[]; users?: unknown[]; friends?: unknown[] }>>(
-    `friends/list?count=${count}&page=${page}`,
-    { method: "GET" },
-  );
+export async function getMembers() {
+  const limit = 200;
+  let offset = 0;
+  let total = 0;
+  const members: OrganizationMembersResult["members"] = [];
+  do {
+    const page = await organizationRequest<OrganizationMembersResult>(
+      `/v1/members?limit=${limit}&offset=${offset}`,
+      { method: "GET" },
+    );
+    members.push(...(Array.isArray(page.members) ? page.members : []));
+    total = Number(page.total) || members.length;
+    if (!page.members?.length) break;
+    offset += page.members.length;
+  } while (offset < total);
+  return { members, total, limit, offset: 0 } satisfies OrganizationMembersResult;
 }
 
 export function searchFriends(key: string) {
@@ -100,30 +111,67 @@ export function applyFriend(friendId: string) {
   });
 }
 
-export function getGroups(count = 100, offset = "") {
-  return chatRequest<ApiEnvelope>(`groups/mygroups?count=${count}&offset=${encodeURIComponent(offset)}`, { method: "GET" });
+export function getTeams() {
+  return organizationRequest<OrganizationTeamsResult>("/v1/teams", { method: "GET" });
 }
 
 export function createGroup(name: string, members: ChatContactInput[]) {
-  return chatRequest<ApiEnvelope<{ group_id?: string; group_name?: string; group_portrait?: string }>>("groups/add", {
+  const memberIds = members.map((member) => member.member_id).filter((id): id is string => Boolean(id));
+  if (memberIds.length !== members.length) throw new Error("组织成员数据缺少 member ID，请刷新通讯录后重试");
+  return organizationRequest<{ team: OrganizationTeamsResult["teams"][number] }>("/v1/teams", {
     method: "POST",
-    body: JSON.stringify({
-      group_name: name,
-      group_portrait: "",
-      members: members.map((member) => ({ user_id: member.user_id })),
-    }),
+    body: JSON.stringify({ name, memberIds }),
   });
 }
 
-export function getGroupInfo(groupId: string) {
-  return chatRequest<ApiEnvelope<Record<string, unknown>>>(`groups/info?group_id=${encodeURIComponent(groupId)}`, { method: "GET" });
+function memberAsGroupMember(member: OrganizationMembersResult["members"][number]): ChatGroupMember {
+  return {
+    user_id: member.user.imUserId,
+    id: member.user.imUserId,
+    nickname: member.user.name || member.user.account || member.user.imUserId,
+    name: member.user.name || member.user.account || member.user.imUserId,
+    avatar: member.user.avatar || undefined,
+    portrait: member.user.avatar || undefined,
+    organization_member_id: member.id,
+    role: member.isOwner ? 1 : member.role === "admin" ? 2 : 0,
+  };
 }
 
-export function getGroupMembers(groupId: string, limit = 100, offset = "") {
-  return chatRequest<ApiEnvelope<{ items?: ChatGroupMember[]; members?: ChatGroupMember[]; offset?: string } | ChatGroupMember[]>>(
-    `groups/members/list?group_id=${encodeURIComponent(groupId)}&limit=${limit}&offset=${encodeURIComponent(offset)}`,
-    { method: "GET" },
-  );
+async function getTeamMembers(groupId: string) {
+  const [teamsResult, membersResult] = await Promise.all([getTeams(), getMembers()]);
+  const team = teamsResult.teams.find((item) => item.id === groupId);
+  if (!team) throw new Error("群组不存在或已被删除");
+  const memberIds = new Set(team.memberIds);
+  const members = membersResult.members.filter((member) => memberIds.has(member.id)).map(memberAsGroupMember);
+  return { team, members };
+}
+
+export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<string, unknown>>> {
+  const teamsResult = await getTeams();
+  const team = teamsResult.teams.find((item) => item.id === groupId);
+  if (!team) throw new Error("群组不存在或已被删除");
+  return {
+    code: 0,
+    data: {
+      group_id: team.id,
+      group_name: team.name,
+      members: [],
+      member_count: team.memberIds.length,
+      my_role: 0,
+      group_management: { group_mention_all_right: 7 },
+    },
+  };
+}
+
+export async function getGroupMembers(groupId: string, limit = 100, offset = "") {
+  const { members } = await getTeamMembers(groupId);
+  const start = Math.max(0, Number.parseInt(offset, 10) || 0);
+  const page = members.slice(start, start + limit);
+  const nextOffset = start + page.length < members.length ? String(start + page.length) : "";
+  return {
+    code: 0,
+    data: { items: page, members: page, offset: nextOffset },
+  } satisfies ApiEnvelope<{ items: ChatGroupMember[]; members: ChatGroupMember[]; offset: string }>;
 }
 
 export function updateGroup(groupId: string, values: { group_name?: string; group_portrait?: string }) {
@@ -222,26 +270,7 @@ export function dismissGroup(groupId: string) {
   return chatRequest<ApiEnvelope>("groups/dissolve", { method: "POST", body: JSON.stringify({ group_id: groupId }) });
 }
 
-type ChatContactInput = { user_id: string };
-
-export async function resolveOrganization(organId: string): Promise<ServerSetting> {
-  const value = organId.trim();
-  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
-    const server = `http://${value}:9003`;
-    return { app_key: "n6wrag6h2csg9wyv", im_servers: [server], app_servers: [server] };
-  }
-  // The organization directory is public and intentionally receives no
-  // tenant/user headers. Adding AppKey here makes browsers preflight a request
-  // that the directory service does not need to accept.
-  const response = await fetch(`https://index.snailchat.im/serverinfos?no=${encodeURIComponent(value)}`);
-  if (!response.ok) throw new Error(`组织查询失败（HTTP ${response.status}）`);
-  const result = (await response.json()) as { data?: { server_info_plain?: string } };
-  const raw = result.data?.server_info_plain;
-  if (!raw) throw new Error("组织不存在或未返回服务器配置");
-  const parsed = JSON.parse(raw) as ServerSetting;
-  if (!parsed.app_key || !parsed.app_servers?.length) throw new Error("组织服务器配置无效");
-  return parsed;
-}
+type ChatContactInput = { user_id: string; member_id?: string };
 
 export async function callBusserver(args: Record<string, unknown> = {}) {
   const http = (args._http && typeof args._http === "object" ? args._http : {}) as Record<string, unknown>;

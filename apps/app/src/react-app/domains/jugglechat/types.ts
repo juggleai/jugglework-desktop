@@ -4,6 +4,7 @@ export type ServerSetting = {
   app_key: string;
   app_servers: string[];
   im_servers: string[];
+  api_base_url?: string;
 };
 
 export type ChatUser = {
@@ -101,6 +102,8 @@ export type ChatReaction = {
 
 export type ChatContact = {
   user_id: string;
+  member_id?: string;
+  identity_user_id?: string;
   conversationType?: number;
   nickname?: string;
   avatar?: string;
@@ -139,12 +142,41 @@ export type ApiEnvelope<T = unknown> = {
   data: T;
 };
 
-export type LoginResult = {
-  user_id: string;
-  authorization: string;
-  nickname: string;
-  im_token: string;
-  avatar?: string;
+export type OrganizationMember = {
+  id: string;
+  userId: string;
+  role: string;
+  createdAt: string;
+  joinedAt: string;
+  isOwner: boolean;
+  user: {
+    id: string;
+    imUserId: string;
+    account: string;
+    email: string;
+    name: string;
+    avatar: string | null;
+  };
+};
+
+export type OrganizationMembersResult = {
+  members: OrganizationMember[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type OrganizationTeam = {
+  id: string;
+  name: string;
+  memberIds: string[];
+  managedByScim: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type OrganizationTeamsResult = {
+  teams: OrganizationTeam[];
 };
 
 export type SkillEnvelope = {
