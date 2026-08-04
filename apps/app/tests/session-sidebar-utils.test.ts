@@ -13,7 +13,7 @@ const sessions: SidebarSessionItem[] = [
 ];
 
 describe("global session pinning", () => {
-  test("selects a pinned root and its expanded descendants", () => {
+  test("shows only the pinned main session even when it has expanded children", () => {
     const tree = buildSessionTreeState(sessions, undefined);
     const rows = flattenSessionRows(
       sessions,
@@ -26,7 +26,24 @@ describe("global session pinning", () => {
       { include: new Set(["session-a"]) },
     );
 
-    expect(rows.map((row) => row.session.id)).toEqual(["session-a", "session-a-child"]);
+    expect(rows.map((row) => row.session.id)).toEqual(["session-a"]);
+  });
+
+  test("does not promote an orphaned child into the main session list", () => {
+    const orphaned = [
+      ...sessions,
+      { id: "session-orphan", title: "Orphan child", parentID: "missing-parent" },
+    ];
+    const tree = buildSessionTreeState(orphaned, undefined);
+    const rows = flattenSessionRows(
+      orphaned,
+      10,
+      tree,
+      new Set(),
+      new Set(),
+    );
+
+    expect(rows.map((row) => row.session.id)).toEqual(["session-a", "session-b"]);
   });
 
   test("removes pinned roots before applying the workspace preview limit", () => {

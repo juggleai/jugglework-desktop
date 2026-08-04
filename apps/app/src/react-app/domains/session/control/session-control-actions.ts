@@ -12,6 +12,7 @@ import { useWorkbenchStore } from "../chat/workbench-store";
 type SessionLike = {
   id?: string;
   title?: string;
+  parentID?: string | null;
   time?: {
     updated?: number;
     created?: number;
@@ -108,6 +109,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       for (const workspace of workspaces) {
         const list = sessionsByWorkspaceId[workspace.id] ?? [];
         for (const session of list) {
+          if (session.parentID?.trim()) continue;
           const sessionId = session.id?.trim() ?? "";
           if (!sessionId) continue;
           const title = getDisplaySessionTitle(session.title ?? "");

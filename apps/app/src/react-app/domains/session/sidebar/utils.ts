@@ -53,12 +53,12 @@ const normalizeSessionParentID = (session: SessionListItem) => {
   return parentID || "";
 };
 
+/** Main sessions are the only sessions exposed by session-list UI surfaces. */
+export const isMainSession = (session: Pick<SessionListItem, "parentID">) =>
+  !session.parentID?.trim();
+
 export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
-  const byID = new Set(sessions.map((session) => session.id));
-  return sessions.filter((session) => {
-    const parentID = normalizeSessionParentID(session);
-    return !parentID || !byID.has(parentID);
-  });
+  return sessions.filter(isMainSession);
 };
 
 /** Split sessions into active vs. archived. Archived sessions live in their own section. */
@@ -208,18 +208,11 @@ export const flattenSessionRows = (
   const rows: FlattenedSessionRow[] = [];
   const visited = new Set<string>();
 
-  const walk = (session: SessionListItem, depth: number) => {
+  orderedRoots.forEach((session) => {
     if (visited.has(session.id)) return;
     visited.add(session.id);
-    rows.push({ session, depth });
-    const children = tree.childrenByParent.get(session.id) ?? [];
-    if (!children.length) return;
-    const expanded = expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
-    if (!expanded) return;
-    children.forEach((child) => walk(child, depth + 1));
-  };
-
-  orderedRoots.forEach((root) => walk(root, 0));
+    rows.push({ session, depth: 0 });
+  });
   return rows;
 };
 

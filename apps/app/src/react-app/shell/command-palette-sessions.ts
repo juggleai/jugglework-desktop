@@ -19,6 +19,7 @@ export function buildCommandPaletteSessions(
       t("session.workspace_fallback");
 
     for (const session of sessionsByWorkspaceId[workspace.id] ?? []) {
+      if (session.parentID?.trim()) continue;
       const sessionId = session.id.trim();
       if (!sessionId) continue;
       const title = getDisplaySessionTitle(session.title ?? "");

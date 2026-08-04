@@ -105,6 +105,7 @@ import {
   flattenSessionRows,
   formatSessionRelativeTime,
   getRootSessions,
+  isMainSession,
   isActiveWorkSessionStatus,
   isNeedsAttentionSessionStatus,
   isSessionArchived,
@@ -913,7 +914,10 @@ export function AppSidebar(props: AppSidebarProps) {
     );
     if (!trimmedSessionQuery) return inScope;
     return inScope.flatMap((group) => {
-      const sessions = filterSessionsByTitle(group.sessions, trimmedSessionQuery);
+      const sessions = filterSessionsByTitle(
+        group.sessions.filter(isMainSession),
+        trimmedSessionQuery,
+      );
       return sessions.length ? [{ ...group, sessions }] : [];
     });
   }, [props.workspaceSessionGroups, taskScope, trimmedSessionQuery]);
@@ -934,7 +938,7 @@ export function AppSidebar(props: AppSidebarProps) {
   const archivedSessions = React.useMemo(() => {
     const entries: GlobalArchivedSessionEntry[] = [];
     for (const group of visibleWorkspaceSessionGroups) {
-      for (const session of partitionArchivedSessions(group.sessions).archived) {
+      for (const session of partitionArchivedSessions(group.sessions).archived.filter(isMainSession)) {
         entries.push({ group, session });
       }
     }
@@ -2132,8 +2136,6 @@ function SessionMenuItem({
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
-  const hasChildren = (tree.descendantCountBySessionId.get(session.id) ?? 0) > 0;
-  const isExpanded = ctx.expandedSessionIds.has(session.id) || forcedExpandedSessionIds.has(session.id);
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
   const isUnread = unreadIds.has(session.id) && !isSelected;
@@ -2202,39 +2204,7 @@ function SessionMenuItem({
     </>
   );
 
-  const item = hasChildren ? (
-    <Collapsible
-      open={isExpanded}
-      onOpenChange={() => ctx.toggleSessionExpanded(session.id)}
-      className="group/session-collapsible"
-    >
-      <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
-        <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
-          <CollapsibleTrigger
-            render={
-              <SidebarMenuSubButton
-                className={rowButtonClass}
-                isActive={isSelected}
-                onClick={openSession}
-                onPointerEnter={prefetchSession}
-                onFocus={prefetchSession}
-                aria-label={accessibleState}
-              >
-                {leading}
-                <span className="min-w-0 flex-1 truncate" title={itemTitle}>
-                  {displayTitle}
-                </span>
-                <span className="flex size-6 shrink-0 items-center justify-center">
-                  <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-open/session-collapsible:rotate-90 hover:text-foreground" />
-                </span>
-              </SidebarMenuSubButton>
-            }
-          />
-        </SessionContextMenu>
-        {trailing}
-      </SidebarMenuSubItem>
-    </Collapsible>
-  ) : (
+  const item = (
     <SidebarMenuSubItem {...dragProps} data-sidebar-session-id={session.id}>
       <SessionContextMenu sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived}>
         <SidebarMenuSubButton
