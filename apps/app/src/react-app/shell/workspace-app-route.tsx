@@ -8,6 +8,10 @@ import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
+  WorkspaceShellActionsProvider,
+  useWorkspaceShellActions,
+} from "./workspace-shell-actions";
+import {
   legacySessionRoute,
   parseWorkspaceAppPath,
   workspaceAppsRoute,
@@ -50,9 +54,10 @@ function initialSessionTarget(pathname: string, navigationState: unknown): Retai
  * without reconnecting the active session, refetching its transcript, or
  * resetting transient composer/model state.
  */
-export function WorkspaceAppRoute() {
+function WorkspaceAppRouteContent() {
   const location = useLocation();
   const navigate = useNavigate();
+  const workspaceShellActions = useWorkspaceShellActions();
   const appPath = useMemo(
     () => parseWorkspaceAppPath(location.pathname),
     [location.pathname],
@@ -103,16 +108,6 @@ export function WorkspaceAppRoute() {
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
 
-  const openRetainedSessionAction = (testId: string) => {
-    navigate(sessionPath);
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        const selector = `[data-testid="retained-session-surface"] [data-testid="${testId}"]`;
-        document.querySelector<HTMLButtonElement>(selector)?.click();
-      });
-    });
-  };
-
   const openSurfaceSettings = (
     tab: "cloud-account" | "general",
     returnPath: string,
@@ -161,6 +156,8 @@ export function WorkspaceAppRoute() {
           onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
           onToggleChat={() => navigate(sessionPath)}
           onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
+          onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+          onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
         />
       </div>
 
@@ -176,9 +173,19 @@ export function WorkspaceAppRoute() {
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
             onOpenSettings={() => openSurfaceSettings("general", workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+            onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
           />
         </div>
       ) : null}
     </div>
+  );
+}
+
+export function WorkspaceAppRoute() {
+  return (
+    <WorkspaceShellActionsProvider>
+      <WorkspaceAppRouteContent />
+    </WorkspaceShellActionsProvider>
   );
 }

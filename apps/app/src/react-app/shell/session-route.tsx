@@ -181,6 +181,7 @@ import { useShellShortcuts } from "./use-shell-shortcuts";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
+import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { legacySessionRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
@@ -1538,6 +1539,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
   });
+  const openTaskSearch = useCallback(() => setSessionSearchOpen(true), [setSessionSearchOpen]);
+  const workspaceShellActions = useMemo(() => ({
+    openTaskSearch,
+    openCreateWorkspace: handleOpenCreateWorkspace,
+  }), [handleOpenCreateWorkspace, openTaskSearch]);
+  useRegisterWorkspaceShellActions(workspaceShellActions);
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
     selectedWorkspaceId,

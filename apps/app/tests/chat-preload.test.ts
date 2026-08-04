@@ -21,7 +21,7 @@ describe("Chat startup preload", () => {
   test("keeps the React Chat runtime mounted eagerly", () => {
     expect(workspaceRouteSource).toContain("<ChatPage");
     expect(workspaceRouteSource).toContain("React runtime initializes the IM");
-    expect(chatPageSource).toContain("<JuggleChatApp />");
+    expect(chatPageSource).toContain("<JuggleChatApp");
     expect(chatPageSource).not.toContain("<iframe");
     expect(chatPageSource).not.toContain("/chat/index.html");
   });

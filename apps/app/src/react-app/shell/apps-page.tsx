@@ -8,6 +8,10 @@ export type AppsPageProps = {
   onOpenHome: () => void;
   onOpenChat: () => void;
   onOpenSettings: () => void;
+  /** Opens the cross-workspace task search dialog owned by the session shell. */
+  onOpenTaskSearch: () => void;
+  /** Opens the local/remote workspace chooser owned by the session shell. */
+  onOpenCreateWorkspace: () => void;
 };
 
 export function AppsPage(props: AppsPageProps) {
@@ -20,6 +24,8 @@ export function AppsPage(props: AppsPageProps) {
         onOpenApps={() => undefined}
         onOpenChat={props.onOpenChat}
         onOpenSettings={props.onOpenSettings}
+        onOpenTaskSearch={props.onOpenTaskSearch}
+        onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
       <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <SettingsRoute
