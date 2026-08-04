@@ -6,7 +6,7 @@
  */
 
 .jw-im-root {
-  --primary-panel-width: clamp(340px, 27cqw, 520px);
+  --primary-panel-width: var(--jugglework-left-sidebar-width, clamp(340px, 27cqw, 520px));
   --primary-panel-gutter: clamp(16px, 1.9cqw, 36px);
   --jw-im-panel-width: var(--primary-panel-width);
   --jw-im-navigation-height: var(--primary-navigation-height, 82px);
@@ -24,6 +24,32 @@
 .jw-im-root button { appearance: none; }
 .jw-im-root .sr-only { display: none !important; }
 .jw-im-conversation-layout { width: 100%; min-width: 0; min-height: 0; }
+.jw-im-root .jw-im-sidebar-toggle {
+  position: absolute;
+  z-index: 1500;
+  top: 4px;
+  left: calc(var(--primary-panel-width) + 24px);
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 18.72px;
+  color: #1c2024;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.jw-im-root .jw-im-sidebar-toggle:hover { background: rgba(28, 32, 36, .06); }
+.jw-im-root .jw-im-sidebar-toggle > svg { width: 14px; height: 14px; }
+.jw-im-root.is-list-collapsed .jw-im-sidebar-toggle { left: 16px; }
+:host([data-jugglework-platform="mac"]) .jw-im-root .jw-im-sidebar-toggle {
+  top: 3px;
+  left: 8px;
+}
+:host([data-jugglework-platform="mac"]) .jw-im-root.is-list-collapsed .jw-im-sidebar-toggle { left: 80px; }
 
 /* Avatar typography copied from snailchat-web/custom_conversation.css.
  * Reset the React prototype's inherited weight/line-height first, then keep
@@ -68,8 +94,186 @@
 
 /* Conversation list */
 .jw-im-list-pane {
+  box-sizing: border-box;
+  min-width: 0;
   width: var(--primary-panel-width);
   flex: 0 0 var(--primary-panel-width);
+  overflow: hidden;
+  border-right: 1px solid #e0e1e6 !important;
+  background: #f9f9fb;
+  transition: width 200ms linear, flex-basis 200ms linear;
+}
+.jw-im-root.is-list-collapsed .jw-im-list-pane {
+  width: 0;
+  flex-basis: 0;
+  border-right-width: 0 !important;
+}
+.jw-im-root .jw-im-list-filter-header {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  height: 57px;
+  min-height: 57px;
+  flex: 0 0 57px;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  border-bottom: 1px solid #e0e1e6;
+  background: transparent;
+  -webkit-app-region: drag;
+}
+:host([data-jugglework-platform="mac"]) .jw-im-root .jw-im-list-filter-header {
+  height: 93px;
+  min-height: 93px;
+  flex-basis: 93px;
+  padding-top: 48px;
+}
+.jw-im-list-filter {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: 32px;
+  flex: 1 1 auto;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+.jw-im-list-filter > svg:first-child {
+  position: absolute;
+  z-index: 1;
+  left: 10px;
+  width: 16px;
+  height: 16px;
+  color: rgba(28, 32, 36, .5);
+  pointer-events: none;
+}
+.jw-im-list-filter > input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 4px 32px;
+  border: 1px solid #e0e1e6;
+  border-radius: 10.08px;
+  outline: none;
+  color: #1c2024;
+  background: #fcfcfd;
+  font-family: "IBM Plex Sans", Geist, "Avenir Next", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
+  -webkit-appearance: none;
+}
+.jw-im-list-filter > input::-webkit-search-cancel-button { display: none; }
+.jw-im-list-filter > input::placeholder { color: #60646c; }
+.jw-im-list-filter > input:focus {
+  border-color: #b8bec7;
+  box-shadow: 0 0 0 2px rgba(36, 101, 255, .08);
+}
+.jw-im-list-filter-clear,
+.jw-im-list-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  color: #60646c;
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.jw-im-list-filter-clear {
+  position: absolute;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.jw-im-list-filter-clear > svg { width: 14px; height: 14px; }
+.jw-im-list-add {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid transparent;
+  border-radius: 10.08px;
+}
+.jw-im-list-add > svg { width: 16px; height: 16px; }
+.jw-im-list-filter-clear:hover,
+.jw-im-list-add:hover { color: #1c2024; }
+.jw-im-list-add:hover { background: #fcfcfd; }
+.jw-im-list-add-wrap {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  -webkit-app-region: no-drag;
+}
+.jw-im-list-add-wrap.is-open { z-index: 1600; }
+.jw-im-list-add-menu {
+  position: absolute;
+  z-index: 1;
+  top: 38px;
+  right: 0;
+  width: 140px;
+  padding: 6px;
+  border: 1px solid #e0e1e6;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(28, 32, 36, .14);
+  transform-origin: top right;
+  animation: jw-im-list-menu-in 150ms cubic-bezier(.22, .61, .36, 1);
+}
+.jw-im-list-add-menu > button {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: #1c2024;
+  background: transparent;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.jw-im-list-add-menu > button:hover { background: #f2f2f4; }
+.jw-im-list-add-menu > button > svg { width: 16px; height: 16px; color: #60646c; }
+@keyframes jw-im-list-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.jw-im-list-loading {
+  position: absolute;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #999ea6;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+}
+.jw-im-list-loading > svg { width: 12px; height: 12px; }
+.jw-im-list-filter-shortcut {
+  position: absolute;
+  right: 8px;
+  color: rgba(96, 100, 108, .55);
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: .025em;
+  pointer-events: none;
+}
+.jw-im-root .jw-im-contact-main-header {
+  box-sizing: border-box;
+  width: 100%;
+  height: 56px;
+  min-height: 56px;
+  flex: 0 0 56px;
+  padding: 0 16px;
 }
 .jw-im-pane-header .jg-convers-tools {
   min-width: 0;
@@ -815,7 +1019,7 @@
 .jw-im-call-panel { border-radius: 16px; background: linear-gradient(160deg, #535861, #292d32); }
 
 @media (max-width: 760px) {
-  .jw-im-root { --primary-panel-width: min(100%, 340px); }
+  .jw-im-root { --primary-panel-width: min(100%, var(--jugglework-left-sidebar-width, 340px)); }
   .jw-im-message-stack { max-width: calc(100% - 70px); }
   .jw-im-login-card { width: calc(100% - 32px); padding-right: 24px; padding-left: 24px; }
 }

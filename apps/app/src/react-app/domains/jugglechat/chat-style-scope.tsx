@@ -37,7 +37,11 @@ export function ChatStyleScope({ children }: { children: ReactNode }) {
           inside a Shadow Root. Register only the font globally; all wr icon
           selectors remain isolated in the chat shadow tree. */}
       <style>{iconFontFaceCss}</style>
-      <div ref={mount} className="h-full min-h-0 w-full min-w-0 overflow-hidden">
+      <div
+        ref={mount}
+        className="h-full min-h-0 w-full min-w-0 overflow-hidden"
+        data-jugglework-platform={typeof document !== "undefined" && document.documentElement.classList.contains("jugglework-platform-mac") ? "mac" : "other"}
+      >
         {shadow
           ? createPortal(
               <>

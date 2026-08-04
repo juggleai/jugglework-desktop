@@ -724,6 +724,7 @@ export default {
   "mcp.friendly_status_ready": "Ready",
   "mcp.last_synced": "Synced",
   "navigation.chat": "Chat",
+  "navigation.contacts": "Contacts",
   "navigation.cloud_tasks": "Cloud tasks",
   "navigation.cloud_workspace": "Cloud workspace",
   "navigation.create_cloud_task": "New cloud task",

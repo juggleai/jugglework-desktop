@@ -4,13 +4,13 @@ import { createPortal } from "react-dom";
 import MD5 from "crypto-js/md5";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
+import { isMacPlatform } from "@/app/utils";
 import {
   ArrowDown,
   AtSign,
   Check,
   ChevronLeft,
   CircleAlert,
-  ContactRound,
   Crown,
   FileIcon,
   Forward,
@@ -24,6 +24,7 @@ import {
   Paperclip,
   Phone,
   PhoneOff,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -40,7 +41,6 @@ import {
 } from "lucide-react";
 
 import {
-  applyFriend,
   addGroupAdmins,
   createGroup,
   dismissGroup,
@@ -58,7 +58,6 @@ import {
   removeGroupAdmins,
   removeGroupMembers,
   resolveOrganization,
-  searchFriends,
   setGroupDisplayName,
   setGroupHistoryVisible,
   setGroupManagement,
@@ -81,6 +80,20 @@ import type { ApiEnvelope, ChatContact, ChatConversation, ChatGroupInfo, ChatGro
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+function useListSearchShortcut() {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      inputRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+  return inputRef;
 }
 
 function toError(error: unknown) {
@@ -354,27 +367,6 @@ export function LoginScreen() {
   );
 }
 
-export function PrimaryNavigation() {
-  const view = useJuggleChatStore((state) => state.view);
-  const setView = useJuggleChatStore((state) => state.setView);
-  const user = useJuggleChatStore((state) => state.user);
-  return (
-    <nav className="jw-im-primary-nav tyn-aside-footer jg-primary-navigation" aria-label="Chat 导航">
-      <ul className="jw-im-primary-nav-top jg-footer-tools jg-footer-top-box">
-        <li className="jg-footer-tool jg-primary-tab-item">
-          <button className={cx("jg-asider-footer-item jg-primary-tab", view === "conversations" && "is-active jg-footer-active")} onClick={() => setView("conversations")} title="消息"><MessageCircle className="icon" /><span className="jw-im-nav-label name">消息</span></button>
-        </li>
-        <li className="jg-footer-tool jg-primary-tab-item">
-          <button className={cx("jg-asider-footer-item jg-primary-tab", view === "contacts" && "is-active jg-footer-active")} onClick={() => setView("contacts")} title="联系人"><ContactRound className="icon" /><span className="jw-im-nav-label name">通讯录</span></button>
-        </li>
-      </ul>
-      <button className={cx("jw-im-profile-button jg-primary-profile jg-primary-profile-item", view === "settings" && "is-active")} onClick={() => setView("settings")} title="Chat 设置">
-        <span className="jg-header-user"><ChatAvatar className="jg-header-user-avatar" name={user?.name || user?.id || "?"} userId={user?.id} src={user?.portrait} /></span>
-      </button>
-    </nav>
-  );
-}
-
 function formatTime(value?: number) {
   if (!value) return "";
   const date = new Date(value);
@@ -410,16 +402,57 @@ function messagePreview(message?: ChatMessage) {
   return "[暂不支持的消息]";
 }
 
+function ListAddMenu({ onOpen, onCreateGroup }: { onOpen?: () => void; onCreateGroup: () => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!menuRef.current || event.composedPath().includes(menuRef.current)) return;
+      setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) onOpen?.();
+  };
+
+  return (
+    <div ref={menuRef} className={cx("jw-im-list-add-wrap", open && "is-open")}>
+      <button type="button" className="jw-im-list-add" onClick={toggle} title="新增" aria-label="新增" aria-haspopup="menu" aria-expanded={open}><Plus /></button>
+      {open ? (
+        <div className="jw-im-list-add-menu" role="menu">
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onCreateGroup(); }}><Users /><span>创建群组</span></button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ConversationList() {
   const conversations = useJuggleChatStore((state) => state.conversations);
+  const contacts = useJuggleChatStore((state) => state.contacts);
   const active = useJuggleChatStore((state) => state.activeConversation);
   const select = useJuggleChatStore((state) => state.selectConversation);
   const loading = useJuggleChatStore((state) => state.loadingConversations);
   const initialized = useJuggleChatStore((state) => state.conversationsInitialized);
-  const reload = useJuggleChatStore((state) => state.loadConversations);
-  const setView = useJuggleChatStore((state) => state.setView);
+  const loadContacts = useJuggleChatStore((state) => state.loadContacts);
+  const reloadConversations = useJuggleChatStore((state) => state.loadConversations);
   const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const searchInputRef = useListSearchShortcut();
   const filtered = useMemo(() => conversations.filter((item) => conversationName(item).toLowerCase().includes(query.trim().toLowerCase())), [conversations, query]);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousRowPositions = useRef(new Map<string, number>());
@@ -462,27 +495,24 @@ export function ConversationList() {
     }
     previousRowPositions.current = positions;
     previousOrder.current = orderKey;
-  }, [orderKey, searchOpen]);
+  }, [orderKey]);
   useEffect(() => () => rowAnimations.current.forEach((animation) => animation.cancel()), []);
   return (
-    <aside className="jw-im-list-pane tyn-aside">
-      <header className="jw-im-pane-header jg-conversations-header">
-        <ul className="jg-convers-tools">
-          <li className="jg-conversation-tool">消息</li>
-          {loading && !initialized ? <li className="jg-conversation-tool jg-conversation-updating"><LoaderCircle className="is-spinning" size={13} /><span className="title">数据更新中...</span></li> : null}
-        </ul>
-        <div className="jw-im-header-actions jg-contact-actions">
-          <button className="jg-contact-action" onClick={() => setSearchOpen((value) => !value)} title="搜索"><span className="jg-header-icon jg-header-icon--search" aria-hidden="true" /></button>
-          <button className="jg-contact-action jg-add-action" onClick={() => setView("contacts")} title="新建"><span className="jg-header-icon jg-header-icon--add" aria-hidden="true" /></button>
-          <button className="jw-im-refresh-action" onClick={() => void reload()} title="刷新"><RefreshCw className={loading ? "is-spinning" : ""} size={15} /></button>
+    <>
+      <aside className="jw-im-list-pane tyn-aside">
+      <header className="jw-im-pane-header jg-conversations-header jw-im-list-filter-header">
+        <div className="jw-im-list-filter">
+          <Search aria-hidden="true" />
+          <input ref={searchInputRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" />
+          {query ? <button type="button" className="jw-im-list-filter-clear" onClick={() => setQuery("")} title="清除搜索" aria-label="清除搜索"><X /></button> : loading && !initialized ? <span className="jw-im-list-loading" title="数据更新中..."><LoaderCircle className="is-spinning" /><span>数据更新中...</span></span> : <kbd className="jw-im-list-filter-shortcut">{isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}</kbd>}
         </div>
+        <ListAddMenu onOpen={() => { if (!contacts.length) void loadContacts(); }} onCreateGroup={() => setGroupOpen(true)} />
       </header>
-      {searchOpen ? <label className="jw-im-search jg-search-box"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" /><button onClick={() => { setSearchOpen(false); setQuery(""); }}><X size={14} /></button></label> : null}
       <div className="jg-conversation-body">
         <div className="jg-conver-list">
           <div className="jw-im-list-scroll tyn-aside-body tyn-aside-list newui-conversation-list-anim" onScroll={captureRowPositions}>
         {loading && !conversations.length ? <div className="newui-conversation-skeleton">{Array.from({ length: 6 }, (_, index) => <div className="newui-skeleton-row newui-conversation-card" key={index}><span className="newui-skeleton-avatar" /><span className="newui-conversation-content"><span className="newui-skeleton-line newui-skeleton-line-title" style={{ width: `${52 + index * 4}%` }} /><span className="newui-skeleton-line newui-skeleton-line-preview" style={{ width: `${66 + index * 3}%` }} /></span><span className="newui-conversation-side"><span className="newui-skeleton-line newui-skeleton-line-time" /></span></div>)}</div> : null}
-        {!loading && !filtered.length ? <div className="newui-empty-state"><div className="newui-empty-state-icon"><MessageCircle /></div><div className="newui-empty-state-title">暂无会话</div><div className="newui-empty-state-sub">点击右上角 + 开始新对话</div></div> : null}
+        {!loading && !filtered.length ? <div className="newui-empty-state"><div className="newui-empty-state-icon"><MessageCircle /></div><div className="newui-empty-state-title">暂无会话</div><div className="newui-empty-state-sub">点击右上角 + 创建群组</div></div> : null}
         {filtered.map((conversation) => {
           const name = conversationName(conversation);
           const key = `${conversation.conversationType}:${conversation.conversationId}`;
@@ -507,7 +537,9 @@ export function ConversationList() {
           </div>
         </div>
       </div>
-    </aside>
+      </aside>
+      {groupOpen ? <CreateGroupModal contacts={contacts} onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void loadContacts(); void reloadConversations(); }} /> : null}
+    </>
   );
 }
 
@@ -1780,12 +1812,9 @@ export function ContactsSurface() {
   const open = useJuggleChatStore((state) => state.openContact);
   const [selected, setSelected] = useState<ChatContact | null>(null);
   const [query, setQuery] = useState("");
-  const [addOpen, setAddOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
-  const [tab, setTab] = useState<"friends" | "new" | "groups" | "blacklist" | "bots">("friends");
-  const [addQuery, setAddQuery] = useState("");
-  const [searchResult, setSearchResult] = useState<ChatContact[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<"friends" | "groups">("friends");
+  const searchInputRef = useListSearchShortcut();
   const source = tab === "friends" ? contacts : tab === "groups" ? groups : [];
   const filtered = source.filter((contact) => `${contact.friend_display_name || ""}${contact.nickname || ""}${contact.user_id}`.toLowerCase().includes(query.trim().toLowerCase()));
   const grouped = useMemo(() => {
@@ -1798,35 +1827,29 @@ export function ContactsSurface() {
     return [...values.entries()].sort(([left], [right]) => left === "#" ? 1 : right === "#" ? -1 : left.localeCompare(right));
   }, [filtered]);
   const categories = [
-    { id: "friends" as const, name: "联系人", icon: "jg-tab-icon--contact" },
-    { id: "new" as const, name: "新朋友", icon: "jg-tab-icon--adduser" },
+    { id: "friends" as const, name: "组织内联系人", icon: "jg-tab-icon--contact" },
     { id: "groups" as const, name: "群组", icon: "jg-tab-icon--group" },
-    { id: "blacklist" as const, name: "黑名单", icon: "jg-tab-icon--block" },
-    { id: "bots" as const, name: "智能体", icon: "jg-tab-icon--bot" },
   ];
   const currentCategory = categories.find((item) => item.id === tab)!;
-  const doSearch = async () => {
-    if (!addQuery.trim()) return;
-    setBusy(true);
-    try {
-      const result = await searchFriends(addQuery.trim());
-      setSearchResult(extractContactSearch(result.data));
-    } finally { setBusy(false); }
-  };
   return (
     <div className="jw-im-contacts-layout tyn-contact tyn-content tyn-content-full-height tyn-chat has-aside-base show-content">
       <aside className="jw-im-list-pane tyn-aside tyn-contact-aside">
-        <header className="jw-im-pane-header jg-conversations-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">通讯录</li></ul><div className="jw-im-header-actions jg-contact-actions"><button className="jg-contact-action" onClick={() => setQuery((value) => value ? "" : " ")} title="搜索"><span className="jg-header-icon jg-header-icon--search" /></button><button className="jg-contact-action" onClick={() => setAddOpen(true)} title="新增"><span className="jg-header-icon jg-header-icon--add" /></button></div></header>
+        <header className="jw-im-pane-header jg-conversations-header jw-im-list-filter-header">
+          <div className="jw-im-list-filter">
+            <Search aria-hidden="true" />
+            <input ref={searchInputRef} type="search" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(null); }} placeholder="搜索通讯录" aria-label="搜索通讯录" />
+            {query ? <button type="button" className="jw-im-list-filter-clear" onClick={() => setQuery("")} title="清除搜索" aria-label="清除搜索"><X /></button> : <kbd className="jw-im-list-filter-shortcut">{isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}</kbd>}
+          </div>
+          <ListAddMenu onCreateGroup={() => setGroupOpen(true)} />
+        </header>
         <div className="tyn-aside-body"><ul className="tyn-aside-list jw-im-contact-categories">{categories.map((item) => <li key={item.id} className={cx("tyn-aside-item tyn-aside-contact-item", tab === item.id && "active")} onClick={() => { setTab(item.id); setSelected(null); setQuery(""); }}><div className="tyn-media-group"><span className={cx("jg-tab-icon", item.icon)} /><span className="name">{item.name}</span></div><div className="jg-item-right"><div className="jg-arrow" /></div></li>)}</ul></div>
       </aside>
       <main className="jw-im-contact-main tyn-main tyn-chat-content aside-collapsed">
-        <header className="jw-im-pane-header jg-conversations-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">{selected ? <button className="jw-im-contact-back" onClick={() => setSelected(null)}><ChevronLeft size={17} /></button> : null}{selected ? selected.friend_display_name || selected.nickname || selected.user_id : currentCategory.name}</li></ul><div className="jw-im-header-actions jg-contact-actions"><button className="jg-contact-action" onClick={() => setQuery((value) => value ? "" : " ")} title="搜索"><span className="jg-header-icon jg-header-icon--search" /></button><button className="jg-contact-action" onClick={() => tab === "groups" ? setGroupOpen(true) : setAddOpen(true)} title="新增"><span className="jg-header-icon jg-header-icon--add" /></button></div></header>
+        <header className="jw-im-pane-header jg-conversations-header jw-im-contact-main-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">{selected ? <button className="jw-im-contact-back" onClick={() => setSelected(null)}><ChevronLeft size={17} /></button> : null}{selected ? selected.friend_display_name || selected.nickname || selected.user_id : currentCategory.name}</li></ul></header>
         <div className="tyn-chat-body tyn-contact-body">
-          {query ? <label className="jw-im-search jw-im-contact-search"><Search size={16} /><input autoFocus value={query.trimStart()} onChange={(event) => setQuery(` ${event.target.value}`)} placeholder={`搜索${currentCategory.name}`} /><button onClick={() => setQuery("")}><X size={14} /></button></label> : null}
           {selected ? <div className="jw-im-contact-detail"><ChatAvatar className="jg-size-rg tyn-conver-avatar" size="lg" name={selected.friend_display_name || selected.nickname || selected.user_id} userId={selected.user_id} src={selected.avatar} /><h2>{selected.friend_display_name || selected.nickname || selected.user_id}</h2><p>ID: @{selected.user_id}</p><button className="jw-im-primary-button contact-send-msg" onClick={() => void open(selected)}><MessageCircle size={17} />发消息</button></div> : <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>}
         </div>
       </main>
-      {addOpen ? <div className="jw-im-modal-backdrop" onMouseDown={() => setAddOpen(false)}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>添加好友</h3><button onClick={() => setAddOpen(false)}><X size={18} /></button></header><div className="jw-im-add-search"><input value={addQuery} onChange={(event) => setAddQuery(event.target.value)} placeholder="输入用户 ID 或昵称" onKeyDown={(event) => { if (event.key === "Enter") void doSearch(); }} /><button onClick={() => void doSearch()}>{busy ? <LoaderCircle className="is-spinning" /> : <Search />}</button></div><div className="jw-im-search-results">{searchResult.map((contact) => <div key={contact.user_id}><ChatAvatar name={contact.nickname || contact.user_id} userId={contact.user_id} src={contact.avatar} /><span><strong>{contact.nickname || contact.user_id}</strong><small>{contact.user_id}</small></span><button onClick={() => void applyFriend(contact.user_id)}><UserPlus size={16} />添加</button></div>)}</div></section></div> : null}
       {groupOpen ? <CreateGroupModal contacts={contacts} onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void reload(); setTab("groups"); }} /> : null}
     </div>
   );
@@ -1864,14 +1887,6 @@ function CreateGroupModal({ contacts, onClose, onCreated }: { contacts: ChatCont
       </section>
     </div>
   );
-}
-
-function extractContactSearch(data: unknown): ChatContact[] {
-  if (Array.isArray(data)) return data as ChatContact[];
-  if (!data || typeof data !== "object") return [];
-  const value = data as Record<string, unknown>;
-  const list = value.items ?? value.users ?? value.friends ?? (value.user_id ? [value] : []);
-  return Array.isArray(list) ? list as ChatContact[] : [];
 }
 
 export function SettingsSurface() {

@@ -401,6 +401,7 @@ export default {
   "mcp.friendly_status_ready": "Pronto",
   "mcp.last_synced": "Sincronizado",
   "navigation.chat": "Chat",
+  "navigation.contacts": "Contatos",
   "navigation.cloud_tasks": "Tarefas na nuvem",
   "navigation.home": "Início",
   "navigation.local_tasks": "Tarefas locais",

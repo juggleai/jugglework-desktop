@@ -395,6 +395,7 @@ export default {
   "mcp.friendly_status_ready": "準備完了",
   "mcp.last_synced": "同期済み",
   "navigation.chat": "チャット",
+  "navigation.contacts": "連絡先",
   "navigation.cloud_tasks": "クラウドタスク",
   "navigation.home": "ホーム",
   "navigation.local_tasks": "ローカルタスク",
