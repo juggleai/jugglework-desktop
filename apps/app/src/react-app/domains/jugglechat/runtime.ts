@@ -155,14 +155,16 @@ class JuggleChatRuntime {
     }) as Promise<{ messages: ChatMessage[]; isFinished?: boolean }>;
   }
 
-  async sendText(conversation: ChatConversation, content: string, referMsg?: ChatMessage) {
+  async sendText(conversation: ChatConversation, content: string, referMsg?: ChatMessage, mentionInfo?: ChatMessage["mentionInfo"], tid?: string) {
     const client = await this.initialize();
     return client.sendMessage({
       conversationId: conversation.conversationId,
       conversationType: conversation.conversationType,
       name: client.MessageType.TEXT,
       content: { content },
+      ...(tid ? { tid } : {}),
       ...(referMsg ? { referMsg } : {}),
+      ...(mentionInfo ? { mentionInfo, readCount: 0, unreadCount: 1 } : {}),
     }) as Promise<ChatMessage>;
   }
 

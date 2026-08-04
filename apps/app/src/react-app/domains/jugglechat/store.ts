@@ -36,7 +36,7 @@ type JuggleChatState = {
   loadEarlierMessages: () => Promise<void>;
   loadContacts: () => Promise<void>;
   openContact: (contact: ChatContact) => Promise<void>;
-  sendText: (content: string) => Promise<void>;
+  sendText: (content: string, mentionInfo?: ChatMessage["mentionInfo"]) => Promise<void>;
   sendFile: (file: File) => Promise<void>;
   recallMessage: (message: ChatMessage) => Promise<void>;
   removeMessage: (message: ChatMessage) => Promise<void>;
@@ -103,6 +103,12 @@ function getVideoMetadata(url: string) {
 
 function isSameConversation(a: Pick<ChatConversation, "conversationId" | "conversationType"> | null, b: Pick<ChatConversation, "conversationId" | "conversationType"> | null) {
   return Boolean(a && b && a.conversationId === b.conversationId && a.conversationType === b.conversationType);
+}
+
+function syncActiveConversation(activeConversation: ChatConversation | null, conversations: ChatConversation[]) {
+  if (!activeConversation) return null;
+  const updated = conversations.find((conversation) => isSameConversation(conversation, activeConversation));
+  return updated ? { ...activeConversation, ...updated } : activeConversation;
 }
 
 function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
@@ -194,7 +200,11 @@ function startSubscriptions() {
   });
   juggleChatRuntime.subscribe("conversation", ({ conversations = [] }: { conversations?: ChatConversation[] }) => {
     const state = useJuggleChatStore.getState();
-    useJuggleChatStore.setState({ conversations: mergeConversations(state.conversations, conversations, state.user?.id) });
+    const merged = mergeConversations(state.conversations, conversations, state.user?.id);
+    useJuggleChatStore.setState({
+      conversations: merged,
+      activeConversation: syncActiveConversation(state.activeConversation, merged),
+    });
   });
   const updateMessage = (message: ChatMessage) => {
     const state = useJuggleChatStore.getState();
@@ -375,7 +385,11 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     try {
       const result = await juggleChatRuntime.getConversations({ time: 0, count: 100 });
       const conversations = mergeConversations([], result.conversations ?? [], get().user?.id);
-      set({ conversations, loadingConversations: false });
+      set({
+        conversations,
+        activeConversation: syncActiveConversation(get().activeConversation, conversations),
+        loadingConversations: false,
+      });
       if (!get().activeConversation && conversations[0]) void get().selectConversation(conversations[0]);
     } catch (error) {
       set({ loadingConversations: false, error: errorMessage(error) });
@@ -462,19 +476,48 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     await get().selectConversation(conversation);
   },
 
-  async sendText(content) {
+  async sendText(content, mentionInfo) {
     const conversation = get().activeConversation;
     const text = content.trim();
     if (!conversation || !text || get().sending) return;
-    set({ sending: true });
+    const replyTo = get().replyTo ?? undefined;
+    const tid = globalThis.crypto?.randomUUID?.() ?? `text-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const currentUser = get().user;
+    const draft: ChatMessage = {
+      conversationId: conversation.conversationId,
+      conversationType: conversation.conversationType,
+      name: "jg:text",
+      content: { content: text },
+      sender: currentUser ? { id: currentUser.id, name: currentUser.name, portrait: currentUser.portrait } : undefined,
+      isSender: true,
+      sentTime: Date.now(),
+      sentState: 1,
+      tid,
+      localSendAnimation: true,
+      ...(replyTo ? { referMsg: replyTo } : {}),
+      ...(mentionInfo ? { mentionInfo, readCount: 0, unreadCount: 1 } : {}),
+    };
+    set({
+      sending: true,
+      messages: isSameConversation(get().activeConversation, conversation)
+        ? appendMessages(get().messages, [draft])
+        : get().messages,
+    });
     try {
-      const message = await juggleChatRuntime.sendText(conversation, text, get().replyTo ?? undefined);
+      const message = await juggleChatRuntime.sendText(conversation, text, replyTo, mentionInfo, tid);
       if (isSameConversation(get().activeConversation, conversation)) {
-        set({ messages: appendMessages(get().messages, [message]), sending: false, replyTo: null });
+        const sent = mergeMessage(draft, { ...message, tid: message.tid || tid, sentState: 2 });
+        set({ messages: appendMessages(get().messages, [sent]), sending: false, replyTo: null });
+      } else {
+        set({ sending: false });
       }
       await get().loadConversations();
     } catch (error) {
-      set({ sending: false, error: errorMessage(error) });
+      set({
+        sending: false,
+        messages: get().messages.map((message) => message.tid === tid ? { ...message, sentState: 3 } : message),
+        error: errorMessage(error),
+      });
       throw error;
     }
   },
@@ -498,6 +541,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       percent: 0,
       tid,
       localUrl,
+      localSendAnimation: true,
     };
     set({ sending: true, uploadProgress: 0 });
     try {

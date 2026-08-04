@@ -80,6 +80,7 @@ export type ChatMessage = {
   readCount?: number;
   percent?: number;
   localUrl?: string;
+  localSendAnimation?: boolean;
   lifeCountdownTime?: number;
   lifeTimeAfterRead?: number;
   destroyTime?: number;

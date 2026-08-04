@@ -20,11 +20,11 @@ import {
   Mic,
   MicOff,
   MessageCircle,
+  MoreHorizontal,
   Paperclip,
   Phone,
   PhoneOff,
   RefreshCw,
-  Reply,
   Search,
   Send,
   Settings,
@@ -385,7 +385,7 @@ function formatTime(value?: number) {
 
 function messagePreview(message?: ChatMessage) {
   if (!message) return "暂无消息";
-  if (message.name === "jg:text") return message.content?.content || "";
+  if (message.name === "jg:text") return mentionText(message);
   if (message.name === "jg:img") return "[图片]";
   if (message.name === "jg:file") return `[文件] ${message.content?.name || ""}`;
   if (message.name === "jg:video") return "[视频]";
@@ -554,6 +554,28 @@ function mentionText(message: ChatMessage, translated = false) {
   return value;
 }
 
+function mentionEditorText(message: ChatMessage) {
+  let value = String(message.content?.content ?? "");
+  const info = message.mentionInfo;
+  if (!info) return value;
+  if (info.mentionType === 1 || info.mentionType === 3) value = value.replaceAll("{all}", "@所有人 ");
+  for (const member of info.members ?? []) value = value.replaceAll(`{${member.id}}`, `@${member.name || member.id} `);
+  return value;
+}
+
+function mentionEditorContent(message: ChatMessage, content: string) {
+  const info = message.mentionInfo;
+  if (!info) return content;
+  const replacements: Array<{ label: string; token: string }> = [];
+  if (info.mentionType === 1 || info.mentionType === 3) replacements.push({ label: "@所有人", token: "{all}" });
+  for (const member of info.members ?? []) replacements.push({ label: `@${member.name || member.id}`, token: `{${member.id}}` });
+  let value = content;
+  for (const { label, token } of replacements.sort((a, b) => b.label.length - a.label.length)) {
+    value = value.replaceAll(`${label} `, token).replaceAll(label, token);
+  }
+  return value;
+}
+
 function markdownHtml(value: string) {
   const rendered = marked.parse(value.replace(/</g, "&lt;"), { breaks: true, gfm: true, async: false }) as string;
   return rendered.replace(/<a href=/g, '<a target="_blank" rel="noopener noreferrer nofollow" href=');
@@ -586,12 +608,12 @@ function MessageMeta({ message, overlay, sticker, onResend }: { message: ChatMes
   const read = Boolean(message.isRead || (message.conversationType === 2 && Number(message.readCount) > 0));
   return (
     <div className={cx("jg-msg-status-box", overlay === "image" && "jg-imgmsg-stbox", overlay === "video" && "jg-videomsg-stbox")}>
-      {message.sentState === 1 ? <div className="wr message-state message-send-loading message-sending" title="发送中" /> : null}
-      {message.sentState === 3 ? <button className="wr wr-failed message-state message-failed" title="发送失败，点击重试" onClick={(event) => { event.stopPropagation(); onResend?.(); }} /> : null}
       <span className={cx("jg-message-senttime", sticker && "jg-stickermsg-stbox")}>
         {message.isUpdated ? <span className="tyn-text-modify">（已编辑）</span> : null}
         <span>{messageClock(message.sentTime)}</span>
       </span>
+      {message.sentState === 1 ? <span className="message-state message-send-loading message-sending" role="status" aria-label="发送中" title="发送中" /> : null}
+      {message.sentState === 3 ? <button className="wr wr-failed message-state message-failed" title="发送失败，点击重试" onClick={(event) => { event.stopPropagation(); onResend?.(); }} /> : null}
       {message.isSender && message.sentState === 2 ? <div className="jg-sent-tip"><div className={cx("wr", read ? "wr-done-all" : "wr-done", "tyn-opacity1")} /></div> : null}
     </div>
   );
@@ -599,7 +621,7 @@ function MessageMeta({ message, overlay, sticker, onResend }: { message: ChatMes
 
 function TranslationBlock({ message }: { message: ChatMessage }) {
   if (!message.isTranslating && !(message.translation && message.isShowTranslation)) return null;
-  return <div className="jg-translate"><div className={cx("jg-translate-content", `jg-peer-color-${avatarColorIndex(message.sender?.id || "")}`)}><div className="wrapper">{message.isTranslating ? <div className="loading-container"><div className="loading-spinner" /></div> : <span className={cx("content", isMarkdownContent(message.translation || "") && "markdown-body")} dangerouslySetInnerHTML={{ __html: messageHtml(message, true) }} />}</div><div className="label">由 SnailChat 提供翻译支持</div></div></div>;
+  return <div className="jg-translate"><div className={cx("jg-translate-content", `jg-peer-color-${avatarColorIndex(message.sender?.id || "")}`)}><div className="wrapper">{message.isTranslating ? <div className="loading-container"><div className="loading-spinner" /></div> : <span className={cx("content", isMarkdownContent(message.translation || "") && "markdown-body")} dangerouslySetInnerHTML={{ __html: messageHtml(message, true) }} />}</div><div className="label">由 JuggleWork 提供翻译支持</div></div></div>;
 }
 
 function UploadProgressOverlay({ message }: { message: ChatMessage }) {
@@ -752,7 +774,7 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (emoji: string) => void;
     <div className="tyn-emoji-pn show-aside fadein-o4 jw-im-emoji-picker">
       <div className="tyn-emoji-header"><div className="tyn-emoji-title">所有表情</div></div>
       <div className="tyn-emoni-box"><div className="tyn-emoni-innerbox show"><div className="emojis__grid">
-        {MESSAGE_EMOJIS.map((emoji) => <button type="button" className="emoji-item" key={emoji} onClick={() => onSelect(emoji)}>{emoji}</button>)}
+        {MESSAGE_EMOJIS.map((emoji) => <button type="button" className="emoji-item" key={emoji} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(emoji)}>{emoji}</button>)}
       </div></div></div>
       <ul className="tyn-emoji-tools"><li className="tyn-emoji-tool active"><div className="tyn-emojis-btn"><div className="tyn-emoji-icon">😄</div></div></li></ul>
     </div>
@@ -841,7 +863,7 @@ function MessageReactions({ message }: { message: ChatMessage }) {
   return <ul className="jg-reactions">{reactions.map(([id, list]) => <li className="jg-reaction" key={id} onClick={() => void toggleReaction(message, id)} title={list.map((item) => item.user?.name || item.user?.id || item.value).join("、")}><div className="jg-reaction-inner"><div className="jg-reaction-emoji"><div className="jg-reaction-emoji-img">{reactionEmoji(id)}</div></div><div className="jg-reaction-names">{list.slice(0, 4).map((item, index) => { const name = item.user?.name || item.user?.id || item.value; return <div className="jg-reaction-name" style={{ zIndex: 10 - index }} key={item.value}><ChatAvatar className="jg-reaction-avatar tyn-sd-avatar" name={name} userId={item.user?.id} src={item.user?.portrait} size="sm" /></div>; })}</div></div></li>)}</ul>;
 }
 
-type MessageItemProps = { message: ChatMessage; onForward?: (message: ChatMessage) => void; onEdit?: (message: ChatMessage) => void; onStartMultiSelect?: (message: ChatMessage) => void; selectionMode?: boolean; selected?: boolean; onToggleSelected?: (message: ChatMessage) => void; readOnly?: boolean; compact?: boolean };
+type MessageItemProps = { message: ChatMessage; onForward?: (message: ChatMessage) => void; onEdit?: (message: ChatMessage) => void; onReply?: (message: ChatMessage) => void; onStartMultiSelect?: (message: ChatMessage) => void; selectionMode?: boolean; selected?: boolean; onToggleSelected?: (message: ChatMessage) => void; readOnly?: boolean; compact?: boolean };
 
 type MessageMenuPosition = {
   x: number;
@@ -849,19 +871,23 @@ type MessageMenuPosition = {
   target: HTMLElement;
 };
 
-function MessageItem({ message, onForward, onEdit, onStartMultiSelect, selectionMode, selected, onToggleSelected, readOnly, compact }: MessageItemProps) {
+function MessageItem({ message, onEdit, onReply, selectionMode, selected, onToggleSelected, readOnly, compact }: MessageItemProps) {
   const recall = useJuggleChatStore((state) => state.recallMessage);
   const remove = useJuggleChatStore((state) => state.removeMessage);
   const resend = useJuggleChatStore((state) => state.resendMessage);
   const pin = useJuggleChatStore((state) => state.pinMessage);
   const setReply = useJuggleChatStore((state) => state.setReplyTo);
   const toggleReaction = useJuggleChatStore((state) => state.toggleReaction);
-  const favorite = useJuggleChatStore((state) => state.favoriteMessage);
   const translate = useJuggleChatStore((state) => state.translateMessage);
   const currentUser = useJuggleChatStore((state) => state.user);
   const [menu, setMenu] = useState<MessageMenuPosition | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [sendEntering, setSendEntering] = useState(() => Boolean(message.isSender && message.localSendAnimation));
   const [expired, setExpired] = useState(Number(message.destroyTime) > 0 && Number(message.destroyTime) <= Date.now());
+  useEffect(() => {
+    if (!sendEntering) return;
+    const timer = window.setTimeout(() => setSendEntering(false), 420);
+    return () => window.clearTimeout(timer);
+  }, [sendEntering]);
   useEffect(() => {
     const destroyTime = Number(message.destroyTime) || 0;
     if (!destroyTime) { setExpired(false); return; }
@@ -902,13 +928,10 @@ function MessageItem({ message, onForward, onEdit, onStartMultiSelect, selection
               <div className="jg-pn-reactions">{QUICK_REACTIONS.map((reaction) => <button className="jg-reaction-item" key={reaction.id} onClick={() => menuAction(() => void toggleReaction(message, reaction.id))}>{reaction.emoji}</button>)}</div>
             </div>
             <ul className="tyn-list-links">
-              {message.name === MESSAGE_NAMES.text ? <><li className="tyn-list-link"><button className="wr wr-copy" onClick={() => menuAction(() => void copyText(mentionText(message)))}><span>复制</span></button></li><li className="tyn-list-link"><button className="wr wr-translate" onClick={() => menuAction(() => void translate(message))}><span>{message.translation && message.isShowTranslation ? "取消翻译" : "消息翻译"}</span></button></li><li className="tyn-list-link"><div className="jg-bottom-line" /></li></> : null}
+              {message.name === MESSAGE_NAMES.text ? <><li className="tyn-list-link"><button className="wr wr-copy" onClick={() => menuAction(() => void copyText(mentionText(message)))}><span>复制</span></button></li><li className="tyn-list-link"><button className="wr wr-translate" onClick={() => menuAction(() => void translate(message))}><span>{message.translation && message.isShowTranslation ? "取消翻译" : "翻译"}</span></button></li><li className="tyn-list-link"><div className="jg-bottom-line" /></li></> : null}
               {message.isSender ? <li className="tyn-list-link"><button className="wr wr-recall" onClick={() => menuAction(() => void recall(message))}><span>撤回</span></button></li> : null}
               <li className="tyn-list-link"><button className="wr wr-top" onClick={() => menuAction(() => void pin(message))}><span>置顶</span></button></li>
-              {onForward || onStartMultiSelect ? <li className="tyn-list-link"><button className="wr wr-share" onClick={() => menuAction(() => { if (onStartMultiSelect) onStartMultiSelect(message); else onForward?.(message); })}><span>转发</span></button></li> : null}
-              <li className="tyn-list-link"><button className="wr wr-reply" onClick={() => menuAction(() => setReply(message))}><span>回复</span></button></li>
-              <li className="tyn-list-link"><div className="jg-bottom-line" /></li>
-              <li className="tyn-list-link"><button className="wr wr-fav" onClick={() => menuAction(() => void favorite(message).then(() => setSaved(true)))}><span>{saved ? "已收藏" : "收藏"}</span></button></li>
+              <li className="tyn-list-link"><button className="wr wr-reply" onClick={() => menuAction(() => { if (onReply) onReply(message); else setReply(message); })}><span>回复</span></button></li>
               <li className="tyn-list-link"><div className="jg-bottom-line" /></li>
               {message.isSender && message.name === MESSAGE_NAMES.text && onEdit ? <li className="tyn-list-link"><button className="wr wr-edit" onClick={() => menuAction(() => onEdit(message))}><span>编辑</span></button></li> : null}
               <li className="tyn-list-link"><button className="wr wr-delete is-danger" onClick={() => menuAction(() => void remove(message))}><span>删除</span></button></li>
@@ -921,7 +944,7 @@ function MessageItem({ message, onForward, onEdit, onStartMultiSelect, selection
     menu.target,
   ) : null;
   return (
-    <div className={cx("jw-im-message tny-content-msg", message.isSender && "is-sender", selectionMode && "tny-content-msg-operator", selected && "tny-content-msg-select")} onContextMenu={openMenu}>
+    <div className={cx("jw-im-message tny-content-msg", message.isSender && "is-sender", sendEntering && "jw-im-message-send-enter", selectionMode && "tny-content-msg-operator", selected && "tny-content-msg-select")} onContextMenu={openMenu}>
       {selectionMode ? <button className="jw-im-message-select" onClick={() => onToggleSelected?.(message)}>{selected ? <Check size={14} /> : null}</button> : null}
       <article className={cx("tyn-reply-item", message.isSender ? "outgoing" : "ingoing", selectionMode && "tny-message", compact && "tyn-force-msg-margin")} onClick={() => { if (selectionMode) onToggleSelected?.(message); }}>
         <div className="tyn-reply-avatar"><div className="tyn-media"><ChatAvatar className="jg-msg-user-avatar" name={message.isSender ? currentUser?.name || currentUser?.id || senderName : senderName} userId={message.isSender ? currentUser?.id : message.sender?.id} src={message.isSender ? currentUser?.portrait : message.sender?.portrait} size="sm" /></div></div>
@@ -934,6 +957,138 @@ function MessageItem({ message, onForward, onEdit, onStartMultiSelect, selection
         </div>
       </article>
       {menuPortal}
+    </div>
+  );
+}
+
+type MentionCandidate = {
+  id: string;
+  name: string;
+  portrait?: string;
+  isAll?: boolean;
+};
+
+function canMentionAll(settingRight: number, myRole: number) {
+  return settingRight === 7 || (settingRight === 1 && myRole === 1) || (settingRight === 3 && (myRole === 1 || myRole === 2));
+}
+
+async function getAllGroupMentionMembers(groupId: string) {
+  const members: ChatGroupMember[] = [];
+  let offset = "";
+  for (let page = 0; page < 50; page += 1) {
+    const result = await getGroupMembers(groupId, 100, offset);
+    assertSuccess(result, "获取群成员失败");
+    const items = extractGroupMembers(result.data);
+    members.push(...items);
+    if (Array.isArray(result.data)) break;
+    const nextOffset = result.data && typeof result.data === "object" && "offset" in result.data ? String(result.data.offset || "") : "";
+    if (!nextOffset || nextOffset === offset || !items.length) break;
+    offset = nextOffset;
+  }
+  return members;
+}
+
+async function getMentionCandidates(groupId: string): Promise<MentionCandidate[]> {
+  const [infoResult, listedMembers] = await Promise.all([
+    getGroupInfo(groupId),
+    getAllGroupMentionMembers(groupId).catch(() => []),
+  ]);
+  assertSuccess(infoResult, "获取群资料失败");
+  const data = infoResult.data ?? {};
+  const memberMap = new Map<string, ChatGroupMember>();
+  for (const member of [...extractGroupMembers(data.members), ...listedMembers]) {
+    const id = groupMemberId(member);
+    if (id) memberMap.set(id, { ...memberMap.get(id), ...member });
+  }
+  const candidates: MentionCandidate[] = [];
+  const management = data.group_management && typeof data.group_management === "object" ? data.group_management as Record<string, unknown> : {};
+  if (canMentionAll(Number(management.group_mention_all_right ?? 0), Number(data.my_role ?? 0))) {
+    candidates.push({ id: "all", name: "所有人", isAll: true });
+  }
+  for (const member of memberMap.values()) {
+    const id = groupMemberId(member);
+    candidates.push({ id, name: groupMemberName(member), portrait: String(member.avatar || member.portrait || "") || undefined });
+  }
+  return candidates;
+}
+
+function mentionTokenAt(value: string, cursor: number) {
+  const prefix = value.slice(0, cursor);
+  const match = prefix.match(/@([^@\s]*)$/u);
+  if (!match || match.index === undefined) return null;
+  return { index: match.index, query: match[1] };
+}
+
+function buildMentionMessage(content: string, mentions: MentionCandidate[]) {
+  let nextContent = content;
+  let hasAll = false;
+  const members = new Map<string, { id: string; name?: string }>();
+  for (const mention of mentions) {
+    const visibleText = `@${mention.name} `;
+    if (!nextContent.includes(visibleText)) continue;
+    nextContent = nextContent.replace(visibleText, mention.isAll ? "{all}" : `{${mention.id}}`);
+    if (mention.isAll) hasAll = true;
+    else members.set(mention.id, { id: mention.id, name: mention.name });
+  }
+  if (!hasAll && !members.size) return { content };
+  const mentionInfo: NonNullable<ChatMessage["mentionInfo"]> = {
+    mentionType: hasAll ? (members.size ? 3 : 1) : 2,
+    members: [...members.values()],
+  };
+  return { content: nextContent, mentionInfo };
+}
+
+function MentionPicker({ members, activeIndex, loading, onSelect }: { members: MentionCandidate[]; activeIndex: number; loading: boolean; onSelect: (member: MentionCandidate) => void }) {
+  const activeRef = useRef<HTMLLIElement>(null);
+  useEffect(() => activeRef.current?.scrollIntoView({ block: "nearest" }), [activeIndex]);
+  return (
+    <div className="tyn-chat-search tyn-mentions active jw-im-mentions" role="listbox" aria-label="选择要提醒的群成员">
+      <ul className="form-control-wrap form-control-plaintext-wrap jg-mentions-warp">
+        {loading ? <li className="jw-im-mention-empty">正在加载群成员…</li> : null}
+        {!loading && !members.length ? <li className="jw-im-mention-empty">没有匹配的群成员</li> : null}
+        {members.map((member, index) => <li ref={index === activeIndex ? activeRef : undefined} className={cx("mention-row", index === activeIndex && "mention-active")} role="option" aria-selected={index === activeIndex} key={`${member.isAll ? "all" : "member"}:${member.id}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(member)}><ChatAvatar className="jw-im-mention-avatar" name={member.isAll ? "@" : member.name} userId={member.id} src={member.portrait} size="sm" /><span className="name">{member.name}</span></li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ComposerMessagePanel({ mode, message, onClose }: { mode: "reply" | "edit"; message: ChatMessage | null; onClose: () => void }) {
+  const [cachedMessage, setCachedMessage] = useState<ChatMessage | null>(message);
+  useEffect(() => {
+    if (message) {
+      setCachedMessage(message);
+      return;
+    }
+    if (!cachedMessage) return;
+    const timer = window.setTimeout(() => setCachedMessage(null), 280);
+    return () => window.clearTimeout(timer);
+  }, [cachedMessage, message]);
+  const renderedMessage = message ?? cachedMessage;
+  const senderId = renderedMessage?.sender?.id || "";
+  const senderName = renderedMessage?.sender?.name || renderedMessage?.sender?.id || "消息";
+  return (
+    <div
+      className={cx(
+        "tyn-replies tyn-form-box jw-im-composer-message-panel",
+        message && "active",
+        senderId && `jg-peer-color-${avatarColorIndex(senderId)}`,
+      )}
+      aria-hidden={!message}
+    >
+      {renderedMessage ? <>
+        <div className="flex-grow-1">
+          <div className="form-control-wrap form-control-plaintext-wrap">
+            <div className="tyn-form-wrapper">
+              <div className="tyn-form-wrapper-icon"><span className={cx("wr", mode === "edit" ? "wr-edit" : "wr-reply")} /></div>
+              <div className="tyn-form-wrapper-content">
+                <div className="title">{mode === "edit" ? "修改消息" : senderName}</div>
+                <div className="content">{renderedMessage.name === MESSAGE_NAMES.text ? mentionText(renderedMessage) : messageText(renderedMessage)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <ul className="tyn-list-inline"><li><button type="button" className="btn wr wr-close" aria-label={mode === "edit" ? "取消编辑" : "取消回复"} onClick={onClose} /></li></ul>
+      </> : null}
     </div>
   );
 }
@@ -957,13 +1112,20 @@ export function ConversationSurface() {
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [mentionMembers, setMentionMembers] = useState<MentionCandidate[]>([]);
+  const [selectedMentions, setSelectedMentions] = useState<MentionCandidate[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionTriggerIndex, setMentionTriggerIndex] = useState(-1);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [forwarding, setForwarding] = useState<ChatMessage[] | null>(null);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
-  const startCall = useJuggleCallStore((state) => state.start);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const actionsMenuRef = useRef<HTMLLIElement>(null);
   const lastConversation = useRef<string | null>(null);
   const lastMessage = useRef<string | null>(null);
   const lastScrollTopRef = useRef(0);
@@ -1043,10 +1205,47 @@ export function ConversationSurface() {
     setText("");
     setActionsOpen(false);
     setEmojiOpen(false);
+    setSelectedMentions([]);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionTriggerIndex(-1);
+    setMentionActiveIndex(0);
     loadingEarlierRef.current = false;
     historyAnchorRef.current = null;
     lastScrollTopRef.current = 0;
   }, [conversation?.conversationId, conversation?.conversationType]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      if (!actionsMenuRef.current?.contains(event.target as Node)) setActionsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
+  }, [actionsOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMentionMembers([]);
+    setMentionLoading(conversation?.conversationType === 2);
+    if (!conversation || conversation.conversationType !== 2) return () => { cancelled = true; };
+    void getMentionCandidates(conversation.conversationId).then((members) => {
+      if (!cancelled) setMentionMembers(members);
+    }).catch(() => {
+      if (!cancelled) setMentionMembers([]);
+    }).finally(() => {
+      if (!cancelled) setMentionLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [conversation?.conversationId, conversation?.conversationType]);
+
+  const filteredMentionMembers = useMemo(() => {
+    const query = mentionQuery.trim().toLocaleLowerCase();
+    if (!query) return mentionMembers;
+    return mentionMembers.filter((member) => member.name.toLocaleLowerCase().includes(query) || member.id.toLocaleLowerCase().includes(query));
+  }, [mentionMembers, mentionQuery]);
+
+  useEffect(() => setMentionActiveIndex(0), [mentionQuery, mentionMembers]);
 
   useEffect(() => {
     if (!conversation || loading || finished || !messages.length) return;
@@ -1068,34 +1267,131 @@ export function ConversationSurface() {
   };
   const submit = async () => {
     if (!text.trim()) return;
+    if (!editingMessage && sending) return;
     const value = text;
+    const mentionMessage = conversation.conversationType === 2 ? buildMentionMessage(value, selectedMentions) : { content: value };
     setText("");
-    try {
-      if (editingMessage) {
-        await editMessage(editingMessage, value);
+    if (editingMessage) {
+      try {
+        await editMessage(editingMessage, mentionEditorContent(editingMessage, value));
         setEditingMessage(null);
-      } else {
-        setEmojiOpen(false);
-        await sendText(value);
-        window.requestAnimationFrame(() => {
-          const node = scrollRef.current;
-          if (!node) return;
-          node.scrollTop = node.scrollHeight;
-          lastScrollTopRef.current = node.scrollTop;
-          window.requestAnimationFrame(() => {
-            if (scrollRef.current === node) {
-              node.scrollTop = node.scrollHeight;
-              lastScrollTopRef.current = node.scrollTop;
-            }
-          });
-        });
-      }
-    } catch { setText(value); }
+      } catch { setText(value); }
+      return;
+    }
+    setEmojiOpen(false);
+    setMentionOpen(false);
+    const sendingTask = sendText(mentionMessage.content, mentionMessage.mentionInfo);
+    setSelectedMentions([]);
+    window.requestAnimationFrame(() => {
+      const node = scrollRef.current;
+      if (!node) return;
+      node.scrollTop = node.scrollHeight;
+      lastScrollTopRef.current = node.scrollTop;
+    });
+    try { await sendingTask; } catch { /* Failed optimistic messages remain available for resend. */ }
   };
   const beginEdit = (message: ChatMessage) => {
     setReply(null);
+    setMentionOpen(false);
+    setSelectedMentions([]);
     setEditingMessage(message);
-    setText(String(message.content?.content || ""));
+    setText(mentionEditorText(message));
+  };
+  const cancelEdit = () => {
+    setEditingMessage(null);
+    setSelectedMentions([]);
+    setMentionOpen(false);
+    setText("");
+  };
+  const beginReply = (message: ChatMessage) => {
+    if (editingMessage) {
+      setEditingMessage(null);
+      setSelectedMentions([]);
+      setText("");
+    }
+    setMentionOpen(false);
+    setReply(message);
+  };
+  const selectMention = (member: MentionCandidate) => {
+    const cursor = inputRef.current?.selectionStart ?? text.length;
+    const token = mentionTokenAt(text, cursor);
+    const triggerIndex = token?.index ?? mentionTriggerIndex;
+    if (triggerIndex < 0) return;
+    const tokenEnd = token ? cursor : triggerIndex + 1;
+    const inserted = `@${member.name} `;
+    const nextText = `${text.slice(0, triggerIndex)}${inserted}${text.slice(tokenEnd)}`;
+    const nextCursor = triggerIndex + inserted.length;
+    setText(nextText);
+    setSelectedMentions((current) => [...current, member]);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionTriggerIndex(-1);
+    setMentionActiveIndex(0);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+  const handleComposerChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    const cursor = event.target.selectionStart ?? value.length;
+    setText(value);
+    setSelectedMentions((current) => value ? current.filter((member) => value.includes(`@${member.name} `)) : []);
+    const token = !editingMessage && conversation.conversationType === 2 ? mentionTokenAt(value, cursor) : null;
+    if (token) {
+      setMentionOpen(true);
+      setMentionQuery(token.query);
+      setMentionTriggerIndex(token.index);
+    } else {
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionTriggerIndex(-1);
+    }
+  };
+  const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (mentionOpen && filteredMentionMembers.length) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current + 1) % filteredMentionMembers.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionActiveIndex((current) => (current - 1 + filteredMentionMembers.length) % filteredMentionMembers.length);
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        selectMention(filteredMentionMembers[Math.min(mentionActiveIndex, filteredMentionMembers.length - 1)]);
+        return;
+      }
+    }
+    if (event.key === "Escape" && mentionOpen) {
+      setMentionOpen(false);
+      return;
+    }
+    if (event.key === "Escape" && editingMessage) {
+      cancelEdit();
+    } else if (event.key === "Escape" && emojiOpen) {
+      setEmojiOpen(false);
+    } else if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      setMentionOpen(false);
+      void submit();
+    }
+  };
+  const insertEmoji = (emoji: string) => {
+    const input = inputRef.current;
+    const start = input?.selectionStart ?? text.length;
+    const end = input?.selectionEnd ?? start;
+    const nextCursor = start + emoji.length;
+    setText((current) => `${current.slice(0, start)}${emoji}${current.slice(end)}`);
+    window.requestAnimationFrame(() => {
+      const currentInput = inputRef.current;
+      currentInput?.focus();
+      currentInput?.setSelectionRange(nextCursor, nextCursor);
+    });
   };
   const handleMessageScroll = async (event: React.UIEvent<HTMLDivElement>) => {
     const node = event.currentTarget;
@@ -1113,8 +1409,8 @@ export function ConversationSurface() {
         <div className="tyn-media-group"><ChatAvatar className="tyn-size-md jg-size-md tyn-conver-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" />
         <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div><div className="tyn-media-row"><span className="meta">{conversation.conversationType === 2 ? "群聊" : `@${name}`}</span></div></div></div>
         <ul className="jw-im-chat-actions tyn-list-inline gap gap-1 ms-auto jg-conversation-header-tools">
-          <li><button type="button" className="tool btn btn-icon btn-light wr wr-more-dot" onClick={(event) => { event.stopPropagation(); setActionsOpen((current) => !current); }} title="会话设置" aria-expanded={actionsOpen} />
-            {actionsOpen ? <ConversationActions conversation={conversation} onManageGroup={conversation.conversationType === 2 ? () => { setActionsOpen(false); setGroupManagerOpen(true); } : undefined} onClose={() => setActionsOpen(false)} /> : null}
+          <li ref={actionsMenuRef}><button type="button" className="tool btn btn-icon btn-light wr wr-more-dot" onClick={(event) => { event.stopPropagation(); setActionsOpen((current) => !current); }} title="会话设置" aria-expanded={actionsOpen}><MoreHorizontal aria-hidden="true" /></button>
+            {actionsOpen ? <ConversationActions conversation={conversation} onClose={() => setActionsOpen(false)} /> : null}
           </li>
         </ul>
         {visiblePinnedMessage ? <div className="jg-pinned-box"><div className="jg-pinned-info"><div className="jg-pinned-icon wr wr-top-s" /><ul className="jg-pinned-content"><li className="jg-pinned-item content"><ChatAvatar className="jg-top-avatar" name={visiblePinnedMessage.message.sender?.name || visiblePinnedMessage.message.sender?.id || "用户"} userId={visiblePinnedMessage.message.sender?.id} src={visiblePinnedMessage.message.sender?.portrait} /><div>{visiblePinnedMessage.message.sender?.name || "用户"}：<span>{messageText(visiblePinnedMessage.message)}</span></div></li><li className="jg-pinned-item operator">由 <span className="name">{visiblePinnedMessage.operator?.name || "你"}</span> 置顶</li></ul></div><ul className="jg-pinned-tools"><li><button type="button" className="jg-pinned-item wr wr-close" title="取消置顶" aria-label="取消置顶" onClick={() => void pinMessage(visiblePinnedMessage.message, false)}><span className="sr-only">取消置顶</span></button></li></ul></div> : null}
@@ -1129,27 +1425,28 @@ export function ConversationSurface() {
           const showTimeline = message.name !== "notify" && (!previous || timeGroup(message.sentTime) !== timeGroup(previous.sentTime));
           return [
             showTimeline ? <div className="tyn-reply-separator" key={`${key}:timeline`}><span className="tyn-separator-item">{timeSeparatorText(message.sentTime)}</span></div> : null,
-            <MessageItem key={key} message={message} compact={index === orderedMessages.length - 1 || orderedMessages[index + 1]?.sender?.id === message.sender?.id} onForward={(item) => setForwarding([item])} onEdit={beginEdit} onStartMultiSelect={(item) => setSelectedMessageIds([selectKey(item)])} selectionMode={selectionMode} selected={selectedMessageIds.includes(selectKey(message))} onToggleSelected={toggleSelected} />,
+            <MessageItem key={key} message={message} compact={index === orderedMessages.length - 1 || orderedMessages[index + 1]?.sender?.id === message.sender?.id} onForward={(item) => setForwarding([item])} onEdit={beginEdit} onReply={beginReply} onStartMultiSelect={(item) => setSelectedMessageIds([selectKey(item)])} selectionMode={selectionMode} selected={selectedMessageIds.includes(selectKey(message))} onToggleSelected={toggleSelected} />,
           ];
         })}
         </div>
       </div>
+      {!selectionMode ? <div className="jw-im-composer-message-panels">
+        <ComposerMessagePanel mode="edit" message={editingMessage} onClose={cancelEdit} />
+        <ComposerMessagePanel mode="reply" message={replyTo} onClose={() => setReply(null)} />
+      </div> : null}
       {selectionMode ? <footer className="jw-im-selection-bar"><button onClick={() => setSelectedMessageIds([])}><X size={16} />取消</button><span>已选择 {selectedMessageIds.length} 条消息</span><button className="is-primary" onClick={() => setForwarding(messages.filter((message) => selectedMessageIds.includes(selectKey(message))))}><Forward size={16} />转发</button></footer> : <footer className="jw-im-composer tyn-chat-form" style={{ "--composer-height": "180px" } as React.CSSProperties}>
         <div className="tyn-composer-shell"><div className="tyn-composer-resize-handle" />
-        {editingMessage ? <div className={cx("tyn-replies tyn-form-box active", `jg-peer-color-${avatarColorIndex(editingMessage.sender?.id || "")}`)}><div className="flex-grow-1"><div className="form-control-wrap form-control-plaintext-wrap"><div className="tyn-form-wrapper"><div className="tyn-form-wrapper-icon"><span className="wr wr-edit" /></div><div className="tyn-form-wrapper-content"><div className="title">修改消息</div><div className="content">{messageText(editingMessage)}</div></div></div></div></div><ul className="tyn-list-inline"><li><button className="btn wr wr-close" onClick={() => { setEditingMessage(null); setText(""); }} /></li></ul></div> : null}
-        {replyTo ? <div className="jw-im-reply-bar"><Reply size={15} /><span>回复 {replyTo.sender?.name || "消息"}：{messageText(replyTo)}</span><button onClick={() => setReply(null)}><X size={15} /></button></div> : null}
+        {mentionOpen ? <MentionPicker members={filteredMentionMembers} activeIndex={mentionActiveIndex} loading={mentionLoading} onSelect={selectMention} /> : null}
         <div className="jw-im-composer-row tyn-chat-form-enter tyn-conversation-input">
           <div className="tyn-composer-toolbar"><div className="tyn-composer-left tyn-composer-toolbar-left">
           <input ref={fileRef} className="sr-only" type="file" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendFile(file); event.target.value = ""; }} />
           <div className="tyn-toolbar-icon-wrap tyn-toolbar-emoji-wrap">
-            <button className="btn btn-icon btn-light btn-md wr wr-smile tyn-toolbar-icon" title="表情" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((current) => !current)}><SmilePlus size={20} /></button>
-            {emojiOpen ? <EmojiPicker onClose={() => setEmojiOpen(false)} onSelect={(emoji) => { setText((current) => current + emoji); window.requestAnimationFrame(() => inputRef.current?.focus()); }} /> : null}
+            <button className="btn btn-icon btn-light btn-md wr wr-smile tyn-toolbar-icon" title="表情" aria-expanded={emojiOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setEmojiOpen((current) => !current)}><SmilePlus size={20} /></button>
+            {emojiOpen ? <EmojiPicker onClose={() => setEmojiOpen(false)} onSelect={insertEmoji} /> : null}
           </div>
           <button className="btn btn-icon btn-light btn-md wr wr-huixing tyn-toolbar-icon" onClick={() => fileRef.current?.click()} disabled={sending} title="发送文件"><Paperclip size={19} /></button>
-          <button className="btn btn-icon btn-light btn-md wr wr-rtc-mic tyn-toolbar-icon jg-call-toolbar-icon" onClick={() => void startCall(conversation, false)} title="语音通话"><Phone size={18} /></button>
-          {conversation.conversationType !== 2 ? <button className="btn btn-icon btn-light btn-md wr wr-rtc-camera tyn-toolbar-icon jg-call-toolbar-icon" onClick={() => void startCall(conversation, true)} title="视频通话"><Video size={18} /></button> : null}
           </div></div>
-          <div className="tyn-chat-form-inner"><div className="tyn-composer-editor"><textarea ref={inputRef} className="tyn-chat-form-input" value={text} onChange={(event) => setText(event.target.value)} placeholder={editingMessage ? "修改消息" : `发送消息给 ${name}`} onKeyDown={(event) => { if (event.key === "Escape" && editingMessage) { setEditingMessage(null); setText(""); } else if (event.key === "Escape" && emojiOpen) { setEmojiOpen(false); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} /></div></div>
+          <div className="tyn-chat-form-inner"><div className="tyn-composer-editor"><textarea ref={inputRef} className="tyn-chat-form-input" value={text} onChange={handleComposerChange} placeholder={editingMessage ? "修改消息" : `发送消息给 ${name}`} onKeyDown={handleComposerKeyDown} /></div></div>
         </div>
         </div>
       </footer>}
@@ -1163,19 +1460,37 @@ export function ConversationSurface() {
 function ConversationActions({ conversation, onClose, onManageGroup }: { conversation: ChatConversation; onClose: () => void; onManageGroup?: () => void }) {
   const reload = useJuggleChatStore((state) => state.loadConversations);
   const [busy, setBusy] = useState(false);
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
-    try { await action(); await reload(); onClose(); } finally { setBusy(false); }
+  const applyConversationPatch = (patch: Partial<ChatConversation>) => {
+    useJuggleChatStore.setState((state) => {
+      const matches = (item: ChatConversation | null) => Boolean(item && item.conversationId === conversation.conversationId && item.conversationType === conversation.conversationType);
+      return {
+        conversations: state.conversations.map((item) => matches(item) ? { ...item, ...patch } : item),
+        activeConversation: matches(state.activeConversation) ? { ...state.activeConversation!, ...patch } : state.activeConversation,
+      };
+    });
   };
+  const run = async (action: () => Promise<unknown>, patch: Partial<ChatConversation>) => {
+    setBusy(true);
+    try {
+      await action();
+      applyConversationPatch(patch);
+      await reload();
+      onClose();
+    } finally { setBusy(false); }
+  };
+  const nextIsTop = !Boolean(conversation.isTop);
+  const nextUndisturbType = conversation.undisturbType === 1 ? 0 : 1;
   return (
     <div className="jw-im-conversation-actions">
       {onManageGroup ? <button onClick={onManageGroup}>群管理</button> : null}
-      <button disabled={busy} onClick={() => void run(async () => {
-        return juggleChatRuntime.setTopConversation(conversation, !Boolean(conversation.isTop));
-      })}>{conversation.isTop ? "取消置顶" : "置顶会话"}</button>
-      <button disabled={busy} onClick={() => void run(async () => {
-        return juggleChatRuntime.disturbConversation(conversation, conversation.undisturbType === 1 ? 0 : 1);
-      })}>{conversation.undisturbType === 1 ? "关闭免打扰" : "消息免打扰"}</button>
+      <button disabled={busy} onClick={() => void run(
+        () => juggleChatRuntime.setTopConversation(conversation, nextIsTop),
+        { isTop: nextIsTop },
+      )}>{conversation.isTop ? "取消置顶" : "置顶会话"}</button>
+      <button disabled={busy} onClick={() => void run(
+        () => juggleChatRuntime.disturbConversation(conversation, nextUndisturbType),
+        { undisturbType: nextUndisturbType },
+      )}>{conversation.undisturbType === 1 ? "关闭免打扰" : "消息免打扰"}</button>
     </div>
   );
 }

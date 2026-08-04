@@ -130,9 +130,6 @@
 .jw-im-composer-row .jw-im-send-button { color: white; background: var(--jw-im-accent); }
 .jw-im-composer-row .jw-im-send-button:hover { color: white; background: var(--jw-im-accent-strong); }
 .jw-im-composer-row .jw-im-send-button:disabled { opacity: .45; cursor: default; }
-.jw-im-reply-bar { display: flex; align-items: center; gap: 7px; margin: 0 5px; padding: 7px 10px; border: 1px solid var(--jw-im-border); border-bottom: 0; border-radius: 10px 10px 0 0; color: var(--jw-im-muted); background: #faf9fc; font-size: 11px; }
-.jw-im-reply-bar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jw-im-reply-bar button { padding: 0; border: 0; background: transparent; cursor: pointer; }
 .jw-im-upload-progress { height: 3px; margin: 0 10px; overflow: hidden; background: #eeeaf9; }
 .jw-im-upload-progress span { display: block; height: 100%; background: var(--jw-im-accent); transition: width .15s; }
 .jw-im-selection-bar { flex: none; display: flex; align-items: center; justify-content: center; gap: 16px; min-height: 66px; padding: 10px 18px; border-top: 1px solid var(--jw-im-border); background: white; font-size: 11px; }

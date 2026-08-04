@@ -10,7 +10,10 @@ import conversationCss from "./snailchat-assets/css/newui-conversation.css?inlin
 import aiCss from "./snailchat-assets/css/newui-ai.css?inline";
 import loginCss from "./snailchat-assets/css/newui.css?inline";
 import cardBackgroundUrl from "./snailchat-assets/images/card-bg.png";
+import iconFontUrl from "./snailchat-assets/icon/iconfont.woff2?url";
 import bridgeCss from "./snailchat-theme.css?inline";
+
+const iconFontFaceCss = `@font-face{font-family:'wr';src:url('${iconFontUrl}') format('woff2');font-style:normal;font-weight:normal;font-display:swap;}`;
 
 const sourceCss = [bundleCss, appCss, customCss, conversationCss, aiCss, loginCss]
   .join("\n")
@@ -29,19 +32,25 @@ export function ChatStyleScope({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div ref={mount} className="h-full min-h-0 w-full min-w-0 overflow-hidden">
-      {shadow
-        ? createPortal(
-            <>
-              <style>{`:host{display:block;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}`}</style>
-              <style>{baseCss}</style>
-              <style>{sourceCss}</style>
-              <style>{bridgeCss}</style>
-              {children}
-            </>,
-            shadow,
-          )
-        : null}
-    </div>
+    <>
+      {/* Chromium does not reliably register @font-face declarations scoped
+          inside a Shadow Root. Register only the font globally; all wr icon
+          selectors remain isolated in the chat shadow tree. */}
+      <style>{iconFontFaceCss}</style>
+      <div ref={mount} className="h-full min-h-0 w-full min-w-0 overflow-hidden">
+        {shadow
+          ? createPortal(
+              <>
+                <style>{`:host{display:block;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}`}</style>
+                <style>{baseCss}</style>
+                <style>{sourceCss}</style>
+                <style>{bridgeCss}</style>
+                {children}
+              </>,
+              shadow,
+            )
+          : null}
+      </div>
+    </>
   );
 }
