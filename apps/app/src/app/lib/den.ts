@@ -39,6 +39,7 @@ import type {
 export const STORAGE_BASE_URL = "jugglework.den.baseUrl";
 const LEGACY_STORAGE_API_BASE_URL = "jugglework.den.apiBaseUrl";
 const STORAGE_AUTH_TOKEN = "jugglework.den.authToken";
+const STORAGE_IM_LOGIN_BOOTSTRAP = "jugglework.den.imLoginBootstrap";
 const STORAGE_ACTIVE_ORG_ID = "jugglework.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "jugglework.den.activeOrgSlug";
 const STORAGE_ACTIVE_ORG_NAME = "jugglework.den.activeOrgName";
@@ -72,6 +73,25 @@ const BUILD_DEN_DEV_AUTH_TOKEN =
   typeof import.meta.env?.VITE_DEN_DEV_AUTH_TOKEN === "string"
     ? import.meta.env.VITE_DEN_DEV_AUTH_TOKEN
     : "").trim();
+const BUILD_DEN_DEV_IM_LOGIN_BOOTSTRAP: DenIMLoginBootstrap | null = (() => {
+  if (typeof import.meta === "undefined" || import.meta.env?.DEV !== true) return null;
+  const read = (key: string) => {
+    const value = import.meta.env?.[key];
+    return typeof value === "string" ? value.trim() : "";
+  };
+  const appKey = read("VITE_DEN_DEV_IM_APP_KEY");
+  const websocketUrl = read("VITE_DEN_DEV_IM_WEBSOCKET_URL");
+  const imUserId = read("VITE_DEN_DEV_IM_USER_ID");
+  const token = read("VITE_DEN_DEV_IM_TOKEN");
+  if (!appKey || !websocketUrl || !imUserId || !token) return null;
+  return {
+    provider: read("VITE_DEN_DEV_IM_PROVIDER") || "juggleim",
+    appKey,
+    websocketUrl,
+    imUserId,
+    token,
+  };
+})();
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://work.juggle.im";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
@@ -110,6 +130,7 @@ import type {
   DenResourceSnapshotMarketplace,
   DenResourceSnapshotPlugin,
   DenSettings,
+  DenIMLoginBootstrap,
   DenUser,
 } from "./den-types";
 
@@ -317,11 +338,13 @@ export type DenBillingSummary = {
 type DenAuthResult = {
   user: DenUser | null;
   token: string | null;
+  im: DenIMLoginBootstrap | null;
 };
 
 export type DenDesktopHandoffExchange = {
   user: DenUser | null;
   token: string | null;
+  im: DenIMLoginBootstrap | null;
 };
 
 const defaultBootstrapBaseUrls = resolveDenBaseUrls({
@@ -884,6 +907,50 @@ export function readDenUserId(): string | null {
   return (window.localStorage.getItem(STORAGE_USER_ID) ?? "").trim() || null;
 }
 
+function denCredentialFingerprint(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${value.length}:${hash >>> 0}`;
+}
+
+export function readDenIMLoginBootstrap(): DenIMLoginBootstrap | null {
+  // Keep the fixed development credentials aligned with
+  // VITE_DEN_DEV_AUTH_TOKEN: they override stale persisted handoff data and
+  // are ignored entirely outside Vite development mode.
+  if (BUILD_DEN_DEV_IM_LOGIN_BOOTSTRAP) return BUILD_DEN_DEV_IM_LOGIN_BOOTSTRAP;
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(STORAGE_IM_LOGIN_BOOTSTRAP);
+  if (!raw) return null;
+  try {
+    const stored = JSON.parse(raw) as { authFingerprint?: unknown; im?: unknown };
+    const authToken = readDenSettings().authToken?.trim() ?? "";
+    if (!authToken || stored.authFingerprint !== denCredentialFingerprint(authToken)) return null;
+    return getIMLoginBootstrap({ im: stored.im });
+  } catch {
+    return null;
+  }
+}
+
+export function writeDenIMLoginBootstrap(value: DenIMLoginBootstrap | null) {
+  if (typeof window === "undefined") return;
+  if (value) {
+    const authToken = readDenSettings().authToken?.trim() ?? "";
+    if (!authToken) {
+      window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
+      return;
+    }
+    window.localStorage.setItem(STORAGE_IM_LOGIN_BOOTSTRAP, JSON.stringify({
+      authFingerprint: denCredentialFingerprint(authToken),
+      im: value,
+    }));
+  } else {
+    window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
+  }
+}
+
 export function writeDenUserId(userId: string | null) {
   if (typeof window === "undefined") return;
   const resolved = userId?.trim() ?? "";
@@ -1012,6 +1079,7 @@ export function clearDenSession(options?: { includeBaseUrls?: boolean }) {
   }
 
   window.localStorage.removeItem(STORAGE_AUTH_TOKEN);
+  window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_ID);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_SLUG);
   window.localStorage.removeItem(STORAGE_ACTIVE_ORG_NAME);
@@ -1110,6 +1178,9 @@ function getUser(payload: unknown): DenUser | null {
     id: user.id,
     email: user.email,
     name: typeof user.name === "string" ? user.name : null,
+    account: typeof user.account === "string" ? user.account : null,
+    avatar: typeof user.avatar === "string" ? user.avatar : null,
+    imUserId: typeof user.imUserId === "string" ? user.imUserId : null,
   };
 }
 
@@ -1118,6 +1189,28 @@ function getToken(payload: unknown): string | null {
     return null;
   }
   return payload.token.trim() || null;
+}
+
+function getIMLoginBootstrap(payload: unknown): DenIMLoginBootstrap | null {
+  if (!isRecord(payload) || !isRecord(payload.im)) return null;
+  const im = payload.im;
+  if (
+    typeof im.provider !== "string" ||
+    typeof im.websocketUrl !== "string" ||
+    typeof im.appKey !== "string" ||
+    typeof im.imUserId !== "string" ||
+    typeof im.token !== "string"
+  ) {
+    return null;
+  }
+  const result = {
+    provider: im.provider.trim(),
+    websocketUrl: im.websocketUrl.trim(),
+    appKey: im.appKey.trim(),
+    imUserId: im.imUserId.trim(),
+    token: im.token.trim(),
+  };
+  return result.websocketUrl && result.appKey && result.imUserId && result.token ? result : null;
 }
 
 function getOrgList(payload: unknown): DenOrgSummary[] {
@@ -2057,15 +2150,15 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       await ensureActiveOrganization(baseUrls, token, input);
     },
 
-    async signInEmail(email: string, password: string): Promise<DenAuthResult> {
-      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-in/email", {
+    async signInAccount(account: string, password: string): Promise<DenAuthResult> {
+      const payload = await requestJson<unknown>(baseUrls, "/api/auth/sign-in/account", {
         method: "POST",
         body: {
-          email: email.trim(),
+          account: account.trim(),
           password,
         },
       });
-      return { user: getUser(payload), token: getToken(payload) };
+      return { user: getUser(payload), token: getToken(payload), im: getIMLoginBootstrap(payload) };
     },
 
     async signUpEmail(email: string, password: string): Promise<DenAuthResult> {
@@ -2077,7 +2170,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
           password,
         },
       });
-      return { user: getUser(payload), token: getToken(payload) };
+      return { user: getUser(payload), token: getToken(payload), im: getIMLoginBootstrap(payload) };
     },
 
     async signOut() {
@@ -2138,7 +2231,7 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         method: "POST",
         body: { grant },
       });
-      return { user: getUser(payload), token: getToken(payload) };
+      return { user: getUser(payload), token: getToken(payload), im: getIMLoginBootstrap(payload) };
     },
 
     async listOrgs(): Promise<{ orgs: DenOrgSummary[]; activeOrgId: string | null; activeOrgSlug: string | null; defaultOrgId: string | null }> {

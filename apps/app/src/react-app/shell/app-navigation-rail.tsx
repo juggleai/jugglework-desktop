@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import {
-  AppWindowMac,
-  House,
+  BookUser,
+  FolderKanban,
   MessageCircleMore,
   Orbit,
   Plus,
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
@@ -75,11 +76,16 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const { user } = useDenAuth();
   const brandLogoUrl = useBrandLogoUrl();
   const taskScope = useTaskScope();
+  const chatView = useJuggleChatStore((state) => state.view);
 
   /** Home lists local tasks, the cloud button lists remote ones — same surface. */
   const openTaskScope = (scope: "local" | "remote") => {
     setTaskScope(scope);
     props.onOpenHome();
+  };
+  const openChatView = (view: "conversations" | "contacts") => {
+    useJuggleChatStore.getState().setView(view);
+    if (!props.chatActive) props.onOpenChat();
   };
   const identity = user?.name?.trim() || user?.email?.trim() || "JuggleWork";
   const initial = identity.slice(0, 1).toLocaleUpperCase();
@@ -129,7 +135,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
         >
-          <House className="size-5" strokeWidth={1.8} />
+          <FolderKanban className="size-5" strokeWidth={1.8} />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -149,11 +155,19 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         </RailButton>
         <RailButton
           label={t("navigation.chat")}
-          active={props.chatActive}
-          onClick={props.onOpenChat}
+          active={props.chatActive && chatView !== "contacts"}
+          onClick={() => openChatView("conversations")}
           testId="app-rail-chat"
         >
           <MessageCircleMore className="size-5" strokeWidth={1.8} />
+        </RailButton>
+        <RailButton
+          label={t("navigation.contacts")}
+          active={props.chatActive && chatView === "contacts"}
+          onClick={() => openChatView("contacts")}
+          testId="app-rail-contacts"
+        >
+          <BookUser className="size-5" strokeWidth={1.8} />
         </RailButton>
       </nav>
 

@@ -1,0 +1,813 @@
+/* New UI Login Page Styles */
+
+/* Login container - full screen with background */
+.jg-login-newui {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #eff0f2;
+  overflow: hidden;
+  padding: 32px 24px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.jg-login-newui::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url(../images/login/bg-gradient1.svg), url(../images/login/bg-gradient2.svg);
+  background-repeat: no-repeat;
+  background-position: left 8% top 16%, right 12% bottom 12%;
+  background-size: 260px auto, 320px auto;
+  opacity: 0.9;
+}
+
+.jg-login-newui::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-image: url(../images/login/bg-overlay.png);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.9;
+}
+
+/* Login card */
+.jg-login-card {
+  position: relative;
+  width: 440px;
+  height: 545px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0px 8px 16px rgba(0, 0, 0, 0.1);
+  padding: 76px 72px;
+  box-sizing: border-box;
+  z-index: 1;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+/* Login card 错误抖动：表单校验失败时触发 */
+.jg-login-card.is-shake {
+  animation: jg-login-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+@keyframes jg-login-shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-6px); }
+  20%, 40%, 60%, 80% { transform: translateX(6px); }
+}
+.jg-login-card.is-shake .jg-login-input {
+  animation: jg-login-input-error 0.4s ease-out;
+}
+@keyframes jg-login-input-error {
+  0% { background: #f5f7f9; }
+  20% { background: #fff1f0; }
+  100% { background: #f5f7f9; }
+}
+
+/* Transition animations */
+.jg-login-fade-enter-active,
+.jg-login-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.jg-login-fade-enter-from,
+.jg-login-fade-leave-to {
+  opacity: 0;
+}
+
+/* Content wrapper for smooth transitions */
+.jg-login-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  padding: 76px 72px;
+  box-sizing: border-box;
+}
+
+/* Logo */
+.jg-login-logo {
+  display: block;
+  width: 194px;
+  height: 40px;
+  margin: 0 auto;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 76px;
+}
+
+/* QR code toggle button - top right corner */
+.jg-login-qr-toggle {
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  width: 56px;
+  height: 56px;
+  cursor: pointer;
+  transition: transform 0.2s;
+  z-index: 10;
+}
+
+.jg-login-qr-toggle:hover {
+  transform: scale(1.05);
+}
+
+.jg-login-qr-toggle img {
+  width: 100%;
+  height: 100%;
+}
+
+/* QR code hint badge */
+.jg-login-qr-hint {
+  position: absolute;
+  right: 84px;
+  top: 40px;
+  background: #e9f0ff;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #2465ff;
+  white-space: nowrap;
+}
+
+.jg-login-qr-hint::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  background: #e9f0ff;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+/* Settings button - 移到 QR 切换按钮左侧，避免完全被遮挡 */
+.jg-login-setting-btn {
+  position: absolute;
+  right: 92px;   /* 24 (QR right) + 56 (QR width) + 12 = 92，与 QR 按钮视觉对齐 */
+  top: 40px;     /* 视觉居中对齐于 56px 高的 QR 按钮 */
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+  z-index: 11;
+}
+
+.jg-login-setting-btn:hover {
+  opacity: 1;
+}
+
+.jg-login-setting-icon {
+  width: 100%;
+  height: 100%;
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-image: url('../images/login/icon-setting.png');
+}
+
+/* Back button */
+.jg-login-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  margin-bottom: 20px;
+  color: #000;
+  font-size: 14px;
+}
+
+.jg-login-back-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.jg-login-back-text {
+  font-size: 14px;
+  color: #000;
+}
+
+/* Login tabs */
+.jg-login-tabs {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+  margin-bottom: 40px;
+  position: relative;
+  margin-top: 60px;
+}
+
+.jg-login-tab {
+  font-size: 20px;
+  font-weight: 500;
+  color: #858585;
+  cursor: pointer;
+  padding-bottom: 8px;
+  transition: color 0.2s;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.jg-login-tab.active {
+  color: #2465ff;
+}
+
+.jg-login-tab-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 80px;
+  height: 2px;
+  background: #2465ff;
+  transition: transform 0.3s;
+}
+
+.jg-login-tab-indicator--second {
+  transform: translateX(105px);
+}
+
+/* Login title for QR code */
+.jg-login-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #212121;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.jg-login-subtitle {
+  font-size: 14px;
+  color: #5d5d5d;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* Form group */
+.jg-login-form-group {
+  margin-bottom: 25px;
+}
+
+/* Input field */
+.jg-login-input {
+  position: relative;
+  width: 100%;
+  height: 50px;
+  background: #f5f7f9;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.jg-login-input-icon {
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.jg-login-input-icon--user {
+  background-image: url('../images/login/icon-user.png');
+}
+
+.jg-login-input-icon--password {
+  background-image: url('../images/login/icon-password.png');
+}
+
+.jg-login-input input {
+  flex: 1;
+  height: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 15px;
+  color: #212121;
+}
+
+.jg-login-input input::placeholder {
+  color: #858585;
+}
+
+.jg-login-input-toggle {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.jg-login-input-toggle--eye {
+  background-image: url('../images/login/icon-eye.png');
+}
+
+.jg-login-input-toggle--eye-off {
+  background-image: url('../images/login/icon-eye-off.png');
+}
+
+/* Error message */
+.jg-login-error {
+  font-size: 12px;
+  color: #ff4d4f;
+  margin-top: 4px;
+  padding-left: 16px;
+}
+
+/* Login button */
+.jg-login-btn {
+  width: 100%;
+  height: 50px;
+  background: #2465ff;
+  border-radius: 12px;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-top: 24px;
+}
+
+.jg-login-btn:hover {
+  background: #1a5ae6;
+}
+
+.jg-login-btn:disabled {
+  background: #e6e7ea;
+  color: #858585;
+  cursor: not-allowed;
+}
+
+/* Switch login mode */
+.jg-login-switch {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: #2465ff;
+  cursor: pointer;
+}
+
+.jg-login-switch:hover {
+  text-decoration: underline;
+}
+
+/* QR code section */
+.jg-login-qrcode-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+}
+
+.jg-login-qrcode-logo {
+  display: block;
+  width: 194px;
+  height: 40px;
+  margin-bottom: 16px;
+}
+
+.jg-login-qrcode-box {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  background: #f5f7f9;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.jg-login-qrcode-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.jg-login-qrcode-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.jg-login-qrcode-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 50px;
+  height: 50px;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.jg-login-qrcode-center img {
+  width: 100%;
+  height: 100%;
+}
+
+.jg-login-qrcode-refresh {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jg-login-qrcode-refresh button {
+  padding: 8px 16px;
+  background: #2465ff;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* Version info */
+.jg-login-version {
+  position: relative;
+  text-align: center;
+  margin-top: 30px;
+}
+
+.jg-login-version-bg {
+  width: 120px;
+  height: 80px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.jg-login-version-bg img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.jg-login-version-text {
+  font-size: 12px;
+  color: #5d5d5d;
+}
+
+/* User register / org info links */
+.jg-register-card {
+  height: 545px;
+  padding-top: 36px;
+}
+
+.jg-register-back {
+  margin-bottom: 48px;
+  margin-left: -50px;
+}
+
+.jg-register-title {
+  margin-bottom: 40px;
+  text-align: center;
+  font-size: 24px;
+  line-height: 33px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.jg-register-btn {
+  margin-top: 32px;
+}
+
+.jg-login-links {
+  display: flex;
+  justify-content: center;
+  gap: 56px;
+  margin-top: 24px;
+}
+
+.jg-login-link {
+  font-size: 14px;
+  color: #2465ff;
+  cursor: pointer;
+}
+
+.jg-login-link--muted {
+  color: #9097a3;
+  cursor: default;
+}
+
+.jg-login-link:hover {
+  text-decoration: underline;
+}
+
+.jg-login-link--muted:hover {
+  text-decoration: none;
+}
+
+/* Loading spinner */
+.jg-login-loading {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: conic-gradient(#2465ff 0deg, #2465ff 90deg, transparent 90deg);
+  animation: jg-login-spin 1s linear infinite;
+}
+
+@keyframes jg-login-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Organization setting page */
+.jg-login-org-card {
+  padding: 24px;
+}
+
+.jg-login-org-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  font-size: 14px;
+  line-height: 22px;
+  color: #000000;
+  cursor: pointer;
+}
+
+.jg-login-org-back-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.jg-login-org-panel {
+  width: 295px;
+  margin: 76px auto 0;
+}
+
+.jg-login-org-title-new {
+  margin-bottom: 66px;
+  text-align: center;
+  font-size: 24px;
+  line-height: 33px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.jg-login-org-input-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 50px;
+  padding: 0 16px;
+  margin-bottom: 8px;
+  border-radius: 12px;
+  background: #f5f7f9;
+}
+
+.jg-login-org-input-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #98a2b3;
+  flex-shrink: 0;
+}
+
+.jg-login-org-input-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.jg-login-org-input-new {
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  font-size: 15px;
+  line-height: 24px;
+  color: #212121;
+}
+
+.jg-login-org-input-new::placeholder {
+  color: #b7bdc6;
+}
+
+.jg-login-org-error {
+  margin-bottom: 12px;
+}
+
+.jg-login-org-submit {
+  width: 295px;
+  height: 50px;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #e6e7ea;
+  color: #858585;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.jg-login-org-submit:hover {
+  background: #dcdfe4;
+}
+.jg-login-org-submit.active{
+  background-color: #2465ff;
+  color: #FFF;
+}
+/* Code button in input */
+.jg-login-code-btn {
+  margin: 0;
+  padding: 0 8px;
+  font-size: 14px;
+  color: #2465ff;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.jg-login-code-btn:hover {
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .jg-login-newui {
+    padding: 16px;
+  }
+
+  .jg-login-card {
+    width: calc(100% - 32px);
+    padding: 40px 24px;
+    min-height: 545px;
+  }
+
+  .jg-login-logo {
+    top: 40px;
+    width: 164px;
+    height: auto;
+  }
+
+  .jg-login-tabs {
+    margin-top: 40px;
+  }
+
+  .jg-login-links {
+    gap: 24px;
+  }
+}
+
+/* Toast action button（撤销按钮等） */
+.jg-toast-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 16px;
+}
+.jg-toast-action {
+  background: transparent;
+  border: 0;
+  color: #2465ff;
+  font-weight: 500;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.jg-toast-action:hover {
+  background: rgba(36, 101, 255, 0.1);
+}
+.jg-toast-action:active {
+  background: rgba(36, 101, 255, 0.18);
+}
+
+/* ========== IM 连接状态条 ==========
+   断线 / 重连中 / 未授权 三种状态 */
+.jg-connection-banner {
+  position: relative;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+  -webkit-app-region: drag;
+  display: none;
+}
+.jg-connection-banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.jg-connection-banner-text {
+  flex: none;
+}
+.jg-connection-banner-err {
+  opacity: 0.85;
+  font-weight: 400;
+  margin-left: 2px;
+}
+.jg-connection-banner-btn {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid currentColor;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background 0.15s;
+}
+.jg-connection-banner-btn:hover {
+  background: rgba(255, 255, 255, 1);
+}
+
+.jg-connection-banner.is-disconnected {
+  background: #fff2f0;
+  color: #cf1322;
+  border-bottom: 1px solid #ffccc7;
+}
+.jg-connection-banner.is-disconnected .jg-connection-banner-dot {
+  background: #ff4d4f;
+  box-shadow: 0 0 0 3px rgba(255, 77, 79, 0.18);
+  animation: jg-conn-pulse 1.4s ease-in-out infinite;
+}
+.jg-connection-banner.is-connecting {
+  background: #e6f4ff;
+  color: #0958d9;
+  border-bottom: 1px solid #91caff;
+}
+.jg-connection-banner.is-connecting .jg-connection-banner-dot {
+  background: #1677ff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.18);
+  animation: jg-conn-pulse 1s ease-in-out infinite;
+}
+.jg-connection-banner.is-unauthorized {
+  background: #fffbe6;
+  color: #ad6800;
+  border-bottom: 1px solid #ffe58f;
+}
+.jg-connection-banner.is-unauthorized .jg-connection-banner-dot {
+  background: #faad14;
+  box-shadow: 0 0 0 3px rgba(250, 173, 20, 0.2);
+}
+@keyframes jg-conn-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.7); }
+}
+.jg-conn-fade-enter-active,
+.jg-conn-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.jg-conn-fade-enter-from,
+.jg-conn-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+.jg-ai-header-title .icon{
+  height: 1.125rem;
+  width: 1.125rem;
+  background-repeat: no-repeat;
+  background-size: 100%;
+}

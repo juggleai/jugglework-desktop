@@ -1,0 +1,394 @@
+.contact_dp_show{
+  position: absolute; 
+  inset: 0px 0px auto auto; 
+  margin: 0px; 
+  transform: translate3d(0px, 40px, 0px);
+}
+.setting-content,
+.contact-content{
+  height: 100%;
+  display: flex;
+  justify-content: center;
+}
+.contact-content .tyn-chat-head{
+  flex-direction: column;
+  background: none;
+}
+.contact-content .tyn-media-group{
+  width: 380px;
+  margin-top: 2rem;
+}
+.contact-content .tyn-media-row{
+  width: 100%;
+}
+.contact-send-msg{
+  background: #2563eb;
+  color: #FFF;
+  border: 0;
+}
+.contact-content .tyn-media-col{
+  margin-right: 3rem;
+}
+.tyn-contact .nav-link::before{
+  font-size: 14px;
+  margin-right: 2px;
+}
+.contact-content .lower-btn{
+  color: red;
+  background-color: var(--bs-btn-hover-bg);
+  border-color: var(--bs-btn-hover-border-color);
+  border: 0;
+}
+/* .tyn-contact .modal-content{
+  height: 140px;
+} */
+.tyn-contact .tyn-conver-avatar{
+  border: 1px solid #e8e6e6;
+}
+.tyn-contact .modal-body .tyn-aside-search{
+  padding: 0 0 0 0;
+}
+
+.m-friend-name,
+.m-friend-add-btn{
+  width: 6rem;
+  display: flex;
+  justify-content: end;
+}
+.m-friend-name{
+  justify-content: start;
+  width: auto;
+}
+.m-friend-add-btn .wr-plus{
+  background-color: #FBFBFB;
+  border-radius: 2px;
+  padding: 0 4px;
+  font-weight: 700;
+  transition: background-color 0.3s ease;
+}
+.m-friend-add-btn .wr-plus:hover{
+  background-color: #2563eb;
+  color: #FBFBFB;
+}
+
+.jg-setting-body{
+  width: 600px;
+}
+.jg-formuser-avatar{
+  height: 60px;
+  width: 60px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.jg-setting-body .form-avatars{
+  height: 500px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.jg-setting-body .form-avatar{
+  height: 40px;
+  width: 40px;
+}
+.jg-setting-body .form-avatar-selected{
+  height: 60px;
+  width: 60px;
+}
+.jg-setting-body .form-avatar-selected::before{
+  font-size: 60px;
+}
+
+/* contacts page icons */
+.jg-header-icon,
+.jg-tab-icon,
+.jg-addmenu-icon {
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.jg-header-icon {
+  width: 24px;
+  height: 24px;
+}
+.jg-tab-icon {
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+}
+.jg-addmenu-icon {
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+}
+
+.jg-header-icon--search {
+  background-image: url('../icon/icon-search.png');
+}
+
+.jg-header-icon--add {
+  background-image: url('../icon/icon-add.png');
+}
+
+.jg-header-icon--add-bot {
+  background-image: url('../icon/icon-add-bot.png');
+}
+
+.jg-tab-icon--contact {
+  background-image: url('../icon/icon-contact.png');
+}
+
+.jg-tab-icon--adduser {
+  background-image: url('../icon/icon-newfriend.png');
+}
+
+.jg-tab-icon--group {
+  background-image: url('../icon/icon-group.png');
+}
+
+.jg-tab-icon--block {
+  background-image: url('../icon/icon-block.png');
+}
+
+.jg-tab-icon--bot {
+  background-image: url('../icon/icon-bot.png');
+}
+
+.jg-addmenu-icon--group {
+  background-image: url('../icon/icon-creategroup.png');
+}
+
+.jg-addmenu-icon--adduser {
+  background-image: url('../icon/icon-addfriend.png');
+}
+
+.jg-addmenu-icon--agent {
+  background-image: url('../icon/icon-add-bot.png');
+}
+
+.jg-addmenu-icon--qrcode {
+  background-image: url('../icon/icon-qrcode.png');
+}
+
+/* layout header */
+.jg-conversations-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: #FFF;
+}
+.jg-convers-tools {
+  display: flex;
+  align-items: center;
+}
+.jg-conversation-tool {
+  font-size: 16px;
+  font-weight: 400;
+  color: rgba(33, 33, 33, 1);
+}
+.jg-contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  -webkit-app-region: no-drag;
+}
+.jg-contact-action {
+  cursor: pointer;
+}
+
+/* contacts page list item */
+.tyn-aside-contact-item {
+  padding: 0 16px;
+  justify-content: space-between;
+  position: relative;
+}
+.tyn-aside-contact-item::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left:16px;
+  right:16px;
+  height: 0.5px;
+  background: #e5e5e5;
+}
+.jg-item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jg-arrow {
+  width: 6px;
+  height: 10px;
+  background: url('../icon/icon-arrow.png') no-repeat center;
+  background-size: contain;
+}
+
+/* contacts page active state - 浅灰背景+黑色文字 */
+.tyn-aside-contact-item.active {
+  background: #F5F7F9 !important;
+  border-radius: 0 !important;
+}
+.tyn-aside-contact-item.active .name {
+  color: #000 !important;
+}
+
+/* add menu dropdown */
+.jg-addmenu-wrap {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1200;
+  pointer-events: none;
+}
+.jg-addmenu-wrap.show {
+  pointer-events: auto;
+}
+.jg-addmenu-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: none;
+}
+.jg-addmenu-wrap.show .jg-addmenu-backdrop {
+  display: block;
+}
+.jg-addmenu {
+  min-width: 140px;
+  background: #FFF;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 8px 0;
+  list-style: none;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+.jg-addmenu-wrap.show .jg-addmenu {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.jg-addmenu-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+.jg-addmenu-item:hover {
+  background: #F5F7F9;
+}
+.jg-addmenu-name {
+  font-size: 14px;
+  color: #333;
+}
+
+/* contact detail page - grouped list */
+.jg-contact-group {
+  margin-bottom: 8px;
+}
+.jg-group-letter {
+  padding: 4px 16px;
+  font-size: 12px;
+  color: #999;
+}
+.jg-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.jg-group-item {
+  display: flex;
+  align-items: center;
+  padding: 5px 16px;
+  cursor: pointer;
+  position: relative;
+  height: 50px;
+  box-sizing: border-box;
+}
+.jg-group-item::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 16px;
+  right: 16px;
+  height: 0.5px;
+  background: #e5e5e5;
+}
+.jg-group-item:last-child::after {
+  display: none;
+}
+.jg-group-item .tyn-avatar {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px;
+  border-radius: 50%;
+  margin-right: 14px;
+  flex-shrink: 0;
+}
+.jg-group-item .tyn-avatar .inner {
+  font-size: 16px;
+}
+.jg-contact-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+.jg-contact-name {
+  font-size: 14px;
+  color: #333;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jg-contact-pinyin {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+  text-align: left;
+}
+.jg-contact-status {
+  font-size: 14px;
+  color: #aaa;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding-right: 0;
+}
+.jg-contact-status.jg-status-pending {
+  color: #FE812E;
+}
+.jg-contact-tools {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.jg-contact-tools .tool {
+  width: 52px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.jg-contact-tools .jg-success {
+  background: #2565FF;
+  color: #FFF;
+}
+.jg-contact-tools .jg-warn {
+  background: #FF3839;
+  color: #FFF;
+}

@@ -1,4 +1,4 @@
-import type { DenSettings, DenUser } from "./den-types";
+import type { DenIMLoginBootstrap, DenSettings, DenUser } from "./den-types";
 
 export const denSessionUpdatedEvent = "jugglework-den-session-updated";
 export const denSettingsChangedEvent = "jugglework-den-settings-changed";
@@ -8,6 +8,7 @@ export type DenSessionUpdatedDetail = {
   baseUrl?: string | null;
   token?: string | null;
   user?: DenUser | null;
+  im?: DenIMLoginBootstrap | null;
   email?: string | null;
   message?: string | null;
 };

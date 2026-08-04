@@ -1,0 +1,1213 @@
+.jg-cndrop-show{
+  /* position: absolute;  */
+  /* inset: 0px 0px auto auto;  */
+  /* margin: 0px;
+  transform: translate3d(0px, 40px, 0px); */
+  /* top: -40px; */
+}
+
+.tyn-common-aside.tyn-common-aside-right {
+  width: 375px;
+  border-radius: 0;
+  background: #f5f7f9;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tyn-common-aside.tyn-common-aside-right.show-caside {
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.tyn-settings-body {
+  display: flex;
+  flex-direction: column;
+  /* 用 flex 写法替代 height: 100%:
+     - flex: 1 1 0   在 flex column 容器里 grow 填满 header 之外的剩余空间
+     - min-height: 0 避免 flex item 默认 min-height: auto 把内容高度顶开(无法触发滚动)
+     - overflow-y: auto 超出后内部滚动
+     在 position: fixed + top/bottom 撑高的容器里最稳。 */
+  flex: 1 1 0;
+  min-height: 0;
+  background: #f5f7f9;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+  border-radius: 0;
+  /* 滚动手感优化 */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tyn-settings-page {
+  /* min-height: 100%; */
+  padding: 16px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #f5f7f9;
+}
+
+.tyn-settings-page > .tyn-settings-section:first-child {
+  margin-top: 0;
+}
+
+.tyn-settings-header {
+  background: #fff;
+  min-height: 60px;
+  height: 60px;
+  padding: 0 16px;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.tyn-settings-header .title {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: #212121;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.tyn-settings-header .tools {
+  min-width: 24px;
+  gap: 0;
+}
+
+.tyn-settings-header .tool {
+  width: 24px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.tyn-settings-header .close {
+  box-shadow: none;
+  border-radius: 0;
+  font-weight: 400;
+  padding: 0;
+}
+
+.tyn-settings-header .close::before {
+  content: none;
+}
+
+.tyn-aside-back-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-image: url('../icon/aside-back.png');
+}
+
+.tyn-settings-header .title-none {
+  width: 24px;
+}
+
+.tyn-settings-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 0 16px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.tyn-settings-section--flat {
+  padding: 0;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tyn-settings-section--flat .tyn-settings-row--danger {
+  min-height: 50px;
+  padding: 14px 0;
+  position: relative;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.tyn-settings-section--flat .tyn-settings-row--danger::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.tyn-settings-row {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #f1f3f5;
+}
+
+.tyn-settings-row:last-child {
+  border-bottom: 0;
+}
+
+.tyn-settings-row--compact {
+  min-height: 48px;
+  padding: 12px 0;
+}
+
+.tyn-settings-row--danger {
+  justify-content: center;
+  color: #ef2323;
+  font-weight: 500;
+}
+
+.tyn-settings-row--clickable {
+  cursor: pointer;
+}
+
+.tyn-settings-row--clickable:active {
+  background: rgba(36, 101, 255, 0.03);
+}
+
+.tyn-settings-row--disabled {
+  opacity: 0.55;
+}
+
+.tyn-settings-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.tyn-settings-title {
+  font-size: 14px;
+  line-height: 22px;
+  color: #212121;
+}
+
+.tyn-settings-desc,
+.tyn-settings-value,
+.tyn-settings-note {
+  font-size: 14px;
+  line-height: 22px;
+  color: #858585;
+}
+
+.tyn-settings-desc {
+  margin-top: 2px;
+}
+
+.tyn-settings-note {
+  text-align: center;
+}
+
+.tyn-settings-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: #858585;
+}
+
+.tyn-settings-chevron {
+  color: #b5b5b5;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.tyn-settings-input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: #5d5d5d;
+  outline: none;
+}
+
+.tyn-settings-input::placeholder {
+  color: #b7b7b7;
+}
+
+.tyn-settings-page--list {
+  padding: 16px 16px 24px;
+  gap: 12px;
+}
+
+.tyn-settings-page--compact {
+  padding: 14px 16px 18px;
+  gap: 14px;
+}
+
+.tyn-settings-page--translator {
+  min-height: 100%;
+}
+
+.tyn-settings-page--qrcode {
+  padding: 6px 16px 16px;
+}
+
+.tyn-settings-section--editor {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.tyn-settings-section--editor .tyn-settings-row--compact {
+  min-height: 52px;
+  padding: 14px 0;
+}
+
+.tyn-settings-section--translator {
+  min-height: 104px;
+  border-radius: 16px;
+  padding: 0 16px;
+}
+
+.tyn-settings-section--translator .tyn-settings-row {
+  min-height: 52px;
+  padding: 14px 0;
+  border-bottom-color: #f3f4f6;
+}
+
+.tyn-settings-section--translator .tyn-settings-title {
+  font-size: 14px;
+  line-height: 20px;
+  color: #212121;
+}
+
+.tyn-settings-section--translator .tyn-settings-extra {
+  color: #5d5d5d;
+}
+
+.tyn-settings-section--private {
+  margin-top: 0;
+  min-height: 152px;
+}
+
+.tyn-settings-section--private .tyn-settings-row {
+  min-height: 52px;
+  padding: 12px 0;
+  border-bottom-color: #f3f4f6;
+}
+
+.tyn-settings-section--private .tyn-settings-row:first-child {
+  min-height: 48px;
+  padding: 12px 0;
+}
+
+.tyn-settings-section--private .tyn-settings-title {
+  font-weight: 400;
+}
+
+.tyn-settings-section--group-info {
+  min-height: 146px;
+}
+
+.tyn-settings-section--group-info .tyn-settings-row {
+  min-height: 48px;
+  padding: 12px 0;
+  border-bottom-color: #f3f4f6;
+}
+
+.tyn-settings-section--group-info .tyn-settings-title,
+.tyn-settings-section--group-tools .tyn-settings-title {
+  font-weight: 400;
+}
+
+.tyn-settings-section--group-info .tyn-settings-desc {
+  color: #5d5d5d;
+  margin-top: 2px;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.tyn-settings-section--group-info .tyn-settings-extra {
+  min-width: 24px;
+  justify-content: flex-end;
+}
+
+.tyn-settings-section--group-tools {
+  min-height: 200px;
+}
+
+.tyn-settings-section--group-tools .tyn-settings-row {
+  min-height: 48px;
+  padding: 12px 0;
+  border-bottom-color: #f3f4f6;
+}
+
+.tyn-settings-section--group-tools .tyn-settings-extra {
+  min-width: 50px;
+  justify-content: flex-end;
+}
+
+.tyn-settings-section--group-tools .tyn-settings-switch {
+  margin-top: 0;
+}
+
+.tyn-settings-section--group-tools .tyn-settings-row:last-child {
+  border-bottom: 0;
+}
+
+.tyn-settings-section--group-members {
+  padding-top: 14px;
+  padding-bottom: 10px;
+}
+
+.tyn-settings-section--group-members .tyn-settings-members {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px 8px;
+  max-height: 232px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 168, 168, 0.7) transparent;
+}
+
+.tyn-settings-section--group-members .tyn-settings-members::-webkit-scrollbar {
+  width: 4px;
+}
+
+.tyn-settings-section--group-members .tyn-settings-members::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tyn-settings-section--group-members .tyn-settings-members::-webkit-scrollbar-thumb {
+  background: rgba(168, 168, 168, 0.7);
+  border-radius: 4px;
+}
+
+.tyn-settings-section--group-members .tyn-settings-member {
+  gap: 6px;
+}
+
+.tyn-settings-section--group-members .tyn-settings-member-name {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.tyn-settings-section--group-members .tyn-settings-member-action {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.tyn-settings-pill::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid #858585;
+  border-bottom: 1.5px solid #858585;
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+
+.tyn-settings-selector-wrap {
+  position: relative;
+}
+
+.tyn-settings-selector {
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  color: #5d5d5d;
+  font-size: 14px;
+  line-height: 22px;
+  cursor: pointer;
+}
+
+.tyn-settings-selector__value {
+  color: #5d5d5d;
+}
+
+.tyn-settings-selector__chevron {
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  color: #b5b5b5;
+  transition: transform 0.2s ease;
+}
+
+.tyn-settings-selector-wrap.is-open .tyn-settings-selector__chevron {
+  transform: rotate(180deg);
+}
+
+.tyn-settings-selector__dropdown {
+  position: fixed;
+  min-width: 180px;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  z-index: 1400;
+}
+
+.tyn-settings-selector__sheet-title {
+  padding: 12px 16px 6px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: #858585;
+}
+
+.tyn-settings-selector__option {
+  width: 100%;
+  border: 0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 22px;
+  color: #212121;
+  border-top: 1px solid #f1f3f5;
+}
+
+.tyn-settings-selector__option:first-of-type {
+  border-top: 0;
+}
+
+.tyn-settings-selector__option.is-active {
+  color: #2465ff;
+}
+
+.tyn-settings-selector__option-check {
+  font-size: 14px;
+}
+
+.tyn-settings-switch {
+  position: relative;
+  display: flex;
+  width: 50px;
+  height: 28px;
+  transform-origin: center right;
+}
+
+.tyn-settings-switch .jg-switch-slider {
+  background-color: #d9dde4;
+  border-radius: 999px;
+}
+
+.tyn-settings-switch .jg-switch-slider:before {
+  width: 20px;
+  height: 20px;
+  left: 6px;
+  bottom: 4px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+}
+
+.tyn-settings-switch input:checked + .jg-switch-slider {
+  background-color: #2465ff;
+}
+
+.tyn-settings-switch input:checked + .jg-switch-slider:before {
+  transform: translateX(22px);
+}
+
+.tyn-settings-actions {
+  margin-top: auto;
+  display: flex;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.tyn-settings-actions .tyn-settings-btn {
+  flex: 1;
+  box-shadow: none;
+}
+
+.tyn-settings-actions--translator {
+  gap: 10px;
+  padding-top: 4px;
+  padding-bottom: 0;
+}
+
+.tyn-settings-actions--translator .tyn-settings-btn {
+  height: 30px;
+  min-height: 30px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0 10px;
+}
+
+.tyn-settings-actions--translator .tyn-settings-btn--secondary {
+  background: #f3f4f6;
+  border-color: #f3f4f6;
+  color: #212121;
+}
+
+.tyn-settings-actions--translator .tyn-settings-btn--primary {
+  background: #2465ff;
+  border-color: #2465ff;
+}
+
+.tyn-settings-btn {
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tyn-settings-btn--primary {
+  background: #2465ff;
+  border-color: #2465ff;
+  color: #fff;
+}
+
+.tyn-settings-btn--secondary {
+  background: #fff;
+  border-color: #e5e7eb;
+  color: #212121;
+}
+
+.tyn-settings-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 22px 24px 20px;
+}
+
+.tyn-settings-card--content,
+.tyn-settings-card--compact {
+  padding: 22px 24px 20px;
+}
+
+.tyn-settings-qrcode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.tyn-settings-qrcode-box {
+  width: 258px;
+  height: 258px;
+  max-width: 100%;
+  border-radius: 0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  box-shadow: none;
+  position: relative;
+}
+
+.tyn-settings-qrcode-center-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #ebebeb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.tyn-settings-qrcode-center-icon .jg-nlogin-icon {
+  transform: scale(0.74);
+  box-shadow: none;
+}
+
+.tyn-settings-note--qrcode {
+  color: #212121;
+  font-size: 14px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.tyn-settings-members {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px 8px;
+}
+
+.tyn-settings-member {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.tyn-settings-member-name {
+  width: 100%;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  color: #5d5d5d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tyn-settings-member-action {
+  width: var(--tyn-size);
+  height: var(--tyn-size);
+  border-radius: 16px;
+  border: 1px solid #e5e7eb;
+  background: #f5f7f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tyn-settings-member-action::before {
+  font-size: 16px;
+  color: #212121;
+}
+
+.tyn-settings-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 2px;
+}
+
+.tyn-settings-more-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #5d5d5d;
+  cursor: pointer;
+}
+
+.tyn-settings-textarea {
+  width: 100%;
+  min-height: 180px;
+  border: 0;
+  resize: none;
+  background: transparent;
+  outline: none;
+  padding: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: #212121;
+}
+
+.tyn-settings-textarea::placeholder {
+  color: #b7b7b7;
+}
+
+.jg-toggle::before{
+  font-size: 20px;
+}
+.jg-aside-show{
+  right: 0;
+}
+.tyn-aside-row .nav-link::before{
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.tyn-reply-bubble > *:first-child:not(:only-child){
+  max-width: 40rem;
+}
+
+.tyn-aside-members{
+  width: 100%;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.tyn-aside-member{
+  width: 20%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.tyn-aside-member-name{
+  font-size: 10px;
+  margin-top: 2px;
+  width: 2.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tyn-group-avatars{
+  display: flex;
+  justify-content: center;
+  background: #f2f2f2;
+  border-radius: 2px;
+  padding: 10px;
+  flex-direction: row-reverse;
+  flex-wrap: wrap-reverse;
+  align-content: center;
+}
+.tyn-group-avatar{
+  height: 30%;
+  width: 30%;
+  background-size: cover;
+  border-radius: 2px;
+  background-repeat: no-repeat;
+  margin: 2px;
+}
+.tyn-avatar{
+  position: relative;
+}
+.tyn-avatar > .inner {
+  overflow: hidden;
+  border-radius: var(--radius);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  z-index: 1;
+  align-items: center;
+  justify-content: center;
+  /* background-image: linear-gradient(#ffffff -300%, var(--color-user)); */
+  background-image: linear-gradient(45deg, var(--color-user1), var(--color-user2), var(--color-user3), var(--color-user4));
+  color: #FFF;
+  border-radius: 50%;
+  font-weight: 500;
+}
+.jg-peer-color-0{
+  --color-user1: rgb(236, 72, 153);
+  --color-user2: rgb(236, 84, 160);
+  --color-user3: rgb(219, 39, 119);
+  --color-user4: rgb(214, 29, 106);
+  --color-user10: rgb(10, 3, 111);
+}
+.jg-peer-color-1{
+  --color-user1: rgb(96, 165, 250);
+  --color-user2: rgb(59, 130, 246);
+  --color-user3: rgb(37, 99, 235);
+  --color-user4: rgb(29, 78, 216);
+}
+.jg-peer-color-2{
+  --color-user1: rgb(253, 186, 116);
+  --color-user2: rgb(251, 146, 60);
+  --color-user3: rgb(249, 130, 71);
+  --color-user4: rgb(248, 113, 113);
+}
+.jg-peer-color-3{
+  --color-user1: rgb(99, 102, 241);
+  --color-user2: rgb(139, 92, 246);
+  --color-user3: rgb(186, 85, 211);
+  --color-user4: rgb(236, 72, 230);
+}
+.jg-peer-color-4{
+  --color-user1: rgb(132, 204, 22);
+  --color-user2: rgb(101, 163, 13);
+  --color-user3: rgb(54, 125, 22);
+  --color-user4: rgb(22, 101, 52);
+}
+.jg-peer-color-5{
+  --color-user1: rgb(255, 112, 172);
+  --color-user2: rgb(255, 97, 163);
+  --color-user3: rgb(255, 71, 142);
+  --color-user4: rgb(237 66 132);
+}
+
+.tyn-s-avatar .inner{
+  font-size: 1.4rem;
+}
+.tyn-ss-avatar .inner{
+  font-size: 3.4rem;
+}
+.tyn-md-avatar .inner{
+  font-size: 1rem;
+}
+.tyn-xmd-avatar .inner{
+  font-size: 2rem;
+}
+.tyn-size-md .inner{
+  font-size: 14px;
+}
+.tyn-sd-avatar .inner{
+  font-size: 0.6rem;
+}
+.tyn-smd-avatar .inner{
+  font-size: 0.66rem;
+}
+.jg-size-md{
+  height: var(--tyn-size) !important;
+  width: var(--tyn-size) !important;
+}
+.jg-size-ld{
+  height: 2rem !important;
+  width: 2rem !important;
+}
+.jg-size-xs{
+  height: 1.2rem !important;
+  width: 1.2rem !important;
+}
+.jg-size-xs .inner{
+  font-size: 0.6rem;
+}
+.jg-size-xss{
+  height: 0.8rem !important;
+  width: 0.8rem !important;
+}
+.jg-size-xss .inner{
+  font-size: 0.5rem;
+}
+.jg-size-rg{
+  height: 4rem !important;
+  width: 4rem !important;
+}
+.jg-size-rg .inner{
+  font-size: 2rem;
+}
+.jg-mention-msg-name{
+	color: #3390ec;
+	margin: 0 0.2rem;
+}
+.jg-warn{
+  color: #FF0000;
+}
+.jg-success{
+  color: #3390ec;
+}
+.jg-gray{
+  color: #888787;
+}
+.jg-notify-message .tyn-reply-item{
+  flex-direction: column;
+}
+.jg-notify-message{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.jg-msg-emoji-box{
+  display: flex;
+}
+.jg-msg-emoji{
+  display: flex;
+}
+.jg-msg-emoji-img{
+  height: 6rem;
+  width: 6rem;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+.jg-msg-emoji-content{
+  font-size: 4rem;
+}
+.jg-tag{
+	font-size: 0.6rem;
+	border-radius: 2px;
+	padding: 0 4px;
+	min-width: 2rem;
+	text-align: center;
+}
+.jg-tag-agent{
+	background-color: #fbd349;
+  color: #281f00;
+}
+
+.tyn-transpant-bubble .tyn-reply-media,
+.tyn-staker-bubble .tyn-reply-text{
+  background: transparent;
+}
+
+.tyn-transpant-bubble .tyn-reply-media .message-state,
+.tyn-staker-bubble .tyn-reply-text .message-state{
+  position: relative;
+  left: unset;
+  bottom: unset;
+}
+.tyn-transpant-bubble .tyn-reply-media .jg-message-senttime,
+.tyn-staker-bubble .tyn-reply-text .jg-message-senttime{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.jg-staker-msg-st{
+  background: #000d044f;
+  color: #FFF;
+  background: #000d044f;
+  padding: 0px 4px;
+  border-radius: 4px;
+}
+.tyn-transpant-bubble .tyn-reply-media{
+  padding: 0;
+}
+
+.tyn-transpant-bubble .jg-reaction{
+  background-color: #fdfeff;
+  box-shadow: #03040445 0 3px 20px;
+  backdrop-filter: blur(30px);
+}
+.common-unreadcount{
+  background: #ef2323;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 10px;
+  color: #FFF;
+  padding: 2px 6px;
+}
+.jg-convers-tools .loading-container{
+  padding: 0;
+}
+.jg-convers-tools .loading-spinner{
+  width: 15px;
+  height: 15px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3390EC;
+  margin-bottom: 0;
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap .jg-call-toolbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #212121;
+  line-height: 1;
+  appearance: none;
+  cursor: pointer;
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap .jg-call-toolbar-icon::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  font-size: 20px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap .jg-call-toolbar-icon--mic::before {
+  background-image: url("../icon/call-mic-on.png");
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap .jg-call-toolbar-icon--camera::before {
+  background-image: url("../icon/call-camera-on.png");
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap--group {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap--group .jg-call-toolbar-icon {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 8px;
+  background: #f3f6fb;
+}
+
+.tyn-composer-toolbar .tyn-toolbar-call-wrap--group .jg-call-toolbar-icon:hover {
+  background: #e8f1ff;
+}
+
+.jg-call-member-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jg-call-member-modal__mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.jg-call-member-modal__dialog {
+  position: relative;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.jg-call-member-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 20px 12px;
+}
+
+.jg-call-member-modal__title {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.jg-call-member-modal__desc {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  color: #64748b;
+}
+
+.jg-call-member-modal__close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+}
+
+.jg-call-member-modal__search {
+  margin: 0 20px;
+  height: 42px;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  color: #94a3b8;
+}
+
+.jg-call-member-modal__search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.jg-call-member-modal__selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 20px 0;
+}
+
+.jg-call-member-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #334155;
+  font-size: 12px;
+}
+
+.jg-call-member-modal__chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.jg-call-member-modal__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 0;
+}
+
+.jg-call-member-modal__item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  color: #0f172a;
+  text-align: left;
+}
+
+.jg-call-member-modal__item:hover {
+  background: #f8fafc;
+}
+
+.jg-call-member-modal__checked {
+  color: #2465ff;
+}
+
+.tyn-avatar.jg-call-member-modal__avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.jg-call-member-modal__name {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.jg-call-member-modal__empty {
+  padding: 56px 20px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.jg-call-member-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid #eef2f7;
+}
+
+.jg-call-member-modal__ghost,
+.jg-call-member-modal__primary {
+  min-width: 88px;
+  height: 38px;
+  border: 0;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.jg-call-member-modal__ghost {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.jg-call-member-modal__primary {
+  background: #2465ff;
+  color: #fff;
+}
+
+.jg-call-member-modal__primary--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

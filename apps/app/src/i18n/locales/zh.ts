@@ -727,6 +727,7 @@ export default {
   "mcp.friendly_status_ready": "就绪",
   "mcp.last_synced": "已同步",
   "navigation.chat": "聊天",
+  "navigation.contacts": "通讯录",
   "navigation.cloud_tasks": "云端任务",
   "navigation.cloud_workspace": "云端工作区",
   "navigation.create_cloud_task": "新建云端任务",

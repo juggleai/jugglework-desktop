@@ -20,6 +20,17 @@ export type DenUser = {
   id: string;
   email: string;
   name: string | null;
+  account?: string | null;
+  avatar?: string | null;
+  imUserId?: string | null;
+};
+
+export type DenIMLoginBootstrap = {
+  provider: string;
+  websocketUrl: string;
+  appKey: string;
+  imUserId: string;
+  token: string;
 };
 
 export type DenPluginConfigObjectType =

@@ -1,5 +1,6 @@
 import {
   createDenClient,
+  writeDenIMLoginBootstrap,
   writeDenSettings,
   type DenDesktopHandoffExchange,
 } from "./den";
@@ -57,12 +58,14 @@ export async function exchangeHandoffAndSignIn(
       activeOrgSlug: options.activeOrg?.slug ?? null,
       activeOrgName: options.activeOrg?.name ?? null,
     });
+    writeDenIMLoginBootstrap(exchange.im);
 
     dispatchDenSessionUpdated({
       status: "success",
       baseUrl: options.baseUrl,
       token: exchange.token,
       user: exchange.user,
+      im: exchange.im,
       email: exchange.user?.email ?? null,
     });
 

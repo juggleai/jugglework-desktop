@@ -403,6 +403,7 @@ export default {
   "mcp.friendly_status_ready": "Listo",
   "mcp.last_synced": "Sincronizado",
   "navigation.chat": "Chat",
+  "navigation.contacts": "Contactos",
   "navigation.cloud_tasks": "Tareas en la nube",
   "navigation.home": "Inicio",
   "navigation.local_tasks": "Tareas locales",
