@@ -12,6 +12,7 @@ import loginCss from "./snailchat-assets/css/newui.css?inline";
 import cardBackgroundUrl from "./snailchat-assets/images/card-bg.png";
 import iconFontUrl from "./snailchat-assets/icon/iconfont.woff2?url";
 import bridgeCss from "./snailchat-theme.css?inline";
+import listPanelHeaderCss from "../../shell/list-panel-header.css?inline";
 
 const iconFontFaceCss = `@font-face{font-family:'wr';src:url('${iconFontUrl}') format('woff2');font-style:normal;font-weight:normal;font-display:swap;}`;
 
@@ -39,14 +40,15 @@ export function ChatStyleScope({ children }: { children: ReactNode }) {
       <style>{iconFontFaceCss}</style>
       <div
         ref={mount}
-        className="h-full min-h-0 w-full min-w-0 overflow-hidden"
+        className="isolate h-full min-h-0 w-full min-w-0 overflow-hidden"
         data-jugglework-platform={typeof document !== "undefined" && document.documentElement.classList.contains("jugglework-platform-mac") ? "mac" : "other"}
       >
         {shadow
           ? createPortal(
               <>
-                <style>{`:host{display:block;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;container-type:inline-size}`}</style>
+                <style>{`:host{display:block;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden;isolation:isolate;container-type:inline-size}`}</style>
                 <style>{baseCss}</style>
+                <style>{listPanelHeaderCss}</style>
                 <style>{sourceCss}</style>
                 <style>{bridgeCss}</style>
                 {children}

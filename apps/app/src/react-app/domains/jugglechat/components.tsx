@@ -4,6 +4,8 @@ import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { isMacPlatform } from "@/app/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import {
   ArrowDown,
   AtSign,
@@ -256,14 +258,18 @@ export function ConversationList() {
   return (
     <>
       <aside className="jw-im-list-pane tyn-aside">
-      <header className="jw-im-pane-header jg-conversations-header jw-im-list-filter-header">
-        <div className="jw-im-list-filter">
-          <Search aria-hidden="true" />
-          <input ref={searchInputRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" />
-          {query ? <button type="button" className="jw-im-list-filter-clear" onClick={() => setQuery("")} title="清除搜索" aria-label="清除搜索"><X /></button> : loading && !initialized ? <span className="jw-im-list-loading" title="数据更新中..."><LoaderCircle className="is-spinning" /><span>数据更新中...</span></span> : <kbd className="jw-im-list-filter-shortcut">{isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}</kbd>}
-        </div>
-        <ListAddMenu onOpen={() => { if (!contacts.length) void loadContacts(); }} onCreateGroup={() => setGroupOpen(true)} />
-      </header>
+      <ListPanelHeader
+        title="消息"
+        searchValue={query}
+        searchPlaceholder="搜索会话"
+        searchInputRef={searchInputRef}
+        onSearchChange={setQuery}
+        onClearSearch={() => setQuery("")}
+        showClear={Boolean(query)}
+        shortcut={isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+        searchEnd={loading && !initialized ? <span className="jw-im-list-loading" title="数据更新中..."><LoaderCircle className="is-spinning" /><span>数据更新中...</span></span> : undefined}
+        addControl={<ListAddMenu onOpen={() => { if (!contacts.length) void loadContacts(); }} onCreateGroup={() => setGroupOpen(true)} />}
+      />
       <div className="jg-conversation-body">
         <div className="jg-conver-list">
           <div className="jw-im-list-scroll tyn-aside-body tyn-aside-list newui-conversation-list-anim" onScroll={captureRowPositions}>
@@ -1590,23 +1596,70 @@ export function ContactsSurface() {
   return (
     <div className="jw-im-contacts-layout tyn-contact tyn-content tyn-content-full-height tyn-chat has-aside-base show-content">
       <aside className="jw-im-list-pane tyn-aside tyn-contact-aside">
-        <header className="jw-im-pane-header jg-conversations-header jw-im-list-filter-header">
-          <div className="jw-im-list-filter">
-            <Search aria-hidden="true" />
-            <input ref={searchInputRef} type="search" value={query} onChange={(event) => { setQuery(event.target.value); setSelected(null); }} placeholder="搜索通讯录" aria-label="搜索通讯录" />
-            {query ? <button type="button" className="jw-im-list-filter-clear" onClick={() => setQuery("")} title="清除搜索" aria-label="清除搜索"><X /></button> : <kbd className="jw-im-list-filter-shortcut">{isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}</kbd>}
-          </div>
-          <ListAddMenu onCreateGroup={() => setGroupOpen(true)} />
-        </header>
+        <ListPanelHeader
+          title="通讯录"
+          searchValue={query}
+          searchPlaceholder="搜索通讯录"
+          searchInputRef={searchInputRef}
+          onSearchChange={setQuery}
+          onClearSearch={() => setQuery("")}
+          showClear={Boolean(query)}
+          shortcut={isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+          addControl={<ListAddMenu onCreateGroup={() => setGroupOpen(true)} />}
+        />
         <div className="tyn-aside-body"><ul className="tyn-aside-list jw-im-contact-categories">{categories.map((item) => <li key={item.id} className={cx("tyn-aside-item tyn-aside-contact-item", tab === item.id && "active")} onClick={() => { setTab(item.id); setSelected(null); setQuery(""); }}><div className="tyn-media-group"><span className={cx("jg-tab-icon", item.icon)} /><span className="name">{item.name}</span></div><div className="jg-item-right"><div className="jg-arrow" /></div></li>)}</ul></div>
       </aside>
       <main className="jw-im-contact-main tyn-main tyn-chat-content aside-collapsed">
-        <header className="jw-im-pane-header jg-conversations-header jw-im-contact-main-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">{selected ? <button className="jw-im-contact-back" onClick={() => setSelected(null)}><ChevronLeft size={17} /></button> : null}{selected ? selected.friend_display_name || selected.nickname || selected.user_id : currentCategory.name}</li></ul></header>
+        <header className="jw-im-pane-header jg-conversations-header jw-im-contact-main-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">{currentCategory.name}</li></ul></header>
         <div className="tyn-chat-body tyn-contact-body">
-          {selected ? <div className="jw-im-contact-detail"><ChatAvatar className="jg-size-rg tyn-conver-avatar" size="lg" name={selected.friend_display_name || selected.nickname || selected.user_id} userId={selected.user_id} src={selected.avatar} /><h2>{selected.friend_display_name || selected.nickname || selected.user_id}</h2><p>ID: @{selected.user_id}</p><button className="jw-im-primary-button contact-send-msg" onClick={() => void open(selected)}><MessageCircle size={17} />发消息</button></div> : <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>}
+          <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>
         </div>
       </main>
+      {selected ? <ContactDetail contact={selected} onClose={() => setSelected(null)} onConversation={() => open(selected).then(() => setSelected(null))} /> : null}
       {groupOpen ? <CreateGroupModal contacts={contacts} onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void reload(); setTab("groups"); }} /> : null}
+    </div>
+  );
+}
+
+function ContactDetail({ contact, onClose, onConversation }: { contact: ChatContact; onClose: () => void; onConversation: () => Promise<void> }) {
+  const isGroup = contact.conversationType === 2;
+  const name = contact.friend_display_name || contact.nickname || contact.user_id;
+  const [opening, setOpening] = useState(false);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  const memberCount = Array.isArray(contact.member_ids) ? contact.member_ids.length : null;
+
+  const openConversation = async () => {
+    if (opening) return;
+    setOpening(true);
+    try {
+      await onConversation();
+    } finally {
+      setOpening(false);
+    }
+  };
+
+  return (
+    <div className="jw-im-contact-card-backdrop" onMouseDown={onClose}>
+      <section className="jw-im-contact-profile-card" role="dialog" aria-modal="true" aria-label={isGroup ? "群组详情" : "联系人详情"} onMouseDown={(event) => event.stopPropagation()}>
+        <button className="jw-im-contact-card-close" onClick={onClose} title="关闭" aria-label="关闭"><X size={17} /></button>
+        <Avatar className="jw-im-contact-profile-avatar" size="lg">
+          {contact.avatar ? <AvatarImage src={contact.avatar} alt={name} /> : null}
+          <AvatarFallback className={cx("jw-im-contact-profile-avatar-fallback", `jg-peer-color-${avatarColorIndex(contact.user_id)}`)}>{initials(name)}</AvatarFallback>
+        </Avatar>
+        <h2>{name}</h2>
+        <p className={isGroup ? undefined : "jw-im-contact-detail-id"} title={isGroup ? undefined : `ID: @${contact.user_id}`}>{isGroup ? `${memberCount ?? 0} 位成员` : `ID: @${contact.user_id}`}</p>
+        <div className="jw-im-contact-detail-actions">
+          <button className="jw-im-contact-detail-primary" disabled={opening} onClick={() => void openConversation()}>{opening ? <LoaderCircle className="is-spinning" size={17} /> : <MessageCircle size={17} />}{opening ? "打开中" : "发送消息"}</button>
+        </div>
+      </section>
     </div>
   );
 }

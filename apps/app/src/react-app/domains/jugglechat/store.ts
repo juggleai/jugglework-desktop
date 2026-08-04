@@ -32,7 +32,7 @@ type JuggleChatState = {
   bootstrap: (identity?: DenUser | null) => Promise<void>;
   acceptLogin: (user: ChatUser) => Promise<void>;
   loadConversations: () => Promise<void>;
-  selectConversation: (conversation: ChatConversation) => Promise<void>;
+  selectConversation: (conversation: ChatConversation, options?: { loadHistory?: boolean }) => Promise<void>;
   loadEarlierMessages: () => Promise<void>;
   loadContacts: () => Promise<void>;
   openContact: (contact: ChatContact) => Promise<void>;
@@ -103,6 +103,10 @@ function getVideoMetadata(url: string) {
 
 function isSameConversation(a: Pick<ChatConversation, "conversationId" | "conversationType"> | null, b: Pick<ChatConversation, "conversationId" | "conversationType"> | null) {
   return Boolean(a && b && a.conversationId === b.conversationId && a.conversationType === b.conversationType);
+}
+
+function hasConversationIdentity(value?: Partial<ChatConversation> | null): value is ChatConversation {
+  return Boolean(value?.conversationId && typeof value.conversationType === "number");
 }
 
 function syncActiveConversation(activeConversation: ChatConversation | null, conversations: ChatConversation[]) {
@@ -404,7 +408,9 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     set({ loadingConversations: true });
     try {
       const result = await juggleChatRuntime.getConversations({ time: 0, count: 100 });
-      const conversations = mergeConversations([], result.conversations ?? [], get().user?.id);
+      const rawConversations = result.conversations ?? [];
+      console.log("[JuggleChat] SDK 原始会话列表", result);
+      const conversations = mergeConversations([], rawConversations, get().user?.id);
       set({
         conversations,
         conversationsInitialized: true,
@@ -417,8 +423,20 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
     }
   },
 
-  async selectConversation(conversation) {
+  async selectConversation(conversation, options) {
     releaseLocalMediaUrls(get().messages);
+    if (options?.loadHistory === false) {
+      set({
+        activeConversation: conversation,
+        messages: [],
+        loadingMessages: false,
+        messagesFinished: true,
+        replyTo: null,
+        pinnedMessage: null,
+        error: null,
+      });
+      return;
+    }
     set({ activeConversation: conversation, messages: [], loadingMessages: true, messagesFinished: false, replyTo: null, pinnedMessage: null });
     try {
       const [result, pinned] = await Promise.all([
@@ -491,15 +509,35 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   async openContact(contact) {
     const client = await juggleChatRuntime.initialize();
     const conversationType = contact.conversationType ?? client.ConversationType.PRIVATE;
-    const result = await client.getConversation({ conversationId: contact.user_id, conversationType });
-    const conversation = result?.conversation ?? {
+    const displayName = contact.friend_display_name || contact.nickname || contact.user_id;
+    const existingInMemory = get().conversations.find((item) => (
+      item.conversationId === contact.user_id && item.conversationType === conversationType
+    ));
+    const result = existingInMemory
+      ? null
+      : await client.getConversation({ conversationId: contact.user_id, conversationType });
+    const sdkConversation = hasConversationIdentity(result?.conversation) ? result.conversation : null;
+    const existing = existingInMemory ?? sdkConversation;
+    // Always prefer the in-memory contact / group name so the conversation
+    // list entry shows the right title immediately after navigating.
+    const conversation: ChatConversation = {
+      ...(existing ?? {}),
       conversationId: contact.user_id,
       conversationType,
-      conversationTitle: contact.friend_display_name || contact.nickname || contact.user_id,
-      conversationPortrait: contact.avatar,
+      conversationTitle: displayName || existing?.conversationTitle || contact.user_id,
+      ...(contact.avatar
+        ? { conversationPortrait: contact.avatar }
+        : existing?.conversationPortrait
+          ? { conversationPortrait: existing.conversationPortrait }
+          : {}),
     };
-    set({ view: "conversations" });
-    await get().selectConversation(conversation);
+    // Ensure the conversation appears in the list immediately using the
+    // in-memory group / contact data — no need to wait for a full list fetch.
+    set({
+      conversations: mergeConversations(get().conversations, [conversation], get().user?.id),
+      view: "conversations",
+    });
+    await get().selectConversation(conversation, { loadHistory: Boolean(existing) });
   },
 
   async sendText(content, mentionInfo) {

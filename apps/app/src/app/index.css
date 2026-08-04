@@ -3,6 +3,8 @@
 
 @import "../styles/colors.css";
 
+@import "../styles/custom.css";
+
 @import "tw-animate-css";
 
 @import "shadcn/tailwind.css";

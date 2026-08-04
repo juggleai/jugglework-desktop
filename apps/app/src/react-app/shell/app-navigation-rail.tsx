@@ -1,9 +1,9 @@
 /** @jsxImportSource react */
 import {
-  BookUser,
+  ContactRound,
+  Cloud,
   FolderKanban,
-  MessageCircleMore,
-  Orbit,
+  MessageSquare,
   Plus,
   Search,
   Settings,
@@ -61,7 +61,7 @@ function RailButton({
       onClick={onClick}
       data-testid={testId}
       className={cn(
-        "flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag",
+        "flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.8]",
         "hover:border-dls-border hover:bg-background hover:text-dls-text",
         active && "border-dls-border bg-background text-dls-text shadow-sm",
         disabled && "cursor-default opacity-45 hover:border-transparent hover:bg-transparent hover:text-dls-secondary",
@@ -117,7 +117,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             onClick={props.onOpenTaskSearch}
             testId="app-rail-task-search"
           >
-            <Search className="size-5" strokeWidth={1.8} />
+            <Search />
           </RailButton>
         ) : null}
         {props.onOpenCreateWorkspace ? (
@@ -126,7 +126,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
             onClick={props.onOpenCreateWorkspace}
             testId="app-rail-create-workspace"
           >
-            <Plus className="size-5" strokeWidth={1.8} />
+            <Plus />
           </RailButton>
         ) : null}
         <RailButton
@@ -135,7 +135,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
         >
-          <FolderKanban className="size-5" strokeWidth={1.8} />
+          <FolderKanban />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -151,7 +151,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
         >
-          <Orbit className="size-5" strokeWidth={1.8} />
+          <Cloud />
         </RailButton>
         <RailButton
           label={t("navigation.chat")}
@@ -159,7 +159,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openChatView("conversations")}
           testId="app-rail-chat"
         >
-          <MessageCircleMore className="size-5" strokeWidth={1.8} />
+          <MessageSquare />
         </RailButton>
         <RailButton
           label={t("navigation.contacts")}
@@ -167,7 +167,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openChatView("contacts")}
           testId="app-rail-contacts"
         >
-          <BookUser className="size-5" strokeWidth={1.8} />
+          <ContactRound />
         </RailButton>
       </nav>
 
@@ -178,7 +178,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={props.onOpenSettings}
           testId="app-rail-settings"
         >
-          <Settings className="size-5" strokeWidth={1.8} />
+          <Settings />
         </RailButton>
       </div>
     </aside>
