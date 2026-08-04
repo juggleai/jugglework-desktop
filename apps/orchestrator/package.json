@@ -1,6 +1,6 @@
 {
   "name": "jugglework-orchestrator",
-  "version": "0.17.40",
+  "version": "1.1.29",
   "description": "JuggleWork host orchestrator for opencode + JuggleWork server",
   "private": true,
   "type": "module",
@@ -46,7 +46,7 @@
     "@opencode-ai/sdk": "^1.18.7",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
-    "jugglework-server": "0.17.40",
+    "jugglework-server": "1.1.29",
     "solid-js": "1.9.9"
   },
   "devDependencies": {
