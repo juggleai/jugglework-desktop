@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { t } from "@/i18n";
-import { parseManualAuthInput } from "./forced-signin-page";
+import { parseManualDenAuthInput } from "@/app/lib/jugglework-links";
 
 type JoinOrganizationDialogProps = {
   open: boolean;
@@ -137,7 +137,7 @@ export function JoinOrganizationDialog({
   }, [finishConnected]);
 
   const submitManualAuth = useCallback(async (value: string) => {
-    const parsed = parseManualAuthInput(value);
+    const parsed = parseManualDenAuthInput(value);
     if (!parsed) return false;
 
     const baseUrl = parsed.baseUrl ?? readDenSettings().baseUrl;

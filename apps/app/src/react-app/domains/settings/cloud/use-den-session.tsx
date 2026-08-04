@@ -32,6 +32,7 @@ import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
 import { useCloudSession } from "./cloud-session-provider";
 import { defaultControlPlaneUrl, saveControlPlaneUrl } from "./control-plane-url";
+import { parseManualDenAuthInput } from "@/app/lib/jugglework-links";
 
 type SettingsTone = "ready" | "warning" | "neutral" | "error";
 
@@ -64,33 +65,6 @@ async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOu
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
-
-function parseManualAuthInput(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  try {
-    const url = new URL(trimmed);
-    const protocol = url.protocol.toLowerCase();
-    const routeHost = url.hostname.toLowerCase();
-    const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
-    const routeSegments = routePath.split("/").filter(Boolean);
-    const routeTail = routeSegments[routeSegments.length - 1] ?? "";
-    if (
-      (protocol === "jugglework:" || protocol === "jugglework-dev:") &&
-      (routeHost === "den-auth" || routePath === "den-auth" || routeTail === "den-auth")
-    ) {
-      const grant = url.searchParams.get("grant")?.trim() ?? "";
-      const nextBaseUrl =
-        normalizeDenBaseUrl(url.searchParams.get("denBaseUrl")?.trim() ?? "") ?? undefined;
-      return grant ? { grant, baseUrl: nextBaseUrl } : null;
-    }
-  } catch {
-    // Treat non-URL input as a raw handoff grant.
-  }
-
-  return trimmed.length >= 12 ? { grant: trimmed } : null;
 }
 
 export function useDenSession({
@@ -483,7 +457,7 @@ export function useDenSession({
   }, [clearSessionState, setAuthToken, setBaseUrl]);
 
   const submitManualAuth = React.useCallback(async (input: string) => {
-    const parsed = parseManualAuthInput(input);
+    const parsed = parseManualDenAuthInput(input);
     if (!parsed || authBusy) {
       if (!parsed) setAuthError(t("den.error_paste_valid_code"));
       return false;

@@ -25,6 +25,19 @@ function isSupportedDeepLinkProtocol(protocol: string): boolean {
   return normalized === "jugglework:" || normalized === "jugglework-dev:" || normalized === "https:" || normalized === "http:";
 }
 
+/**
+ * Normalize JSON/HTML escaped delimiters that can survive when a handoff URL
+ * is copied from a raw JSON response or another serialized text surface.
+ */
+export function normalizeJuggleWorkDeepLink(rawUrl: string): string {
+  return rawUrl
+    .trim()
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\u003d/gi, "=")
+    .replace(/\\u003f/gi, "?")
+    .replace(/\\\//g, "/");
+}
+
 export function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | null {
   let url: URL;
   try {
@@ -111,7 +124,7 @@ export function stripRemoteConnectQuery(rawUrl: string): string | null {
 export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   let url: URL;
   try {
-    url = new URL(rawUrl);
+    url = new URL(normalizeJuggleWorkDeepLink(rawUrl));
   } catch {
     return null;
   }
@@ -136,6 +149,40 @@ export function parseDenAuthDeepLink(rawUrl: string): DenAuthDeepLink | null {
   }
 
   return { grant, denBaseUrl };
+}
+
+export type ManualDenAuthInput = {
+  grant: string;
+  baseUrl?: string;
+};
+
+/** Accept a desktop authorization link or a raw opaque one-time grant. */
+export function parseManualDenAuthInput(value: string): ManualDenAuthInput | null {
+  const normalized = normalizeJuggleWorkDeepLink(value);
+  if (!normalized) return null;
+
+  const deepLink = parseDenAuthDeepLink(normalized);
+  if (deepLink) {
+    const parsedUrl = new URL(normalized);
+    const hasExplicitBaseUrl = Boolean(parsedUrl.searchParams.get("denBaseUrl")?.trim());
+    return {
+      grant: deepLink.grant,
+      ...(hasExplicitBaseUrl ? { baseUrl: deepLink.denBaseUrl } : {}),
+    };
+  }
+
+  // A URL that is not a den-auth handoff must never be exchanged as if its
+  // entire text were an opaque grant (for example, the browser login page).
+  try {
+    new URL(normalized);
+    return null;
+  } catch {
+    // Non-URL input may be a raw handoff grant.
+  }
+
+  return /^[A-Za-z0-9_-]{12,256}$/.test(normalized)
+    ? { grant: normalized }
+    : null;
 }
 
 export function parseConnectDeepLink(rawUrl: string): ConnectDeepLink | null {
