@@ -121,6 +121,14 @@
 .jw-im-conversation-row .newui-conversation-card { width: 100%; }
 .jw-im-conversation-row .jw-im-avatar > .inner { width: 100%; height: 100%; }
 .jw-im-conversation-row .jw-im-unread { position: static; inset: auto; }
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active),
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active) .newui-conversation-card {
+  background: #f1f1f2;
+}
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover,
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover .newui-conversation-card {
+  background: #ededee;
+}
 
 /* Empty conversation surface */
 .jw-im-empty-surface { min-width: 0; background: var(--ui-surface); }

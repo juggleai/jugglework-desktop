@@ -20,6 +20,7 @@ type JuggleChatState = {
   contacts: ChatContact[];
   groups: ChatContact[];
   loadingConversations: boolean;
+  conversationsInitialized: boolean;
   loadingMessages: boolean;
   loadingContacts: boolean;
   sending: boolean;
@@ -312,6 +313,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   contacts: [],
   groups: [],
   loadingConversations: false,
+  conversationsInitialized: false,
   loadingMessages: false,
   loadingContacts: false,
   sending: false,
@@ -370,6 +372,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       status: "signed-out",
       user: null,
       conversations: [],
+      conversationsInitialized: false,
       activeConversation: null,
       messages: [],
       pinnedMessage: null,
@@ -387,6 +390,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       const conversations = mergeConversations([], result.conversations ?? [], get().user?.id);
       set({
         conversations,
+        conversationsInitialized: true,
         activeConversation: syncActiveConversation(get().activeConversation, conversations),
         loadingConversations: false,
       });

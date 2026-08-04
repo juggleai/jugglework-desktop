@@ -383,6 +383,14 @@ function formatTime(value?: number) {
   return date.toLocaleDateString([], { month: "numeric", day: "numeric" });
 }
 
+function formatConversationTime(value?: number) {
+  if (!value) return "";
+  const date = new Date(value);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${date.getMonth() + 1}-${date.getDate()}`;
+}
+
 function messagePreview(message?: ChatMessage) {
   if (!message) return "暂无消息";
   if (message.name === "jg:text") return mentionText(message);
@@ -407,17 +415,61 @@ export function ConversationList() {
   const active = useJuggleChatStore((state) => state.activeConversation);
   const select = useJuggleChatStore((state) => state.selectConversation);
   const loading = useJuggleChatStore((state) => state.loadingConversations);
+  const initialized = useJuggleChatStore((state) => state.conversationsInitialized);
   const reload = useJuggleChatStore((state) => state.loadConversations);
   const setView = useJuggleChatStore((state) => state.setView);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const filtered = useMemo(() => conversations.filter((item) => conversationName(item).toLowerCase().includes(query.trim().toLowerCase())), [conversations, query]);
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const previousRowPositions = useRef(new Map<string, number>());
+  const previousOrder = useRef<string | null>(null);
+  const rowAnimations = useRef(new Map<string, Animation>());
+  const orderKey = filtered.map((conversation) => `${conversation.conversationType}:${conversation.conversationId}`).join("|");
+  const captureRowPositions = () => {
+    const positions = new Map<string, number>();
+    rowRefs.current.forEach((node, key) => positions.set(key, node.getBoundingClientRect().top));
+    previousRowPositions.current = positions;
+  };
+  useLayoutEffect(() => {
+    const positions = new Map<string, number>();
+    rowRefs.current.forEach((node, key) => positions.set(key, node.getBoundingClientRect().top));
+    const orderChanged = previousOrder.current !== null && previousOrder.current !== orderKey;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (orderChanged && !reduceMotion) {
+      rowRefs.current.forEach((node, key) => {
+        const previousTop = previousRowPositions.current.get(key);
+        const offset = previousTop === undefined ? -12 : previousTop - (positions.get(key) ?? previousTop);
+        if (previousTop !== undefined && Math.abs(offset) < 1) return;
+        rowAnimations.current.get(key)?.cancel();
+        const animation = node.animate(
+          previousTop === undefined
+            ? [{ opacity: 0, transform: `translateY(${offset}px)` }, { opacity: 1, transform: "translateY(0)" }]
+            : [{ transform: `translateY(${offset}px)` }, { transform: "translateY(0)" }],
+          { duration: 320, easing: "cubic-bezier(.22, .61, .36, 1)" },
+        );
+        rowAnimations.current.set(key, animation);
+        const clearAnimation = () => { if (rowAnimations.current.get(key) === animation) rowAnimations.current.delete(key); };
+        animation.onfinish = clearAnimation;
+        animation.oncancel = clearAnimation;
+      });
+    }
+    for (const [key, animation] of rowAnimations.current) {
+      if (!positions.has(key)) {
+        animation.cancel();
+        rowAnimations.current.delete(key);
+      }
+    }
+    previousRowPositions.current = positions;
+    previousOrder.current = orderKey;
+  }, [orderKey, searchOpen]);
+  useEffect(() => () => rowAnimations.current.forEach((animation) => animation.cancel()), []);
   return (
     <aside className="jw-im-list-pane tyn-aside">
       <header className="jw-im-pane-header jg-conversations-header">
         <ul className="jg-convers-tools">
           <li className="jg-conversation-tool">消息</li>
-          {loading ? <li className="jg-conversation-tool jg-conversation-updating"><LoaderCircle className="is-spinning" size={13} /><span className="title">数据更新中...</span></li> : null}
+          {loading && !initialized ? <li className="jg-conversation-tool jg-conversation-updating"><LoaderCircle className="is-spinning" size={13} /><span className="title">数据更新中...</span></li> : null}
         </ul>
         <div className="jw-im-header-actions jg-contact-actions">
           <button className="jg-contact-action" onClick={() => setSearchOpen((value) => !value)} title="搜索"><span className="jg-header-icon jg-header-icon--search" aria-hidden="true" /></button>
@@ -428,13 +480,14 @@ export function ConversationList() {
       {searchOpen ? <label className="jw-im-search jg-search-box"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索会话" /><button onClick={() => { setSearchOpen(false); setQuery(""); }}><X size={14} /></button></label> : null}
       <div className="jg-conversation-body">
         <div className="jg-conver-list">
-          <div className="jw-im-list-scroll tyn-aside-body tyn-aside-list">
+          <div className="jw-im-list-scroll tyn-aside-body tyn-aside-list newui-conversation-list-anim" onScroll={captureRowPositions}>
         {loading && !conversations.length ? <div className="newui-conversation-skeleton">{Array.from({ length: 6 }, (_, index) => <div className="newui-skeleton-row newui-conversation-card" key={index}><span className="newui-skeleton-avatar" /><span className="newui-conversation-content"><span className="newui-skeleton-line newui-skeleton-line-title" style={{ width: `${52 + index * 4}%` }} /><span className="newui-skeleton-line newui-skeleton-line-preview" style={{ width: `${66 + index * 3}%` }} /></span><span className="newui-conversation-side"><span className="newui-skeleton-line newui-skeleton-line-time" /></span></div>)}</div> : null}
         {!loading && !filtered.length ? <div className="newui-empty-state"><div className="newui-empty-state-icon"><MessageCircle /></div><div className="newui-empty-state-title">暂无会话</div><div className="newui-empty-state-sub">点击右上角 + 开始新对话</div></div> : null}
         {filtered.map((conversation) => {
           const name = conversationName(conversation);
+          const key = `${conversation.conversationType}:${conversation.conversationId}`;
           return (
-            <button key={`${conversation.conversationType}:${conversation.conversationId}`} className={cx("jw-im-conversation-row tyn-aside-item newui-conversation-item", isSame(active, conversation) && "is-active active")} onClick={() => void select(conversation)}>
+            <button ref={(node) => { if (node) rowRefs.current.set(key, node); else rowRefs.current.delete(key); }} key={key} className={cx("jw-im-conversation-row tyn-aside-item newui-conversation-item", Boolean(conversation.isTop) && "is-pinned", isSame(active, conversation) && "is-active active")} onClick={() => void select(conversation)}>
               <span className="newui-conversation-card">
                 <span className="newui-conversation-main">
                   <span className="newui-conversation-avatar-wrap"><ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} /></span>
@@ -444,7 +497,7 @@ export function ConversationList() {
                   </span>
                 </span>
                 <span className="newui-conversation-side">
-                  <span className="newui-conversation-side-top"><time className="newui-conversation-time">{formatTime(conversation.latestMessage?.sentTime)}</time></span>
+                  <span className="newui-conversation-side-top"><time className="newui-conversation-time">{formatConversationTime(conversation.latestMessage?.sentTime)}</time></span>
                   <span className="newui-conversation-side-bottom">{(conversation.unreadCount ?? 0) > 0 ? <span className="jw-im-unread newui-conversation-side-badge">{Math.min(conversation.unreadCount ?? 0, 99)}</span> : <span className="newui-conversation-side-placeholder" />}</span>
                 </span>
               </span>
