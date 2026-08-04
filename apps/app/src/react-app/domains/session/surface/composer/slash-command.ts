@@ -1,10 +1,9 @@
-import type { McpServerEntry, SkillCard, SlashCommandOption } from "@/app/types";
+import type { SkillCard, SlashCommandOption } from "@/app/types";
 
 const SLASH_COMMAND_QUERY_RE = /^\/([A-Za-z0-9_-]*)$/;
 const SLASH_COMMAND_INVOCATION_RE = /^\/([A-Za-z0-9_-]+)(?:[ \t]+([\s\S]*))?$/;
 
 export type ComposerSlashCommandOption = SlashCommandOption & {
-  mcp?: McpServerEntry;
   skill?: SkillCard;
 };
 
@@ -41,38 +40,6 @@ export function connectSkillSlashCommandOptions(skills: SkillCard[]): ComposerSl
       skill,
     }];
   });
-}
-
-/**
- * 将 MCP 服务名称转换为可输入的斜杠命令名称。
- *
- * @param mcp MCP 服务条目
- * @returns 仅包含斜杠命令安全字符的名称
- */
-export function mcpSlashCommandName(mcp: Pick<McpServerEntry, "name">) {
-  return slashSafeName(mcp.name, "mcp");
-}
-
-/**
- * 将会话可见的 MCP 服务投影为斜杠菜单选项。
- *
- * @param mcpServers 当前会话可见的 MCP 服务
- * @returns 可供输入框选择的 MCP 斜杠选项
- */
-export function mcpSlashCommandOptions(mcpServers: McpServerEntry[]): ComposerSlashCommandOption[] {
-  return mcpServers.map((mcp) => ({
-    id: `mcp:${mcp.id ?? mcp.name}`,
-    name: mcpSlashCommandName(mcp),
-    description: [
-      [mcp.marketplaceName, mcp.pluginName].filter(Boolean).join(" · "),
-      mcp.config.type === "remote" ? mcp.config.url : mcp.config.command?.join(" "),
-    ].filter(Boolean).join(" — "),
-    source: "mcp",
-    origin: mcp.origin,
-    marketplaceName: mcp.marketplaceName,
-    pluginName: mcp.pluginName,
-    mcp,
-  }));
 }
 
 export function getSlashCommandQuery(value: string) {

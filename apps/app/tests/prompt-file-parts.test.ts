@@ -4,8 +4,6 @@ import { firstLineLocalFileParts } from "../src/react-app/domains/session/sync/p
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
-  mcpSlashCommandName,
-  mcpSlashCommandOptions,
   parseSlashCommandInvocation,
   skillMenuSlashCommandName,
   skillSlashCommandName,
@@ -163,30 +161,3 @@ describe("Connect skill slash commands", () => {
   });
 });
 
-describe("MCP slash commands", () => {
-  test("projects a connected organization MCP into a selectable slash option", () => {
-    const mcp = {
-      id: "jugglework-connect:connection:github",
-      name: "GitHub Cloud",
-      config: { type: "remote" as const, url: "https://api.githubcopilot.com/mcp/" },
-      origin: "jugglework-connect" as const,
-    };
-
-    expect(mcpSlashCommandOptions([mcp])).toEqual([
-      {
-        id: "mcp:jugglework-connect:connection:github",
-        name: "github-cloud",
-        description: "https://api.githubcopilot.com/mcp/",
-        source: "mcp",
-        origin: "jugglework-connect",
-        marketplaceName: undefined,
-        pluginName: undefined,
-        mcp,
-      },
-    ]);
-  });
-
-  test("keeps an empty MCP label slash-safe", () => {
-    expect(mcpSlashCommandName({ name: "" })).toBe("mcp");
-  });
-});

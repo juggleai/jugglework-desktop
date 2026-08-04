@@ -98,8 +98,6 @@ export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
-  /** 输入框中选中的 MCP 服务（草稿里以 `[mcp <name>]` 令牌表示）。 */
-  | { type: "mcp"; name: string }
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }
