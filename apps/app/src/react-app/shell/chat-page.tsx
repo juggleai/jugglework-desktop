@@ -1,14 +1,11 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
+import { PanelLeftIcon } from "lucide-react";
 
 import { JuggleChatApp } from "@/react-app/domains/jugglechat/jugglechat-app";
-import {
-  DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-  useUiStateStore,
-} from "./ui-state-store";
+import { useUiStateStore } from "./ui-state-store";
 import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "./app-navigation-rail";
+import { useWorkspaceShellLayout } from "./workspace-shell-layout";
 
 export type ChatPageProps = {
   onOpenAccount: () => void;
@@ -24,15 +21,10 @@ export type ChatPageProps = {
 
 export function ChatPage(props: ChatPageProps) {
   const sidebarOpen = useUiStateStore((state) => state.sidebarOpen);
-  const storedSidebarWidth = useUiStateStore((state) => state.workspaceLeftSidebarWidth);
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
-  const leftSidebarWidth = Math.min(
-    MAX_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-    Math.max(
-      MIN_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-      storedSidebarWidth || DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
-    ),
-  );
+  const { leftSidebarResizing, leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+  });
   const chatSidebarOpen = sidebarOpen;
   const chatLayoutStyle = {
     "--jugglework-left-sidebar-width": `${leftSidebarWidth}px`,
@@ -55,8 +47,32 @@ export function ChatPage(props: ChatPageProps) {
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
       </div>
+      <button
+        type="button"
+        data-sidebar="trigger"
+        data-slot="sidebar-trigger"
+        className={`pointer-events-auto absolute top-[3px] z-[2000] inline-flex size-8 items-center justify-center rounded-full border-0 bg-transparent text-foreground hover:bg-black/5 titlebar-no-drag ${chatSidebarOpen ? "left-[80px]" : "left-4 mac:left-[80px]"}`}
+        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleSidebar();
+        }}
+        aria-label={chatSidebarOpen ? "折叠左侧区域" : "展开左侧区域"}
+        title={chatSidebarOpen ? "折叠左侧区域" : "展开左侧区域"}
+        aria-expanded={chatSidebarOpen}
+        data-testid="chat-sidebar-trigger"
+      >
+        <PanelLeftIcon className="pointer-events-none size-3.5" />
+        <span className="sr-only">{chatSidebarOpen ? "折叠左侧区域" : "展开左侧区域"}</span>
+      </button>
       <main className="relative min-h-0 min-w-0 flex-1 bg-white" style={chatLayoutStyle}>
-        <JuggleChatApp sidebarOpen={chatSidebarOpen} onToggleSidebar={toggleSidebar} />
+        <JuggleChatApp
+          sidebarOpen={chatSidebarOpen}
+          sidebarResizing={leftSidebarResizing}
+          onStartSidebarResize={startLeftSidebarResize}
+        />
       </main>
     </div>
   );

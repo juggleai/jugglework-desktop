@@ -104,13 +104,6 @@ export function searchFriends(key: string) {
   return chatRequest<ApiEnvelope>("friends/search", { method: "POST", body: JSON.stringify({ key }) });
 }
 
-export function applyFriend(friendId: string) {
-  return chatRequest<ApiEnvelope>("friends/apply", {
-    method: "POST",
-    body: JSON.stringify({ friend_id: friendId }),
-  });
-}
-
 export function getTeams() {
   return organizationRequest<OrganizationTeamsResult>("/v1/teams", { method: "GET" });
 }

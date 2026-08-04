@@ -11,7 +11,6 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
   Share2,
   Trash2,
   RefreshCw,
@@ -19,7 +18,6 @@ import {
   Settings,
   FolderOpen,
   Tag,
-  X,
 } from "lucide-react";
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
@@ -43,7 +41,6 @@ import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 import {
   Sidebar,
   SidebarGroup,
-  SidebarHeader,
   SidebarGroupContent,
   SidebarMenu,
   SidebarMenuButton,
@@ -88,6 +85,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import {
   Select,
   SelectContent,
@@ -979,58 +977,31 @@ export function AppSidebar(props: AppSidebarProps) {
           />
 
           <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
-            <div className="hidden h-11 shrink-0 mac:block mac:titlebar-drag" />
-            <SidebarHeader className="gap-2 border-b border-dls-border px-3 pb-3 pt-3 mac:pt-1">
-              <div className="flex items-center gap-1.5">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-sidebar-foreground/50" />
-                  <Input
-                    type="search"
-                    value={sessionQuery}
-                    onChange={(event) => setSessionQuery(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Escape" || !sessionQuery) return;
-                      event.preventDefault();
-                      setSessionQuery("");
-                    }}
-                    placeholder={t("workspace_list.search_sessions")}
-                    aria-label={t("workspace_list.search_sessions")}
-                    className="h-8 rounded-lg pl-8 pr-8 text-sm [&::-webkit-search-cancel-button]:appearance-none"
-                  />
-                  {isFiltering ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="absolute right-1 top-1/2 size-6 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      onClick={() => setSessionQuery("")}
-                      aria-label={t("workspace_list.clear_session_filter")}
-                      title={t("workspace_list.clear_session_filter")}
-                    >
-                      <X className="size-3.5" />
-                    </Button>
-                  ) : (
-                    <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-sans text-[11px] tracking-wide text-sidebar-foreground/40">
-                      {isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
-                    </kbd>
-                  )}
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 shrink-0 rounded-lg text-dls-secondary hover:bg-background hover:text-dls-text"
-                  onClick={taskScope === "remote"
-                    ? props.onOpenConnectRemoteWorkspace
-                    : props.onOpenCreateLocalWorkspace}
+            <ListPanelHeader
+              title={taskScope === "remote" ? t("navigation.cloud_workspace") : t("navigation.local_workspace")}
+              searchValue={sessionQuery}
+              searchPlaceholder={t("workspace_list.search_sessions")}
+              onSearchChange={setSessionQuery}
+              onSearchKeyDown={(event) => {
+                if (event.key !== "Escape" || !sessionQuery) return;
+                event.preventDefault();
+                setSessionQuery("");
+              }}
+              onClearSearch={() => setSessionQuery("")}
+              showClear={isFiltering}
+              shortcut={isMacPlatform() ? "⌘⇧F" : "Ctrl+Shift+F"}
+              addControl={(
+                <button
+                  type="button"
+                  onClick={taskScope === "remote" ? props.onOpenConnectRemoteWorkspace : props.onOpenCreateLocalWorkspace}
                   aria-label={createTaskLabel}
                   title={createTaskLabel}
-                  data-testid={taskScope === "remote"
-                    ? "sidebar-create-cloud-task"
-                    : "sidebar-create-local-task"}
+                  data-testid={taskScope === "remote" ? "sidebar-create-cloud-task" : "sidebar-create-local-task"}
                 >
-                  <Plus className="size-4" />
-                </Button>
-              </div>
-            </SidebarHeader>
+                  <Plus />
+                </button>
+              )}
+            />
 
             <LazyMotion features={domMax}>
               <m.div
@@ -1303,8 +1274,7 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
-        statusLabel && "h-10",
+        "h-12 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
       )}
       onClick={(event) => {
         onClick?.(event);
@@ -2176,7 +2146,7 @@ function SessionMenuItem({
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
     // The left activity slot is the indent — dot-matrix sits in the chevron
     // lane and the title starts in the group-label lane without shifting.
-    "relative rounded-[11px] transition-[padding,background-color] duration-75 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:font-medium",
+    "relative h-[52px] rounded-[11px] transition-[padding,background-color] duration-75 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:font-medium",
     depth > 0 && "ps-7",
   );
 

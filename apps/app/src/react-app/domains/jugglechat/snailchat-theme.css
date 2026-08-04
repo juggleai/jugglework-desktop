@@ -24,33 +24,6 @@
 .jw-im-root button { appearance: none; }
 .jw-im-root .sr-only { display: none !important; }
 .jw-im-conversation-layout { width: 100%; min-width: 0; min-height: 0; }
-.jw-im-root .jw-im-sidebar-toggle {
-  position: absolute;
-  z-index: 1500;
-  top: 4px;
-  left: calc(var(--primary-panel-width) + 24px);
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 18.72px;
-  color: #1c2024;
-  background: transparent;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-}
-.jw-im-root .jw-im-sidebar-toggle:hover { background: rgba(28, 32, 36, .06); }
-.jw-im-root .jw-im-sidebar-toggle > svg { width: 14px; height: 14px; }
-.jw-im-root.is-list-collapsed .jw-im-sidebar-toggle { left: 16px; }
-:host([data-jugglework-platform="mac"]) .jw-im-root .jw-im-sidebar-toggle {
-  top: 3px;
-  left: 8px;
-}
-:host([data-jugglework-platform="mac"]) .jw-im-root.is-list-collapsed .jw-im-sidebar-toggle { left: 80px; }
-
 /* Avatar typography copied from snailchat-web/custom_conversation.css.
  * Reset the React prototype's inherited weight/line-height first, then keep
  * every source size class at its original value. */
@@ -108,67 +81,33 @@
   flex-basis: 0;
   border-right-width: 0 !important;
 }
-.jw-im-root .jw-im-list-filter-header {
-  box-sizing: border-box;
-  display: flex;
-  width: 100%;
-  height: 57px;
-  min-height: 57px;
-  flex: 0 0 57px;
-  align-items: center;
-  gap: 6px;
-  padding: 12px;
-  border-bottom: 1px solid #e0e1e6;
-  background: transparent;
-  -webkit-app-region: drag;
-}
-:host([data-jugglework-platform="mac"]) .jw-im-root .jw-im-list-filter-header {
-  height: 93px;
-  min-height: 93px;
-  flex-basis: 93px;
-  padding-top: 48px;
-}
-.jw-im-list-filter {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  height: 32px;
-  flex: 1 1 auto;
-  align-items: center;
-  -webkit-app-region: no-drag;
-}
-.jw-im-list-filter > svg:first-child {
+.jw-im-list-resize-handle {
   position: absolute;
-  z-index: 1;
-  left: 10px;
-  width: 16px;
-  height: 16px;
-  color: rgba(28, 32, 36, .5);
-  pointer-events: none;
+  z-index: 1650;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--primary-panel-width) - 4px);
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+  touch-action: none;
 }
-.jw-im-list-filter > input {
-  box-sizing: border-box;
-  width: 100%;
-  height: 32px;
-  padding: 4px 32px;
-  border: 1px solid #e0e1e6;
-  border-radius: 10.08px;
-  outline: none;
-  color: #1c2024;
-  background: #fcfcfd;
-  font-family: "IBM Plex Sans", Geist, "Avenir Next", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 14px;
-  line-height: 20px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
-  -webkit-appearance: none;
+.jw-im-list-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background-color 120ms ease;
 }
-.jw-im-list-filter > input::-webkit-search-cancel-button { display: none; }
-.jw-im-list-filter > input::placeholder { color: #60646c; }
-.jw-im-list-filter > input:focus {
-  border-color: #b8bec7;
-  box-shadow: 0 0 0 2px rgba(36, 101, 255, .08);
-}
-.jw-im-list-filter-clear,
+.jw-im-list-resize-handle:hover::after,
+.jw-im-root.is-list-resizing .jw-im-list-resize-handle::after { background: #b8bec7; }
+.jw-im-root.is-list-resizing .jw-im-list-pane { transition: none; }
 .jw-im-list-add {
   display: inline-flex;
   align-items: center;
@@ -180,14 +119,6 @@
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.jw-im-list-filter-clear {
-  position: absolute;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-}
-.jw-im-list-filter-clear > svg { width: 14px; height: 14px; }
 .jw-im-list-add {
   width: 32px;
   height: 32px;
@@ -196,7 +127,6 @@
   border-radius: 10.08px;
 }
 .jw-im-list-add > svg { width: 16px; height: 16px; }
-.jw-im-list-filter-clear:hover,
 .jw-im-list-add:hover { color: #1c2024; }
 .jw-im-list-add:hover { background: #fcfcfd; }
 .jw-im-list-add-wrap {
@@ -244,8 +174,6 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .jw-im-list-loading {
-  position: absolute;
-  right: 8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -255,18 +183,6 @@
   pointer-events: none;
 }
 .jw-im-list-loading > svg { width: 12px; height: 12px; }
-.jw-im-list-filter-shortcut {
-  position: absolute;
-  right: 8px;
-  color: rgba(96, 100, 108, .55);
-  background: transparent;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1;
-  letter-spacing: .025em;
-  pointer-events: none;
-}
 .jw-im-root .jw-im-contact-main-header {
   box-sizing: border-box;
   width: 100%;

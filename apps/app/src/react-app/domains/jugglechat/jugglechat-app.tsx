@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
-import { CircleAlert, LoaderCircle, PanelLeftIcon } from "lucide-react";
+import { useEffect, type PointerEventHandler } from "react";
+import { CircleAlert, LoaderCircle } from "lucide-react";
 
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 
@@ -16,7 +16,15 @@ import {
 import { ChatStyleScope } from "./chat-style-scope";
 import { useJuggleChatStore } from "./store";
 
-export function JuggleChatApp({ sidebarOpen = true, onToggleSidebar }: { sidebarOpen?: boolean; onToggleSidebar?: () => void }) {
+export function JuggleChatApp({
+  sidebarOpen = true,
+  sidebarResizing = false,
+  onStartSidebarResize,
+}: {
+  sidebarOpen?: boolean;
+  sidebarResizing?: boolean;
+  onStartSidebarResize?: PointerEventHandler<HTMLButtonElement>;
+}) {
   const bootstrap = useJuggleChatStore((state) => state.bootstrap);
   const status = useJuggleChatStore((state) => state.status);
   const error = useJuggleChatStore((state) => state.error);
@@ -36,19 +44,16 @@ export function JuggleChatApp({ sidebarOpen = true, onToggleSidebar }: { sidebar
     content = <div className="jw-im-root tyn-root tyn-web-root jw-im-boot"><CircleAlert /><span>{error || "请先登录 JuggleWork"}</span></div>;
   } else {
     content = (
-      <div className={`jw-im-root tyn-root tyn-web-root${sidebarOpen ? "" : " is-list-collapsed"}`}>
-        {onToggleSidebar ? (
+      <div className={`jw-im-root tyn-root tyn-web-root${sidebarOpen ? "" : " is-list-collapsed"}${sidebarResizing ? " is-list-resizing" : ""}`}>
+        {sidebarOpen && onStartSidebarResize ? (
           <button
             type="button"
-            className="jw-im-sidebar-toggle"
-            onClick={onToggleSidebar}
-            aria-label={sidebarOpen ? "折叠左侧区域" : "展开左侧区域"}
-            title={sidebarOpen ? "折叠左侧区域" : "展开左侧区域"}
-            aria-expanded={sidebarOpen}
-            data-testid="chat-sidebar-trigger"
-          >
-            <PanelLeftIcon />
-          </button>
+            className="jw-im-list-resize-handle"
+            aria-label="调整列表宽度"
+            title="拖拽调整列表宽度"
+            onClick={(event) => event.preventDefault()}
+            onPointerDown={onStartSidebarResize}
+          />
         ) : null}
         <ConnectionBanner />
         <CallOverlay />
