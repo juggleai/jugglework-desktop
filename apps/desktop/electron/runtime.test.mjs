@@ -192,9 +192,9 @@ describe("denModelsCatalogUrl", () => {
     );
   });
 
-  it("leaves the public mirror in place for the hosted cloud", () => {
-    assert.equal(denModelsCatalogUrl("https://work.juggle.im"), null);
-    assert.equal(denModelsCatalogUrl("https://work.juggle.im/api/den"), null);
+  it("points the hosted engine at the hosted deployment catalog", () => {
+    assert.equal(denModelsCatalogUrl("https://work.juggle.im"), "https://work.juggle.im/jwork/models");
+    assert.equal(denModelsCatalogUrl("https://work.juggle.im/api/den"), "https://work.juggle.im/jwork/models");
   });
 
   it("returns null rather than a broken URL for unusable input", () => {

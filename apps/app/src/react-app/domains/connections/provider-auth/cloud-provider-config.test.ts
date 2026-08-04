@@ -144,6 +144,7 @@ describe("buildCloudProviderConfig catalog backfill", () => {
         cost: { input: 5, output: 25 },
         modalities: { input: ["text", "image", "pdf"], output: ["text"] },
         family: "claude-opus",
+        variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} },
       },
     },
   };
@@ -176,6 +177,7 @@ describe("buildCloudProviderConfig catalog backfill", () => {
     expect(model?.limit).toEqual({ context: 1000000, output: 128000 });
     expect(model?.cost).toEqual({ input: 5, output: 25 });
     expect(model?.family).toBe("claude-opus");
+    expect(model?.variants).toEqual({ low: {}, medium: {}, high: {}, xhigh: {}, max: {} });
     // The org's own label still wins over the catalog's.
     expect(model?.name).toBe("claude-opus-5");
   });

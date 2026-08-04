@@ -99,14 +99,12 @@ export function embeddedServerImportUrl(embeddedPath) {
 const DEN_CONTROL_PLANE_PATH = "/jwork";
 /** Path suffixes a stored Den base URL may already carry. */
 const DEN_BASE_PATH_SUFFIXES = [`${DEN_CONTROL_PLANE_PATH}/api`, DEN_CONTROL_PLANE_PATH, "/api/den"];
-/** The hosted control plane: it does not serve a private model catalog. */
-const HOSTED_DEN_HOST = "work.juggle.im";
-
 /**
  * The provider catalog a connected JuggleWork server serves
  * (`<origin>/jwork/models`), used as the engine's `OPENCODE_MODELS_URL` so its
- * provider list matches that deployment's catalog. Returns null for the hosted
- * cloud or unusable input, leaving the public mirror in place.
+ * provider list matches that deployment's catalog. The hosted control plane
+ * serves this catalog too, so every valid deployment URL resolves to its own
+ * metadata source. Returns null only for unusable input.
  */
 export function denModelsCatalogUrl(denBaseUrl) {
   const raw = String(denBaseUrl ?? "").trim();
@@ -119,7 +117,6 @@ export function denModelsCatalogUrl(denBaseUrl) {
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (url.hostname.toLowerCase() === HOSTED_DEN_HOST) return null;
 
   const pathname = url.pathname.replace(/\/+$/, "");
   const suffix = DEN_BASE_PATH_SUFFIXES.find((candidate) => pathname.toLowerCase().endsWith(candidate));

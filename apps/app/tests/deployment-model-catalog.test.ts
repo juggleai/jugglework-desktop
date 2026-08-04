@@ -4,8 +4,6 @@ import { getDenModelCatalogUrl } from "../src/app/lib/den";
 import { parseDeploymentModelCatalog } from "../src/react-app/domains/connections/provider-auth/deployment-model-catalog";
 
 describe("getDenModelCatalogUrl", () => {
-  // A self-hosted deployment. The hosted cloud is the one origin that serves
-  // no private catalog, so it cannot stand in for "the deployment's own".
   const SELF_HOSTED = "https://den.acme.test";
 
   test("points at the deployment's own catalog", () => {
@@ -26,11 +24,16 @@ describe("getDenModelCatalogUrl", () => {
     }
   });
 
-  test("returns null where there is no private catalog to read", () => {
-    // The hosted cloud serves no deployment catalog, and an unusable value
-    // must not become a URL — both leave imports on Den's metadata alone.
-    expect(getDenModelCatalogUrl("https://work.juggle.im")).toBeNull();
-    expect(getDenModelCatalogUrl("https://work.juggle.im/jwork/api")).toBeNull();
+  test("points the hosted client at the hosted deployment catalog", () => {
+    expect(getDenModelCatalogUrl("https://work.juggle.im")).toBe(
+      "https://work.juggle.im/jwork/models/api.json",
+    );
+    expect(getDenModelCatalogUrl("https://work.juggle.im/jwork/api")).toBe(
+      "https://work.juggle.im/jwork/models/api.json",
+    );
+  });
+
+  test("returns null for unusable input", () => {
     expect(getDenModelCatalogUrl("")).toBeNull();
     expect(getDenModelCatalogUrl("not a url")).toBeNull();
   });
@@ -41,12 +44,18 @@ describe("parseDeploymentModelCatalog", () => {
     const catalog = parseDeploymentModelCatalog({
       jugglerouter: {
         id: "jugglerouter",
-        models: { "claude-opus-5": { limit: { context: 1000000, output: 128000 } } },
+        models: {
+          "claude-opus-5": {
+            limit: { context: 1000000, output: 128000 },
+            variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} },
+          },
+        },
       },
     });
 
     expect(catalog.jugglerouter?.["claude-opus-5"]).toEqual({
       limit: { context: 1000000, output: 128000 },
+      variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} },
     });
   });
 

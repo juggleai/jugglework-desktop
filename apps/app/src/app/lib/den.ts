@@ -561,15 +561,13 @@ export function getDenInferenceUrl(baseUrl?: string | null): string {
  * The provider catalog a self-hosted deployment serves at
  * `<origin>/jwork/models/api.json` — the same payload the desktop hands the
  * engine as `OPENCODE_MODELS_URL` (see `denModelsCatalogUrl` in
- * `apps/desktop/electron/runtime.mjs`, which derives the same URL). Null for
- * the hosted cloud, which serves no private catalog.
+ * `apps/desktop/electron/runtime.mjs`, which derives the same URL). The hosted
+ * control plane serves the same catalog, so only an unusable URL returns null.
  */
 export function getDenModelCatalogUrl(baseUrl?: string | null): string | null {
   const effectiveBaseUrl = baseUrl ?? readDenSettings().baseUrl;
   const origin = denOriginComparisonKey(effectiveBaseUrl);
-  if (!origin || origin === denOriginComparisonKey(HOSTED_DEFAULT_DEN_BASE_URL)) {
-    return null;
-  }
+  if (!origin) return null;
   return `${denControlPlaneBaseUrl(resolveDenBaseUrls(effectiveBaseUrl).baseUrl)}/models/api.json`;
 }
 

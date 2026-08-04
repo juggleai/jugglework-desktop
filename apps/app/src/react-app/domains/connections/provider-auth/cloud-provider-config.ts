@@ -102,9 +102,10 @@ export const getProviderModelIds = (
  * block, so already-imported providers are rewritten once instead of keeping
  * whatever an older build wrote. 1: model metadata is backfilled from the
  * deployment catalog. 2: that backfill no longer reads the catalog through the
- * HTTP cache, so blocks written from a stale catalog are rewritten.
+ * HTTP cache, so blocks written from a stale catalog are rewritten. 3: hosted
+ * cloud imports also read the deployment catalog, including model variants.
  */
-export const CLOUD_PROVIDER_METADATA_VERSION = 2;
+export const CLOUD_PROVIDER_METADATA_VERSION = 3;
 
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
