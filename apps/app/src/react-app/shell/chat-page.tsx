@@ -51,7 +51,7 @@ export function ChatPage(props: ChatPageProps) {
         type="button"
         data-sidebar="trigger"
         data-slot="sidebar-trigger"
-        className={`pointer-events-auto absolute top-[3px] z-[2000] inline-flex size-8 items-center justify-center rounded-full border-0 bg-transparent text-foreground hover:bg-black/5 titlebar-no-drag ${chatSidebarOpen ? "left-[80px]" : "left-4 mac:left-[80px]"}`}
+        className={`pointer-events-auto absolute top-[3px] z-[2000] inline-flex size-8 items-center justify-center rounded-full border-0 bg-transparent text-foreground hover:bg-black/5 dark:hover:bg-white/10 titlebar-no-drag ${chatSidebarOpen ? "left-[80px]" : "left-4 mac:left-[80px]"}`}
         style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -67,7 +67,7 @@ export function ChatPage(props: ChatPageProps) {
         <PanelLeftIcon className="pointer-events-none size-3.5" />
         <span className="sr-only">{chatSidebarOpen ? "折叠左侧区域" : "展开左侧区域"}</span>
       </button>
-      <main className="relative min-h-0 min-w-0 flex-1 bg-white" style={chatLayoutStyle}>
+      <main className="relative min-h-0 min-w-0 flex-1 bg-background" style={chatLayoutStyle}>
         <JuggleChatApp
           sidebarOpen={chatSidebarOpen}
           sidebarResizing={leftSidebarResizing}

@@ -11,6 +11,7 @@
   --jw-im-panel-width: var(--primary-panel-width);
   --jw-im-navigation-height: var(--primary-navigation-height, 82px);
   --jw-im-panel-gutter: var(--primary-panel-gutter, clamp(16px, 1.9vw, 36px));
+  --ui-chat-bg: #fafafa;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -18,6 +19,32 @@
   font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   font-size: 16px;
   line-height: 1.5;
+}
+
+/* The chat runs in a Shadow Root, so the host explicitly mirrors the app
+ * theme and owns the semantic palette used by messages and contacts. */
+:host([data-theme="dark"]) .tyn-root {
+  --ui-bg: #1b1c1f;
+  --ui-panel: #202125;
+  --ui-surface: #24262a;
+  --ui-soft: #2b2d32;
+  --ui-hover: #2d2f34;
+  --ui-active: #36383e;
+  --ui-border: #36383d;
+  --ui-border-strong: #45484f;
+  --ui-text: #f1f2f4;
+  --ui-text-secondary: #b0b4bc;
+  --ui-text-muted: #858a94;
+  --ui-control: #e6e8eb;
+  --ui-control-hover: #ffffff;
+  --ui-link: #91b9dc;
+  --ui-shadow-sm: 0 1px 3px rgba(0, 0, 0, .3);
+  --ui-shadow-md: 0 12px 32px rgba(0, 0, 0, .42);
+  --ui-chat-bg: #1b1c1f;
+  --newui-conversation-tag-bg: #34373d;
+  --newui-conversation-tag-color: #c2c6cd;
+  --bs-primary-rgb: 230, 232, 235;
+  color-scheme: dark;
 }
 
 .jw-im-root::before { pointer-events: none; }
@@ -72,8 +99,8 @@
   width: var(--primary-panel-width);
   flex: 0 0 var(--primary-panel-width);
   overflow: hidden;
-  border-right: 1px solid #e0e1e6 !important;
-  background: #f9f9fb;
+  border-right: 1px solid var(--ui-border) !important;
+  background: var(--ui-panel);
   transition: width 200ms linear, flex-basis 200ms linear;
 }
 .jw-im-root.is-list-collapsed .jw-im-list-pane {
@@ -106,7 +133,7 @@
   transition: background-color 120ms ease;
 }
 .jw-im-list-resize-handle:hover::after,
-.jw-im-root.is-list-resizing .jw-im-list-resize-handle::after { background: #b8bec7; }
+.jw-im-root.is-list-resizing .jw-im-list-resize-handle::after { background: var(--ui-border-strong); }
 .jw-im-root.is-list-resizing .jw-im-list-pane { transition: none; }
 .jw-im-list-add {
   display: inline-flex;
@@ -114,7 +141,7 @@
   justify-content: center;
   padding: 0;
   border: 0;
-  color: #60646c;
+  color: var(--ui-text-secondary);
   background: transparent;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -127,8 +154,8 @@
   border-radius: 10.08px;
 }
 .jw-im-list-add > svg { width: 16px; height: 16px; }
-.jw-im-list-add:hover { color: #1c2024; }
-.jw-im-list-add:hover { background: #fcfcfd; }
+.jw-im-list-add:hover { color: var(--ui-text); }
+.jw-im-list-add:hover { background: var(--ui-hover); }
 .jw-im-list-add-wrap {
   position: relative;
   width: 32px;
@@ -144,9 +171,9 @@
   right: 0;
   width: 140px;
   padding: 6px;
-  border: 1px solid #e0e1e6;
+  border: 1px solid var(--ui-border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--ui-surface);
   box-shadow: 0 8px 24px rgba(28, 32, 36, .14);
   transform-origin: top right;
   animation: jw-im-list-menu-in 150ms cubic-bezier(.22, .61, .36, 1);
@@ -160,15 +187,15 @@
   padding: 0 10px;
   border: 0;
   border-radius: 7px;
-  color: #1c2024;
+  color: var(--ui-text);
   background: transparent;
   font-size: 14px;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
 }
-.jw-im-list-add-menu > button:hover { background: #f2f2f4; }
-.jw-im-list-add-menu > button > svg { width: 16px; height: 16px; color: #60646c; }
+.jw-im-list-add-menu > button:hover { background: var(--ui-hover); }
+.jw-im-list-add-menu > button > svg { width: 16px; height: 16px; color: var(--ui-text-secondary); }
 @keyframes jw-im-list-menu-in {
   from { opacity: 0; transform: translateY(-4px) scale(.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -243,11 +270,11 @@
 .jw-im-conversation-row .jw-im-unread { position: static; inset: auto; }
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active),
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active) .newui-conversation-card {
-  background: #f1f1f2;
+  background: var(--ui-soft);
 }
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover,
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover .newui-conversation-card {
-  background: #ededee;
+  background: var(--ui-hover);
 }
 
 /* Empty conversation surface */
@@ -256,8 +283,19 @@
 .jw-im-empty-surface .tyn-chat-none-bg { transform: translateY(-2px); }
 
 /* Active conversation */
-.jw-im-chat-surface { min-width: 0; }
-.jw-im-chat-surface > .jg-chat-root { height: 100%; }
+.jw-im-chat-surface {
+  min-width: 0;
+  color: var(--ui-text);
+  background: var(--ui-chat-bg);
+}
+.jw-im-chat-surface > .jg-chat-root {
+  height: 100%;
+  background: var(--ui-chat-bg);
+}
+.jw-im-chat-surface .tyn-chat-body,
+.jw-im-chat-surface .jw-im-message-scroll {
+  background: var(--ui-chat-bg);
+}
 .jw-im-chat-header { justify-content: flex-start; }
 .jw-im-chat-header > .tyn-media-group { padding: 0 4px; }
 .jw-im-chat-header .tyn-conver-avatar > .inner { width: 100%; height: 100%; }
@@ -465,6 +503,24 @@
   align-items: center;
   justify-content: center;
 }
+
+:host([data-theme="dark"]) .jw-im-message-menu .jg-reaction-emoji-pn {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+:host([data-theme="dark"]) .jw-im-message-menu .jg-reaction-item:hover {
+  background: var(--ui-hover);
+}
+:host([data-theme="dark"]) .jw-im-message .jg-reactions,
+:host([data-theme="dark"]) .jw-im-message .outgoing .jg-reactions {
+  border-color: var(--ui-border);
+  background: var(--ui-soft);
+}
+:host([data-theme="dark"]) .jw-im-message .jg-reaction-inner {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
 .jw-im-message .jg-reaction-emoji-img,
 .jw-im-message .jg-reaction-name,
 .jw-im-message .jg-reaction-avatar {
@@ -561,6 +617,8 @@
 .jg-contact-card .tyn-avatar > .inner { width: 100%; height: 100%; }
 .jw-im-contact-card-detail { align-items: center; text-align: center; }
 .jw-im-contact-card-detail > span:not(.jw-im-avatar) { color: var(--ui-text-secondary); }
+.tyn-reply-separator,
+.tyn-separator-item { color: var(--ui-text-muted); }
 .jw-im-voice-bubble { min-width: 270px; }
 .jw-im-favorite-image { max-width: 240px; max-height: 180px; object-fit: contain; }
 .jw-im-merge-backdrop .modal-merge-content { display: flex; max-height: min(650px, 80vh); }
@@ -792,6 +850,10 @@
 .jw-im-contacts-layout,
 .jw-im-favorites-surface,
 .jw-im-settings-surface { color: var(--ui-text); background: var(--ui-surface); }
+.jw-im-contacts-layout .jw-im-contact-main,
+.jw-im-contacts-layout .contact-content,
+.jw-im-contacts-layout .tyn-contact-body,
+.jw-im-contacts-layout .tyn-chat-body { color: var(--ui-text); background: var(--ui-surface); }
 .jw-im-contact-tabs { background: var(--ui-soft); }
 .jw-im-contact-tabs button.is-active { color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .jw-im-contact-detail { background: var(--ui-surface); }
@@ -851,13 +913,259 @@
 }
 .jw-im-field input,
 .jw-im-field textarea,
-.jw-im-add-search input { border-color: var(--ui-border); color: var(--ui-text); background: #f5f7f9; }
+.jw-im-add-search input { border-color: var(--ui-border); color: var(--ui-text); background: var(--ui-panel); }
 .jw-im-primary-button { color: #fff; background: var(--ui-control); }
 .jw-im-primary-button:hover { background: var(--ui-control-hover); }
 .jw-im-member-picker > button:hover,
 .jw-im-member-picker > button.is-selected { background: var(--ui-hover); }
 .jw-im-group-section { border-color: var(--ui-border); }
 .jw-im-group-members > div { background: var(--ui-panel); }
+
+/* Create-group dialog: wider two-column layout with less vertical bulk. */
+.jw-im-create-group-modal {
+  width: min(680px, 100%);
+  min-height: min(540px, 86%);
+  max-height: min(610px, 90%);
+}
+:host([data-theme="dark"]) .jw-im-modal-backdrop,
+:host([data-theme="dark"]) .jw-im-contact-card-backdrop {
+  background: rgba(0, 0, 0, .5);
+}
+:host([data-theme="dark"]) .jw-im-create-group-modal,
+:host([data-theme="dark"]) .jw-im-contact-profile-card,
+:host([data-theme="dark"]) .jw-im-contact-card-detail {
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+:host([data-theme="dark"]) .jw-im-create-group-left {
+  border-color: var(--ui-border);
+  background: var(--ui-panel);
+}
+:host([data-theme="dark"]) .jw-im-create-group-search > svg,
+:host([data-theme="dark"]) .jw-im-create-group-search-clear,
+:host([data-theme="dark"]) .jw-im-create-group-letter,
+:host([data-theme="dark"]) .jw-im-create-group-right-count {
+  color: var(--ui-text-secondary);
+}
+:host([data-theme="dark"]) .jw-im-create-group-search input {
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+:host([data-theme="dark"]) .jw-im-create-group-search input::placeholder {
+  color: var(--ui-text-muted);
+}
+:host([data-theme="dark"]) .jw-im-create-group-search input:focus {
+  border-color: var(--ui-border-strong);
+  box-shadow: 0 0 0 2px rgba(100, 150, 255, .16);
+}
+:host([data-theme="dark"]) .jw-im-create-group-search-clear:hover,
+:host([data-theme="dark"]) .jw-im-contact-card-close:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+:host([data-theme="dark"]) .jw-im-create-group-contact,
+:host([data-theme="dark"]) .jw-im-create-group-selected-name,
+:host([data-theme="dark"]) .jw-im-create-group-right-title {
+  color: var(--ui-text);
+}
+:host([data-theme="dark"]) .jw-im-create-group-contact:hover,
+:host([data-theme="dark"]) .jw-im-create-group-contact.is-selected,
+:host([data-theme="dark"]) .jw-im-create-group-selected-item:hover {
+  background: var(--ui-hover);
+}
+:host([data-theme="dark"]) .wr-checkbox-empty {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-surface);
+}
+:host([data-theme="dark"]) .jw-im-create-group-right-header,
+:host([data-theme="dark"]) .jw-im-create-group-footer {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+:host([data-theme="dark"]) .jw-im-create-group-footer .jw-im-secondary-button {
+  border-color: var(--ui-border);
+  color: var(--ui-text-secondary);
+  background: var(--ui-panel);
+}
+:host([data-theme="dark"]) .jw-im-create-group-footer .jw-im-secondary-button:hover:not(:disabled) {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+:host([data-theme="dark"]) .jw-im-create-group-footer .jw-im-primary-button {
+  color: #18191c;
+  background: #f1f2f4;
+}
+:host([data-theme="dark"]) .jw-im-create-group-footer .jw-im-primary-button:hover:not(:disabled) {
+  background: #fff;
+}
+:host([data-theme="dark"]) .jw-im-create-group-footer .jw-im-primary-button:disabled {
+  color: var(--ui-text-muted);
+  background: var(--ui-soft);
+}
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-id,
+:host([data-theme="dark"]) .jw-im-contact-card-detail > span:not(.jw-im-avatar) {
+  color: var(--ui-text-secondary);
+}
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary,
+:host([data-theme="dark"]) .jw-im-contact-card-detail .jw-im-primary-button {
+  color: #18191c;
+  background: #f1f2f4;
+}
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary span,
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary svg,
+:host([data-theme="dark"]) .jw-im-contact-card-detail .jw-im-primary-button span,
+:host([data-theme="dark"]) .jw-im-contact-card-detail .jw-im-primary-button svg {
+  color: #18191c !important;
+}
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary:hover:not(:disabled),
+:host([data-theme="dark"]) .jw-im-contact-card-detail .jw-im-primary-button:hover:not(:disabled) {
+  background: #fff;
+}
+
+/* Create group: both panes use the same width and primary text scale. */
+.jw-im-create-group-left,
+.jw-im-create-group-right {
+  flex: 1 1 0;
+}
+.jw-im-create-group-contact,
+.jw-im-create-group-contact-name,
+.jw-im-create-group-right-title,
+.jw-im-create-group-selected-name {
+  font-size: 12px;
+}
+.jw-im-create-group-modal > header h3,
+.jw-im-create-group-contact,
+.jw-im-create-group-contact-name,
+.jw-im-create-group-right-title,
+.jw-im-create-group-selected-name { color: var(--ui-text); }
+.jw-im-create-group-modal > header > button,
+.jw-im-create-group-selected-remove { color: var(--ui-text-secondary); }
+.jw-im-create-group-modal > header > button:hover {
+  border-radius: 6px;
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+.jw-im-create-group-layout,
+.jw-im-create-group-left,
+.jw-im-create-group-right-header,
+.jw-im-create-group-footer { border-color: var(--ui-border); }
+.jw-im-create-group-empty,
+.jw-im-create-group-letter,
+.jw-im-create-group-right-count { color: var(--ui-text-secondary); }
+.jw-im-create-group-selected-remove:hover {
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 12%, var(--ui-surface));
+}
+.jw-im-create-group-modal .jw-im-form-error {
+  color: var(--ui-danger);
+  background: color-mix(in srgb, var(--ui-danger) 10%, var(--ui-surface));
+}
+
+/* Contacts: normalize every visible surface, label, divider and icon to the
+ * semantic palette. Source image icons are monochrome assets, so dark mode
+ * lifts their luminance instead of leaving their black pixels invisible. */
+.jw-im-contacts-layout,
+.jw-im-contacts-layout .tyn-aside,
+.jw-im-contacts-layout .tyn-aside-body,
+.jw-im-contacts-layout .jw-im-contact-main,
+.jw-im-contacts-layout .tyn-chat-content,
+.jw-im-contacts-layout .tyn-contact-body,
+.jw-im-contacts-layout .tyn-contact-wrapper {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.jw-im-contacts-layout .jw-im-list-pane,
+.jw-im-contacts-layout .tyn-aside-body {
+  background: var(--ui-panel);
+}
+.jw-im-contacts-layout .jw-im-list-pane,
+.jw-im-contacts-layout .jw-im-contact-main-header {
+  border-color: var(--ui-border) !important;
+}
+.jw-im-contacts-layout .jw-im-contact-main-header {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.jw-im-contacts-layout .jg-conversation-tool,
+.jw-im-contacts-layout .tyn-aside-contact-item,
+.jw-im-contacts-layout .tyn-aside-contact-item .name,
+.jw-im-contacts-layout .jg-contact-name { color: var(--ui-text) !important; }
+.jw-im-contacts-layout .jg-group-letter,
+.jw-im-contacts-layout .jg-contact-pinyin,
+.jw-im-contacts-layout .jg-contact-status { color: var(--ui-text-secondary); }
+.jw-im-contacts-layout .tyn-aside-contact-item::after,
+.jw-im-contacts-layout .jg-group-item::after { background: var(--ui-border); }
+.jw-im-contacts-layout .tyn-aside-contact-item:hover,
+.jw-im-contacts-layout .jg-group-item:hover { background: var(--ui-hover); }
+.jw-im-contacts-layout .tyn-aside-contact-item.active {
+  color: var(--ui-text) !important;
+  background: var(--ui-active) !important;
+}
+.jw-im-contacts-layout .jg-tab-icon,
+.jw-im-contacts-layout .jg-arrow,
+.jw-im-contacts-layout .jg-header-icon,
+.jw-im-contacts-layout .jg-addmenu-icon { opacity: .72; }
+:host([data-theme="dark"]) .jw-im-contacts-layout .jg-tab-icon,
+:host([data-theme="dark"]) .jw-im-contacts-layout .jg-arrow,
+:host([data-theme="dark"]) .jw-im-contacts-layout .jg-header-icon,
+:host([data-theme="dark"]) .jw-im-contacts-layout .jg-addmenu-icon {
+  filter: brightness(0) invert(1);
+  opacity: .72;
+}
+.jw-im-contacts-layout .jg-addmenu {
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+.jw-im-contacts-layout .jg-addmenu-item:hover { background: var(--ui-hover); }
+.jw-im-contacts-layout .jg-addmenu-name { color: var(--ui-text); }
+
+/* Contact/group profile dialog. */
+.jw-im-contact-profile-card {
+  border-color: var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.jw-im-contact-profile-card h2 { color: var(--ui-text); }
+.jw-im-contact-profile-card p,
+.jw-im-contact-profile-card .jw-im-contact-detail-id { color: var(--ui-text-secondary); }
+.jw-im-contact-card-close {
+  color: var(--ui-text-secondary);
+  background: transparent;
+}
+.jw-im-contact-card-close:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+.jw-im-contact-profile-card .jw-im-contact-detail-primary {
+  color: var(--ui-surface);
+  background: var(--ui-control);
+}
+.jw-im-contact-profile-card .jw-im-contact-detail-primary span,
+.jw-im-contact-profile-card .jw-im-contact-detail-primary svg {
+  color: var(--ui-surface) !important;
+  stroke: currentColor;
+}
+.jw-im-contact-profile-card .jw-im-contact-detail-primary:hover:not(:disabled) {
+  background: var(--ui-control-hover);
+}
+.jw-im-contact-profile-card .jw-im-contact-detail-primary:disabled {
+  color: var(--ui-text-muted);
+  background: var(--ui-soft);
+}
+.jw-im-contact-profile-card .jw-im-contact-detail-primary:disabled span,
+.jw-im-contact-profile-card .jw-im-contact-detail-primary:disabled svg {
+  color: var(--ui-text-muted) !important;
+}
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary:not(:disabled),
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary:not(:disabled) span,
+:host([data-theme="dark"]) .jw-im-contact-profile-card .jw-im-contact-detail-primary:not(:disabled) svg {
+  color: #18191c !important;
+}
 
 /* Current login markup mapped exactly to newui.css measurements. */
 .jw-im-login {

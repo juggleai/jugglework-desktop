@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { getResolvedThemeMode, subscribeToTheme } from "@/app/theme";
 import baseCss from "./jugglechat.css?inline";
 import bundleCss from "./snailchat-assets/css/bundle.css?inline";
 import appCss from "./snailchat-assets/css/app.css?inline";
@@ -27,6 +28,7 @@ const sourceCss = [bundleCss, appCss, customCss, conversationCss, aiCss, loginCs
 
 export function ChatStyleScope({ children }: { children: ReactNode }) {
   const [shadow, setShadow] = useState<ShadowRoot | null>(null);
+  const theme = useSyncExternalStore(subscribeToTheme, getResolvedThemeMode, () => "light");
   const mount = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     setShadow(node.shadowRoot ?? node.attachShadow({ mode: "open" }));
@@ -41,6 +43,8 @@ export function ChatStyleScope({ children }: { children: ReactNode }) {
       <div
         ref={mount}
         className="isolate h-full min-h-0 w-full min-w-0 overflow-hidden"
+        data-theme={theme}
+        data-bs-theme={theme}
         data-jugglework-platform={typeof document !== "undefined" && document.documentElement.classList.contains("jugglework-platform-mac") ? "mac" : "other"}
       >
         {shadow
