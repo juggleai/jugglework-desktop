@@ -1063,6 +1063,14 @@ export function ConversationSurface() {
   }, [conversation?.conversationId, conversation?.conversationType]);
 
   useEffect(() => {
+    if (!conversation) return;
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [conversation?.conversationId, conversation?.conversationType]);
+
+  useEffect(() => {
     if (!actionsOpen) return;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
       if (!actionsMenuRef.current?.contains(event.target as Node)) setActionsOpen(false);
