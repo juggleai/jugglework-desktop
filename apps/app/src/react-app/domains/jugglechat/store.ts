@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
-import { getMembers, getTeams } from "./api";
+import { getChatGroupsForContacts, getMembers } from "./api";
 import { juggleChatRuntime } from "./runtime";
 import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
@@ -482,7 +482,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   async loadContacts() {
     set({ loadingContacts: true });
     try {
-      const [membersResult, teamsResult] = await Promise.all([getMembers(), getTeams()]);
+      const [membersResult, chatGroups] = await Promise.all([getMembers(), getChatGroupsForContacts()]);
       const contacts = membersResult.members.map((member) => ({
         user_id: member.user.imUserId,
         member_id: member.id,
@@ -492,12 +492,12 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         conversationType: 1,
         role: member.role,
       } satisfies ChatContact)).filter((contact) => contact.user_id && contact.user_id !== get().user?.id);
-      const groups = teamsResult.teams.map((team) => {
+      const groups = chatGroups.map((group) => {
         return {
-          user_id: team.id,
-          nickname: team.name || team.id,
+          user_id: group.id,
+          nickname: group.name || group.id,
+          avatar: group.avatar || undefined,
           conversationType: 2,
-          member_ids: team.memberIds,
         } satisfies ChatContact;
       }).filter((item) => item.user_id);
       set({ contacts, groups, loadingContacts: false });

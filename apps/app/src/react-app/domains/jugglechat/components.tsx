@@ -23,6 +23,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Paperclip,
+  PanelLeftIcon,
   Phone,
   PhoneOff,
   Plus,
@@ -49,6 +50,8 @@ import {
   getGroupInfo,
   getGroupMembers,
   getGroupNotice,
+  getMembersPage,
+  inviteGroupMembers,
   quitGroup,
   removeGroupAdmins,
   removeGroupMembers,
@@ -59,7 +62,6 @@ import {
   setGroupNotice,
   transferGroupOwner,
   updateGroup,
-  inviteGroupMembers,
 } from "./api";
 import { useJuggleCallStore } from "./call-store";
 import { juggleChatRuntime } from "./runtime";
@@ -198,7 +200,12 @@ function ListAddMenu({ onOpen, onCreateGroup }: { onOpen?: () => void; onCreateG
   );
 }
 
-export function ConversationList() {
+function ChatSidebarTrigger({ onToggle, expanded }: { onToggle?: () => void; expanded: boolean }) {
+  const label = expanded ? "折叠左侧区域" : "展开左侧区域";
+  return <button type="button" className="jw-im-sidebar-trigger" onClick={onToggle} aria-label={label} title={label} aria-expanded={expanded}><PanelLeftIcon /></button>;
+}
+
+export function ConversationList({ sidebarOpen = true, onToggleSidebar }: { sidebarOpen?: boolean; onToggleSidebar?: () => void }) {
   const conversations = useJuggleChatStore((state) => state.conversations);
   const contacts = useJuggleChatStore((state) => state.contacts);
   const active = useJuggleChatStore((state) => state.activeConversation);
@@ -259,6 +266,7 @@ export function ConversationList() {
       <aside className="jw-im-list-pane tyn-aside">
       <ListPanelHeader
         title="消息"
+        titleEnd={sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded /> : undefined}
         searchValue={query}
         searchPlaceholder="搜索会话"
         searchInputRef={searchInputRef}
@@ -299,7 +307,7 @@ export function ConversationList() {
         </div>
       </div>
       </aside>
-      {groupOpen ? <CreateGroupModal contacts={contacts} onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void loadContacts(); void reloadConversations(); }} /> : null}
+      {groupOpen ? <CreateGroupModal onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void loadContacts(); void reloadConversations(); }} /> : null}
     </>
   );
 }
@@ -939,7 +947,7 @@ function ComposerMessagePanel({ mode, message, onClose }: { mode: "reply" | "edi
   );
 }
 
-export function ConversationSurface() {
+export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { sidebarOpen?: boolean; onToggleSidebar?: () => void }) {
   const conversation = useJuggleChatStore((state) => state.activeConversation);
   const conversations = useJuggleChatStore((state) => state.conversations);
   const messages = useJuggleChatStore((state) => state.messages);
@@ -1110,7 +1118,7 @@ export function ConversationSurface() {
     return () => window.cancelAnimationFrame(frame);
   }, [conversation?.conversationId, conversation?.conversationType, finished, loading, messages.length]);
 
-  if (!conversation) return <main className="jw-im-empty-surface tyn-main tyn-chat-content aside-collapsed"><div className="tyn-chat-body tyn-chat-none-box"><div className="tyn-chat-none-bg"><div className="blank-main-box"><div className="blank-main-icon" /><div className="blank-main-title fontcolor-title">欢迎来到您的私密聊天空间</div><div className="blank-main-content fontcolor-second">从列表中选择一个聊天，开始浏览您的消息，或开启一段新的对话</div></div></div></div></main>;
+  if (!conversation) return <main className="jw-im-empty-surface tyn-main tyn-chat-content aside-collapsed">{!sidebarOpen ? <header className="jw-im-chat-header tyn-chat-head"><ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /></header> : null}<div className="tyn-chat-body tyn-chat-none-box"><div className="tyn-chat-none-bg"><div className="blank-main-box"><div className="blank-main-icon" /><div className="blank-main-title fontcolor-title">欢迎来到您的私密聊天空间</div><div className="blank-main-content fontcolor-second">从列表中选择一个聊天，开始浏览您的消息，或开启一段新的对话</div></div></div></div></main>;
   const name = conversationName(conversation);
   const selectionMode = selectedMessageIds.length > 0;
   const selectKey = (message: ChatMessage) => message.tid || message.messageId || "";
@@ -1281,6 +1289,7 @@ export function ConversationSurface() {
     <main className="jw-im-chat-surface tyn-main tyn-chat-content aside-collapsed">
       <div className="jg-chat-root">
       <header className="jw-im-chat-header tyn-chat-head">
+        {!sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /> : null}
         <div className="tyn-media-group"><ChatAvatar className="tyn-size-md jg-size-md tyn-conver-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" />
         <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div><div className="tyn-media-row"><span className="meta">{conversation.conversationType === 2 ? "群聊" : `@${name}`}</span></div></div></div>
         <ul className="jw-im-chat-actions tyn-list-inline gap gap-1 ms-auto jg-conversation-header-tools">
@@ -1594,7 +1603,7 @@ export function CallOverlay() {
   );
 }
 
-export function ContactsSurface() {
+export function ContactsSurface({ sidebarOpen = true, onToggleSidebar }: { sidebarOpen?: boolean; onToggleSidebar?: () => void }) {
   const contacts = useJuggleChatStore((state) => state.contacts);
   const groups = useJuggleChatStore((state) => state.groups);
   const loading = useJuggleChatStore((state) => state.loadingContacts);
@@ -1626,6 +1635,7 @@ export function ContactsSurface() {
       <aside className="jw-im-list-pane tyn-aside tyn-contact-aside">
         <ListPanelHeader
           title="通讯录"
+          titleEnd={sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded /> : undefined}
           searchValue={query}
           searchPlaceholder="搜索通讯录"
           searchInputRef={searchInputRef}
@@ -1638,13 +1648,13 @@ export function ContactsSurface() {
         <div className="tyn-aside-body"><ul className="tyn-aside-list jw-im-contact-categories">{categories.map((item) => <li key={item.id} className={cx("tyn-aside-item tyn-aside-contact-item", tab === item.id && "active")} onClick={() => { setTab(item.id); setSelected(null); setQuery(""); }}><div className="tyn-media-group"><span className={cx("jg-tab-icon", item.icon)} /><span className="name">{item.name}</span></div><div className="jg-item-right"><div className="jg-arrow" /></div></li>)}</ul></div>
       </aside>
       <main className="jw-im-contact-main tyn-main tyn-chat-content aside-collapsed">
-        <header className="jw-im-pane-header jg-conversations-header jw-im-contact-main-header"><ul className="jg-convers-tools"><li className="jg-conversation-tool">{currentCategory.name}</li></ul></header>
+        <header className="jw-im-pane-header jg-conversations-header jw-im-contact-main-header">{!sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /> : null}<ul className="jg-convers-tools"><li className="jg-conversation-tool">{currentCategory.name}</li></ul></header>
         <div className="tyn-chat-body tyn-contact-body">
           <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>
         </div>
       </main>
       {selected ? <ContactDetail contact={selected} onClose={() => setSelected(null)} onConversation={() => open(selected).then(() => setSelected(null))} /> : null}
-      {groupOpen ? <CreateGroupModal contacts={contacts} onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void reload(); setTab("groups"); }} /> : null}
+      {groupOpen ? <CreateGroupModal onClose={() => setGroupOpen(false)} onCreated={() => { setGroupOpen(false); void reload(); setTab("groups"); }} /> : null}
     </div>
   );
 }
@@ -1692,14 +1702,38 @@ function ContactDetail({ contact, onClose, onConversation }: { contact: ChatCont
   );
 }
 
-function CreateGroupModal({ contacts, onClose, onCreated }: { contacts: ChatContact[]; onClose: () => void; onCreated: () => void }) {
+function CreateGroupModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [contacts, setContacts] = useState<ChatContact[]>([]);
   const [selected, setSelected] = useState<ChatContact[]>([]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [searchResults, setSearchResults] = useState<ChatContact[]>([]);
   const [showSearch, setShowSearch] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getMembersPage(50, 0).then((result) => {
+      if (cancelled) return;
+      const currentUserId = useJuggleChatStore.getState().user?.id;
+      const list = (result.members ?? []).map((member) => ({
+        user_id: member.user.imUserId,
+        member_id: member.id,
+        identity_user_id: member.user.id,
+        nickname: member.user.name || member.user.account || member.user.imUserId,
+        avatar: member.user.avatar || undefined,
+        conversationType: 1,
+      } satisfies ChatContact)).filter((contact) => contact.user_id && contact.user_id !== currentUserId);
+      setContacts(list);
+    }).catch((fetchError) => {
+      if (!cancelled) setError(fetchError instanceof Error ? fetchError.message : "加载成员失败");
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => () => {
     if (searchTimer.current) clearTimeout(searchTimer.current);

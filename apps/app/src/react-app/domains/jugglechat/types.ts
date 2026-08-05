@@ -168,6 +168,7 @@ export type OrganizationMembersResult = {
 
 export type OrganizationTeam = {
   id: string;
+  teamId?: string;
   name: string;
   memberIds: string[];
   managedByScim: boolean;
@@ -177,6 +178,22 @@ export type OrganizationTeam = {
 
 export type OrganizationTeamsResult = {
   teams: OrganizationTeam[];
+};
+
+export type OrganizationChatGroup = {
+  id: string;
+  name: string;
+  avatar?: string;
+  groupType: "normal" | "team" | string;
+  ownerId?: string;
+  orgId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type OrganizationChatGroupsResult = {
+  groups: OrganizationChatGroup[];
+  total: number;
 };
 
 export type SkillEnvelope = {

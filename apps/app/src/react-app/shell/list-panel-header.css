@@ -64,6 +64,14 @@
   white-space: nowrap;
 }
 
+.jw-list-panel-title-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+
 .jw-list-panel-icon-button,
 .jw-list-panel-add-slot > button,
 .jw-list-panel-add-slot > div > button {

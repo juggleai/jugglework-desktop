@@ -20,10 +20,12 @@ export function JuggleChatApp({
   sidebarOpen = true,
   sidebarResizing = false,
   onStartSidebarResize,
+  onToggleSidebar,
 }: {
   sidebarOpen?: boolean;
   sidebarResizing?: boolean;
   onStartSidebarResize?: PointerEventHandler<HTMLButtonElement>;
+  onToggleSidebar?: () => void;
 }) {
   const bootstrap = useJuggleChatStore((state) => state.bootstrap);
   const status = useJuggleChatStore((state) => state.status);
@@ -57,8 +59,8 @@ export function JuggleChatApp({
         ) : null}
         <ConnectionBanner />
         <CallOverlay />
-        {view === "conversations" || view === "settings" || view === "favorites" ? <div className="jw-im-conversation-layout tyn-content show-content"><ConversationList /><ConversationSurface /></div> : null}
-        {view === "contacts" ? <ContactsSurface /> : null}
+        {view === "conversations" || view === "settings" || view === "favorites" ? <div className="jw-im-conversation-layout tyn-content show-content"><ConversationList sidebarOpen={sidebarOpen} onToggleSidebar={onToggleSidebar} /><ConversationSurface sidebarOpen={sidebarOpen} onToggleSidebar={onToggleSidebar} /></div> : null}
+        {view === "contacts" ? <ContactsSurface sidebarOpen={sidebarOpen} onToggleSidebar={onToggleSidebar} /> : null}
         {view === "favorites" ? <FavoritesSurface /> : null}
         {view === "settings" ? <SettingsSurface /> : null}
       </div>

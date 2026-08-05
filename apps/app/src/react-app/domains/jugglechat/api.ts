@@ -1,6 +1,8 @@
 import type {
   ApiEnvelope,
   ChatGroupMember,
+  OrganizationChatGroup,
+  OrganizationChatGroupsResult,
   OrganizationMembersResult,
   OrganizationTeamsResult,
 } from "./types";
@@ -100,8 +102,37 @@ export async function getMembers() {
   return { members, total, limit, offset: 0 } satisfies OrganizationMembersResult;
 }
 
+export function getMembersPage(limit = 50, offset = 0) {
+  return organizationRequest<OrganizationMembersResult>(
+    `/v1/members?limit=${limit}&offset=${offset}`,
+    { method: "GET" },
+  );
+}
+
 export function searchFriends(key: string) {
   return chatRequest<ApiEnvelope>("friends/search", { method: "POST", body: JSON.stringify({ key }) });
+}
+
+async function getChatGroups() {
+  const limit = 100;
+  let offset = 0;
+  let total = 0;
+  const groups: OrganizationChatGroup[] = [];
+  do {
+    const page = await organizationRequest<OrganizationChatGroupsResult>(
+      `/v1/groups?limit=${limit}&offset=${offset}`,
+      { method: "GET" },
+    );
+    groups.push(...(Array.isArray(page.groups) ? page.groups : []));
+    total = Number(page.total) || groups.length;
+    if (!page.groups?.length) break;
+    offset += page.groups.length;
+  } while (offset < total);
+  return groups;
+}
+
+export function getChatGroupsForContacts() {
+  return getChatGroups();
 }
 
 export function getTeams() {
@@ -109,9 +140,11 @@ export function getTeams() {
 }
 
 export function createGroup(name: string, members: ChatContactInput[]) {
-  const memberIds = members.map((member) => member.member_id).filter((id): id is string => Boolean(id));
-  if (memberIds.length !== members.length) throw new Error("组织成员数据缺少 member ID，请刷新通讯录后重试");
-  return organizationRequest<{ team: OrganizationTeamsResult["teams"][number] }>("/v1/teams", {
+  // POST /api/v1/groups expects user IDs (not org member IDs). The server
+  // auto-includes the creator as owner via dedupedUserIDs(ownerUserID, ...).
+  const memberIds = members.map((member) => member.user_id).filter((id): id is string => Boolean(id));
+  if (memberIds.length !== members.length) throw new Error("成员数据缺少用户 ID，请刷新后重试");
+  return organizationRequest<{ group: OrganizationChatGroup }>("/v1/groups", {
     method: "POST",
     body: JSON.stringify({ name, memberIds }),
   });
@@ -131,25 +164,26 @@ function memberAsGroupMember(member: OrganizationMembersResult["members"][number
 }
 
 async function getTeamMembers(groupId: string) {
-  const [teamsResult, membersResult] = await Promise.all([getTeams(), getMembers()]);
-  const team = teamsResult.teams.find((item) => item.id === groupId);
-  if (!team) throw new Error("群组不存在或已被删除");
-  const memberIds = new Set(team.memberIds);
-  const members = membersResult.members.filter((member) => memberIds.has(member.id)).map(memberAsGroupMember);
-  return { team, members };
+  const [groups, membersResult] = await Promise.all([getChatGroups(), getMembers()]);
+  const group = groups.find((item) => item.id === groupId);
+  if (!group) throw new Error("群组不存在或已被删除");
+  const ownerMember = membersResult.members.find((member) => member.user.id === group.ownerId);
+  const members = ownerMember ? [memberAsGroupMember(ownerMember)] : [];
+  return { group, members };
 }
 
 export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<string, unknown>>> {
-  const teamsResult = await getTeams();
-  const team = teamsResult.teams.find((item) => item.id === groupId);
-  if (!team) throw new Error("群组不存在或已被删除");
+  const groups = await getChatGroups();
+  const group = groups.find((item) => item.id === groupId);
+  if (!group) throw new Error("群组不存在或已被删除");
   return {
     code: 0,
     data: {
-      group_id: team.id,
-      group_name: team.name,
+      group_id: group.id,
+      group_name: group.name,
+      group_avatar: group.avatar || "",
       members: [],
-      member_count: team.memberIds.length,
+      member_count: 0,
       my_role: 0,
       group_management: { group_mention_all_right: 7 },
     },

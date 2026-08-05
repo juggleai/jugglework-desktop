@@ -49,6 +49,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
   Collapsible,
@@ -979,6 +980,7 @@ export function AppSidebar(props: AppSidebarProps) {
           <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
             <ListPanelHeader
               title={taskScope === "remote" ? t("navigation.cloud_workspace") : t("navigation.local_workspace")}
+              titleEnd={<SidebarTrigger className="titlebar-no-drag" />}
               searchValue={sessionQuery}
               searchPlaceholder={t("workspace_list.search_sessions")}
               onSearchChange={setSessionQuery}

@@ -17,6 +17,7 @@ export type ListPanelHeaderProps = {
   showClear?: boolean;
   shortcut?: string;
   searchEnd?: React.ReactNode;
+  titleEnd?: React.ReactNode;
   addControl: React.ReactNode;
 };
 
@@ -25,6 +26,7 @@ export function ListPanelHeader(props: ListPanelHeaderProps) {
     <header className={`jw-list-panel-header${isMacPlatform() ? " is-mac" : ""}`}>
       <div className="jw-list-panel-title-row">
         <h2 className="jw-list-panel-title">{props.title}</h2>
+        {props.titleEnd ? <div className="jw-list-panel-title-end">{props.titleEnd}</div> : null}
       </div>
       <div className="jw-list-panel-search-row">
         <div className="jw-list-panel-search">

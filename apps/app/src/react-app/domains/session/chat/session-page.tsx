@@ -1072,6 +1072,7 @@ export function SessionPage(props: SessionPageProps) {
           <header className="z-10 flex h-10 shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar session-header">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
+              {shellConfig.sidebar && !sidebarOpen ? <SidebarTrigger className="hidden mac:flex titlebar-no-drag" /> : null}
               <h1 className="truncate text-[15px] font-semibold text-dls-text">
                 {showWorkspaceSetupEmptyState
                   ? t("session.create_or_connect_workspace")
@@ -1635,8 +1636,6 @@ export function SessionPage(props: SessionPageProps) {
           </aside>
           </div>
         </SidebarInset>
-        {/* 收起侧栏按钮：macOS 红绿灯右边缘约在 64px，留出一段间距再放图标，避免贴着绿灯。 */}
-        {shellConfig.sidebar ? <SidebarTrigger className="hidden mac:absolute mac:left-[80px] top-[3px] z-50 mac:flex titlebar-no-drag" /> : null}
       </SidebarProvider>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}
