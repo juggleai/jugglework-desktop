@@ -8,7 +8,6 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { searchJuggleWorkConnectCapabilities } from "../connect-capability-search.js";
 import { readJuggleWorkConnectSkillCatalog, renderJuggleWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
@@ -333,17 +332,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       skills,
       instruction: renderJuggleWorkConnectSkillInstruction(skills),
     });
-  });
-
-  addRoute(routes, "GET", "/experimental/connect/capabilities", "client", async (ctx) => {
-    // Connect capabilities are server/account-scoped, same as the skill catalog.
-    const query = ctx.url.searchParams.get("query") ?? "";
-    const limitParam = Number(ctx.url.searchParams.get("limit") ?? "");
-    const result = await searchJuggleWorkConnectCapabilities(config, {
-      query,
-      ...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
-    });
-    return jsonResponse({ ok: result.ok, schemaVersion: 1, matches: result.matches });
   });
 
   addRoute(routes, "PUT", "/experimental/connect/state", "host", async (ctx) => {

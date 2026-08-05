@@ -67,7 +67,6 @@ type EditorProps = {
 
 export type LexicalPromptEditorHandle = {
   insertSkillAtSelection: (skillName: string) => void;
-  insertMcpAtSelection: (mcpName: string) => void;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -93,15 +92,6 @@ type SerializedComposerSkillNode = Spread<
   {
     skillName: string;
     type: "composer-skill";
-    version: 1;
-  },
-  SerializedTextNode
->;
-
-type SerializedComposerMcpNode = Spread<
-  {
-    mcpName: string;
-    type: "composer-mcp";
     version: 1;
   },
   SerializedTextNode
@@ -323,80 +313,6 @@ class ComposerSkillNode extends TextNode {
 
 function $createComposerSkillNode(skillName: string) {
   return $applyNodeReplacement(new ComposerSkillNode(skillName));
-}
-
-/**
- * 输入框中的 MCP 令牌节点。
- *
- * TIPS：草稿里存 `[mcp <name>]` 纯文本，渲染成不可编辑的 pill；
- * 发送前由 buildDraft 展开成完整的调用指令，所以界面短、模型收到的指令完整。
- */
-class ComposerMcpNode extends TextNode {
-  __mcpName: string;
-
-  static override getType() {
-    return "composer-mcp";
-  }
-
-  static override clone(node: ComposerMcpNode) {
-    return new ComposerMcpNode(node.__mcpName, node.__key);
-  }
-
-  static override importJSON(serializedNode: SerializedComposerMcpNode) {
-    return $createComposerMcpNode(serializedNode.mcpName);
-  }
-
-  constructor(mcpName = "", key?: NodeKey) {
-    super(`[mcp ${mcpName}]`, key);
-    this.__mcpName = mcpName;
-  }
-
-  override exportJSON(): SerializedComposerMcpNode {
-    return {
-      ...super.exportJSON(),
-      mcpName: this.__mcpName,
-      type: "composer-mcp",
-      version: 1,
-    };
-  }
-
-  override createDOM(_config: EditorConfig) {
-    const dom = document.createElement("span");
-    dom.className = "inline-flex items-center rounded-full border border-teal-6/35 bg-teal-3/20 px-2.5 py-1 text-xs font-medium text-teal-11";
-    dom.textContent = this.__mcpName;
-    dom.contentEditable = "false";
-    dom.setAttribute("spellcheck", "false");
-    dom.title = `MCP: ${this.__mcpName}`;
-    return dom;
-  }
-
-  override updateDOM(prevNode: ComposerMcpNode, dom: HTMLElement) {
-    if (prevNode.__mcpName !== this.__mcpName) {
-      dom.textContent = this.__mcpName;
-      dom.title = `MCP: ${this.__mcpName}`;
-    }
-    return false;
-  }
-
-  override canInsertTextBefore(): false {
-    return false;
-  }
-
-  override canInsertTextAfter(): false {
-    return false;
-  }
-
-  override isTextEntity(): true {
-    return true;
-  }
-
-  override isToken(): true {
-    return true;
-  }
-}
-
-function $createComposerMcpNode(mcpName: string) {
-  return $applyNodeReplacement(new ComposerMcpNode(mcpName));
 }
 
 function pastedTextChipLabel(lines: number) {
@@ -699,7 +615,6 @@ type ComposerInlineTokenNode =
   | ComposerMentionNode
   | ComposerSlashCommandNode
   | ComposerSkillNode
-  | ComposerMcpNode
   | ComposerPastedTextNode
   | ComposerAttachmentNode;
 
@@ -707,7 +622,6 @@ function isComposerInlineTokenNode(node: unknown): node is ComposerInlineTokenNo
   return node instanceof ComposerMentionNode
     || node instanceof ComposerSlashCommandNode
     || node instanceof ComposerSkillNode
-    || node instanceof ComposerMcpNode
     || node instanceof ComposerPastedTextNode
     || node instanceof ComposerAttachmentNode;
 }
@@ -777,7 +691,7 @@ function setPrompt(
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|\[mcp [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
@@ -801,11 +715,6 @@ function setPrompt(
     const skillMatch = segment.match(/^\[skill (.+)\]$/);
     if (skillMatch?.[1]) {
       paragraph.append($createComposerSkillNode(skillMatch[1]));
-      continue;
-    }
-    const mcpMatch = segment.match(/^\[mcp (.+)\]$/);
-    if (mcpMatch?.[1]) {
-      paragraph.append($createComposerMcpNode(mcpMatch[1]));
       continue;
     }
     if (segment.startsWith("@")) {
@@ -840,29 +749,6 @@ function insertSkillAtSelection(skillName: string) {
   const skillNode = $createComposerSkillNode(skillName);
   const spaceNode = $createTextNode(" ");
   selection.insertNodes([skillNode, spaceNode]);
-  setSelectionAfterNode(spaceNode);
-}
-
-function appendMcpAtEnd(mcpName: string) {
-  const root = $getRoot();
-  const lastChild = root.getLastChild();
-  const paragraph = $isElementNode(lastChild) ? lastChild : $createParagraphNode();
-  if (!$isElementNode(lastChild)) root.append(paragraph);
-  const mcpNode = $createComposerMcpNode(mcpName);
-  const spaceNode = $createTextNode(" ");
-  paragraph.append(mcpNode, spaceNode);
-  setSelectionAfterNode(spaceNode);
-}
-
-function insertMcpAtSelection(mcpName: string) {
-  const selection = $getSelection();
-  if (!$isRangeSelection(selection)) {
-    appendMcpAtEnd(mcpName);
-    return;
-  }
-  const mcpNode = $createComposerMcpNode(mcpName);
-  const spaceNode = $createTextNode(" ");
-  selection.insertNodes([mcpNode, spaceNode]);
   setSelectionAfterNode(spaceNode);
 }
 
@@ -1197,10 +1083,6 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => insertSkillAtSelection(skillName));
       editor.focus();
     },
-    insertMcpAtSelection(mcpName: string) {
-      editor.update(() => insertMcpAtSelection(mcpName));
-      editor.focus();
-    },
   }), [editor]);
 
   return null;
@@ -1267,7 +1149,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
         editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerMcpNode, ComposerPastedTextNode, ComposerAttachmentNode],
+        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
         editorState: () => {
           setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
         },

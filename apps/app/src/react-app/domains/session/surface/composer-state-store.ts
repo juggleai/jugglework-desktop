@@ -15,13 +15,6 @@ export type ComposerSessionState = {
   attachments: ComposerAttachment[];
   mentions: Record<string, ComposerMentionKind>;
   pasteParts: ComposerPastePart[];
-  /**
-   * 草稿中每个 `[mcp <name>]` 令牌对应的完整调用指令，按 MCP 名称索引。
-   *
-   * TIPS：令牌只在输入框里显示成短 pill，发送前用这里的指令替换回去，
-   * 所以指令内容（本地 MCP / Cloud 连接器写法不同）必须在选中时就记下来。
-   */
-  mcpTokens: Record<string, string>;
 };
 
 export type ComposerStateStore = {
@@ -36,7 +29,6 @@ export type ComposerStateStore = {
   setDraft: (sessionId: string, draft: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
-  setMcpTokens: (sessionId: string, mcpTokens: Record<string, string>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
   appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
@@ -48,7 +40,6 @@ export type ComposerStateStore = {
 
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
 const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
-const EMPTY_MCP_TOKENS: Record<string, string> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 const EMPTY_HISTORY: string[] = [];
 const EMPTY_QUEUED_DRAFTS: ComposerDraft[] = [];
@@ -60,7 +51,6 @@ function createEmptyComposerSession(): ComposerSessionState {
     attachments: [],
     mentions: {},
     pasteParts: [],
-    mcpTokens: {},
   };
 }
 
@@ -86,11 +76,6 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const current = getWritableSession(state, sessionId);
     if (current.mentions === mentions) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, mentions } } };
-  }),
-  setMcpTokens: (sessionId, mcpTokens) => set((state) => {
-    const current = getWritableSession(state, sessionId);
-    if (current.mcpTokens === mcpTokens) return state;
-    return { sessions: { ...state.sessions, [sessionId]: { ...current, mcpTokens } } };
   }),
   setPasteParts: (sessionId, pasteParts) => set((state) => {
     const current = getWritableSession(state, sessionId);
@@ -150,17 +135,6 @@ export function getComposerAttachments(state: ComposerStateStore, sessionId: str
 
 export function getComposerMentions(state: ComposerStateStore, sessionId: string): Record<string, ComposerMentionKind> {
   return state.sessions[sessionId]?.mentions ?? EMPTY_MENTIONS;
-}
-
-/**
- * 读取会话草稿中 MCP 令牌到调用指令的映射。
- *
- * @param state 输入框状态
- * @param sessionId 会话 ID
- * @returns MCP 名称到完整调用指令的映射
- */
-export function getComposerMcpTokens(state: ComposerStateStore, sessionId: string): Record<string, string> {
-  return state.sessions[sessionId]?.mcpTokens ?? EMPTY_MCP_TOKENS;
 }
 
 export function getComposerPasteParts(state: ComposerStateStore, sessionId: string): ComposerPastePart[] {

@@ -769,8 +769,49 @@
 }
 .jw-im-composer-row { padding: 0; border: 0; border-radius: 0; box-shadow: none; }
 .jw-im-composer .tyn-composer-toolbar button { cursor: pointer; }
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon,
+.jw-im-composer .tyn-composer-toolbar .wr-smile,
+.jw-im-composer .tyn-composer-toolbar .wr-huixing {
+  color: var(--ui-text-secondary);
+  background: transparent;
+}
+.jw-im-composer .tyn-composer-toolbar .wr-smile::before,
+.jw-im-composer .tyn-composer-toolbar .wr-huixing::before {
+  color: var(--ui-text-secondary) !important;
+}
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-smile::before,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-huixing::before {
+  filter: brightness(0) invert(1);
+  opacity: .72;
+}
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon:hover,
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon[aria-expanded="true"] {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon:hover::before,
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon[aria-expanded="true"]::before {
+  color: var(--ui-text) !important;
+}
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon:hover::before,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon[aria-expanded="true"]::before {
+  opacity: 1;
+}
 .jw-im-composer .tyn-composer-toolbar .wr-smile > svg,
 .jw-im-composer .tyn-composer-toolbar .wr-huixing > svg { display: none; }
+.jw-im-emoji-picker {
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+.jw-im-emoji-picker .tyn-emoji-title { color: var(--ui-text-secondary); }
+.jw-im-emoji-picker .tyn-emoji-tools {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+.jw-im-emoji-picker .tyn-emojis-btn:hover,
+.jw-im-emoji-picker .tyn-emoji-tool.active .tyn-emojis-btn { background: var(--ui-hover); }
 .jw-im-emoji-picker .emoji-item {
   padding: 0;
   border: 0;
@@ -780,7 +821,7 @@
   line-height: 32px;
   cursor: pointer;
 }
-.jw-im-emoji-picker .emoji-item:hover { background: #f5f5f5; }
+.jw-im-emoji-picker .emoji-item:hover { background: var(--ui-hover); }
 .jw-im-emoji-backdrop {
   width: auto;
   height: auto;
@@ -825,6 +866,8 @@
     opacity 180ms ease,
     transform 250ms cubic-bezier(.4, 0, .2, 1);
   will-change: max-height, padding, opacity, transform;
+  color: var(--ui-text);
+  background: var(--ui-panel);
 }
 .jw-im-root .jw-im-composer-message-panel.active {
   max-height: 88px;
@@ -835,10 +878,34 @@
 }
 .jw-im-root .jw-im-composer-message-panel .flex-grow-1,
 .jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-content { min-width: 0; }
+.jw-im-root .jw-im-composer-message-panel .form-control-plaintext-wrap {
+  color: var(--ui-text-secondary);
+}
+.jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-icon,
+.jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-icon .wr::before {
+  color: var(--ui-text-secondary);
+}
+.jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-content {
+  border-left-color: var(--ui-border-strong);
+  color: var(--ui-text);
+  background: var(--ui-soft);
+}
+.jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-content .title {
+  color: var(--ui-text-secondary);
+}
+.jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-content .content {
+  color: var(--ui-text);
+}
 .jw-im-root .jw-im-composer-message-panel .content {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.jw-im-message .tyn-message-refer,
+.jw-im-message .jw-im-refer-message {
+  border-left-color: var(--ui-border-strong);
+  color: var(--ui-text-secondary);
+  background: var(--ui-soft);
 }
 .jw-im-selection-bar { border-color: var(--ui-border); background: var(--ui-panel); }
 
