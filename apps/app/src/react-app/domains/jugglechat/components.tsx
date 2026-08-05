@@ -117,10 +117,9 @@ export function ChatAvatar(props: { name: string; userId?: string; src?: string;
   return (
     <span
       className={cx("jw-im-avatar tyn-avatar", `is-${props.size ?? "md"}`, props.className)}
-      style={hasPortrait ? { backgroundImage: `url(${JSON.stringify(props.src)})` } : undefined}
       aria-hidden="true"
     >
-      {hasPortrait ? <img src={props.src} alt="" style={{ display: "none" }} onError={() => setFailed(true)} /> : <span className={cx("inner", colorClass)}>{initials(props.name)}</span>}
+      {hasPortrait ? <img src={props.src} alt="" onError={() => setFailed(true)} /> : <span className={cx("inner", colorClass)}>{initials(props.name)}</span>}
     </span>
   );
 }
