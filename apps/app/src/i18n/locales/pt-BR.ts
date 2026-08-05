@@ -553,6 +553,8 @@ export default {
   "question_modal.question_counter": "Pergunta {current} de {total}",
   "session.allow_for_session": "Permitir para esta sessão",
   "session.allow_once": "Permitir uma vez",
+  "session.jump_to_start": "Ir para o início",
+  "session.jump_to_latest": "Ir para o mais recente",
   "session.cmd_current_workspace": "Workspace atual",
   "session.cmd_new_session_detail": "Iniciar uma nova tarefa no workspace atual",
   "session.cmd_new_session_meta": "Criar",

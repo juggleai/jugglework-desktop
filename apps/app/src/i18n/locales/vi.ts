@@ -547,6 +547,8 @@ export default {
   "question_modal.question_counter": "Câu hỏi {current} / {total}",
   "session.allow_for_session": "Cho phép trong phiên này",
   "session.allow_once": "Cho phép một lần",
+  "session.jump_to_start": "Đến đầu",
+  "session.jump_to_latest": "Đến mới nhất",
   "session.cmd_current_workspace": "Workspace hiện tại",
   "session.cmd_new_session_detail": "Bắt đầu task mới trong workspace hiện tại",
   "session.cmd_new_session_meta": "Tạo",

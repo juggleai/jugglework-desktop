@@ -555,6 +555,8 @@ export default {
   "question_modal.question_counter": "Question {current} sur {total}",
   "session.allow_for_session": "Autoriser pour la session",
   "session.allow_once": "Autoriser une fois",
+  "session.jump_to_start": "Aller au début",
+  "session.jump_to_latest": "Aller au plus récent",
   "session.cmd_current_workspace": "Espace de travail actuel",
   "session.cmd_new_session_detail": "Démarrer une nouvelle tâche dans l'espace de travail actuel",
   "session.cmd_new_session_meta": "Créer",

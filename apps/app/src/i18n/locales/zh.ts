@@ -1012,6 +1012,8 @@ export default {
   "question_modal.question_counter": "问题{current} / {total}",
   "session.allow_for_session": "在会话期间允许",
   "session.allow_once": "允许一次",
+  "session.jump_to_start": "跳到开头",
+  "session.jump_to_latest": "跳到最新",
   "session.cmd_agent_active": "使用中",
   "session.cmd_agent_default_detail": "使用引擎的默认智能体",
   "session.cmd_agents_detail": "选择由哪个智能体来执行你的提示词",

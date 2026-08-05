@@ -472,6 +472,8 @@ export default {
   "question_modal.question_counter": "Вопрос {current} из {total}",
   "session.allow_for_session": "Разрешить для сеанса",
   "session.allow_once": "Разрешить один раз",
+  "session.jump_to_start": "В начало",
+  "session.jump_to_latest": "К последнему",
   "session.cmd_current_workspace": "Текущее рабочее пространство",
   "session.cmd_new_session_detail": "Начать новую задачу в текущем рабочем пространстве",
   "session.cmd_new_session_meta": "Создать",

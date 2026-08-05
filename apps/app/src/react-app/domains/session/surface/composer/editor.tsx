@@ -446,9 +446,20 @@ function $createComposerPastedTextNode(label: string, lines: number) {
   return $applyNodeReplacement(new ComposerPastedTextNode(label, lines));
 }
 
+// 文件图标（document 轮廓），用于非图片附件卡片。
+const ATTACHMENT_FILE_ICON_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>';
+
+/** 从文件名推导类型标签（如 "1785884400000.log" -> "LOG"）。 */
+function attachmentTypeLabel(name: string) {
+  const match = /\.([^.\\/]+)$/.exec(name.trim());
+  return match ? match[1].toUpperCase() : "FILE";
+}
+
 function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   const dom = document.createElement("span");
-  dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
+  // 块级展示：每个附件独占一行，输入文本自然落到附件下方的新行。
+  dom.className = "relative my-1 flex w-fit max-w-[280px] items-center align-middle";
   dom.contentEditable = "false";
   dom.setAttribute("spellcheck", "false");
   dom.title = attachment.name;
@@ -458,16 +469,27 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
     img.src = attachment.previewUrl;
     img.alt = attachment.name;
     img.decoding = "async";
-    img.className = "h-10 w-10 rounded-xl border border-border/70 object-cover";
+    img.className = "h-16 w-16 rounded-xl border border-border/70 object-cover";
     dom.append(img);
   } else {
-    const chip = document.createElement("span");
-    chip.className = "inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2";
+    const card = document.createElement("span");
+    card.className = "flex max-w-[280px] items-center gap-2 rounded-xl border border-border/70 bg-muted/40 px-2.5 py-1.5";
+    const iconBox = document.createElement("span");
+    iconBox.className = "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground";
+    iconBox.innerHTML = ATTACHMENT_FILE_ICON_SVG;
+    const meta = document.createElement("span");
+    meta.className = "flex min-w-0 flex-col";
     const label = document.createElement("span");
-    label.className = "truncate text-[11px] font-medium text-foreground";
+    label.className = "truncate text-[12px] font-medium leading-tight text-foreground";
+    label.dataset.attachmentLabel = "";
     label.textContent = attachment.name;
-    chip.append(label);
-    dom.append(chip);
+    const type = document.createElement("span");
+    type.className = "truncate text-[10px] font-medium uppercase leading-tight text-muted-foreground";
+    type.dataset.attachmentType = "";
+    type.textContent = attachmentTypeLabel(attachment.name);
+    meta.append(label, type);
+    card.append(iconBox, meta);
+    dom.append(card);
   }
 
   const remove = document.createElement("button");
@@ -493,8 +515,10 @@ function updateAttachmentChipDom(dom: HTMLElement, attachment: ComposerAttachmen
     img.src = attachment.previewUrl;
     img.alt = attachment.name;
   }
-  const label = dom.querySelector("span.truncate");
+  const label = dom.querySelector("[data-attachment-label]");
   if (label) label.textContent = attachment.name;
+  const type = dom.querySelector("[data-attachment-type]");
+  if (type) type.textContent = attachmentTypeLabel(attachment.name);
 }
 
 type SerializedComposerAttachmentNode = Spread<

@@ -147,7 +147,8 @@ export function createApplicationMenu({ appName, docsUrl, getWindow }) {
           { type: "separator" },
           { role: "reload" },
           { role: "forceReload" },
-          { role: "toggleDevTools" },
+          // 打开/关闭开发者控制台，统一使用 Cmd/Ctrl+Shift+I 快捷键。
+          { role: "toggleDevTools", accelerator: "CommandOrControl+Shift+I" },
           { type: "separator" },
           {
             label: "Actual Size",

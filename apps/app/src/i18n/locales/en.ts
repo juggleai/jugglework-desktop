@@ -1009,6 +1009,8 @@ export default {
   "question_modal.question_counter": "Question {current} of {total}",
   "session.allow_for_session": "Allow for session",
   "session.allow_once": "Allow once",
+  "session.jump_to_start": "Jump to start",
+  "session.jump_to_latest": "Jump to latest",
   "session.cmd_agent_active": "Active",
   "session.cmd_agent_default_detail": "Use the engine's default agent",
   "session.cmd_agents_detail": "Choose which agent runs your prompts",

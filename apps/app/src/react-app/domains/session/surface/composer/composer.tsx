@@ -153,6 +153,17 @@ function isImageAttachment(attachment: ComposerAttachment) {
   return attachment.kind === "image" || attachment.mimeType.startsWith("image/");
 }
 
+/** 从文件名推导类型标签（如 "1785895200000.log" -> "LOG"）。 */
+function attachmentTypeLabel(name: string) {
+  const match = /\.([^.\\/]+)$/.exec(name.trim());
+  return match ? match[1].toUpperCase() : "FILE";
+}
+
+// 附件 token（[attachment <id>]）内嵌在草稿字符串里，是附件生命周期的真源；
+// 但它不再在编辑器内联渲染——附件改由编辑器上方独立的横向行展示，
+// 编辑器只保留纯文本，保证光标与 placeholder 正常。
+const ATTACHMENT_TOKEN_RE = /\[attachment [^\]]+\]/g;
+
 async function compressImageFile(file: File): Promise<File> {
   if (file.type === "image/gif" || file.size <= IMAGE_COMPRESS_TARGET_BYTES) {
     return file;
@@ -401,6 +412,15 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
     void props.onSend();
   }, [props.busy, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing]);
+
+  // 编辑器只显示草稿的文本部分（剥离附件 token），每次变更再把当前附件 token
+  // 追加回去，保证草稿这一附件生命周期真源不被破坏。
+  const draftWithoutAttachments = props.draft.replace(ATTACHMENT_TOKEN_RE, "");
+  const handleEditorDraftChange = useCallback((text: string) => {
+    const stripped = text.replace(ATTACHMENT_TOKEN_RE, "");
+    const tokens = props.attachments.map((attachment) => `[attachment ${attachment.id}]`).join("");
+    props.onDraftChange(`${stripped}${tokens}`);
+  }, [props.onDraftChange, props.attachments]);
 
   const slashCommandQuery = getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
@@ -1278,21 +1298,70 @@ export function ReactSessionComposer(props: ComposerProps) {
           ) : null}
 
           <div className="px-4 pt-3 pb-2">
+            {/* 附件行：文件独占区域，位于输入框上方，可横向滚动。 */}
+            {props.attachments.length > 0 ? (
+              <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+                {props.attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="group relative flex shrink-0 items-center"
+                    title={attachment.name}
+                  >
+                    {isImageAttachment(attachment) && attachment.previewUrl ? (
+                      <>
+                        <img
+                          src={attachment.previewUrl}
+                          alt={attachment.name}
+                          decoding="async"
+                          className="h-14 w-14 rounded-xl border border-border/70 object-cover"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75"
+                          aria-label={`Remove ${attachment.name}`}
+                          title="Remove"
+                          onClick={() => props.onRemoveAttachment(attachment.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="relative flex w-[220px] max-w-[220px] items-center gap-2 rounded-xl border border-border/70 bg-muted/40 py-1.5 pl-2.5 pr-7">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
+                          <FileText size={18} />
+                        </div>
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate text-[13px] font-medium leading-tight text-foreground">
+                            {attachment.name}
+                          </span>
+                          <span className="truncate text-[11px] font-medium uppercase leading-tight text-muted-foreground">
+                            {attachmentTypeLabel(attachment.name)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          aria-label={`Remove ${attachment.name}`}
+                          title="Remove"
+                          onClick={() => props.onRemoveAttachment(attachment.id)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {/* Editor */}
             <LexicalPromptEditor
               ref={editorRef}
-              value={props.draft}
+              value={draftWithoutAttachments}
               mentions={props.mentions}
               pastedText={pastedTextTokens}
-              attachments={props.attachments.map((attachment) => ({
-                id: attachment.id,
-                name: attachment.name,
-                kind: isImageAttachment(attachment) ? "image" : "file",
-                previewUrl: attachment.previewUrl,
-              }))}
               disabled={props.disabled}
               placeholder={t("composer.placeholder")}
-              onChange={props.onDraftChange}
+              onChange={handleEditorDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
               onRemoveAttachment={props.onRemoveAttachment}

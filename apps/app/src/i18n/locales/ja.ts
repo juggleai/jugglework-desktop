@@ -546,6 +546,8 @@ export default {
   "question_modal.question_counter": "質問{current}/{total}",
   "session.allow_for_session": "セッション中許可",
   "session.allow_once": "一度だけ許可",
+  "session.jump_to_start": "先頭へ移動",
+  "session.jump_to_latest": "最新へ移動",
   "session.cmd_current_workspace": "現在のワークスペース",
   "session.cmd_new_session_detail": "現在のワークスペースで新しいタスクを開始",
   "session.cmd_new_session_meta": "作成",

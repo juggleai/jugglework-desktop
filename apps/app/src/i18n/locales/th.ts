@@ -547,6 +547,8 @@ export default {
   "question_modal.question_counter": "คำถามที่ {current} จาก {total}",
   "session.allow_for_session": "อนุญาตตลอดเซสชัน",
   "session.allow_once": "อนุญาตครั้งเดียว",
+  "session.jump_to_start": "ไปที่จุดเริ่มต้น",
+  "session.jump_to_latest": "ไปที่ล่าสุด",
   "session.cmd_current_workspace": "พื้นที่ทำงานปัจจุบัน",
   "session.cmd_new_session_detail": "เริ่มงานใหม่ในพื้นที่ทำงานปัจจุบัน",
   "session.cmd_new_session_meta": "สร้าง",
