@@ -1204,7 +1204,28 @@ export function ConversationSurface() {
     }
   };
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    // Chromium does not consistently perform the native textarea newline for
+    // Option+Enter on macOS. Insert it explicitly (Alt+Enter on Windows/Linux
+    // reports the same altKey modifier) and restore the caret afterwards.
+    const isEnter = event.key === "Enter" || event.code === "Enter" || event.code === "NumpadEnter";
+    if (isEnter && event.altKey) {
+      event.preventDefault();
+      const input = event.currentTarget;
+      const start = input.selectionStart ?? text.length;
+      const end = input.selectionEnd ?? start;
+      const nextText = `${text.slice(0, start)}\n${text.slice(end)}`;
+      const nextCursor = start + 1;
+      setText(nextText);
+      setMentionOpen(false);
+      setMentionQuery("");
+      setMentionTriggerIndex(-1);
+      window.requestAnimationFrame(() => {
+        inputRef.current?.focus({ preventScroll: true });
+        inputRef.current?.setSelectionRange(nextCursor, nextCursor);
+      });
+      return;
+    }
     if (mentionOpen && filteredMentionMembers.length) {
       if (event.key === "ArrowDown") {
         event.preventDefault();

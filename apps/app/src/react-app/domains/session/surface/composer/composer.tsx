@@ -959,6 +959,11 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (event.key === "Enter" && imeActive) {
       return;
     }
+    // macOS Option+Enter / Windows Alt+Enter inserts a newline. Let the
+    // editor handle it before any open command or mention menu consumes it.
+    if (event.key === "Enter" && event.altKey) {
+      return;
+    }
     // Escape-to-stop while the agent is busy. Only when no menu is open so
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.

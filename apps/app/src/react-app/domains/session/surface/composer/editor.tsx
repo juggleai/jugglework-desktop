@@ -841,8 +841,9 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
         // must always fall through to the editor so the composition can
         // commit.
         if (event?.isComposing === true || event?.keyCode === 229) return false;
-        // Shift+Enter inserts a newline — let the editor handle it.
-        if (event?.shiftKey) return false;
+        // Shift+Enter and macOS Option+Enter / Windows Alt+Enter insert a
+        // newline — let the editor handle them.
+        if (event?.shiftKey || event?.altKey) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
         // Plain Enter submits. Cmd/Ctrl+Enter submits with the queue
