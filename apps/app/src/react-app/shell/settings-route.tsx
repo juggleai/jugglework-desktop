@@ -61,6 +61,7 @@ import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/conne
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@/react-app/domains/connections/jugglework-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
+import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
@@ -2240,9 +2241,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 setReconnectingProviderId(null);
               }
             }}
-            cloudProviderIds={new Set([
-              ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
-            ])}
+            cloudProviderIds={new Set(getCurrentCloudManagedProviderIds({
+              imported: providerAuthSnapshot.importedCloudProviders ?? {},
+              liveProviders: providerAuthSnapshot.cloudOrgProviders,
+            }))}
             cloudProvidersView={
               <CloudProvidersView
                 embedded

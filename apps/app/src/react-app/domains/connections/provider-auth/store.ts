@@ -58,6 +58,7 @@ import { cleanupJuggleWorkCloudMcpAfterSignOut } from "../cloud-mcp-reconciler";
 import {
   readWorkspaceCloudStateOwner,
   workspaceCloudStateOwnerAction,
+  workspaceCloudStateOwnerIdentity,
   writeWorkspaceCloudStateOwner,
 } from "./workspace-cloud-owner";
 import {
@@ -243,6 +244,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let cloudOrgProvidersInFlightKey = "";
   let cloudOrgProvidersInFlight: Promise<DenOrgLlmProvider[]> | null = null;
   let cloudProviderSyncContextKey = "";
+  let cloudProviderDenContextKey = "";
   let importedCloudProvidersWorkspaceKey = "";
 
   const emitChange = () => {
@@ -292,7 +294,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     for (const provider of state.cloudOrgProviders) {
-      const id = provider.providerId.trim();
+      // Organization providers are distinct rows. Key them by the cloud row
+      // id (`lpr_*`) rather than the catalog/source id so an admin-named
+      // provider such as "DeepSeek" backed by JuggleRouter does not turn the
+      // generic JuggleRouter catalog entry into a connected Cloud provider.
+      const id = getCloudManagedProviderId(provider);
       if (!id || merged.has(id)) continue;
       if (isProviderBlocked(id)) continue;
       merged.set(id, {
@@ -896,13 +902,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         const supportedProviders = providers.filter((provider) =>
           provider.source !== "jugglework" && provider.providerId.trim().toLowerCase() !== "jugglework"
         );
+        // An organization switch can finish while this request is in flight.
+        // Never let the previous organization's providers overwrite the new
+        // organization's state.
+        if (getCloudOrgProvidersKey() !== loadKey) {
+          return supportedProviders;
+        }
         setStateField("cloudOrgProviders", supportedProviders);
         cloudOrgProvidersLoadKey = loadKey;
         return supportedProviders;
       })
       .catch((error) => {
-        setStateField("cloudOrgProviders", []);
-        cloudOrgProvidersLoadKey = "";
+        if (getCloudOrgProvidersKey() === loadKey) {
+          setStateField("cloudOrgProviders", []);
+          cloudOrgProvidersLoadKey = "";
+        }
         throw error;
       })
       .finally(() => {
@@ -1142,7 +1156,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     for (const provider of cloudProviders) {
-      const id = provider.providerId.trim();
+      const id = getCloudManagedProviderId(provider);
       if (!id) continue;
       if (isProviderBlocked(id)) continue;
       const existing = merged[id] ?? [];
@@ -1959,17 +1973,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // MCP token until it is opened, which is here. Ordered after the baseline
     // read so the purge sees this workspace's records, and inside the same
     // pass as the import below so a switch cannot race a fresh import.
-    const currentUserId = readDenUserId();
+    const settings = readDenSettings();
+    const currentOwnerId = workspaceCloudStateOwnerIdentity({
+      userId: readDenUserId(),
+      organizationId: settings.activeOrgId,
+    });
     const ownerAction = workspaceCloudStateOwnerAction({
       storedOwnerId: readWorkspaceCloudStateOwner(target.juggleworkWorkspaceId),
-      currentUserId,
+      currentOwnerId,
     });
     if (ownerAction === "purge") {
       await purgeWorkspaceCloudState();
       importedProviders = {};
     }
     if (ownerAction !== "keep") {
-      writeWorkspaceCloudStateOwner(target.juggleworkWorkspaceId, currentUserId);
+      writeWorkspaceCloudStateOwner(target.juggleworkWorkspaceId, currentOwnerId);
     }
     const liveProviders = await refreshCloudOrgProviders({ force: true });
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
@@ -2204,6 +2222,28 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     lastWorkspaceKey = workspaceKey;
     refreshSnapshot();
     emitChange();
+
+    const nextDenContextKey = getCloudOrgProvidersKey();
+    if (nextDenContextKey !== cloudProviderDenContextKey) {
+      cloudProviderDenContextKey = nextDenContextKey;
+      cloudOrgProvidersLoadKey = "";
+      cloudOrgProvidersInFlightKey = "";
+      cloudOrgProvidersInFlight = null;
+      mutateState((current) => ({
+        ...current,
+        cloudOrgProviders: [],
+        providerAuthMethods: Object.fromEntries(
+          Object.entries(current.providerAuthMethods)
+            .map(([providerId, methods]) => [
+              providerId,
+              methods.filter((method) => method.type !== "cloud"),
+            ])
+            .filter(([, methods]) => methods.length > 0),
+        ),
+      }));
+      refreshSnapshot();
+      emitChange();
+    }
     if (workspaceChanged) {
       void refreshImportedCloudProviders();
     }

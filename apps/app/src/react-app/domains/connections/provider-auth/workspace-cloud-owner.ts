@@ -20,11 +20,21 @@ export type WorkspaceCloudStateOwnerAction =
   /** A different account's state is in this workspace: purge, then stamp. */
   | "purge";
 
+export function workspaceCloudStateOwnerIdentity(input: {
+  userId: string | null | undefined;
+  organizationId: string | null | undefined;
+}): string | null {
+  const userId = input.userId?.trim() ?? "";
+  const organizationId = input.organizationId?.trim() ?? "";
+  if (!userId || !organizationId) return null;
+  return JSON.stringify({ userId, organizationId });
+}
+
 export function workspaceCloudStateOwnerAction(input: {
   storedOwnerId: string | null | undefined;
-  currentUserId: string | null | undefined;
+  currentOwnerId: string | null | undefined;
 }): WorkspaceCloudStateOwnerAction {
-  const current = input.currentUserId?.trim() ?? "";
+  const current = input.currentOwnerId?.trim() ?? "";
   // No identity for the current session — never purge on a guess.
   if (!current) return "keep";
   const stored = input.storedOwnerId?.trim() ?? "";
@@ -48,12 +58,12 @@ export function readWorkspaceCloudStateOwner(workspaceKey: string): string | nul
   }
 }
 
-export function writeWorkspaceCloudStateOwner(workspaceKey: string, userId: string | null) {
+export function writeWorkspaceCloudStateOwner(workspaceKey: string, ownerId: string | null) {
   if (typeof window === "undefined") return;
   const key = ownerKey(workspaceKey);
   if (!key) return;
   try {
-    const resolved = userId?.trim() ?? "";
+    const resolved = ownerId?.trim() ?? "";
     if (resolved) {
       window.localStorage.setItem(key, resolved);
     } else {

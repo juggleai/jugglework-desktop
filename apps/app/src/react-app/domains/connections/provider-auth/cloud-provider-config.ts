@@ -72,6 +72,20 @@ export const getCloudManagedProviderId = (
 ) => provider.id.trim();
 
 /**
+ * Cloud badges must reflect providers published by the active organization,
+ * not merely workspace import records left by an earlier organization.
+ */
+export const getCurrentCloudManagedProviderIds = (input: {
+  imported: Record<string, CloudImportedProvider>;
+  liveProviders: Array<Pick<DenOrgLlmProvider, "id">>;
+}) => {
+  const liveIds = new Set(input.liveProviders.map((provider) => provider.id.trim()));
+  return Object.values(input.imported)
+    .filter((provider) => liveIds.has(provider.cloudProviderId.trim()))
+    .map((provider) => provider.providerId);
+};
+
+/**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
  * `lpr_*` keys (org-managed providers) and `jugglework` (the built-in cloud
  * provider). These keys are never hand-authored, so re-importing over an

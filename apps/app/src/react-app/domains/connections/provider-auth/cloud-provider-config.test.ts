@@ -14,6 +14,7 @@ import type { DenOrgLlmProviderConnection } from "../../../../app/lib/den";
 import {
   buildCloudProviderConfig,
   CLOUD_PROVIDER_METADATA_VERSION,
+  getCurrentCloudManagedProviderIds,
   getCloudManagedProviderId,
   getProviderModelIds,
   isCloudProviderOutOfSync,
@@ -55,6 +56,36 @@ const importedFrom = (provider: DenOrgLlmProvider): CloudImportedProvider => ({
   modelIds: getProviderModelIds(provider),
   importedAt: 1,
   metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
+});
+
+describe("getCloudManagedProviderId", () => {
+  test("uses the organization provider row id instead of the catalog source id", () => {
+    const provider = makeProvider([]);
+    expect(getCloudManagedProviderId(provider)).toBe("lpr_openrouter");
+  });
+});
+
+describe("getCurrentCloudManagedProviderIds", () => {
+  test("does not classify a stale import as cloud without a current organization row", () => {
+    const provider = makeProvider([]);
+    expect(getCurrentCloudManagedProviderIds({
+      imported: { [provider.id]: importedFrom(provider) },
+      liveProviders: [],
+    })).toEqual([]);
+  });
+
+  test("returns the lpr id for a provider published by the current organization", () => {
+    const provider = {
+      ...makeProvider([]),
+      id: "lpr_deepseek",
+      providerId: "jugglerouter",
+      name: "DeepSeek",
+    };
+    expect(getCurrentCloudManagedProviderIds({
+      imported: { [provider.id]: importedFrom(provider) },
+      liveProviders: [provider],
+    })).toEqual(["lpr_deepseek"]);
+  });
 });
 
 describe("isCloudProviderOutOfSync", () => {
