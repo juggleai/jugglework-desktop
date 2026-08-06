@@ -12,12 +12,10 @@ import {
   Check,
   ChevronLeft,
   CircleAlert,
-  Crown,
   FileIcon,
   Forward,
   ImageIcon,
   LoaderCircle,
-  LogOut,
   Mic,
   MicOff,
   MessageCircle,
@@ -31,7 +29,6 @@ import {
   Search,
   Send,
   Settings,
-  Shield,
   SmilePlus,
   Trash2,
   UserPlus,
@@ -43,24 +40,13 @@ import {
 } from "lucide-react";
 
 import {
-  addGroupAdmins,
   createGroup,
   dismissGroup,
-  getGroupAdmins,
   getGroupInfo,
   getGroupMembers,
-  getGroupNotice,
   getMembersPage,
   inviteGroupMembers,
-  quitGroup,
-  removeGroupAdmins,
   removeGroupMembers,
-  setGroupDisplayName,
-  setGroupHistoryVisible,
-  setGroupManagement,
-  setGroupMute,
-  setGroupNotice,
-  transferGroupOwner,
   updateGroup,
 } from "./api";
 import { useJuggleCallStore } from "./call-store";
@@ -117,12 +103,13 @@ export function ChatAvatar(props: { name: string; userId?: string; src?: string;
   const hasPortrait = Boolean(props.src && !failed);
   useEffect(() => setFailed(false), [props.src]);
   return (
-    <span
+    <Avatar
       className={cx("jw-im-avatar tyn-avatar", `is-${props.size ?? "md"}`, props.className)}
       aria-hidden="true"
     >
-      {hasPortrait ? <img src={props.src} alt="" onError={() => setFailed(true)} /> : <span className={cx("inner", colorClass)}>{initials(props.name)}</span>}
-    </span>
+      {hasPortrait ? <AvatarImage src={props.src} alt="" onError={() => setFailed(true)} /> : null}
+      <AvatarFallback className={cx("inner", colorClass)}>{initials(props.name)}</AvatarFallback>
+    </Avatar>
   );
 }
 
@@ -975,6 +962,8 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [forwarding, setForwarding] = useState<ChatMessage[] | null>(null);
   const [groupManagerOpen, setGroupManagerOpen] = useState(false);
+  const [groupManagerHost, setGroupManagerHost] = useState<HTMLElement | null>(null);
+  const [groupManagerKey, setGroupManagerKey] = useState(0);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1080,7 +1069,8 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
   useEffect(() => {
     if (!actionsOpen) return;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      if (!actionsMenuRef.current?.contains(event.target as Node)) setActionsOpen(false);
+      const menu = actionsMenuRef.current;
+      if (!menu || !event.composedPath().includes(menu)) setActionsOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
@@ -1285,6 +1275,14 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
   };
   const orderedMessages = messages;
   const visiblePinnedMessage = pinnedMessage?.message?.name && (pinnedMessage.message.messageId || pinnedMessage.message.tid) ? pinnedMessage : null;
+  const openGroupManager = () => {
+    const host = actionsMenuRef.current?.closest<HTMLElement>(".jw-im-root") ?? null;
+    if (!host) return;
+    setGroupManagerHost(host);
+    setGroupManagerKey((current) => current + 1);
+    setActionsOpen(false);
+    setGroupManagerOpen(true);
+  };
   return (
     <main className="jw-im-chat-surface tyn-main tyn-chat-content aside-collapsed">
       <div className="jg-chat-root">
@@ -1294,7 +1292,7 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
         <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div><div className="tyn-media-row"><span className="meta">{conversation.conversationType === 2 ? "群聊" : `@${name}`}</span></div></div></div>
         <ul className="jw-im-chat-actions tyn-list-inline gap gap-1 ms-auto jg-conversation-header-tools">
           <li ref={actionsMenuRef}><button type="button" className="tool btn btn-icon btn-light wr wr-more-dot" onClick={(event) => { event.stopPropagation(); setActionsOpen((current) => !current); }} title="会话设置" aria-expanded={actionsOpen}><MoreHorizontal aria-hidden="true" /></button>
-            {actionsOpen ? <ConversationActions conversation={conversation} onClose={() => setActionsOpen(false)} /> : null}
+            {actionsOpen ? <ConversationActions conversation={conversation} onClose={() => setActionsOpen(false)} onManageGroup={conversation.conversationType === 2 ? openGroupManager : undefined} /> : null}
           </li>
         </ul>
         {visiblePinnedMessage ? <div className="jg-pinned-box"><div className="jg-pinned-info"><div className="jg-pinned-icon wr wr-top-s" /><ul className="jg-pinned-content"><li className="jg-pinned-item content"><ChatAvatar className="jg-top-avatar" name={visiblePinnedMessage.message.sender?.name || visiblePinnedMessage.message.sender?.id || "用户"} userId={visiblePinnedMessage.message.sender?.id} src={visiblePinnedMessage.message.sender?.portrait} /><div>{visiblePinnedMessage.message.sender?.name || "用户"}：<span>{messageText(visiblePinnedMessage.message)}</span></div></li><li className="jg-pinned-item operator">由 <span className="name">{visiblePinnedMessage.operator?.name || "你"}</span> 置顶</li></ul></div><ul className="jg-pinned-tools"><li><button type="button" className="jg-pinned-item wr wr-close" title="取消置顶" aria-label="取消置顶" onClick={() => void pinMessage(visiblePinnedMessage.message, false)}><span className="sr-only">取消置顶</span></button></li></ul></div> : null}
@@ -1335,7 +1333,10 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
         </div>
       </footer>}
       {forwarding ? <ForwardModal messages={forwarding} conversations={conversations} onClose={() => { setForwarding(null); setSelectedMessageIds([]); }} /> : null}
-      {groupManagerOpen ? <GroupManagementModal conversation={conversation} onClose={() => setGroupManagerOpen(false)} /> : null}
+      {groupManagerOpen && groupManagerHost ? createPortal(
+        <GroupManagementModal key={groupManagerKey} conversation={conversation} onClose={() => setGroupManagerOpen(false)} />,
+        groupManagerHost,
+      ) : null}
       </div>
     </main>
   );
@@ -1449,15 +1450,6 @@ export function FavoritesSurface() {
   </aside>;
 }
 
-const GROUP_PERMISSIONS = [
-  ["group_add_member_right", "添加成员"],
-  ["group_top_msg_right", "置顶消息"],
-  ["group_mention_all_right", "@ 所有人"],
-  ["group_edit_msg_right", "编辑群消息"],
-  ["group_send_msg_right", "在群内发言"],
-  ["group_set_msg_life_right", "设置消息定时删除"],
-] as const;
-
 function groupMemberId(member: ChatGroupMember) {
   return String(member.user_id || member.id || "");
 }
@@ -1484,10 +1476,7 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
   const reloadContacts = useJuggleChatStore((state) => state.loadContacts);
   const reloadConversations = useJuggleChatStore((state) => state.loadConversations);
   const [group, setGroup] = useState<ChatGroupInfo | null>(null);
-  const [notice, setNotice] = useState("");
-  const [admins, setAdmins] = useState<string[]>([]);
   const [name, setName] = useState(conversationName(conversation));
-  const [displayName, setDisplayName] = useState("");
   const [picker, setPicker] = useState<"invite" | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1498,11 +1487,9 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
     setLoading(true);
     setError(null);
     try {
-      const [infoResult, membersResult, noticeResult, adminsResult] = await Promise.all([
+      const [infoResult, membersResult] = await Promise.all([
         getGroupInfo(conversation.conversationId),
         getGroupMembers(conversation.conversationId),
-        getGroupNotice(conversation.conversationId),
-        getGroupAdmins(conversation.conversationId).catch(() => ({ code: 0, data: [] } as ApiEnvelope<ChatGroupMember[]>)),
       ]);
       assertSuccess(infoResult, "获取群资料失败");
       assertSuccess(membersResult, "获取群成员失败");
@@ -1514,17 +1501,16 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
         nickname: String(data.group_name ?? conversationName(conversation)),
         avatar: data.group_portrait ? String(data.group_portrait) : undefined,
         members: initialMembers,
-        member_count: Number(data.member_count ?? initialMembers.length),
+        member_count: Number(data.member_count) || initialMembers.length,
         member_offset: data.member_offset ? String(data.member_offset) : undefined,
         my_role: Number(data.my_role ?? 0),
+        group_type: data.group_type ? String(data.group_type) : undefined,
+        owner_id: data.owner_id ? String(data.owner_id) : undefined,
         grp_display_name: data.grp_display_name ? String(data.grp_display_name) : "",
         group_management: data.group_management && typeof data.group_management === "object" ? data.group_management as Record<string, number> : {},
       };
       setGroup(next);
       setName(next.nickname);
-      setDisplayName(next.grp_display_name ?? "");
-      if (noticeResult.code === 0) setNotice(noticeResult.data?.content ?? "");
-      if (adminsResult.code === 0) setAdmins(extractGroupMembers(adminsResult.data).map(groupMemberId).filter(Boolean));
     } catch (loadError) { setError(toError(loadError)); }
     finally { setLoading(false); }
   };
@@ -1542,24 +1528,26 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
     finally { setBusy(false); }
   };
 
-  if (loading && !group) return <div className="jw-im-modal-backdrop"><section className="jw-im-modal jw-im-modal-loading"><LoaderCircle className="is-spinning" /><span>正在加载群资料…</span></section></div>;
-  if (!group) return <div className="jw-im-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>群管理</h3><button onClick={onClose}><X size={18} /></button></header>{error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}<button className="jw-im-primary-button" onClick={() => void load()}>重试</button></section></div>;
+  if (loading && !group) return <div className="jw-im-modal-backdrop jw-im-group-modal-backdrop"><section className="jw-im-modal jw-im-modal-loading"><LoaderCircle className="is-spinning" /><span>正在加载群资料…</span></section></div>;
+  if (!group) return <div className="jw-im-modal-backdrop jw-im-group-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>群管理</h3><button onClick={onClose}><X size={18} /></button></header>{error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}<button className="jw-im-primary-button" onClick={() => void load()}>重试</button></section></div>;
 
-  const canManage = group.my_role === 1 || group.my_role === 2;
+  const isNormalGroup = group.group_type === "normal";
+  const canInvite = isNormalGroup;
   const isOwner = group.my_role === 1;
-  const existingIds = new Set(group.members.map(groupMemberId));
-  const availableContacts = contacts.filter((contact) => !existingIds.has(contact.user_id));
-  const groupMuted = Number(group.group_management.group_mute ?? 0) === 1;
-  const historyVisible = Number(group.group_management.group_his_msg_visible ?? 0) === 1;
+  const existingIMIds = new Set(group.members.map(groupMemberId).filter(Boolean));
+  const existingIdentityIds = new Set(group.members.map((member) => String(member.identity_user_id || "")).filter(Boolean));
+  const availableContacts = contacts.filter((contact) => (
+    !existingIMIds.has(contact.user_id)
+    && !existingIdentityIds.has(String(contact.identity_user_id || ""))
+  ));
 
-  return <div className="jw-im-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal jw-im-group-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>群管理</h3><button onClick={onClose}><X size={18} /></button></header>
+  return <div className="jw-im-modal-backdrop jw-im-group-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal jw-im-group-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>群管理</h3><button onClick={onClose}><X size={18} /></button></header>
     <div className="jw-im-group-summary"><ChatAvatar name={group.nickname} userId={group.id} src={group.avatar} size="lg" /><div><strong>{group.nickname}</strong><span>{group.member_count} 位成员 · {isOwner ? "群主" : group.my_role === 2 ? "管理员" : "成员"}</span></div></div>
     {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
-    <section className="jw-im-group-section"><h4>群资料</h4><label className="jw-im-field"><span>群名称</span><span className="jw-im-inline-field"><input value={name} disabled={!canManage} onChange={(event) => setName(event.target.value)} /><button disabled={!canManage || busy || !name.trim()} onClick={() => void run(() => updateGroup(group.id, { group_name: name.trim(), group_portrait: group.avatar || "" }), "更新群名称")}>保存</button></span></label><label className="jw-im-field"><span>我的群昵称</span><span className="jw-im-inline-field"><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><button disabled={busy} onClick={() => void run(() => setGroupDisplayName(group.id, displayName.trim()), "更新群昵称")}>保存</button></span></label><label className="jw-im-field"><span>群公告</span><textarea value={notice} disabled={!canManage} onChange={(event) => setNotice(event.target.value)} rows={3} /><button className="jw-im-secondary-button" disabled={!canManage || busy} onClick={() => void run(() => setGroupNotice(group.id, notice), "更新群公告")}>保存群公告</button></label></section>
-    <section className="jw-im-group-section"><div className="jw-im-group-section-title"><h4>群成员（{group.members.length}）</h4>{canManage ? <button onClick={() => { setPicker("invite"); setSelected([]); }}><UserPlus size={14} />邀请</button> : null}</div><div className="jw-im-group-members">{group.members.map((member) => { const id = groupMemberId(member); const admin = admins.includes(id); const self = id === currentUser?.id; return <div key={id}><ChatAvatar name={groupMemberName(member)} userId={id} src={String(member.avatar || member.portrait || "") || undefined} size="sm" /><span><strong>{groupMemberName(member)}</strong><small>{admin ? "管理员" : id === currentUser?.id ? "我" : id}</small></span>{isOwner && !self ? <span className="jw-im-member-actions"><button title={admin ? "取消管理员" : "设为管理员"} disabled={busy} onClick={() => void run(() => admin ? removeGroupAdmins(group.id, [id]) : addGroupAdmins(group.id, [id]), admin ? "取消管理员" : "设置管理员")}><Shield size={14} /></button><button title="转让群主" disabled={busy} onClick={() => { if (window.confirm(`确定将群主转让给 ${groupMemberName(member)}？`)) void run(() => transferGroupOwner(group.id, id), "转让群主"); }}><Crown size={14} /></button></span> : null}{canManage && !self ? <button className="jw-im-member-remove" title="移出群聊" disabled={busy} onClick={() => { if (window.confirm(`确定移除 ${groupMemberName(member)}？`)) void run(() => removeGroupMembers(group.id, [id]), "移除成员"); }}><UserMinus size={14} /></button> : null}</div>; })}</div></section>
-    {canManage ? <section className="jw-im-group-section"><h4>群设置</h4><label className="jw-im-switch-row"><span>全员禁言</span><input type="checkbox" checked={groupMuted} disabled={busy} onChange={(event) => void run(() => setGroupMute(group.id, event.target.checked), "设置群禁言")} /></label><label className="jw-im-switch-row"><span>新成员可查看历史消息</span><input type="checkbox" checked={historyVisible} disabled={busy} onChange={(event) => void run(() => setGroupHistoryVisible(group.id, event.target.checked), "设置历史消息权限")} /></label>{isOwner ? GROUP_PERMISSIONS.map(([key, label]) => <label className="jw-im-select-row" key={key}><span>谁可以{label}</span><select value={Number(group.group_management[key] ?? 7)} disabled={busy} onChange={(event) => void run(() => setGroupManagement(group.id, key, Number(event.target.value)), `设置${label}`)}><option value={7}>全部成员</option><option value={1}>仅群主</option><option value={3}>群主和管理员</option></select></label>) : null}</section> : null}
-    <section className="jw-im-group-danger">{isOwner ? <button disabled={busy} onClick={() => { if (window.confirm("解散后群聊将不可恢复，确定继续？")) void run(() => dismissGroup(group.id), "解散群聊", false).then((ok) => { if (ok) onClose(); }); }}><Trash2 size={15} />解散群聊</button> : <button disabled={busy} onClick={() => { if (window.confirm("确定退出当前群聊？")) void run(() => quitGroup(group.id), "退出群聊", false).then((ok) => { if (ok) onClose(); }); }}><LogOut size={15} />退出群聊</button>}</section>
-    {picker === "invite" ? <div className="jw-im-submodal"><header><h4>邀请群成员</h4><button onClick={() => setPicker(null)}><X size={16} /></button></header><div className="jw-im-member-picker">{availableContacts.map((contact) => { const checked = selected.includes(contact.user_id); const label = contact.friend_display_name || contact.nickname || contact.user_id; return <button key={contact.user_id} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((id) => id !== contact.user_id) : [...selected, contact.user_id])}><ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; })}</div><button className="jw-im-primary-button" disabled={busy || !selected.length} onClick={() => void run(() => inviteGroupMembers(group.id, selected), "邀请成员").then((ok) => { if (ok) setPicker(null); })}><UserPlus size={16} />邀请 {selected.length} 人</button></div> : null}
+    <section className="jw-im-group-section"><h4>群设置</h4><label className="jw-im-field"><span>群名称</span><span className="jw-im-inline-field"><input value={name} disabled={!isOwner} onChange={(event) => setName(event.target.value)} /><button disabled={!isOwner || busy || !name.trim()} onClick={() => void run(() => updateGroup(group.id, { group_name: name.trim() }), "更新群名称")}>保存</button></span></label>{!isNormalGroup ? <p>团队群由团队配置统一管理，不能在聊天中修改。</p> : null}</section>
+    <section className="jw-im-group-section"><div className="jw-im-group-section-title"><h4>群成员（{group.members.length}）</h4>{canInvite ? <button onClick={() => { setPicker("invite"); setSelected([]); }}><UserPlus size={14} />邀请成员</button> : null}</div><div className="jw-im-group-members">{group.members.map((member) => { const id = groupMemberId(member); const identityId = String(member.identity_user_id || ""); const self = id === currentUser?.id; return <div key={id}><ChatAvatar name={groupMemberName(member)} userId={id} src={String(member.avatar || member.portrait || "") || undefined} size="sm" /><span><strong>{groupMemberName(member)}</strong><small>{self ? "我" : id}</small></span>{isOwner && !self && identityId ? <button className="jw-im-member-remove" title="移出群聊" disabled={busy} onClick={() => { if (window.confirm(`确定移除 ${groupMemberName(member)}？`)) void run(() => removeGroupMembers(group.id, [identityId]), "移除成员"); }}><UserMinus size={14} /></button> : null}</div>; })}</div></section>
+    {isOwner && isNormalGroup ? <section className="jw-im-group-danger"><button disabled={busy} onClick={() => { if (window.confirm("解散后群聊将不可恢复，确定继续？")) void run(() => dismissGroup(group.id), "解散群聊", false).then((ok) => { if (ok) onClose(); }); }}><Trash2 size={15} />解散群聊</button></section> : null}
+    {picker === "invite" ? <div className="jw-im-submodal jw-im-group-invite"><header><div><h4>邀请群成员</h4><p>仅显示尚未加入该群的组织成员</p></div><button aria-label="关闭" onClick={() => setPicker(null)}><X size={16} /></button></header><div className="jw-im-member-picker">{availableContacts.length ? availableContacts.map((contact) => { const identityId = String(contact.identity_user_id || ""); const checked = selected.includes(identityId); const label = contact.friend_display_name || contact.nickname || contact.user_id; return <button key={contact.user_id} disabled={!identityId} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((id) => id !== identityId) : [...selected, identityId])}><ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" /><span><strong>{label}</strong><small>{contact.user_id}</small></span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; }) : <div className="jw-im-invite-empty"><Users size={22} /><span>没有可邀请的成员</span></div>}</div><footer><span>已选择 {selected.length} 人</span><button className="jw-im-primary-button" disabled={busy || !selected.length} onClick={() => void run(() => inviteGroupMembers(group.id, selected), "邀请成员").then((ok) => { if (ok) setPicker(null); })}>{busy ? <LoaderCircle className="is-spinning" size={16} /> : <UserPlus size={16} />}确认邀请</button></footer></div> : null}
   </section></div>;
 }
 

@@ -6,7 +6,7 @@ import type {
   OrganizationMembersResult,
   OrganizationTeamsResult,
 } from "./types";
-import { readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";
+import { readDenIMLoginBootstrap, readDenSettings, resolveDenBaseUrls } from "@/app/lib/den";
 import { getServerSetting } from "./storage";
 
 function normalizeServer(value: string) {
@@ -142,7 +142,7 @@ export function getTeams() {
 export function createGroup(name: string, members: ChatContactInput[]) {
   // POST /api/v1/groups expects user IDs (not org member IDs). The server
   // auto-includes the creator as owner via dedupedUserIDs(ownerUserID, ...).
-  const memberIds = members.map((member) => member.user_id).filter((id): id is string => Boolean(id));
+  const memberIds = members.map((member) => member.identity_user_id).filter((id): id is string => Boolean(id));
   if (memberIds.length !== members.length) throw new Error("成员数据缺少用户 ID，请刷新后重试");
   return organizationRequest<{ group: OrganizationChatGroup }>("/v1/groups", {
     method: "POST",
@@ -150,32 +150,12 @@ export function createGroup(name: string, members: ChatContactInput[]) {
   });
 }
 
-function memberAsGroupMember(member: OrganizationMembersResult["members"][number]): ChatGroupMember {
-  return {
-    user_id: member.user.imUserId,
-    id: member.user.imUserId,
-    nickname: member.user.name || member.user.account || member.user.imUserId,
-    name: member.user.name || member.user.account || member.user.imUserId,
-    avatar: member.user.avatar || undefined,
-    portrait: member.user.avatar || undefined,
-    organization_member_id: member.id,
-    role: member.isOwner ? 1 : member.role === "admin" ? 2 : 0,
-  };
-}
-
-async function getTeamMembers(groupId: string) {
+export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<string, unknown>>> {
   const [groups, membersResult] = await Promise.all([getChatGroups(), getMembers()]);
   const group = groups.find((item) => item.id === groupId);
   if (!group) throw new Error("群组不存在或已被删除");
-  const ownerMember = membersResult.members.find((member) => member.user.id === group.ownerId);
-  const members = ownerMember ? [memberAsGroupMember(ownerMember)] : [];
-  return { group, members };
-}
-
-export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<string, unknown>>> {
-  const groups = await getChatGroups();
-  const group = groups.find((item) => item.id === groupId);
-  if (!group) throw new Error("群组不存在或已被删除");
+  const currentIMUserId = readDenIMLoginBootstrap()?.imUserId;
+  const currentMember = membersResult.members.find((member) => member.user.imUserId === currentIMUserId);
   return {
     code: 0,
     data: {
@@ -184,42 +164,55 @@ export async function getGroupInfo(groupId: string): Promise<ApiEnvelope<Record<
       group_avatar: group.avatar || "",
       members: [],
       member_count: 0,
-      my_role: 0,
+      my_role: currentMember?.user.id === group.ownerId ? 1 : 0,
+      group_type: group.groupType,
+      owner_id: group.ownerId,
       group_management: { group_mention_all_right: 7 },
     },
   };
 }
 
 export async function getGroupMembers(groupId: string, limit = 100, offset = "") {
-  const { members } = await getTeamMembers(groupId);
-  const start = Math.max(0, Number.parseInt(offset, 10) || 0);
-  const page = members.slice(start, start + limit);
-  const nextOffset = start + page.length < members.length ? String(start + page.length) : "";
+  void limit;
+  void offset;
+  const result = await organizationRequest<{
+    members: Array<{ userId: string; imUserId: string; name: string; email: string; avatar?: string | null }>;
+  }>(`/v1/groups/${encodeURIComponent(groupId)}/members`, { method: "GET" });
+  const members: ChatGroupMember[] = (result.members ?? []).map((member) => ({
+    id: member.imUserId,
+    user_id: member.imUserId,
+    identity_user_id: member.userId,
+    nickname: member.name || member.email || member.imUserId,
+    name: member.name || member.email || member.imUserId,
+    avatar: member.avatar || undefined,
+    portrait: member.avatar || undefined,
+  }));
   return {
     code: 0,
-    data: { items: page, members: page, offset: nextOffset },
+    data: { items: members, members, offset: "" },
   } satisfies ApiEnvelope<{ items: ChatGroupMember[]; members: ChatGroupMember[]; offset: string }>;
 }
 
 export function updateGroup(groupId: string, values: { group_name?: string; group_portrait?: string }) {
-  return chatRequest<ApiEnvelope>("groups/update", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId, is_notify: true, ...values }),
-  });
+  if (!values.group_name?.trim()) throw new Error("群名称不能为空");
+  return organizationRequest<{ group: OrganizationChatGroup }>(`/v1/groups/${encodeURIComponent(groupId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: values.group_name.trim() }),
+  }).then((data) => ({ code: 0, data } satisfies ApiEnvelope<typeof data>));
 }
 
 export function inviteGroupMembers(groupId: string, memberIds: string[]) {
-  return chatRequest<ApiEnvelope>("groups/invite", {
+  return organizationRequest<Record<string, never>>(`/v1/groups/${encodeURIComponent(groupId)}/members`, {
     method: "POST",
-    body: JSON.stringify({ group_id: groupId, member_ids: memberIds }),
-  });
+    body: JSON.stringify({ memberIds }),
+  }).then((data) => ({ code: 0, data } satisfies ApiEnvelope<typeof data>));
 }
 
 export function removeGroupMembers(groupId: string, memberIds: string[]) {
-  return chatRequest<ApiEnvelope>("groups/members/del", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId, member_ids: memberIds }),
-  });
+  return organizationRequest<Record<string, never>>(`/v1/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "DELETE",
+    body: JSON.stringify({ memberIds }),
+  }).then((data) => ({ code: 0, data } satisfies ApiEnvelope<typeof data>));
 }
 
 export function getGroupNotice(groupId: string) {
@@ -262,10 +255,10 @@ export function setGroupManagement(groupId: string, name: string, value: number)
 }
 
 export function transferGroupOwner(groupId: string, ownerId: string) {
-  return chatRequest<ApiEnvelope>("groups/management/chgowner", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId, owner_id: ownerId }),
-  });
+  return organizationRequest<{ group: OrganizationChatGroup }>(`/v1/groups/${encodeURIComponent(groupId)}/owner`, {
+    method: "PUT",
+    body: JSON.stringify({ userId: ownerId }),
+  }).then((data) => ({ code: 0, data } satisfies ApiEnvelope<typeof data>));
 }
 
 export function addGroupAdmins(groupId: string, memberIds: string[]) {
@@ -294,10 +287,11 @@ export function quitGroup(groupId: string) {
 }
 
 export function dismissGroup(groupId: string) {
-  return chatRequest<ApiEnvelope>("groups/dissolve", { method: "POST", body: JSON.stringify({ group_id: groupId }) });
+  return organizationRequest<Record<string, never>>(`/v1/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" })
+    .then((data) => ({ code: 0, data } satisfies ApiEnvelope<typeof data>));
 }
 
-type ChatContactInput = { user_id: string; member_id?: string };
+type ChatContactInput = { user_id: string; member_id?: string; identity_user_id?: string };
 
 export async function callBusserver(args: Record<string, unknown> = {}) {
   const http = (args._http && typeof args._http === "object" ? args._http : {}) as Record<string, unknown>;

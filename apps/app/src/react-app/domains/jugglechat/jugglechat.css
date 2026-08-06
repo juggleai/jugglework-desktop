@@ -238,6 +238,7 @@
 .jw-im-qr-code button { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 15px; color: white; background: rgb(32 30 40 / 82%); font-size: 11px; cursor: pointer; }
 
 .jw-im-modal-backdrop { z-index: 30; position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(22 20 30 / 38%); backdrop-filter: blur(3px); }
+.jw-im-group-modal-backdrop { z-index: 1300; }
 .jw-im-modal { width: min(430px, 100%); max-height: min(620px, 90%); overflow: auto; padding: 20px; border: 1px solid var(--jw-im-border); border-radius: 18px; background: white; box-shadow: 0 24px 70px rgb(24 20 40 / 22%); }
 .jw-im-modal-loading { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 150px; color: var(--jw-im-muted); font-size: 12px; }
 .jw-im-modal > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }

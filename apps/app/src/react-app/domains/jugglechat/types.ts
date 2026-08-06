@@ -121,6 +121,7 @@ export type ChatGroupMember = {
   avatar?: string;
   portrait?: string;
   role?: number;
+  identity_user_id?: string;
   [key: string]: unknown;
 };
 
@@ -132,6 +133,8 @@ export type ChatGroupInfo = {
   member_count: number;
   member_offset?: string;
   my_role: number;
+  group_type?: string;
+  owner_id?: string;
   grp_display_name?: string;
   group_management: Record<string, number>;
 };

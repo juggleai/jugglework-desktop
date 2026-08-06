@@ -1036,6 +1036,14 @@
 }
 
 .jw-im-modal-backdrop { background: rgba(15, 23, 42, 0.06); backdrop-filter: none; }
+.jw-im-group-modal-backdrop {
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
+}
+.jw-im-group-modal-backdrop > .jw-im-group-modal {
+  border: 1px solid var(--ui-border-strong);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+}
 .jw-im-modal {
   border-color: var(--ui-border);
   border-radius: 12px;
@@ -1052,6 +1060,119 @@
 .jw-im-member-picker > button.is-selected { background: var(--ui-hover); }
 .jw-im-group-section { border-color: var(--ui-border); }
 .jw-im-group-members > div { background: var(--ui-panel); }
+.jw-im-group-summary .jw-im-avatar {
+  border: 1px solid var(--ui-border);
+  border-radius: 50%;
+  background: var(--ui-soft);
+  box-shadow: var(--ui-shadow-sm);
+}
+.jw-im-group-section-title > button {
+  color: var(--ui-text-secondary);
+  background: var(--ui-soft);
+}
+.jw-im-group-section-title > button:hover {
+  color: var(--ui-text);
+  background: var(--ui-hover);
+}
+.jw-im-group-invite {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+.jw-im-group-invite > header { align-items: flex-start; }
+.jw-im-group-invite > header > div { min-width: 0; }
+.jw-im-group-invite > header h4 { margin-bottom: 2px; font-size: 14px; }
+.jw-im-group-invite > header p {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.jw-im-group-invite > header > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--ui-text-secondary);
+}
+.jw-im-group-invite > header > button:hover { background: var(--ui-hover); }
+.jw-im-group-invite .jw-im-member-picker {
+  padding: 6px;
+  border-color: var(--ui-border);
+  background: var(--ui-panel);
+}
+.jw-im-group-invite .jw-im-member-picker > button {
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  color: var(--ui-text);
+}
+.jw-im-group-invite .jw-im-member-picker > button:hover {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+}
+.jw-im-group-invite .jw-im-member-picker > button.is-selected {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-active);
+}
+.jw-im-group-invite .jw-im-member-picker > button > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.jw-im-group-invite .jw-im-member-picker strong,
+.jw-im-group-invite .jw-im-member-picker small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jw-im-group-invite .jw-im-member-picker strong { font-size: 12px; font-weight: 500; }
+.jw-im-group-invite .jw-im-member-picker small { color: var(--ui-text-muted); font-size: 10px; }
+.jw-im-group-invite .jw-im-check {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-surface);
+  background: var(--ui-surface);
+}
+.jw-im-group-invite .jw-im-member-picker > button.is-selected .jw-im-check {
+  border-color: #526779;
+  color: #fff;
+  background: #526779;
+}
+.jw-im-group-invite > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+  color: var(--ui-text-muted);
+  font-size: 11px;
+}
+.jw-im-group-invite > footer .jw-im-primary-button {
+  min-height: 36px;
+  border: 1px solid #43596c;
+  border-radius: 9px;
+  color: #fff;
+  background: #526779;
+}
+.jw-im-group-invite > footer .jw-im-primary-button:hover:not(:disabled) { background: #43596c; }
+.jw-im-group-invite > footer .jw-im-primary-button:disabled {
+  border-color: var(--ui-border);
+  color: var(--ui-text-muted);
+  background: var(--ui-soft);
+  opacity: 1;
+}
+.jw-im-invite-empty {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
 
 /* Create-group dialog: wider two-column layout with less vertical bulk. */
 .jw-im-create-group-modal {
