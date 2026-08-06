@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useEffect } from "react";
 import {
   ContactRound,
   Cloud,
@@ -42,6 +43,7 @@ type RailButtonProps = {
   onClick?: () => void;
   children: React.ReactNode;
   testId?: string;
+  badge?: number;
 };
 
 function RailButton({
@@ -51,6 +53,7 @@ function RailButton({
   onClick,
   children,
   testId,
+  badge = 0,
 }: RailButtonProps) {
   return (
     <button
@@ -61,13 +64,14 @@ function RailButton({
       onClick={onClick}
       data-testid={testId}
       className={cn(
-        "flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.8]",
+        "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.8]",
         "hover:border-dls-border hover:bg-background hover:text-dls-text",
         active && "border-dls-border bg-background text-dls-text shadow-sm",
         disabled && "cursor-default opacity-45 hover:border-transparent hover:bg-transparent hover:text-dls-secondary",
       )}
     >
       {children}
+      {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={`${badge} 条未读消息`}>{badge > 99 ? "99+" : badge}</span> : null}
     </button>
   );
 }
@@ -77,6 +81,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const brandLogoUrl = useBrandLogoUrl();
   const taskScope = useTaskScope();
   const chatView = useJuggleChatStore((state) => state.view);
+  const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
+  const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
+
+  useEffect(() => {
+    void bootstrapChat(user);
+  }, [bootstrapChat, user]);
 
   /** Home lists local tasks, the cloud button lists remote ones — same surface. */
   const openTaskScope = (scope: "local" | "remote") => {
@@ -158,6 +168,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={props.chatActive && chatView !== "contacts"}
           onClick={() => openChatView("conversations")}
           testId="app-rail-chat"
+          badge={totalUnreadCount}
         >
           <MessageSquare />
         </RailButton>

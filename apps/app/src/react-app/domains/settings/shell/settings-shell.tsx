@@ -50,6 +50,8 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenTaskSearch?: () => void;
+  onOpenCreateWorkspace?: () => void;
   onClose: () => void;
   headerLeadingSlot?: React.ReactNode;
   children: React.ReactNode;
@@ -139,6 +141,8 @@ export function SettingsShell(props: SettingsShellProps) {
           onOpenHome={props.onOpenHome}
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
+          onOpenTaskSearch={props.onOpenTaskSearch}
+          onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

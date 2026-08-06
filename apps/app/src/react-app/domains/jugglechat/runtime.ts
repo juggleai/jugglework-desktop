@@ -146,6 +146,11 @@ class JuggleChatRuntime {
     return client.getConversations(params) as Promise<{ conversations: ChatConversation[]; isFinished?: boolean }>;
   }
 
+  async getTotalUnreadCount() {
+    const client = await this.initialize();
+    return client.getTotalUnreadcount() as Promise<{ count?: number }>;
+  }
+
   async getMessages(conversation: ChatConversation, time = 0) {
     const client = await this.initialize();
     return client.getMessages({

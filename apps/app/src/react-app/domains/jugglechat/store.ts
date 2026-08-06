@@ -19,6 +19,7 @@ type JuggleChatState = {
   messagesFinished: boolean;
   contacts: ChatContact[];
   groups: ChatContact[];
+  totalUnreadCount: number;
   loadingConversations: boolean;
   conversationsInitialized: boolean;
   loadingMessages: boolean;
@@ -32,6 +33,7 @@ type JuggleChatState = {
   bootstrap: (identity?: DenUser | null) => Promise<void>;
   acceptLogin: (user: ChatUser) => Promise<void>;
   loadConversations: () => Promise<void>;
+  refreshTotalUnreadCount: () => Promise<void>;
   selectConversation: (conversation: ChatConversation, options?: { loadHistory?: boolean }) => Promise<void>;
   loadEarlierMessages: () => Promise<void>;
   loadContacts: () => Promise<void>;
@@ -173,6 +175,7 @@ function startSubscriptions() {
   juggleChatRuntime.subscribe("state", ({ state, error }: { state: number; error?: { code?: number; message?: string } }) => {
     if (state === 0) {
       useJuggleChatStore.setState({ status: "connected", error: null });
+      void useJuggleChatStore.getState().refreshTotalUnreadCount();
     } else if (state === 1 || state === 6) {
       useJuggleChatStore.setState({ status: "connecting" });
     } else if (state === 2 || state === 3) {
@@ -189,7 +192,9 @@ function startSubscriptions() {
     const state = useJuggleChatStore.getState();
     if (isSameConversation(state.activeConversation, message)) {
       useJuggleChatStore.setState({ messages: appendMessages(state.messages, [message]) });
-      void juggleChatRuntime.clearUnread(state.activeConversation!);
+      void juggleChatRuntime.clearUnread(state.activeConversation!).then(() => state.refreshTotalUnreadCount());
+    } else {
+      void state.refreshTotalUnreadCount();
     }
     void state.loadConversations();
   });
@@ -304,6 +309,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
   messagesFinished: false,
   contacts: [],
   groups: [],
+  totalUnreadCount: 0,
   loadingConversations: false,
   conversationsInitialized: false,
   loadingMessages: false,
@@ -339,6 +345,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         messages: [],
         contacts: [],
         groups: [],
+        totalUnreadCount: 0,
         messagesFinished: false,
         pinnedMessage: null,
         replyTo: null,
@@ -359,6 +366,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         messagesFinished: false,
         contacts: [],
         groups: [],
+        totalUnreadCount: 0,
         pinnedMessage: null,
         replyTo: null,
         error: "当前 JuggleWork 登录状态缺少 IM 凭据，请退出后重新登录",
@@ -417,9 +425,22 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         activeConversation: syncActiveConversation(get().activeConversation, conversations),
         loadingConversations: false,
       });
-      if (!get().activeConversation && conversations[0]) void get().selectConversation(conversations[0]);
+      await get().refreshTotalUnreadCount();
     } catch (error) {
       set({ loadingConversations: false, error: errorMessage(error) });
+    }
+  },
+
+  async refreshTotalUnreadCount() {
+    if (!get().user || !juggleChatRuntime.isConnected()) {
+      set({ totalUnreadCount: 0 });
+      return;
+    }
+    try {
+      const result = await juggleChatRuntime.getTotalUnreadCount();
+      set({ totalUnreadCount: Math.max(0, Number(result?.count) || 0) });
+    } catch {
+      // A transient unread-count failure must not disconnect chat.
     }
   },
 
@@ -454,6 +475,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       set({
         conversations: get().conversations.map((item) => isSameConversation(item, conversation) ? { ...item, unreadCount: 0 } : item),
       });
+      await get().refreshTotalUnreadCount();
     } catch (error) {
       if (isSameConversation(get().activeConversation, conversation)) {
         set({ loadingMessages: false, error: errorMessage(error) });

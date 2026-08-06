@@ -265,6 +265,8 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onOpenHome: () => void;
   onOpenApps: () => void;
   onOpenChat: () => void;
+  onOpenTaskSearch?: () => void;
+  onOpenCreateWorkspace?: () => void;
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
@@ -284,6 +286,8 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenApps={props.onOpenApps}
           onOpenChat={props.onOpenChat}
           onOpenSettings={() => undefined}
+          onOpenTaskSearch={props.onOpenTaskSearch}
+          onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
           <div className="hidden h-10 mac:block mac:titlebar-drag" />

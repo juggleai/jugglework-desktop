@@ -68,6 +68,18 @@
 }
 .jw-im-sidebar-trigger:hover { color: var(--ui-text); background: var(--ui-hover); }
 .jw-im-sidebar-trigger > svg { width: 14px; height: 14px; }
+:host([data-jugglework-platform="mac"]) .jw-im-root.is-list-collapsed .jw-im-chat-header,
+:host([data-jugglework-platform="mac"]) .jw-im-root.is-list-collapsed .jw-im-contact-main-header {
+  padding-left: 82px;
+}
+.jw-im-root.is-list-collapsed .jw-im-empty-header > .jw-im-sidebar-trigger {
+  position: absolute;
+  left: 16px;
+  z-index: 1;
+}
+:host([data-jugglework-platform="mac"]) .jw-im-root.is-list-collapsed .jw-im-empty-header > .jw-im-sidebar-trigger {
+  left: 82px;
+}
 .jw-im-root .sr-only { display: none !important; }
 .jw-im-conversation-layout { width: 100%; min-width: 0; min-height: 0; }
 /* Avatar typography copied from snailchat-web/custom_conversation.css.
