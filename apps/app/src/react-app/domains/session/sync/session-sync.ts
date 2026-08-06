@@ -707,7 +707,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const tracked = isTrackedSession(entry, props.sessionID);
     if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: props.status });
-    if (input && tracked && !isLiveStatus(props.status)) releaseRetainedSessionSoon(input, entry, props.sessionID);
+    if (input && tracked && !isLiveStatus(props.status)) {
+      void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
+      releaseRetainedSessionSoon(input, entry, props.sessionID);
+    }
     return;
   }
 
@@ -955,7 +958,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const tracked = isTrackedSession(entry, props.sessionID);
     if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: idleStatus });
-    if (input && tracked) releaseRetainedSessionSoon(input, entry, props.sessionID);
+    if (input && tracked) {
+      void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
+      releaseRetainedSessionSoon(input, entry, props.sessionID);
+    }
   }
 }
 
