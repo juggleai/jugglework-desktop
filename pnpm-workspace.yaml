@@ -1,6 +1,13 @@
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - "@opencode-ai/sdk"
+  # Security-only exceptions. These versions patch active Dependabot alerts
+  # and should not wait for the normal three-day release cooling period.
+  - "fast-uri@3.1.5"
+  - "ip-address@10.3.1"
+  - "postcss@8.5.23"
+  - "socket.io-parser@4.2.7"
+  - "undici@6.28.0"
 
 packages:
   - "apps/*"
@@ -16,6 +23,12 @@ catalogs:
     react-dom: 18.2.0
 linkWorkspacePackages: true
 preferWorkspacePackages: true
+overrides:
+  fast-uri: 3.1.5
+  ip-address: 10.3.1
+  postcss: 8.5.23
+  socket.io-parser: 4.2.7
+  undici@6: 6.28.0
 allowBuilds:
   "@sentry/cli": true
   "@whiskeysockets/baileys": true
