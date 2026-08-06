@@ -80,6 +80,7 @@ import {
 import {
   buildCustomProviderConfig,
   formatConfigWithCustomProvider,
+  formatConfigWithoutCustomProvider,
   normalizeCustomProviderInput,
   validateCustomProviderInput,
   type CustomProviderInput,
@@ -1513,6 +1514,80 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  const removeCustomProviderConfig = async (providerId: string) => {
+    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
+    if (configFile) {
+      const raw = configFile.content?.trim()
+        ? configFile.content
+        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+      const next = formatConfigWithoutCustomProvider(raw, providerId);
+      if (!configsAreSemanticallyEqual(raw, next)) {
+        await writeProjectConfigFile(next);
+      }
+      return;
+    }
+
+    // Custom providers fall back to the runtime provider map when a workspace
+    // has no editable project config. Mirror that ownership during deletion.
+    await patchRuntimeProviders({ [providerId]: null });
+  };
+
+  const assertWorkspaceOwnsProviderConfig = async (providerId: string) => {
+    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
+    if (!configFile) return;
+    const parsed = parse(configFile.content ?? "") as Record<string, unknown> | undefined;
+    const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
+    if (!Object.prototype.hasOwnProperty.call(configuredProviders, providerId)) {
+      throw new Error(t("providers.delete_not_workspace_owned"));
+    }
+  };
+
+  async function deleteProvider(providerId: string) {
+    setStateField("providerAuthError", null);
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+    if (
+      isCloudManagedProviderKey(resolved) ||
+      Object.values(state.importedCloudProviders).some((entry) => entry.providerId === resolved)
+    ) {
+      throw new Error(t("providers.delete_cloud_managed"));
+    }
+
+    const source = resolveProviderSource(resolved);
+    if (source === "env" || source === "api" || resolved.toLowerCase() === "opencode") {
+      throw new Error(t("providers.delete_config_only"));
+    }
+
+    try {
+      await assertWorkspaceOwnsProviderConfig(resolved);
+      try {
+        await removeProviderAuthCredentials(resolved);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? "");
+        if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
+          throw error;
+        }
+      }
+      await ensureProjectProviderDisabledState(resolved, false);
+      await removeCustomProviderConfig(resolved);
+      options.setDisabledProviders(
+        options.disabledProviders().filter((entry) => entry.trim() !== resolved),
+      );
+      options.markOpencodeConfigReloadRequired();
+      await refreshProviders({ dispose: true });
+      removeProviderFromState(resolved);
+      refreshSnapshot();
+      emitChange();
+      return t("providers.deleted", { provider: resolved });
+    } catch (error) {
+      const message = describeProviderError(error, t("providers.delete_failed"));
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function connectCloudProviderInternal(
     cloudProviderId: string,
     optionsArg?: { silent?: boolean },
@@ -2249,6 +2324,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
+    deleteProvider,
     ensureProjectProviderDisabledState,
     openProviderAuthModal,
     closeProviderAuthModal,

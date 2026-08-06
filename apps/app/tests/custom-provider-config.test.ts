@@ -5,6 +5,7 @@ import zh from "../src/i18n/locales/zh";
 import {
   buildCustomProviderConfig,
   formatConfigWithCustomProvider,
+  formatConfigWithoutCustomProvider,
   normalizeCustomProviderId,
   normalizeCustomProviderInput,
   parseCustomProviderModels,
@@ -236,5 +237,40 @@ describe("formatConfigWithCustomProvider", () => {
       options: { baseURL: "https://api.example.com/v1" },
       models: { "gpt-4o": { name: "GPT-4o" } },
     });
+  });
+});
+
+describe("formatConfigWithoutCustomProvider", () => {
+  test("removes the provider and its disabled entry while preserving unrelated config", () => {
+    const existing = `{
+  // Keep this workspace setting.
+  "theme": "dark",
+  "provider": {
+    "other": { "name": "Other" },
+    "my-relay": { "name": "My Relay" }
+  },
+  "disabled_providers": ["my-relay", "other-disabled"]
+}\n`;
+
+    const updated = formatConfigWithoutCustomProvider(existing, "my-relay");
+    const parsed = JSON.parse(updated.replace(/\/\/.*$/gm, "")) as {
+      theme: string;
+      provider: Record<string, unknown>;
+      disabled_providers: string[];
+    };
+
+    expect(updated).toContain("// Keep this workspace setting.");
+    expect(parsed.theme).toBe("dark");
+    expect(parsed.provider).toEqual({ other: { name: "Other" } });
+    expect(parsed.disabled_providers).toEqual(["other-disabled"]);
+  });
+
+  test("removes empty provider and disabled_providers containers", () => {
+    const updated = formatConfigWithoutCustomProvider(
+      JSON.stringify({ provider: { relay: { name: "Relay" } }, disabled_providers: ["relay"] }),
+      "relay",
+    );
+
+    expect(JSON.parse(updated)).toEqual({});
   });
 });

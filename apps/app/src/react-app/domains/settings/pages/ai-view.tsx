@@ -1,6 +1,16 @@
 /** @jsxImportSource react */
 import { Button } from "@/components/ui/button";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { t } from "@/i18n";
 import { ProviderIcon } from "../../../design-system/provider-icon";
@@ -37,7 +47,10 @@ export type AiSettingsViewProps = {
   providerDisconnectError: string | null;
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
+  onDeleteProvider: (providerId: string) => boolean | Promise<boolean>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
+  canDeleteProvider: (provider: ConnectedProvider) => boolean;
+  deletingProviderId: string | null;
   /**
    * Provider IDs parked in `disabled_providers`. They stay declared in the
    * user's OpenCode config, so Disconnect must be undoable from here.
@@ -65,8 +78,11 @@ function providerStatusTone(label: string): "ready" | "warning" | "neutral" {
 }
 
 export function AiSettingsView(props: AiSettingsViewProps) {
+  const [deleteCandidate, setDeleteCandidate] = useState<ConnectedProvider | null>(null);
+
   return (
-    <LayoutStack>
+    <>
+      <LayoutStack>
       {/* ---- Providers ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
@@ -123,22 +139,41 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                   </div>
                 </div>
                 {!props.cloudProviderIds?.has(provider.id) ? (
-                  <Button
-                    variant="destructive"
-                    onClick={() => void props.onDisconnectProvider(provider.id)}
-                    disabled={
-                      props.busy ||
-                      props.providerAuthBusy ||
-                      props.disconnectingProviderId !== null ||
-                      !props.canDisconnectProvider(provider)
-                    }
-                  >
-                    {props.disconnectingProviderId === provider.id
-                      ? t("settings.disconnecting")
-                      : props.canDisconnectProvider(provider)
-                        ? t("settings.disconnect")
-                        : t("settings.managed_by_env")}
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => void props.onDisconnectProvider(provider.id)}
+                      disabled={
+                        props.busy ||
+                        props.providerAuthBusy ||
+                        props.disconnectingProviderId !== null ||
+                        props.deletingProviderId !== null ||
+                        !props.canDisconnectProvider(provider)
+                      }
+                    >
+                      {props.disconnectingProviderId === provider.id
+                        ? t("settings.disconnecting")
+                        : props.canDisconnectProvider(provider)
+                          ? t("settings.disconnect")
+                          : t("settings.managed_by_env")}
+                    </Button>
+                    {props.canDeleteProvider(provider) ? (
+                      <Button
+                        variant="destructive"
+                        onClick={() => setDeleteCandidate(provider)}
+                        disabled={
+                          props.busy ||
+                          props.providerAuthBusy ||
+                          props.disconnectingProviderId !== null ||
+                          props.deletingProviderId !== null
+                        }
+                      >
+                        {props.deletingProviderId === provider.id
+                          ? t("providers.deleting")
+                          : t("providers.delete_permanently")}
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : null}
               </LayoutSectionItem>
             ))}
@@ -175,6 +210,20 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       ? t("settings.reconnecting_provider")
                       : t("settings.reconnect_provider")}
                   </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => setDeleteCandidate({ id: providerId, name: providerId, source: "config" })}
+                    disabled={
+                      props.busy ||
+                      props.providerAuthBusy ||
+                      props.disconnectingProviderId !== null ||
+                      props.deletingProviderId !== null
+                    }
+                  >
+                    {props.deletingProviderId === providerId
+                      ? t("providers.deleting")
+                      : t("providers.delete_permanently")}
+                  </Button>
                 </div>
               ))}
             </div>
@@ -196,6 +245,46 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
       {props.cloudProvidersView}
 
-    </LayoutStack>
+      </LayoutStack>
+
+      <AlertDialog
+        open={deleteCandidate !== null}
+        onOpenChange={(open) => {
+          if (!open && !props.deletingProviderId) setDeleteCandidate(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("providers.delete_dialog_title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("providers.delete_dialog_desc", {
+                provider: deleteCandidate?.name ?? deleteCandidate?.id ?? "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-xl border border-red-6 bg-red-2 px-3 py-2 text-xs text-red-11">
+            {t("providers.delete_dialog_warning")}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(props.deletingProviderId)}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={!deleteCandidate || Boolean(props.deletingProviderId)}
+              onClick={async () => {
+                if (!deleteCandidate) return;
+                const deleted = await props.onDeleteProvider(deleteCandidate.id);
+                if (deleted) setDeleteCandidate(null);
+              }}
+            >
+              {props.deletingProviderId
+                ? t("providers.deleting")
+                : t("providers.delete_confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

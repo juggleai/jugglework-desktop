@@ -438,6 +438,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // Disconnecting a provider reloads the engine, which takes seconds. Track the
   // in-flight provider so the row can show progress instead of looking inert.
   const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
+  const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
   const [reconnectingProviderId, setReconnectingProviderId] = useState<string | null>(null);
   const [providerDisconnectError, setProviderDisconnectError] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
@@ -2162,6 +2163,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerSummary={providerSummary}
             connectedProviders={connectedProviders}
             disconnectingProviderId={disconnectingProviderId}
+            deletingProviderId={deletingProviderId}
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectStatus={configActionStatus}
             providerDisconnectError={providerDisconnectError}
@@ -2186,8 +2188,33 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 setDisconnectingProviderId(null);
               }
             }}
+            onDeleteProvider={async (providerId) => {
+              if (deletingProviderId || disconnectingProviderId) return false;
+              setDeletingProviderId(providerId);
+              setProviderDisconnectError(null);
+              setConfigActionStatus(null);
+              try {
+                const message = await providerAuthStore.deleteProvider(providerId);
+                if (typeof message === "string" && message.trim()) {
+                  setConfigActionStatus(message);
+                }
+                return true;
+              } catch (error) {
+                setProviderDisconnectError(
+                  error instanceof Error && error.message.trim()
+                    ? error.message
+                    : t("providers.delete_failed"),
+                );
+                return false;
+              } finally {
+                setDeletingProviderId(null);
+              }
+            }}
             canDisconnectProvider={(provider) =>
               provider.id.trim().toLowerCase() === "opencode" || provider.source !== "env"
+            }
+            canDeleteProvider={(provider) =>
+              provider.source === "config" || provider.source === "custom"
             }
             disabledProviderIds={reconnectableDisabledProviderIds}
             reconnectingProviderId={reconnectingProviderId}

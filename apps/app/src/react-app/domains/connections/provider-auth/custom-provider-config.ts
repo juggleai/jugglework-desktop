@@ -1,4 +1,4 @@
-import { applyEdits, modify } from "jsonc-parser";
+import { applyEdits, modify, parse } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
 
 import { isCloudManagedProviderKey } from "./cloud-provider-config";
@@ -203,5 +203,61 @@ export const formatConfigWithCustomProvider = (
     formattingOptions: { insertSpaces: true, tabSize: 2 },
   });
   const updated = applyEdits(base, edits);
+  return updated.endsWith("\n") ? updated : `${updated}\n`;
+};
+
+/**
+ * Permanently remove a user-declared provider from a workspace config. This
+ * also clears a matching disabled_providers entry left by Disconnect while
+ * preserving unrelated JSONC comments and settings.
+ */
+export const formatConfigWithoutCustomProvider = (raw: string, providerId: string) => {
+  const resolvedProviderId = providerId.trim();
+  if (!resolvedProviderId) return raw.endsWith("\n") ? raw : `${raw}\n`;
+
+  let updated = raw.trim()
+    ? raw
+    : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+
+  updated = applyEdits(
+    updated,
+    modify(updated, ["provider", resolvedProviderId], undefined, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+    }),
+  );
+
+  const parsedAfterProvider = parse(updated) as Record<string, unknown> | undefined;
+  const providers = parsedAfterProvider?.provider;
+  if (
+    providers &&
+    typeof providers === "object" &&
+    !Array.isArray(providers) &&
+    Object.keys(providers).length === 0
+  ) {
+    updated = applyEdits(
+      updated,
+      modify(updated, ["provider"], undefined, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }),
+    );
+  }
+
+  const parsed = parse(updated) as Record<string, unknown> | undefined;
+  const disabledProviders = Array.isArray(parsed?.disabled_providers)
+    ? parsed.disabled_providers.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.trim() !== resolvedProviderId,
+      )
+    : [];
+  updated = applyEdits(
+    updated,
+    modify(
+      updated,
+      ["disabled_providers"],
+      disabledProviders.length ? disabledProviders : undefined,
+      { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+    ),
+  );
+
   return updated.endsWith("\n") ? updated : `${updated}\n`;
 };
