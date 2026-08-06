@@ -43,7 +43,7 @@ import type {
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
-import { parseSlashCommandInvocation } from "./composer/slash-command";
+import { parseSlashCommandInvocation, withBuiltinCompactCommand } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@jugglework/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
@@ -1306,7 +1306,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, []);
 
   const listCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
-    const localCommands = await props.listCommands();
+    const localCommands = withBuiltinCompactCommand(
+      await props.listCommands(),
+      t("app.compact_command_desc"),
+    );
     try {
       const [connect, config] = await Promise.all([
         loadConnectCapabilityInventory(),

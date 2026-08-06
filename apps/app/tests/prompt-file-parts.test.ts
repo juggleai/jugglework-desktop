@@ -7,6 +7,7 @@ import {
   parseSlashCommandInvocation,
   skillMenuSlashCommandName,
   skillSlashCommandName,
+  withBuiltinCompactCommand,
 } from "../src/react-app/domains/session/surface/composer/slash-command";
 
 describe("first-line local file parts", () => {
@@ -74,6 +75,33 @@ describe("slash-command parsing", () => {
   test("does not parse absolute file paths as commands", () => {
     expect(parseSlashCommandInvocation("/Users/omar/code/jugglework/apps/app/src/file.ts\nwhy does this fail?")).toBeNull();
     expect(getSlashCommandQuery("/Users/omar/code/file.ts")).toBeNull();
+  });
+});
+
+describe("built-in slash commands", () => {
+  test("adds compact when the engine command list omits it", () => {
+    expect(
+      withBuiltinCompactCommand(
+        [{ id: "cmd:review", name: "review", source: "command" }],
+        "Reduce context size.",
+      ),
+    ).toEqual([
+      {
+        id: "builtin:compact",
+        name: "compact",
+        description: "Reduce context size.",
+        source: "command",
+      },
+      { id: "cmd:review", name: "review", source: "command" },
+    ]);
+  });
+
+  test("preserves an engine-provided compact command without duplication", () => {
+    const commands = [
+      { id: "cmd:compact", name: " Compact ", description: "Engine compact", source: "command" as const },
+    ];
+
+    expect(withBuiltinCompactCommand(commands, "Built-in compact")).toBe(commands);
   });
 });
 
@@ -160,4 +188,3 @@ describe("Connect skill slash commands", () => {
     expect(withoutProvenance?.description).toBe("");
   });
 });
-

@@ -7,6 +7,25 @@ export type ComposerSlashCommandOption = SlashCommandOption & {
   skill?: SkillCard;
 };
 
+export function withBuiltinCompactCommand(
+  commands: SlashCommandOption[],
+  description: string,
+): SlashCommandOption[] {
+  if (commands.some((command) => command.name.trim().toLowerCase() === "compact")) {
+    return commands;
+  }
+
+  return [
+    {
+      id: "builtin:compact",
+      name: "compact",
+      description,
+      source: "command",
+    },
+    ...commands,
+  ];
+}
+
 function slashSafeName(name: string, fallback: string, preferredName?: string) {
   const preferred = preferredName?.trim();
   if (preferred && /^[A-Za-z0-9_-]+$/.test(preferred)) return preferred;
