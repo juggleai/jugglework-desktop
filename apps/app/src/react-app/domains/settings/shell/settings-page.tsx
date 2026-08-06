@@ -251,6 +251,8 @@ type SettingsPageProps = {
   updateToolbarDisabled?: boolean;
   updateRestartBlockedMessage?: string | null;
   onUpdateToolbarAction?: () => void;
+  /** 隐藏页头标题与描述（会话右侧分组扩展面板用）。 */
+  hideHeading?: boolean;
   children: React.ReactNode;
 };
 
@@ -451,6 +453,10 @@ function DesktopPolicyBanner() {
 }
 
 export function SettingsPage(props: SettingsPageProps) {
+  // 会话右侧分组扩展面板隐藏页头标题/描述与策略横幅，仅保留分组内容。
+  if (props.hideHeading) {
+    return <SettingsContent>{props.children}</SettingsContent>;
+  }
   return (
     <SettingsContent>
       <SettingsPanel>

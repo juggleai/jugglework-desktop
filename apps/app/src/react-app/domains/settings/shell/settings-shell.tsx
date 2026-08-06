@@ -58,6 +58,8 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   modalSlot?: React.ReactNode;
   footer?: React.ReactNode;
   compact?: boolean;
+  /** 设置后 compact 头部只显示该静态标题（替代分区菜单与工作区切换器），会话右侧分组扩展面板用。 */
+  compactTitle?: string;
 };
 
 export function SettingsShell(props: SettingsShellProps) {
@@ -81,17 +83,23 @@ export function SettingsShell(props: SettingsShellProps) {
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
         <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
           <div className="flex min-w-0 items-center gap-2 mac:titlebar-no-drag">
-            <SettingsSectionMenu
-              activeTab={props.activeTab}
-              developerMode={props.developerMode}
-              onSelectTab={props.onSelectTab}
-            />
-            <WorkspaceMenu
-              selectedWorkspaceId={props.selectedWorkspaceId}
-              selectedWorkspaceName={props.selectedWorkspaceName}
-              workspaces={props.workspaces}
-              onSelectWorkspace={props.onSelectWorkspace}
-            />
+            {props.compactTitle ? (
+              <h1 className="truncate text-[15px] font-semibold text-dls-text">{props.compactTitle}</h1>
+            ) : (
+              <>
+                <SettingsSectionMenu
+                  activeTab={props.activeTab}
+                  developerMode={props.developerMode}
+                  onSelectTab={props.onSelectTab}
+                />
+                <WorkspaceMenu
+                  selectedWorkspaceId={props.selectedWorkspaceId}
+                  selectedWorkspaceName={props.selectedWorkspaceName}
+                  workspaces={props.workspaces}
+                  onSelectWorkspace={props.onSelectWorkspace}
+                />
+              </>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
             <Button

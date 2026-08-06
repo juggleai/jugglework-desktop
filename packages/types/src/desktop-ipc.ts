@@ -267,6 +267,50 @@ export type LocalSkillCard = {
   path: string;
   description?: string;
   trigger?: string;
+  /** 技能来源：project=项目级（可管理），global=全局（只读）。 */
+  scope?: "project" | "global";
+};
+
+/** SkillHub 技能市场检索返回的单个技能条目。 */
+export type SkillHubSkill = {
+  id: number;
+  slug: string;
+  displayName: string;
+  summary?: string;
+  namespace: string;
+  downloadCount?: number;
+  starCount?: number;
+  ratingAvg?: number;
+  updatedAt?: string;
+  headlineVersion?: { version?: string } | null;
+  resolutionMode?: string;
+};
+
+/** SkillHub 技能市场检索的分页结果。 */
+export type SkillHubSearchResult = {
+  items: SkillHubSkill[];
+  total: number;
+  page: number;
+  size: number;
+};
+
+/** 技能目录下的单个文件条目。 */
+export type SkillFileEntry = {
+  /** 相对技能根目录的路径，如 `references/x.md`。 */
+  relPath: string;
+  /** 文件字节数。 */
+  size: number;
+};
+
+/** SkillHub 技能安装结果。 */
+export type SkillHubInstallResult = {
+  ok: boolean;
+  installedPath?: string;
+  skippedEntries?: string[];
+  stdout?: string;
+  stderr?: string;
+  status?: number;
+  message?: string;
 };
 
 export type LocalSkillContent = {
@@ -537,6 +581,20 @@ export type DesktopCommandMap = {
     result: ExecResult;
   };
   uninstallSkill: { args: [projectDir: string, skillName: string]; result: ExecResult };
+  listSkillFiles: { args: [skillPath: string]; result: { files: SkillFileEntry[] } };
+  skillhubSearch: {
+    args: [params: { q?: string; sort?: string; namespace?: string; label?: string; page?: number; size?: number }];
+    result: SkillHubSearchResult;
+  };
+  skillhubInstall: {
+    args: [params: { projectDir: string; namespace: string; slug: string; version?: string }];
+    result: SkillHubInstallResult;
+  };
+  readProjectInstructions: {
+    args: [projectDir: string];
+    result: { path: string; exists: boolean; content: string };
+  };
+  writeProjectInstructions: { args: [projectDir: string, content: string]; result: ExecResult };
 
   // Updater / config / resets
   updaterEnvironment: { args: []; result: UpdaterEnvironment };

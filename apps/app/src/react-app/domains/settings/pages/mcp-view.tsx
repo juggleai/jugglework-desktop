@@ -83,6 +83,7 @@ export type SkillItem = {
   path: string;
   content?: string;
   origin?: "local" | "jugglework-connect";
+  scope?: "project" | "global";
   marketplaceName?: string;
   pluginName?: string;
 };

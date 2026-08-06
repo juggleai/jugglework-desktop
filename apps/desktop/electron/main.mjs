@@ -15,6 +15,7 @@ import {
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { unzipSync } from "fflate";
 import { fileURLToPath } from "node:url";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
@@ -1501,26 +1502,180 @@ async function listLocalSkills(projectDir) {
 
   const seen = new Set();
   const out = [];
-  for (const root of await collectSkillRoots(projectDir)) {
-    for (const skillDir of await findSkillDirsInRoot(root)) {
-      const name = path.basename(skillDir);
-      if (seen.has(name)) continue;
-      seen.add(name);
-      let raw = "";
-      try {
-        raw = await readFile(path.join(skillDir, "SKILL.md"), "utf8");
-      } catch {
-        raw = "";
+  // TIPS: 项目级根目录与全局根目录分开遍历，为每个技能打上 scope；
+  // 项目级排在前，同名去重时优先保留项目级，保证项目内技能覆盖全局同名技能。
+  /** @type {{ scope: "project" | "global", roots: string[] }[]} */
+  const scopedGroups = [
+    { scope: "project", roots: await collectProjectSkillRoots(projectDir) },
+    { scope: "global", roots: await collectGlobalSkillRoots() },
+  ];
+  for (const group of scopedGroups) {
+    for (const root of group.roots) {
+      for (const skillDir of await findSkillDirsInRoot(root)) {
+        const name = path.basename(skillDir);
+        if (seen.has(name)) continue;
+        seen.add(name);
+        let raw = "";
+        try {
+          raw = await readFile(path.join(skillDir, "SKILL.md"), "utf8");
+        } catch {
+          raw = "";
+        }
+        out.push({
+          name,
+          path: skillDir,
+          description: extractDescription(raw) ?? undefined,
+          trigger: extractTrigger(raw) ?? undefined,
+          scope: group.scope,
+        });
       }
-      out.push({
-        name,
-        path: skillDir,
-        description: extractDescription(raw) ?? undefined,
-        trigger: extractTrigger(raw) ?? undefined,
-      });
     }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * 递归列出技能目录下的文件（用于技能详情的文件列表）。
+ * @param {string} skillPath 技能目录绝对路径（listLocalSkills 返回的 path）
+ * @returns {Promise<{ files: { relPath: string, size: number }[] }>}
+ */
+async function listSkillFiles(skillPath) {
+  const root = String(skillPath ?? "").trim();
+  if (!root) throw new Error("skillPath is required");
+  if (!(await isDirectory(root))) return { files: [] };
+
+  /** @type {{ relPath: string, size: number }[]} */
+  const files = [];
+  const MAX_FILES = 800;
+  async function walk(dir, rel) {
+    if (files.length >= MAX_FILES) return;
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (files.length >= MAX_FILES) break;
+      const abs = path.join(dir, entry.name);
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(abs, relPath);
+      } else if (entry.isFile()) {
+        let size = 0;
+        try {
+          size = (await stat(abs)).size;
+        } catch {
+          size = 0;
+        }
+        files.push({ relPath, size });
+      }
+    }
+  }
+  await walk(root, "");
+  files.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  return { files };
+}
+
+// SkillHub 技能市场服务地址；默认公开实例，可用 SKILLHUB_BASE_URL 覆盖。
+const SKILLHUB_BASE = (process.env.SKILLHUB_BASE_URL || "https://skillhub.juggle.im").replace(/\/+$/, "");
+
+/**
+ * 判断解压目标路径是否仍位于技能目录内（zip-slip 防护）。
+ * @param {string} child 归一化后的目标绝对路径
+ * @param {string} parent 技能目标根目录绝对路径
+ */
+function isPathInside(child, parent) {
+  const rel = path.relative(parent, child);
+  return Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * 检索 SkillHub 技能市场。
+ * @param {{ q?: string, sort?: string, namespace?: string, label?: string, page?: number, size?: number }} params
+ * @returns {Promise<import("@jugglework/types/desktop-ipc").SkillHubSearchResult>}
+ */
+async function skillhubSearch(params = {}) {
+  const { q = "", sort = "newest", namespace = "", label = "", page = 0, size = 12 } = params ?? {};
+  const url = new URL(`${SKILLHUB_BASE}/api/web/skills`);
+  url.searchParams.set("q", String(q ?? ""));
+  url.searchParams.set("sort", String(sort ?? "newest"));
+  if (namespace) url.searchParams.set("namespace", String(namespace));
+  if (label) url.searchParams.set("label", String(label));
+  url.searchParams.set("page", String(page ?? 0));
+  url.searchParams.set("size", String(size ?? 12));
+  const response = await fetch(url, { headers: { accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(`SkillHub search failed: HTTP ${response.status}`);
+  }
+  const body = await response.json();
+  const data = body?.data ?? {};
+  return /** @type {import("@jugglework/types/desktop-ipc").SkillHubSearchResult} */ ({
+    items: Array.isArray(data.items) ? data.items : [],
+    total: Number(data.total ?? 0),
+    page: Number(data.page ?? page ?? 0),
+    size: Number(data.size ?? size ?? 12),
+  });
+}
+
+/**
+ * 从 SkillHub 下载技能包（ZIP）并解压安装到项目 .opencode/skills/<slug>/。
+ * @param {{ projectDir?: string, namespace?: string, slug?: string, version?: string }} params
+ * @returns {Promise<{ ok: boolean, installedPath?: string, skippedEntries?: string[], stdout?: string, stderr?: string, status?: number, message?: string }>}
+ */
+async function skillhubInstall(params = {}) {
+  const projectDir = String(params?.projectDir ?? "").trim();
+  const namespace = String(params?.namespace ?? "").trim();
+  const slug = String(params?.slug ?? "").trim();
+  const version = params?.version ? String(params.version).trim() : "";
+  if (!projectDir) throw new Error("projectDir is required");
+  if (!namespace || !slug) throw new Error("namespace and slug are required");
+  const safeSlug = validateSkillName(slug);
+
+  const base = `${SKILLHUB_BASE}/api/web/skills/${encodeURIComponent(namespace)}/${encodeURIComponent(slug)}`;
+  const downloadUrl = version
+    ? `${base}/versions/${encodeURIComponent(version)}/download`
+    : `${base}/download`;
+  const response = await fetch(downloadUrl, { headers: { accept: "application/zip" } });
+  if (!response.ok) {
+    return execResult(false, "", `Download failed: HTTP ${response.status}`);
+  }
+
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  let files;
+  try {
+    files = unzipSync(buffer);
+  } catch (error) {
+    return execResult(false, "", `Unzip failed: ${error?.message ?? String(error)}`);
+  }
+
+  const skillRoot = await ensureProjectSkillRoot(projectDir);
+  const destination = path.join(skillRoot, safeSlug);
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+
+  const skippedEntries = [];
+  let written = 0;
+  for (const [entryPath, content] of Object.entries(files)) {
+    // 目录项（以 / 结尾）无需单独创建，写文件时按需建目录。
+    if (!entryPath || entryPath.endsWith("/")) continue;
+    const target = path.join(destination, entryPath);
+    // TIPS: zip-slip 防护——归一化后的目标必须仍在技能目录内，否则丢弃。
+    if (!isPathInside(target, destination)) {
+      skippedEntries.push(entryPath);
+      continue;
+    }
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, Buffer.from(content));
+    written += 1;
+  }
+
+  if (written === 0) {
+    await rm(destination, { recursive: true, force: true });
+    return execResult(false, "", "Skill package contained no installable files");
+  }
+
+  return {
+    ok: true,
+    installedPath: destination,
+    skippedEntries,
+    message: `Installed ${safeSlug} (${written} files)`,
+  };
 }
 
 async function findSkillFile(projectDir, name) {
@@ -1920,6 +2075,39 @@ const desktopCommandHandlers = {
       }
       await rm(path.dirname(skillPath), { recursive: true, force: true });
       return execResult(true, `Removed skill ${args[1]}`);
+  },
+  "listSkillFiles": async (event, ...args) => {
+      return listSkillFiles(String(args[0] ?? "").trim());
+  },
+  "skillhubSearch": async (event, ...args) => {
+      return skillhubSearch(args[0] ?? {});
+  },
+  "skillhubInstall": async (event, ...args) => {
+      return skillhubInstall(args[0] ?? {});
+  },
+  "readProjectInstructions": async (event, ...args) => {
+      const projectDir = String(args[0] ?? "").trim();
+      if (!projectDir) throw new Error("projectDir is required");
+      const filePath = path.join(projectDir, "AGENTS.md");
+      let content = "";
+      let exists = false;
+      try {
+        content = await readFile(filePath, "utf8");
+        exists = true;
+      } catch {
+        content = "";
+        exists = false;
+      }
+      return { path: filePath, exists, content };
+  },
+  "writeProjectInstructions": async (event, ...args) => {
+      const projectDir = String(args[0] ?? "").trim();
+      if (!projectDir) throw new Error("projectDir is required");
+      const content = String(args[1] ?? "");
+      const filePath = path.join(projectDir, "AGENTS.md");
+      const next = content.endsWith("\n") || content === "" ? content : `${content}\n`;
+      await writeFile(filePath, next, "utf8");
+      return execResult(true, `Saved ${filePath}`);
   },
   "updaterEnvironment": async (event, ...args) => {
       const executablePath = app.isPackaged ? app.getPath("exe") : process.execPath;

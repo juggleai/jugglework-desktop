@@ -96,6 +96,8 @@ import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
 import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
+import { ProjectExtensionsPanel } from "@/react-app/domains/settings/pages/project-extensions/project-extensions-panel";
+import { buildProjectConnectors } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
 import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
@@ -114,6 +116,7 @@ import {
   engineStart,
   engineRestart,
   pickDirectory,
+  importSkill,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
   workspaceCreateRemote,
@@ -2280,7 +2283,49 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "shell":
         return <ShellCustomizationView />;
-      case "extensions":
+      case "extensions": {
+        // TIPS: 仅会话右侧 rail（embedded）改为分组卡片面板；独立设置页维持既有 ExtensionsView。
+        if (props.embedded) {
+          const projectConnectors = buildProjectConnectors({
+            mcpServers: connectionsSnapshot.mcpServers,
+            mcpStatuses: connectionsSnapshot.mcpStatuses,
+            quickConnect: extensionItems.quickConnectEntries,
+            orgMcpItems: extensionItems.orgMcpConnectionItems,
+            mcpConnectingName: connectionsSnapshot.mcpConnectingName,
+            orgMcpConnectingId: orgMcpConnections.connectingId,
+            orgMcpDisconnectingId: orgMcpConnections.disconnectingId,
+            connectDirectory: (entry) => { void connectionsStore.connectMcp(entry); },
+            authorizeMcp: (entry) => { void connectionsStore.authorizeMcp(entry); },
+            removeMcp: (name) => { void connectionsStore.removeMcp(name); },
+            connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
+            disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
+          });
+          const projectSkills = [
+            ...extensionItems.installedSkills,
+            ...connectCapabilities.skills.filter(
+              (skill) => !extensionItems.installedSkills.some(
+                (installed) => installed.name.toLowerCase() === skill.name.toLowerCase(),
+              ),
+            ),
+          ];
+          return (
+            <ProjectExtensionsPanel
+              projectDir={selectedWorkspaceRoot}
+              isRemoteWorkspace={isRemoteWorkspace}
+              busy={busy}
+              connectors={projectConnectors}
+              installedSkills={projectSkills}
+              onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
+              onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}
+              onUploadSkill={async () => {
+                const dir = (await pickDirectory({ title: t("project_extensions.upload_skill") })) as string | null;
+                if (!dir) return;
+                await importSkill(selectedWorkspaceRoot, dir, { overwrite: false });
+                await extensionsStore.refreshSkills({ force: true });
+              }}
+            />
+          );
+        }
         return (
           <ExtensionsView
             busy={busy}
@@ -2381,6 +2426,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
           />
         );
+      }
       case "cloud-account":
         return (
           <CloudAccountView
@@ -2575,6 +2621,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         ))}
         compact={props.embedded}
         contentOnly={props.contentOnly}
+        compactTitle={Boolean(props.embedded) && route.tab === "extensions" ? t("project_extensions.panel_title") : undefined}
+        hideHeading={Boolean(props.embedded) && route.tab === "extensions"}
       >
         {settingsView}
       </SettingsShell>
