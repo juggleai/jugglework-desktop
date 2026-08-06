@@ -182,7 +182,11 @@ export function useDesktopRuntimeBoot() {
               console.warn("[desktop-boot] juggleworkServerRestart failed:", error);
               return null;
             });
-            if (isJuggleWorkServerInfoLike(restarted)) serverInfo = restarted;
+            if (isJuggleWorkServerInfoLike(restarted)) {
+              serverInfo = restarted;
+              const restartedEngine = await engineInfo().catch(() => null) as EngineInfo | null;
+              if (restartedEngine?.baseUrl) setActive(restartedEngine.baseUrl);
+            }
           }
           publishJuggleWorkServerInfo(serverInfo);
           markReady();

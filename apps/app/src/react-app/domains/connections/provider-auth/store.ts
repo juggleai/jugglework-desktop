@@ -93,9 +93,13 @@ import {
   type DesktopAppRestrictionChecker,
 } from "../../../../app/cloud/desktop-app-restrictions";
 import {
+  createKeyedSingleflight,
   createLatestSyncQueue,
   shouldAdoptWorkspaceSnapshot,
 } from "./cloud-provider-sync-queue";
+
+const cloudProviderConnectionSingleflight =
+  createKeyedSingleflight<string, DenOrgLlmProviderConnection>();
 
 type ProviderReturnFocusTarget = "none" | "composer";
 type CloudProviderSyncReason =
@@ -1533,7 +1537,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         baseUrl: settings.baseUrl,
         token,
       });
-      const provider = await den.getOrgLlmProviderConnection(orgId, cloudProviderId);
+      const connectionKey = JSON.stringify([
+        settings.baseUrl.replace(/\/+$/, ""),
+        orgId,
+        token,
+        cloudProviderId,
+      ]);
+      const provider = await cloudProviderConnectionSingleflight.run(
+        connectionKey,
+        () => den.getOrgLlmProviderConnection(orgId, cloudProviderId),
+      );
       assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);

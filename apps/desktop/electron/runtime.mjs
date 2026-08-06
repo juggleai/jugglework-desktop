@@ -73,6 +73,16 @@ export function selectStickyJuggleWorkPortWorkspace(requestedWorkspacePaths = []
   return "";
 }
 
+export function shouldReuseHealthyManagedRuntime(input) {
+  return input.forceRestart !== true &&
+    input.inProcess === true &&
+    input.lifecycleState === "healthy" &&
+    input.remoteAccessEnabled === input.requestedRemoteAccess &&
+    input.running === true &&
+    Boolean(input.baseUrl) &&
+    input.hasToken === true;
+}
+
 export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   const value = String(command ?? "");
   if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
@@ -1202,6 +1212,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
     await stopChild(juggleworkServerState);
 
+    // An embedded-server stop should terminate its managed OpenCode child, but
+    // a force-killed or slow child can outlive the handle. Never start a second
+    // bundled sidecar while an orphan from this app bundle still exists.
+    if (options.manageOpencode === true) {
+      await cleanupPackagedSidecars();
+    }
+
     const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
@@ -1531,17 +1548,22 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     // the sticky preferred port, racing the not-yet-released socket into
     // EADDRINUSE and leaving the runtime in error -> boot screen.
     const requestedRemoteAccess = options.juggleworkRemoteAccess === true;
-    if (
-      options.forceRestart !== true &&
-      juggleworkServerState.inProcess &&
-      lifecycleState === "healthy" &&
-      normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(safeProjectDir) &&
-      juggleworkServerState.remoteAccessEnabled === requestedRemoteAccess
-    ) {
-      const existing = snapshotJuggleWorkServerState(juggleworkServerState);
-      if (existing.running && existing.baseUrl && (existing.ownerToken || existing.clientToken)) {
-        return snapshotEngineState(engineState);
-      }
+    const existing = snapshotJuggleWorkServerState(juggleworkServerState);
+    if (shouldReuseHealthyManagedRuntime({
+      forceRestart: options.forceRestart,
+      inProcess: juggleworkServerState.inProcess,
+      lifecycleState,
+      remoteAccessEnabled: juggleworkServerState.remoteAccessEnabled,
+      requestedRemoteAccess,
+      running: existing.running,
+      baseUrl: existing.baseUrl,
+      hasToken: Boolean(existing.ownerToken || existing.clientToken),
+    })) {
+      // One managed engine serves every registered local workspace. Switching
+      // the selected directory must not replace that engine (and strand active
+      // tasks on its old in-memory provider credential).
+      engineState.projectDir = safeProjectDir;
+      return snapshotEngineState(engineState);
     }
 
     await mkdir(safeProjectDir, { recursive: true });

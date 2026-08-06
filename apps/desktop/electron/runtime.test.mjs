@@ -13,6 +13,7 @@ import {
   resolveJuggleWorkServerConfigPath,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyJuggleWorkPortWorkspace,
+  shouldReuseHealthyManagedRuntime,
   snapshotEngineState,
 } from "./runtime.mjs";
 
@@ -61,6 +62,35 @@ describe("selectStickyJuggleWorkPortWorkspace", () => {
       selectStickyJuggleWorkPortWorkspace([], ["/workspace/from-server"]),
       "/workspace/from-server",
     );
+  });
+});
+
+describe("shouldReuseHealthyManagedRuntime", () => {
+  it("reuses one healthy managed engine when the selected workspace changes", () => {
+    assert.equal(shouldReuseHealthyManagedRuntime({
+      forceRestart: false,
+      inProcess: true,
+      lifecycleState: "healthy",
+      remoteAccessEnabled: false,
+      requestedRemoteAccess: false,
+      running: true,
+      baseUrl: "http://127.0.0.1:4097",
+      hasToken: true,
+    }), true);
+  });
+
+  it("does not reuse when a restart or remote-access change is required", () => {
+    const healthy = {
+      inProcess: true,
+      lifecycleState: "healthy",
+      remoteAccessEnabled: false,
+      requestedRemoteAccess: false,
+      running: true,
+      baseUrl: "http://127.0.0.1:4097",
+      hasToken: true,
+    };
+    assert.equal(shouldReuseHealthyManagedRuntime({ ...healthy, forceRestart: true }), false);
+    assert.equal(shouldReuseHealthyManagedRuntime({ ...healthy, forceRestart: false, requestedRemoteAccess: true }), false);
   });
 });
 

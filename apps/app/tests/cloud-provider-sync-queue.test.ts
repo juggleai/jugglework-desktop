@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  createKeyedSingleflight,
   createLatestSyncQueue,
   shouldAdoptWorkspaceSnapshot,
 } from "../src/react-app/domains/connections/provider-auth/cloud-provider-sync-queue";
@@ -48,6 +49,32 @@ describe("createLatestSyncQueue", () => {
     await pending;
 
     expect(calls).toEqual(["app_launch", "new_chat"]);
+  });
+});
+
+describe("createKeyedSingleflight", () => {
+  test("shares one in-flight provider connection across stores", async () => {
+    const gate = deferred();
+    const singleflight = createKeyedSingleflight<string, string>();
+    let calls = 0;
+    const load = async () => {
+      calls += 1;
+      await gate.promise;
+      return "credential";
+    };
+
+    const sessionStore = singleflight.run("org::provider", load);
+    const settingsStore = singleflight.run("org::provider", load);
+    expect(calls).toBe(1);
+    gate.resolve();
+    expect(await sessionStore).toBe("credential");
+    expect(await settingsStore).toBe("credential");
+
+    await singleflight.run("org::provider", async () => {
+      calls += 1;
+      return "fresh";
+    });
+    expect(calls).toBe(2);
   });
 });
 
