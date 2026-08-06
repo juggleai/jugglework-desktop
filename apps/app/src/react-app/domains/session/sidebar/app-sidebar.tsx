@@ -1212,6 +1212,12 @@ type WorkspaceReorderItemProps = {
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
 };
 
+// TIPS: 普通点击工作区标题只应「选中」，不应改变工作区顺序。framer-motion 的
+// dragControls.start 一旦在 pointerdown 时立即调用，就会把这次点击当作一次拖拽，
+// 触发 onReorder 把该工作区重排（在不等高列表中常被移动到首位）。因此这里加一个
+// 位移阈值：只有当指针实际拖动超过阈值时才真正启动拖拽排序。
+const WORKSPACE_DRAG_THRESHOLD_PX = 5;
+
 function WorkspaceReorderItem({
   className,
   group,
@@ -1220,6 +1226,36 @@ function WorkspaceReorderItem({
   showMoreSessions,
 }: WorkspaceReorderItemProps) {
   const dragControls = useDragControls();
+
+  const startDragOnThreshold = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      // 仅响应主键（鼠标左键 / 触摸 / 笔），忽略右键与中键。
+      if (event.button !== 0) return;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let dragStarted = false;
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", cleanup);
+        window.removeEventListener("pointercancel", cleanup);
+      };
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        if (dragStarted) return;
+        const moved = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+        if (moved < WORKSPACE_DRAG_THRESHOLD_PX) return;
+        dragStarted = true;
+        cleanup();
+        dragControls.start(moveEvent);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", cleanup);
+      window.addEventListener("pointercancel", cleanup);
+    },
+    [dragControls],
+  );
 
   return (
     <Reorder.Item
@@ -1243,7 +1279,7 @@ function WorkspaceReorderItem({
         showInitialLoading={showInitialLoading}
         previewCount={previewCount}
         showMoreSessions={showMoreSessions}
-        onWorkspaceTitlePointerDown={(event) => dragControls.start(event)}
+        onWorkspaceTitlePointerDown={startDragOnThreshold}
       />
     </Reorder.Item>
   );
