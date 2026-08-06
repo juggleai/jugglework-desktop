@@ -159,6 +159,36 @@ describe("buildCustomProviderConfig", () => {
       b: { name: "B", limit: { context: 200000, output: 32000 } },
     });
   });
+
+  test("adds reasoning effort variants to manually added GPT-5.6 models", () => {
+    const config = buildCustomProviderConfig(
+      baseInput({
+        models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+        contextLimit: 1_000_000,
+        outputLimit: 120_000,
+      }),
+    );
+
+    expect(config.models?.["gpt-5.6-sol"]).toEqual({
+      name: "GPT-5.6 Sol",
+      reasoning: true,
+      variants: {
+        low: { reasoningEffort: "low" },
+        medium: { reasoningEffort: "medium" },
+        high: { reasoningEffort: "high" },
+        xhigh: { reasoningEffort: "xhigh" },
+      },
+      limit: { context: 1_000_000, output: 120_000 },
+    });
+  });
+
+  test("does not invent reasoning variants for unknown custom models", () => {
+    const config = buildCustomProviderConfig(
+      baseInput({ models: [{ id: "acme-chat-v2", name: "Acme Chat V2" }] }),
+    );
+
+    expect(config.models?.["acme-chat-v2"]).toEqual({ name: "Acme Chat V2" });
+  });
 });
 
 describe("formatConfigWithCustomProvider", () => {

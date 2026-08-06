@@ -23,6 +23,27 @@ export type CustomProviderModel = {
   name: string;
 };
 
+const OPENAI_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
+/**
+ * Model metadata that the OpenCode provider catalog cannot discover from a
+ * generic OpenAI-compatible `/v1/models` response. Keep this allowlist narrow:
+ * an unknown relay model is safer without a non-functional thinking selector
+ * than with options its upstream API may ignore.
+ */
+const inferCustomProviderModelMetadata = (modelId: string) => {
+  const normalized = modelId.trim().toLowerCase();
+  const isGpt56 = /(?:^|\/)gpt-5\.6(?:$|[-.:])/.test(normalized);
+  if (!isGpt56) return {};
+
+  return {
+    reasoning: true,
+    variants: Object.fromEntries(
+      OPENAI_REASONING_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]),
+    ),
+  };
+};
+
 export type CustomProviderInput = {
   providerId: string;
   name: string;
@@ -155,7 +176,11 @@ export const buildCustomProviderConfig = (
     models: Object.fromEntries(
       input.models.map((model) => [
         model.id,
-        limit ? { name: model.name, limit } : { name: model.name },
+        {
+          name: model.name,
+          ...inferCustomProviderModelMetadata(model.id),
+          ...(limit ? { limit } : {}),
+        },
       ]),
     ),
   };

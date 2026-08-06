@@ -39,6 +39,23 @@ describe("JuggleWork Safe Grep Plugin", () => {
     expect(other.args.include).toBeUndefined();
   });
 
+  test("narrows broad and generated-file includes to avoid oversized records", async () => {
+    const plugin = await JuggleWorkSafeGrep();
+    const generated: { args: Record<string, unknown> } = {
+      args: { pattern: "needle", include: "**/*.{js,map,html}" },
+    };
+    const minified: { args: Record<string, unknown> } = {
+      args: { pattern: "needle", include: "**/*.min.js" },
+    };
+
+    await plugin["tool.execute.before"]({ tool: "grep" }, generated);
+    await plugin["tool.execute.before"]({ tool: "grep" }, minified);
+
+    expect(generated.args.include).toBeDefined();
+    expect(generated.args.include).not.toContain("html");
+    expect(minified.args.include).not.toBe("**/*.min.js");
+  });
+
   test("module exposes only the plugin factory", async () => {
     const mod = await import("./jugglework-safe-grep.js");
     expect(Object.keys(mod)).toEqual(["JuggleWorkSafeGrep"]);
