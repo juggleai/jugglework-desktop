@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Plus, Trash2, Upload } from "lucide-react";
 
 import {
@@ -41,11 +41,15 @@ function SkillCard({ skill, onUninstall, onOpen }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <p className="truncate text-sm font-semibold text-dls-text">{skill.name}</p>
-          {isGlobal ? (
-            <span className="shrink-0 rounded-full bg-dls-bg px-1.5 py-0.5 text-[10px] text-dls-secondary">
-              {t("project_extensions.scope_global")}
-            </span>
-          ) : null}
+          {/* TIPS: 本地列表同时包含全局与本工作区技能，用标签区分来源与可管理性。 */}
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-1.5 py-0.5 text-[10px]",
+              isGlobal ? "bg-dls-bg text-dls-secondary" : "bg-green-3 text-green-11",
+            )}
+          >
+            {t(isGlobal ? "project_extensions.scope_global" : "project_extensions.scope_workspace")}
+          </span>
         </div>
         {skill.description ? (
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{skill.description}</p>
@@ -65,21 +69,26 @@ function SkillCard({ skill, onUninstall, onOpen }: {
   );
 }
 
+type SkillsTab = "local" | "cloud";
+
 /**
- * 技能管理弹窗：展示项目已装技能网格，支持上传或从技能中心添加。
- * 项目级技能可卸载；全局技能只读并标注「全局」，计数只统计项目级。
+ * 技能管理弹窗：分「本地已安装 / 云端运行」两个页签。
+ * 本地页展示项目已装技能网格，项目级技能可卸载；全局技能只读并标注「全局」，计数只统计项目级。
+ * 云端页由宿主注入扩展市场视图（同一数据源与详情弹窗）。
  * @param open 是否打开
  * @param projectDir 项目根目录
  * @param skills 已安装技能（项目级 + 全局）
+ * @param cloudSkillsSlot 云端运行页内容（扩展市场视图）
  * @param onClose 关闭回调
  * @param onUninstall 卸载项目级技能
  * @param onUpload 从本地上传技能
  * @param onRefresh 刷新技能列表
  */
-export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninstall, onUpload, onRefresh }: {
+export function SkillsManagerModal({ open, projectDir, skills, cloudSkillsSlot, onClose, onUninstall, onUpload, onRefresh }: {
   open: boolean;
   projectDir: string;
   skills: SkillItem[];
+  cloudSkillsSlot?: ReactNode;
   onClose: () => void;
   onUninstall: (name: string) => void;
   onUpload: () => void | Promise<void>;
@@ -87,6 +96,7 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
 }) {
   const [hubOpen, setHubOpen] = useState(false);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
+  const [tab, setTab] = useState<SkillsTab>("local");
 
   const projectCount = useMemo(
     () => skills.filter((skill) => skill.scope !== "global").length,
@@ -138,10 +148,29 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
               </DropdownMenuContent>
             </DropdownMenu>
             </div>
+            <div className="flex items-center gap-1.5">
+              {(["local", "cloud"] as SkillsTab[]).map((key) => (
+                <Button
+                  key={key}
+                  type="button"
+                  variant={tab === key ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setTab(key)}
+                >
+                  {t(`project_extensions.tab_${key}_skills`)}
+                </Button>
+              ))}
+            </div>
           </DialogHeader>
 
           <div className={cn("min-h-0 flex-1 overflow-y-auto")}>
-            {skills.length === 0 ? (
+            {tab === "cloud" ? (
+              cloudSkillsSlot ?? (
+                <p className="py-10 text-center text-sm text-dls-secondary">
+                  {t("project_extensions.no_cloud_skills")}
+                </p>
+              )
+            ) : skills.length === 0 ? (
               <p className="py-10 text-center text-sm text-dls-secondary">
                 {t("project_extensions.no_skills_installed")}
               </p>

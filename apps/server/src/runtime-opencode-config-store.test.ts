@@ -60,6 +60,29 @@ async function expectMissing(path: string): Promise<void> {
 }
 
 describe("runtime OpenCode config store", () => {
+  test("normalizes and round-trips compaction settings", async () => {
+    await withWorkspace(async ({ config }) => {
+      await writeRuntimeOpencodeConfig(config, WORKSPACE_ID, (current) => ({
+        ...current,
+        compaction: {
+          auto: false,
+          prune: true,
+          tail_turns: 3,
+          preserve_recent_tokens: 12_000,
+          reserved: 20_000,
+        },
+      }));
+
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).compaction).toEqual({
+        auto: false,
+        prune: true,
+        tail_turns: 3,
+        preserve_recent_tokens: 12_000,
+        reserved: 20_000,
+      });
+    });
+  });
+
   test("reports no-op writes without notifying listeners", async () => {
     await withWorkspace(async ({ config }) => {
       let writes = 0;

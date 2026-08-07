@@ -161,8 +161,8 @@ export function SkillHubModal({ open, projectDir, installedSlugs, onClose, onIns
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next && !installing) onClose(); }}>
       <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[1000px] flex-col sm:max-w-[1000px]">
-        <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0">
-          <DialogTitle>{t("project_extensions.skill_hub_title")}</DialogTitle>
+        <DialogHeader className="flex-row items-center gap-3 space-y-0 pr-8">
+          <DialogTitle className="shrink-0">{t("project_extensions.skill_hub_title")}</DialogTitle>
           <div className="relative w-64">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
             <input

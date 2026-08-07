@@ -455,7 +455,7 @@ function DesktopPolicyBanner() {
 export function SettingsPage(props: SettingsPageProps) {
   // 会话右侧分组扩展面板隐藏页头标题/描述与策略横幅，仅保留分组内容。
   if (props.hideHeading) {
-    return <SettingsContent>{props.children}</SettingsContent>;
+    return <SettingsContent compact>{props.children}</SettingsContent>;
   }
   return (
     <SettingsContent>

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  matchesMarketplaceFilters,
   shouldIncludeCloudMarketplacePluginRow,
   shouldIncludeOrgMcpConnectionMarketplaceRow,
   shouldShowMarketplaceRows,
@@ -22,5 +23,31 @@ describe("Cloud marketplace row visibility", () => {
   test("keeps organization MCP connections out of both Marketplace surfaces", () => {
     expect(shouldIncludeOrgMcpConnectionMarketplaceRow({ embedded: false })).toBe(false);
     expect(shouldIncludeOrgMcpConnectionMarketplaceRow({ embedded: true })).toBe(false);
+  });
+});
+
+describe("Marketplace search and filters", () => {
+  const row = {
+    marketplaceId: "mk_1",
+    status: "available" as const,
+    searchableText: "desktop marketplace compatibility test 1 skill",
+  };
+  const noFilters = { search: "", statusFilter: "all" as const, marketplaceFilter: "all" };
+
+  test("keeps every row when no query or filter is set", () => {
+    expect(matchesMarketplaceFilters(row, noFilters)).toBe(true);
+  });
+
+  test("matches the query case-insensitively and ignores surrounding spaces", () => {
+    expect(matchesMarketplaceFilters(row, { ...noFilters, search: "Compatibility" })).toBe(true);
+    expect(matchesMarketplaceFilters(row, { ...noFilters, search: "  DESKTOP  " })).toBe(true);
+    expect(matchesMarketplaceFilters(row, { ...noFilters, search: "notion" })).toBe(false);
+  });
+
+  test("applies status and marketplace filters alongside the query", () => {
+    expect(matchesMarketplaceFilters(row, { ...noFilters, statusFilter: "installed" })).toBe(false);
+    expect(matchesMarketplaceFilters(row, { ...noFilters, statusFilter: "available" })).toBe(true);
+    expect(matchesMarketplaceFilters(row, { ...noFilters, marketplaceFilter: "mk_2" })).toBe(false);
+    expect(matchesMarketplaceFilters(row, { ...noFilters, marketplaceFilter: "mk_1", search: "skill" })).toBe(true);
   });
 });

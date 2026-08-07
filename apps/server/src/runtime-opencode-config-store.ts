@@ -15,6 +15,15 @@ export type RuntimeOpencodeConfig = {
     external_directory?: Record<string, unknown>;
   };
   provider?: Record<string, unknown>;
+  compaction?: RuntimeCompactionConfig;
+};
+
+export type RuntimeCompactionConfig = {
+  auto?: boolean;
+  prune?: boolean;
+  tail_turns?: number;
+  preserve_recent_tokens?: number;
+  reserved?: number;
 };
 
 const runtimeOpencodeConfigs = sqliteTable("runtime_opencode_configs", {
@@ -32,6 +41,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function normalizeRuntimeCompactionConfig(value: unknown): RuntimeCompactionConfig | undefined {
+  if (!isRecord(value)) return undefined;
+  const auto = typeof value.auto === "boolean" ? value.auto : undefined;
+  const prune = typeof value.prune === "boolean" ? value.prune : undefined;
+  const tailTurns = nonNegativeInteger(value.tail_turns);
+  const preserveRecentTokens = nonNegativeInteger(value.preserve_recent_tokens);
+  const reserved = nonNegativeInteger(value.reserved);
+  const normalized = {
+    ...(auto !== undefined ? { auto } : {}),
+    ...(prune !== undefined ? { prune } : {}),
+    ...(tailTurns !== undefined ? { tail_turns: tailTurns } : {}),
+    ...(preserveRecentTokens !== undefined ? { preserve_recent_tokens: preserveRecentTokens } : {}),
+    ...(reserved !== undefined ? { reserved } : {}),
+  };
+  return Object.keys(normalized).length ? normalized : undefined;
+}
+
 function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   if (!isRecord(value)) return {};
   const defaultAgent = typeof value.default_agent === "string" ? value.default_agent : undefined;
@@ -43,6 +73,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
   const provider = isRecord(value.provider) ? value.provider : undefined;
+  const compaction = normalizeRuntimeCompactionConfig(value.compaction);
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(plugin ? { plugin } : {}),
@@ -50,6 +81,7 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
     ...(mcp ? { mcp } : {}),
     ...(externalDirectory ? { permission: { external_directory: externalDirectory } } : {}),
     ...(provider ? { provider } : {}),
+    ...(compaction ? { compaction } : {}),
   };
 }
 
@@ -369,6 +401,7 @@ export function mergeOpencodeConfigs(
   const persistedExternalDirectory = isRecord(persistedPermission.external_directory)
     ? persistedPermission.external_directory
     : {};
+  const persistedCompaction = isRecord(persisted.compaction) ? persisted.compaction : {};
   return {
     ...persisted,
     plugin: [
@@ -391,6 +424,9 @@ export function mergeOpencodeConfigs(
       },
     },
     ...(runtime.provider ? { provider: { ...(isRecord(persisted.provider) ? persisted.provider : {}), ...runtime.provider } } : {}),
+    ...(runtime.compaction
+      ? { compaction: { ...persistedCompaction, ...runtime.compaction } }
+      : (Object.keys(persistedCompaction).length ? { compaction: persistedCompaction } : {})),
     ...(runtime.default_agent ? { default_agent: runtime.default_agent } : {}),
   };
 }

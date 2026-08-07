@@ -61,6 +61,7 @@ import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionAct
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
+import { shouldDrainQueuedTask } from "./queued-draft-policy";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
@@ -466,34 +467,6 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
   return left.length === right.length && left.every((attachment, index) => attachment.id === right[index]?.id);
 }
 
-// Combine multiple queued follow-up drafts into a single send. Their text and
-// parts are concatenated with blank-line separators and attachments are
-// merged, so the whole queue is delivered to the agent as one message.
-function mergeDrafts(drafts: ComposerDraft[]): ComposerDraft | null {
-  if (drafts.length === 0) return null;
-  if (drafts.length === 1) return drafts[0] ?? null;
-  const separator: ComposerPart = { type: "text", text: "\n\n" };
-  const parts: ComposerPart[] = [];
-  const attachments: ComposerAttachment[] = [];
-  const texts: string[] = [];
-  const resolvedTexts: string[] = [];
-  drafts.forEach((draft, index) => {
-    if (index > 0) parts.push(separator);
-    parts.push(...draft.parts);
-    attachments.push(...draft.attachments);
-    texts.push(draft.text);
-    resolvedTexts.push(draft.resolvedText ?? draft.text);
-  });
-  return {
-    mode: "prompt",
-    parts,
-    attachments,
-    text: texts.join("\n\n"),
-    resolvedText: resolvedTexts.join("\n\n"),
-    command: undefined,
-  };
-}
-
 export function SessionSurface(props: SessionSurfaceProps) {
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
@@ -525,8 +498,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const queuedDrafts = useComposerStateStore((state) => getComposerQueuedDrafts(state, props.sessionId));
   const appendQueuedDraft = useComposerStateStore((state) => state.appendQueuedDraft);
   const removeQueuedDraftFromStore = useComposerStateStore((state) => state.removeQueuedDraft);
+  const restoreQueuedDraft = useComposerStateStore((state) => state.restoreQueuedDraft);
+  const editQueuedDraftInStore = useComposerStateStore((state) => state.editQueuedDraft);
   const clearQueuedDrafts = useComposerStateStore((state) => state.clearQueuedDrafts);
-  const prependQueuedDrafts = useComposerStateStore((state) => state.prependQueuedDrafts);
   const [error, setError] = useState<SessionError | null>(null);
   const [showDelayedLoading, setShowDelayedLoading] = useState(false);
   const [awaitingAssistantBaseline, setAwaitingAssistantBaseline] = useState<number | null>(null);
@@ -543,10 +517,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   } | null>(null);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
+  const [queueDrainVersion, setQueueDrainVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
   const cloudQueueBlockedRef = useRef(false);
-  // Shared with promote-to-send so a manual send-now cannot race the idle drain.
   const drainingQueueRef = useRef(false);
+  const queueWaitsForIdleRef = useRef(false);
+  const queuedRunObservedBusyRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
@@ -991,45 +967,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
+    queueWaitsForIdleRef.current = true;
     clearComposer();
   }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
 
-  const removeQueuedDraft = useCallback((index: number) => {
-    const target = queuedDrafts[index];
-    removeQueuedDraftFromStore(props.sessionId, index);
-    target?.attachments.forEach(revokeAttachmentPreview);
-  }, [props.sessionId, queuedDrafts, removeQueuedDraftFromStore]);
+  const removeQueuedDraft = useCallback((id: string) => {
+    const removed = removeQueuedDraftFromStore(props.sessionId, id);
+    removed?.draft.attachments.forEach(revokeAttachmentPreview);
+  }, [props.sessionId, removeQueuedDraftFromStore]);
 
-  // Promote a queued follow-up to an immediate send (steer-style), instead of
-  // waiting for the idle drain. Guarded against the drain effect so the same
-  // draft cannot be delivered twice.
-  const [sendingQueued, setSendingQueued] = useState(false);
-  const sendQueuedDraftNow = useCallback(async (index: number) => {
-    if (drainingQueueRef.current || sendingQueued) return;
-    const target = queuedDrafts[index];
-    if (!target) return;
-    setSendingQueued(true);
-    removeQueuedDraftFromStore(props.sessionId, index);
-    try {
-      const result = await sendDraft(target);
-      if (result.outcome === "blocked" || result.outcome === "cancelled") {
-        prependQueuedDrafts(props.sessionId, [target]);
-        return;
-      }
-      target.attachments.forEach(revokeAttachmentPreview);
-    } catch {
-      prependQueuedDrafts(props.sessionId, [target]);
-    } finally {
-      setSendingQueued(false);
+  const editQueuedDraft = useCallback((id: string) => {
+    if (draft.trim() || attachments.length > 0) {
+      toast.warning(t("composer.queued_edit_requires_empty"));
+      return;
     }
-  }, [
-    prependQueuedDrafts,
-    props.sessionId,
-    queuedDrafts,
-    removeQueuedDraftFromStore,
-    sendDraft,
-    sendingQueued,
-  ]);
+    const edited = editQueuedDraftInStore(props.sessionId, id);
+    if (!edited) return;
+    window.setTimeout(() => {
+      composerShellRef.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus();
+    }, 0);
+  }, [attachments.length, draft, editQueuedDraftInStore, props.sessionId]);
 
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
@@ -1037,7 +994,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
-    queuedDrafts.forEach((draftItem) => draftItem.attachments.forEach(revokeAttachmentPreview));
+    queuedDrafts.forEach((item) => item.draft.attachments.forEach(revokeAttachmentPreview));
     clearQueuedDrafts(props.sessionId);
     // The prompt was sent through a directory-scoped client (session-route
     // passes the workspace root), so the abort must target the same scope —
@@ -1061,38 +1018,54 @@ export function SessionSurface(props: SessionSurfaceProps) {
     useSessionActivityStore.getState().clearError(props.workspaceId, props.sessionId);
   }, [props.sessionId, props.workspaceId]);
 
-  // Drain the queued follow-ups once the session goes idle. OpenCode has no
-  // server-side queue, so we send everything that's queued as a single merged
-  // message. The ref guards against re-entrancy while the send is in flight.
+  // A queued task starts only after the previous run has been observed busy
+  // and then reaches idle. Each idle transition claims exactly one FIFO item.
   useEffect(() => {
-    if (drainingQueueRef.current || sendingQueued) return;
-    if (cloudQueueBlockedRef.current) return;
-    if (queuedDrafts.length === 0) return;
-    if (chatStreaming || liveStatus.type !== "idle") return;
-    const merged = mergeDrafts(queuedDrafts);
-    if (!merged) return;
-    const drained = queuedDrafts;
+    if (chatStreaming) {
+      if (drainingQueueRef.current) queuedRunObservedBusyRef.current = true;
+      queueWaitsForIdleRef.current = queuedDrafts.length > 0;
+      return;
+    }
+    if (!shouldDrainQueuedTask({
+      queuedCount: queuedDrafts.length,
+      chatStreaming,
+      liveStatus: liveStatus.type,
+      waitingForIdle: queueWaitsForIdleRef.current,
+      draining: drainingQueueRef.current,
+      blocked: cloudQueueBlockedRef.current,
+    })) return;
+    const target = queuedDrafts[0];
+    if (!target) return;
     drainingQueueRef.current = true;
-    clearQueuedDrafts(props.sessionId);
+    queueWaitsForIdleRef.current = false;
+    queuedRunObservedBusyRef.current = false;
+    const claimed = removeQueuedDraftFromStore(props.sessionId, target.id);
+    if (!claimed) {
+      drainingQueueRef.current = false;
+      return;
+    }
     void (async () => {
       try {
-        const result = await sendDraft(merged);
+        const result = await sendDraft(claimed.draft);
         if (result.outcome === "blocked") {
           cloudQueueBlockedRef.current = true;
-          prependQueuedDrafts(props.sessionId, drained);
+          restoreQueuedDraft(props.sessionId, claimed);
         } else if (result.outcome === "cancelled") {
-          prependQueuedDrafts(props.sessionId, drained);
+          restoreQueuedDraft(props.sessionId, claimed);
         } else {
-          drained.forEach((draftItem) => draftItem.attachments.forEach(revokeAttachmentPreview));
+          claimed.draft.attachments.forEach(revokeAttachmentPreview);
         }
       } catch {
-        // Restore the queue so the user can retry / edit on failure.
-        prependQueuedDrafts(props.sessionId, drained);
+        restoreQueuedDraft(props.sessionId, claimed);
       } finally {
         drainingQueueRef.current = false;
+        // If a run was observed, wait for its next idle transition. If status
+        // propagation has not arrived yet, the busy branch above will arm it.
+        queueWaitsForIdleRef.current = queuedRunObservedBusyRef.current;
+        setQueueDrainVersion((version) => version + 1);
       }
     })();
-  }, [chatStreaming, clearQueuedDrafts, cloudQueueRetryVersion, liveStatus.type, prependQueuedDrafts, props.sessionId, queuedDrafts, sendDraft, sendingQueued]);
+  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -1948,8 +1921,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <QueuedMessagesPanel
                     drafts={queuedDrafts}
                     onRemove={removeQueuedDraft}
-                    onSendNow={(index) => void sendQueuedDraftNow(index)}
-                    sending={sendingQueued}
+                    onEdit={editQueuedDraft}
+                    sending={drainingQueueRef.current}
                   />
                 ) : null}
                 {props.activeQuestion ? (

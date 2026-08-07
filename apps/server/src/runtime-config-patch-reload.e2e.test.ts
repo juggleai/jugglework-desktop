@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer } from "./server.js";
+import { readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ReloadEvent, ServerConfig } from "./types.js";
 
 const stops: Array<() => void | Promise<void>> = [];
@@ -112,5 +113,42 @@ describe("workspace config patch reload events", () => {
 
     const secondEvents = await readEvents(base, token);
     expect(secondEvents).toHaveLength(1);
+  });
+
+  test("compaction patches deep-merge and identical patches do not reload", async () => {
+    const root = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+    try {
+      const { base, token } = await startJuggleWorkServer(root);
+      await patchConfig(base, token, {
+        opencode: { compaction: { prune: false, reserved: 30_000 } },
+      });
+      await patchConfig(base, token, {
+        opencode: { compaction: { auto: false } },
+      });
+
+      const config = {
+        host: "127.0.0.1", port: 0, token, hostToken: "owt_host_token",
+        approval: { mode: "auto" as const, timeoutMs: 1000 }, corsOrigins: ["*"],
+        workspaces: [{ id: "ws_1", name: "Workspace", path: root, preset: "starter", workspaceType: "local" as const }],
+        authorizedRoots: [root], readOnly: false, startedAt: Date.now(),
+        tokenSource: "cli" as const, hostTokenSource: "cli" as const,
+        logFormat: "pretty" as const, logRequests: false,
+      };
+      expect((await readRuntimeOpencodeConfig(config, "ws_1")).compaction).toEqual({
+        auto: false,
+        prune: false,
+        reserved: 30_000,
+      });
+
+      const before = await readEvents(base, token);
+      await sleep(800);
+      await patchConfig(base, token, { opencode: { compaction: { auto: false } } });
+      expect(await readEvents(base, token)).toHaveLength(before.length);
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
   });
 });

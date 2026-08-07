@@ -69,7 +69,9 @@ describe("jugglework runtime config file", () => {
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("jugglework");
+    expect(parsed.compaction).toEqual({ prune: true, reserved: 20_000 });
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-context-overflow"))).toBe(true);
     expect(parsed.agent).toMatchObject({
       jugglework: {
         permission: {
@@ -182,5 +184,16 @@ describe("jugglework runtime config file", () => {
     const second = await buildJuggleWorkRuntimeConfig(config, "ws_1");
 
     expect(second).toBe(first);
+  });
+
+  test("preserves explicit compaction overrides over managed defaults", async () => {
+    const { config } = await setup();
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      compaction: { auto: false, prune: false, reserved: 30_000 },
+    }));
+
+    const parsed = JSON.parse(await buildJuggleWorkRuntimeConfig(config, "ws_1")) as Record<string, unknown>;
+    expect(parsed.compaction).toEqual({ auto: false, prune: false, reserved: 30_000 });
   });
 });
