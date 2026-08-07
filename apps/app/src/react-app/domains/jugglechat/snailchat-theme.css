@@ -1059,12 +1059,48 @@
   -webkit-app-region: no-drag;
 }
 .jw-im-group-modal-backdrop {
-  background: rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(1px);
+  -webkit-app-region: no-drag;
 }
 .jw-im-group-modal-backdrop > .jw-im-group-modal {
-  border: 1px solid var(--ui-border-strong);
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+  width: min(440px, calc(100% - 24px));
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 0;
+  border-left: 1px solid var(--ui-border-strong);
+  border-radius: 16px 0 0 16px;
+  box-shadow: -20px 0 60px rgba(15, 23, 42, 0.22);
+  animation: jw-im-group-drawer-in 180ms cubic-bezier(.22, .8, .3, 1) both;
+  -webkit-app-region: no-drag;
+}
+.jw-im-group-modal-backdrop > .jw-im-group-modal > header {
+  position: sticky;
+  z-index: 3;
+  top: -20px;
+  margin: -20px -20px 18px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  background: color-mix(in srgb, var(--ui-surface) 94%, transparent);
+  backdrop-filter: blur(14px);
+}
+.jw-im-group-modal-backdrop button,
+.jw-im-group-modal-backdrop input {
+  -webkit-app-region: no-drag;
+}
+@keyframes jw-im-group-drawer-in {
+  from { opacity: .82; transform: translateX(28px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jw-im-group-modal-backdrop > .jw-im-group-modal { animation: none; }
 }
 .jw-im-modal {
   border-color: var(--ui-border);
@@ -1082,12 +1118,6 @@
 .jw-im-member-picker > button.is-selected { background: var(--ui-hover); }
 .jw-im-group-section { border-color: var(--ui-border); }
 .jw-im-group-members > div { background: var(--ui-panel); }
-.jw-im-group-summary .jw-im-avatar {
-  border: 1px solid var(--ui-border);
-  border-radius: 50%;
-  background: var(--ui-soft);
-  box-shadow: var(--ui-shadow-sm);
-}
 .jw-im-group-section-title > button {
   color: var(--ui-text-secondary);
   background: var(--ui-soft);
