@@ -596,6 +596,9 @@ export type DesktopCommandMap = {
   };
   writeProjectInstructions: { args: [projectDir: string, content: string]; result: ExecResult };
 
+  /** 获取项目目录的 git 分支名称：分离 HEAD 时返回短 commit id，非 git 目录返回空字符串 */
+  getGitBranch: { args: [projectDir: string]; result: string };
+
   // Updater / config / resets
   updaterEnvironment: { args: []; result: UpdaterEnvironment };
   readOpencodeConfig: { args: [scope: string, projectDir?: string]; result: OpencodeConfigFile };

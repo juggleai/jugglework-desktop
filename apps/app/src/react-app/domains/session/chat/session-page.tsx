@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -11,7 +11,7 @@ import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den
 import { type JuggleWorkServerClient, type JuggleWorkServerStatus } from "../../../../app/lib/jugglework-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopPath, revealDesktopItemInDir, getGitBranch, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,
@@ -733,6 +733,44 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceDisplay.displayName?.trim() ||
     props.selectedWorkspaceDisplay.name?.trim() ||
     t("session.workspace_fallback");
+  // 会话头部的 git 分支信息：只有桌面端的本地工作区可读，远程工作区路径不在本机
+  const gitBranchEnabled =
+    isElectronRuntime() &&
+    props.selectedWorkspaceDisplay.workspaceType !== "remote" &&
+    Boolean(props.selectedWorkspaceRoot);
+  const [gitBranch, setGitBranch] = useState("");
+  const [gitBranchLoading, setGitBranchLoading] = useState(false);
+  useEffect(() => {
+    if (!gitBranchEnabled) {
+      setGitBranch("");
+      setGitBranchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const root = props.selectedWorkspaceRoot;
+    // TIPS: 首次/切换目录时进入 loading 占位；窗口重新聚焦时静默刷新，
+    // 这样在终端里切换分支后切回应用能同步，且不会让已有分支闪烁一下。
+    const load = (silent: boolean) => {
+      if (!silent) setGitBranchLoading(true);
+      getGitBranch(root)
+        .then((branch) => {
+          if (!cancelled) setGitBranch(branch);
+        })
+        .catch(() => {
+          if (!cancelled) setGitBranch("");
+        })
+        .finally(() => {
+          if (!cancelled) setGitBranchLoading(false);
+        });
+    };
+    load(false);
+    const refresh = () => load(true);
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [gitBranchEnabled, props.selectedWorkspaceRoot]);
   useEffect(() => {
     if (pendingConversationHistoryNavigation) {
       if (
@@ -1085,6 +1123,20 @@ export function SessionPage(props: SessionPageProps) {
               <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
                 {workspaceName}
               </span>
+              {gitBranchLoading ? (
+                <span
+                  aria-hidden
+                  className="hidden h-3 w-14 shrink-0 animate-pulse rounded-full bg-dls-hover/80 lg:inline-block"
+                />
+              ) : gitBranch ? (
+                <span
+                  className="hidden min-w-0 max-w-[180px] items-center gap-1 text-[12px] text-dls-secondary lg:inline-flex"
+                  title={gitBranch}
+                >
+                  <GitBranch size={12} className="shrink-0" />
+                  <span className="truncate">{gitBranch}</span>
+                </span>
+              ) : null}
               {props.developerMode ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}
