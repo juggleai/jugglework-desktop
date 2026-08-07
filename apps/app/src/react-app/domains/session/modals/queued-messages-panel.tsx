@@ -1,15 +1,16 @@
 /** @jsxImportSource react */
-import { ArrowUp, FileText, ListPlus, X } from "lucide-react";
+import { FileText, ListPlus, Pencil, X } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { t } from "@/i18n";
 import type { ComposerAttachment, ComposerDraft, ComposerPart } from "@/app/types";
+import type { QueuedComposerDraft } from "@/react-app/domains/session/surface/composer-state-store";
 
 export type QueuedMessagesPanelProps = {
-  drafts: ComposerDraft[];
-  onRemove: (index: number) => void;
-  onSendNow: (index: number) => void;
+  drafts: QueuedComposerDraft[];
+  onRemove: (id: string) => void;
+  onEdit: (id: string) => void;
   sending?: boolean;
 };
 
@@ -125,7 +126,7 @@ function QueuedAttachmentChip(props: { attachment: ComposerAttachment }) {
 /**
  * Shows the follow-up messages the user has queued while the agent is busy.
  * Rendered above the composer (mirrors the QuestionPanel header style). Each
- * entry can be sent immediately (arrow up) or removed (X).
+ * entry can be moved back into the composer for editing or cancelled.
  */
 export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
   if (props.drafts.length === 0) return null;
@@ -144,30 +145,35 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
       </div>
 
       <div className="max-h-48 space-y-2 overflow-auto px-4 py-3">
-        {props.drafts.map((draft, index) => (
+        {props.drafts.map((item, index) => (
             <div
-              key={index}
-              className="flex items-start justify-between gap-3 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2.5"
+              key={item.id}
+              className="group flex items-start justify-between gap-3 rounded-xl border border-gray-6/80 bg-gray-1/80 px-3 py-2.5 transition-colors hover:border-gray-7 hover:bg-gray-2/70"
             >
-              <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 text-gray-11">
-                <QueuedDraftContent draft={draft} />
+              <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-gray-3 font-mono text-[10px] tabular-nums text-gray-10">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 text-gray-11">
+                  <QueuedDraftContent draft={item.draft} />
+                </div>
               </div>
-              <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
+              <div className="mt-0.5 flex shrink-0 items-center gap-1 opacity-80 transition-opacity group-hover:opacity-100">
                 <button
                   type="button"
-                  onClick={() => props.onSendNow(index)}
+                  onClick={() => props.onEdit(item.id)}
                   disabled={props.sending}
-                  className="flex size-5 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-40"
-                  title={t("composer.queued_send_now")}
-                  aria-label={t("composer.queued_send_now")}
+                  className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] disabled:pointer-events-none disabled:opacity-40"
+                  title={t("common.edit")}
+                  aria-label={t("common.edit")}
                 >
-                  <ArrowUp size={13} />
+                  <Pencil size={13} />
                 </button>
                 <button
                   type="button"
-                  onClick={() => props.onRemove(index)}
+                  onClick={() => props.onRemove(item.id)}
                   disabled={props.sending}
-                  className="flex size-5 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 disabled:pointer-events-none disabled:opacity-40"
+                  className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-red-3 hover:text-red-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-8 disabled:pointer-events-none disabled:opacity-40"
                   title={t("common.remove")}
                   aria-label={t("common.remove")}
                 >
