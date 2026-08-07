@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync } from "node:fs";
@@ -1097,6 +1097,74 @@ function execResult(ok, stdout = "", stderr = "", status = ok ? 0 : 1) {
   return { ok, status, stdout, stderr };
 }
 
+/**
+ * 本机 git 是否可用：null 表示尚未探测，false 表示未安装（或不在 PATH 中）。
+ *
+ * TIPS: 未安装 git 时每次调用都会白白 spawn 一次进程，这里探测到 ENOENT 后就
+ * 记住结果，后续直接短路。若用户在应用运行期间才安装 git，需重启应用才生效。
+ */
+let gitExecutableAvailable = null;
+
+/**
+ * 在指定目录下异步执行一条 git 命令。
+ *
+ * TIPS: 必须走异步 execFile —— Electron 主进程是单线程的，同步执行会在慢盘、
+ * 网络盘或仓库很大时阻塞全部窗口与 IPC。任何失败（未安装 git、非仓库、超时）
+ * 都收敛为空字符串，不向调用方抛异常。
+ *
+ * @param {string} dir 执行目录（git 的 -C 参数）
+ * @param {string[]} gitArgs git 子命令参数
+ * @returns {Promise<string>} 标准输出（已 trim）；命令失败返回空字符串
+ */
+function runGit(dir, gitArgs) {
+  if (gitExecutableAvailable === false) return Promise.resolve("");
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        "git",
+        ["-C", dir, ...gitArgs],
+        { encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 1024 * 64 },
+        (error, stdout) => {
+          if (error) {
+            // ENOENT/EACCES 表示 git 本身不可用；其它错误（如 exit 128）说明 git 在、只是命令失败
+            const code = error.code;
+            if (code === "ENOENT" || code === "EACCES") gitExecutableAvailable = false;
+            else gitExecutableAvailable = true;
+            resolve("");
+            return;
+          }
+          gitExecutableAvailable = true;
+          resolve(String(stdout ?? "").trim());
+        },
+      );
+    } catch {
+      resolve("");
+    }
+  });
+}
+
+/**
+ * 获取指定目录的 git 分支名称。
+ *
+ * TIPS: 分离 HEAD（detached HEAD，如 checkout 到某个 commit/tag）下没有分支名，
+ * 退回展示短 commit id，避免显示成无意义的 "HEAD"。
+ *
+ * @param {string} projectDir 项目根目录
+ * @returns {Promise<string>} 分支名称；分离 HEAD 返回短 commit id；非 git 目录返回空字符串
+ */
+async function getGitBranch(projectDir) {
+  const dir = String(projectDir ?? "").trim();
+  if (!dir || !path.isAbsolute(dir)) return "";
+  if (!(await pathExists(dir))) return "";
+  // `branch --show-current` 在空仓库（尚无提交）下也能拿到分支名，分离 HEAD 时返回空串
+  const branch = await runGit(dir, ["branch", "--show-current"]);
+  if (branch) return branch;
+  // 走到这里有两种可能：分离 HEAD，或目录根本不是 git 仓库
+  const insideWorkTree = await runGit(dir, ["rev-parse", "--is-inside-work-tree"]);
+  if (insideWorkTree !== "true") return "";
+  return await runGit(dir, ["rev-parse", "--short", "HEAD"]);
+}
+
 async function pathExists(targetPath) {
   try {
     await stat(targetPath);
@@ -2084,6 +2152,9 @@ const desktopCommandHandlers = {
   },
   "skillhubInstall": async (event, ...args) => {
       return skillhubInstall(args[0] ?? {});
+  },
+  "getGitBranch": async (event, ...args) => {
+      return getGitBranch(String(args[0] ?? "").trim());
   },
   "readProjectInstructions": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();

@@ -109,6 +109,7 @@ import {
   isNeedsAttentionSessionStatus,
   isSessionArchived,
   partitionArchivedSessions,
+  resolveWorkspaceSessionIndicator,
   workspaceKindLabel,
   workspaceLabel,
 } from "./utils";
@@ -121,6 +122,7 @@ import {
   useWorkspaceGroups,
   type SessionGroupDefinition,
 } from "./session-management-store";
+import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
 import { setTaskScope, useTaskScope, workspaceTaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
@@ -920,6 +922,20 @@ export function AppSidebar(props: AppSidebarProps) {
       return sessions.length ? [{ ...group, sessions }] : [];
     });
   }, [props.workspaceSessionGroups, taskScope, trimmedSessionQuery]);
+  const unreadIds = useUnreadSessionIds();
+  const localWorkspaceIndicator = React.useMemo(
+    () => resolveWorkspaceSessionIndicator(
+      props.workspaceSessionGroups
+        .filter((group) => group.workspace.workspaceType === "local")
+        .flatMap((group) => group.sessions),
+      props.sessionStatusById,
+      unreadIds,
+    ),
+    [props.sessionStatusById, props.workspaceSessionGroups, unreadIds],
+  );
+  React.useEffect(() => {
+    useWorkspaceIndicatorStore.getState().setLocalWorkspaceIndicator(localWorkspaceIndicator);
+  }, [localWorkspaceIndicator]);
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();

@@ -2,16 +2,16 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
 import { JUGGLEWORK_EXTENSION_CATALOG } from "../../../../app/constants";
-import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
-import { type JuggleWorkServerClient, type JuggleWorkServerStatus } from "../../../../app/lib/jugglework-server";
+import { buildDenAuthUrl, readDenBootstrapConfig, readDenSettings } from "../../../../app/lib/den";
+import { type JuggleWorkServerClient } from "../../../../app/lib/jugglework-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopPath, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { openDesktopPath, revealDesktopItemInDir, getGitBranch, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   PendingPermission,
   PendingQuestion,
@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { usePlatform } from "../../../kernel/platform";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { resolveJuggleWorkConnectStatus } from "../../connections/jugglework-connect-status";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
@@ -53,7 +54,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
-import { StatusBar, type StatusBarProps } from "./status-bar";
+import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
 import { NotificationBell } from "../../../shell/notification-center";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
@@ -104,13 +105,31 @@ type PendingConversationHistoryNavigation = {
   targetSessionId: string;
 };
 
-type StatusBarOverrides = Pick<
-  StatusBarProps,
-  | "loading"
-  | "reloadBusy"
-  | "reloadError"
-  | "juggleWorkConnectState"
->;
+type StatusBarOverrides = {
+  loading?: boolean;
+  reloadBusy?: boolean;
+  reloadError?: string | null;
+  juggleWorkConnectState?: SessionCloudMcpMaintenanceState;
+};
+
+type ReadinessTone = "ready" | "pending" | "unavailable";
+
+/**
+ * 会话顶部综合准备状态：两项均就绪为绿，仅一项就绪为黄，两项均未就绪为红。
+ * @param taskReady 当前工作区是否可接受新任务
+ * @param connectReady JuggleWork Connect 是否准备完成
+ */
+function resolveReadinessTone(taskReady: boolean, connectReady: boolean): ReadinessTone {
+  if (taskReady && connectReady) return "ready";
+  if (taskReady || connectReady) return "pending";
+  return "unavailable";
+}
+
+function readinessDotClass(tone: ReadinessTone) {
+  if (tone === "ready") return "bg-green-9";
+  if (tone === "pending") return "bg-amber-9";
+  return "bg-red-9";
+}
 
 export type SessionPageHistoryControls = {
   canUndo: boolean;
@@ -204,7 +223,6 @@ export type SessionPageProps = {
   opencodeBaseUrl?: string | null;
   workspaces: WorkspaceInfo[];
   clientConnected: boolean;
-  juggleworkServerStatus: JuggleWorkServerStatus;
   juggleworkServerClient: JuggleWorkServerClient | null;
   environmentClient?: JuggleWorkServerClient | null;
   juggleworkServerToken?: string | null;
@@ -215,8 +233,6 @@ export type SessionPageProps = {
   providerConnectedIds: string[];
   hasUsableModel?: boolean;
   providers?: ProviderListItem[];
-  mcpConnectedCount: number;
-  onSendFeedback: () => void;
   onOpenSettings: () => void;
   sidebar: SessionPageSidebarProps;
   surface?: SessionPageSurfaceProps | null;
@@ -373,6 +389,30 @@ export function SessionPage(props: SessionPageProps) {
     [],
   );
   const voiceExtensionEnabled = voiceExtension ? isJuggleWorkExtensionEnabled(voiceExtension) : false;
+  const connectStatus = resolveJuggleWorkConnectStatus(
+    denAuth.isSignedIn
+      || (denAuth.status === "checking" && Boolean(readDenSettings().authToken?.trim())),
+    props.statusBar?.juggleWorkConnectState,
+  );
+  const taskReady = props.clientConnected && !props.statusBar?.loading && !props.statusBar?.reloadBusy && !props.statusBar?.reloadError;
+  const connectReady = connectStatus?.state === "ready";
+  const readinessTone = resolveReadinessTone(taskReady, connectReady);
+  const taskTone: ReadinessTone = taskReady
+    ? "ready"
+    : props.statusBar?.loading || props.statusBar?.reloadBusy
+      ? "pending"
+      : "unavailable";
+  const connectTone: ReadinessTone = connectReady
+    ? "ready"
+    : connectStatus?.state === "checking" || denAuth.status === "checking"
+      ? "pending"
+      : "unavailable";
+  const taskStatusLabel = taskReady
+    ? "Ready"
+    : taskTone === "pending"
+      ? "Checking"
+      : "Not ready";
+  const connectStatusLabel = connectStatus?.label ?? (denAuth.status === "checking" ? "Checking" : "Not ready");
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -733,6 +773,44 @@ export function SessionPage(props: SessionPageProps) {
     props.selectedWorkspaceDisplay.displayName?.trim() ||
     props.selectedWorkspaceDisplay.name?.trim() ||
     t("session.workspace_fallback");
+  // 会话头部的 git 分支信息：只有桌面端的本地工作区可读，远程工作区路径不在本机
+  const gitBranchEnabled =
+    isElectronRuntime() &&
+    props.selectedWorkspaceDisplay.workspaceType !== "remote" &&
+    Boolean(props.selectedWorkspaceRoot);
+  const [gitBranch, setGitBranch] = useState("");
+  const [gitBranchLoading, setGitBranchLoading] = useState(false);
+  useEffect(() => {
+    if (!gitBranchEnabled) {
+      setGitBranch("");
+      setGitBranchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const root = props.selectedWorkspaceRoot;
+    // TIPS: 首次/切换目录时进入 loading 占位；窗口重新聚焦时静默刷新，
+    // 这样在终端里切换分支后切回应用能同步，且不会让已有分支闪烁一下。
+    const load = (silent: boolean) => {
+      if (!silent) setGitBranchLoading(true);
+      getGitBranch(root)
+        .then((branch) => {
+          if (!cancelled) setGitBranch(branch);
+        })
+        .catch(() => {
+          if (!cancelled) setGitBranch("");
+        })
+        .finally(() => {
+          if (!cancelled) setGitBranchLoading(false);
+        });
+    };
+    load(false);
+    const refresh = () => load(true);
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [gitBranchEnabled, props.selectedWorkspaceRoot]);
   useEffect(() => {
     if (pendingConversationHistoryNavigation) {
       if (
@@ -1077,6 +1155,31 @@ export function SessionPage(props: SessionPageProps) {
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
               {shellConfig.sidebar && !sidebarOpen ? <SidebarTrigger className="hidden mac:flex titlebar-no-drag" /> : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={(
+                    <span
+                      data-testid="session-readiness-status"
+                      className={cn(
+                        "inline-flex size-2.5 shrink-0 rounded-full mac:titlebar-no-drag",
+                        readinessTone === "ready" && "bg-green-9",
+                        readinessTone === "pending" && "bg-amber-9",
+                        readinessTone === "unavailable" && "bg-red-9",
+                      )}
+                    />
+                  )}
+                />
+                <TooltipContent side="bottom" align="start" className="flex-col items-start gap-2 py-2">
+                  <span className="flex items-center gap-2 whitespace-nowrap">
+                    <span className={cn("size-2 rounded-full", readinessDotClass(taskTone))} />
+                    <span>{t("status.ready_for_tasks")}: {taskStatusLabel}</span>
+                  </span>
+                  <span className="flex items-center gap-2 whitespace-nowrap">
+                    <span className={cn("size-2 rounded-full", readinessDotClass(connectTone))} />
+                    <span>JuggleWork Connect: {connectStatusLabel}</span>
+                  </span>
+                </TooltipContent>
+              </Tooltip>
               <h1 className="truncate text-[15px] font-semibold text-dls-text">
                 {showWorkspaceSetupEmptyState
                   ? t("session.create_or_connect_workspace")
@@ -1085,6 +1188,20 @@ export function SessionPage(props: SessionPageProps) {
               <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
                 {workspaceName}
               </span>
+              {gitBranchLoading ? (
+                <span
+                  aria-hidden
+                  className="hidden h-3 w-14 shrink-0 animate-pulse rounded-full bg-dls-hover/80 lg:inline-block"
+                />
+              ) : gitBranch ? (
+                <span
+                  className="hidden min-w-0 max-w-[180px] items-center gap-1 text-[12px] text-dls-secondary lg:inline-flex"
+                  title={gitBranch}
+                >
+                  <GitBranch size={12} className="shrink-0" />
+                  <span className="truncate">{gitBranch}</span>
+                </span>
+              ) : null}
               {props.developerMode ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}
@@ -1518,21 +1635,6 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
 
-          {shellConfig.statusBar ? (
-            <StatusBar
-              clientConnected={props.clientConnected}
-              juggleworkServerStatus={props.juggleworkServerStatus}
-              developerMode={props.developerMode}
-              showConnectionStatus={Boolean(props.selectedWorkspaceId)}
-              onSendFeedback={props.onSendFeedback}
-              providerConnectedIds={props.providerConnectedIds}
-              mcpConnectedCount={props.mcpConnectedCount}
-              loading={props.statusBar?.loading ?? false}
-              reloadBusy={props.statusBar?.reloadBusy}
-              reloadError={props.statusBar?.reloadError}
-              juggleWorkConnectState={props.statusBar?.juggleWorkConnectState}
-            />
-          ) : null}
               </main>
             </ResizablePanel>
               {sidePanelOpen ? (

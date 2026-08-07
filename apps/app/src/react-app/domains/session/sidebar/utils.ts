@@ -36,6 +36,29 @@ export const isStreamingSessionStatus = (status: string | undefined) =>
 export const isNeedsAttentionSessionStatus = (status: string | undefined) =>
   status === "waiting";
 
+export type WorkspaceSessionIndicator = "running" | "unread" | null;
+
+/**
+ * 汇总工作区内全部会话的状态指示。
+ * @param sessions 工作区内的会话列表
+ * @param sessionStatusById 会话运行状态映射
+ * @param unreadSessionIds 尚未查看结果的会话 id 集合
+ * @returns 运行中优先显示黄色状态，其次显示绿色未读状态，否则不显示
+ */
+export function resolveWorkspaceSessionIndicator(
+  sessions: WorkspaceSessionGroup["sessions"],
+  sessionStatusById: Record<string, string> | undefined,
+  unreadSessionIds: ReadonlySet<string>,
+): WorkspaceSessionIndicator {
+  if (sessions.some((session) => isActiveWorkSessionStatus(sessionStatusById?.[session.id]))) {
+    return "running";
+  }
+  if (sessions.some((session) => unreadSessionIds.has(session.id))) {
+    return "unread";
+  }
+  return null;
+}
+
 export function formatSessionRelativeTime(updatedAt: number | null | undefined): string | null {
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt) || updatedAt <= 0) return null;
   const ms = updatedAt < 1_000_000_000_000 ? updatedAt * 1000 : updatedAt;

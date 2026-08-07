@@ -58,7 +58,6 @@ import type {
   WorkspaceDisplay,
   WorkspaceSessionGroup,
 } from "@/app/types";
-import { buildFeedbackUrl } from "@/app/lib/feedback";
 import {
   getWorkspaceTaskLoadErrorDisplay,
   isDesktopRuntime,
@@ -132,7 +131,6 @@ import {
   disabledProvidersFromConfig,
   updateManagedDisabledProviders,
 } from "@/react-app/domains/connections/managed-engine-config";
-import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
 import { useSessionMcpMaintenance } from "@/react-app/domains/connections/use-session-mcp-maintenance";
 import { useCloudMcpSubmitReadiness } from "@/react-app/domains/connections/use-cloud-mcp-submit-readiness";
 import type { CloudMcpSubmissionResult } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
@@ -760,7 +758,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     return next;
   }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
 
-  const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot);
   const providerListQuery = useProviderListQuery({
     client: opencodeClient,
     baseUrl: opencodeBaseUrl,
@@ -2169,7 +2166,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       opencodeBaseUrl={opencodeBaseUrl}
       workspaces={workspaces}
       clientConnected={canCreateTask}
-      juggleworkServerStatus={client ? "connected" : "disconnected"}
       juggleworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
       environmentClient={client}
       juggleworkServerToken={selectedWorkspaceServerToken}
@@ -2180,14 +2176,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       providerConnectedIds={providerConnectedIds}
       hasUsableModel={hasUsableModel}
       providers={providers}
-      mcpConnectedCount={mcpConnectedCount}
-      onSendFeedback={() => {
-        platform.openLink(
-          buildFeedbackUrl({
-            entrypoint: "status-bar",
-          }),
-        );
-      }}
       onOpenSettings={() => handleOpenSettings("/settings/general")}
       onOpenProviderAuth={() => sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer" })}
       providerAuthModal={sessionProviderAuthSnapshot.providerAuthModalOpen ? {

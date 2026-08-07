@@ -16,6 +16,8 @@ import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
+import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
+import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
@@ -44,6 +46,7 @@ type RailButtonProps = {
   children: React.ReactNode;
   testId?: string;
   badge?: number;
+  statusIndicator?: WorkspaceSessionIndicator;
 };
 
 function RailButton({
@@ -54,6 +57,7 @@ function RailButton({
   children,
   testId,
   badge = 0,
+  statusIndicator = null,
 }: RailButtonProps) {
   return (
     <button
@@ -71,6 +75,20 @@ function RailButton({
       )}
     >
       {children}
+      {statusIndicator ? (
+        <span
+          className="absolute right-0.5 top-0.5 flex size-2.5 items-center justify-center"
+          title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
+          aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
+        >
+          {statusIndicator === "running" ? (
+            <span className="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2">
+              <span className="block size-full animate-ping rounded-full bg-green-9/35" />
+            </span>
+          ) : null}
+          <span className="relative size-2.5 rounded-full bg-green-9" />
+        </span>
+      ) : null}
       {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={`${badge} 条未读消息`}>{badge > 99 ? "99+" : badge}</span> : null}
     </button>
   );
@@ -80,6 +98,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const { user } = useDenAuth();
   const brandLogoUrl = useBrandLogoUrl();
   const taskScope = useTaskScope();
+  const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
@@ -144,6 +163,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={props.homeActive && taskScope === "local"}
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
+          statusIndicator={localWorkspaceIndicator}
         >
           <FolderKanban />
         </RailButton>

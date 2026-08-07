@@ -4,6 +4,7 @@ import type { SidebarSessionItem } from "../src/app/types";
 import {
   buildSessionTreeState,
   flattenSessionRows,
+  resolveWorkspaceSessionIndicator,
 } from "../src/react-app/domains/session/sidebar/utils";
 
 const sessions: SidebarSessionItem[] = [
@@ -60,5 +61,31 @@ describe("global session pinning", () => {
     );
 
     expect(rows.map((row) => row.session.id)).toEqual(["session-b"]);
+  });
+});
+
+describe("workspace session indicator", () => {
+  test("prioritizes running work across multiple sessions", () => {
+    expect(resolveWorkspaceSessionIndicator(
+      sessions,
+      { "session-a": "idle", "session-b": "responding" },
+      new Set(["session-a"]),
+    )).toBe("running");
+  });
+
+  test("shows unread after every session becomes idle", () => {
+    expect(resolveWorkspaceSessionIndicator(
+      sessions,
+      { "session-a": "idle", "session-b": "idle" },
+      new Set(["session-a"]),
+    )).toBe("unread");
+  });
+
+  test("hides the indicator after all results are read", () => {
+    expect(resolveWorkspaceSessionIndicator(
+      sessions,
+      { "session-a": "idle", "session-b": "idle" },
+      new Set(),
+    )).toBeNull();
   });
 });
