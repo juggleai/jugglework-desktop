@@ -1093,12 +1093,39 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const unreadable = sized.filter((file) => !isAttachmentFileReadable(file));
     const accepted = sized.filter(isAttachmentFileReadable);
     if (unreadable.length) {
-      toast.warning(
-        unreadable.length === 1
-          ? `${unreadable[0]?.name ?? "File"} has a format the model can't read`
-          : `${unreadable.length} files have formats the model can't read`,
-        { description: t("composer.any_file_type_supported") },
-      );
+      // TIPS: 模型不可读的二进制文件（如 zip）在 Electron 环境下可通过 webUtils 获取完整路径，
+      // 直接将路径作为文本插入输入框（类似终端粘贴路径），而非弹警告拒绝。
+      const electronBridge = (window as Window & {
+        __JUGGLEWORK_ELECTRON__?: { file?: { getPathForFile?: (file: File) => string } };
+      }).__JUGGLEWORK_ELECTRON__;
+      const paths = unreadable
+        .map((file) => {
+          // 优先使用 Electron 32+ 的 webUtils.getPathForFile（替代已废弃的 File.path）
+          try {
+            const p = electronBridge?.file?.getPathForFile?.(file);
+            if (typeof p === "string" && p.trim()) return p.trim();
+          } catch {
+            // fallthrough to legacy
+          }
+          // 回退：旧版 Electron 的 File.path 扩展属性
+          const legacy = (file as File & { path?: unknown }).path;
+          return typeof legacy === "string" && legacy.trim() ? legacy.trim() : null;
+        })
+        .filter((p): p is string => p !== null);
+
+      if (paths.length) {
+        setComposerDraft(
+          props.sessionId,
+          `${draft}${draft && !draft.endsWith("\n") ? "\n" : ""}${paths.join("\n")}`,
+        );
+      } else {
+        toast.warning(
+          unreadable.length === 1
+            ? `${unreadable[0]?.name ?? "File"} has a format the model can't read`
+            : `${unreadable.length} files have formats the model can't read`,
+          { description: t("composer.any_file_type_supported") },
+        );
+      }
     }
     if (!accepted.length) return;
     const next = accepted.map((file) => {
