@@ -7,23 +7,28 @@ export type ComposerSlashCommandOption = SlashCommandOption & {
   skill?: SkillCard;
 };
 
-export function withBuiltinCompactCommand(
+export function withBuiltinSlashCommands(
   commands: SlashCommandOption[],
-  description: string,
+  builtins: readonly SlashCommandOption[],
 ): SlashCommandOption[] {
-  if (commands.some((command) => command.name.trim().toLowerCase() === "compact")) {
-    return commands;
-  }
+  const seen = new Set(commands.map((command) => command.name.trim().toLowerCase()));
+  const missing = builtins.filter((command) => {
+    const name = command.name.trim().toLowerCase();
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+  return missing.length ? [...missing, ...commands] : commands;
+}
 
-  return [
-    {
-      id: "builtin:compact",
-      name: "compact",
-      description,
-      source: "command",
-    },
-    ...commands,
-  ];
+export function isNewSessionCommand(
+  command: { name: string; arguments: string } | null | undefined,
+) {
+  if (command?.name.trim().toLowerCase() !== "new") return false;
+  if (command.arguments.trim()) {
+    throw new Error("/new does not accept arguments.");
+  }
+  return true;
 }
 
 function slashSafeName(name: string, fallback: string, preferredName?: string) {

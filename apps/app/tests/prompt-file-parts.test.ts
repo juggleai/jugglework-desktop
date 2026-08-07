@@ -4,10 +4,11 @@ import { firstLineLocalFileParts } from "../src/react-app/domains/session/sync/p
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
+  isNewSessionCommand,
   parseSlashCommandInvocation,
   skillMenuSlashCommandName,
   skillSlashCommandName,
-  withBuiltinCompactCommand,
+  withBuiltinSlashCommands,
 } from "../src/react-app/domains/session/surface/composer/slash-command";
 
 describe("first-line local file parts", () => {
@@ -69,6 +70,7 @@ describe("first-line local file parts", () => {
 describe("slash-command parsing", () => {
   test("parses command invocations", () => {
     expect(parseSlashCommandInvocation("/compact")).toEqual({ name: "compact", arguments: "" });
+    expect(parseSlashCommandInvocation("/new")).toEqual({ name: "new", arguments: "" });
     expect(parseSlashCommandInvocation("/review this diff")).toEqual({ name: "review", arguments: "this diff" });
   });
 
@@ -79,13 +81,24 @@ describe("slash-command parsing", () => {
 });
 
 describe("built-in slash commands", () => {
-  test("adds compact when the engine command list omits it", () => {
+  const builtins = [
+    { id: "builtin:new", name: "new", description: "Start a new session.", source: "command" as const },
+    { id: "builtin:compact", name: "compact", description: "Reduce context size.", source: "command" as const },
+  ];
+
+  test("adds new and compact when the engine command list omits them", () => {
     expect(
-      withBuiltinCompactCommand(
+      withBuiltinSlashCommands(
         [{ id: "cmd:review", name: "review", source: "command" }],
-        "Reduce context size.",
+        builtins,
       ),
     ).toEqual([
+      {
+        id: "builtin:new",
+        name: "new",
+        description: "Start a new session.",
+        source: "command",
+      },
       {
         id: "builtin:compact",
         name: "compact",
@@ -96,12 +109,21 @@ describe("built-in slash commands", () => {
     ]);
   });
 
-  test("preserves an engine-provided compact command without duplication", () => {
+  test("preserves engine-provided built-ins without duplication", () => {
     const commands = [
+      { id: "cmd:new", name: " NEW ", description: "Engine new", source: "command" as const },
       { id: "cmd:compact", name: " Compact ", description: "Engine compact", source: "command" as const },
     ];
 
-    expect(withBuiltinCompactCommand(commands, "Built-in compact")).toBe(commands);
+    expect(withBuiltinSlashCommands(commands, builtins)).toBe(commands);
+  });
+
+  test("recognizes new as a reserved no-argument interface command", () => {
+    expect(isNewSessionCommand({ name: " New ", arguments: "" })).toBe(true);
+    expect(isNewSessionCommand({ name: "review", arguments: "new" })).toBe(false);
+    expect(() => isNewSessionCommand({ name: "new", arguments: "task title" })).toThrow(
+      "/new does not accept arguments.",
+    );
   });
 });
 

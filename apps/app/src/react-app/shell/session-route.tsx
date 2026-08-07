@@ -20,7 +20,8 @@ import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
+import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
+import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -1100,6 +1101,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const targetChoice = resolveModelForSession(targetSessionId);
         const targetModel = targetChoice.model;
         const targetVariant = describeModel(targetModel, targetChoice.variant).modelVariantValue;
+        if (isNewSessionCommand(draft.command)) {
+          throw new Error("/new must be handled by the session interface.");
+        }
+        const isCompactCommand = isCompactSessionCommand(draft.command);
+        if (isCompactCommand && !targetModel) {
+          throw new Error("Choose a model before compacting this session.");
+        }
         if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
         return submitWithCloudMcpReadiness({
@@ -1132,6 +1140,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
             if (draft.mode === "shell") {
               await shellInSession(opencodeClient, targetSessionId, text);
+              return;
+            }
+
+            if (isCompactCommand && targetModel) {
+              await compactSession(opencodeClient, targetSessionId, targetModel, {
+                directory: selectedWorkspaceRoot || undefined,
+                variant: targetVariant ?? undefined,
+              });
               return;
             }
 
@@ -2356,7 +2372,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onOpenChat: () => navigate(workspaceChatRoute(sidebarActiveWorkspaceId)),
         onReorderWorkspaces: handleReorderWorkspaces,
       }}
-      surface={surfaceProps}
+      surface={surfaceProps ? {
+        ...surfaceProps,
+        onCreateNewSession: () => handleCreateTaskInWorkspace(selectedWorkspaceId),
+      } : null}
       history={{
         canUndo: false,
         canRedo: false,

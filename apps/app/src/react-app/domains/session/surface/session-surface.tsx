@@ -43,7 +43,7 @@ import type {
 import { ReactSessionComposer } from "./composer/composer";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
-import { parseSlashCommandInvocation, withBuiltinCompactCommand } from "./composer/slash-command";
+import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { PaperGrainGradient } from "@jugglework/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
@@ -167,6 +167,7 @@ export type SessionSurfaceProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  onCreateNewSession: () => Promise<string | null>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
   onDraftChange: (draft: ComposerDraft) => void;
@@ -938,6 +939,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const nextDraft = buildDraft(text, attachments);
     const sentAttachments = attachments;
     try {
+      if (isNewSessionCommand(nextDraft.command)) {
+        const sessionId = await props.onCreateNewSession();
+        if (!sessionId) return;
+        const currentState = useComposerStateStore.getState();
+        const currentDraft = getComposerDraft(currentState, props.sessionId);
+        const currentAttachments = getComposerAttachments(currentState, props.sessionId);
+        if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments)) {
+          clearComposer();
+          sentAttachments.forEach(revokeAttachmentPreview);
+        }
+        return;
+      }
+
       const result = await sendDraft(nextDraft);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return;
       const currentState = useComposerStateStore.getState();
@@ -952,9 +966,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           .filter((attachment) => !retainedIds.has(attachment.id))
           .forEach(revokeAttachmentPreview);
       }
-    } catch {
+    } catch (nextError) {
+      setError(parseSessionError(nextError));
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.sessionId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, sendDraft]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -1306,9 +1321,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, []);
 
   const listCommands = useCallback(async (): Promise<SlashCommandOption[]> => {
-    const localCommands = withBuiltinCompactCommand(
+    const localCommands = withBuiltinSlashCommands(
       await props.listCommands(),
-      t("app.compact_command_desc"),
+      [
+        {
+          id: "builtin:new",
+          name: "new",
+          description: t("session.cmd_new_session_detail"),
+          source: "command",
+        },
+        {
+          id: "builtin:compact",
+          name: "compact",
+          description: t("app.compact_command_desc"),
+          source: "command",
+        },
+      ],
     );
     try {
       const [connect, config] = await Promise.all([

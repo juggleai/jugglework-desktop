@@ -11,6 +11,16 @@ import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { Client, ModelRef } from "../types";
 import { unwrap } from "./opencode";
 
+export function isCompactSessionCommand(
+  command: { name: string; arguments: string } | null | undefined,
+) {
+  if (command?.name.trim().toLowerCase() !== "compact") return false;
+  if (command.arguments.trim()) {
+    throw new Error("/compact does not accept arguments.");
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Session helpers
 // ---------------------------------------------------------------------------
@@ -116,7 +126,7 @@ export async function compactSession(
   client: Client,
   sessionID: string,
   model: ModelRef,
-  options?: { directory?: string },
+  options?: { directory?: string; variant?: string },
 ): Promise<void> {
   const session = client.session as { summarize?: (input: {
     sessionID: string;
@@ -143,6 +153,7 @@ export async function compactSession(
     arguments: "",
     model: modelString,
     directory: options?.directory,
+    variant: options?.variant,
   });
   assertNoClientError(result);
 }
