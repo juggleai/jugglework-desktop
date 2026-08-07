@@ -22,6 +22,7 @@ import {
   juggleworkAnthropicToolSchemaPluginPath,
   juggleworkOfficeAttachmentsPluginPath,
   juggleworkSafeGrepPluginPath,
+  juggleworkContextOverflowPluginPath,
 } from "./jugglework-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -99,6 +100,11 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   return {
     ...runtimeConfig,
+    compaction: {
+      prune: true,
+      reserved: 20_000,
+      ...runtimeConfig.compaction,
+    },
     default_agent: runtimeConfig.default_agent ?? "jugglework",
     agent: {
       jugglework: {
@@ -127,6 +133,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       juggleworkAnthropicAdaptiveThinkingPluginPath(),
       juggleworkAnthropicToolSchemaPluginPath(),
       juggleworkSafeGrepPluginPath(),
+      juggleworkContextOverflowPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

@@ -211,7 +211,7 @@ function readStringField(value: unknown, key: string): string {
 }
 
 const LEGACY_RUNTIME_CONFIG_KEYS = ["plugin", "mcp", "permission", "provider"] as const;
-const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "mcp", "disabled_providers", "provider"] as const;
+const USER_OPENCODE_RUNTIME_CONFIG_KEYS = ["default_agent", "plugin", "mcp", "disabled_providers", "provider", "compaction"] as const;
 
 type LegacyRuntimeConfigKey = typeof LEGACY_RUNTIME_CONFIG_KEYS[number];
 type UserOpencodeRuntimeConfigKey = typeof USER_OPENCODE_RUNTIME_CONFIG_KEYS[number];
@@ -273,12 +273,14 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
     ? opencode.disabled_providers.filter((item) => typeof item === "string")
     : undefined;
   const provider = isRecord(opencode.provider) ? opencode.provider : undefined;
+  const compaction = isRecord(opencode.compaction) ? opencode.compaction : undefined;
 
   if (defaultAgent) keys.push("default_agent");
   if (Array.isArray(opencode.plugin)) keys.push("plugin");
   if (Object.keys(mcp).length) keys.push("mcp");
   if (Array.isArray(opencode.disabled_providers)) keys.push("disabled_providers");
   if (isRecord(opencode.provider)) keys.push("provider");
+  if (isRecord(opencode.compaction)) keys.push("compaction");
 
   return {
     keys,
@@ -288,6 +290,7 @@ function userRuntimeConfigFromOpencodeConfig(opencode: Record<string, unknown>):
       ...(Object.keys(mcp).length ? { mcp } : {}),
       ...(disabledProviders?.length ? { disabled_providers: disabledProviders } : {}),
       ...(provider && Object.keys(provider).length ? { provider } : {}),
+      ...(compaction && Object.keys(compaction).length ? { compaction } : {}),
     },
   };
 }
@@ -309,6 +312,7 @@ function runtimeConfigKeys(config: RuntimeOpencodeConfig): string[] {
     keys.push("permission");
   }
   if (isRecord(config.provider) && Object.keys(config.provider).length) keys.push("provider");
+  if (isRecord(config.compaction) && Object.keys(config.compaction).length) keys.push("compaction");
   return keys;
 }
 
@@ -413,6 +417,10 @@ function mergeLegacyRuntimeConfig(
     provider: {
       ...(isRecord(legacy.provider) ? legacy.provider : {}),
       ...(isRecord(current.provider) ? current.provider : {}),
+    },
+    compaction: {
+      ...(isRecord(legacy.compaction) ? legacy.compaction : {}),
+      ...(isRecord(current.compaction) ? current.compaction : {}),
     },
   };
 }
@@ -2140,7 +2148,7 @@ function createRoutes(
     if (opencode) {
       const configPath = juggleworkConfigPath(workspace.path);
       const nextOpencode = ensurePlainObject(opencode);
-      const { permission, provider, ...topLevelUpdates } = nextOpencode;
+      const { permission, provider, compaction, ...topLevelUpdates } = nextOpencode;
       const logicalUpdates: Record<string, unknown> = { ...topLevelUpdates };
 
       // Per-provider merge: record values upsert, explicit `null` deletes
@@ -2150,6 +2158,14 @@ function createRoutes(
       if (Object.keys(providerUpdate).length) {
         const currentRuntime = await readRuntimeOpencodeConfig(config, workspace.id);
         logicalUpdates.provider = mergeRuntimeProviderUpdate(currentRuntime.provider, providerUpdate);
+      }
+
+      if (isRecord(compaction)) {
+        const currentRuntime = await readRuntimeOpencodeConfig(config, workspace.id);
+        logicalUpdates.compaction = {
+          ...(isRecord(currentRuntime.compaction) ? currentRuntime.compaction : {}),
+          ...compaction,
+        };
       }
 
       const permissionUpdate = ensurePlainObject(permission);
