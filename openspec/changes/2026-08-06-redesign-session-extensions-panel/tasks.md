@@ -74,3 +74,10 @@
 - [x] 9.6 技能中心搜索框移至「选择技能」标题右侧紧邻位置
 - [x] 9.7 面板默认宽度改为独立窄常量（不再复用浏览器面板记忆宽度）；`SettingsContent` 新增 compact 模式去掉视口断点内边距并横向撑满；面板与分组卡片内边距收紧
 - [x] 9.8 连接器弹窗右上角新增「+ 添加」下拉：`自定义 MCP` 复用 `AddMcpModal` 并走 `connectMcp`；`从 MCP 中心添加` 置灰待实现
+- [x] 9.9 技能弹窗新增 `本地已安装 / 云端运行` 页签；云端页复用 `CloudMarketplacesView`（新增 `skillsOnly` + `hideSectionHeader`），经 `cloudSkillsSlot` 由宿主注入
+- [x] 9.10 本地页数据源改为 `extensionsSnapshot.skills`（`listLocalSkills` 全量）：不再用会折叠云端插件技能的 `extensionItems.installedSkills`，也不再混入 `connectCapabilities.skills`
+- [x] 9.11 技能卡片按 `scope` 打「本工作区 / 全局」标签
+- [x] 9.12 市场筛选、空态与详情操作按钮文案本地化（zh + en）
+- [x] 9.13 连接器行整体可点击并打开 `ExtensionDetailModal`，字段与扩展页 MCP 详情对齐（manifest 经 `ConnectorRow.entry` 传递，`configSlotForEntry` 透传）；行内按钮阻止冒泡
+- [x] 9.14 连接器头像按「品牌图标 → 域名 favicon → 名称哈希占位」解析，已装 MCP 回查目录项复用图标与描述
+- [x] 9.15 市场搜索/筛选判据抽为纯函数 `matchesMarketplaceFilters` 并补单测

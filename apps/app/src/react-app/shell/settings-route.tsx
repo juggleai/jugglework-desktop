@@ -2302,14 +2302,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });
-          const projectSkills = [
-            ...extensionItems.installedSkills,
-            ...connectCapabilities.skills.filter(
-              (skill) => !extensionItems.installedSkills.some(
-                (installed) => installed.name.toLowerCase() === skill.name.toLowerCase(),
-              ),
-            ),
-          ];
+          // TIPS: 「本地已安装」= listLocalSkills 的完整结果（本工作区 + 全局，带 scope）。
+          // 不能用 extensionItems.installedSkills：那份列表会把「属于某个云端市场包」的技能
+          // 剔除（旧扩展页把它们折叠进插件卡片），导致刚安装到工作区的市场技能不显示。
+          // JuggleWork Connect 下发的云端技能则归「云端运行」页，不混入本地列表。
+          const projectSkills = extensionsSnapshot.skills;
           return (
             <ProjectExtensionsPanel
               projectDir={selectedWorkspaceRoot}
@@ -2318,7 +2315,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               connectors={projectConnectors}
               connectorError={orgMcpConnections.error}
               onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
+              configSlotForConnector={extensionController.configSlotForEntry}
               installedSkills={projectSkills}
+              cloudSkillsSlot={(
+                <CloudMarketplacesView
+                  extensions={extensionsStore}
+                  onOpenAccount={openCloudAccountSettings}
+                  session={denSession}
+                  skillsOnly
+                  hideSectionHeader
+                />
+              )}
               onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
               onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}
               onUploadSkill={async () => {

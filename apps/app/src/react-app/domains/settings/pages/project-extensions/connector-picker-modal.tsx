@@ -1,6 +1,9 @@
 /** @jsxImportSource react */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, Loader2, Plug2, Plus, Store } from "lucide-react";
+import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
+import { ExtensionMeshAvatar } from "@/react-app/design-system/extension-mesh-avatar";
+import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 
 import {
   Dialog,
@@ -20,20 +23,56 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import type { McpDirectoryInfo } from "@/app/constants";
 import { AddMcpModal } from "@/react-app/domains/connections/modals/add-mcp-modal";
+import {
+  isJuggleWorkExtensionHidden,
+  setJuggleWorkExtensionHidden,
+} from "@/react-app/domains/settings/extension-state";
 import type { ConnectorRow } from "./types";
 
-function ConnectorItem({ row }: { row: ConnectorRow }) {
+/** 连接器头像：品牌图标 → 服务域名 favicon → 名称哈希占位，与扩展卡片同一套解析规则。 */
+function ConnectorIcon({ row }: { row: ConnectorRow }) {
+  const iconUrl = resolveExtensionIconUrl({
+    iconSrc: row.iconSrc,
+    iconSlug: row.iconSlug,
+    serviceUrl: row.url,
+  });
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2.5">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-dls-bg text-dls-secondary">
+    <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dls-border bg-dls-bg text-dls-secondary">
+      {iconUrl ? (
+        <span className="flex size-6 items-center justify-center rounded-md bg-white">
+          <img src={iconUrl} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} />
+        </span>
+      ) : row.name ? (
+        <ExtensionMeshAvatar name={row.name} category="mcp" className="size-6 rounded-md" />
+      ) : (
         <Plug2 className="size-4" />
-      </span>
+      )}
+    </span>
+  );
+}
+
+function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail: (row: ConnectorRow) => void }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenDetail(row)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onOpenDetail(row);
+      }}
+      className="flex cursor-pointer items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2.5 transition-colors hover:border-dls-border-hover hover:bg-dls-hover"
+    >
+      <ConnectorIcon row={row} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-dls-text">{row.name}</p>
         {row.description ? (
           <p className="truncate text-xs text-dls-secondary">{row.description}</p>
         ) : null}
       </div>
+      {/* TIPS: 行本身可点开详情，行内按钮需阻止冒泡，否则点「连接」会同时弹出详情。 */}
+      <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
       {row.connected ? (
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 rounded-full bg-green-3 px-2 py-0.5 text-xs text-green-11">
@@ -64,6 +103,7 @@ function ConnectorItem({ row }: { row: ConnectorRow }) {
           {t("project_extensions.connect")}
         </Button>
       )}
+      </div>
     </div>
   );
 }
@@ -79,16 +119,18 @@ function ConnectorItem({ row }: { row: ConnectorRow }) {
  * @param onAddCustomMcp 添加自定义 MCP
  * @param onClose 关闭回调
  */
-export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWorkspace, onAddCustomMcp, onClose }: {
+export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWorkspace, onAddCustomMcp, configSlotForEntry, onClose }: {
   open: boolean;
   connectors: ConnectorRow[];
   error?: string | null;
   busy?: boolean;
   isRemoteWorkspace?: boolean;
   onAddCustomMcp?: (entry: McpDirectoryInfo) => void | Promise<void>;
+  configSlotForEntry?: (entry: McpDirectoryInfo) => ReactNode | null;
   onClose: () => void;
 }) {
   const [addCustomOpen, setAddCustomOpen] = useState(false);
+  const [detailKey, setDetailKey] = useState<string | null>(null);
 
   const { connected, unconnected } = useMemo(() => {
     const connectedRows = connectors.filter((row) => row.connected);
@@ -96,9 +138,15 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
     return { connected: connectedRows, unconnected: unconnectedRows };
   }, [connectors]);
 
+  // TIPS: 详情按 key 回查而非存快照，连接/断开后状态才会实时反映到已打开的详情里。
+  const detailRow = useMemo(
+    () => connectors.find((row) => row.key === detailKey) ?? null,
+    [connectors, detailKey],
+  );
+
   return (
     <>
-      <Dialog open={open && !addCustomOpen} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog open={open && !addCustomOpen && !detailRow} onOpenChange={(next) => { if (!next) onClose(); }}>
         <DialogContent className="max-w-[750px] sm:max-w-[750px]">
           <DialogHeader className="gap-2 space-y-0">
             <div className="flex items-center justify-between gap-4 pr-8">
@@ -148,12 +196,14 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
               count={connected.length}
               rows={connected}
               emptyLabel={t("project_extensions.no_connected")}
+              onOpenDetail={(row) => setDetailKey(row.key)}
             />
             <ConnectorGroup
               title={t("project_extensions.unconnected_group")}
               count={unconnected.length}
               rows={unconnected}
               emptyLabel={t("project_extensions.no_unconnected")}
+              onOpenDetail={(row) => setDetailKey(row.key)}
             />
           </div>
         </DialogContent>
@@ -166,15 +216,69 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
         onAdd={(entry) => { void onAddCustomMcp?.(entry); }}
         onClose={() => setAddCustomOpen(false)}
       />
+
+      {open && detailRow ? (
+        <ConnectorDetailModal
+          row={detailRow}
+          configSlotForEntry={configSlotForEntry}
+          onClose={() => setDetailKey(null)}
+        />
+      ) : null}
     </>
   );
 }
 
-function ConnectorGroup({ title, count, rows, emptyLabel }: {
+/**
+ * 连接器详情：字段与扩展页 MCP 详情（`mcp-view` 的 ExtensionDetailModal）保持一致——
+ * 安装说明、能力/贡献清单、「What this enables」、启动命令、服务地址、OAuth、隐藏开关。
+ * 组织下发连接器没有目录项（无 manifest），此时只展示其自有信息。
+ */
+function ConnectorDetailModal({ row, configSlotForEntry, onClose }: {
+  row: ConnectorRow;
+  configSlotForEntry?: (entry: McpDirectoryInfo) => ReactNode | null;
+  onClose: () => void;
+}) {
+  const entry = row.entry;
+  const hidden = entry ? isJuggleWorkExtensionHidden(entry) : false;
+  const configSlot = entry ? configSlotForEntry?.(entry) ?? null : null;
+
+  return (
+    <ExtensionDetailModal
+      open
+      onClose={onClose}
+      name={row.name}
+      description={row.description ?? entry?.description ?? t("project_extensions.connector_desc")}
+      iconSlug={row.iconSlug}
+      iconSrc={row.iconSrc}
+      kind={entry?.kind ?? "mcp"}
+      connected={row.connected}
+      connecting={row.busy}
+      preview={row.preview}
+      hidden={hidden}
+      url={row.url}
+      oauth={entry?.oauth}
+      launchCommand={row.command}
+      setupInstructions={entry?.extensionManifest?.setup?.instructions}
+      resourceLabels={entry?.extensionManifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
+      contributionLabels={entry?.extensionManifest?.contributions?.map(
+        (contribution) => contribution.label ?? contribution.ref ?? contribution.type,
+      ) ?? []}
+      configSlot={configSlot}
+      onConnect={configSlot ? undefined : row.onConnect}
+      uninstallLabel={t("project_extensions.disconnect")}
+      onUninstall={row.onDisconnect}
+      onHide={entry ? () => setJuggleWorkExtensionHidden(entry, true) : undefined}
+      onShow={entry ? () => setJuggleWorkExtensionHidden(entry, false) : undefined}
+    />
+  );
+}
+
+function ConnectorGroup({ title, count, rows, emptyLabel, onOpenDetail }: {
   title: string;
   count: number;
   rows: ConnectorRow[];
   emptyLabel: string;
+  onOpenDetail: (row: ConnectorRow) => void;
 }) {
   return (
     <section className="space-y-2">
@@ -189,7 +293,7 @@ function ConnectorGroup({ title, count, rows, emptyLabel }: {
       ) : (
         <div className="space-y-1.5">
           {rows.map((row) => (
-            <ConnectorItem key={row.key} row={row} />
+            <ConnectorItem key={row.key} row={row} onOpenDetail={onOpenDetail} />
           ))}
         </div>
       )}

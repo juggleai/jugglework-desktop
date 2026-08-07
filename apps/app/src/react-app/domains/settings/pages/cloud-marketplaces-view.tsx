@@ -113,6 +113,22 @@ export function shouldIncludeOrgMcpConnectionMarketplaceRow(_input: { embedded?:
   return false;
 }
 
+/**
+ * 市场列表的搜索与筛选判据。
+ * @param row 待判定行（只用到 marketplaceId / status / searchableText）
+ * @param filters 搜索词与状态、市场筛选
+ */
+export function matchesMarketplaceFilters(
+  row: Pick<MarketplaceRow, "marketplaceId" | "status" | "searchableText">,
+  filters: { search: string; statusFilter: MarketplaceStatusFilter; marketplaceFilter: string },
+): boolean {
+  if (filters.marketplaceFilter !== "all" && row.marketplaceId !== filters.marketplaceFilter) return false;
+  if (filters.statusFilter !== "all" && row.status !== filters.statusFilter) return false;
+  const query = filters.search.trim().toLowerCase();
+  if (!query) return true;
+  return row.searchableText.toLowerCase().includes(query);
+}
+
 export type CloudMarketplacesViewProps = {
   extensions: DenSettingsExtensionsStore;
   embedded?: boolean;
@@ -132,7 +148,16 @@ export type CloudMarketplacesViewProps = {
   onDisconnectOrgMcp?: (connectionId: string) => void;
   refreshOrgMcpConnections?: () => Promise<unknown> | void;
   setBuiltInEnabled?: (entry: McpDirectoryInfo, enabled: boolean) => void;
+  /** 只保留含技能组件的市场包，供「项目设置 → 技能 → 云端运行」复用同一数据源与详情弹窗。 */
+  skillsOnly?: boolean;
+  /** 隐藏分区标题/描述/刷新（宿主已有自己的标题栏时使用）。 */
+  hideSectionHeader?: boolean;
 };
+
+/** 市场包是否包含技能组件。 */
+function pluginHasSkill(plugin: DenOrgPlugin) {
+  return pluginComposition(plugin).some((entry) => entry.type === "skill" && entry.count > 0);
+}
 
 function pluginCounts(plugin: DenOrgPlugin) {
   return pluginComposition(plugin).map((entry) => `${entry.count} ${entry.label}${entry.count === 1 ? "" : "s"}`);
@@ -200,6 +225,8 @@ export function CloudMarketplacesView({
   onDisconnectOrgMcp,
   refreshOrgMcpConnections,
   setBuiltInEnabled,
+  skillsOnly = false,
+  hideSectionHeader = false,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -249,6 +276,7 @@ export function CloudMarketplacesView({
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
     return marketplaces.flatMap((marketplace) => marketplace.plugins.flatMap((plugin) => {
       if (!includeCloudMarketplaceRows) return [];
+      if (skillsOnly && !pluginHasSkill(plugin)) return [];
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
@@ -276,7 +304,7 @@ export function CloudMarketplacesView({
         ].join(" ").toLowerCase(),
       }];
     }));
-  }, [extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplaces, pendingChanges]);
+  }, [extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplaces, pendingChanges, skillsOnly]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -325,7 +353,11 @@ export function CloudMarketplacesView({
     });
   }, [extensionItems, includeOrgMcpRows]);
 
-  const rows = React.useMemo<MarketplaceRow[]>(() => canShowRows ? [...builtInRows, ...cloudRows, ...orgMcpRows] : [], [builtInRows, canShowRows, cloudRows, orgMcpRows]);
+  // TIPS: skillsOnly 只保留云端市场包这一路来源，内置项与组织 MCP 连接不属于「技能」。
+  const rows = React.useMemo<MarketplaceRow[]>(
+    () => canShowRows ? (skillsOnly ? [...cloudRows] : [...builtInRows, ...cloudRows, ...orgMcpRows]) : [],
+    [builtInRows, canShowRows, cloudRows, orgMcpRows, skillsOnly],
+  );
 
   React.useEffect(() => {
     if (detailRow?.source !== "org-mcp") return;
@@ -352,15 +384,10 @@ export function CloudMarketplacesView({
     [builtInRows.length, canShowRows, includeCloudMarketplaceRows, marketplaces, orgMcpRows.length],
   );
 
-  const visibleRows = React.useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return displayRows.filter((row) => {
-      if (marketplaceFilter !== "all" && row.marketplaceId !== marketplaceFilter) return false;
-      if (statusFilter !== "all" && row.status !== statusFilter) return false;
-      if (!query) return true;
-      return row.searchableText.includes(query);
-    });
-  }, [displayRows, marketplaceFilter, search, statusFilter]);
+  const visibleRows = React.useMemo(
+    () => displayRows.filter((row) => matchesMarketplaceFilters(row, { search, statusFilter, marketplaceFilter })),
+    [displayRows, marketplaceFilter, search, statusFilter],
+  );
 
   const refresh = React.useCallback(
     async (quiet = false) => {
@@ -474,23 +501,25 @@ export function CloudMarketplacesView({
 
   const content = (
     <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{t("extensions.marketplace_title")}</SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>
-            {t("extensions.marketplace_description")}
-          </SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-        <SettingsSectionHeaderActions>
-          <RefreshButton
-            busy={busy}
-            disabled={busy || !canShowRows}
-            onRefresh={refresh}
-          >
-            {t("den.refresh")}
-          </RefreshButton>
-        </SettingsSectionHeaderActions>
-      </SettingsSectionHeader>
+      {!hideSectionHeader ? (
+        <SettingsSectionHeader>
+          <SettingsSectionHeaderContent>
+            <SettingsSectionHeaderTitle>{t("extensions.marketplace_title")}</SettingsSectionHeaderTitle>
+            <SettingsSectionHeaderDescription>
+              {t("extensions.marketplace_description")}
+            </SettingsSectionHeaderDescription>
+          </SettingsSectionHeaderContent>
+          <SettingsSectionHeaderActions>
+            <RefreshButton
+              busy={busy}
+              disabled={busy || !canShowRows}
+              onRefresh={refresh}
+            >
+              {t("den.refresh")}
+            </RefreshButton>
+          </SettingsSectionHeaderActions>
+        </SettingsSectionHeader>
+      ) : null}
 
       {!isSignedIn ? (
         <SettingsNotice>
@@ -521,7 +550,7 @@ export function CloudMarketplacesView({
               disabled={Boolean(actionId)}
               onClick={() => void removePlugin(plugin.pluginId, plugin.name)}
             >
-              {actionId === plugin.pluginId ? "Working..." : t("extensions.remove_from_workspace_button")}
+              {actionId === plugin.pluginId ? t("marketplace.working") : t("extensions.remove_from_workspace_button")}
             </Button>
           </div>
         </SettingsNotice>
@@ -541,16 +570,22 @@ export function CloudMarketplacesView({
               size="xs"
               onClick={() => setStatusFilter(filter)}
             >
-              {filter === "all" ? "All" : filter === "update_available" ? "Updates" : filter === "installed" ? "Installed" : "Available"}
+              {filter === "all"
+                ? t("marketplace.filter_all")
+                : filter === "update_available"
+                  ? t("marketplace.filter_updates")
+                  : filter === "installed"
+                    ? t("marketplace.filter_installed")
+                    : t("marketplace.filter_available")}
             </Button>
           ))}
           <details className="group relative">
             <summary className="flex h-7 cursor-pointer list-none items-center rounded-md border border-dls-border px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text">
-              Filters
+              {t("marketplace.filters")}
             </summary>
             <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-shell-shadow)]">
               <label className="grid gap-1.5 text-xs text-dls-secondary">
-                Marketplace
+                {t("marketplace.marketplace_label")}
                 <select
                   className="rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-xs text-dls-text"
                   value={marketplaceFilter}
@@ -569,7 +604,11 @@ export function CloudMarketplacesView({
 
       {!busy && displayRows.length === 0 ? (
         <SettingsListEmptyState>
-          {!isSignedIn ? "Sign in to view marketplace extensions." : activeOrgId ? "No marketplace extensions are available yet." : "Choose an organization to view marketplace extensions."}
+          {!isSignedIn
+            ? t("marketplace.empty_signin")
+            : activeOrgId
+              ? t("marketplace.empty_no_extensions")
+              : t("marketplace.empty_choose_org")}
         </SettingsListEmptyState>
       ) : null}
 
@@ -636,7 +675,8 @@ export function CloudMarketplacesView({
     </SettingsSection>
   );
 
-  return embedded ? content : (
+  // hideSectionHeader 时宿主（技能弹窗）自带标题与边距，不再套设置页的分隔线容器。
+  return embedded || hideSectionHeader ? content : (
     <SettingsStack>
       <Separator />
       {content}
@@ -750,7 +790,7 @@ function MarketplaceCard(props: {
         iconSrc={manifest?.icon?.src}
         kind="extension"
         connected
-        connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
+        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
         connecting={actionBusy}
         actionLabel={cloudBuiltIn ? t("mcp.view_details") : deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
         onClick={() => onOpenDetail(row)}
@@ -891,16 +931,16 @@ function MarketplacePackageDetailModal(props: {
       open
       onClose={onClose}
       name={row.plugin.name}
-      description={row.plugin.description || "No description provided."}
+      description={row.plugin.description || t("marketplace.no_description")}
       iconSlug={manifest?.icon?.simpleIconSlug}
       iconSrc={manifest?.icon?.src}
       kind="extension"
       connected
-      connectedLabel={cloudBuiltIn ? "Built-in" : deliveryLabel}
+      connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
       connecting={actionBusy}
       connectLabel={deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
-      connectingLabel="Working..."
-      uninstallLabel="Remove"
+      connectingLabel={t("marketplace.working")}
+      uninstallLabel={t("marketplace.remove")}
       showEnablementCard={false}
       setupInstructions={manifest?.setup?.instructions}
       resourceLabels={manifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
@@ -910,7 +950,7 @@ function MarketplacePackageDetailModal(props: {
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
             <SettingsPill>
-              {cloudBuiltIn ? "Built-in" : deliveryLabel}
+              {cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
             </SettingsPill>
             <SettingsPill>{row.marketplaceName}</SettingsPill>
             {row.counts.map((label) => <SettingsPill key={label}>{label}</SettingsPill>)}
@@ -921,7 +961,7 @@ function MarketplacePackageDetailModal(props: {
               disabled={actionBusy}
               onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
             >
-              {actionBusy ? "Working..." : row.imported ? "Sync to workspace" : "Install in workspace"}
+              {actionBusy ? t("marketplace.working") : row.imported ? t("marketplace.sync_to_workspace") : t("marketplace.install_in_workspace")}
             </Button>
           ) : null}
           {deliveryAction === "cloud_active_local_copy" ? (

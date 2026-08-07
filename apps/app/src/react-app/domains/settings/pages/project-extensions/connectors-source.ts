@@ -45,17 +45,30 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
     rows.push(row);
   };
 
+  // TIPS: 已装 MCP 大多来自快速连接目录，按身份回查目录项即可复用其图标与描述，
+  // 否则列表里只能显示默认占位头像。
+  const directoryByIdentity = new Map(
+    input.quickConnect.map((entry) => [getMcpIdentityKey(entry), entry] as const),
+  );
+
   // 1) 已装 MCP 服务（优先级最高）。
   for (const server of input.mcpServers) {
     const connected = isServerConnected(server, input.mcpStatuses);
+    const directory = directoryByIdentity.get(server.name);
     push(
       {
         key: `installed:${server.name}`,
-        name: server.name,
-        description: undefined,
+        name: directory?.name || server.name,
+        description: directory?.description,
         connected,
         source: "installed",
         busy: input.mcpConnectingName === server.name,
+        iconSlug: directory?.iconSlug,
+        iconSrc: directory?.iconSrc,
+        url: server.config.url ?? directory?.url,
+        command: server.config.command ?? directory?.command,
+        preview: directory?.preview,
+        entry: directory,
         onConnect: connected ? undefined : () => input.authorizeMcp(server),
         onDisconnect: connected ? () => input.removeMcp(server.name) : undefined,
       },
@@ -79,6 +92,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         connected,
         source: "org",
         busy: input.orgMcpConnectingId === connection.id || input.orgMcpDisconnectingId === connection.id,
+        url: connection.url,
         onConnect: connected ? undefined : () => input.connectOrg(connection.id),
         onDisconnect: connected && canDisconnect ? () => input.disconnectOrg(connection.id) : undefined,
       },
@@ -99,6 +113,12 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         connected: false,
         source: "directory",
         busy: input.mcpConnectingName === identity,
+        iconSlug: entry.iconSlug,
+        iconSrc: entry.iconSrc,
+        url: entry.url,
+        command: entry.command,
+        preview: entry.preview,
+        entry,
         onConnect: () => input.connectDirectory(entry),
       },
       identity,

@@ -124,12 +124,14 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
         onAddCustomMcp={props.onAddCustomMcp}
+        configSlotForEntry={props.configSlotForConnector}
         onClose={() => setModal(null)}
       />
       <SkillsManagerModal
         open={modal === "skill"}
         projectDir={props.projectDir}
         skills={props.installedSkills}
+        cloudSkillsSlot={props.cloudSkillsSlot}
         onClose={() => setModal(null)}
         onUninstall={props.onUninstallSkill}
         onUpload={props.onUploadSkill}
