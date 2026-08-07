@@ -2,6 +2,7 @@ import type { McpDirectoryInfo } from "@/app/constants";
 import { getMcpServerName } from "@/app/constants";
 import { getMcpIdentityKey } from "@/app/mcp";
 import type { McpServerEntry, McpStatusMap } from "@/app/types";
+import { canDisconnectOrgMcpConnection } from "@/react-app/domains/connections/native-provider-connections";
 import { isOrgMcpConnectionReady, type ExtensionItem } from "../../extension-items";
 import type { ConnectorRow } from "./types";
 
@@ -67,6 +68,9 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
     const connection = item.orgMcpConnection;
     if (!connection) continue;
     const connected = isOrgMcpConnectionReady(connection);
+    // TIPS: 只有成员凭证（per_member）连接才由成员自己断开；组织共享凭证由管理员维护，
+    // 成员侧不出「断开」按钮，避免点击后无任何效果。
+    const canDisconnect = canDisconnectOrgMcpConnection(connection);
     push(
       {
         key: `org:${connection.id}`,
@@ -76,7 +80,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         source: "org",
         busy: input.orgMcpConnectingId === connection.id || input.orgMcpDisconnectingId === connection.id,
         onConnect: connected ? undefined : () => input.connectOrg(connection.id),
-        onDisconnect: connected ? () => input.disconnectOrg(connection.id) : undefined,
+        onDisconnect: connected && canDisconnect ? () => input.disconnectOrg(connection.id) : undefined,
       },
       item.name,
     );

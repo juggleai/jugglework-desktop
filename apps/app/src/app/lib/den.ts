@@ -2371,6 +2371,20 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       );
     },
 
+    /**
+     * 断开当前成员在某个组织 MCP 连接上的授权（成员凭证模式）。
+     * 仅清除调用者自己的授权，连接本身仍由组织保留，之后可再次 connect。
+     * @param orgId 组织 id
+     * @param connectionId 组织 MCP 连接 id
+     */
+    async disconnectMcpConnection(orgId: string, connectionId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/mcp-connections/${encodeURIComponent(connectionId)}/disconnect`,
+        { method: "POST", token, organizationId: orgId },
+      );
+    },
+
     async listOrgMarketplaces(orgId: string): Promise<DenOrgMarketplace[]> {
       const payload = await requestJson<unknown>(
         baseUrls,

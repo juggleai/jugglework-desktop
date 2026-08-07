@@ -22,7 +22,7 @@ function GroupCard({ title, description, count, disabled, onAdd, children }: {
   children?: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-dls-border bg-dls-surface px-4 py-3.5">
+    <section className="rounded-xl border border-dls-border bg-dls-surface px-3 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -71,7 +71,7 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
   const skillPreview = props.installedSkills.slice(0, 8);
 
   return (
-    <div className="flex h-full flex-col gap-2.5 overflow-y-auto px-4 py-4">
+    <div className="flex h-full w-full flex-col gap-2 overflow-y-auto px-3 py-3">
       <GroupCard
         title={t("project_extensions.group_instruction")}
         description={t("project_extensions.instruction_card_desc")}
@@ -120,6 +120,7 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
       <ConnectorPickerModal
         open={modal === "connector"}
         connectors={props.connectors}
+        error={props.connectorError}
         onClose={() => setModal(null)}
       />
       <SkillsManagerModal

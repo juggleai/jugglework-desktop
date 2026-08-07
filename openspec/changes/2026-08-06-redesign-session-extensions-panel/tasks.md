@@ -63,3 +63,13 @@
 - [x] 8.4 技能网格正确区分项目级（可卸载）与全局（只读标注），计数只数项目级
 - [x] 8.5 `@jugglework/app` typecheck 通过；应用启动无 Vite 报错叠层
 - [x] 8.6 zip-slip 防护有效（构造越界路径的技能包被拒绝）
+
+## 9. 走查修复
+
+- [x] 9.1 连接器弹窗「断开」按钮改用警示配色，并补断开中的 loading 态
+- [x] 9.2 `den.ts` 新增 `disconnectMcpConnection`（`POST /v1/mcp-connections/:id/disconnect`）
+- [x] 9.3 `use-org-mcp-connections` 的 `disconnect` 按连接类型分流（原生 Provider 走 oauth-providers，其余走 mcp-connections），准入判据改为 `canDisconnectOrgMcpConnection`
+- [x] 9.4 `native-provider-connections` 新增 `canDisconnectOrgMcpConnection`（`per_member` 且已授权）+ 单测；共享凭证不出断开入口
+- [x] 9.5 断开失败经 `orgMcpConnections.error` 透传到连接器弹窗顶部展示
+- [x] 9.6 技能中心搜索框移至「选择技能」标题右侧紧邻位置
+- [x] 9.7 面板默认宽度改为独立窄常量（不再复用浏览器面板记忆宽度）；`SettingsContent` 新增 compact 模式去掉视口断点内边距并横向撑满；面板与分组卡片内边距收紧

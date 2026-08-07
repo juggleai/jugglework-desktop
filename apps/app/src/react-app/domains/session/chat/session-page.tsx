@@ -88,6 +88,10 @@ const STARTUP_SKELETON_ROWS = [
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
 const GLOBAL_VOICE_SIDE_PANEL_KEY = "__jugglework_voice__";
+// TIPS: 「项目设置」面板只放分组卡片（连接器/技能等明细都在弹窗里），
+// 用独立的窄宽度，不跟随浏览器面板记忆的宽度，避免默认打开过宽。
+const EXTENSIONS_PANEL_DEFAULT_WIDTH = 380;
+const EXTENSIONS_PANEL_MIN_WIDTH = 320;
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const EMPTY_SESSION_TABS: WorkbenchSessionTab[] = [];
 
@@ -1536,8 +1540,8 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizableHandle withHandle className="hidden lg:flex" />
                 <ResizablePanel
                   panelRef={browserPanelRef}
-                  defaultSize={`${activeSidePanel === "extensions" ? Math.max(browserPanelDefaultWidth, 480) : browserPanelDefaultWidth}px`}
-                  minSize={activeSidePanel === "extensions" ? "420px" : "320px"}
+                  defaultSize={`${activeSidePanel === "extensions" ? EXTENSIONS_PANEL_DEFAULT_WIDTH : browserPanelDefaultWidth}px`}
+                  minSize={activeSidePanel === "extensions" ? `${EXTENSIONS_PANEL_MIN_WIDTH}px` : "320px"}
                   maxSize="70%"
                   className="min-h-0 overflow-hidden lg:flex lg:flex-col"
                 >

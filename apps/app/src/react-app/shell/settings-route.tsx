@@ -2316,6 +2316,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               isRemoteWorkspace={isRemoteWorkspace}
               busy={busy}
               connectors={projectConnectors}
+              connectorError={orgMcpConnections.error}
               installedSkills={projectSkills}
               onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
               onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}

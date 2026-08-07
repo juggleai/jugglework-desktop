@@ -9,6 +9,8 @@
 
 每个分组卡片 MUST 提供右上角 `+` 入口打开对应新增流程；`技能` 卡片 MUST 展示已装技能的图标行与数量。
 
+面板宽度 MUST 使用独立于浏览器面板记忆宽度的窄默认值；面板内容 MUST 横向撑满并使用固定内边距，不得沿用按视口断点放大的设置页内边距。
+
 #### Scenario: 打开会话右侧扩展面板
 - **WHEN** 用户在会话页点击右侧配置 icon 打开「扩展」
 - **THEN** 面板以分组卡片展示 `指令 / 连接器 / 技能`（含 `专家 / 自动化` 占位），而非扁平的 All/MCPs/Skills 列表
@@ -16,6 +18,10 @@
 #### Scenario: 独立设置页不受影响
 - **WHEN** 用户从独立设置页进入 extensions tab（非 `embedded`）
 - **THEN** 仍渲染既有 `mcp-view`，样式与行为不变
+
+#### Scenario: 面板默认宽度与留白
+- **WHEN** 面板在大屏会话页打开
+- **THEN** 以窄默认宽度呈现，内容左右留白与面板标题栏对齐，不随视口断点放大
 
 #### Scenario: 预留分组占位
 - **WHEN** 面板渲染 `专家` 或 `自动化` 分组
@@ -37,6 +43,31 @@
 #### Scenario: 多来源去重
 - **WHEN** 同一 MCP 同时出现在多个来源
 - **THEN** 弹窗按身份去重，仅展示一条
+
+### Requirement: 组织下发连接器可由成员断开并重新连接
+系统 SHALL 允许成员在连接器弹窗中断开自己在组织下发 MCP 连接（服务端下发，如 GitHub）上的授权，断开只清除调用成员自身的授权，连接本身由组织保留。
+
+断开入口 MUST 仅对成员凭证（`credentialMode==="per_member"`）且当前成员已授权的连接展示；组织共享凭证（`shared`）由管理员维护，MUST 不展示断开入口。
+
+断开通道 MUST 按连接类型分流：原生 Provider（Google Workspace / Microsoft 365）走 `POST /v1/oauth-providers/:id/disconnect`，其余组织下发连接走 `POST /v1/mcp-connections/:id/disconnect`。
+
+断开失败 MUST 在弹窗中展示错误文案，不得静默无响应。断开按钮 MUST 使用警示（warning）配色以区别于普通操作。
+
+#### Scenario: 断开非原生 Provider 的下发连接器
+- **WHEN** 成员对一个已授权的成员凭证连接（如 GitHub）点击「断开」
+- **THEN** 系统调用 `POST /v1/mcp-connections/:id/disconnect` 清除该成员授权，刷新后该项移入「未连接」组
+
+#### Scenario: 断开后重新连接
+- **WHEN** 成员对已断开的连接器点击「连接」
+- **THEN** 系统走既有成员授权流程（浏览器 OAuth + 轮询），成功后该项回到「已连接」组
+
+#### Scenario: 共享凭证不可断开
+- **WHEN** 弹窗中出现 `credentialMode==="shared"` 的已连接项
+- **THEN** 该项不展示断开入口
+
+#### Scenario: 断开失败可见
+- **WHEN** 断开请求返回错误
+- **THEN** 弹窗顶部展示错误文案，该项保持「已连接」状态
 
 ### Requirement: 技能管理弹窗区分项目级与全局技能
 系统 SHALL 在 `技能` 分组 `+` 打开的弹窗中展示当前项目已添加的技能网格，并提供「上传技能」与「从技能中心添加」两个新增入口。

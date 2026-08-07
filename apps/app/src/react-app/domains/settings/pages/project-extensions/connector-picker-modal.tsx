@@ -33,7 +33,14 @@ function ConnectorItem({ row }: { row: ConnectorRow }) {
             {t("ext_card.connected")}
           </span>
           {row.onDisconnect ? (
-            <Button variant="ghost" size="sm" disabled={row.busy} onClick={row.onDisconnect}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={row.busy}
+              onClick={row.onDisconnect}
+              className="border-amber-6/60 bg-amber-2/50 text-amber-11 hover:border-amber-7 hover:bg-amber-3 hover:text-amber-11"
+            >
+              {row.busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
               {t("project_extensions.disconnect")}
             </Button>
           ) : null}
@@ -57,11 +64,13 @@ function ConnectorItem({ row }: { row: ConnectorRow }) {
  * 连接器(MCP) 选择弹窗：按「已连接 / 未连接」两组展示汇总的连接器。
  * @param open 是否打开
  * @param connectors 聚合后的连接器列表
+ * @param error 连接/断开失败的提示文案
  * @param onClose 关闭回调
  */
-export function ConnectorPickerModal({ open, connectors, onClose }: {
+export function ConnectorPickerModal({ open, connectors, error, onClose }: {
   open: boolean;
   connectors: ConnectorRow[];
+  error?: string | null;
   onClose: () => void;
 }) {
   const { connected, unconnected } = useMemo(() => {
@@ -77,6 +86,11 @@ export function ConnectorPickerModal({ open, connectors, onClose }: {
           <DialogTitle>{t("project_extensions.group_connector")}</DialogTitle>
           <DialogDescription>{t("project_extensions.connector_desc")}</DialogDescription>
         </DialogHeader>
+        {error ? (
+          <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
         <div className="max-h-[60vh] space-y-4 overflow-y-auto">
           <ConnectorGroup
             title={t("project_extensions.connected_group")}

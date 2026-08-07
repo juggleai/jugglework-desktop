@@ -4,6 +4,7 @@ declare const expect: (value: unknown) => { toBe: (expected: unknown) => void; t
 
 import {
   canDisconnectNativeProviderAccount,
+  canDisconnectOrgMcpConnection,
   isNativeProviderConnectionId,
 } from "./native-provider-connections";
 import { resolveOrgMcpConnectionCardState } from "./use-org-mcp-connections";
@@ -21,6 +22,13 @@ describe("native provider connections", () => {
     expect(canDisconnectNativeProviderAccount({ id: "microsoft-365", connectedForMe: true })).toBe(true);
     expect(canDisconnectNativeProviderAccount({ id: "google-workspace", connectedForMe: false })).toBe(false);
     expect(canDisconnectNativeProviderAccount({ id: "emc_google_workspace", connectedForMe: true })).toBe(false);
+  });
+
+  test("member can disconnect any connected per-member org connection, not just native providers", () => {
+    expect(canDisconnectOrgMcpConnection({ id: "emc_github", credentialMode: "per_member", connectedForMe: true })).toBe(true);
+    expect(canDisconnectOrgMcpConnection({ id: "google-workspace", credentialMode: "per_member", connectedForMe: true })).toBe(true);
+    expect(canDisconnectOrgMcpConnection({ id: "emc_github", credentialMode: "per_member", connectedForMe: false })).toBe(false);
+    expect(canDisconnectOrgMcpConnection({ id: "emc_github", credentialMode: "shared", connectedForMe: true })).toBe(false);
   });
 
   test("projects connected native providers with missing scopes as reconnectable", () => {

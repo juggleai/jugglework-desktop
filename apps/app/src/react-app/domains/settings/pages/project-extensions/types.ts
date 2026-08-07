@@ -30,6 +30,8 @@ export type ProjectExtensionsPanelProps = {
   busy?: boolean;
   /** 聚合后的连接器列表。 */
   connectors: ConnectorRow[];
+  /** 连接/断开失败的提示文案。 */
+  connectorError?: string | null;
   /** 已安装技能（含项目级与全局，带 scope）。 */
   installedSkills: SkillItem[];
   /** 卸载项目级技能。 */

@@ -7,10 +7,25 @@ import { Button } from "@/components/ui/button";
 
 type SettingsContentProps = {
   children: React.ReactNode;
+  /**
+   * 紧凑模式：会话右侧「项目设置」面板使用。
+   * TIPS: 常规内边距是按视口断点（md/lg）放大的，在窄侧栏里会叠加成左右各 32px 的空白，
+   * 紧凑模式交由内容自己控制留白，并且横向撑满而非居中。
+   */
+  compact?: boolean;
 };
 
 export function SettingsContent(props: SettingsContentProps) {
-  return <div className="min-w-0 min-h-0 flex-1 overflow-y-auto flex flex-col gap-6 p-4 md:gap-8 md:p-6 lg:p-8 items-center">{props.children}</div>;
+  return (
+    <div
+      className={cn(
+        "min-w-0 min-h-0 flex-1 overflow-y-auto flex flex-col",
+        props.compact ? "gap-3 items-stretch" : "gap-6 p-4 md:gap-8 md:p-6 lg:p-8 items-center",
+      )}
+    >
+      {props.children}
+    </div>
+  );
 }
 
 type SettingsPanelProps = {

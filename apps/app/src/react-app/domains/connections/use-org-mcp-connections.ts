@@ -4,7 +4,11 @@ import { createDenClient, readDenSettings, type DenExternalMcpConnection } from 
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
-import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
+import {
+  canDisconnectOrgMcpConnection,
+  connectionNeedsReconnect,
+  isNativeProviderConnectionId,
+} from "./native-provider-connections";
 
 // Mirrors the poll-until-connected pattern used for local MCP OAuth
 // (mcp-auth-modal.tsx) — the external server's redirect completes on a
@@ -108,6 +112,10 @@ export function useOrgMcpConnections() {
   const pollRef = useRef<number | null>(null);
   const pollGenerationRef = useRef(0);
   const refreshRunRef = useRef(0);
+  // TIPS: disconnect 需要读取「最新连接列表」判断凭证模式，用 ref 避免把 connections
+  // 塞进 useCallback 依赖导致回调每次刷新都重建。
+  const connectionsRef = useRef<DenExternalMcpConnection[]>([]);
+  connectionsRef.current = connections;
 
   const stopPolling = useCallback(() => {
     pollGenerationRef.current += 1;
@@ -242,8 +250,19 @@ export function useOrgMcpConnections() {
     }
   }, [isActionScopeCurrent, refresh, stopPolling]);
 
+  /**
+   * 断开当前成员在某个组织 MCP 连接上的授权，断开后该连接回到「未连接」状态，可再次 connect()。
+   *
+   * TIPS: 两条断开通道——原生 Provider（Google Workspace / Microsoft 365）走
+   * `/v1/oauth-providers/:id/disconnect`；其余服务端下发的 MCP 连接（如 GitHub）走
+   * `/v1/mcp-connections/:id/disconnect`。此前只放行原生 Provider，导致其它连接器
+   * 的「断开」按钮点击后静默无响应。
+   */
   const disconnect = useCallback(async (connectionId: string) => {
-    if (!isNativeProviderConnectionId(connectionId)) return;
+    const connection = connectionsRef.current.find((entry) => entry.id === connectionId);
+    const nativeProvider = isNativeProviderConnectionId(connectionId);
+    // 列表尚未加载到该连接时，仅对原生 Provider 保留旧的直连行为。
+    if (connection ? !canDisconnectOrgMcpConnection(connection) : !nativeProvider) return;
 
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
@@ -260,7 +279,11 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      await client.disconnectOauthProviderAccount(orgId, connectionId);
+      if (nativeProvider) {
+        await client.disconnectOauthProviderAccount(orgId, connectionId);
+      } else {
+        await client.disconnectMcpConnection(orgId, connectionId);
+      }
       if (!isActionScopeCurrent(actionScope)) return;
       await refresh(actionScope);
       if (!isActionScopeCurrent(actionScope)) return;
