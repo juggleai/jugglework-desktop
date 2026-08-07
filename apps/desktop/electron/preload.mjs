@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "jugglework:native-menu:open-settings";
@@ -232,6 +232,16 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   juggleChat: {
     setSkillEvent(callback) {
       return setJuggleChatSkillEvent(callback);
+    },
+  },
+  file: {
+    /**
+     * 获取粘贴/拖拽 File 对象的完整磁盘路径（Electron 32+ 替代已废弃的 File.path）。
+     * @param {File} file 渲染进程 paste/drop 事件中的 File 对象
+     * @returns {string} 完整文件路径
+     */
+    getPathForFile(file) {
+      return webUtils.getPathForFile(file);
     },
   },
   meta: {
