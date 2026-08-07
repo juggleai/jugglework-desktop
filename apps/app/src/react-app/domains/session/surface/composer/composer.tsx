@@ -1269,7 +1269,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="max-w-[800px] mx-auto">
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
+          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)] ring-1 ring-black/[0.035] transition-[border-color,box-shadow,ring-color] dark:ring-white/[0.055] ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 

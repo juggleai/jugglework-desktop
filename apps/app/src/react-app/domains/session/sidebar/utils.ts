@@ -43,7 +43,7 @@ export type WorkspaceSessionIndicator = "running" | "unread" | null;
  * @param sessions 工作区内的会话列表
  * @param sessionStatusById 会话运行状态映射
  * @param unreadSessionIds 尚未查看结果的会话 id 集合
- * @returns 运行中优先显示黄色状态，其次显示绿色未读状态，否则不显示
+ * @returns 运行中优先显示绿色呼吸状态，其次显示绿色未读状态，否则不显示
  */
 export function resolveWorkspaceSessionIndicator(
   sessions: WorkspaceSessionGroup["sessions"],

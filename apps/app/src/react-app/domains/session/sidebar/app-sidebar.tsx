@@ -1062,7 +1062,7 @@ export function AppSidebar(props: AppSidebarProps) {
           </div>
         </div>
         <SidebarRail
-          className="before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%+1px)] before:right-0 before:content-[''] group-data-[state=expanded]:before:bg-sidebar"
+          className="right-[-8px]! translate-x-0! bg-transparent! hover:bg-transparent!"
           style={{ cursor: "col-resize" }}
           aria-label={props.onStartResize ? t("session.resize_workspace_column") : undefined}
           title={props.onStartResize ? t("session.resize_workspace_column") : undefined}
@@ -1306,6 +1306,8 @@ type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
+  isExpanded: boolean;
+  onToggleExpanded: () => void;
   onTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
 };
 
@@ -1314,26 +1316,23 @@ function WorkspaceHeader({
   statusLabel,
   isError,
   isLoading,
+  isExpanded,
+  onToggleExpanded,
   onTitlePointerDown,
   onClick,
   ...props
 }: WorkspaceHeaderProps) {
-  const ctx = useSidebarContext();
-
-  const handleSelectWorkspace = () => {
-    void Promise.resolve(ctx.onSelectWorkspace(workspace.id));
-  };
-
   return (
     <SidebarMenuButton
       {...props}
       className={cn(
-        "h-12 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
+        "h-11 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
       )}
       onClick={(event) => {
         onClick?.(event);
-        handleSelectWorkspace();
+        if (!event.defaultPrevented) onToggleExpanded();
       }}
+      aria-expanded={isExpanded}
     >
       {isLoading ? (
         <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
@@ -1403,7 +1402,6 @@ function WorkspaceSidebarGroup({
     (connectionState.status === "error" || group.status === "error");
   // While filtering the workspace stays open — a collapsed group would hide its matches.
   const isExpanded = ctx.filteringSessions || ctx.expandedWorkspaceIds.has(workspace.id);
-  const isSelected = ctx.selectedWorkspaceId === workspace.id;
 
   const statusLabel = (() => {
     if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
@@ -1412,7 +1410,6 @@ function WorkspaceSidebarGroup({
     if (isConnectionActionBusy) return t("workspace_list.connecting");
     if (isRemoteWorkspace && connectionState.status === "connected") return connectionState.message?.trim() || t("workspace_list.connected");
     if (!ctx.developerMode) return "";
-    if (isSelected) return t("workspace.selected");
     return workspaceKindLabel(workspace);
   })();
 
@@ -1466,6 +1463,8 @@ function WorkspaceSidebarGroup({
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={group.status === "loading" || isConnecting}
+                isExpanded={isExpanded}
+                onToggleExpanded={() => ctx.toggleWorkspaceExpanded(workspace.id)}
                 onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
               <div data-workspace-actions className="group/workspace-actions absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -1504,8 +1503,8 @@ function WorkspaceSidebarGroup({
               </Button>
             </div>
 
-            <CollapsibleContent className="pt-px">
-              <SidebarMenuSub>
+            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+              <SidebarMenuSub className="pt-px">
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
@@ -2200,7 +2199,7 @@ function SessionMenuItem({
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
     // The left activity slot is the indent — dot-matrix sits in the chevron
     // lane and the title starts in the group-label lane without shifting.
-    "relative h-[52px] rounded-[11px] transition-[padding,background-color] duration-75 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:font-medium",
+    "relative h-12 rounded-[11px] transition-[padding,background-color] duration-75 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:font-medium",
     depth > 0 && "ps-7",
   );
 
