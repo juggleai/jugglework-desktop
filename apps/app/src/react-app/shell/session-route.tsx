@@ -509,12 +509,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     () => resolveModelForSession(selectedSessionId),
     [resolveModelForSession, selectedSessionId],
   );
-  // TIPS: 模型选择的落点 —— 有会话时只写该会话（互不影响）；没有会话时（命令面板等
-  // 入口）才更新全局默认模型，它只是「没单独选过模型的会话」的兜底值。
+  // TIPS: 模型选择的落点 —— 有会话时写该会话（会话之间互不影响），并同步把全局默认
+  // 模型刷新成这次选的模型。全局默认只是「没单独选过模型的会话」的兜底值：若只写会话
+  // 级，它会一直停在最早设置的那个模型上，一旦该模型下线（provider 重新导入换了 id、
+  // 模型被移除），此后每个新建会话都会回落到不可用模型并被强制弹出模型选择器，且在弹窗
+  // 里重选也只修好当前会话，下一个新会话继续弹。同步更新让默认值能自愈。
   const applyModelSelection = useCallback((next: ModelRef, sessionId: string | null) => {
     if (sessionId && selectedWorkspaceId) {
       setSessionModelChoice(selectedWorkspaceId, sessionId, next);
-      return;
     }
     local.setPrefs((previous) => ({
       ...previous,
