@@ -1,3 +1,4 @@
+import type { McpDirectoryInfo } from "@/app/constants";
 import type { SkillItem } from "../mcp-view";
 
 /**
@@ -32,6 +33,8 @@ export type ProjectExtensionsPanelProps = {
   connectors: ConnectorRow[];
   /** 连接/断开失败的提示文案。 */
   connectorError?: string | null;
+  /** 添加自定义 MCP（复用扩展页「添加自定义应用」的连接链路）。 */
+  onAddCustomMcp?: (entry: McpDirectoryInfo) => void | Promise<void>;
   /** 已安装技能（含项目级与全局，带 scope）。 */
   installedSkills: SkillItem[];
   /** 卸载项目级技能。 */

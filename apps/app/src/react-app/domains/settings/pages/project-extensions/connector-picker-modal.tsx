@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useMemo } from "react";
-import { CheckCircle2, Loader2, Plug2, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CheckCircle2, Loader2, Plug2, Plus, Store } from "lucide-react";
 
 import {
   Dialog,
@@ -9,9 +9,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
+import type { McpDirectoryInfo } from "@/app/constants";
+import { AddMcpModal } from "@/react-app/domains/connections/modals/add-mcp-modal";
 import type { ConnectorRow } from "./types";
 
 function ConnectorItem({ row }: { row: ConnectorRow }) {
@@ -61,18 +69,27 @@ function ConnectorItem({ row }: { row: ConnectorRow }) {
 }
 
 /**
- * 连接器(MCP) 选择弹窗：按「已连接 / 未连接」两组展示汇总的连接器。
+ * 连接器(MCP) 选择弹窗：按「已连接 / 未连接」两组展示汇总的连接器，
+ * 右上角「+ 添加」提供自定义 MCP 入口。
  * @param open 是否打开
  * @param connectors 聚合后的连接器列表
  * @param error 连接/断开失败的提示文案
+ * @param busy 连接动作是否进行中
+ * @param isRemoteWorkspace 远程工作区（不支持本地命令型 MCP）
+ * @param onAddCustomMcp 添加自定义 MCP
  * @param onClose 关闭回调
  */
-export function ConnectorPickerModal({ open, connectors, error, onClose }: {
+export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWorkspace, onAddCustomMcp, onClose }: {
   open: boolean;
   connectors: ConnectorRow[];
   error?: string | null;
+  busy?: boolean;
+  isRemoteWorkspace?: boolean;
+  onAddCustomMcp?: (entry: McpDirectoryInfo) => void | Promise<void>;
   onClose: () => void;
 }) {
+  const [addCustomOpen, setAddCustomOpen] = useState(false);
+
   const { connected, unconnected } = useMemo(() => {
     const connectedRows = connectors.filter((row) => row.connected);
     const unconnectedRows = connectors.filter((row) => !row.connected);
@@ -80,33 +97,76 @@ export function ConnectorPickerModal({ open, connectors, error, onClose }: {
   }, [connectors]);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
-      <DialogContent className="max-w-[750px] sm:max-w-[750px]">
-        <DialogHeader>
-          <DialogTitle>{t("project_extensions.group_connector")}</DialogTitle>
-          <DialogDescription>{t("project_extensions.connector_desc")}</DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto">
-          <ConnectorGroup
-            title={t("project_extensions.connected_group")}
-            count={connected.length}
-            rows={connected}
-            emptyLabel={t("project_extensions.no_connected")}
-          />
-          <ConnectorGroup
-            title={t("project_extensions.unconnected_group")}
-            count={unconnected.length}
-            rows={unconnected}
-            emptyLabel={t("project_extensions.no_unconnected")}
-          />
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open && !addCustomOpen} onOpenChange={(next) => { if (!next) onClose(); }}>
+        <DialogContent className="max-w-[750px] sm:max-w-[750px]">
+          <DialogHeader className="gap-2 space-y-0">
+            <div className="flex items-center justify-between gap-4 pr-8">
+              <DialogTitle>{t("project_extensions.group_connector")}</DialogTitle>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <DialogDescription>{t("project_extensions.connector_desc")}</DialogDescription>
+              {onAddCustomMcp ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button variant="outline" size="sm">
+                        <Plus className="size-4" />
+                        {t("project_extensions.add")}
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" className="w-60">
+                    <DropdownMenuItem onClick={() => setAddCustomOpen(true)}>
+                      <Plug2 className="size-4" />
+                      <div>
+                        <p className="text-sm">{t("project_extensions.custom_mcp")}</p>
+                        <p className="text-xs text-dls-secondary">{t("project_extensions.custom_mcp_desc")}</p>
+                      </div>
+                    </DropdownMenuItem>
+                    {/* TIPS: MCP 中心尚未实现，先占位置灰。 */}
+                    <DropdownMenuItem disabled>
+                      <Store className="size-4" />
+                      <div>
+                        <p className="text-sm">{t("project_extensions.from_mcp_hub")}</p>
+                        <p className="text-xs text-dls-secondary">{t("project_extensions.from_mcp_hub_desc")}</p>
+                      </div>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </div>
+          </DialogHeader>
+          {error ? (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+            <ConnectorGroup
+              title={t("project_extensions.connected_group")}
+              count={connected.length}
+              rows={connected}
+              emptyLabel={t("project_extensions.no_connected")}
+            />
+            <ConnectorGroup
+              title={t("project_extensions.unconnected_group")}
+              count={unconnected.length}
+              rows={unconnected}
+              emptyLabel={t("project_extensions.no_unconnected")}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AddMcpModal
+        open={open && addCustomOpen}
+        busy={Boolean(busy)}
+        isRemoteWorkspace={Boolean(isRemoteWorkspace)}
+        onAdd={(entry) => { void onAddCustomMcp?.(entry); }}
+        onClose={() => setAddCustomOpen(false)}
+      />
+    </>
   );
 }
 

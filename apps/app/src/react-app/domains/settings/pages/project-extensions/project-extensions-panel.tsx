@@ -121,6 +121,9 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         open={modal === "connector"}
         connectors={props.connectors}
         error={props.connectorError}
+        busy={props.busy}
+        isRemoteWorkspace={props.isRemoteWorkspace}
+        onAddCustomMcp={props.onAddCustomMcp}
         onClose={() => setModal(null)}
       />
       <SkillsManagerModal

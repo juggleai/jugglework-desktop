@@ -2317,6 +2317,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               busy={busy}
               connectors={projectConnectors}
               connectorError={orgMcpConnections.error}
+              onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
               installedSkills={projectSkills}
               onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
               onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}
