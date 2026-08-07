@@ -1521,7 +1521,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           ))}
                         </div>
-                        <div className="max-h-72 overflow-y-auto p-2">
+                        <div className="h-60 overflow-y-auto p-2">
                           <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
                             <button
                               type="button"
