@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
@@ -56,6 +56,27 @@ import type { ApiEnvelope, ChatContact, ChatConversation, ChatGroupInfo, ChatGro
 
 function cx(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
+}
+
+/**
+ * Lift modal layers out of list/contact panes. Those panes create their own
+ * stacking and hit-testing contexts, so a large z-index on a nested backdrop
+ * alone cannot reliably place it above resize handles and floating surfaces.
+ */
+function ChatRootPortal({ children }: { children: ReactNode }) {
+  const markerRef = useRef<HTMLSpanElement>(null);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    setHost(markerRef.current?.closest<HTMLElement>(".jw-im-root") ?? null);
+  }, []);
+
+  return (
+    <>
+      <span ref={markerRef} hidden />
+      {host ? createPortal(children, host) : null}
+    </>
+  );
 }
 
 function useListSearchShortcut() {
@@ -1791,9 +1812,10 @@ function CreateGroupModal({ onClose, onCreated }: { onClose: () => void; onCreat
   };
 
   return (
-    <div className="jw-im-modal-backdrop" onMouseDown={onClose}>
+    <ChatRootPortal>
+      <div className="jw-im-modal-backdrop jw-im-create-group-backdrop" onMouseDown={onClose}>
       <section className="jw-im-modal jw-im-create-group-modal" onMouseDown={(event) => event.stopPropagation()}>
-        <header><h3>创建群组</h3><button onClick={onClose}><X size={18} /></button></header>
+        <header><h3>创建群组</h3><button type="button" onClick={onClose}><X size={18} /></button></header>
         <div className="jw-im-create-group-layout">
           <div className="jw-im-create-group-left">
             <div className="jw-im-create-group-search">
@@ -1856,7 +1878,7 @@ function CreateGroupModal({ onClose, onCreated }: { onClose: () => void; onCreat
                   <div className="jw-im-create-group-selected-item" key={contact.user_id}>
                     <ChatAvatar name={label} userId={contact.user_id} src={contact.avatar} size="sm" />
                     <span className="jw-im-create-group-selected-name">{label}</span>
-                    <button className="jw-im-create-group-selected-remove" onClick={() => removeContact(contact.user_id)} title="移除">
+                    <button type="button" className="jw-im-create-group-selected-remove" onClick={() => removeContact(contact.user_id)} title="移除">
                       <X size={13} />
                     </button>
                   </div>
@@ -1865,15 +1887,16 @@ function CreateGroupModal({ onClose, onCreated }: { onClose: () => void; onCreat
             </div>
             {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
             <div className="jw-im-create-group-footer">
-              <button className="jw-im-secondary-button" onClick={onClose} disabled={busy}>取消</button>
-              <button className="jw-im-primary-button" onClick={() => void submit()} disabled={busy || !selected.length}>
+              <button type="button" className="jw-im-secondary-button" onClick={onClose} disabled={busy}>取消</button>
+              <button type="button" className="jw-im-primary-button" onClick={() => void submit()} disabled={busy || !selected.length}>
                 {busy ? <><LoaderCircle className="is-spinning" size={16} />创建中...</> : "确定"}
               </button>
             </div>
           </div>
         </div>
       </section>
-    </div>
+      </div>
+    </ChatRootPortal>
   );
 }
 

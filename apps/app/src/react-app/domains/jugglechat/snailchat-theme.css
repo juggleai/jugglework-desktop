@@ -1048,6 +1048,16 @@
 }
 
 .jw-im-modal-backdrop { background: rgba(15, 23, 42, 0.06); backdrop-filter: none; }
+.jw-im-create-group-backdrop {
+  z-index: 1800;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+.jw-im-create-group-backdrop .jw-im-modal,
+.jw-im-create-group-backdrop button,
+.jw-im-create-group-backdrop input {
+  -webkit-app-region: no-drag;
+}
 .jw-im-group-modal-backdrop {
   background: rgba(15, 23, 42, 0.42);
   backdrop-filter: blur(2px);
