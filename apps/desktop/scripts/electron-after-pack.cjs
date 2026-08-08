@@ -6,8 +6,6 @@ const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
 const sidecarBases = [
   "opencode",
-  "jugglework-server",
-  "jugglework-orchestrator",
   "chrome-devtools-mcp",
 ];
 

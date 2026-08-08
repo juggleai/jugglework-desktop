@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
+import { createRuntimeIpcHandlers } from "./runtime-ipc.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
@@ -1234,6 +1235,7 @@ const runtimeManager = createRuntimeManager({
   // cloud instead of the public mirror.
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
+const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
@@ -1350,7 +1352,7 @@ async function bootRuntimeForSelectedWorkspace() {
       watchedId: String(fallback.id ?? ""),
     }).catch(() => undefined);
   }
-  await runtimeManager.orchestratorWorkspaceActivate({
+  await runtimeManager.workspaceActivate({
     workspacePath: bootWorkspaceRoot,
     name: bootWorkspace.name ?? bootWorkspace.displayName ?? null,
   }).catch(() => undefined);
@@ -1881,10 +1883,16 @@ const desktopCommandHandlers = {
       return ensureRuntimeBootstrap();
   },
   "runtimeStatus": async (event, ...args) => {
-      return runtimeManager.runtimeStatus();
+      return runtimeIpcHandlers.runtimeStatus();
+  },
+  "workspaceActivate": async (event, ...args) => {
+      return runtimeIpcHandlers.workspaceActivate(args[0]);
   },
   "engineStop": async (event, ...args) => {
       return runtimeManager.engineStop();
+  },
+  "engineDispose": async (event, ...args) => {
+      return runtimeIpcHandlers.engineDispose(args[0]);
   },
   "engineRestart": async (event, ...args) => {
       return runtimeManager.engineRestart(args[0] ?? {});
@@ -1897,15 +1905,6 @@ const desktopCommandHandlers = {
   },
   "engineInstall": async (event, ...args) => {
       return runtimeManager.engineInstall();
-  },
-  "orchestratorStatus": async (event, ...args) => {
-      return runtimeManager.orchestratorStatus();
-  },
-  "orchestratorWorkspaceActivate": async (event, ...args) => {
-      return runtimeManager.orchestratorWorkspaceActivate(args[0] ?? {});
-  },
-  "orchestratorInstanceDispose": async (event, ...args) => {
-      return runtimeManager.orchestratorInstanceDispose(String(args[0] ?? "").trim());
   },
   "appBuildInfo": async (event, ...args) => {
       return {
@@ -2020,8 +2019,8 @@ const desktopCommandHandlers = {
         removeWindowsBrandShortcut,
       }, { preserveBootstrap: args[0]?.preserveBootstrap !== false });
   },
-  "orchestratorStartDetached": async (event, ...args) => {
-      return runtimeManager.orchestratorStartDetached(args[0] ?? {});
+  "sandboxStart": async (event, ...args) => {
+      return runtimeManager.sandboxStart(args[0] ?? {});
   },
   "sandboxDoctor": async (event, ...args) => {
       return runtimeManager.sandboxDoctor();

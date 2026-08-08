@@ -9,9 +9,9 @@ const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const args = process.argv.slice(2);
 
 const binaryName = process.platform === "win32" ? "jugglework-server.exe" : "jugglework-server";
-const compiledBinary = fileURLToPath(new URL(`./dist/bin/${binaryName}`, `${new URL("../", import.meta.url)}`));
-const builtCli = fileURLToPath(new URL("./dist/cli.js", `${new URL("../", import.meta.url)}`));
-const sourceCli = fileURLToPath(new URL("./src/cli.ts", `${new URL("../", import.meta.url)}`));
+const compiledBinary = fileURLToPath(new URL(`../dist/bin/${binaryName}`, import.meta.url));
+const builtCli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+const sourceCli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 function run(command, commandArgs) {
   const result = spawnSync(command, commandArgs, { stdio: "inherit" });

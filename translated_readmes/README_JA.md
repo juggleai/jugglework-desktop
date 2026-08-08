@@ -8,7 +8,7 @@
 ## 基本理念
 
 - ローカルファースト、クラウド対応: JuggleWorkはワンクリックであなたのマシン上で動作します。メッセージを即座に送信できます。
-- コンポーザブル: デスクトップアプリ、WhatsApp/Slack/Telegramコネクタ、またはサーバー。用途に合ったものを使えます。ロックインなし。
+- コンポーザブル: デスクトップアプリ、WhatsApp/Slack/Telegramコネクタ、または直接起動するServerホスト。用途に合ったものを使えます。ロックインなし。
 - エジェクタブル: JuggleWorkはOpenCodeで動いているため、OpenCodeでできることはすべてJuggleWorkでも動作します（UIがなくても）。
 - シェアリング・イズ・ケアリング: localhostでソロ作業を始め、必要に応じてリモート共有を明示的にオプトインできます。
 
@@ -19,10 +19,10 @@
 JuggleWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
 
 ## 代替UI
-- **JuggleWork Orchestrator（CLIホスト）**: デスクトップUIなしでOpenCode + JuggleWorkサーバーを実行します。
-  - インストール: `npm install -g jugglework-orchestrator`
-  - 実行: `jugglework start --workspace /path/to/workspace --approval auto`
-  - ドキュメント: [apps/orchestrator/README.md](../apps/orchestrator/README.md)
+- **JuggleWork Server（ヘッドレスランタイム）**: デスクトップUIなしで認証済みJuggleWork APIを直接実行し、ServerがOpenCodeを管理します。
+  - インストール: `npm install -g jugglework-server`
+  - ドキュメント: [apps/server/README.md](../apps/server/README.md)
+  - 旧`jugglework-orchestrator`パッケージと裸の`jugglework` CLIは廃止されました。[移行ガイド](../packages/docs/start-here/migrate-from-orchestrator.mdx)を参照してください。
 
 ## クイックスタート
 
@@ -131,9 +131,9 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## アーキテクチャ（概要）
 
-- **ホストモード**では、JuggleWorkはローカルホストスタックを実行し、UIをそれに接続します。
-  - デフォルトランタイム: `jugglework`（`jugglework-orchestrator` からインストール）。`opencode` と `jugglework-server` をオーケストレーションします。
-  - フォールバックランタイム: `direct`。デスクトップアプリが直接 `opencode serve --hostname 127.0.0.1 --port <free-port>` を起動します。
+- **ホストモード**では、DesktopがJuggleWork Serverを組み込みます。Serverがワークスペースランタイムの唯一のエントリポイントとなり、OpenCode子プロセスを起動・停止します。
+- ヘッドレスおよびコンテナ環境では、`JUGGLEWORK_MANAGE_OPENCODE=1`と解決済みの`JUGGLEWORK_OPENCODE_BIN`を設定し、`jugglework-server`を直接起動します。
+- DesktopのDockerサンドボックスはDesktopの`sandbox-runtime`が作成・削除し、コンテナ内ではJuggleWork Serverを直接実行します。
 
 プロジェクトフォルダを選択すると、JuggleWorkはそのフォルダを使用してローカルでホストスタックを実行し、デスクトップUIを接続します。
 これにより、リモートサーバーなしで完全にマシン上でエージェントワークフローの実行、プロンプトの送信、進捗の確認が可能です。

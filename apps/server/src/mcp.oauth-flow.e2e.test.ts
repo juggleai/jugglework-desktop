@@ -27,6 +27,8 @@ const repoRoot = resolve(import.meta.dir, "../../..");
 const sidecarDir = join(repoRoot, "apps/desktop/resources/sidecars");
 
 function findSidecar(): string | null {
+  const explicit = process.env.JUGGLEWORK_TEST_OPENCODE_PATH;
+  if (explicit && existsSync(explicit)) return explicit;
   const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
   const names =
     process.platform === "darwin"
@@ -118,6 +120,10 @@ describeMaybe("mcp oauth flow against mock provider", () => {
     engineProc = spawn(enginePath!, ["serve", "--hostname", "127.0.0.1", "--port", String(enginePort)], {
       env: {
         ...process.env,
+        // These tests run an unauthenticated loopback engine. Do not inherit
+        // credentials from the JuggleWork desktop runtime hosting this agent.
+        OPENCODE_SERVER_USERNAME: "",
+        OPENCODE_SERVER_PASSWORD: "",
         XDG_DATA_HOME: join(dataDir, "xdg-data"),
         XDG_CONFIG_HOME: join(dataDir, "xdg-config"),
         XDG_STATE_HOME: join(dataDir, "xdg-state"),

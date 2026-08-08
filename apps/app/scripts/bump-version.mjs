@@ -60,39 +60,20 @@ const targetVersion = async () => {
 const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
   const tauriPath = path.join(REPO_ROOT, "apps", "desktop", "package.json");
-  const orchestratorPath = path.join(
-    REPO_ROOT,
-    "apps",
-    "orchestrator",
-    "package.json",
-  );
   const serverPath = path.join(REPO_ROOT, "apps", "server", "package.json");
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
-  const orchestratorData = await readJson(orchestratorPath);
   const serverData = await readJson(serverPath);
   uiData.version = nextVersion;
   tauriData.version = nextVersion;
-  orchestratorData.version = nextVersion;
-
-  // Ensure jugglework-orchestrator uses the same jugglework-server version.
-  orchestratorData.dependencies = orchestratorData.dependencies ?? {};
-  orchestratorData.dependencies["jugglework-server"] = nextVersion;
-
   serverData.version = nextVersion;
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
     await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
-    await writeFile(
-      orchestratorPath,
-      JSON.stringify(orchestratorData, null, 2) + "\n",
-    );
     await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
   }
 };
 
-// apps/orchestrator pins exact versions of workspace packages, so the lockfile
-// must be resynced after a bump or CI's --frozen-lockfile install fails.
 const syncLockfile = () => {
   const result = spawnSync("pnpm", ["install", "--lockfile-only"], {
     cwd: REPO_ROOT,
@@ -124,7 +105,6 @@ const main = async () => {
         files: [
           "apps/app/package.json",
           "apps/desktop/package.json",
-          "apps/orchestrator/package.json",
           "apps/server/package.json",
           "pnpm-lock.yaml",
         ],

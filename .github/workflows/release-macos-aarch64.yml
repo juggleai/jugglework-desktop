@@ -33,13 +33,8 @@ on:
         required: false
         type: boolean
         default: true
-      publish_sidecars:
-        description: "Build + upload jugglework-orchestrator sidecar release assets"
-        required: false
-        type: boolean
-        default: true
       publish_npm:
-        description: "Publish jugglework-orchestrator/jugglework-server to npm if versions changed"
+        description: "Publish jugglework-server to npm if its version changed"
         required: false
         type: boolean
         default: true
@@ -83,7 +78,6 @@ jobs:
       notarize: ${{ steps.resolve.outputs.notarize }}
       build_electron: ${{ steps.resolve.outputs.build_electron }}
       sign_windows: ${{ steps.resolve.outputs.sign_windows }}
-      publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
       publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
     steps:
@@ -99,10 +93,8 @@ jobs:
           INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
           INPUT_BUILD_ELECTRON: ${{ github.event.inputs.build_electron }}
           INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
-          INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
           INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
-          DEFAULT_PUBLISH_SIDECARS: ${{ vars.RELEASE_PUBLISH_SIDECARS }}
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
           DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
@@ -178,10 +170,6 @@ jobs:
             printf -v RELEASE_BODY '%s\n\n%s' "$RELEASE_BODY" "$WINDOWS_UNSIGNED_NOTE"
           fi
 
-          publish_sidecars="${INPUT_PUBLISH_SIDECARS:-}"
-          if [ -z "$publish_sidecars" ]; then
-            publish_sidecars="${DEFAULT_PUBLISH_SIDECARS:-true}"
-          fi
           publish_npm="${INPUT_PUBLISH_NPM:-}"
           if [ -z "$publish_npm" ]; then
             publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
@@ -204,7 +192,6 @@ jobs:
           echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
           echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
           echo "sign_windows=$sign_windows" >> "$GITHUB_OUTPUT"
-          echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
           echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
           {
@@ -601,121 +588,13 @@ jobs:
       sign_windows: ${{ needs.resolve-release.outputs.sign_windows == 'true' }}
     secrets: inherit
 
-  release-orchestrator-sidecars:
-    name: Build + Upload jugglework-orchestrator Sidecars
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_sidecars == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.4.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          # Bun >= 1.3.10 is required to compile bun-windows-arm64 sidecars.
-          bun-version: "1.3.10"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Resolve sidecar versions
-        id: sidecar-versions
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve SOURCE_DATE_EPOCH
-        id: source-date
-        shell: bash
-        run: |
-          epoch=$(git show -s --format=%ct "${RELEASE_TAG}")
-          echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
-
-      - name: Check jugglework-orchestrator release
-        id: orchestrator-release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="jugglework-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build orchestrator release artifacts
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: |
-          pnpm --filter jugglework-orchestrator build:bin:all
-          pnpm --filter jugglework-orchestrator build:sidecars
-
-      - name: Release review (strict)
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: node scripts/release/review.mjs --strict
-
-      - name: Create jugglework-orchestrator release
-        if: steps.orchestrator-release.outputs.exists != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${{ steps.sidecar-versions.outputs.orchestrator }}"
-          tag="jugglework-orchestrator-v${version}"
-          notes="Sidecar bundle for jugglework-orchestrator v${version}.\n\njugglework-server: ${{ steps.sidecar-versions.outputs.server }}"
-          gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "jugglework-orchestrator v${version}" \
-            --notes "$notes" \
-            --latest=false
-
-      - name: Upload orchestrator release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="jugglework-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          gh release upload "$tag" apps/orchestrator/dist/bin/* apps/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
-
   publish-npm:
     name: Publish npm packages
-    needs: [resolve-release, verify-release, release-orchestrator-sidecars]
+    needs: [resolve-release, verify-release]
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       needs.resolve-release.outputs.publish_npm == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
@@ -766,26 +645,18 @@ jobs:
         id: package-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('apps/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const server=JSON.parse(fs.readFileSync('apps/server/package.json','utf8')); console.log('server=' + server.version);" >> "$GITHUB_OUTPUT"
 
       - name: Check npm versions
         id: npm-versions
         shell: bash
         env:
-          ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
           SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
         run: |
           set -euo pipefail
           # npm view exits non-zero for packages that don't exist yet (404).
           # Treat missing packages as "not published" so release can publish them.
-          orchestrator_current="$(npm view jugglework-orchestrator version 2>/dev/null || true)"
           server_current="$(npm view jugglework-server version 2>/dev/null || true)"
-
-          if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
-            echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_orchestrator=true" >> "$GITHUB_OUTPUT"
-          fi
 
           if [ "$server_current" = "$SERVER_VERSION" ]; then
             echo "publish_server=false" >> "$GITHUB_OUTPUT"
@@ -794,7 +665,7 @@ jobs:
           fi
 
           publish_any=false
-          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ]; then
+          if [ "$server_current" != "$SERVER_VERSION" ]; then
             publish_any=true
           fi
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
@@ -825,21 +696,6 @@ jobs:
       - name: Publish jugglework-server
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter jugglework-server publish --access public --no-git-checks
-
-      - name: Publish jugglework-orchestrator
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
-        run: |
-          set -euo pipefail
-          tag="jugglework-orchestrator-v${ORCHESTRATOR_VERSION}"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "jugglework-orchestrator sidecar release $tag not found. Publish sidecars before jugglework-orchestrator." >&2
-            exit 1
-          fi
-          pnpm --filter jugglework-orchestrator build:bin:all
-          node apps/orchestrator/scripts/publish-npm.mjs
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot
@@ -916,7 +772,6 @@ jobs:
       - publish-electron
       - publish-electron-assets
       - publish-installers
-      - release-orchestrator-sidecars
       - publish-npm
       - publish-daytona-snapshot
     if: |
@@ -926,7 +781,6 @@ jobs:
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
       needs.publish-installers.result == 'success' &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404

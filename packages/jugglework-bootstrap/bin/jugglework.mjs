@@ -7,9 +7,8 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
-// The installed command name. Deliberately NOT "jugglework" so it never collides
-// with the jugglework-orchestrator npm package, which also installs an "jugglework"
-// binary onto the user's PATH.
+// Keep onboarding distinct from the retired bare "jugglework" runtime command.
+// Headless runtime hosting is provided by jugglework-server.
 const COMMAND_NAME = "jugglework-bootstrap"
 const DEFAULT_JUGGLEWORK_MARKETPLACE_NAME = "JuggleWork Marketplace"
 const executableBasename = () => (process.platform === "win32" ? `${COMMAND_NAME}.cmd` : COMMAND_NAME)

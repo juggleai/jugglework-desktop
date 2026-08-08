@@ -1,9 +1,16 @@
 # JuggleWork Host (Docker)
 
-This directory contains the desktop companion host packaging. It runs:
+This directory contains the desktop companion host packaging. The container
+runs one runtime entrypoint:
 
-- `opencode serve` on the container loopback interface.
 - `jugglework-server` on port `8787` as the only published API.
+- Server starts and stops `opencode serve` as a managed child on the container
+  loopback interface.
+
+No `jugglework-orchestrator` process or bare `jugglework` CLI is installed or
+started. Image construction supplies the OpenCode binary, and the container sets
+`JUGGLEWORK_MANAGE_OPENCODE=1` plus `JUGGLEWORK_OPENCODE_BIN` before executing
+Server.
 
 The hosted JuggleWork control plane and inference services are maintained in the
 separate `jugglework-server` repository.
@@ -17,6 +24,15 @@ docker compose up --build
 ```
 
 Then open `http://127.0.0.1:8787/ui`.
+
+For background operation, let Compose own detach, logs, and shutdown:
+
+```bash
+docker compose up --build -d
+docker compose ps
+docker compose logs -f jugglework-host
+docker compose down
+```
 
 Recommended environment variables:
 
@@ -55,3 +71,12 @@ Defaults:
 
 OpenCode is never exposed directly; clients connect through the JuggleWork host
 API.
+
+Desktop-created Docker sandboxes use Desktop's `sandbox-runtime` for host-level
+validation, creation, diagnostics, and cleanup. Each sandbox container still
+runs `jugglework-server` directly with managed OpenCode; Server itself never
+receives Docker control privileges.
+
+See the [orchestrator migration guide](../../packages/docs/start-here/migrate-from-orchestrator.mdx)
+for replacements for the retired TUI, daemon, detach, status, approvals, files,
+and sandbox commands.

@@ -37,7 +37,6 @@ import { addRoute, type Route } from "./registry.js";
 type JsonResponse = (data: unknown, status?: number) => Response;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 type ParseOptionalBoolean = (value: string | null, name: string) => boolean | undefined;
-type FetchRuntimeControl = (path: string, init?: { method?: string; body?: unknown }) => Promise<unknown>;
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
 interface RegisterCoreRoutesOptions {
@@ -53,7 +52,6 @@ interface RegisterCoreRoutesOptions {
   parseOptionalBoolean: ParseOptionalBoolean;
   ensureWritable: (config: ServerConfig) => void;
   buildCapabilities: (config: ServerConfig) => Capabilities;
-  fetchRuntimeControl: FetchRuntimeControl;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveOpencodeDirectory: (workspace: WorkspaceInfo) => string | null;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
@@ -111,7 +109,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     parseOptionalBoolean,
     ensureWritable,
     buildCapabilities,
-    fetchRuntimeControl,
     resolveWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
@@ -283,28 +280,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
         host: config.hostTokenSource,
       },
     });
-  });
-
-  addRoute(routes, "GET", "/runtime/versions", "client", async () => {
-    const snapshot = await fetchRuntimeControl("/runtime/versions");
-    return jsonResponse(snapshot);
-  });
-
-  addRoute(routes, "POST", "/runtime/upgrade", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
-    return jsonResponse(result, 202);
-  });
-
-  addRoute(routes, "GET", "/w/:id/runtime/versions", "client", async () => {
-    const snapshot = await fetchRuntimeControl("/runtime/versions");
-    return jsonResponse(snapshot);
-  });
-
-  addRoute(routes, "POST", "/w/:id/runtime/upgrade", "host", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    const result = await fetchRuntimeControl("/runtime/upgrade", { method: "POST", body });
-    return jsonResponse(result, 202);
   });
 
   addRoute(routes, "GET", "/whoami", "client", async (ctx) => {

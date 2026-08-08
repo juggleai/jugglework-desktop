@@ -4,8 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Keep this in sync with apps/orchestrator/package.json if you want a pinned release.
-        JUGGLEWORK_ORCHESTRATOR_VERSION: 0.11.22
+        # Keep these in sync with apps/server/package.json and constants.json.
+        JUGGLEWORK_SERVER_VERSION: 1.1.30
+        OPENCODE_VERSION: 1.18.7
     ports:
       - "8787:8787"
     environment:
@@ -14,7 +15,7 @@ services:
       # JUGGLEWORK_HOST_TOKEN: "..."
       # Optional: JUGGLEWORK_APPROVAL_MODE: "auto"
       # Optional: JUGGLEWORK_APPROVAL_TIMEOUT_MS: "30000"
-      JUGGLEWORK_DATA_DIR: /data/jugglework-orchestrator
+      JUGGLEWORK_DATA_DIR: /data/jugglework-server
       JUGGLEWORK_SIDECAR_DIR: /data/sidecars
     volumes:
       # Mount an existing project/workspace here.

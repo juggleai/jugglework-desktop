@@ -57,38 +57,6 @@ export type JuggleWorkServerDiagnostics = {
   tokenSource: { client: string; host: string };
 };
 
-export type JuggleWorkRuntimeServiceName = "jugglework-server" | "opencode";
-
-export type JuggleWorkRuntimeServiceSnapshot = {
-  name: JuggleWorkRuntimeServiceName;
-  enabled: boolean;
-  running: boolean;
-  targetVersion: string | null;
-  actualVersion: string | null;
-  upgradeAvailable: boolean;
-};
-
-export type JuggleWorkRuntimeSnapshot = {
-  ok: boolean;
-  orchestrator?: {
-    version: string;
-    startedAt: number;
-  };
-  worker?: {
-    workspace: string;
-    sandboxMode: string;
-  };
-  upgrade?: {
-    status: "idle" | "running" | "failed";
-    startedAt: number | null;
-    finishedAt: number | null;
-    error: string | null;
-    operationId: string | null;
-    services: JuggleWorkRuntimeServiceName[];
-  };
-  services: JuggleWorkRuntimeServiceSnapshot[];
-};
-
 export type JuggleWorkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
@@ -1357,8 +1325,6 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
-    runtimeVersions: () =>
-      requestJson<JuggleWorkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<JuggleWorkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),

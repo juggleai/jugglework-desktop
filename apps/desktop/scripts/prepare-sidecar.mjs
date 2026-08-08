@@ -28,11 +28,23 @@ const readArg = (name) => {
   return null;
 };
 
-const hasFlag = (name) => process.argv.slice(2).includes(name);
-const forceBuild = hasFlag("--force") || process.env.JUGGLEWORK_SIDECAR_FORCE_BUILD === "1";
 const sidecarOverride = process.env.JUGGLEWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "resources", "sidecars");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
+
+// Build outputs are ignored and can retain retired sidecars from older local
+// builds. Remove those names proactively so package-content inspection and
+// manual runs never mistake them for current runtime dependencies.
+const retiredSidecarPatterns = [
+  /^jugglework-orchestrator(?:-|$)/,
+  /^openwork-orchestrator(?:-|$)/,
+];
+if (existsSync(sidecarDir)) {
+  for (const entry of readdirSync(sidecarDir)) {
+    if (!retiredSidecarPatterns.some((pattern) => pattern.test(entry))) continue;
+    unlinkSync(join(sidecarDir, entry));
+  }
+}
 
 const opencodeGithubRepo = (() => {
   const raw =
@@ -87,27 +99,6 @@ const resolvedTargetTriple = (() => {
 })();
 const isWindowsTarget = process.platform === "win32" || resolvedTargetTriple?.includes("windows") === true;
 
-const bunTarget = (() => {
-  switch (resolvedTargetTriple) {
-    case "aarch64-apple-darwin":
-      return "bun-darwin-arm64";
-    case "x86_64-apple-darwin":
-      return "bun-darwin-x64-baseline";
-    case "aarch64-unknown-linux-gnu":
-      return "bun-linux-arm64";
-    case "x86_64-unknown-linux-gnu":
-      return "bun-linux-x64-baseline";
-    // Windows baseline artifacts intermittently fail to extract in CI
-    // with Bun 1.3.6. Use the stable x64 target here for now.
-    case "x86_64-pc-windows-msvc":
-      return "bun-windows-x64";
-    case "aarch64-pc-windows-msvc":
-      return "bun-windows-arm64";
-    default:
-      return null;
-  }
-})();
-
 const opencodeBaseName = isWindowsTarget ? "opencode.exe" : "opencode";
 const opencodePath = join(sidecarDir, opencodeBaseName);
 const opencodeTargetName = resolvedTargetTriple
@@ -118,45 +109,7 @@ const opencodeTargetPath = opencodeTargetName ? join(sidecarDir, opencodeTargetN
 const opencodeCandidatePath = opencodeTargetPath ?? opencodePath;
 let existingOpencodeVersion = null;
 
-// jugglework-server paths
-const juggleworkServerBaseName = "jugglework-server";
-const juggleworkServerName = isWindowsTarget ? `${juggleworkServerBaseName}.exe` : juggleworkServerBaseName;
-const juggleworkServerPath = join(sidecarDir, juggleworkServerName);
-const juggleworkServerBuildName = bunTarget
-  ? `${juggleworkServerBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : juggleworkServerName;
-const juggleworkServerBuildPath = join(sidecarDir, juggleworkServerBuildName);
-const juggleworkServerTargetTriple = resolvedTargetTriple;
-const juggleworkServerTargetName = juggleworkServerTargetTriple
-  ? `${juggleworkServerBaseName}-${juggleworkServerTargetTriple}${juggleworkServerTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const juggleworkServerTargetPath = juggleworkServerTargetName ? join(sidecarDir, juggleworkServerTargetName) : null;
-
 const juggleworkServerDir = resolve(__dirname, "..", "..", "server");
-
-const resolveBuildScript = (dir) => {
-  const scriptPath = resolve(dir, "script", "build.ts");
-  if (existsSync(scriptPath)) return scriptPath;
-  const scriptsPath = resolve(dir, "scripts", "build.ts");
-  if (existsSync(scriptsPath)) return scriptsPath;
-  return scriptPath;
-};
-
-// orchestrator paths
-const orchestratorBaseName = "jugglework-orchestrator";
-const orchestratorName =
-  isWindowsTarget ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
-const orchestratorPath = join(sidecarDir, orchestratorName);
-const orchestratorBuildName = bunTarget
-  ? `${orchestratorBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : orchestratorName;
-const orchestratorBuildPath = join(sidecarDir, orchestratorBuildName);
-const orchestratorTargetTriple = resolvedTargetTriple;
-const orchestratorTargetName = orchestratorTargetTriple
-  ? `${orchestratorBaseName}-${orchestratorTargetTriple}${orchestratorTargetTriple.includes("windows") ? ".exe" : ""}`
-  : null;
-const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
-const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
 
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
@@ -273,12 +226,6 @@ const parseChecksum = (content, assetName) => {
   }
   return null;
 };
-
-// jugglework-server is no longer compiled as a sidecar binary — it runs
-// in-process inside Electron via a direct import of the server library.
-const didBuildJuggleWorkServer = false;
-
-// Server binary copy/sign skipped — runs in-process.
 
 if (!existingOpencodeVersion && opencodeCandidatePath) {
   existingOpencodeVersion =
@@ -410,99 +357,14 @@ if (shouldDownloadOpencode) {
   console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
 }
 
-// Build orchestrator sidecar
-let didBuildOrchestrator = false;
-const shouldBuildOrchestrator =
-  forceBuild || !existsSync(orchestratorBuildPath) || isStubBinary(orchestratorBuildPath);
-if (shouldBuildOrchestrator) {
-  mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(orchestratorBuildPath)) {
-    try {
-      unlinkSync(orchestratorBuildPath);
-    } catch {
-      // ignore
-    }
-  }
-  const orchestratorBuildScript = resolveBuildScript(orchestratorDir);
-  if (!existsSync(orchestratorBuildScript)) {
-    console.error(`Orchestrator build script not found at ${orchestratorBuildScript}`);
-    process.exit(1);
-  }
-  const orchestratorArgs = [
-    orchestratorBuildScript,
-    "--outdir",
-    sidecarDir,
-    "--filename",
-    orchestratorBaseName,
-  ];
-  if (bunTarget) {
-    orchestratorArgs.push("--target", bunTarget);
-  }
-  const result = spawnSync("bun", orchestratorArgs, {
-    cwd: orchestratorDir,
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      BUN_ENV: "production",
-    },
-  });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
-
-  didBuildOrchestrator = true;
-}
-
-if (existsSync(orchestratorBuildPath)) {
-  const shouldCopyCanonical =
-    didBuildOrchestrator || !existsSync(orchestratorPath) || isStubBinary(orchestratorPath);
-  if (shouldCopyCanonical && orchestratorBuildPath !== orchestratorPath) {
-    try {
-      if (existsSync(orchestratorPath)) unlinkSync(orchestratorPath);
-    } catch {
-      // ignore
-    }
-    copyFileSync(orchestratorBuildPath, orchestratorPath);
-  }
-
-  if (orchestratorTargetPath) {
-    const shouldCopyTarget =
-      didBuildOrchestrator ||
-      !existsSync(orchestratorTargetPath) ||
-      isStubBinary(orchestratorTargetPath);
-    if (shouldCopyTarget && orchestratorBuildPath !== orchestratorTargetPath) {
-      try {
-        if (existsSync(orchestratorTargetPath)) unlinkSync(orchestratorTargetPath);
-      } catch {
-        // ignore
-      }
-      copyFileSync(orchestratorBuildPath, orchestratorTargetPath);
-    }
-  }
-}
-
 adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
-  // jugglework-server runs in-process — no binary to sign.
-  orchestratorBuildPath,
-  orchestratorPath,
-  orchestratorTargetPath,
 ]);
 
 const juggleworkServerVersion = (() => {
   try {
     const raw = readFileSync(resolve(juggleworkServerDir, "package.json"), "utf8");
-    return String(JSON.parse(raw).version ?? "").trim();
-  } catch {
-    return null;
-  }
-})();
-
-const orchestratorVersion = (() => {
-  try {
-    const raw = readFileSync(resolve(orchestratorDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -517,10 +379,6 @@ const versions = {
   "jugglework-server": {
     version: juggleworkServerVersion,
     sha256: "in-process",
-  },
-  "jugglework-orchestrator": {
-    version: orchestratorVersion,
-    sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
   },
 };
 
