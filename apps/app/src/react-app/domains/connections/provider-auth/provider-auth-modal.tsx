@@ -713,12 +713,12 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const submittingLabel = () => {
     if (!props.submitting) return null;
-    if (resolvedView === "api") return "Saving API key...";
+    if (resolvedView === "api") return t("providers.status_saving_api_key");
     if (resolvedView === "custom") return t("providers.custom_submitting_status");
-    if (resolvedView === "cloud") return "Connecting organization provider...";
-    if (resolvedView === "oauth-code") return "Verifying authorization code...";
-    if (resolvedView === "oauth-auto") return "Waiting for OAuth confirmation...";
-    return "Opening authentication...";
+    if (resolvedView === "cloud") return t("providers.status_connecting_org_provider");
+    if (resolvedView === "oauth-code") return t("providers.status_verifying_code");
+    if (resolvedView === "oauth-auto") return t("providers.status_waiting_oauth");
+    return t("providers.status_opening_auth");
   };
 
   const stepEntryIndex = (delta: number) => {
@@ -787,7 +787,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     >
       <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Connect providers</DialogTitle>
+          <DialogTitle>{t("providers.connect_title")}</DialogTitle>
           <DialogDescription>
             Sign in to services or use providers managed by your organization.
           </DialogDescription>
@@ -916,11 +916,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     ))
                   ) : (
                     <div className="text-sm text-gray-10 pt-2">
-                      {entries.length ? "No providers match your search." : "No providers available."}
+                      {entries.length ? t("providers.no_search_results") : t("providers.no_available")}
                     </div>
                   )}
 
-                  <div className="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                  <div className="text-[11px] text-gray-9">{t("providers.keyboard_hint")}</div>
                 </div>
               ) : null}
 
@@ -985,7 +985,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   />
                   {selectedEntry.env.length > 0 ? (
                     <div className="text-[11px] text-gray-9">
-                      Env vars: <span className="font-mono">{selectedEntry.env.join(", ")}</span>
+                      {t("providers.env_vars")}: <span className="font-mono">{selectedEntry.env.join(", ")}</span>
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
@@ -1194,20 +1194,22 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   </div>
                   {(selectedCloudMethod.modelCount ?? 0) > 0 ? (
                     <div className="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9">
-                      {(selectedCloudMethod.modelCount ?? 0)} curated model{(selectedCloudMethod.modelCount ?? 0) === 1 ? "" : "s"} will be added to this workspace.
+                      {(selectedCloudMethod.modelCount ?? 0) === 1
+                        ? t("providers.curated_models_one", { count: selectedCloudMethod.modelCount ?? 0 })
+                        : t("providers.curated_models_other", { count: selectedCloudMethod.modelCount ?? 0 })}
                     </div>
                   ) : null}
                   {(selectedCloudMethod.env?.length ?? 0) > 0 ? (
                     <div className="text-[11px] text-gray-9">
-                      Env vars: <span className="font-mono">{selectedCloudMethod.env?.join(", ")}</span>
+                      {t("providers.env_vars")}: <span className="font-mono">{selectedCloudMethod.env?.join(", ")}</span>
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[11px] text-gray-9">
-                      JuggleWork will install the provider config and use the credential stored for your org.
+                      {t("providers.org_install_hint")}
                     </div>
                     <Button onClick={handleCloudSubmit} disabled={actionDisabled}>
-                      {props.submitting ? "Connecting..." : "Connect provider"}
+                      {props.submitting ? t("providers.connecting") : t("settings.connect_provider")}
                     </Button>
                   </div>
                 </div>

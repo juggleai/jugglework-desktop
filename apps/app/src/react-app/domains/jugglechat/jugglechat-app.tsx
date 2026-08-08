@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, type PointerEventHandler } from "react";
 import { CircleAlert, LoaderCircle } from "lucide-react";
+import { t } from "@/i18n";
 
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 
@@ -41,9 +42,9 @@ export function JuggleChatApp({
 
   let content;
   if (denAuth.status === "checking" || status === "idle" || status === "initializing") {
-    content = <div className="jw-im-root tyn-root tyn-web-root jw-im-boot"><LoaderCircle className="is-spinning" /><span>正在初始化 JuggleChat…</span></div>;
+    content = <div className="jw-im-root tyn-root tyn-web-root jw-im-boot"><LoaderCircle className="is-spinning" /><span>{t("chat.initializing")}</span></div>;
   } else if (!user) {
-    content = <div className="jw-im-root tyn-root tyn-web-root jw-im-boot"><CircleAlert /><span>{error || "请先登录 JuggleWork"}</span></div>;
+    content = <div className="jw-im-root tyn-root tyn-web-root jw-im-boot"><CircleAlert /><span>{error || t("chat.sign_in_required")}</span></div>;
   } else {
     content = (
       <div className={`jw-im-root tyn-root tyn-web-root${sidebarOpen ? "" : " is-list-collapsed"}${sidebarResizing ? " is-list-resizing" : ""}`}>
@@ -51,8 +52,8 @@ export function JuggleChatApp({
           <button
             type="button"
             className="jw-im-list-resize-handle"
-            aria-label="调整列表宽度"
-            title="拖拽调整列表宽度"
+            aria-label={t("chat.resize_list")}
+            title={t("chat.resize_list_hint")}
             onClick={(event) => event.preventDefault()}
             onPointerDown={onStartSidebarResize}
           />

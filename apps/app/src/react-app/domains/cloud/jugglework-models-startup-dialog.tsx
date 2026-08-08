@@ -2,6 +2,7 @@
 import { ArrowRight, KeyRound, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import {
   Dialog,
   DialogContent,
@@ -40,9 +41,9 @@ export function JuggleWorkModelsStartupDialog(props: JuggleWorkModelsStartupDial
           <div className="mb-2 flex size-11 items-center justify-center rounded-2xl border border-blue-6 bg-blue-2 text-blue-11">
             <ProviderIcon providerId={JUGGLEWORK_MODELS_PROVIDER_ID} providerName={JUGGLEWORK_MODELS_PROVIDER_NAME} size={22} />
           </div>
-          <DialogTitle>Use JuggleWork Models without API keys</DialogTitle>
+          <DialogTitle>{t("models_startup.title")}</DialogTitle>
           <DialogDescription>
-            JuggleWork Models gives your workspace hosted frontier models managed by JuggleWork Cloud. You can still use your own providers whenever you prefer.
+            {t("models_startup.description")}
           </DialogDescription>
         </DialogHeader>
 
@@ -59,25 +60,25 @@ export function JuggleWorkModelsStartupDialog(props: JuggleWorkModelsStartupDial
           <div className="grid gap-2 text-xs text-dls-secondary sm:grid-cols-2">
             <div className="flex gap-2 rounded-xl bg-dls-hover/50 p-3">
               <Sparkles className="mt-0.5 size-3.5 shrink-0 text-blue-11" />
-              <span>Managed model access for JuggleWork tasks and shared workflows.</span>
+              <span>{t("models_startup.managed_access")}</span>
             </div>
             <div className="flex gap-2 rounded-xl bg-dls-hover/50 p-3">
               <KeyRound className="mt-0.5 size-3.5 shrink-0 text-blue-11" />
-              <span>No Anthropic, OpenAI, or Google API key setup required.</span>
+              <span>{t("models_startup.no_api_keys")}</span>
             </div>
           </div>
 
           <p className="text-xs text-dls-secondary">
-            Pricing is handled through JuggleWork Cloud. Continue without it to use your organization models or your own provider keys.
+            {t("models_startup.pricing")}
           </p>
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">
           <Button variant="ghost" onClick={props.onContinueWithout}>
-            Continue without JuggleWork Models
+            {t("models_startup.continue_without")}
           </Button>
           <Button onClick={props.onSubscribe}>
-            {props.isSignedIn ? "Subscribe" : "Sign in to subscribe"}
+            {props.isSignedIn ? t("models_startup.subscribe") : t("models_startup.sign_in_to_subscribe")}
             <ArrowRight className="ml-1.5 size-3.5" />
           </Button>
         </DialogFooter>

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import type { Ref } from "react";
 import { Search, X } from "lucide-react";
+import { t } from "@/i18n";
 
 import { isMacPlatform } from "@/app/utils";
 
@@ -42,7 +43,7 @@ export function ListPanelHeader(props: ListPanelHeaderProps) {
           />
           <span className="jw-list-panel-search-end">
             {props.showClear ? (
-              <button type="button" className="jw-list-panel-clear" onClick={props.onClearSearch} title="清除搜索" aria-label="清除搜索"><X /></button>
+              <button type="button" className="jw-list-panel-clear" onClick={props.onClearSearch} title={t("common.clear_search")} aria-label={t("common.clear_search")}><X /></button>
             ) : props.searchEnd ?? (props.shortcut ? <kbd className="jw-list-panel-shortcut">{props.shortcut}</kbd> : null)}
           </span>
         </div>

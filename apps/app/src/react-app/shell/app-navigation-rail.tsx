@@ -89,7 +89,7 @@ function RailButton({
           <span className="relative size-2.5 rounded-full bg-green-9" />
         </span>
       ) : null}
-      {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={`${badge} 条未读消息`}>{badge > 99 ? "99+" : badge}</span> : null}
+      {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={t("chat.unread_count", { count: badge })}>{badge > 99 ? "99+" : badge}</span> : null}
     </button>
   );
 }

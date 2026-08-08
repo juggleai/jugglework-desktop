@@ -1548,8 +1548,8 @@ export function SessionPage(props: SessionPageProps) {
                           </h2>
                           <p className="text-xs text-dls-secondary">
                             {providerCount === 0
-                              ? "Add an AI model provider so your tasks can run."
-                              : "Try one of these to get started:"}
+                              ? t("session.new_session_provider_hint")
+                              : t("session.new_session_starter_hint")}
                           </p>
                         </div>
                         <div className="space-y-2">
@@ -1561,9 +1561,9 @@ export function SessionPage(props: SessionPageProps) {
                             >
                               <Zap className="mt-0.5 size-5 shrink-0 text-blue-10" />
                               <div>
-                                <div className="text-[13px] font-medium text-dls-text">Connect a model provider</div>
+                                <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_connect_provider_title")}</div>
                                 <div className="mt-0.5 text-[11px] text-dls-secondary">
-                                  Add an API key for Anthropic, OpenAI, Google, or other providers
+                                  {t("session.new_session_connect_provider_desc")}
                                 </div>
                               </div>
                             </button>
@@ -1574,14 +1574,14 @@ export function SessionPage(props: SessionPageProps) {
                             onClick={() => {
                               props.sidebar.onCreateTaskWithPrompt?.(
                                 props.selectedWorkspaceId,
-                                "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data.",
+                                t("session.new_session_csv_prompt"),
                               );
                             }}
                           >
                             <img src="https://cdn.simpleicons.org/googlesheets" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Edit a CSV</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Create a sample spreadsheet with customer data</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_csv_title")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_csv_desc")}</div>
                             </div>
                           </button>
                           <button
@@ -1590,14 +1590,14 @@ export function SessionPage(props: SessionPageProps) {
                             onClick={() => {
                               props.sidebar.onCreateTaskWithPrompt?.(
                                 props.selectedWorkspaceId,
-                                "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices.",
+                                t("session.new_session_browser_prompt"),
                               );
                             }}
                           >
                             <img src={resolveExtensionIconSrc("/jugglework-logo.png")} alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Browse the web</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Search Craigslist for couches and list the results</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_browser_title")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_browser_desc")}</div>
                             </div>
                           </button>
                           <button
@@ -1609,8 +1609,8 @@ export function SessionPage(props: SessionPageProps) {
                           >
                             <img src="https://cdn.simpleicons.org/hackthebox" alt="" width={20} height={20} className="mt-0.5 shrink-0" />
                             <div>
-                              <div className="text-[13px] font-medium text-dls-text">Connect an extension</div>
-                              <div className="mt-0.5 text-[11px] text-dls-secondary">Add MCP servers, plugins, and integrations</div>
+                              <div className="text-[13px] font-medium text-dls-text">{t("session.new_session_extension_title")}</div>
+                              <div className="mt-0.5 text-[11px] text-dls-secondary">{t("session.new_session_extension_desc")}</div>
                             </div>
                           </button>
                         </div>

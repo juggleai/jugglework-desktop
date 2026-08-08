@@ -106,8 +106,8 @@ export function CreateRemoteWorkspaceModal(
             showDirectory
             submitting={submitting}
             hostInputRef={inputRef}
-            title="Remote server details"
-            description="Use the URL your JuggleWork server shared with you. Add a token only if the server needs one."
+            title={t("remote_workspace.server_details")}
+            description={t("remote_workspace.server_details_description")}
           />
         </div>
 

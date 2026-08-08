@@ -9,16 +9,9 @@ import {
 } from "@/components/descriptive-button"
 import { useMessageList } from "@/components/chat/message-list-provider"
 import { cn } from "@/lib/utils"
+import { t } from "@/i18n"
 import { useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider"
 import { BoltIcon, CubeIcon, DocumentChartBarIcon, GlobeAltIcon, SparklesIcon } from "@heroicons/react/24/solid"
-
-const CSV_PROMPT =
-  "Create a sample CSV file with 20 rows of fake customer data (name, email, company, revenue). Then show me a summary of the data."
-
-const BROWSER_PROMPT =
-  "Open craigslist.org in the browser and search for couches for sale. Show me the top 5 results with prices."
-
-const ORGANIZATION_PROMPT_TITLES = ["Organization prompt 1", "Organization prompt 2", "Organization prompt 3"]
 
 export function resolveOrganizationPromptCardContent(input: {
   prompt: string
@@ -27,7 +20,7 @@ export function resolveOrganizationPromptCardContent(input: {
 }) {
   const title = input.description?.trim()
   return {
-    title: title || ORGANIZATION_PROMPT_TITLES[input.index] || "Organization prompt",
+    title: title || t("session.new_session_org_prompt_title", { count: input.index + 1 }),
     description: input.prompt,
     selectionPrompt: input.prompt,
   }
@@ -54,10 +47,10 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
     <div className={cn("@container flex flex-col gap-4 pt-1", className)}>
       <p className="text-muted-foreground font-medium select-none">
         {noProviders
-          ? "Connect a model provider to get started:"
+          ? t("session.new_session_connect_provider_heading")
           : hasOrganizationPrompts
-            ? "Try one of your organization's prompts:"
-            : "Try one of these:"}
+            ? t("session.new_session_org_starter_hint")
+            : t("session.new_session_starter_hint")}
       </p>
       <div className="grid min-w-0 gap-2 @lg:grid-cols-2 @2xl:grid-cols-3">
         {noProviders ? (
@@ -76,9 +69,9 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
               <BoltIcon className="size-6 text-blue-10" aria-hidden />
             </DescriptiveButtonIcon>
             <DescriptiveButtonContent>
-              <DescriptiveButtonTitle>Connect a model provider</DescriptiveButtonTitle>
+              <DescriptiveButtonTitle>{t("session.new_session_connect_provider_title")}</DescriptiveButtonTitle>
               <DescriptiveButtonDescription>
-                Add an API key for Anthropic, OpenAI, Google, or others
+                {t("session.new_session_connect_provider_desc")}
               </DescriptiveButtonDescription>
             </DescriptiveButtonContent>
           </DescriptiveButton>
@@ -105,23 +98,23 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
           })
         ) : (
           <>
-            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(CSV_PROMPT)}>
+            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(t("session.new_session_csv_prompt"))}>
               <DescriptiveButtonIcon>
                 <DocumentChartBarIcon className="size-6 text-green-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Edit a CSV</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Create a sample spreadsheet</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("session.new_session_csv_title")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("session.new_session_csv_desc_short")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
 
-            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(BROWSER_PROMPT)}>
+            <DescriptiveButton orientation="vertical" onClick={() => setPrompt(t("session.new_session_browser_prompt"))}>
               <DescriptiveButtonIcon>
                 <GlobeAltIcon className="size-6 text-blue-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Browse the web</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Search Craigslist for couches</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("session.new_session_browser_title")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("session.new_session_browser_desc_short")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
 
@@ -139,8 +132,8 @@ export function TaskSuggestions({ className }: TaskSuggestionsProps) {
                 <CubeIcon className="size-6 text-amber-10" aria-hidden />
               </DescriptiveButtonIcon>
               <DescriptiveButtonContent>
-                <DescriptiveButtonTitle>Connect an extension</DescriptiveButtonTitle>
-                <DescriptiveButtonDescription>Add MCPs and integrations</DescriptiveButtonDescription>
+                <DescriptiveButtonTitle>{t("session.new_session_extension_title")}</DescriptiveButtonTitle>
+                <DescriptiveButtonDescription>{t("session.new_session_extension_desc_short")}</DescriptiveButtonDescription>
               </DescriptiveButtonContent>
             </DescriptiveButton>
           </>
