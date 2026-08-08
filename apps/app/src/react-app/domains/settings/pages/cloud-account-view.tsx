@@ -27,7 +27,6 @@ import {
   SettingsSectionHeaderDescription,
   SettingsSectionHeaderTitle,
   SettingsStack,
-  SettingsStatusBadge,
 } from "../settings-section";
 
 type CloudAccountSession = Pick<
@@ -43,8 +42,6 @@ type CloudAccountSession = Pick<
   | "orgsError"
   | "sessionBusy"
   | "signinFallbackUrl"
-  | "summaryLabel"
-  | "summaryTone"
   | "onActiveOrgChange"
   | "onApplyBaseUrl"
   | "onBaseUrlDraftChange"
@@ -172,7 +169,7 @@ function DenSignedOutPanel({
 }
 
 export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
-  const { activeOrganization, isSignedIn, statusMessage } = useCloudSession();
+  const { activeOrganization, isSignedIn } = useCloudSession();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -180,52 +177,35 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
     navigate("/onboarding", { replace: true });
   }, [isSignedIn, navigate, session.needsOrgSelection]);
 
+  const developerSettings = developerMode ? (
+    <>
+      <Separator />
+      <SettingsSection>
+        <CloudDevMode
+          authBusy={session.authBusy}
+          baseUrlBusy={session.baseUrlBusy}
+          baseUrlDraft={session.baseUrlDraft}
+          onApplyBaseUrl={session.onApplyBaseUrl}
+          onBaseUrlDraftChange={session.onBaseUrlDraftChange}
+          onOpenControlPlane={session.onOpenControlPlane}
+          onResetBaseUrl={session.onResetBaseUrl}
+          sessionBusy={session.sessionBusy}
+        />
+        {session.baseUrlError ? (
+          <SettingsNotice tone="error">{session.baseUrlError}</SettingsNotice>
+        ) : null}
+      </SettingsSection>
+    </>
+  ) : null;
+
   return (
     <SettingsStack>
-      <Separator />
-
-      <SettingsSection>
-        <SettingsSectionHeader>
-          <SettingsSectionHeaderContent>
-            <SettingsSectionHeaderTitle>
-              {t("den.cloud_section_title")}
-              <SettingsStatusBadge tone={session.summaryTone} label={session.summaryLabel} />
-            </SettingsSectionHeaderTitle>
-            <SettingsSectionHeaderDescription>
-              {t(isSignedIn ? "den.cloud_signed_in_desc" : "den.cloud_section_desc")}
-            </SettingsSectionHeaderDescription>
-            {!isSignedIn ? (
-              <SettingsSectionHeaderDescription className="text-xs">
-                {t("den.cloud_sleep_hint")}
-              </SettingsSectionHeaderDescription>
+      {isSignedIn ? (
+        <>
+          <SettingsSection>
+            {session.authError ? (
+              <SettingsNotice tone="error">{session.authError}</SettingsNotice>
             ) : null}
-          </SettingsSectionHeaderContent>
-        </SettingsSectionHeader>
-
-        {developerMode ? (
-          <CloudDevMode
-            authBusy={session.authBusy}
-            baseUrlBusy={session.baseUrlBusy}
-            baseUrlDraft={session.baseUrlDraft}
-            onApplyBaseUrl={session.onApplyBaseUrl}
-            onBaseUrlDraftChange={session.onBaseUrlDraftChange}
-            onOpenControlPlane={session.onOpenControlPlane}
-            onResetBaseUrl={session.onResetBaseUrl}
-            sessionBusy={session.sessionBusy}
-          />
-        ) : null}
-
-        {session.baseUrlError ? <SettingsNotice tone="error">{session.baseUrlError}</SettingsNotice> : null}
-
-        {isSignedIn && session.authError ? (
-          <SettingsNotice tone="error">{session.authError}</SettingsNotice>
-        ) : null}
-
-        {statusMessage && !session.authError && !session.orgsError ? (
-          <SettingsNotice>{statusMessage}</SettingsNotice>
-        ) : null}
-
-        {isSignedIn ? (
           <CloudAccountSection
             activeOrgId={activeOrganization?.id ?? ""}
             authBusy={session.authBusy}
@@ -239,12 +219,11 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
             onRefreshOrgs={session.onRefreshOrgs}
             onSignOut={session.onSignOut}
           />
-        ) : null}
-      </SettingsSection>
-
-      <Separator />
-
-      {!isSignedIn ? (
+          </SettingsSection>
+          {developerSettings}
+        </>
+      ) : (
+        <>
         <DenSignedOutPanel
           authBusy={session.authBusy}
           authError={session.authError}
@@ -254,7 +233,9 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
           sessionBusy={session.sessionBusy}
           signinFallbackUrl={session.signinFallbackUrl}
         />
-      ) : null}
+          {developerSettings}
+        </>
+      )}
     </SettingsStack>
   );
 }

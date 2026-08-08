@@ -13,7 +13,6 @@ import type {
 } from "@/app/lib/jugglework-server";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t } from "@/i18n";
 import { DenSignInSurface } from "@/react-app/domains/cloud/den-signin-surface";
@@ -41,10 +40,6 @@ import {
   SettingsInset,
   SettingsNotice,
   SettingsSection,
-  SettingsSectionHeader,
-  SettingsSectionHeaderContent,
-  SettingsSectionHeaderDescription,
-  SettingsSectionHeaderTitle,
   SettingsStack,
   SettingsStatusBadge,
 } from "../settings-section";
@@ -523,21 +518,6 @@ function AgentAccessAdvanced(props: {
   );
 }
 
-function ConnectIntro() {
-  return (
-    <SettingsSection>
-      <SettingsSectionHeader>
-        <SettingsSectionHeaderContent>
-          <SettingsSectionHeaderTitle>{t("connect.header_title")}</SettingsSectionHeaderTitle>
-          <SettingsSectionHeaderDescription>
-            {t("connect.header_description")}
-          </SettingsSectionHeaderDescription>
-        </SettingsSectionHeaderContent>
-      </SettingsSectionHeader>
-    </SettingsSection>
-  );
-}
-
 function ConnectLoadingPanel() {
   return (
     <SettingsSection>
@@ -621,19 +601,6 @@ type ConnectOrganizationRow =
       importedLocally: boolean;
       plugin: DenOrgPlugin;
     };
-
-const connectGroupOrder: Array<Exclude<ConnectRowGroup, "excluded">> = ["needs_signin", "ready", "needs_admin_setup"];
-
-function connectGroupLabel(group: Exclude<ConnectRowGroup, "excluded">) {
-  switch (group) {
-    case "needs_signin":
-      return t("connect.group_needs_signin");
-    case "ready":
-      return t("connect.group_ready");
-    case "needs_admin_setup":
-      return t("connect.group_needs_admin_setup");
-  }
-}
 
 function ConnectRowIcon(props: { iconSlug?: string; iconSrc?: string; name: string; serviceUrl?: string }) {
   const resolved = resolveExtensionIconUrl({ iconSlug: props.iconSlug, iconSrc: props.iconSrc, serviceUrl: props.serviceUrl });
@@ -793,15 +760,13 @@ function ConnectOrganizationList(props: {
   role: "owner" | "admin" | "member" | null | undefined;
 }) {
   const [search, setSearch] = useState("");
-  const rows = useMemo(() => buildConnectRows({ connections: props.connections, items: props.items, role: props.role }), [props.connections, props.items, props.role]);
+  const rows = useMemo(
+    () => buildConnectRows({ connections: props.connections, items: props.items, role: props.role })
+      .filter((row) => row.group === "ready"),
+    [props.connections, props.items, props.role],
+  );
   const query = search.trim().toLowerCase();
   const filteredRows = query ? rows.filter((row) => rowSearchText(row).includes(query)) : rows;
-  const rowsByGroup = new Map<ConnectOrganizationRow["group"], ConnectOrganizationRow[]>();
-  for (const row of filteredRows) {
-    const existing = rowsByGroup.get(row.group) ?? [];
-    existing.push(row);
-    rowsByGroup.set(row.group, existing);
-  }
 
   return (
     <div
@@ -809,10 +774,6 @@ function ConnectOrganizationList(props: {
       data-connect-marketplace-item-count={props.items.length}
       className="space-y-3"
     >
-      <div className="space-y-1">
-        <div className="text-sm font-semibold text-dls-text">{t("connect.organization_section_title")}</div>
-        <div className="text-sm text-dls-secondary">{t("connect.organization_section_description")}</div>
-      </div>
       {rows.length > 10 ? (
         <Input
           value={search}
@@ -829,30 +790,19 @@ function ConnectOrganizationList(props: {
           <div className="text-sm text-dls-secondary">{t("connect.organization_no_matches")}</div>
         </SettingsInset>
       ) : (
-        <div className="space-y-4">
-          {connectGroupOrder.map((group) => {
-            const groupRows = rowsByGroup.get(group) ?? [];
-            if (groupRows.length === 0) return null;
-            return (
-              <div key={group} className="space-y-2" data-connect-group={group}>
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-dls-secondary">
-                  {connectGroupLabel(group)}
-                </div>
-                <div className="space-y-2">
-                  {groupRows.map((row) => (
-                    <ConnectOrganizationRow
-                      key={`${row.kind}:${row.id}`}
-                      row={row}
-                      connectingId={props.connectingId}
-                      disconnectingId={props.disconnectingId}
-                      onConnect={props.onConnect}
-                      onDisconnect={props.onDisconnect}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+        <div className="space-y-2" data-connect-group="ready">
+          <div className="space-y-2">
+            {filteredRows.map((row) => (
+              <ConnectOrganizationRow
+                key={`${row.kind}:${row.id}`}
+                row={row}
+                connectingId={props.connectingId}
+                disconnectingId={props.disconnectingId}
+                onConnect={props.onConnect}
+                onDisconnect={props.onDisconnect}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -874,27 +824,9 @@ function ConnectActivePanel(props: {
   onDisconnect: (connectionId: string) => void;
 }) {
   const { activeOrganization } = useCloudSession();
-  const activeOrgName = activeOrganization?.name.trim();
 
   return (
     <SettingsSection>
-      <AgentAccessCard
-        client={props.juggleworkClient}
-        workspaceId={props.workspaceId}
-        currentModel={props.currentModel}
-        onHealthChange={props.onCloudMcpHealthChange}
-      />
-
-      <div
-        data-testid="connect-org-status-row"
-        className="flex items-center gap-2 rounded-2xl border border-green-6/30 bg-green-2 px-4 py-3 text-sm font-medium text-green-11"
-      >
-        <span className="size-2 rounded-full bg-green-9" />
-        {activeOrgName
-          ? t("connect.connected_to_org", { name: activeOrgName })
-          : t("connect.connected_to_cloud")}
-      </div>
-
       {props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
       {props.loading ? <SettingsNotice>{t("connect.loading")}</SettingsNotice> : null}
 
@@ -907,10 +839,6 @@ function ConnectActivePanel(props: {
         onConnect={props.onConnect}
         onDisconnect={props.onDisconnect}
       />
-
-      <div className="flex justify-end">
-        <ManageInDenButton />
-      </div>
     </SettingsSection>
   );
 }
@@ -959,8 +887,6 @@ export function ConnectView(props: ConnectViewProps) {
 
   return (
     <SettingsStack>
-      <Separator />
-      <ConnectIntro />
       {state === "loading" ? <ConnectLoadingPanel /> : null}
       {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
       {state === "active" ? (

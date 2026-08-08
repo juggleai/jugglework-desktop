@@ -175,11 +175,11 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "extensions", "advanced"];
+  return ["preferences", "extensions"];
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["appearance", "updates", "ai", "shell"];
+  const tabs: SettingsTab[] = ["appearance", "updates", "ai"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }

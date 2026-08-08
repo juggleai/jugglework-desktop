@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState, type ReactNode } from "react";
-import { Cpu, Sparkles, Upload } from "lucide-react";
+import { Cpu, RefreshCw, Sparkles, Upload } from "lucide-react";
 
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
@@ -94,9 +94,9 @@ export function ExtensionsView(props: ExtensionsViewProps) {
   };
 
   return (
-    <section className="space-y-6 max-w-3xl w-full animate-in fade-in duration-300">
-      <div className="flex items-center justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
+    <section className="w-full max-w-5xl space-y-5 animate-in fade-in duration-300">
+      <div className="flex flex-wrap items-start justify-between gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="text-sm text-dls-secondary">
             {t("extensions.inventory_description")}
           </p>
@@ -108,6 +108,19 @@ export function ExtensionsView(props: ExtensionsViewProps) {
               </span>
             </div>
           ) : null}
+        </div>
+        <Button variant="outline" disabled={props.busy} onClick={props.onRefresh}>
+          <RefreshCw size={14} className={props.busy ? "animate-spin" : undefined} />
+          {t("common.refresh")}
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-dls-text">{t("settings.tab_skills")}</div>
+          <div className="mt-0.5 text-xs text-dls-secondary">
+            {t("extensions_view.skill_workspace_only")}
+          </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           <Button
@@ -126,21 +139,18 @@ export function ExtensionsView(props: ExtensionsViewProps) {
             <Sparkles size={14} />
             {t("skills.create_local_skill")}
           </Button>
-          <Button variant="outline" onClick={props.onRefresh}>
-            {t("common.refresh")}
-          </Button>
         </div>
       </div>
 
       {/* Runtime extensions and organization-assigned capabilities share one inventory. */}
-      {props.mcpView}
+      <div className="min-w-0">{props.mcpView}</div>
 
-      {props.marketplaceView}
+      {props.marketplaceView ? <div className="min-w-0">{props.marketplaceView}</div> : null}
 
       {/* OpenCode plugins -- advanced, collapsed */}
       {pluginCount > 0 ? (
-        <details className="group">
-          <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
+        <details className="group rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">
             <Cpu size={14} />
             <span>{t("extensions_view.opencode_plugins")}</span>
             <span className="text-[11px] text-dls-secondary">({pluginCount})</span>

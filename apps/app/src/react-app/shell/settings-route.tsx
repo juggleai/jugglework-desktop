@@ -2483,39 +2483,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <AdvancedView
             busy={busy}
-            clientConnected={Boolean(opencodeClient)}
-            opencodeConnectStatus={null}
-            juggleworkServerStatus={juggleworkServerSnapshot.juggleworkServerStatus}
             developerMode={developerMode}
             toggleDeveloperMode={() => setDeveloperMode((current) => {
               const next = !current;
               try { window.localStorage.setItem("jugglework.developerMode", next ? "1" : "0"); } catch {}
               return next;
             })}
-            opencodeDevModeEnabled={false}
-            openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
-            cloudMcpUrl={juggleworkCloudMcpUrl}
-            canMigrateRuntimeConfig={Boolean(juggleworkClient && selectedWorkspaceId)}
-            migrateRuntimeConfig={async () => {
-              if (!juggleworkClient || !selectedWorkspaceId) {
-                throw new Error("Select a workspace before migrating legacy runtime config.");
-              }
-              const result = await juggleworkClient.migrateRuntimeConfig(selectedWorkspaceId);
-              if (result.migrated) {
-                void connectionsStore.refreshMcpServers();
-                void extensionsStore.refreshPlugins();
-              }
-              return { migrated: result.migrated, keys: result.keys };
-            }}
-            getRuntimeConfigStatus={async () => {
-              if (!juggleworkClient || !selectedWorkspaceId) {
-                throw new Error("Select a workspace to inspect runtime config.");
-              }
-              return juggleworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
-            }}
-            cloudMcpHealth={cloudMcpHealth}
-            refreshCloudMcpHealth={refreshCloudMcpHealth}
-            organizationServer={denSession}
           />
         );
       case "appearance":
@@ -2544,13 +2517,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             checkForUpdates={electronUpdaterState.checkForUpdates}
             downloadUpdate={electronUpdaterState.downloadUpdate}
             installUpdateAndRestart={electronUpdaterState.installUpdateAndRestart}
-            releaseChannel={local.prefs.releaseChannel ?? "stable"}
-            onReleaseChannelChange={electronUpdaterState.setReleaseChannel}
-            alphaChannelSupported={
-              isElectronRuntime() &&
-              isMacPlatform() &&
-              desktopConfig.config.allowAlphaUpdates !== false
-            }
+            onToggleDebug={() => {
+              setDeveloperMode((current) => {
+                const next = !current;
+                try { window.localStorage.setItem("jugglework.developerMode", next ? "1" : "0"); } catch {}
+                return next;
+              });
+            }}
           />
         );
       case "recovery":

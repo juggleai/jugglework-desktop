@@ -63,11 +63,6 @@ export function PreferencesView(props: PreferencesViewProps) {
   return (
     <LayoutStack>
       <LayoutSection>
-        <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("settings.model_title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("settings.model_section_desc")}</LayoutSectionDescription>
-        </LayoutSectionHeader>
-
         {/* Show reasoning */}
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
@@ -102,11 +97,6 @@ export function PreferencesView(props: PreferencesViewProps) {
       </LayoutSection>
 
       <LayoutSection>
-        <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("settings.desktop_notifications.title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("settings.desktop_notifications.section_desc")}</LayoutSectionDescription>
-        </LayoutSectionHeader>
-
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.desktop_notifications.mode")}</LayoutSectionItemTitle>
@@ -143,11 +133,6 @@ export function PreferencesView(props: PreferencesViewProps) {
       </LayoutSection>
 
       <LayoutSection>
-        <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("settings.privacy_title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("settings.privacy_section_desc")}</LayoutSectionDescription>
-        </LayoutSectionHeader>
-
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.analytics_toggle")}</LayoutSectionItemTitle>
