@@ -17,14 +17,11 @@ import {
 } from "@/react-app/kernel/desktop-notification-preferences";
 import {
   LayoutSection,
-  LayoutSectionDescription,
-  LayoutSectionHeader,
   LayoutSectionItem,
   LayoutSectionItemDescription,
   LayoutSectionItemHeader,
   LayoutSectionItemHeaderActions,
   LayoutSectionItemTitle,
-  LayoutSectionTitle,
   LayoutStack,
 } from "../settings-layout";
 
@@ -150,11 +147,6 @@ export function PreferencesView(props: PreferencesViewProps) {
       </LayoutSection>
 
       <LayoutSection>
-        <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("memory.preferences_title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("memory.preferences_section_desc")}</LayoutSectionDescription>
-        </LayoutSectionHeader>
-
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("memory.preferences_toggle")}</LayoutSectionItemTitle>

@@ -11,7 +11,6 @@ import { ALL_LANGUAGE_OPTIONS, LANGUAGE_OPTIONS, t } from "@/i18n";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
   LayoutSectionItem,
-  LayoutSectionItemDescription,
   LayoutSectionItemHeader,
   LayoutSectionItemHeaderActions,
   LayoutSectionItemTitle,
@@ -31,11 +30,10 @@ export function LanguageSection(props: LanguageSectionProps) {
 
   return (
     <LayoutSectionItem>
-      <LayoutSectionItemHeader>
+      <LayoutSectionItemHeader className="items-center">
         <LayoutSectionItemTitle>{t("settings.language")}</LayoutSectionItemTitle>
-        <LayoutSectionItemDescription>{t("settings.language.description")}</LayoutSectionItemDescription>
 
-        <LayoutSectionItemHeaderActions>
+        <LayoutSectionItemHeaderActions className="self-center">
           <div className="w-64 max-w-full">
             <Select
               value={props.language}
