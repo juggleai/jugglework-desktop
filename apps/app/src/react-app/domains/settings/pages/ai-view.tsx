@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { Button } from "@/components/ui/button";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,16 +14,12 @@ import {
 
 import { t } from "@/i18n";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { SettingsNotice, SettingsStatusBadge } from "../settings-section";
+import { SettingsNotice } from "../settings-section";
 import {
   LayoutSection,
   LayoutSectionDescription,
   LayoutSectionHeader,
   LayoutSectionItem,
-  LayoutSectionItemFootnote,
-  LayoutSectionItemHeader,
-  LayoutSectionItemHeaderActions,
-  LayoutSectionItemTitle,
   LayoutSectionTitle,
   LayoutStack,
 } from "../settings-layout";
@@ -37,13 +33,9 @@ type ConnectedProvider = {
 export type AiSettingsViewProps = {
   busy: boolean;
   providerAuthBusy: boolean;
-  providerStatusLabel: string;
-  providerStatusStyle: string;
-  providerSummary: string;
   connectedProviders: ConnectedProvider[];
   disconnectingProviderId: string | null;
   providerConnectError: string | null;
-  providerDisconnectStatus: string | null;
   providerDisconnectError: string | null;
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
@@ -60,7 +52,8 @@ export type AiSettingsViewProps = {
   onReconnectProvider?: (providerId: string) => void | Promise<void>;
   /** Set of local provider IDs that were imported from cloud. */
   cloudProviderIds?: Set<string>;
-  cloudProvidersView?: ReactNode;
+  cloudProviderImportIds?: Record<string, string>;
+  onRemoveCloudProvider?: (providerId: string, cloudProviderId: string) => void | Promise<void>;
 };
 
 function providerSourceLabel(source?: ConnectedProvider["source"]) {
@@ -69,12 +62,6 @@ function providerSourceLabel(source?: ConnectedProvider["source"]) {
   if (source === "config") return t("settings.provider_source_config");
   if (source === "custom") return t("settings.provider_source_custom");
   return null;
-}
-
-function providerStatusTone(label: string): "ready" | "warning" | "neutral" {
-  if (label.toLowerCase().includes("connected")) return "ready";
-  if (label.toLowerCase().includes("error") || label.toLowerCase().includes("fail")) return "warning";
-  return "neutral";
 }
 
 export function AiSettingsView(props: AiSettingsViewProps) {
@@ -86,31 +73,23 @@ export function AiSettingsView(props: AiSettingsViewProps) {
       {/* ---- Providers ---- */}
       <LayoutSection>
         <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("settings.providers_title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("settings.providers_desc")}</LayoutSectionDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <LayoutSectionTitle>{t("settings.providers_title")}</LayoutSectionTitle>
+              <LayoutSectionDescription className="mt-1">
+                {t("settings.providers_desc")}
+              </LayoutSectionDescription>
+            </div>
+            <Button
+              onClick={() => void props.onOpenProviderAuth()}
+              disabled={props.busy || props.providerAuthBusy}
+            >
+              {props.providerAuthBusy
+                ? t("settings.loading_providers")
+                : t("settings.connect_provider")}
+            </Button>
+          </div>
         </LayoutSectionHeader>
-
-        <LayoutSectionItem>
-          <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>
-              {props.providerSummary}
-              <SettingsStatusBadge
-                tone={providerStatusTone(props.providerStatusLabel)}
-                label={props.providerStatusLabel}
-              />
-            </LayoutSectionItemTitle>
-            <LayoutSectionItemHeaderActions>
-              <Button
-                onClick={() => void props.onOpenProviderAuth()}
-                disabled={props.busy || props.providerAuthBusy}
-              >
-                {props.providerAuthBusy
-                  ? t("settings.loading_providers")
-                  : t("settings.connect_provider")}
-              </Button>
-            </LayoutSectionItemHeaderActions>
-          </LayoutSectionItemHeader>
-        </LayoutSectionItem>
 
         {props.connectedProviders.length > 0 ? (
           <div className="space-y-2">
@@ -126,7 +105,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
                       {props.cloudProviderIds?.has(provider.id) ? (
                         <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
-                          Cloud
+                          {t("settings.provider_source_cloud")}
                         </span>
                       ) : null}
                       {provider.source === "env" ? (
@@ -135,10 +114,30 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                         </span>
                       ) : null}
                     </div>
-                    <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
+                    {!provider.id.startsWith("lpr_") ? (
+                      <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
+                    ) : null}
                   </div>
                 </div>
-                {!props.cloudProviderIds?.has(provider.id) ? (
+                {props.cloudProviderIds?.has(provider.id) ? (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const cloudProviderId = props.cloudProviderImportIds?.[provider.id];
+                      if (cloudProviderId) void props.onRemoveCloudProvider?.(provider.id, cloudProviderId);
+                    }}
+                    disabled={
+                      props.busy ||
+                      props.providerAuthBusy ||
+                      props.disconnectingProviderId !== null ||
+                      !props.cloudProviderImportIds?.[provider.id]
+                    }
+                  >
+                    {props.disconnectingProviderId === provider.id
+                      ? t("settings.disconnecting")
+                      : t("settings.disconnect")}
+                  </Button>
+                ) : (
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
@@ -174,7 +173,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                       </Button>
                     ) : null}
                   </div>
-                ) : null}
+                )}
               </LayoutSectionItem>
             ))}
           </div>
@@ -233,17 +232,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
         {props.providerConnectError ? (
           <SettingsNotice tone="error">{props.providerConnectError}</SettingsNotice>
         ) : null}
-        {props.providerDisconnectStatus ? (
-          <SettingsNotice>{props.providerDisconnectStatus}</SettingsNotice>
-        ) : null}
         {props.providerDisconnectError ? (
           <SettingsNotice tone="error">{props.providerDisconnectError}</SettingsNotice>
         ) : null}
-
-        <LayoutSectionItemFootnote>{t("settings.api_keys_info")}</LayoutSectionItemFootnote>
       </LayoutSection>
-
-      {props.cloudProvidersView}
 
       </LayoutStack>
 

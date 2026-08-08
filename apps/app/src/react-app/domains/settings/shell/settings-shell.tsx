@@ -34,6 +34,7 @@ import {
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
+import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
@@ -65,6 +66,9 @@ export type SettingsShellProps = SettingsPageFrameProps & {
 export function SettingsShell(props: SettingsShellProps) {
   const title = getSettingsTabLabel(props.activeTab);
   const workspaceScoped = getWorkspaceSettingsTabs().includes(props.activeTab);
+  const { leftSidebarWidth, startLeftSidebarResize } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+  });
 
   if (props.contentOnly) {
     return (
@@ -138,7 +142,7 @@ export function SettingsShell(props: SettingsShellProps) {
       <SidebarProvider
         open={true}
         className="relative min-h-0 flex-1"
-        style={{ "--sidebar-width": `${256 + APP_NAVIGATION_RAIL_WIDTH}px` } as React.CSSProperties}
+        style={{ "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px` } as React.CSSProperties}
       >
         <SettingsSidebar
           activeTab={props.activeTab}
@@ -156,10 +160,11 @@ export function SettingsShell(props: SettingsShellProps) {
           onOpenChat={props.onOpenChat}
           onOpenTaskSearch={props.onOpenTaskSearch}
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
+          onStartResize={startLeftSidebarResize}
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="shrink-0 flex h-10 items-center justify-between border-b border-dls-border px-4 md:px-6 mac:titlebar-drag">
+            <header className="flex h-14 shrink-0 items-center justify-between border-b border-dls-border px-4 md:px-6 mac:titlebar-drag">
               <div className="flex min-w-0 items-center gap-3">
                 <SidebarTrigger className="mac:titlebar-no-drag md:hidden" />
                 {props.headerLeadingSlot}

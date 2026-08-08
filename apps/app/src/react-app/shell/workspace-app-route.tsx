@@ -65,6 +65,21 @@ function WorkspaceAppRouteContent() {
   const [retainedSession, setRetainedSession] = useState<RetainedSessionTarget>(() => (
     initialSessionTarget(location.pathname, location.state)
   ));
+  const [retainedSettings, setRetainedSettings] = useState(() => {
+    const initial = initialSessionTarget(location.pathname, location.state);
+    const initialPath = parseWorkspaceAppPath(location.pathname);
+    const workspaceId = initialPath?.view === "settings"
+      ? initialPath.workspaceId
+      : initial.workspaceId || null;
+    return {
+      workspaceId,
+      routePath: initialPath?.view === "settings"
+        ? location.pathname
+        : workspaceId
+          ? workspaceSettingsRoute(workspaceId, "preferences")
+          : "/settings/preferences",
+    };
+  });
   const [appsMounted, setAppsMounted] = useState(() => appPath?.view === "apps");
 
   const currentSession = appPath?.view === "session"
@@ -96,6 +111,15 @@ function WorkspaceAppRouteContent() {
     if (appPath?.view === "apps") setAppsMounted(true);
   }, [appPath?.view]);
 
+  useEffect(() => {
+    if (appPath?.view !== "settings") return;
+    setRetainedSettings((current) => (
+      current.workspaceId === appPath.workspaceId && current.routePath === location.pathname
+        ? current
+        : { workspaceId: appPath.workspaceId, routePath: location.pathname }
+    ));
+  }, [appPath, location.pathname]);
+
   if (!appPath) {
     return <Navigate to="/session" replace />;
   }
@@ -109,7 +133,7 @@ function WorkspaceAppRouteContent() {
     : legacySessionRoute(activeSession.sessionId);
 
   const openSurfaceSettings = (
-    tab: "cloud-account" | "general",
+    tab: "cloud-account" | "preferences",
     returnPath: string,
   ) => {
     const target = activeSession.workspaceId
@@ -137,16 +161,25 @@ function WorkspaceAppRouteContent() {
         />
       </div>
 
-      {settingsVisible ? (
-        <div className="absolute inset-0" data-testid="workspace-settings-surface">
-          <SettingsRoute workspaceId={appPath.workspaceId ?? undefined} />
-        </div>
-      ) : null}
+      <div
+        className={settingsVisible
+          ? "visible absolute inset-0 z-10 bg-background"
+          : "invisible pointer-events-none absolute inset-0 z-0 bg-background"}
+        aria-hidden={!settingsVisible || undefined}
+        data-testid="workspace-settings-surface"
+      >
+        <SettingsRoute
+          workspaceId={(settingsVisible ? appPath.workspaceId : retainedSettings.workspaceId) ?? undefined}
+          routePath={settingsVisible ? location.pathname : retainedSettings.routePath}
+        />
+      </div>
 
       {/* Keep Chat mounted from startup so the React runtime initializes the IM
           SDK and desktop skill bridge before the user first opens the surface. */}
       <div
-        className={chatVisible ? "absolute inset-0" : "hidden"}
+        className={chatVisible
+          ? "visible absolute inset-0 z-10 bg-background"
+          : "invisible pointer-events-none absolute inset-0 z-0 bg-background"}
         aria-hidden={!chatVisible || undefined}
         data-testid="workspace-chat-surface"
       >
@@ -155,7 +188,7 @@ function WorkspaceAppRouteContent() {
           onOpenHome={() => navigate(sessionPath)}
           onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
           onToggleChat={() => navigate(sessionPath)}
-          onOpenSettings={() => openSurfaceSettings("general", workspaceChatRoute(activeSession.workspaceId))}
+          onOpenSettings={() => openSurfaceSettings("preferences", workspaceChatRoute(activeSession.workspaceId))}
           onOpenTaskSearch={workspaceShellActions.openTaskSearch}
           onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
         />
@@ -172,7 +205,7 @@ function WorkspaceAppRouteContent() {
             onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
-            onOpenSettings={() => openSurfaceSettings("general", workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("preferences", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
           />

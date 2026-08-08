@@ -363,6 +363,8 @@ export type SettingsSurfaceProps = {
   embedded?: boolean;
   contentOnly?: boolean;
   initialPath?: string;
+  /** Keep parsing the retained settings route while this surface is hidden behind another app module. */
+  routePath?: string;
   workspaceId?: string;
   onClose?: () => void;
 };
@@ -381,7 +383,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const desktopConfig = useDesktopConfig();
   const reloadCoordinator = useReloadCoordinator();
   const [embeddedPath, setEmbeddedPath] = useState(props.initialPath ?? "preferences");
-  const route = props.embedded ? parseSettingsPath(`/settings/${embeddedPath}`) : parseSettingsPath(location.pathname);
+  const route = props.embedded
+    ? parseSettingsPath(`/settings/${embeddedPath}`)
+    : parseSettingsPath(props.routePath ?? location.pathname);
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
   const navigationReturnPath = readNavigationReturnPath(location.state);
@@ -1660,13 +1664,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     ? `${local.prefs.defaultModel.providerID}/${local.prefs.defaultModel.modelID}`
     : t("settings.default_label");
   const defaultModelVariantLabel = local.prefs.modelVariant ?? t("settings.default_label");
-  const providerStatusLabel = providerConnectedIds.length > 0 ? t("status.connected") : t("status.disconnected_label");
-  const providerStatusStyle = providerConnectedIds.length > 0
-    ? "bg-green-7/10 text-green-11 border-green-7/20"
-    : "bg-gray-4/60 text-gray-11 border-gray-7/50";
-  const providerSummary = providerConnectedIds.length > 0
-    ? t("status.providers_connected", { count: providerConnectedIds.length })
-    : t("settings.no_providers_connected");
   const providerConnectedIdSet = new Set(providerConnectedIds);
   const disabledProviderIdSet = new Set(
     disabledProviders.map((id) => id.trim().toLowerCase()).filter(Boolean),
@@ -2163,14 +2160,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <AiSettingsView
             busy={busy}
             providerAuthBusy={providerAuthSnapshot.providerAuthBusy}
-            providerStatusLabel={providerStatusLabel}
-            providerStatusStyle={providerStatusStyle}
-            providerSummary={providerSummary}
             connectedProviders={connectedProviders}
             disconnectingProviderId={disconnectingProviderId}
             deletingProviderId={deletingProviderId}
             providerConnectError={providerAuthSnapshot.providerAuthError}
-            providerDisconnectStatus={configActionStatus}
             providerDisconnectError={providerDisconnectError}
             onOpenProviderAuth={handleOpenProviderAuth}
             onDisconnectProvider={async (providerId) => {
@@ -2246,19 +2239,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               imported: providerAuthSnapshot.importedCloudProviders ?? {},
               liveProviders: providerAuthSnapshot.cloudOrgProviders,
             }))}
-            cloudProvidersView={
-              <CloudProvidersView
-                embedded
-                cloudOrgProviders={providerAuthSnapshot.cloudOrgProviders}
-                connectCloudProvider={providerAuthStore.connectCloudProvider}
-                importedCloudProviders={providerAuthSnapshot.importedCloudProviders}
-                onOpenAccount={openCloudAccountSettings}
-                refreshCloudOrgProviders={providerAuthStore.refreshCloudOrgProviders}
-                refreshImportedCloudProviders={providerAuthStore.refreshImportedCloudProviders}
-                removeCloudProvider={providerAuthStore.removeCloudProvider}
-                session={denSession}
-              />
-            }
+            cloudProviderImportIds={Object.fromEntries(
+              Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((provider) => [
+                provider.providerId,
+                provider.cloudProviderId,
+              ]),
+            )}
+            onRemoveCloudProvider={async (providerId, cloudProviderId) => {
+              if (disconnectingProviderId) return;
+              setDisconnectingProviderId(providerId);
+              setProviderDisconnectError(null);
+              setConfigActionStatus(null);
+              try {
+                const message = await providerAuthStore.removeCloudProvider(cloudProviderId);
+                if (typeof message === "string" && message.trim()) {
+                  setConfigActionStatus(message);
+                }
+              } catch (error) {
+                setProviderDisconnectError(
+                  error instanceof Error && error.message.trim()
+                    ? error.message
+                    : t("providers.disconnect_failed"),
+                );
+              } finally {
+                setDisconnectingProviderId(null);
+              }
+            }}
           />
         );
       case "preferences":
@@ -2646,7 +2652,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onOpenSession={(workspaceId, sessionId) => {
           navigate(workspaceSessionRoute(workspaceId, sessionId));
         }}
-        onOpenSettings={(path = "/settings/general") => {
+        onOpenSettings={(path = "/settings/preferences") => {
           navigateSettingsPath(path.replace(/^\/settings\//, ""));
         }}
         onOpenModelPicker={() => {

@@ -989,7 +989,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
   }, [engineReloadVersion, opencodeClient]);
 
-  const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
+  const handleOpenSettings = useCallback((route = "/settings/preferences", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
@@ -1087,7 +1087,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
-        handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/general");
+        handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/preferences");
       },
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
@@ -2176,7 +2176,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       providerConnectedIds={providerConnectedIds}
       hasUsableModel={hasUsableModel}
       providers={providers}
-      onOpenSettings={() => handleOpenSettings("/settings/general")}
+      onOpenSettings={() => handleOpenSettings("/settings/preferences")}
       onOpenProviderAuth={() => sessionProviderAuthStore.openProviderAuthModal({ returnFocusTarget: "composer" })}
       providerAuthModal={sessionProviderAuthSnapshot.providerAuthModalOpen ? {
         open: true,
@@ -2499,7 +2499,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
-      onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
+      onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/preferences")}
       onOpenModelPicker={() => {
         setModelPickerSessionId(null);
         modelPicker.setQuery("");

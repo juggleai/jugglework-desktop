@@ -7,7 +7,6 @@ import {
   CloudCog,
   Cog,
   FolderLock,
-  Info,
   Layout,
   Paintbrush,
   Puzzle,
@@ -31,17 +30,14 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
 } from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
 import { cn } from "@/lib/utils";
-import { useOrgRestrictions } from "../../cloud/desktop-config-provider";
 import {
   SettingsContent,
   SettingsPanel,
-  SettingsPanelDescription,
-  SettingsPanelHeading,
-  SettingsPanelTitle,
   SettingsPanelToolbar,
   SettingsPanelToolbarActions,
   SettingsPanelToolbarButton,
@@ -179,11 +175,11 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "permissions", "extensions", "advanced"];
+  return ["preferences", "extensions", "advanced"];
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "shell", "appearance", "environment", "updates", "recovery"];
+  const tabs: SettingsTab[] = ["appearance", "updates", "ai", "shell"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }
@@ -259,6 +255,7 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onOpenChat: () => void;
   onOpenTaskSearch?: () => void;
   onOpenCreateWorkspace?: () => void;
+  onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
@@ -282,6 +279,13 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
+          <header className="box-border flex h-10 min-h-10 shrink-0 items-start px-3 pb-3 pt-[9px] mac:h-[50px] mac:min-h-[50px] mac:pb-[9px] mac:pt-[22px] mac:titlebar-drag">
+            <div className="flex h-[18px] min-w-0 items-center">
+              <h2 className="truncate text-[14px] font-semibold leading-[18px] text-sidebar-foreground">
+                {t("settings.tab_general")}
+              </h2>
+            </div>
+          </header>
           <SidebarContent className="overflow-y-auto px-2 pb-6 pt-2">
         <SidebarGroup className="rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
           <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
@@ -363,37 +367,15 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           </SidebarContent>
         </div>
       </div>
+      <SidebarRail
+        className="right-[-8px]! translate-x-0! bg-transparent! hover:bg-transparent!"
+        style={{ cursor: "col-resize" }}
+        aria-label={props.onStartResize ? t("session.resize_workspace_column") : undefined}
+        title={props.onStartResize ? t("session.resize_workspace_column") : undefined}
+        onClick={props.onStartResize ? (event) => event.preventDefault() : undefined}
+        onPointerDown={props.onStartResize}
+      />
     </Sidebar>
-  );
-}
-
-function DesktopPolicyBanner() {
-  const config = useOrgRestrictions();
-
-  // Show the banner when the org has any active desktop policy restriction
-  // (a boolean set to false) or any white-label branding override.
-  const hasRestriction = Object.entries(config).some(
-    ([key, value]) => typeof value === "boolean" && value === false && key !== "allowedDesktopVersions",
-  );
-  const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
-
-  if (!hasRestriction && !hasBranding) return null;
-
-  return (
-    <div
-      data-testid="desktop-policy-banner"
-      className="flex items-start gap-2.5 rounded-xl border border-indigo-6/30 bg-indigo-2/50 px-3.5 py-2.5 text-sm dark:border-indigo-7/25 dark:bg-indigo-3/30"
-    >
-      <Info className="mt-0.5 size-4 shrink-0 text-indigo-11" />
-      <div className="min-w-0 flex-1">
-        <p className="font-medium text-indigo-12">
-          {t("settings.desktop_policy_active_title")}
-        </p>
-        <p className="mt-0.5 text-xs text-indigo-11">
-          {t("settings.desktop_policy_active_body")}
-        </p>
-      </div>
-    </div>
   );
 }
 
@@ -404,14 +386,8 @@ export function SettingsPage(props: SettingsPageProps) {
   }
   return (
     <SettingsContent>
-      <SettingsPanel>
-        <SettingsPanelHeading>
-          <SettingsPanelTitle>{getSettingsTabLabel(props.activeTab)}</SettingsPanelTitle>
-          <SettingsPanelDescription>{getSettingsTabDescription(props.activeTab)}</SettingsPanelDescription>
-        </SettingsPanelHeading>
-        <DesktopPolicyBanner />
-
-        {props.showUpdateToolbar && props.activeTab === "general" ? (
+      {props.showUpdateToolbar && props.activeTab === "general" ? (
+        <SettingsPanel>
           <SettingsPanelToolbar>
             <SettingsPanelToolbarActions>
               <SettingsPanelToolbarStatus
@@ -435,8 +411,8 @@ export function SettingsPage(props: SettingsPageProps) {
               <SettingsPanelToolbarMessage>{props.updateRestartBlockedMessage}</SettingsPanelToolbarMessage>
             ) : null}
           </SettingsPanelToolbar>
-        ) : null}
-      </SettingsPanel>
+        </SettingsPanel>
+      ) : null}
 
       {props.children}
     </SettingsContent>
