@@ -147,8 +147,8 @@ describe("resolveOpencodeDbPath", () => {
     }
   });
 
-  test("finds orchestrator-managed OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
-    const root = await mkdtemp(join(tmpdir(), "jugglework-orchestrator-data-"));
+  test("finds JuggleWork-managed OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-data-"));
     const dir = join(root, "jugglework-dev-data", "xdg", "data", "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });
@@ -177,8 +177,8 @@ describe("resolveOpencodeDbPath", () => {
     }
   });
 
-  test("finds legacy orchestrator-managed OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
-    const root = await mkdtemp(join(tmpdir(), "jugglework-orchestrator-data-"));
+  test("finds legacy OpenCode dbs under JUGGLEWORK_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-data-"));
     const dir = join(root, "opencode-dev", "ws-test", "xdg", "data", "opencode");
     const file = join(dir, "opencode.db");
     await mkdir(dir, { recursive: true });

@@ -29,7 +29,7 @@
 #   3. Tauri webview       (target/debug/JuggleWork-Dev)  <-- never /Applications/
 #   4. Electron main+helpers (node_modules/electron/...Electron.app)
 #   5. Vite                (node node_modules/.../vite)
-#   6. orchestrator + jugglework-server + opencode
+#   6. jugglework-server + opencode
 #      (both target/debug/* and src-tauri/sidecars/* trees)
 #
 # Cache/ephemeral state wiped by `reset`:
@@ -196,7 +196,7 @@ NODE
 
 snapshot() {
   echo "=== dev stack processes ==="
-  ps -Ao pid,ppid,command | awk '/target\/debug\/JuggleWork-Dev|node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|target\/debug\/jugglework-server|target\/debug\/jugglework-orchestrator|target\/debug\/opencode( |\/)|apps\/desktop\/src-tauri\/sidecars\/jugglework-server|apps\/desktop\/src-tauri\/sidecars\/jugglework-orchestrator|apps\/desktop\/src-tauri\/sidecars\/opencode( |\/)|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
+  ps -Ao pid,ppid,command | awk '/target\/debug\/JuggleWork-Dev|node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron|apps\/desktop\/scripts\/electron-dev\.mjs|target\/debug\/jugglework-server|target\/debug\/opencode( |\/)|apps\/desktop\/src-tauri\/sidecars\/jugglework-server|apps\/desktop\/src-tauri\/sidecars\/opencode( |\/)|vite|pnpm .*dev/ && !/awk/ && !/grep/' | sed -E 's#/Users/[^ ]*/#…/#g' | head -20
 
   echo
   echo "=== jugglework-server ==="
@@ -211,26 +211,8 @@ snapshot() {
   fi
 
   echo
-  echo "=== opencode (via orchestrator) ==="
-  local oc_port
-  oc_port=$(ps -Ao command \
-    | grep -E "(target/debug|apps/desktop/src-tauri/sidecars)/jugglework-orchestrator" \
-    | grep -v grep \
-    | grep -oE '\-\-opencode-port [0-9]+' \
-    | head -1 \
-    | awk '{print $2}' \
-    || true)
-  if [[ -z "$oc_port" ]]; then
-    echo "  (no opencode port)"
-  else
-    echo "  port=$oc_port"
-    curl -sS --max-time 2 "http://127.0.0.1:$oc_port/app" | head -c 200
-    echo
-  fi
-
-  echo
   echo "=== orphans (parent == 1) ==="
-  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /jugglework-server|jugglework-orchestrator|opencode( |\/)/' | head
+  ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /jugglework-server|opencode( |\/)/' | head
 
   echo
   echo "=== dev log sink ==="
@@ -258,7 +240,7 @@ tail_logs() {
 
 kill_orphans() {
   local pids
-  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /jugglework-server|jugglework-orchestrator|opencode( |\/)/ {print $1}')
+  pids=$(ps -Ao pid,ppid,command | awk '$2 == 1 && $3 ~ /jugglework-server|opencode( |\/)/ {print $1}')
   if [[ -z "$pids" ]]; then
     log "no orphans"
     return 0
@@ -449,16 +431,14 @@ stop() {
   kill_by_pattern "node_modules/\.bin/vite"
   kill_by_pattern "node_modules/vite/bin/vite\.js"
 
-  # 5. jugglework-server / orchestrator / opencode for the
+  # 5. jugglework-server / opencode for the
   #    current dev build. These are the longest-lived children and the ones
   #    most likely to orphan after an unclean shutdown.
   #    Tauri dev runs them from target/debug/, Electron dev runs them from
   #    src-tauri/sidecars/ — kill both trees, both are idempotent.
   kill_by_pattern "target/debug/jugglework-server"
-  kill_by_pattern "target/debug/jugglework-orchestrator"
   kill_by_pattern "target/debug/opencode"
   kill_by_pattern "apps/desktop/src-tauri/sidecars/jugglework-server"
-  kill_by_pattern "apps/desktop/src-tauri/sidecars/jugglework-orchestrator"
   kill_by_pattern "apps/desktop/src-tauri/sidecars/opencode( |/)"
 
   # Safety net for stragglers we don't own directly.

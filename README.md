@@ -15,7 +15,7 @@ Built on [OpenCode](https://github.com/sst/opencode), JuggleWork wraps the engin
 ## Design principles
 
 - **Local-first, cloud-ready** — One-click to run on your machine. Connect to JuggleWork Cloud when you want shared workspaces, team policies, and managed providers.
-- **Composable** — Desktop app, WhatsApp bot, CLI host, or server. Use what fits. No lock-in.
+- **Composable** — Desktop app, WhatsApp bot, or direct Server host. Use what fits. No lock-in.
 - **Ejectable** — JuggleWork runs on OpenCode. Everything OpenCode can do, JuggleWork can do — even without the UI.
 - **Sharing is caring** — Start solo on localhost, explicitly opt in to remote sharing when needed.
 - **Extensible** — Skills, plugins, and MCP connections are installable modules. Install from the marketplace or write your own.
@@ -75,9 +75,9 @@ JuggleWork is more than the desktop app:
 
 | Surface | What it is |
 |---|---|
-| **[JuggleWork Orchestrator](apps/orchestrator/README.md)** | CLI host — run OpenCode + JuggleWork Server without the desktop UI. `npm install -g jugglework-orchestrator` |
+| **[JuggleWork Server](apps/server/README.md)** | Headless runtime — run the authenticated JuggleWork API with Server-managed OpenCode. `npm install -g jugglework-server` |
 | **[Owpenbot](https://github.com/juggleai/jugglework-desktop)** | Lightweight WhatsApp bridge for a running OpenCode server. |
-| **[JuggleWork Server](https://github.com/juggleai/jugglework-server)** | Self-hostable Go backend — deploy in your VPC for private team use. |
+| **JuggleWork control plane** | Self-hostable organization backend — deploy in your VPC for private team use. |
 | **[JuggleWork Cloud MCP](https://work.juggle.im/jwork/api/mcp/agent)** | Connect any MCP-compatible client (Claude Code, Cursor, Codex, VS Code, etc.) to your JuggleWork org. |
 
 ---
@@ -159,12 +159,18 @@ JuggleWork is an Electron (Tauri) desktop shell wrapping a web UI that connects 
 When you pick a workspace, JuggleWork starts the local runtime stack:
 
 ```
-jugglework-orchestrator (CLI)        ← default runtime (npm install -g jugglework-orchestrator)
-  ├── opencode serve --port <port>   ← manages OpenCode server process
-  └── jugglework-server              ← optional backend for cloud features
+JuggleWork Desktop
+  └── JuggleWork Server              ← embedded runtime authority
+      └── opencode serve             ← managed child process
 ```
 
-Fallback: if the orchestrator is not installed, the desktop falls back to starting `opencode serve` directly.
+Headless and container deployments start `jugglework-server` directly with
+`JUGGLEWORK_MANAGE_OPENCODE=1` and a resolved `JUGGLEWORK_OPENCODE_BIN`. The
+former `jugglework-orchestrator` package and bare `jugglework` CLI are retired;
+see the [migration guide](packages/docs/start-here/migrate-from-orchestrator.mdx).
+
+Desktop Docker sandbox provisioning is owned by Desktop's `sandbox-runtime`;
+the sandbox container runs JuggleWork Server directly.
 
 The UI uses `@opencode-ai/sdk/v2/client` to connect, list/create sessions, send prompts, subscribe to SSE events, and read todos/permissions.
 

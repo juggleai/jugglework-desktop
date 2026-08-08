@@ -24,4 +24,8 @@ Current scope:
 - `cloud onboard` drives the headless REST onboarding flow: sign up, sign in,
   create an org, invite a teammate, and create a starter skill.
 
-This is a bootstrap layer; it does not replace the existing orchestrator CLI yet.
+This bootstrap layer is independent from runtime hosting. The old bare
+`jugglework` command and `jugglework-orchestrator` package are retired;
+`jugglework-server` is the supported headless runtime entrypoint. Bootstrap does
+not start Server, manage OpenCode, daemonize a runtime, or provide compatibility
+commands for the retired CLI.

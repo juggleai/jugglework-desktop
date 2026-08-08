@@ -73,6 +73,19 @@ describe("ensureWorkspaceFiles", () => {
     }
   });
 
+  test("uses an explicit headless plugin directory", () => {
+    const previous = process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR;
+    process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR = "/opt/jugglework/opencode-plugins";
+    try {
+      expect(juggleworkExtensionsPreviewPluginPath()).toBe(
+        join("/opt/jugglework/opencode-plugins", "jugglework-extensions-preview.js"),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR;
+      else process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR = previous;
+    }
+  });
+
   test("does not create workspace extension preview plugin", async () => {
     await withWorkspace(async (root) => {
       await ensureWorkspaceFiles(root, "starter");

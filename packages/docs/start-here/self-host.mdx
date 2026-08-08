@@ -10,7 +10,8 @@ control plane are supplied by the separate JuggleWork server deployment.
 ## Run the host
 
 The repository includes a Docker template in `packaging/docker` that starts
-OpenCode and exposes only the authenticated JuggleWork host API.
+`jugglework-server` directly. Server manages the OpenCode child and exposes only
+the authenticated JuggleWork host API.
 
 ```bash
 cd packaging/docker
@@ -35,6 +36,10 @@ In JuggleWork, create a remote workspace and provide:
 
 The desktop app connects to the JuggleWork host API. OpenCode remains private
 behind that API and should not be exposed directly.
+
+The former `jugglework` CLI, TUI, detach mode, and daemon are retired. For a
+direct host installation or legacy-state cleanup, follow
+[Migrate from JuggleWork Orchestrator](/start-here/migrate-from-orchestrator).
 
 For organization-level deployment, authentication, provider policies, and the
 web dashboard, use the independently maintained `jugglework-server`.
