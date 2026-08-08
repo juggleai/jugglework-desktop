@@ -1,11 +1,9 @@
 /** @jsxImportSource react */
 import type * as React from "react";
 import {
-  ArrowLeft,
   BrainCircuit,
   Bug,
   Cable,
-  ChevronDown,
   CloudCog,
   Cog,
   FolderLock,
@@ -30,17 +28,10 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
 import type { SettingsTab } from "../../../../app/types";
 import { cn } from "@/lib/utils";
@@ -57,7 +48,6 @@ import {
   SettingsPanelToolbarMessage,
   SettingsPanelToolbarStatus,
 } from "./panel";
-import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 
@@ -292,63 +282,11 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
         />
         <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
-          <div className="hidden h-10 mac:block mac:titlebar-drag" />
-          <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton type="button" onClick={props.onClose}>
-              <ArrowLeft size={14} />
-              <span>{t("dashboard.back_to_app")}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <SidebarMenuButton type="button">
-                    <WorkspaceIcon workspaceId={props.selectedWorkspaceId} sizeClass="size-4" />
-                    <span className="truncate">{props.selectedWorkspaceName}</span>
-                    <ChevronDown className="ml-auto" />
-                  </SidebarMenuButton>
-                }
-              />
-              <DropdownMenuContent className="w-(--anchor-width)">
-                {props.workspaces.map((workspace) => (
-                  <DropdownMenuItem
-                    key={workspace.id}
-                    onClick={() => props.onSelectWorkspace(workspace.id)}
-                    disabled={workspace.id === props.selectedWorkspaceId}
-                  >
-                    <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
-                    <span className="truncate">{workspace.name}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
-          </SidebarHeader>
-          <SidebarContent>
-        {/* Top-level hub entry */}
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  type="button"
-                  isActive={props.activeTab === "general"}
-                  onClick={() => props.onSelectTab("general")}
-                >
-                  <Cog />
-                  <span>{getSettingsTabLabel("general")}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("settings.group_workspace")}</SidebarGroupLabel>
+          <SidebarContent className="overflow-y-auto px-2 pb-6 pt-2">
+        <SidebarGroup className="rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
+          <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+            {t("settings.group_workspace")}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {workspaceTabs.map((tab) => {
@@ -356,6 +294,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                 return (
                   <SidebarMenuItem key={tab}>
                     <SidebarMenuButton
+                      className="min-h-10 rounded-lg px-3"
                       type="button"
                       isActive={props.activeTab === tab}
                       onClick={() => props.onSelectTab(tab)}
@@ -370,8 +309,10 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("settings.group_global")}</SidebarGroupLabel>
+        <SidebarGroup className="mt-3 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
+          <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+            {t("settings.group_global")}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {globalTabs.map((tab) => {
@@ -379,6 +320,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                 return (
                   <SidebarMenuItem key={tab}>
                     <SidebarMenuButton
+                      className="min-h-10 rounded-lg px-3"
                       type="button"
                       isActive={props.activeTab === tab}
                       onClick={() => props.onSelectTab(tab)}
@@ -393,8 +335,10 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("settings.group_cloud")}</SidebarGroupLabel>
+        <SidebarGroup className="mt-3 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
+          <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+            {t("settings.group_cloud")}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {cloudTabs.map((tab) => {
@@ -402,6 +346,7 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
                 return (
                   <SidebarMenuItem key={tab}>
                     <SidebarMenuButton
+                      className="min-h-10 rounded-lg px-3"
                       type="button"
                       isActive={props.activeTab === tab}
                       onClick={() => props.onSelectTab(tab)}

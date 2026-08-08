@@ -1513,6 +1513,7 @@ export default {
   "settings.group_cloud": "云端",
   "settings.group_global": "全局",
   "settings.group_workspace": "工作区",
+  "settings.select_workspace": "切换工作区",
   "settings.hide_titlebar": "隐藏标题栏",
   "settings.hide_titlebar_desc": "隐藏窗口标题栏。适用于平铺式窗口管理器。",
   "settings.join_discord": "加入Discord",

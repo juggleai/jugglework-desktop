@@ -64,6 +64,7 @@ export type SettingsShellProps = SettingsPageFrameProps & {
 
 export function SettingsShell(props: SettingsShellProps) {
   const title = getSettingsTabLabel(props.activeTab);
+  const workspaceScoped = getWorkspaceSettingsTabs().includes(props.activeTab);
 
   if (props.contentOnly) {
     return (
@@ -92,12 +93,16 @@ export function SettingsShell(props: SettingsShellProps) {
                   developerMode={props.developerMode}
                   onSelectTab={props.onSelectTab}
                 />
-                <WorkspaceMenu
-                  selectedWorkspaceId={props.selectedWorkspaceId}
-                  selectedWorkspaceName={props.selectedWorkspaceName}
-                  workspaces={props.workspaces}
-                  onSelectWorkspace={props.onSelectWorkspace}
-                />
+                {workspaceScoped ? (
+                  <span className="min-w-0 mac:titlebar-no-drag">
+                    <WorkspaceMenu
+                      selectedWorkspaceId={props.selectedWorkspaceId}
+                      selectedWorkspaceName={props.selectedWorkspaceName}
+                      workspaces={props.workspaces}
+                      onSelectWorkspace={props.onSelectWorkspace}
+                    />
+                  </span>
+                ) : null}
               </>
             )}
           </div>
@@ -159,9 +164,16 @@ export function SettingsShell(props: SettingsShellProps) {
                 <SidebarTrigger className="mac:titlebar-no-drag md:hidden" />
                 {props.headerLeadingSlot}
                 <h1 className="truncate text-[15px] font-semibold text-dls-text">{title}</h1>
-                <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
-                  {props.selectedWorkspaceName}
-                </span>
+                {workspaceScoped ? (
+                  <span className="min-w-0 mac:titlebar-no-drag">
+                    <WorkspaceMenu
+                      selectedWorkspaceId={props.selectedWorkspaceId}
+                      selectedWorkspaceName={props.selectedWorkspaceName}
+                      workspaces={props.workspaces}
+                      onSelectWorkspace={props.onSelectWorkspace}
+                    />
+                  </span>
+                ) : null}
                 {props.developerMode && props.headerStatus ? (
                   <span className="hidden text-[12px] text-dls-secondary lg:inline">
                     {props.headerStatus}
@@ -205,7 +217,6 @@ export function SettingsShell(props: SettingsShellProps) {
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
   const { memoryEnabled } = useFeatureFlagsPreferences();
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
-    { label: null, tabs: ["general"] },
     { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
     { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode) },
     { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
@@ -255,24 +266,32 @@ function WorkspaceMenu(props: Pick<SettingsShellProps, "selectedWorkspaceId" | "
     <DropdownMenu>
       <DropdownMenuTrigger
         render={(
-          <Button variant="ghost" size="sm" className="min-w-0 max-w-36 justify-start gap-2 text-dls-secondary">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-w-48 max-w-[min(26rem,55vw)] justify-start gap-2 px-3 text-dls-secondary mac:titlebar-no-drag"
+          >
             <WorkspaceIcon workspaceId={props.selectedWorkspaceId} sizeClass="size-4" />
-            <span className="truncate">{props.selectedWorkspaceName}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{props.selectedWorkspaceName}</span>
             <ChevronDown className="ml-auto size-4 shrink-0" />
           </Button>
         )}
       />
-      <DropdownMenuContent className="w-56">
-        {props.workspaces.map((workspace) => (
-          <DropdownMenuItem
-            key={workspace.id}
-            onClick={() => props.onSelectWorkspace(workspace.id)}
-            disabled={workspace.id === props.selectedWorkspaceId}
-          >
-            <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
-            <span className="truncate">{workspace.name}</span>
-          </DropdownMenuItem>
-        ))}
+      <DropdownMenuContent className="w-80 max-w-[calc(100vw-2rem)] mac:titlebar-no-drag">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{t("settings.select_workspace")}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {props.workspaces.map((workspace) => (
+            <DropdownMenuItem
+              key={workspace.id}
+              onClick={() => props.onSelectWorkspace(workspace.id)}
+              disabled={workspace.id === props.selectedWorkspaceId}
+            >
+              <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
+              <span className="min-w-0 whitespace-normal break-words leading-5">{workspace.name}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );

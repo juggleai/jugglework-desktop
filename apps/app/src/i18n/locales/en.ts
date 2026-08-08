@@ -1510,6 +1510,7 @@ export default {
   "settings.group_cloud": "Cloud",
   "settings.group_global": "Global",
   "settings.group_workspace": "Workspace",
+  "settings.select_workspace": "Switch workspace",
   "settings.hide_titlebar": "Hide titlebar",
   "settings.hide_titlebar_desc": "Hide the window titlebar. Useful for tiling window",
   "settings.join_discord": "Join Discord",
