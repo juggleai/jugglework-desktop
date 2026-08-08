@@ -2526,8 +2526,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             setThemeMode={setThemeModeState}
             language={currentLocale() as Language}
             setLanguage={setLocale}
-            hideTitlebar={hideTitlebar}
-            toggleHideTitlebar={() => setHideTitlebar((current) => !current)}
           />
         );
       case "updates":

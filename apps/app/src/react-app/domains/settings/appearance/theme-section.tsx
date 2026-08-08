@@ -1,13 +1,15 @@
 /** @jsxImportSource react */
+import { getResolvedThemeMode } from "@/app/theme";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { cn } from "@/lib/utils";
-import type { ReactNode } from "react";
 import { t } from "@/i18n";
+import type { ReactNode } from "react";
+import darkThemePreview from "./assets/dark.png";
+import lightThemePreview from "./assets/light.png";
 import type { AppearanceViewProps } from "../pages/appearance-view";
 import {
   LayoutSectionItem,
   LayoutSectionItemDescription,
-  LayoutSectionItemFootnote,
   LayoutSectionItemHeader,
   LayoutSectionItemTitle,
 } from "../settings-layout";
@@ -18,27 +20,43 @@ interface ThemeSectionProps
   extends Pick<AppearanceViewProps, "busy" | "themeMode" | "setThemeMode"> {}
 
 export function ThemeSection(props: ThemeSectionProps) {
+  const followsSystem = props.themeMode === "system";
+
   return (
-    <LayoutSectionItem className="items-center">
+    <LayoutSectionItem className="gap-5">
       <LayoutSectionItemHeader className="w-full">
         <LayoutSectionItemTitle>{t("settings.theme_title")}</LayoutSectionItemTitle>
-        <LayoutSectionItemDescription>{t("settings.appearance_hint")}</LayoutSectionItemDescription>
       </LayoutSectionItemHeader>
 
+      <label className="flex cursor-pointer items-start gap-3 self-stretch">
+        <Checkbox
+          className="mt-0.5 size-5"
+          checked={followsSystem}
+          disabled={props.busy}
+          onCheckedChange={(checked) => {
+            props.setThemeMode(checked ? "system" : getResolvedThemeMode());
+          }}
+        />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-dls-text">
+            {t("settings.theme_system")}
+          </span>
+          <LayoutSectionItemDescription className="mt-1">
+            {t("settings.theme_system_hint")}
+          </LayoutSectionItemDescription>
+        </span>
+      </label>
+
       <ThemePicker
-        className="pt-1"
         busy={props.busy}
         themeMode={props.themeMode}
         setThemeMode={props.setThemeMode}
       />
-
-      <LayoutSectionItemFootnote>{t("settings.theme_system_hint")}</LayoutSectionItemFootnote>
     </LayoutSectionItem>
   );
 }
 
 interface ThemePickerProps {
-  className?: string;
   busy: boolean;
   themeMode: ThemeMode;
   setThemeMode: (value: ThemeMode) => void;
@@ -47,90 +65,54 @@ interface ThemePickerProps {
 function ThemePicker(props: ThemePickerProps) {
   return (
     <ToggleGroup
-      value={[props.themeMode]}
+      value={props.themeMode === "system" ? [] : [props.themeMode]}
       onValueChange={(value) => {
-        if (value[0] === null) {
-          return;
-        }
-
-        props.setThemeMode(value[0] as ThemeMode);
+        if (value[0] === "light" || value[0] === "dark") props.setThemeMode(value[0]);
       }}
       disabled={props.busy}
-      className={cn("w-full gap-6 max-w-xl", props.className)}
+      className="grid w-full max-w-5xl grid-cols-1 justify-start gap-5 sm:grid-cols-2"
     >
-      <ThemePickerItem
-        value="system"
-        label={t("settings.theme_system")}
-      >
-        <ThemePreview value="system" />
-        <ThemePickerLabel>{t("settings.theme_system")}</ThemePickerLabel>
-      </ThemePickerItem>
-      <ThemePickerItem
-        value="light"
-        label={t("settings.theme_light")}
-      >
-        <ThemePreview value="light" className="bg-white" />
+      <ThemePickerItem value="light" label={t("settings.theme_light")}>
+        <ThemePreview value="light" />
         <ThemePickerLabel>{t("settings.theme_light")}</ThemePickerLabel>
       </ThemePickerItem>
-      <ThemePickerItem
-        value="dark"
-        label={t("settings.theme_dark")}
-      >
-        <ThemePreview value="dark" className="bg-zinc-950" />
+      <ThemePickerItem value="dark" label={t("settings.theme_dark")}>
+        <ThemePreview value="dark" />
         <ThemePickerLabel>{t("settings.theme_dark")}</ThemePickerLabel>
       </ThemePickerItem>
     </ToggleGroup>
   );
 }
 
-interface ThemePickerItemProps {
-  value: ThemeMode;
-  label: string;
-  children: ReactNode;
-}
-
-function ThemePickerItem(props: ThemePickerItemProps) {
+function ThemePickerItem(props: { value: "light" | "dark"; label: string; children: ReactNode }) {
   return (
     <ToggleGroupItem
       value={props.value}
       aria-label={props.label}
-      className="group/theme h-auto flex-1 flex-col gap-3 rounded-sm p-0 hover:bg-transparent aria-pressed:bg-transparent"
+      className="group/theme h-auto w-full min-w-0 flex-col items-stretch self-start overflow-hidden rounded-xl border border-dls-border bg-dls-surface p-0 text-left hover:bg-dls-surface aria-pressed:border-primary aria-pressed:bg-primary/5 aria-pressed:shadow-sm"
     >
       {props.children}
     </ToggleGroupItem>
   );
 }
 
-interface ThemePreviewProps {
-  value: ThemeMode;
-  className?: string;
-}
-
-function ThemePreview(props: ThemePreviewProps) {
+function ThemePreview(props: { value: "light" | "dark" }) {
   return (
-    <div
-      className={cn(
-        "aspect-4/3 w-full overflow-hidden rounded-md border transition-shadow group-data-pressed/theme:ring-2 group-data-pressed/theme:ring-primary group-data-pressed/theme:ring-offset-2 group-data-pressed/theme:ring-offset-background group-hover/theme:ring-1 group-hover/theme:ring-primary/40 group-hover/theme:ring-offset-2 group-hover/theme:ring-offset-background",
-        props.className,
-      )}
-    >
-      {props.value === "system" && (
-        <div className="flex h-full">
-          <div className="w-1/2 bg-white" />
-          <div className="w-1/2 bg-zinc-950" />
-        </div>
-      )}
-    </div>
+    <img
+      aria-hidden="true"
+      alt=""
+      src={props.value === "dark" ? darkThemePreview : lightThemePreview}
+      className="block aspect-[944/416] w-full shrink-0 scale-[1.01] object-cover object-left-top blur-[1.5px]"
+    />
   );
 }
 
-interface ThemePickerLabelProps {
-  children: string;
-}
-
-function ThemePickerLabel(props: ThemePickerLabelProps) {
+function ThemePickerLabel(props: { children: string }) {
   return (
-    <span className="text-sm text-muted-foreground group-data-pressed/theme:text-foreground">
+    <span className="flex w-full items-center justify-start gap-3 px-4 py-3.5 text-left text-sm font-medium text-dls-text">
+      <span className="flex size-4 items-center justify-center rounded-full border border-dls-border-strong group-data-pressed/theme:border-primary">
+        <span className="size-2 rounded-full bg-primary opacity-0 group-data-pressed/theme:opacity-100" />
+      </span>
       {props.children}
     </span>
   );
