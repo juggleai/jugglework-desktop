@@ -172,6 +172,12 @@
 .jw-im-contact-detail-primary:disabled { color: #999ea6; background: #eeeff1; cursor: default; }
 .jw-im-contact-detail-primary:disabled svg { color: #999ea6; }
 .jw-im-contact-detail-id { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jw-im-contact-detail-copy-id { display: flex; max-width: 100%; min-width: 0; align-items: center; gap: 6px; margin: 0 0 20px; padding: 3px 6px; border: 0; border-radius: 6px; color: var(--jw-im-muted); background: transparent; font-size: 11px; cursor: pointer; }
+.jw-im-contact-detail-copy-id:hover { color: var(--jw-im-text); background: var(--ui-hover); }
+.jw-im-contact-detail-copy-id-text { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.jw-im-contact-detail-copy-id-text > span:first-child { flex: none; }
+.jw-im-contact-detail-copy-id-text > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jw-im-contact-detail-copy-id > svg { flex: none; }
 .jw-im-contact-detail-error { display: flex; align-items: flex-start; gap: 6px; margin-top: 14px; color: #b83f53; font-size: 11px; line-height: 1.4; }
 .jw-im-contact-detail-error svg { flex: none; }
 @keyframes jw-im-contact-card-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }

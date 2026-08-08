@@ -13,6 +13,7 @@ import {
   Check,
   ChevronLeft,
   CircleAlert,
+  Copy,
   FileIcon,
   Forward,
   ImageIcon,
@@ -1673,16 +1674,30 @@ function ContactDetail({ contact, onClose, onConversation }: { contact: ChatCont
   const isGroup = contact.conversationType === 2;
   const name = contact.friend_display_name || contact.nickname || contact.user_id;
   const [opening, setOpening] = useState(false);
+  const [idCopied, setIdCopied] = useState(false);
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+    };
   }, [onClose]);
 
-  const memberCount = Array.isArray(contact.member_ids) ? contact.member_ids.length : null;
+  const copyContactId = async () => {
+    try {
+      await navigator.clipboard.writeText(contact.user_id);
+      setIdCopied(true);
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = setTimeout(() => setIdCopied(false), 1600);
+    } catch {
+      setIdCopied(false);
+    }
+  };
 
   const openConversation = async () => {
     if (opening) return;
@@ -1703,7 +1718,35 @@ function ContactDetail({ contact, onClose, onConversation }: { contact: ChatCont
           <AvatarFallback className={cx("jw-im-contact-profile-avatar-fallback", `jg-peer-color-${avatarColorIndex(contact.user_id)}`)}>{initials(name)}</AvatarFallback>
         </Avatar>
         <h2>{name}</h2>
-        <p className={isGroup ? undefined : "jw-im-contact-detail-id"} title={isGroup ? undefined : `ID: @${contact.user_id}`}>{isGroup ? t("chat.member_count", { count: memberCount ?? 0 }) : `ID: @${contact.user_id}`}</p>
+        {isGroup ? (
+          <button
+            type="button"
+            className="jw-im-contact-detail-copy-id"
+            title={`${t("chat.group_id")}: ${contact.user_id}`}
+            aria-label={idCopied ? t("chat.group_id_copied") : t("chat.group_id_copy")}
+            onClick={() => void copyContactId()}
+          >
+            <span className="jw-im-contact-detail-copy-id-text">
+              <span>{t("chat.group_id")}:</span>
+              <span>{contact.user_id}</span>
+            </span>
+            {idCopied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="jw-im-contact-detail-copy-id"
+            title={`ID: ${contact.user_id}`}
+            aria-label={idCopied ? t("chat.contact_id_copied") : t("chat.contact_id_copy")}
+            onClick={() => void copyContactId()}
+          >
+            <span className="jw-im-contact-detail-copy-id-text">
+              <span>ID:</span>
+              <span>{contact.user_id}</span>
+            </span>
+            {idCopied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        )}
         <div className="jw-im-contact-detail-actions">
           <button className="jw-im-contact-detail-primary" disabled={opening} onClick={() => void openConversation()}>{opening ? <LoaderCircle className="is-spinning" size={17} /> : <MessageCircle size={17} />}{opening ? t("chat.opening") : t("chat.send_message")}</button>
         </div>
