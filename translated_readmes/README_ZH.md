@@ -39,8 +39,9 @@ JuggleWork 围绕一个核心理念设计：让您可以轻松地将智能体工
   - `curl -fsSL https://raw.githubusercontent.com/juggleai/jugglework-desktop/dev/install.sh | bash`
   - 运行 `owpenbot setup`，然后 `owpenbot whatsapp login`，接着 `owpenbot start`
   - 完整设置：https://github.com/juggleai/jugglework-desktop/blob/dev/README.md
-- **Openwrk (CLI 主机)**：无需桌面 UI 即可运行 OpenCode + JuggleWork 服务器。使用 `npm install -g openwrk` 安装。
-  - 文档：[apps/orchestrator/README.md](../apps/orchestrator/README.md)
+- **JuggleWork Server（无界面运行时）**：无需桌面 UI，直接运行经过身份验证的 JuggleWork API，并由 Server 管理 OpenCode。使用 `npm install -g jugglework-server` 安装。
+  - 文档：[apps/server/README.md](../apps/server/README.md)
+  - 原 `jugglework-orchestrator` 包和裸 `jugglework` CLI 已退休；请参阅[迁移指南](../packages/docs/start-here/migrate-from-orchestrator.mdx)。
 
 
 ## 快速开始
@@ -115,11 +116,11 @@ curl -fsSL https://opencode.ai/install | bash -s -- --version "$(node -e "const 
 
 ## 架构（高级）
 
-- 在**主机模式**中，JuggleWork 启动：
-  - `opencode serve --hostname 127.0.0.1 --port <free-port>`
-  - 以您选择的项目文件夹作为进程工作目录。
-在主机模式下，JuggleWork 直接在您的计算机上后台启动 OpenCode 服务器。
-当您选择项目文件夹时，JuggleWork 使用该文件夹在本地运行 OpenCode 并将桌面 UI 连接到它。
+- 在**主机模式**中，Desktop 嵌入 JuggleWork Server；Server 是工作区运行时的唯一入口，并负责启动和停止 OpenCode 子进程。
+- 无界面和容器部署直接运行 `jugglework-server`，设置 `JUGGLEWORK_MANAGE_OPENCODE=1` 和已解析的 `JUGGLEWORK_OPENCODE_BIN`。
+- Desktop Docker 沙箱由 Desktop 的 `sandbox-runtime` 创建和清理；容器内部直接运行 JuggleWork Server。
+
+当您选择项目文件夹时，JuggleWork 使用该文件夹在本地运行 Server 和由其管理的 OpenCode，并将桌面 UI 连接到它。
 这允许您完全在您的机器上运行智能体工作流程、发送提示并查看进度，而无需依赖远程服务器。
 
 - UI 使用 `@opencode-ai/sdk/v2/client` 来：

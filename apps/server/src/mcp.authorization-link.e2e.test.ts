@@ -200,6 +200,10 @@ describeMaybe("authorization-required MCP tool error pass-through", () => {
     engine = spawn(enginePath!, ["serve", "--pure", "--hostname", "127.0.0.1", "--port", String(enginePort)], {
       env: {
         ...process.env,
+        // These tests run an unauthenticated loopback engine. Do not inherit
+        // credentials from the JuggleWork desktop runtime hosting this agent.
+        OPENCODE_SERVER_USERNAME: "",
+        OPENCODE_SERVER_PASSWORD: "",
         OPENCODE_CONFIG: configPath,
         OPENCODE_DISABLE_AUTOUPDATE: "1",
         XDG_DATA_HOME: join(dataDir, "data"),

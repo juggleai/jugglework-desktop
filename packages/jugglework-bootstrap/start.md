@@ -8,8 +8,10 @@ workspace/skill, verify the running app opens to the setup-complete state, and
 offer to connect the JuggleWork MCP to the agent the user is already using.
 
 > The bootstrap command is `jugglework-bootstrap` (NOT `jugglework`). The bare
-> `jugglework` command belongs to the separate `jugglework-orchestrator` package and
-> may already be on the user's PATH - do not use it for these steps.
+> `jugglework` command and its `jugglework-orchestrator` package are retired and
+> may still be on the user's PATH after an older installation. Do not use them
+> for these steps. `jugglework-server` is the headless runtime entrypoint;
+> bootstrap remains an independent installer and onboarding tool.
 
 ## 1. Install CLI
 

@@ -10,7 +10,6 @@ type FeedbackUrlOptions = {
   appVersion?: string | null;
   juggleworkServerVersion?: string | null;
   opencodeVersion?: string | null;
-  orchestratorVersion?: string | null;
 };
 
 type ClientOsContext = {
@@ -93,7 +92,6 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
     appVersion: options.appVersion?.trim() || ENV_APP_VERSION,
     juggleworkServerVersion: options.juggleworkServerVersion?.trim() ?? "",
     opencodeVersion: options.opencodeVersion?.trim() ?? "",
-    orchestratorVersion: options.orchestratorVersion?.trim() ?? "",
     osName: osContext.osName?.trim() ?? "",
     osVersion: osContext.osVersion?.trim() ?? "",
     platform: osContext.platform?.trim() ?? "",

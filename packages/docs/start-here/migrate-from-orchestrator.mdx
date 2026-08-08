@@ -1,0 +1,213 @@
+---
+title: "Migrate from JuggleWork Orchestrator"
+description: "Replace the retired jugglework CLI, daemon, and sandbox commands with JuggleWork Server and Desktop."
+---
+
+`jugglework-orchestrator` and the bare `jugglework` command are retired. There is
+no compatibility CLI. The supported runtime entrypoint for headless and
+self-hosted workspaces is `jugglework-server`; `jugglework-bootstrap` remains a
+separate installer and onboarding tool.
+
+JuggleWork Server owns workspace runtime state, starts and stops managed
+OpenCode, and exposes the JuggleWork API. Docker, systemd, or another deployment
+supervisor owns background process lifecycle. Desktop's `sandbox-runtime` owns
+Desktop Docker sandbox provisioning.
+
+## Start Server with managed OpenCode
+
+Install `jugglework-server` and OpenCode, then resolve the OpenCode executable
+before starting Server:
+
+```bash
+npm install -g jugglework-server
+curl -fsSL https://opencode.ai/install | bash
+
+export JUGGLEWORK_MANAGE_OPENCODE=1
+export JUGGLEWORK_OPENCODE_BIN="$(command -v opencode)"
+export JUGGLEWORK_TOKEN="$(openssl rand -hex 32)"
+export JUGGLEWORK_HOST_TOKEN="$(openssl rand -hex 32)"
+
+jugglework-server \
+  --workspace /path/to/workspace \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --approval manual \
+  --cors "http://localhost:5173"
+```
+
+Server does not download OpenCode, update itself, create containers, detach, or
+daemonize. Keep both tokens secret and put TLS plus your normal access controls
+in front of Server before exposing it outside a trusted network.
+
+## Command migration
+
+| Retired surface | Replacement |
+|---|---|
+| `jugglework`, `jugglework start`, `jugglework serve` | Run `jugglework-server` directly with managed OpenCode enabled. |
+| TUI and `--no-tui` | Use Server logs, the Server health/status APIs, or Desktop. No replacement TUI is shipped. |
+| `--detach` | Use `docker compose up -d`, systemd, or your platform's process supervisor. |
+| `jugglework daemon start/stop` | Start and stop the supervised `jugglework-server` service. Server handles its OpenCode child during startup and shutdown. |
+| `jugglework workspace add/list/path` | Declare workspaces with repeatable `--workspace`, `JUGGLEWORK_WORKSPACES`, or `~/.config/jugglework/server.json`; query `GET /workspaces`. |
+| `jugglework instance dispose` | Use `POST /workspace/:id/engine/reload` when a workspace engine must reload. |
+| `jugglework status` | Use `GET /health` and `GET /status`. |
+| `jugglework approvals list/reply` | Use `GET /approvals` and `POST /approvals/:id`. |
+| `jugglework files ...` | Use Server file-session APIs. |
+| `jugglework ... --sandbox ...` | Use Desktop's sandbox UI/runtime, or manage a Docker deployment directly. |
+| Sidecar/download/source flags | Install binaries in your image or host provisioning and set `JUGGLEWORK_OPENCODE_BIN`. |
+
+Server has one workspace registry and one OpenCode manager. Do not recreate the
+retired router registry, runtime control server, sidecar cache, or downloader
+around it.
+
+## Status, approvals, and files
+
+Set connection variables for the following examples:
+
+```bash
+export JUGGLEWORK_URL="http://127.0.0.1:8787"
+export JUGGLEWORK_TOKEN="<client-token>"
+export JUGGLEWORK_HOST_TOKEN="<host-token>"
+```
+
+Health is unauthenticated. Status requires the client token:
+
+```bash
+curl --fail --silent --show-error "$JUGGLEWORK_URL/health"
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $JUGGLEWORK_TOKEN" \
+  "$JUGGLEWORK_URL/status"
+```
+
+List and answer approvals with host authorization:
+
+```bash
+curl --fail --silent --show-error \
+  -H "X-JuggleWork-Host-Token: $JUGGLEWORK_HOST_TOKEN" \
+  "$JUGGLEWORK_URL/approvals"
+
+curl --fail --silent --show-error \
+  -H "X-JuggleWork-Host-Token: $JUGGLEWORK_HOST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reply":"allow"}' \
+  "$JUGGLEWORK_URL/approvals/<approval-id>"
+```
+
+Create a file session, then use its returned `session.id` with the catalog,
+read, write, events, renew, and close endpoints:
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $JUGGLEWORK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"write":true}' \
+  "$JUGGLEWORK_URL/workspace/<workspace-id>/files/sessions"
+
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $JUGGLEWORK_TOKEN" \
+  "$JUGGLEWORK_URL/files/sessions/<session-id>/catalog/snapshot?limit=200"
+
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $JUGGLEWORK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"paths":["README.md","notes/todo.md"]}' \
+  "$JUGGLEWORK_URL/files/sessions/<session-id>/read-batch"
+
+curl --fail --silent --show-error -X DELETE \
+  -H "Authorization: Bearer $JUGGLEWORK_TOKEN" \
+  "$JUGGLEWORK_URL/files/sessions/<session-id>"
+```
+
+Writes use `POST /files/sessions/:sessionId/write-batch` with base64-encoded
+content and remain subject to token scope and approval policy. See the
+`apps/server/README.md` endpoint list for the full API surface.
+
+## Run in the background
+
+For Docker, use the repository template and let Compose own detach and restart
+behavior:
+
+```bash
+cd packaging/docker
+docker compose up --build -d
+docker compose ps
+docker compose logs -f jugglework-host
+docker compose down
+```
+
+For Linux, a minimal `/etc/systemd/system/jugglework-server.service` can be:
+
+```ini
+[Unit]
+Description=JuggleWork Server
+After=network.target
+
+[Service]
+Type=simple
+User=jugglework
+WorkingDirectory=/srv/jugglework/workspace
+EnvironmentFile=/etc/jugglework/server.env
+ExecStart=/usr/local/bin/jugglework-server --workspace /srv/jugglework/workspace --host 127.0.0.1 --port 8787 --approval manual
+Restart=on-failure
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Place `JUGGLEWORK_MANAGE_OPENCODE=1`, the absolute
+`JUGGLEWORK_OPENCODE_BIN`, `JUGGLEWORK_TOKEN`, and `JUGGLEWORK_HOST_TOKEN` in
+`/etc/jugglework/server.env`. Restrict that file to the service account, then
+run `systemctl daemon-reload` and `systemctl enable --now jugglework-server`.
+
+## Sandbox replacement
+
+Server does not have a `--sandbox` option and does not receive host Docker
+privileges. In Desktop, start and inspect sandboxes through the Desktop sandbox
+flow. Electron's `sandbox-runtime` validates mount allowlists and sensitive
+paths, creates and cleans up the managed container, and starts
+`jugglework-server` with managed OpenCode inside it.
+
+For non-Desktop self-hosting, use Docker or another container platform directly
+and keep OpenCode private behind the JuggleWork Server API. There is no
+replacement for the retired Apple Container CLI path.
+
+## Archive or remove legacy state
+
+The new runtime does not read or import
+`~/.jugglework/jugglework-orchestrator`. Do not copy its workspace IDs,
+credentials, daemon files, or sidecar metadata into `server.json` or a Server
+data directory.
+
+First stop every old orchestrator daemon and confirm no legacy process is using
+the directory. The retired `jugglework daemon stop` command may be used only
+from the old installation for this one-time shutdown. Then archive the complete
+directory without printing file contents:
+
+```bash
+umask 077
+legacy="$HOME/.jugglework/jugglework-orchestrator"
+archive="$HOME/.jugglework/archive/jugglework-orchestrator-$(date +%Y%m%d-%H%M%S)"
+
+if [ -e "$legacy" ]; then
+  mkdir -p "$(dirname "$archive")"
+  mv "$legacy" "$archive"
+  chmod -R go-rwx "$archive"
+  printf 'Archived legacy state at %s\n' "$archive"
+fi
+```
+
+Treat the archive as sensitive because it may contain credentials. Verify that
+Desktop and direct Server work with their own configuration before deleting it.
+When you are certain rollback is unnecessary, remove the exact archived path:
+
+```bash
+archive="$HOME/.jugglework/archive/<exact-archived-directory>"
+case "$archive" in
+  "$HOME/.jugglework/archive/jugglework-orchestrator-"*) ;;
+  *) printf 'Refusing unexpected archive path: %s\n' "$archive" >&2; exit 1 ;;
+esac
+test -d "$archive" && rm -rf -- "$archive"
+```
+
+Do not use a wildcard and do not delete the parent `~/.jugglework` directory;
+it may contain independent bootstrap or current application data.

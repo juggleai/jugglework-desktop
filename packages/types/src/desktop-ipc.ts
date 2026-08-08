@@ -82,6 +82,25 @@ export type JuggleWorkServerInfo = {
   managedOpencodeExecution: OpencodeExecutionSnapshot | null;
 };
 
+export type RuntimeLifecycleState = "idle" | "cleaning" | "starting" | "healthy" | "error" | "stopping";
+
+export type RuntimeStatus = {
+  lifecycleState: RuntimeLifecycleState;
+  engine: EngineInfo & { lifecycleState: RuntimeLifecycleState };
+  juggleworkServer: JuggleWorkServerInfo;
+};
+
+export type WorkspaceActivateInput = {
+  workspacePath: string;
+  name?: string | null;
+};
+
+export type WorkspaceActivation = {
+  id: string;
+  path: string;
+  name: string;
+};
+
 export type EngineDoctorResult = {
   found: boolean;
   inPath: boolean;
@@ -181,7 +200,7 @@ export type DesktopBootstrapConfig = {
   }) | null;
 };
 
-export type OrchestratorDetachedHost = {
+export type SandboxDetachedHost = {
   juggleworkUrl: string;
   token: string;
   ownerToken?: string | null;
@@ -193,6 +212,7 @@ export type OrchestratorDetachedHost = {
   sandboxContainerName?: string | null;
 };
 
+/** @deprecated Use SandboxDetachedHost. */
 export type SandboxDoctorResult = {
   installed: boolean;
   daemonRunning: boolean;
@@ -230,7 +250,7 @@ export type SandboxDebugProbeResult = {
   workspacePath: string;
   ready: boolean;
   doctor: SandboxDoctorResult;
-  detachedHost?: OrchestratorDetachedHost | null;
+  detachedHost?: SandboxDetachedHost | null;
   dockerInspect?: {
     status: number;
     stdout: string;
@@ -479,18 +499,17 @@ export type DesktopCommandMap = {
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
   prepareFreshRuntime: { args: []; result: unknown };
   runtimeBootstrap: { args: []; result: unknown };
-  runtimeStatus: { args: []; result: unknown };
+  runtimeStatus: { args: []; result: RuntimeStatus };
+  workspaceActivate: { args: [input: WorkspaceActivateInput]; result: WorkspaceActivation };
   engineStop: { args: []; result: EngineInfo };
+  engineDispose: { args: [workspacePath: string]; result: boolean };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
   engineInfo: { args: []; result: EngineInfo };
   engineDoctor: { args: [projectDir?: string]; result: EngineDoctorResult };
   engineInstall: { args: []; result: unknown };
-  orchestratorStatus: { args: []; result: unknown };
-  orchestratorWorkspaceActivate: { args: [input?: Record<string, unknown>]; result: unknown };
-  orchestratorInstanceDispose: { args: [instanceId: string]; result: unknown };
-  orchestratorStartDetached: {
+  sandboxStart: {
     args: [input?: Record<string, unknown>];
-    result: OrchestratorDetachedHost;
+    result: SandboxDetachedHost;
   };
 
   // App / bridge info
@@ -533,7 +552,7 @@ export type DesktopCommandMap = {
 
   // Sandbox
   sandboxDoctor: { args: []; result: SandboxDoctorResult };
-  sandboxStop: { args: [runId: string]; result: unknown };
+  sandboxStop: { args: [containerName: string]; result: unknown };
   sandboxCleanupJuggleWorkContainers: { args: []; result: JuggleWorkDockerCleanupResult };
   sandboxDebugProbe: { args: []; result: SandboxDebugProbeResult };
 

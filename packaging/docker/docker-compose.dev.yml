@@ -33,7 +33,7 @@ x-shared: &shared
     - ${JUGGLEWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.jugglework-host-opencode-data}:/persist/.jugglework-host-opencode-data:ro
 
 services:
-  orchestrator:
+  jugglework-server:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -51,7 +51,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          echo "[orchestrator] Installing bun..."
+          echo "[jugglework-server] Installing bun..."
           curl -fsSL https://bun.sh/install | bash
         fi
 
@@ -59,13 +59,22 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Install deps ---
-        echo "[orchestrator] Installing dependencies..."
+        echo "[jugglework-server] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
-        # --- Use source entrypoints for the dev stack ---
-        # The orchestrator can spawn .ts files via Bun directly, which avoids bind-mount
-        # issues from bun --compile inside Docker on macOS.
-        export JUGGLEWORK_SERVER_BIN="/app/apps/server/src/cli.ts"
+        # --- Build managed plugins and install the pinned OpenCode binary ---
+        pnpm --filter jugglework-server build
+        OPENCODE_VERSION=$$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync("/app/constants.json", "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));')
+        export OPENCODE_INSTALL_DIR="/root/.opencode/bin"
+        mkdir -p "$$OPENCODE_INSTALL_DIR"
+        if ! command -v opencode >/dev/null 2>&1; then
+          curl -fsSL https://opencode.ai/install | bash -s -- --version "$$OPENCODE_VERSION" --no-modify-path
+        fi
+        export PATH="$$OPENCODE_INSTALL_DIR:$$PATH"
+        export JUGGLEWORK_MANAGE_OPENCODE=1
+        export JUGGLEWORK_OPENCODE_BIN="$$(command -v opencode)"
+        export JUGGLEWORK_EXTENSIONS_PLUGIN_DIR="/app/apps/server/dist/opencode-plugins"
+        export OPENCODE_MODELS_URL="$${OPENCODE_MODELS_URL:-https://work.juggle.im/jwork/models}"
 
         # --- Resolve tokens ---
         if [ -z "$$JUGGLEWORK_TOKEN" ]; then
@@ -84,7 +93,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  JuggleWork orchestrator"
+        echo "  JuggleWork server"
         echo "  Server:     http://localhost:${JUGGLEWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${JUGGLEWORK_PORT:-8787}/health"
         echo "  Token:      $$JUGGLEWORK_TOKEN"
@@ -92,16 +101,15 @@ services:
         echo "============================================"
         echo ""
 
-        exec pnpm --filter jugglework-orchestrator dev -- start \
+        exec bun /app/apps/server/src/cli.ts \
           --workspace /workspace \
-          --remote-access \
-          --jugglework-port 8787 \
-          --jugglework-token "$$JUGGLEWORK_TOKEN" \
-          --jugglework-host-token "$$JUGGLEWORK_HOST_TOKEN" \
-          --jugglework-server-bin "$$JUGGLEWORK_SERVER_BIN" \
+          --host 0.0.0.0 \
+          --port 8787 \
+          --token "$$JUGGLEWORK_TOKEN" \
+          --host-token "$$JUGGLEWORK_HOST_TOKEN" \
           --approval auto \
-          --allow-external \
-          --cors "*"
+          --cors "*" \
+          --verbose
     ports:
       - "${JUGGLEWORK_PORT:-8787}:8787"
     healthcheck:
@@ -118,12 +126,11 @@ services:
       JUGGLEWORK_DEV_MODE: ${JUGGLEWORK_DEV_MODE:-1}
       JUGGLEWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR: /persist/.config/opencode
       JUGGLEWORK_DEV_OPENCODE_IMPORT_DATA_DIR: /persist/.jugglework-host-opencode-data
-      JUGGLEWORK_SIDECAR_SOURCE: external
  
   web:
     <<: *shared
     depends_on:
-      orchestrator:
+      jugglework-server:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -142,7 +149,7 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by orchestrator ---
+        # --- Read token written by JuggleWork Server ---
         if [ -f "/app/tmp/.dev-env-${JUGGLEWORK_DEV_ID:-default}" ]; then
           . "/app/tmp/.dev-env-${JUGGLEWORK_DEV_ID:-default}"
           export VITE_JUGGLEWORK_TOKEN="$$JUGGLEWORK_TOKEN"
@@ -152,7 +159,7 @@ services:
         echo "============================================"
         echo "  JuggleWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_JUGGLEWORK_TOKEN:-<see orchestrator logs>}"
+        echo "  Token: $${VITE_JUGGLEWORK_TOKEN:-<see jugglework-server logs>}"
         echo "============================================"
         echo ""
 

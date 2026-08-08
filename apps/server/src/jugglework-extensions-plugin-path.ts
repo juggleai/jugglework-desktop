@@ -15,6 +15,9 @@ function resourcesPathFromAppAsarPath(path: string): string | null {
 }
 
 export function juggleworkPluginPath(name: string, here = dirname(fileURLToPath(import.meta.url))): string {
+  const pluginDir = process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR?.trim();
+  if (pluginDir) return join(pluginDir, `${name}.js`);
+
   const resourcesPath = resourcesPathFromAppAsarPath(here);
   if (resourcesPath) {
     const electronResourcesPath = process.resourcesPath?.includes("app.asar") ? resourcesPath : process.resourcesPath?.trim();

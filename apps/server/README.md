@@ -4,12 +4,33 @@ Filesystem-backed API for JuggleWork remote clients. This package provides the J
 
 ## Quick start
 
+JuggleWork Server is the headless runtime entrypoint. To let it start and stop
+OpenCode as a managed child process, install both binaries and pass the resolved
+OpenCode path through the environment:
+
 ```bash
 npm install -g jugglework-server
-jugglework-server --workspace /path/to/workspace --approval auto
+curl -fsSL https://opencode.ai/install | bash
+
+export JUGGLEWORK_MANAGE_OPENCODE=1
+export JUGGLEWORK_OPENCODE_BIN="$(command -v opencode)"
+export JUGGLEWORK_TOKEN="$(openssl rand -hex 32)"
+export JUGGLEWORK_HOST_TOKEN="$(openssl rand -hex 32)"
+
+jugglework-server \
+  --workspace /path/to/workspace \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --approval manual \
+  --cors "http://localhost:5173" \
+  --verbose
 ```
 
 `jugglework-server` ships as a compiled binary, so Bun is not required at runtime.
+With `JUGGLEWORK_MANAGE_OPENCODE=1`, Server owns OpenCode startup, runtime
+configuration, health, and shutdown. `JUGGLEWORK_OPENCODE_BIN` must point to an
+executable OpenCode binary; Server does not download one. Keep the client and
+host tokens secret, especially when binding outside `127.0.0.1`.
 
 Or from source:
 
@@ -59,6 +80,9 @@ Defaults to `~/.config/jugglework/server.json` (override with `JUGGLEWORK_SERVER
 - `JUGGLEWORK_OPENCODE_DIRECTORY`
 - `JUGGLEWORK_OPENCODE_USERNAME`
 - `JUGGLEWORK_OPENCODE_PASSWORD`
+- `JUGGLEWORK_MANAGE_OPENCODE` (`1` makes Server manage an OpenCode child)
+- `JUGGLEWORK_OPENCODE_BIN` (resolved OpenCode executable for managed mode)
+- `JUGGLEWORK_MANAGED_OPENCODE_CWD` (optional managed OpenCode working directory)
 
 Token management (scoped tokens):
 
@@ -148,3 +172,38 @@ Approvals endpoints:
 - `POST /approvals/:id` with `{ "reply": "allow" | "deny" }`
 
 Set `JUGGLEWORK_APPROVAL_MODE=auto` to auto-approve during local development.
+
+## Migration from `jugglework`
+
+The `jugglework-orchestrator` package and its bare `jugglework` command are
+retired. There is no thin compatibility CLI. Use `jugglework-server` as the
+runtime entrypoint and use the Server API for remote operations.
+
+| Retired command or option | Direct-Server replacement |
+|---|---|
+| `jugglework`, `jugglework start`, `jugglework serve` | Start `jugglework-server` with `JUGGLEWORK_MANAGE_OPENCODE=1` and `JUGGLEWORK_OPENCODE_BIN` as shown above. |
+| Interactive TUI, `--no-tui` | Use Server logs, `GET /health`, `GET /status`, or the Desktop app. Server has no TUI mode. |
+| `--detach` | Run Server under Docker Compose (`docker compose up -d`), systemd, or another process supervisor. |
+| `jugglework daemon ...` | Run one supervised Server process. Configure workspaces with repeatable `--workspace`, `JUGGLEWORK_WORKSPACES`, or `server.json`. |
+| `jugglework status` | Call `GET /health` and authenticated `GET /status`. |
+| `jugglework approvals list/reply` | Call `GET /approvals` and `POST /approvals/:id` with host authorization. |
+| `jugglework files ...` | Use `/workspace/:id/files/sessions` and `/files/sessions/:sessionId/*`. |
+| `--sandbox`, `--sandbox-image`, `--sandbox-mount` | Use the Desktop sandbox flow, owned by Desktop's `sandbox-runtime`, or provision Docker directly. Server does not create containers. |
+| `--sidecar-*`, `--*-source`, `--allow-external` | Install OpenCode in the deployment layer and set `JUGGLEWORK_OPENCODE_BIN`. Server does not download or update sidecars. |
+| `--jugglework-server-bin` | Invoke that `jugglework-server` executable directly. |
+| `--data-dir` | Use `JUGGLEWORK_DATA_DIR` only for Server-owned data. Do not point it at legacy orchestrator state. |
+| `--jugglework-host`, `--jugglework-port` | Use `--host`, `--port` or `JUGGLEWORK_HOST`, `JUGGLEWORK_PORT`. |
+| `--jugglework-token`, `--jugglework-host-token` | Use `--token`, `--host-token` or `JUGGLEWORK_TOKEN`, `JUGGLEWORK_HOST_TOKEN`. |
+| `--remote-access` | Bind explicitly with `--host 0.0.0.0`; add TLS and access controls before exposing port `8787`. |
+| `--opencode-bin` | Set the absolute executable path in `JUGGLEWORK_OPENCODE_BIN`. |
+| `--opencode-workdir` | Set `JUGGLEWORK_MANAGED_OPENCODE_CWD`. |
+| `--opencode-host`, `--opencode-port`, `--opencode-auth`, managed OpenCode username/password flags | No managed-mode replacement. Server keeps generated OpenCode credentials and its selected loopback endpoint internal. |
+| OpenCode hot-reload flags | No launcher-level replacement. Server refreshes managed runtime configuration; call `POST /workspace/:id/engine/reload` when an explicit reload is required. |
+| `--approval`, `--approval-timeout`, `--read-only`, `--cors`, `--log-format`, `--verbose` | These Server options retain the same names. |
+| `--check`, `--check-events` | Probe `GET /health`, authenticated `GET /status`, and `GET /workspace/:id/events` from deployment health checks. |
+| `--connect-host` | Configure the public hostname in your reverse proxy or deployment platform; it is not a Server runtime option. |
+| `--run-id`, color flags | Use supervisor/container log metadata and output controls; Server has no run-ID or ANSI-color option. |
+
+See [Migrate from JuggleWork Orchestrator](../../packages/docs/start-here/migrate-from-orchestrator.mdx)
+for API examples, systemd configuration, sandbox guidance, and safe legacy-state
+cleanup.

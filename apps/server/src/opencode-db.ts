@@ -21,7 +21,7 @@ function truthy(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function opencodeOrchestratorDataDirs(): string[] {
+function opencodeJuggleWorkDataDirs(): string[] {
   const root = process.env.JUGGLEWORK_DATA_DIR?.trim();
   if (!root) return [];
 
@@ -46,7 +46,7 @@ function opencodeOrchestratorDataDirs(): string[] {
 
 function opencodeDataDirs(): string[] {
   const dirs: string[] = [];
-  dirs.push(...opencodeOrchestratorDataDirs());
+  dirs.push(...opencodeJuggleWorkDataDirs());
   const xdg = process.env.XDG_DATA_HOME?.trim();
   if (xdg) dirs.push(join(xdg, "opencode"));
   dirs.push(join(homedir(), ".local", "share", "opencode"));

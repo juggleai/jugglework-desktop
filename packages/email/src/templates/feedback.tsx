@@ -10,7 +10,6 @@ export type FeedbackEmailProps = {
   appVersion: string
   juggleworkServerVersion: string
   opencodeVersion: string
-  orchestratorVersion: string
   osName: string
   osVersion: string
   platform: string
@@ -28,7 +27,6 @@ export function FeedbackEmail({
   appVersion,
   juggleworkServerVersion,
   opencodeVersion,
-  orchestratorVersion,
   osName,
   osVersion,
   platform,
@@ -43,7 +41,6 @@ export function FeedbackEmail({
     ["App version", appVersion],
     ["JuggleWork server", juggleworkServerVersion],
     ["OpenCode", opencodeVersion],
-    ["Orchestrator", orchestratorVersion],
     ["OS", osLabel],
     ["Platform", platform],
     ["Submitted", submittedAt],

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,14 +8,8 @@ const outputJson = args.includes("--json");
 const strict = args.includes("--strict");
 
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
-const readText = (path) => readFileSync(path, "utf8");
-
-
 const appPkg = readJson(resolve(root, "apps", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "apps", "desktop", "package.json"));
-const orchestratorPkg = readJson(
-  resolve(root, "apps", "orchestrator", "package.json"),
-);
 const pinnedOpencodeVersion = String(
   readJson(resolve(root, "constants.json")).opencodeVersion ?? "",
 )
@@ -26,10 +20,7 @@ const versions = {
   app: appPkg.version ?? null,
   desktop: desktopPkg.version ?? null,
   server: serverPkg.version ?? null,
-  orchestrator: orchestratorPkg.version ?? null,
   opencode: pinnedOpencodeVersion || null,
-  orchestratorJuggleWorkServerRange:
-    orchestratorPkg.dependencies?.["jugglework-server"] ?? null,
 };
 
 const checks = [];
@@ -49,13 +40,6 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.desktop ?? "?"}`,
 );
 addCheck(
-  "App/jugglework-orchestrator versions match",
-  versions.app &&
-    versions.orchestrator &&
-    versions.app === versions.orchestrator,
-  `${versions.app ?? "?"} vs ${versions.orchestrator ?? "?"}`,
-);
-addCheck(
   "App/jugglework-server versions match",
   versions.app && versions.server && versions.app === versions.server,
   `${versions.app ?? "?"} vs ${versions.server ?? "?"}`,
@@ -69,57 +53,6 @@ if (versions.opencode) {
 } else {
   addWarning(
     "OpenCode version is not pinned in constants.json.",
-  );
-}
-
-const juggleworkServerRange = versions.orchestratorJuggleWorkServerRange ?? "";
-const juggleworkServerPinned = /^\d+\.\d+\.\d+/.test(juggleworkServerRange);
-if (!juggleworkServerRange) {
-  addWarning("jugglework-orchestrator is missing an jugglework-server dependency.");
-} else if (!juggleworkServerPinned) {
-  addWarning(
-    `jugglework-orchestrator jugglework-server dependency is not pinned (${juggleworkServerRange}).`,
-  );
-} else {
-  addCheck(
-    "JuggleWork-server dependency matches server version",
-    versions.server && juggleworkServerRange === versions.server,
-    `${juggleworkServerRange} vs ${versions.server ?? "?"}`,
-  );
-}
-
-const sidecarManifestPath = resolve(
-  root,
-  "apps",
-  "orchestrator",
-  "dist",
-  "sidecars",
-  "jugglework-orchestrator-sidecars.json",
-);
-if (existsSync(sidecarManifestPath)) {
-  const manifest = readJson(sidecarManifestPath);
-  addCheck(
-    "Sidecar manifest version matches jugglework-orchestrator",
-    versions.orchestrator && manifest.version === versions.orchestrator,
-    `${manifest.version ?? "?"} vs ${versions.orchestrator ?? "?"}`,
-  );
-  const serverEntry = manifest.entries?.["jugglework-server"]?.version;
-  if (serverEntry) {
-    addCheck(
-      "Sidecar manifest jugglework-server version matches",
-      versions.server && serverEntry === versions.server,
-      `${serverEntry ?? "?"} vs ${versions.server ?? "?"}`,
-    );
-  }
-} else {
-  addWarning(
-    "Sidecar manifest missing (run pnpm --filter jugglework-orchestrator build:sidecars).",
-  );
-}
-
-if (!process.env.SOURCE_DATE_EPOCH) {
-  addWarning(
-    "SOURCE_DATE_EPOCH is not set (sidecar manifests will include current time).",
   );
 }
 

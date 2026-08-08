@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -9,10 +9,11 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 
+import { createSandboxRuntime } from "./sandbox-runtime.mjs";
+
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
 const DIRECT_RUNTIME = "direct";
-const ORCHESTRATOR_RUNTIME = "jugglework-orchestrator";
 const JUGGLEWORK_SERVER_PORT_RANGE_START = 48_000;
 const JUGGLEWORK_SERVER_PORT_RANGE_END = 51_000;
 
@@ -88,8 +89,7 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
   if (!sidecarDirs.some((dir) => String(dir ?? "").trim() && value.includes(dir))) {
     return false;
   }
-  return value.includes("jugglework-orchestrator") ||
-    value.includes("jugglework-server") ||
+  return value.includes("jugglework-server") ||
     /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
 }
 
@@ -269,18 +269,6 @@ function assertJuggleWorkServerReady(snapshot) {
     throw new Error("JuggleWork server did not report an access token after startup.");
   }
   return snapshot;
-}
-
-function createOrchestratorState() {
-  return {
-    child: null,
-    childExited: true,
-    dataDir: null,
-    baseUrl: null,
-    daemonPort: null,
-    lastStdout: null,
-    lastStderr: null,
-  };
 }
 
 async function fileExists(targetPath) {
@@ -514,7 +502,7 @@ async function fetchJson(url, options = {}, timeoutMs = 3000) {
 
 // Resolves ~/.config/jugglework/env.json (or %APPDATA%\jugglework\env.json on
 // Windows) — must agree byte-for-byte with apps/server/src/env-file.ts and
-// apps/orchestrator/src/cli.ts. Honor JUGGLEWORK_ENV_STORE override.
+// the Server environment loader. Honor JUGGLEWORK_ENV_STORE override.
 function resolveUserEnvFilePath() {
   const override = String(process.env.JUGGLEWORK_ENV_STORE ?? "").trim();
   if (override) return path.resolve(override);
@@ -611,17 +599,17 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl }) {
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
   const engineState = createEngineState();
   const juggleworkServerState = createJuggleWorkServerState();
-  const orchestratorState = createOrchestratorState();
 
   // Serialize engine lifecycle operations. Without this, concurrent renderer
   // invocations of engineStart/engineStop/engineRestart race: each call's
   // stopAllRuntimeChildren kills the previous call's freshly-spawned
-  // orchestrator daemon, and the prior call then times out its /health probe.
+  // managed runtime, and the prior call then observes a stopped server.
   /** @type {Promise<unknown>} */
   let runtimeLifecycleQueue = Promise.resolve();
+  /** @type {"idle" | "cleaning" | "starting" | "healthy" | "error" | "stopping"} */
   let lifecycleState = "idle";
   /**
    * Serialize engine lifecycle operations; preserves the wrapped function's
@@ -638,6 +626,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   const userDataDir = app.getPath("userData");
+  const sandboxRuntime = sandboxRuntimeOverride ?? createSandboxRuntime({ userDataDir });
   const sidecarDirs = [
     path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
@@ -660,53 +649,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   function managedOpencodeWorkdir() {
     return path.join(userDataDir, "managed-opencode-workdir");
-  }
-
-  function orchestratorDataDir() {
-    const envDir = process.env.JUGGLEWORK_DATA_DIR?.trim();
-    if (envDir) return envDir;
-    return path.join(app.getPath("home"), ".jugglework", "jugglework-orchestrator");
-  }
-
-  function orchestratorStatePath(dataDir) {
-    return path.join(dataDir, "jugglework-orchestrator-state.json");
-  }
-
-  function orchestratorAuthPath(dataDir) {
-    return path.join(dataDir, "jugglework-orchestrator-auth.json");
-  }
-
-  async function readOrchestratorStateFile(dataDir) {
-    return readJsonFile(orchestratorStatePath(dataDir), null);
-  }
-
-  async function readOrchestratorAuthFile(dataDir) {
-    return readJsonFile(orchestratorAuthPath(dataDir), null);
-  }
-
-  async function writeOrchestratorAuthFile(dataDir, auth) {
-    const filePath = orchestratorAuthPath(dataDir);
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFile(filePath, `${JSON.stringify({ ...auth, updatedAt: nowMs() }, null, 2)}\n`, "utf8");
-  }
-
-  async function clearOrchestratorAuthFile(dataDir) {
-    await rm(orchestratorAuthPath(dataDir), { force: true });
-  }
-
-  async function requestOrchestratorShutdown(dataDir) {
-    const state = await readOrchestratorStateFile(dataDir);
-    const baseUrl = state?.daemon?.baseUrl?.trim();
-    if (!baseUrl) return false;
-    try {
-      await fetch(`${baseUrl.replace(/\/+$/, "")}/shutdown`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   async function loadTokenStore() {
@@ -824,7 +766,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   async function buildChildEnv(extra = {}) {
     /** @type {NodeJS.ProcessEnv} */
     // User env is layered first so process.env + any caller overrides always
-    // win. See apps/server/src/env-file.ts and apps/orchestrator/src/cli.ts —
+    // win. See apps/server/src/env-file.ts —
     // all loaders must agree on path + reserved-keys policy.
     const baseEnv = {
       ...loadUserEnvFile(),
@@ -904,102 +846,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   function resolveOpencodeBinary(opencodeBinPath) {
     const explicitPath = typeof opencodeBinPath === "string" ? opencodeBinPath.trim() : "";
     return explicitPath ? { path: explicitPath, source: "custom" } : resolveBinaryInfo("opencode");
-  }
-
-  function resolveDockerCandidates() {
-    const candidates = [];
-    const seen = new Set();
-
-    for (const key of ["JUGGLEWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
-      const value = process.env[key]?.trim();
-      if (value && !seen.has(value)) {
-        seen.add(value);
-        candidates.push(value);
-      }
-    }
-
-    for (const entry of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-      const candidate = path.join(entry, process.platform === "win32" ? "docker.exe" : "docker");
-      if (!seen.has(candidate)) {
-        seen.add(candidate);
-        candidates.push(candidate);
-      }
-    }
-
-    for (const candidate of [
-      "/opt/homebrew/bin/docker",
-      "/usr/local/bin/docker",
-      "/Applications/Docker.app/Contents/Resources/bin/docker",
-    ]) {
-      if (!seen.has(candidate)) {
-        seen.add(candidate);
-        candidates.push(candidate);
-      }
-    }
-
-    return candidates.filter((candidate) => existsSync(candidate));
-  }
-
-  function runDockerCommandDetailed(args, timeoutMs = 8000) {
-    const tried = [...resolveDockerCandidates(), process.platform === "win32" ? "docker.exe" : "docker"];
-    const errors = [];
-
-    for (const program of tried) {
-      try {
-        const result = spawnSync(program, args, {
-          encoding: "utf8",
-          timeout: timeoutMs,
-          windowsHide: true,
-        });
-        return {
-          program,
-          status: typeof result.status === "number" ? result.status : -1,
-          stdout: result.stdout ?? "",
-          stderr: result.stderr ?? "",
-        };
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
-      }
-    }
-
-    throw new Error(
-      `Failed to run docker: ${errors.join("; ")} (Set JUGGLEWORK_DOCKER_BIN to your docker binary if needed)`,
-    );
-  }
-
-  function parseDockerClientVersion(stdout) {
-    const line = String(stdout ?? "").split(/\r?\n/)[0]?.trim() ?? "";
-    return line.toLowerCase().startsWith("docker version") ? line : null;
-  }
-
-  function parseDockerServerVersion(stdout) {
-    for (const line of String(stdout ?? "").split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("Server Version:")) {
-        return trimmed.slice("Server Version:".length).trim() || null;
-      }
-    }
-    return null;
-  }
-
-  function deriveOrchestratorContainerName(runId) {
-    const sanitized = String(runId ?? "")
-      .replace(/[^a-zA-Z0-9_.-]+/g, "-")
-      .slice(0, 24);
-    return `jugglework-orchestrator-${sanitized}`;
-  }
-
-  async function listJuggleWorkManagedContainers() {
-    const result = runDockerCommandDetailed(["ps", "-a", "--format", "{{.Names}}"], 8000);
-    if (result.status !== 0) {
-      const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
-      throw new Error(combined || `docker ps -a failed (status ${result.status})`);
-    }
-    return result.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((name) => name && (name.startsWith("jugglework-orchestrator-") || name.startsWith("jugglework-dev-") || name.startsWith("openwrk-")))
-      .sort();
   }
 
   async function runShellCommand(program, args, options = {}) {
@@ -1114,12 +960,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
 
   async function cleanupPackagedSidecars() {
     if (!app.isPackaged) return;
-
-    // First ask the previously recorded orchestrator daemon to shut itself and
-    // its OpenCode child down. This handles the happy path without relying on
-    // process-list parsing.
-    await requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()).catch(() => false);
-    await new Promise((resolve) => setTimeout(resolve, 300));
 
     // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
     // should always own a fresh runtime per app launch, so remove any leftover
@@ -1258,11 +1098,12 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const candidates = process.env.JUGGLEWORK_DEV_MODE === "1"
       ? [devPath, ...packagedPaths]
       : [...packagedPaths, devPath];
-    const embeddedPath = candidates.find((candidate) => existsSync(candidate));
-    if (!embeddedPath) {
+    const embeddedPath = startEmbeddedServerOverride ? null : candidates.find((candidate) => existsSync(candidate));
+    if (!startEmbeddedServerOverride && !embeddedPath) {
       throw new Error(`Cannot find JuggleWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
-    const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
+    const startEmbeddedServer = startEmbeddedServerOverride
+      ?? (await import(embeddedServerImportUrl(embeddedPath))).startEmbeddedServer;
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port
     // below is authoritative.
@@ -1352,97 +1193,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshotJuggleWorkServerState(juggleworkServerState);
   }
 
-  async function resolveOrchestratorBaseUrl() {
-    if (orchestratorState.baseUrl) {
-      return orchestratorState.baseUrl;
-    }
-    const stateFile = await readOrchestratorStateFile(orchestratorState.dataDir || orchestratorDataDir());
-    const baseUrl = stateFile?.daemon?.baseUrl?.trim();
-    if (!baseUrl) {
-      throw new Error("orchestrator daemon is not running");
-    }
-    return baseUrl;
-  }
-
-  async function startOrchestratorRuntime(projectDir, options = {}) {
-    const dataDir = orchestratorDataDir();
-    await mkdir(dataDir, { recursive: true });
-    const daemonPort = await findFreePort("127.0.0.1");
-    const opencodePort = await findFreePort("127.0.0.1");
-    const [username, password] = generateManagedCredentials();
-
-    const orchestratorProgram = resolveBinary("jugglework-orchestrator") ?? resolveBinary("jugglework");
-    if (!orchestratorProgram) {
-      throw new Error("Failed to locate jugglework-orchestrator.");
-    }
-
-    const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
-    if (!opencodeBinary?.path) {
-      throw new Error("Failed to locate opencode.");
-    }
-
-    const env = await buildChildEnv({
-      JUGGLEWORK_INTERNAL_ALLOW_OPENCODE_CREDENTIALS: "1",
-      JUGGLEWORK_OPENCODE_USERNAME: username,
-      JUGGLEWORK_OPENCODE_PASSWORD: password,
-      ...(options.opencodeEnableExa !== false ? { OPENCODE_ENABLE_EXA: "1" } : {}),
-    });
-
-    const args = [
-      "daemon",
-      "run",
-      "--data-dir",
-      dataDir,
-      "--daemon-host",
-      "127.0.0.1",
-      "--daemon-port",
-      String(daemonPort),
-      "--opencode-bin",
-      opencodeBinary.path,
-      "--opencode-host",
-      "127.0.0.1",
-      "--opencode-workdir",
-      projectDir,
-      "--opencode-port",
-      String(opencodePort),
-      "--allow-external",
-      "--cors",
-      "*",
-    ];
-
-    spawnManagedChild(orchestratorState, orchestratorProgram, args, { env });
-    orchestratorState.dataDir = dataDir;
-    orchestratorState.daemonPort = daemonPort;
-    orchestratorState.baseUrl = `http://127.0.0.1:${daemonPort}`;
-
-    await writeOrchestratorAuthFile(dataDir, {
-      opencodeUsername: username,
-      opencodePassword: password,
-      projectDir,
-    });
-
-    const health = await waitForHttpOk(`${orchestratorState.baseUrl}/health`, 180_000).then((response) => response.json());
-    const opencode = health?.opencode;
-    if (!opencode?.port) {
-      throw new Error("Orchestrator did not report OpenCode status.");
-    }
-
-    engineState.runtime = ORCHESTRATOR_RUNTIME;
-    engineState.projectDir = projectDir;
-    engineState.hostname = "127.0.0.1";
-    engineState.port = opencode.port;
-    engineState.baseUrl = `http://127.0.0.1:${opencode.port}`;
-    engineState.opencodeUsername = username;
-    engineState.opencodePassword = password;
-    engineState.opencodeBinPath = opencodeBinary.path;
-    engineState.opencodeBinSource = opencodeBinary.source;
-    engineState.managedByServer = false;
-    engineState.managedPid = null;
-    engineState.managedIsAlive = null;
-
-    return snapshotEngineState(engineState);
-  }
-
   async function startDirectRuntime(projectDir, options = {}) {
     const opencodeBinary = resolveOpencodeBinary(options.opencodeBinPath);
     if (!opencodeBinary?.path) {
@@ -1496,15 +1246,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       inProcessServer = null;
     }
     await stopChild(juggleworkServerState);
-    await stopChild(orchestratorState, {
-      requestShutdown: () => requestOrchestratorShutdown(orchestratorState.dataDir || orchestratorDataDir()),
-    });
-    await clearOrchestratorAuthFile(orchestratorState.dataDir || orchestratorDataDir()).catch(() => undefined);
     await stopChild(engineState);
 
     Object.assign(engineState, createEngineState());
     Object.assign(juggleworkServerState, createJuggleWorkServerState());
-    Object.assign(orchestratorState, createOrchestratorState());
   }
 
   async function prepareFreshRuntime() {
@@ -1654,32 +1399,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     });
   }
 
-  async function orchestratorStatus() {
-    const engine = snapshotEngineState(engineState);
-    const juggleworkServer = snapshotJuggleWorkServerState(juggleworkServerState);
-    const workspaces = engine.projectDir
-      ? [{ id: normalizeWorkspaceKey(engine.projectDir), path: engine.projectDir, name: path.basename(engine.projectDir) || "Workspace" }]
-      : [];
-    return {
-      running: engine.running,
-      dataDir: null,
-      daemon: juggleworkServer.running
-        ? { baseUrl: juggleworkServer.baseUrl, port: juggleworkServer.port, pid: juggleworkServer.pid, runtime: "direct" }
-        : null,
-      opencode: engine.running
-        ? { baseUrl: engine.baseUrl, port: engine.port, pid: engine.pid, projectDir: engine.projectDir, runtime: "direct" }
-        : null,
-      cliVersion: null,
-      sidecar: null,
-      binaries: null,
-      activeId: workspaces[0]?.id ?? null,
-      workspaceCount: workspaces.length,
-      workspaces,
-      lastError: engine.lastStderr,
-    };
-  }
-
-  async function orchestratorWorkspaceActivate(input) {
+  async function workspaceActivate(input) {
     const workspacePath = String(input?.workspacePath ?? "").trim();
     if (!workspacePath) {
       throw new Error("workspacePath is required");
@@ -1698,7 +1418,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
-  async function orchestratorInstanceDispose(workspacePath) {
+  async function engineDispose(workspacePath) {
     if (normalizeWorkspaceKey(engineState.projectDir) === normalizeWorkspaceKey(workspacePath)) {
       return true;
     }
@@ -1758,298 +1478,6 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     };
   }
 
-  async function sandboxDoctor() {
-    const candidates = resolveDockerCandidates();
-    const debug = {
-      candidates,
-      selectedBin: null,
-      versionCommand: null,
-      infoCommand: null,
-    };
-
-    let version;
-    try {
-      version = runDockerCommandDetailed(["--version"], 2000);
-    } catch (error) {
-      return {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion: null,
-        serverVersion: null,
-        error: error instanceof Error ? error.message : String(error),
-        debug,
-      };
-    }
-
-    debug.selectedBin = version.program;
-    debug.versionCommand = {
-      status: version.status,
-      stdout: truncateOutput(version.stdout, 1200),
-      stderr: truncateOutput(version.stderr, 1200),
-    };
-
-    const clientVersion = parseDockerClientVersion(version.stdout);
-    if (version.status !== 0) {
-      return {
-        installed: false,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion: null,
-        serverVersion: null,
-        error: `docker --version failed (status ${version.status}): ${version.stderr.trim()}`,
-        debug,
-      };
-    }
-
-    let info;
-    try {
-      info = runDockerCommandDetailed(["info"], 8000);
-    } catch (error) {
-      return {
-        installed: true,
-        daemonRunning: false,
-        permissionOk: false,
-        ready: false,
-        clientVersion,
-        serverVersion: null,
-        error: error instanceof Error ? error.message : String(error),
-        debug,
-      };
-    }
-
-    debug.infoCommand = {
-      status: info.status,
-      stdout: truncateOutput(info.stdout, 1200),
-      stderr: truncateOutput(info.stderr, 1200),
-    };
-
-    if (info.status === 0) {
-      return {
-        installed: true,
-        daemonRunning: true,
-        permissionOk: true,
-        ready: true,
-        clientVersion,
-        serverVersion: parseDockerServerVersion(info.stdout),
-        error: null,
-        debug,
-      };
-    }
-
-    const combined = `${info.stdout.trim()}\n${info.stderr.trim()}`.trim().toLowerCase();
-    const permissionOk = !combined.includes("permission denied") && !combined.includes("access is denied");
-    const daemonRunning = !combined.includes("cannot connect to the docker daemon") && !combined.includes("is the docker daemon running") && !combined.includes("connection refused") && !combined.includes("no such file or directory");
-
-    return {
-      installed: true,
-      daemonRunning,
-      permissionOk,
-      ready: false,
-      clientVersion,
-      serverVersion: null,
-      error: `${info.stdout.trim()}\n${info.stderr.trim()}`.trim() || `docker info failed (status ${info.status})`,
-      debug,
-    };
-  }
-
-  async function sandboxStop(containerName) {
-    const name = String(containerName ?? "").trim();
-    if (!name) {
-      throw new Error("containerName is required");
-    }
-    if (!name.startsWith("jugglework-orchestrator-")) {
-      throw new Error("Refusing to stop container: expected name starting with 'jugglework-orchestrator-'");
-    }
-    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
-      throw new Error("containerName contains invalid characters");
-    }
-    const result = runDockerCommandDetailed(["stop", name], 15_000);
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
-  }
-
-  async function sandboxCleanupJuggleWorkContainers() {
-    const candidates = await listJuggleWorkManagedContainers().catch((error) => {
-      throw error;
-    });
-    const removed = [];
-    const errors = [];
-
-    for (const name of candidates) {
-      try {
-        const result = runDockerCommandDetailed(["rm", "-f", name], 20_000);
-        if (result.status === 0) {
-          removed.push(name);
-        } else {
-          errors.push(`${name}: exit ${result.status}: ${(result.stdout + "\n" + result.stderr).trim()}`);
-        }
-      } catch (error) {
-        errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    return { candidates, removed, errors };
-  }
-
-  async function orchestratorStartDetached(options = {}) {
-    const workspacePath = String(options.workspacePath ?? "").trim();
-    if (!workspacePath) {
-      throw new Error("workspacePath is required");
-    }
-
-    const sandboxBackend = String(options.sandboxBackend ?? "none").trim().toLowerCase();
-    if (!["none", "docker", "microsandbox"].includes(sandboxBackend)) {
-      throw new Error("sandboxBackend must be one of: none, docker, microsandbox");
-    }
-
-    const wantsDockerSandbox = sandboxBackend === "docker" || sandboxBackend === "microsandbox";
-    const runId = String(options.runId ?? randomUUID()).trim();
-    const containerName = wantsDockerSandbox ? deriveOrchestratorContainerName(runId) : null;
-    const port = await findFreePort("127.0.0.1");
-    const token = String(options.juggleworkToken ?? randomUUID()).trim();
-    const hostToken = String(options.juggleworkHostToken ?? randomUUID()).trim();
-    const juggleworkUrl = `http://127.0.0.1:${port}`;
-    const program = resolveBinary("jugglework-orchestrator") ?? resolveBinary("jugglework");
-    if (!program) {
-      throw new Error("Failed to locate jugglework orchestrator.");
-    }
-
-    const args = [
-      "start",
-      "--workspace",
-      workspacePath,
-      "--approval",
-      "auto",
-      "--detach",
-      "--jugglework-port",
-      String(port),
-      "--run-id",
-      runId,
-      ...(wantsDockerSandbox ? ["--sandbox", "docker"] : []),
-      ...(options.sandboxImageRef ? ["--sandbox-image", String(options.sandboxImageRef)] : []),
-    ];
-
-    const child = spawn(program, args, {
-      env: { ...(await buildChildEnv()), JUGGLEWORK_TOKEN: token, JUGGLEWORK_HOST_TOKEN: hostToken },
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
-
-    await waitForHttpOk(`${juggleworkUrl}/health`, wantsDockerSandbox ? 90_000 : 12_000);
-    const ownerToken = await issueOwnerToken(juggleworkUrl, hostToken).catch(() => null);
-
-    return {
-      juggleworkUrl,
-      token,
-      ownerToken,
-      hostToken,
-      port,
-      sandboxBackend: wantsDockerSandbox ? sandboxBackend : null,
-      sandboxRunId: wantsDockerSandbox ? runId : null,
-      sandboxContainerName: containerName,
-    };
-  }
-
-  async function sandboxDebugProbe() {
-    const startedAt = nowMs();
-    const runId = `probe-${randomUUID()}`;
-    const workspacePath = path.join(os.tmpdir(), `jugglework-sandbox-probe-${randomUUID()}`);
-    await mkdir(workspacePath, { recursive: true });
-
-    const doctor = await sandboxDoctor();
-    let detachedHost = null;
-    let dockerInspect = null;
-    let dockerLogs = null;
-    let error = null;
-    const cleanupErrors = [];
-    let containerRemoved = false;
-    let workspaceRemoved = false;
-    let removeResult = null;
-
-    if (doctor.ready) {
-      try {
-        detachedHost = await orchestratorStartDetached({
-          workspacePath,
-          sandboxBackend: "docker",
-          runId,
-        });
-        const containerName = detachedHost.sandboxContainerName ?? deriveOrchestratorContainerName(runId);
-        try {
-          const inspectResult = runDockerCommandDetailed(["inspect", containerName], 6000);
-          dockerInspect = {
-            status: inspectResult.status,
-            stdout: truncateOutput(inspectResult.stdout, 48000),
-            stderr: truncateOutput(inspectResult.stderr, 48000),
-          };
-        } catch (inspectError) {
-          cleanupErrors.push(`docker inspect failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`);
-        }
-        try {
-          const logsResult = runDockerCommandDetailed(["logs", "--timestamps", "--tail", "400", containerName], 8000);
-          dockerLogs = {
-            status: logsResult.status,
-            stdout: truncateOutput(logsResult.stdout, 48000),
-            stderr: truncateOutput(logsResult.stderr, 48000),
-          };
-        } catch (logsError) {
-          cleanupErrors.push(`docker logs failed: ${logsError instanceof Error ? logsError.message : String(logsError)}`);
-        }
-
-        try {
-          const rmResult = runDockerCommandDetailed(["rm", "-f", containerName], 20_000);
-          containerRemoved = rmResult.status === 0;
-          removeResult = {
-            status: rmResult.status,
-            stdout: truncateOutput(rmResult.stdout, 48000),
-            stderr: truncateOutput(rmResult.stderr, 48000),
-          };
-        } catch (removeError) {
-          cleanupErrors.push(`docker rm -f ${containerName} failed: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
-        }
-      } catch (probeError) {
-        error = `Sandbox probe failed to start: ${probeError instanceof Error ? probeError.message : String(probeError)}`;
-      }
-    } else {
-      error = doctor.error ?? "Docker is not ready for sandbox creation";
-    }
-
-    try {
-      await rm(workspacePath, { recursive: true, force: true });
-      workspaceRemoved = true;
-    } catch (workspaceError) {
-      cleanupErrors.push(`Failed to remove probe workspace: ${workspaceError instanceof Error ? workspaceError.message : String(workspaceError)}`);
-    }
-
-    return {
-      startedAt,
-      finishedAt: nowMs(),
-      runId,
-      workspacePath,
-      ready: doctor.ready && !error,
-      doctor,
-      detachedHost,
-      dockerInspect,
-      dockerLogs,
-      cleanup: {
-        containerName: detachedHost?.sandboxContainerName ?? null,
-        containerRemoved,
-        removeResult,
-        workspaceRemoved,
-        errors: cleanupErrors,
-      },
-      error,
-    };
-  }
-
   return {
     engineStart: (projectDir, options) => withRuntimeLifecycle(() => engineStart(projectDir, options)),
     engineStop: () => withRuntimeLifecycle(() => engineStop()),
@@ -2062,14 +1490,13 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     juggleworkServerInfo,
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
-    orchestratorStatus,
-    orchestratorWorkspaceActivate,
-    orchestratorInstanceDispose,
-    orchestratorStartDetached,
+    workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),
+    engineDispose: (workspacePath) => withRuntimeLifecycle(() => engineDispose(workspacePath)),
+    sandboxStart: (options) => sandboxRuntime.start(options),
     opencodeMcpAuth,
-    sandboxDoctor,
-    sandboxStop,
-    sandboxCleanupJuggleWorkContainers,
-    sandboxDebugProbe,
+    sandboxDoctor: () => sandboxRuntime.doctor(),
+    sandboxStop: (containerName) => sandboxRuntime.stop(containerName),
+    sandboxCleanupJuggleWorkContainers: () => sandboxRuntime.cleanup(),
+    sandboxDebugProbe: () => sandboxRuntime.debugProbe(),
   };
 }

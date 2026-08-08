@@ -144,7 +144,7 @@ export default defineFlow({
               packageScope: appPackage.includes('"name": "@jugglework/app"'),
               environment: rootPackage.includes("JUGGLEWORK_DEV_MODE"),
               deepLink: desktopMain.includes('entry.startsWith("jugglework://")'),
-              configStorage: desktopRuntime.includes('".jugglework", "jugglework-orchestrator"'),
+              configStorage: desktopRuntime.includes('"jugglework-dev-data"'),
               existingDomain: desktopMain.includes("juggle.im"),
               visibleProtocolHelp: englishUi.includes("jugglework://"),
             };
