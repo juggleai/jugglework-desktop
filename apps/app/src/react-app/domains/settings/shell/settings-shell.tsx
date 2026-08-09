@@ -35,6 +35,7 @@ import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
+import type { OpenCreateWorkspace } from "../../workspace/types";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
@@ -52,7 +53,7 @@ export type SettingsShellProps = SettingsPageFrameProps & {
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenTaskSearch?: () => void;
-  onOpenCreateWorkspace?: () => void;
+  onOpenCreateWorkspace?: OpenCreateWorkspace;
   onClose: () => void;
   headerLeadingSlot?: React.ReactNode;
   children: React.ReactNode;

@@ -20,7 +20,7 @@ import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
-import type { ShareWorkspaceModalProps } from "../../workspace/types";
+import type { OpenCreateWorkspace, ShareWorkspaceModalProps } from "../../workspace/types";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -162,7 +162,7 @@ export type SessionPageSidebarProps = {
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onOpenCreateWorkspace: () => void;
+  onOpenCreateWorkspace: OpenCreateWorkspace;
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
   onOpenTaskSearch: () => void;
@@ -1489,7 +1489,7 @@ export function SessionPage(props: SessionPageProps) {
                         </p>
                       </div>
                       <div className="flex justify-center">
-                        <Button onClick={props.sidebar.onOpenCreateWorkspace}>{t("workspace.create_workspace")}</Button>
+                        <Button onClick={() => props.sidebar.onOpenCreateWorkspace()}>{t("workspace.create_workspace")}</Button>
                       </div>
                     </div>
                   ) : showSelectedWorkspaceError ? (

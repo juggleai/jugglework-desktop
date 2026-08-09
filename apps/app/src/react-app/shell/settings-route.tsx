@@ -2597,7 +2597,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onOpenApps={() => navigate(workspaceAppsRoute(selectedWorkspaceId))}
         onOpenChat={() => navigate(workspaceChatRoute(selectedWorkspaceId))}
         onOpenTaskSearch={() => setCommandPaletteOpen(true)}
-        onOpenCreateWorkspace={() => openCreateWorkspace("chooser")}
+        onOpenCreateWorkspace={(screen = "chooser") => openCreateWorkspace(screen)}
         headerStatus={routeJuggleWorkStatus}
         busyHint={loading ? t("session.loading_detail") : busyLabel}
         onClose={props.onClose ?? (() => navigate(

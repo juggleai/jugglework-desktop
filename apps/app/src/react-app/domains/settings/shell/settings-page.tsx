@@ -46,6 +46,7 @@ import {
 } from "./panel";
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { AppNavigationRail } from "../../../shell/app-navigation-rail";
+import type { OpenCreateWorkspace } from "../../workspace/types";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -254,7 +255,7 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
   onOpenApps: () => void;
   onOpenChat: () => void;
   onOpenTaskSearch?: () => void;
-  onOpenCreateWorkspace?: () => void;
+  onOpenCreateWorkspace?: OpenCreateWorkspace;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
 

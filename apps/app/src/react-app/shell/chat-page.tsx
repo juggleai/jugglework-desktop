@@ -2,6 +2,7 @@
 import type { CSSProperties } from "react";
 
 import { JuggleChatApp } from "@/react-app/domains/jugglechat/jugglechat-app";
+import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { useUiStateStore } from "./ui-state-store";
 import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "./app-navigation-rail";
 import { useWorkspaceShellLayout } from "./workspace-shell-layout";
@@ -14,8 +15,8 @@ export type ChatPageProps = {
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog owned by the session shell. */
   onOpenTaskSearch: () => void;
-  /** Opens the local/remote workspace chooser owned by the session shell. */
-  onOpenCreateWorkspace: () => void;
+  /** Opens the requested workspace creation flow owned by the session shell. */
+  onOpenCreateWorkspace: OpenCreateWorkspace;
 };
 
 export function ChatPage(props: ChatPageProps) {

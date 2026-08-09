@@ -1321,7 +1321,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
 
   const handleOpenCreateWorkspace = useCallback(
-    () => openCreateWorkspace("chooser"),
+    (screen: CreateWorkspaceScreen = "chooser") => openCreateWorkspace(screen),
     [openCreateWorkspace],
   );
   const handleOpenCreateLocalWorkspace = useCallback(

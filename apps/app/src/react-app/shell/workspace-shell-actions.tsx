@@ -8,10 +8,11 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export type WorkspaceShellActions = {
   openTaskSearch: () => void;
-  openCreateWorkspace: () => void;
+  openCreateWorkspace: OpenCreateWorkspace;
 };
 
 type WorkspaceShellActionsContextValue = {
@@ -35,7 +36,7 @@ export function WorkspaceShellActionsProvider({ children }: { children: ReactNod
 
   const actions = useMemo<WorkspaceShellActions>(() => ({
     openTaskSearch: () => registeredActionsRef.current?.openTaskSearch(),
-    openCreateWorkspace: () => registeredActionsRef.current?.openCreateWorkspace(),
+    openCreateWorkspace: (screen) => registeredActionsRef.current?.openCreateWorkspace(screen),
   }), []);
 
   const value = useMemo(() => ({ actions, register }), [actions, register]);

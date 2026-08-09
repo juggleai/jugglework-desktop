@@ -2,6 +2,8 @@ import type { WorkspacePreset } from "../../../app/types";
 
 export type CreateWorkspaceScreen = "chooser" | "local" | "remote";
 
+export type OpenCreateWorkspace = (screen?: CreateWorkspaceScreen) => void;
+
 export type RemoteWorkspaceInput = {
   juggleworkHostUrl?: string | null;
   juggleworkToken?: string | null;

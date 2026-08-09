@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { AppNavigationRail } from "./app-navigation-rail";
 import { SettingsRoute } from "./settings-route";
+import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export type AppsPageProps = {
   workspaceId?: string | null;
@@ -10,8 +11,8 @@ export type AppsPageProps = {
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog owned by the session shell. */
   onOpenTaskSearch: () => void;
-  /** Opens the local/remote workspace chooser owned by the session shell. */
-  onOpenCreateWorkspace: () => void;
+  /** Opens the requested workspace creation flow owned by the session shell. */
+  onOpenCreateWorkspace: OpenCreateWorkspace;
 };
 
 export function AppsPage(props: AppsPageProps) {

@@ -24,6 +24,7 @@ import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { JuggleWorkDenHelpLink } from "../../workspace/jugglework-den-help-link";
+import type { OpenCreateWorkspace } from "../../workspace/types";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
@@ -689,7 +690,7 @@ export type AppSidebarProps = {
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
   onEditWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
-  onOpenCreateWorkspace: () => void;
+  onOpenCreateWorkspace: OpenCreateWorkspace;
   onOpenCreateLocalWorkspace: () => void;
   onOpenConnectRemoteWorkspace: () => void;
   onOpenTaskSearch: () => void;

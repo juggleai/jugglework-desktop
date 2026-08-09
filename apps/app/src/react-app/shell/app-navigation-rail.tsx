@@ -2,14 +2,20 @@
 import { useEffect } from "react";
 import {
   ContactRound,
-  Cloud,
-  FolderKanban,
+  FolderPlus,
+  Globe,
   MessageSquare,
   Plus,
   Search,
   Settings,
 } from "lucide-react";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
@@ -18,6 +24,7 @@ import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
+import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
@@ -34,8 +41,8 @@ type AppNavigationRailProps = {
   onOpenSettings: () => void;
   /** Opens the cross-workspace task search dialog when the session shell owns it. */
   onOpenTaskSearch?: () => void;
-  /** Opens the local/remote workspace chooser when the session shell owns it. */
-  onOpenCreateWorkspace?: () => void;
+  /** Opens the requested workspace creation flow when the session shell owns it. */
+  onOpenCreateWorkspace?: OpenCreateWorkspace;
 };
 
 type RailButtonProps = {
@@ -150,13 +157,49 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           </RailButton>
         ) : null}
         {props.onOpenCreateWorkspace ? (
-          <RailButton
-            label={t("workspace.create_workspace")}
-            onClick={props.onOpenCreateWorkspace}
-            testId="app-rail-create-workspace"
-          >
-            <Plus />
-          </RailButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(
+                <button
+                  type="button"
+                  aria-label={t("workspace.create_workspace")}
+                  title={t("workspace.create_workspace")}
+                  data-testid="app-rail-create-workspace"
+                  className={cn(
+                    "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag",
+                    "hover:border-dls-border hover:bg-background hover:text-dls-text",
+                    "data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:text-dls-text data-popup-open:shadow-sm",
+                    "[&>svg]:size-5 [&>svg]:stroke-[1.8]",
+                  )}
+                >
+                  <Plus />
+                </button>
+              )}
+            />
+            <DropdownMenuContent
+              side="right"
+              align="start"
+              sideOffset={8}
+              className="workspace-create-menu w-[184px] rounded-2xl bg-popover/95 p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.16)] ring-1 ring-foreground/10 backdrop-blur-xl"
+            >
+              <DropdownMenuItem
+                onClick={() => props.onOpenCreateWorkspace?.("local")}
+                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
+                data-testid="app-rail-create-local-workspace"
+              >
+                <FolderPlus className="size-[18px] stroke-[1.7] text-dls-secondary" />
+                {t("navigation.local_workspace")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => props.onOpenCreateWorkspace?.("remote")}
+                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
+                data-testid="app-rail-create-cloud-workspace"
+              >
+                <Globe className="size-[18px] stroke-[1.7] text-dls-secondary" />
+                {t("navigation.cloud_workspace")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
         <RailButton
           label={t("navigation.local_workspace")}
@@ -165,7 +208,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           testId="app-rail-home"
           statusIndicator={localWorkspaceIndicator}
         >
-          <FolderKanban />
+          <FolderPlus />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -181,7 +224,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
         >
-          <Cloud />
+          <Globe />
         </RailButton>
         <RailButton
           label={t("navigation.chat")}
