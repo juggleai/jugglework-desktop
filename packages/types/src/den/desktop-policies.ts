@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  desktopRemoteDisabledFeatureGates,
+  desktopRemoteFeatureGatesSchema,
+  parseDesktopRemoteFeatureGatesOrDisabled,
+} from "../desktop-remote-control";
 
 type DesktopPolicyDefinitionEntry = {
   id: string;
@@ -207,6 +212,11 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     connectEnabled: z.boolean().optional(),
+    // Remote control is deliberately separate from ordinary allow-style
+    // Desktop policies. Missing or malformed values normalize to a complete
+    // all-false document rather than inheriting permissive defaults.
+    desktopRemoteFeatureGates: desktopRemoteFeatureGatesSchema.optional(),
+    desktopRemotePolicyVersion: z.string().trim().min(1).max(256).optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
   })
@@ -561,6 +571,14 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const brandAccentColor = normalizeBrandAccentColor(raw?.brandAccentColor);
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
+  const desktopRemoteFeatureGates = parseDesktopRemoteFeatureGatesOrDisabled(
+    raw?.desktopRemoteFeatureGates,
+  );
+  const desktopRemotePolicyVersion =
+    typeof raw?.desktopRemotePolicyVersion === "string" &&
+    raw.desktopRemotePolicyVersion.trim()
+      ? raw.desktopRemotePolicyVersion.trim().slice(0, 256)
+      : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
 
   return {
@@ -572,6 +590,13 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
+    desktopRemoteFeatureGates: {
+      ...desktopRemoteDisabledFeatureGates,
+      ...desktopRemoteFeatureGates,
+    },
+    ...(desktopRemotePolicyVersion !== undefined
+      ? { desktopRemotePolicyVersion }
+      : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import {
+  SESSION_STALLED_AFTER_MS,
+  useSessionActivityStore,
+} from "../src/react-app/domains/session/status/session-activity-store";
 
 const workspaceId = "workspace-1";
 const sessionId = "session-1";
@@ -45,5 +48,38 @@ describe("session activity reconciliation", () => {
 
     store.setRunStatus(workspaceId, sessionId, { type: "idle" });
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+  });
+
+  test("marks a silent busy session as stalled without stopping it", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt!;
+
+    store.refreshStalledStatuses(startedAt + SESSION_STALLED_AFTER_MS + 1);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("stalled");
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.runActive).toBe(true);
+  });
+
+  test("meaningful progress clears stalled and allows a later retry window", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt!;
+    store.refreshStalledStatuses(startedAt + SESSION_STALLED_AFTER_MS + 1);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("stalled");
+
+    store.markProgress(workspaceId, sessionId, startedAt + SESSION_STALLED_AFTER_MS + 2);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+  });
+
+  test("replayed busy status is not treated as progress", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt;
+
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt).toBe(startedAt);
   });
 });

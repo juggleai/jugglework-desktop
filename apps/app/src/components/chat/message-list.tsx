@@ -73,11 +73,13 @@ import {
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
   isWebSearchToolPart,
   isWriteToolPart,
 } from "@/lib/build-in-tools"
+import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 import type { ThreadStatus } from "@/lib/messages"
 import {
   collectToolParts,
@@ -180,6 +182,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <TodoWriteTool part={part} />
   }
 
+  if (isTaskToolPart(part)) {
+    return <TaskStatusTool part={part} />
+  }
+
   if (isWebFetchToolPart(part)) {
     return <WebfetchTool part={part} />
   }
@@ -208,6 +214,28 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       onRetry={onMcpRetry}
     />
   )
+}
+
+function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
+  const { workspaceId } = useMessageList()
+  const metadata = part.type === "dynamic-tool"
+    ? (part.callProviderMetadata?.opencode as { toolMetadata?: { sessionId?: unknown } } | undefined)?.toolMetadata
+    : undefined
+  const childSessionId = typeof metadata?.sessionId === "string" ? metadata.sessionId : ""
+  const status = useSessionActivityStore((state) => (
+    childSessionId ? state.getStatus(workspaceId, childSessionId) : "idle"
+  ))
+  const input = part.input && typeof part.input === "object"
+    ? part.input as { description?: unknown }
+    : null
+  const description = typeof input?.description === "string" && input.description.trim()
+    ? input.description.trim()
+    : "Subagent task"
+  const title = status === "stalled"
+    ? `Agent: ${description} · Possibly stuck — stop and retry`
+    : undefined
+
+  return <Tool title={title} toolPart={part} />
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0

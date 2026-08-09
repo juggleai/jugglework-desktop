@@ -37,6 +37,25 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     return null;
   }
 
+  const stateTime = "time" in part.state ? part.state.time : undefined;
+  const rawMetadata = "metadata" in part.state ? part.state.metadata : undefined;
+  const taskMetadata = rawMetadata && typeof rawMetadata === "object"
+    ? {
+        parentSessionId: typeof rawMetadata.parentSessionId === "string" ? rawMetadata.parentSessionId : undefined,
+        sessionId: typeof rawMetadata.sessionId === "string" ? rawMetadata.sessionId : undefined,
+        background: typeof rawMetadata.background === "boolean" ? rawMetadata.background : undefined,
+        jobId: typeof rawMetadata.jobId === "string" ? rawMetadata.jobId : undefined,
+      }
+    : undefined;
+  const providerMetadata = {
+    opencode: {
+      partId: part.id,
+      ...(taskMetadata ? { toolMetadata: taskMetadata } : {}),
+      ...(typeof stateTime?.start === "number" ? { toolStartedAt: stateTime.start } : {}),
+      ...(stateTime && "end" in stateTime && typeof stateTime.end === "number" ? { toolEndedAt: stateTime.end } : {}),
+    },
+  };
+
   if (part.state.status === "error") {
     return {
       type: "dynamic-tool",
@@ -45,7 +64,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
       state: "output-error",
       input: part.state.input,
       errorText: part.state.error,
-      callProviderMetadata: { opencode: { partId: part.id } },
+      callProviderMetadata: providerMetadata,
     };
   }
 
@@ -57,7 +76,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
       state: "output-available",
       input: part.state.input,
       output: part.state.output,
-      callProviderMetadata: { opencode: { partId: part.id } },
+      callProviderMetadata: providerMetadata,
     };
   }
 
@@ -73,6 +92,6 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     toolCallId: part.callID,
     state: "input-streaming",
     input: part.state.input,
-    callProviderMetadata: { opencode: { partId: part.id } },
+    callProviderMetadata: providerMetadata,
   };
 }

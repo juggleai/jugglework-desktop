@@ -1383,6 +1383,17 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshotJuggleWorkServerState(juggleworkServerState);
   }
 
+  /**
+   * Returns the Main-private collaborator endpoint used by closed semantic
+   * adapters. Do not expose this accessor through IPC or preload bridges.
+   */
+  function managedServerAccess() {
+    const snapshot = snapshotJuggleWorkServerState(juggleworkServerState);
+    const baseUrl = typeof snapshot.baseUrl === "string" ? snapshot.baseUrl.trim() : "";
+    const clientToken = typeof snapshot.clientToken === "string" ? snapshot.clientToken.trim() : "";
+    return snapshot.running && baseUrl && clientToken ? { baseUrl, clientToken } : null;
+  }
+
   async function juggleworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
@@ -1489,6 +1500,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineDoctor,
     engineInstall,
     juggleworkServerInfo,
+    managedServerAccess,
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),
     engineDispose: (workspacePath) => withRuntimeLifecycle(() => engineDispose(workspacePath)),

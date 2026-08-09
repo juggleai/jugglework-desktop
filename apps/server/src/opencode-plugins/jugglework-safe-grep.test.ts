@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,10 +63,52 @@ describe("JuggleWork Safe Grep Plugin", () => {
     expect(Object.keys(mod)).toEqual(["JuggleWorkSafeGrep"]);
   });
 
+  test("refuses whole-home searches with retry guidance", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "jugglework-safe-glob-workspace-"));
+    const plugin = await JuggleWorkSafeGrep({ directory: workspace });
+    const output = JSON.parse(await plugin.tool.jugglework_safe_glob.execute({
+      pattern: "**/bin/go",
+      path: process.env.HOME,
+    })) as Record<string, unknown>;
+
+    expect(output.ok).toBe(false);
+    expect(output.code).toBe("unsafe_search_root");
+    expect(output.retryable).toBe(true);
+    await rm(workspace, { recursive: true, force: true });
+  });
+
+  test("terminates a stalled search and returns a retryable timeout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jugglework-safe-glob-"));
+    const command = join(root, "slow-search.sh");
+    await mkdir(join(root, "workspace"));
+    await writeFile(command, "#!/bin/sh\ntrap 'exit 0' TERM\nsleep 30\n", "utf8");
+    await chmod(command, 0o755);
+    const previousCommand = process.env.JUGGLEWORK_SAFE_GLOB_COMMAND;
+    const previousTimeout = process.env.JUGGLEWORK_SAFE_GLOB_TIMEOUT_MS;
+    process.env.JUGGLEWORK_SAFE_GLOB_COMMAND = command;
+    process.env.JUGGLEWORK_SAFE_GLOB_TIMEOUT_MS = "25";
+    try {
+      const plugin = await JuggleWorkSafeGrep({ directory: join(root, "workspace") });
+      const started = Date.now();
+      const output = JSON.parse(await plugin.tool.jugglework_safe_glob.execute({ pattern: "**/*.go" })) as Record<string, unknown>;
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(output.ok).toBe(false);
+      expect(output.code).toBe("glob_timeout");
+      expect(output.retryable).toBe(true);
+    } finally {
+      if (previousCommand === undefined) delete process.env.JUGGLEWORK_SAFE_GLOB_COMMAND;
+      else process.env.JUGGLEWORK_SAFE_GLOB_COMMAND = previousCommand;
+      if (previousTimeout === undefined) delete process.env.JUGGLEWORK_SAFE_GLOB_TIMEOUT_MS;
+      else process.env.JUGGLEWORK_SAFE_GLOB_TIMEOUT_MS = previousTimeout;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("is registered in runtime config and bundled by the build script", async () => {
     const runtime = await buildJuggleWorkRuntimeConfigObject();
     if (!Array.isArray(runtime.plugin)) throw new Error("Expected plugin list");
     expect(runtime.plugin).toContain(juggleworkSafeGrepPluginPath());
+    expect((runtime.permission as Record<string, unknown>).glob).toBe("deny");
 
     const packageJson = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8")) as {
       scripts?: { build?: unknown };

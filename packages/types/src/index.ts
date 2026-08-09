@@ -1,4 +1,5 @@
 export * from "./agent-context-diagnostics"
+export * from "./desktop-remote-control"
 export * from "./jugglework-affordance"
 export * from "./jugglework-context"
 export * from "./jugglework-provider"

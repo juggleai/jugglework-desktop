@@ -107,6 +107,7 @@ function describeApplied(trigger: ReloadTrigger | null): string {
 const LIVE_ACTIVITY_STATUSES: SessionActivityStatus[] = [
   "thinking",
   "responding",
+  "stalled",
   "compacting",
   "waiting",
 ];

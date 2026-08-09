@@ -819,6 +819,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       return;
     }
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
+    if (info.role === "assistant") useSessionActivityStore.getState().markProgress(workspaceId, info.sessionID);
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
     const next = {
@@ -857,6 +858,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
+    useSessionActivityStore.getState().markProgress(workspaceId, part.sessionID);
     if (partHasVisibleAssistantOutput(part)) {
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
@@ -922,6 +924,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || !props.delta) return;
+    useSessionActivityStore.getState().markProgress(workspaceId, props.sessionID);
     useSessionActivityStore.getState().markAssistantOutput(workspaceId, props.sessionID, props.messageID, { allowUnknownMessageRole: true });
     if (!isTrackedSession(entry, props.sessionID)) return;
     // Note: we do NOT trust `props.field` to disambiguate reasoning vs
@@ -1112,6 +1115,7 @@ function startSync(input: SyncOptions) {
 
   void connect();
   watchdogTimer = setInterval(() => {
+    useSessionActivityStore.getState().refreshStalledStatuses();
     if (disposed || controller.signal.aborted || retryTimer) return;
     const active = activeConnectionController;
     if (!active || active.signal.aborted) return;

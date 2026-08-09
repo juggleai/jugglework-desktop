@@ -69,6 +69,7 @@ describe("jugglework runtime config file", () => {
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.posthog?.enabled).toBe(true);
     expect(parsed.default_agent).toBe("jugglework");
+    expect(parsed.permission).toMatchObject({ glob: "deny" });
     expect(parsed.compaction).toEqual({ prune: true, reserved: 20_000 });
     expect(Array.isArray(parsed.plugin)).toBe(true);
     expect((parsed.plugin as string[]).some((entry) => entry.includes("jugglework-context-overflow"))).toBe(true);

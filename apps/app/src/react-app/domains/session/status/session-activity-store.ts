@@ -3,7 +3,9 @@ import { create } from "zustand";
 
 import { t } from "../../../../i18n";
 
-export type SessionActivityStatus = "idle" | "thinking" | "responding" | "error" | "compacting" | "waiting";
+export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting";
+
+export const SESSION_STALLED_AFTER_MS = 5 * 60_000;
 
 type SessionMessageRole = "assistant" | "system" | "user";
 
@@ -17,6 +19,8 @@ type SessionActivityRecord = {
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
   messageRoles: Record<string, SessionMessageRole>;
+  lastMeaningfulProgressAt: number | null;
+  stalledAt: number | null;
   updatedAt: number;
 };
 
@@ -37,6 +41,8 @@ type SessionActivityStore = {
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
+  markProgress: (workspaceId: string, sessionId: string, at?: number) => void;
+  refreshStalledStatuses: (now?: number) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
@@ -55,6 +61,8 @@ const createRecord = (): SessionActivityRecord => ({
   waitingPermissionIds: [],
   waitingQuestionIds: [],
   messageRoles: {},
+  lastMeaningfulProgressAt: null,
+  stalledAt: null,
   updatedAt: 0,
 });
 
@@ -81,6 +89,7 @@ function statusForRecord(record: SessionActivityRecord): SessionActivityStatus {
   if (record.waitingPermissionIds.length > 0 || record.waitingQuestionIds.length > 0) return "waiting";
   if (record.compacting) return "compacting";
   if (!record.runActive) return "idle";
+  if (record.stalledAt !== null) return "stalled";
   return record.assistantOutput ? "responding" : "thinking";
 }
 
@@ -168,6 +177,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           ...updateRecord(nextState, id, sessionId, (record) => {
             const normalized = normalizeRunStatus(status);
             const runActive = normalized === "running" || normalized === "retry";
+            const starting = runActive && !record.runActive;
             return {
               ...record,
               runActive,
@@ -177,6 +187,10 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
               compacting: runActive ? record.compacting : false,
               waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
               waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
+              lastMeaningfulProgressAt: runActive
+                ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
+                : null,
+              stalledAt: runActive ? record.stalledAt : null,
             };
           }),
         };
@@ -191,6 +205,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspace, session, (record) => {
       const normalized = normalizeRunStatus(status);
       const runActive = normalized === "running" || normalized === "retry";
+      const starting = runActive && !record.runActive;
       return {
         ...record,
         runActive,
@@ -200,6 +215,10 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
+        lastMeaningfulProgressAt: runActive
+          ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
+          : null,
+        stalledAt: runActive ? record.stalledAt : null,
       };
     }));
   },
@@ -210,6 +229,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspace, session, (record) => {
       const normalized = normalizeRunStatus(status);
       const runActive = normalized === "running" || normalized === "retry";
+      const starting = runActive && !record.runActive;
       return {
         ...record,
         runActive,
@@ -219,6 +239,12 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
+        // Replayed busy snapshots are not progress. Only the transition into a
+        // run starts the clock; message/tool/token activity refreshes it.
+        lastMeaningfulProgressAt: runActive
+          ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
+          : null,
+        stalledAt: runActive ? record.stalledAt : null,
       };
     }));
   },
@@ -244,8 +270,47 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       if (!record.runActive) return record;
       if (message && record.messageRoles[message] && record.messageRoles[message] !== "assistant") return record;
       if (message && !record.messageRoles[message] && options?.allowUnknownMessageRole !== true) return record;
-      return { ...record, assistantOutput: true };
+      return {
+        ...record,
+        assistantOutput: true,
+        lastMeaningfulProgressAt: Date.now(),
+        stalledAt: null,
+      };
     }));
+  },
+  markProgress: (workspaceId, sessionId, at = Date.now()) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    if (!workspace || !session || !Number.isFinite(at)) return;
+    set((state) => updateRecord(state, workspace, session, (record) => {
+      if (!record.runActive) return record;
+      return {
+        ...record,
+        lastMeaningfulProgressAt: at,
+        stalledAt: null,
+      };
+    }));
+  },
+  refreshStalledStatuses: (now = Date.now()) => {
+    if (!Number.isFinite(now)) return;
+    set((state) => {
+      let nextState = state;
+      for (const [workspaceId, records] of Object.entries(state.recordsByWorkspaceId)) {
+        for (const [sessionId, record] of Object.entries(records)) {
+          if (!record.runActive || record.errorActive || record.compacting || record.waitingPermissionIds.length > 0 || record.waitingQuestionIds.length > 0) continue;
+          const baseline = record.lastMeaningfulProgressAt;
+          if (baseline === null || now - baseline < SESSION_STALLED_AFTER_MS || record.stalledAt !== null) continue;
+          nextState = {
+            ...nextState,
+            ...updateRecord(nextState, workspaceId, sessionId, (current) => ({
+              ...current,
+              stalledAt: now,
+            })),
+          };
+        }
+      }
+      return nextState;
+    });
   },
   setWaitingRequest: (workspaceId, sessionId, kind, requestId, waiting) => {
     const workspace = workspaceId.trim();
@@ -281,6 +346,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       runActive: false,
       assistantOutput: false,
       compacting: false,
+      lastMeaningfulProgressAt: null,
+      stalledAt: null,
     })));
   },
   clearError: (workspaceId, sessionId) => {
@@ -334,6 +401,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
 export function getSessionActivityStatusLabel(status: SessionActivityStatus) {
   if (status === "thinking") return t("session.assistant_thinking");
   if (status === "responding") return t("session.assistant_responding");
+  if (status === "stalled") return t("session.assistant_stalled");
   if (status === "waiting") return t("session.assistant_waiting");
   if (status === "compacting") return t("session.assistant_compacting");
   if (status === "error") return t("session.assistant_error");

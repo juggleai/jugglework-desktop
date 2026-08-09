@@ -14,6 +14,12 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
+    "./desktop-remote-control": {
+      "types": "./src/desktop-remote-control.ts",
+      "node": "./dist/desktop-remote-control.js",
+      "development": "./src/desktop-remote-control.ts",
+      "default": "./dist/desktop-remote-control.js"
+    },
     "./jugglework-affordance": {
       "types": "./src/jugglework-affordance.ts",
       "development": "./src/jugglework-affordance.ts",
@@ -80,7 +86,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "build:electron-runtime": "tsup --config tsup.electron.config.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "zod": "^4.3.6"

@@ -32,6 +32,13 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+// Electron's embedded Node runtime cannot execute workspace TypeScript source.
+// Build shared runtime contracts first, then verify Electron resolves their JS output.
+run(pnpmCmd, ["--filter", "@jugglework/types", "build"], repoRoot);
+run(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], repoRoot);
+run(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], repoRoot, {
+  ELECTRON_RUN_AS_NODE: "1",
+});
 // Build the server TS → JS so Electron can import it in-process
 run(pnpmCmd, ["--filter", "jugglework-server", "build"], repoRoot);
 // JUGGLEWORK_ELECTRON_BUILD tells Vite to emit relative asset paths so

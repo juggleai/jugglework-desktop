@@ -203,6 +203,16 @@ if (process.env.JUGGLEWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
 }
 
+// Keep Electron on compiled shared contracts even in local development. The
+// renderer can consume TS through Vite, but Electron's Node loader cannot.
+console.log("[electron-dev] Building @jugglework/types (tsup)...");
+runSync(pnpmCmd, ["--filter", "@jugglework/types", "build"], { cwd: repoRoot });
+runSync(pnpmCmd, ["--filter", "@jugglework/types", "build:electron-runtime"], { cwd: repoRoot });
+runSync(pnpmCmd, ["--dir", desktopRoot, "exec", "electron", resolve(__dirname, "check-electron-runtime-imports.mjs")], {
+  cwd: repoRoot,
+  env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+});
+
 // Build the server TS → JS so Electron can import it in-process
 console.log("[electron-dev] Building jugglework-server (tsc)...");
 runSync(pnpmCmd, ["--filter", "jugglework-server", "build"], { cwd: repoRoot });

@@ -236,6 +236,7 @@ describe("Electron managed runtime", () => {
         },
       });
 
+      assert.equal(manager.managedServerAccess(), null);
       const engine = await manager.engineStart(workspacePath, { workspacePaths: [workspacePath] });
       assert.equal(engine.runtime, "direct");
       assert.equal(engine.running, true);
@@ -243,6 +244,12 @@ describe("Electron managed runtime", () => {
       assert.equal(embeddedStartOptions.manageOpencode, true);
       assert.equal(embeddedStartOptions.opencodeBin, path.join(sidecarDir, "opencode"));
       assert.equal(embeddedStartOptions.workspaces[0], workspacePath);
+      assert.deepEqual(manager.managedServerAccess(), {
+        baseUrl: `http://127.0.0.1:${embeddedStartOptions.port}`,
+        clientToken: embeddedStartOptions.token,
+      });
+      assert.equal(Object.hasOwn(manager.managedServerAccess(), "ownerToken"), false);
+      assert.equal(Object.hasOwn(manager.managedServerAccess(), "hostToken"), false);
 
       const status = await manager.runtimeStatus();
       assert.equal(status.lifecycleState, "healthy");

@@ -347,6 +347,12 @@ export type DenDesktopHandoffExchange = {
   im: DenIMLoginBootstrap | null;
 };
 
+export type DenDesktopRemoteEnrollmentGrant = {
+  schemaVersion: 1;
+  grant: string;
+  expiresAt: string;
+};
+
 const defaultBootstrapBaseUrls = resolveDenBaseUrls({
   baseUrl: BUILD_DEN_BASE_URL,
 });
@@ -2209,6 +2215,27 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         organizationId: orgId,
       });
       return normalizeDenDesktopConfig(payload);
+    },
+
+    async createDesktopRemoteEnrollmentGrant(orgId: string): Promise<DenDesktopRemoteEnrollmentGrant> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/desktop-devices/enrollment-grants", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: { schemaVersion: 1 },
+      });
+      if (
+        !isRecord(payload) ||
+        Object.keys(payload).some((key) => !["schemaVersion", "grant", "expiresAt"].includes(key)) ||
+        payload.schemaVersion !== 1 ||
+        typeof payload.grant !== "string" ||
+        !/^jwenroll_[A-Za-z0-9_-]+$/.test(payload.grant) ||
+        typeof payload.expiresAt !== "string" ||
+        !Number.isFinite(Date.parse(payload.expiresAt))
+      ) {
+        throw new DenApiError(500, "invalid_enrollment_grant_payload", "Enrollment grant response was invalid.");
+      }
+      return { schemaVersion: 1, grant: payload.grant, expiresAt: payload.expiresAt };
     },
 
     async getResourceSnapshot(orgId?: string | null): Promise<DenResourceSnapshot> {

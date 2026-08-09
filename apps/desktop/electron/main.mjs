@@ -38,6 +38,17 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installMacCloseToHide } from "./window-close-behavior.mjs";
+import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
+import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
+import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
+import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
+import { createManagedRuntimeClient } from "./managed-runtime-client.mjs";
+import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
+import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
+import { createRemoteControlInteractionStore } from "./remote-control-interaction-store.mjs";
+import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
+import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
+import { createRemoteControlAgent } from "./remote-control-agent.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -87,6 +98,7 @@ const {
   systemPreferences,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
+const WebSocketClient = require("ws");
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
@@ -999,6 +1011,82 @@ const workspaceStore = createWorkspaceStore({
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
+const remoteControlSettingsStore = createRemoteControlSettingsStore({ app });
+const remoteControlCommandJournal = createRemoteControlCommandJournal({ app });
+let remoteControlAgent = null;
+let remoteControlReadRegistrations = [];
+let remoteControlMutationRegistrations = [];
+const sessionMutationCoordinator = createSessionMutationCoordinator();
+
+function stoppedRemoteControlAgentStatus() {
+  return {
+    schemaVersion: 1,
+    state: "stopped",
+    started: false,
+    connected: false,
+    enrolled: false,
+    revoked: false,
+    localControlEnabled: false,
+    lifecycleGeneration: 0,
+    connectionGeneration: null,
+    lastErrorCode: null,
+  };
+}
+
+function createMainRemoteControlAgent() {
+  // Keep safeStorage lazy and post-ready. Importing it at module evaluation
+  // can trigger native keychain UI for isolated development profiles.
+  const { safeStorage } = require("electron");
+  const credentialStore = createRemoteControlCredentialStore({
+    app,
+    safeStorage,
+    platform: normalizePlatform(process.platform),
+    allowInsecureLoopback: isDevMode,
+  });
+  const operationRegistry = createRemoteControlOperationRegistry({
+    registrations: [...remoteControlReadRegistrations, ...remoteControlMutationRegistrations],
+    getFeatureGates: (context) => /** @type {any} */ (context)?.featureGates ?? null,
+    isOperationAllowed: ({ context }) => /** @type {any} */ (context)?.policyFresh === true,
+  });
+  return createRemoteControlAgent({
+    settingsStore: remoteControlSettingsStore,
+    credentialStore,
+    operationRegistry,
+    commandJournal: remoteControlCommandJournal,
+    createCloudClient: (controlPlaneBaseUrl) => /** @type {any} */ (createRemoteControlCloudClient({
+      controlPlaneBaseUrl,
+      fetcher: electronNet.fetch,
+      allowInsecureLoopback: isDevMode,
+    })),
+    createWebSocket: ({ url, accessToken }) => new WebSocketClient(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      maxPayload: 2 * 1024 * 1024,
+      perMessageDeflate: false,
+    }),
+    appVersion: app.getVersion(),
+    platform: normalizePlatform(process.platform),
+    getDisplayName: () => {
+      const host = os.hostname().trim().replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 200);
+      return `${currentDisplayAppName} on ${host || normalizePlatform(process.platform)}`.slice(0, 500);
+    },
+    allowInsecureLoopback: isDevMode,
+    logger: {
+      warn: (_message, metadata) => console.warn("[desktop-remote] state warning", metadata),
+      error: (_message, metadata) => console.error("[desktop-remote] state error", metadata),
+    },
+    onCommandReceived: ({ operation, actorDisplayName }) => {
+      try {
+        const { Notification } = require("electron");
+        const isMutation = operation === "session.prompt" || operation === "session.abort" ||
+          operation === "interaction.permission.reply" || operation === "interaction.question.reply";
+        const title = isMutation ? "远程操作请求" : "远程读取请求";
+        const body = `${actorDisplayName || "Cloud"} 请求执行 ${operation}`;
+        const notification = new Notification({ title, body, silent: !isMutation });
+        notification.show();
+      } catch { /* notifications are best-effort */ }
+    },
+  });
+}
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
@@ -1168,6 +1256,28 @@ const runtimeManager = createRuntimeManager({
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
+const remoteControlInteractionStore = createRemoteControlInteractionStore({
+  managedRuntimeClient: createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  }),
+});
+remoteControlReadRegistrations = createRemoteControlReadRegistrations({
+  workspaceStore,
+  managedRuntimeClient: createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  }),
+  interactions: remoteControlInteractionStore,
+});
+remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
+  workspaceStore,
+  managedRuntimeClient: createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  }),
+  coordinator: sessionMutationCoordinator,
+});
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
@@ -1744,6 +1854,40 @@ function applyNativeTheme(mode) {
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "desktopRemoteControlSettingsRead": async (event) => {
+      void event;
+      return remoteControlSettingsStore.read();
+  },
+  "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
+      const settings = await remoteControlSettingsStore.update(args[0] ?? {});
+      await remoteControlAgent?.refreshLocalSettings();
+      applyLaunchAtLogin(settings);
+      return settings;
+  },
+  "desktopRemoteControlStopAll": async (event) => {
+      void event;
+      remoteControlAgent?.stopAll();
+      const settings = await remoteControlSettingsStore.disable();
+      await remoteControlAgent?.refreshLocalSettings();
+      return settings;
+  },
+  "desktopRemoteControlContextSync": async (event, ...args) => {
+      if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
+      return remoteControlAgent.syncContext(args[0]);
+  },
+  "desktopRemoteControlEnroll": async (event, ...args) => {
+      if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
+      return remoteControlAgent.enroll(args[0]);
+  },
+  "desktopRemoteControlCredentialDelete": async (event) => {
+      void event;
+      if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
+      return remoteControlAgent.deleteCredential();
+  },
+  "desktopRemoteControlStatusRead": async (event) => {
+      void event;
+      return remoteControlAgent?.status() ?? stoppedRemoteControlAgentStatus();
+  },
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
   },
@@ -2652,6 +2796,7 @@ if (!app.requestSingleInstanceLock()) {
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
     void Promise.all([
+      remoteControlAgent?.stop(),
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
       stopJuggleChatRouterServer(),
@@ -2693,6 +2838,10 @@ if (!app.requestSingleInstanceLock()) {
       runtimeProcess: process,
       app,
       applicationMenu,
+    });
+    remoteControlAgent = createMainRemoteControlAgent();
+    await remoteControlAgent.start().catch((error) => {
+      console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
@@ -2744,8 +2893,44 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") {
+    // When remote control background mode is enabled, keep running in the
+    // system tray even after all windows close (all platforms).
+    if (remoteControlSettingsStore) {
+      remoteControlSettingsStore.read().then((settings) => {
+        if (settings.backgroundMode && settings.enabled) {
+          // Keep the process alive for remote control; do not quit.
+          return;
+        }
+        if (process.platform !== "darwin") {
+          app.quit();
+        }
+      }).catch(() => {
+        if (process.platform !== "darwin") {
+          app.quit();
+        }
+      });
+    } else if (process.platform !== "darwin") {
       app.quit();
     }
   });
+
+  // Apply launch-at-login when remote control settings change.
+  remoteControlSettingsStore?.read().then(async (settings) => {
+    applyLaunchAtLogin(settings);
+  }).catch(() => undefined);
+  // Re-apply on settings updates via the IPC handler (already calls refreshLocalSettings).
+}
+
+/**
+ * @param {{ launchAtLogin: boolean }} settings
+ */
+function applyLaunchAtLogin(settings) {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: settings.launchAtLogin === true,
+      args: ["--hidden"],
+    });
+  } catch {
+    // setLoginItemSettings can fail on some platforms; silently ignore.
+  }
 }
