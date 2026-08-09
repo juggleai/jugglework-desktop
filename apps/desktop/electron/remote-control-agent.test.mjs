@@ -11,6 +11,7 @@ import {
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const COMMAND_ID = "22222222-2222-4222-8222-222222222222";
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
+const CONTROL_ID = SESSION_ID;
 const MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 const URL = "https://cloud.example.test/jwork/api";
@@ -210,7 +211,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -218,6 +219,12 @@ function harness({
   prepare = async () => ({ action: "execute", commandId: COMMAND_ID }),
   dispatch = async () => ({ ok: true, value: { workspaces: [] } }),
   tokenLifetime = 120_000,
+  localStopAckTimeoutMs = 1_500,
+  getActiveRuns = () => [],
+  onSessionBinding = () => {},
+  onSessionUnbound = () => {},
+  onTransportReset = () => {},
+  onControlRevoked = () => {},
 } = {}) {
   const clock = new FakeClock();
   let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false };
@@ -295,6 +302,12 @@ function harness({
     randomUUID: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(uuid++).padStart(12, "0")}`,
     timers: clock.timers,
     logger: {},
+    localStopAckTimeoutMs,
+    getActiveRuns,
+    onSessionBinding,
+    onSessionUnbound,
+    onTransportReset,
+    onControlRevoked,
   });
   return {
     agent,
@@ -417,6 +430,24 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(heartbeat.payload.localControlEnabled, true);
   });
 
+  it("normalizes and caps active runs in hello and heartbeat", async () => {
+    const runs = Array.from({ length: 105 }, (_, index) => ({
+      workspaceId: `ws_${index}`,
+      sessionId: `ses_${index}`,
+      runId: `run_${index}`,
+      status: "running",
+    }));
+    runs.splice(1, 0, { workspaceId: "ws_0", sessionId: "ses_0", runId: "duplicate", status: "running" });
+    runs.splice(2, 0, { workspaceId: "bad", sessionId: "bad", runId: "bad", status: "unknown" });
+    const fixture = harness({ getActiveRuns: () => runs });
+    const socket = await connect(fixture);
+    assert.equal(frames(socket, "device.hello")[0].payload.activeRuns.length, 100);
+    assert.equal(frames(socket, "device.hello")[0].payload.activeRuns[1].workspaceId, "ws_1");
+    socket.receive(welcome());
+    await fixture.clock.advance(10_000);
+    assert.equal(frames(socket, "device.heartbeat")[0].payload.activeRuns.length, 100);
+  });
+
   it("proactively refreshes the short-lived token without persisting it", async () => {
     const fixture = harness({ tokenLifetime: 120_000 });
     const first = await connect(fixture);
@@ -460,6 +491,59 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.sockets.length, 2);
   });
 
+  it("synchronously resets transport state on failure and socket replacement", async () => {
+    let resets = 0;
+    const fixture = harness({ onTransportReset: () => { resets += 1; } });
+    const first = await connect(fixture);
+    const beforeFailure = resets;
+    first.unexpectedClose();
+    assert.equal(resets, beforeFailure + 1);
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    fixture.sockets[1].open();
+    await settle();
+    await fixture.clock.advance(60_000);
+    assert.ok(resets >= 2);
+  });
+
+  it("reports disconnect transitions only when transport reset had active control", async () => {
+    const resets = [];
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities, onTransportReset: (input) => resets.push(input) });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    const beforeIdleFailure = resets.length;
+    socket.unexpectedClose();
+    assert.deepEqual(resets.at(-1), { hadActiveControl: false, transition: null });
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    const controlled = fixture.sockets.at(-1);
+    controlled.open();
+    await settle();
+    controlled.receive(welcome(78));
+    controlled.receive(delivery({
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    await settle();
+    controlled.unexpectedClose();
+    assert.deepEqual(resets.at(-1), { hadActiveControl: true, transition: 1 });
+    assert.ok(resets.length > beforeIdleFailure);
+  });
+
+  it("does not classify an ordinary disconnect as a local stop", async () => {
+    const revocations = [];
+    const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.unexpectedClose();
+    assert.deepEqual(revocations, []);
+    assert.equal(frames(socket, "device.local_stop").length, 0);
+  });
+
   it("local disable, stop-all, signout, account switch, and stop synchronously fence reconnect", async () => {
     const fixture = harness();
     const first = await connect(fixture);
@@ -490,7 +574,8 @@ describe("remote-control agent context and lifecycle", () => {
   });
 
   it("revocation closes transport, deletes the key, and permanently disables reconnect", async () => {
-    const fixture = harness();
+    const revocations = [];
+    const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
     const socket = await connect(fixture);
     socket.receive(envelope("device.revoked", { deviceId: DEVICE_ID, reason: "Revoked by owner" }));
     await settle();
@@ -499,6 +584,95 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
     assert.equal(fixture.agent.status().enrolled, false);
     assert.equal(fixture.clock.nextDelay(), null);
+    assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("reports explicit local stop once without misclassifying it as disconnect", async () => {
+    const resets = [];
+    const revocations = [];
+    const fixture = harness({
+      onTransportReset: (input) => resets.push(input),
+      onControlRevoked: (input) => revocations.push(input),
+    });
+    await connect(fixture);
+    fixture.agent.stopAll();
+    fixture.agent.stopAll();
+    assert.deepEqual(revocations, [{ source: "local", transition: 1 }]);
+    assert.equal(resets.some((input) => input.hadActiveControl === true), false);
+  });
+
+  it("sends one correlation-only generation-fenced local-stop frame and closes on matching ack", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    const stopping = fixture.agent.stopAll();
+    const frame = frames(socket, "device.local_stop")[0];
+    assert.deepEqual(Object.keys(frame.payload).sort(), ["connectionGeneration", "correlationId", "deviceId"]);
+    assert.deepEqual(frame.payload, {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 77,
+      correlationId: frame.payload.correlationId,
+    });
+    assert.match(frame.payload.correlationId, /^[0-9a-f-]{36}$/);
+    assert.doesNotMatch(JSON.stringify(frame), /prompt|transcript|tool|path|credential|token|secret/i);
+    assert.equal(socket.closeCalls, 0);
+    assert.equal(fixture.agent.status().localControlEnabled, false);
+
+    socket.receive(envelope("device.local_stop_ack", {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 77,
+      correlationId: frame.payload.correlationId,
+      closedControlSessions: 2,
+    }));
+    await stopping;
+    assert.equal(socket.closeCalls, 1);
+    assert.equal(fixture.clock.nextDelay(), null);
+  });
+
+  it("closes after the bounded local-stop ack timeout and never reconnects", async () => {
+    const fixture = harness({ localStopAckTimeoutMs: 250 });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    const stopping = fixture.agent.stopAll();
+    assert.equal(socket.closeCalls, 0);
+    await fixture.clock.advance(249);
+    assert.equal(socket.closeCalls, 0);
+    await fixture.clock.advance(1);
+    await stopping;
+    assert.equal(socket.closeCalls, 1);
+    assert.equal(fixture.sockets.length, 1);
+    assert.equal(fixture.clock.nextDelay(), null);
+  });
+
+  it("coalesces repeated local stop and fences stale close and ack events", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    const first = fixture.agent.stopAll();
+    const second = fixture.agent.stopAll();
+    assert.equal(first, second);
+    assert.equal(frames(socket, "device.local_stop").length, 1);
+    socket.unexpectedClose();
+    await Promise.all([first, second]);
+    assert.equal(socket.closeCalls, 2);
+    assert.equal(fixture.sockets.length, 1);
+    assert.equal(fixture.clock.nextDelay(), null);
+
+    const stopFrame = frames(socket, "device.local_stop")[0];
+    socket.receive(envelope("device.local_stop_ack", {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 77,
+      correlationId: stopFrame.payload.correlationId,
+      closedControlSessions: 0,
+    }));
+    await settle();
+    assert.equal(fixture.sockets.length, 1);
   });
 
   it("stop is idempotent and always leaves timers and transport closed", async () => {
@@ -515,6 +689,210 @@ describe("remote-control agent context and lifecycle", () => {
 });
 
 describe("remote-control agent command handling", () => {
+  it("exposes only a bounded actor identity from a validated accepted session binding", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      actor: { userId: "controller-secret-id", displayName: "A".repeat(100) },
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    await settle();
+
+    const status = fixture.agent.status();
+    assert.equal(status.activeControlSessionCount, 1);
+    assert.deepEqual(status.controllerDisplayNames, ["A".repeat(80)]);
+    assert.doesNotMatch(JSON.stringify(status), /controller-secret-id|workspace\.list|session\.snapshot|ws_1|ses_1|prompt|payloadHash/i);
+  });
+
+  it("never records an actor from a malformed or unadvertised command", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      actor: { userId: "controller-1", displayName: "Malformed Actor", unexpected: "field" },
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    socket.receive(delivery({
+      actor: { userId: "controller-2", displayName: "Unadvertised Actor" },
+      request: { operation: "session.list", payloadVersion: 1, arguments: { workspaceId: "ws_1" } },
+    }));
+    await settle();
+
+    assert.deepEqual(fixture.agent.status().controllerDisplayNames, []);
+    assert.equal(fixture.agent.status().activeControlSessionCount, 0);
+  });
+
+  it("counts sessions while bounding, deduplicating, and updating controller names", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    const actors = ["Alice", "Alice", "Bob", "Carol", "Dave", "Erin", "Frank"];
+    for (let index = 0; index < actors.length; index += 1) {
+      socket.receive(delivery({
+        commandId: `22222222-2222-4222-8222-${String(index + 1).padStart(12, "0")}`,
+        controlSessionId: `33333333-3333-4333-8333-${String(index + 1).padStart(12, "0")}`,
+        actor: { userId: `controller-${index}`, displayName: actors[index] },
+        request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: `ses_${index}` } },
+      }));
+    }
+    await settle();
+    assert.equal(fixture.agent.status().activeControlSessionCount, 7);
+    assert.deepEqual(fixture.agent.status().controllerDisplayNames, ["Alice", "Bob", "Carol", "Dave", "Erin"]);
+
+    socket.receive(delivery({
+      commandId: "22222222-2222-4222-8222-000000000008",
+      controlSessionId: "33333333-3333-4333-8333-000000000001",
+      actor: { userId: "controller-updated", displayName: "Updated" },
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_0" } },
+    }));
+    await settle();
+    assert.equal(fixture.agent.status().activeControlSessionCount, 7);
+    assert.deepEqual(fixture.agent.status().controllerDisplayNames, ["Updated", "Alice", "Bob", "Carol", "Dave"]);
+  });
+
+  it("clears active controller identity on unbind and every control-fencing lifecycle", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const bind = async (fixture, socket) => {
+      socket.receive(welcome(77));
+      await settle();
+      socket.receive(delivery({
+        actor: { userId: "controller-1", displayName: "Controller" },
+        request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+      }));
+      await settle();
+      assert.equal(fixture.agent.status().activeControlSessionCount, 1);
+    };
+
+    const unbound = harness({ capabilities });
+    const unboundSocket = await connect(unbound);
+    await bind(unbound, unboundSocket);
+    unboundSocket.receive(envelope("session.unbound", { controlSessionId: CONTROL_ID, reason: "closed" }));
+    await settle();
+    assert.deepEqual(unbound.agent.status().controllerDisplayNames, []);
+
+    const disconnected = harness({ capabilities });
+    const disconnectedSocket = await connect(disconnected);
+    await bind(disconnected, disconnectedSocket);
+    disconnectedSocket.unexpectedClose();
+    assert.equal(disconnected.agent.status().activeControlSessionCount, 0);
+
+    const stoppedAll = harness({ capabilities });
+    const stoppedAllSocket = await connect(stoppedAll);
+    await bind(stoppedAll, stoppedAllSocket);
+    void stoppedAll.agent.stopAll();
+    assert.equal(stoppedAll.agent.status().activeControlSessionCount, 0);
+
+    const revoked = harness({ capabilities });
+    const revokedSocket = await connect(revoked);
+    await bind(revoked, revokedSocket);
+    revokedSocket.receive(envelope("device.revoked", { deviceId: DEVICE_ID, reason: "Revoked" }));
+    await settle();
+    assert.equal(revoked.agent.status().activeControlSessionCount, 0);
+
+    const switched = harness({ capabilities });
+    const switchedSocket = await connect(switched);
+    await bind(switched, switchedSocket);
+    await switched.agent.syncContext(signedInContext({ userId: "user-2" }));
+    assert.equal(switched.agent.status().activeControlSessionCount, 0);
+
+    const stopped = harness({ capabilities });
+    const stoppedSocket = await connect(stopped);
+    await bind(stopped, stoppedSocket);
+    await stopped.agent.stop();
+    assert.equal(stopped.agent.status().activeControlSessionCount, 0);
+  });
+
+  it("derives a session binding only from a validated advertised delivery", async () => {
+    const bindings = [];
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities, onSessionBinding: (binding) => { bindings.push(binding); } });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      controlSessionId: CONTROL_ID,
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    await settle();
+    assert.deepEqual(bindings, [{
+      controlSessionId: CONTROL_ID,
+      deviceId: DEVICE_ID,
+      workspaceId: "ws_1",
+      sessionId: "ses_1",
+      connectionGeneration: 77,
+    }]);
+    socket.receive(delivery({ request: { operation: "workspace.list", payloadVersion: 1, arguments: {} } }));
+    assert.equal(bindings.length, 1);
+  });
+
+  it("publishes a validated session event only on the welcomed current generation", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    const event = {
+      schemaVersion: 1,
+      payloadVersion: 1,
+      eventId: "55555555-5555-4555-8555-555555555555",
+      controlSessionId: CONTROL_ID,
+      deviceId: DEVICE_ID,
+      workspaceId: "ws_1",
+      sessionId: "ses_1",
+      sequence: 1,
+      occurredAt: new Date(NOW).toISOString(),
+      data: { type: "todos.replace", todos: [] },
+    };
+    assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 76 }), false);
+    assert.equal(fixture.agent.publishSessionEvent({ ...event, deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, { connectionGeneration: 77 }), false);
+    assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 77 }), true);
+    assert.deepEqual(frames(socket, "session.event")[0].payload, event);
+    fixture.agent.stopAll();
+    assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 77 }), false);
+  });
+
+  it("handles strict session rejection without closing or reconnecting the device transport", async () => {
+    const unbound = [];
+    const fixture = harness({ onSessionUnbound: (input) => unbound.push(input) });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(envelope("session.unbound", { controlSessionId: CONTROL_ID, reason: "snapshot_required" }));
+    await settle();
+    assert.deepEqual(unbound, [{ controlSessionId: CONTROL_ID, reason: "snapshot_required" }]);
+    assert.equal(socket.closeCalls, 0);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    socket.receive(envelope("session.unbound", { controlSessionId: CONTROL_ID, reason: "future_reason" }));
+    await settle();
+    assert.equal(socket.closeCalls, 1);
+  });
+
   it("prepares flattened metadata before dispatch, sends accepted/running, journals terminal before send, and wraps result bodies", async () => {
     /** @type {string[]} */
     const order = [];

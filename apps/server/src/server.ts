@@ -62,8 +62,18 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import {
+  createSessionMutationCoordinator,
+  SessionMutationError,
+  type SessionMutationCoordinator,
+} from "./session-mutation-coordinator.js";
+import {
+  createInteractionResolutionCoordinator,
+  type InteractionResolutionCoordinator,
+} from "./interaction-resolution-coordinator.js";
 import {
   markJuggleWorkCloudMcpStale,
   reconcilePersistedJuggleWorkCloudMcp,
@@ -803,11 +813,23 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
   }
 }
 
-function isSessionCommandProxyRequest(method: string, proxyPath: string) {
-  return method === "POST" && /^\/session\/[^/]+\/command$/.test(normalizeOpencodeProxyPath(proxyPath));
+function parseSessionExecutionStartProxyRequest(method: string, proxyPath: string) {
+  if (method !== "POST") return null;
+  const match = normalizeOpencodeProxyPath(proxyPath).match(
+    /^\/session\/([^/]+)\/(command|shell|summarize|compact)$/,
+  );
+  if (!match?.[1]) return null;
+  try {
+    const sessionId = decodeURIComponent(match[1]).trim();
+    return sessionId ? { sessionId, kind: match[2]! } : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function startServer(config: ServerConfig): Promise<ServeResult> {
+export async function startServer(config: ServerConfig, options: {
+  interactionResolutions?: InteractionResolutionCoordinator;
+} = {}): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
@@ -822,6 +844,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
+  const sessionMutations = createSessionMutationCoordinator();
+  const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const routes = createRoutes(
     config,
     approvals,
@@ -829,6 +853,8 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     env,
     restartReloadWatchers,
     engineMcpServerState,
+    sessionMutations,
+    interactionResolutions,
   );
 
   const serverOptions: {
@@ -871,7 +897,14 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
-          const response = await proxyOpencodeRequest({ config, request, url, workspace, proxyPath: mount.restPath });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace,
+            proxyPath: mount.restPath,
+            sessionMutations,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -920,7 +953,13 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ config, request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({
+            config,
+            request,
+            url,
+            workspace: config.workspaces[0],
+            sessionMutations,
+          });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -1059,6 +1098,67 @@ function createWorkspaceOpencodeClient(
   });
 }
 
+function workspaceOpencodeUrl(config: ServerConfig, workspace: WorkspaceInfo, path: string): string {
+  const baseUrl = resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim() ?? "";
+  if (!baseUrl) throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
+  const url = new URL(baseUrl);
+  url.pathname = path;
+  url.search = "";
+  return url.toString();
+}
+
+function workspaceOpencodeHeaders(config: ServerConfig, workspace: WorkspaceInfo): Headers {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  if (connection.authHeader) headers.set("Authorization", connection.authHeader);
+  const directory = resolveOpencodeDirectory(workspace);
+  if (directory) headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
+  return headers;
+}
+
+async function dispatchSessionPromptAsync(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+  prompt: Record<string, unknown>,
+): Promise<void> {
+  const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
+  const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
+    method: "POST",
+    headers: workspaceOpencodeHeaders(config, workspace),
+    body: JSON.stringify(prompt),
+  });
+  if (!response.ok) {
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      status: response.status,
+      body: parseOpencodeErrorBody(await response.text()),
+      path,
+    });
+  }
+}
+
+async function dispatchSessionAbort(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+): Promise<boolean> {
+  const path = `/session/${encodeURIComponent(sessionId)}/abort`;
+  const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
+    method: "POST",
+    headers: workspaceOpencodeHeaders(config, workspace),
+  });
+  if (!response.ok) {
+    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
+      status: response.status,
+      body: parseOpencodeErrorBody(await response.text()),
+      path,
+    });
+  }
+  const text = await response.text();
+  if (!text.trim()) return true;
+  return parseOpencodeErrorBody(text) === true;
+}
+
 function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, path: string): NonNullable<T> {
   if (result.data != null) {
     return result.data;
@@ -1079,6 +1179,7 @@ async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
+  sessionMutations: SessionMutationCoordinator;
 }) {
   const workspace = input.workspace;
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
@@ -1112,24 +1213,61 @@ async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  const executionStart = parseSessionExecutionStartProxyRequest(method, proxyPath);
+  let executionRun: ReturnType<SessionMutationCoordinator["reserveStart"]> | null = null;
+  if (executionStart && workspace) {
+    try {
+      executionRun = input.sessionMutations.reserveStart({
+        workspaceId: workspace.id,
+        sessionId: executionStart.sessionId,
+        origin: "local-renderer",
+        startCommandCorrelationId: null,
+      });
+      input.sessionMutations.acceptStart({
+        workspaceId: workspace.id,
+        sessionId: executionStart.sessionId,
+        runId: executionRun.runId,
+      });
+    } catch (error) {
+      if (error instanceof SessionMutationError) {
+        throw new ApiError(409, error.code, "The session already has an active run", {
+          currentRunId: error.currentRunId,
+        });
+      }
+      throw error;
+    }
+  }
+
+  const releaseExecutionRun = () => {
+    if (!executionRun || !workspace || !executionStart) return;
+    input.sessionMutations.rollbackStart({
+      workspaceId: workspace.id,
+      sessionId: executionStart.sessionId,
+      runId: executionRun.runId,
+    });
+  };
+
   // Managed OpenCode proxy traffic is loopback/engine I/O; keep streaming on Node fetch.
-  if (isSessionCommandProxyRequest(method, proxyPath)) {
+  if (executionStart?.kind === "command") {
     void loopbackFetch(targetUrl, {
       method,
       headers,
       body,
     }).catch(() => {
       // Command failures are surfaced through the OpenCode event stream.
-    });
+    }).finally(releaseExecutionRun);
     return jsonResponse({ ok: true, accepted: true });
   }
-  const response = await loopbackFetch(targetUrl, {
-    method,
-    headers,
-    body,
-  });
-
-  return sanitizeProxyResponse(response);
+  try {
+    const response = await loopbackFetch(targetUrl, {
+      method,
+      headers,
+      body,
+    });
+    return sanitizeProxyResponse(response);
+  } finally {
+    releaseExecutionRun();
+  }
 }
 
 /**
@@ -1487,6 +1625,8 @@ function createRoutes(
   env: EnvService,
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
+  sessionMutations: SessionMutationCoordinator,
+  interactionResolutions: InteractionResolutionCoordinator,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1541,6 +1681,21 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    dispatchSessionPromptAsync,
+    dispatchSessionAbort,
+    sessionMutations,
+  });
+
+  registerInteractionRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    interactionResolutions,
   });
 
   registerCloudMcpRoutes({

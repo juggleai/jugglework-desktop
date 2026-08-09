@@ -207,8 +207,30 @@ describe("remote-control operation registry", () => {
       operation: "workspace.list",
       payloadVersion: 1,
       arguments: { safe: true },
-      context,
+        context,
+        correlationId: null,
     }]);
+  });
+
+  it("passes only a safe correlationId to execute and preserves currentRunId in controlled errors", async () => {
+    const seen = [];
+    const registry = createRemoteControlOperationRegistry({
+      registrations: [readRegistration({
+        execute(input) {
+          seen.push(input.correlationId);
+          throw new RemoteControlOperationExecutionError("run_mismatch", { currentRunId: "run_current" });
+        },
+      })],
+      getFeatureGates: () => enabledReadGates,
+      isOperationAllowed: () => true,
+    });
+    const request = { operation: "workspace.list", payloadVersion: 1, arguments: {} };
+    const result = await registry.dispatch(request, { advertisedCapabilities: advertised(), correlationId: "command_safe" });
+    assert.deepEqual(seen, ["command_safe"]);
+    assert.equal(result.error.currentRunId, "run_current");
+
+    await registry.dispatch(request, { advertisedCapabilities: advertised(), correlationId: "bad\ncommand" });
+    assert.deepEqual(seen, ["command_safe", null]);
   });
 
   it("returns content-minimized deterministic errors for unavailable policy and handler failures", async () => {

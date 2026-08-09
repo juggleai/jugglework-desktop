@@ -77,4 +77,42 @@ describe("managed runtime client", () => {
     await assert.rejects(invalidClient.getJson("/safe"), (error) => error instanceof ManagedRuntimeClientError && error.code === "unavailable");
     await assert.rejects(() => timeoutClient.getJson("https://evil.test/path"), /absolute pathnames/);
   });
+
+  it("maps only bounded safe structured fields from non-2xx responses", async () => {
+    const client = createManagedRuntimeClient({
+      getAccess: access,
+      fetcher: async () => Response.json({
+        code: "run_mismatch",
+        message: "secret /private/workspace",
+        details: { currentRunId: "run_current", token: "must-not-survive" },
+        raw: "x".repeat(1_000),
+      }, { status: 409 }),
+    });
+    await assert.rejects(client.postJson("/runs/abort", {}), (error) => {
+      assert.ok(error instanceof ManagedRuntimeClientError);
+      assert.equal(error.code, "http_error");
+      assert.equal(error.status, 409);
+      assert.equal(error.serverCode, "run_mismatch");
+      assert.equal(error.currentRunId, "run_current");
+      assert.deepEqual(Object.keys(error).sort(), ["code", "currentRunId", "name", "serverCode", "status"]);
+      assert.doesNotMatch(JSON.stringify(error), /secret|private|token|must-not-survive/);
+      return true;
+    });
+  });
+
+  it("discards oversized and unsafe non-2xx bodies", async () => {
+    const cases = [
+      Response.json({ code: "x".repeat(257), details: { currentRunId: "bad\nrun" } }, { status: 409 }),
+      new Response(JSON.stringify({ code: "session_busy", details: { currentRunId: "run_secret" }, raw: "x".repeat(70_000) }), { status: 409 }),
+    ];
+    for (const response of cases) {
+      const client = createManagedRuntimeClient({ getAccess: access, fetcher: async () => response });
+      await assert.rejects(client.getJson("/failure"), (error) => {
+        assert.ok(error instanceof ManagedRuntimeClientError);
+        assert.equal(error.serverCode, null);
+        assert.equal(error.currentRunId, null);
+        return true;
+      });
+    }
+  });
 });

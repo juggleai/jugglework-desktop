@@ -1,5 +1,12 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { z } from "zod";
 import { ApiError } from "../errors.js";
+import {
+  SessionMutationError,
+  type SessionMutationCoordinator,
+  type SessionMutationObservationStatus,
+  type SessionMutationOrigin,
+} from "../session-mutation-coordinator.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
@@ -38,10 +45,88 @@ interface RegisterSessionRoutesOptions {
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   unwrapOpencodeResult: UnwrapOpencodeResult;
+  dispatchSessionPromptAsync: (
+    config: ServerConfig,
+    workspace: WorkspaceInfo,
+    sessionId: string,
+    prompt: Record<string, unknown>,
+  ) => Promise<void>;
+  dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
+  sessionMutations: SessionMutationCoordinator;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const runIdentifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
+const promptBodySchema = z.object({
+  messageID: runIdentifierSchema.optional(),
+  model: z.object({ providerID: runIdentifierSchema, modelID: runIdentifierSchema }).strict().optional(),
+  agent: runIdentifierSchema.optional(),
+  noReply: z.boolean().optional(),
+  tools: z.record(runIdentifierSchema, z.boolean()).refine((value) => Object.keys(value).length <= 1_000).optional(),
+  format: z.union([
+    z.object({ type: z.literal("text") }).strict(),
+    z.object({ type: z.literal("json_schema"), schema: z.record(z.string(), z.unknown()), retryCount: z.number().int().nonnegative().optional() }).strict(),
+  ]).optional(),
+  system: z.string().max(200_000).optional(),
+  variant: z.string().max(256).optional(),
+  parts: z.array(z.json()).max(10_000).optional(),
+  reasoning_effort: z.string().max(256).optional(),
+}).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
+const remotePromptBodySchema = z.object({
+  parts: z.tuple([z.object({ type: z.literal("text"), text: z.string().min(1).max(200_000) }).strict()]),
+}).strict();
+const startRunBodySchema = z.discriminatedUnion("origin", [
+  z.object({
+    origin: z.literal("local-renderer"),
+    startCommandCorrelationId: runIdentifierSchema.nullable(),
+    prompt: promptBodySchema,
+  }).strict(),
+  z.object({
+    origin: z.literal("remote-control"),
+    startCommandCorrelationId: runIdentifierSchema.nullable(),
+    prompt: remotePromptBodySchema,
+  }).strict(),
+]);
+const legacyStartRunBodySchema = z.discriminatedUnion("origin", [
+  z.object({ origin: z.literal("local"), commandId: runIdentifierSchema, prompt: promptBodySchema }).strict(),
+  z.object({ origin: z.literal("remote"), commandId: runIdentifierSchema, prompt: remotePromptBodySchema }).strict(),
+]);
+const abortRunBodySchema = z.object({ abortCommandCorrelationId: runIdentifierSchema.nullable() }).strict();
+const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, commandId: runIdentifierSchema }).strict();
+const observeRunBodySchema = z.object({
+  status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
+}).strict();
+const legacyObserveRunBodySchema = z.object({
+  expectedRunId: runIdentifierSchema,
+  observation: z.enum(["idle", "error", "completed", "failed", "aborted"]),
+}).strict();
+const opencodeTargetSessionStatusSchema = z.object({
+  type: z.enum(["idle", "busy", "running", "retry", "retrying", "waiting"]),
+}).passthrough();
+
+function parseRunBody<T>(schema: z.ZodType<T>, body: Record<string, unknown>): T {
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) throw new ApiError(400, "invalid_payload", "Session run payload is invalid");
+  return parsed.data;
+}
+
+function parseRunIdentifier(value: unknown, field: string): string {
+  const parsed = runIdentifierSchema.safeParse(value);
+  if (!parsed.success) throw new ApiError(400, "invalid_payload", `${field} is invalid`);
+  return parsed.data;
+}
+
+function remapSessionMutationError(error: unknown): never {
+  if (error instanceof SessionMutationError) {
+    const message = error.code === "session_busy"
+      ? "The session already has an active run"
+      : "The expected run does not match the active run";
+    throw new ApiError(409, error.code, message, { currentRunId: error.currentRunId });
+  }
+  throw error;
 }
 
 export function registerSessionRoutes(options: RegisterSessionRoutesOptions): void {
@@ -59,6 +144,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     resolveWorkspaceWithoutBootstrap,
     createWorkspaceOpencodeClient,
     unwrapOpencodeResult,
+    dispatchSessionPromptAsync,
+    dispatchSessionAbort,
+    sessionMutations,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -403,6 +491,179 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
     });
     return jsonResponse({ item });
+  });
+
+  async function startSessionRun(
+    ctx: RequestContext,
+    input: {
+      sessionId: string;
+      origin: SessionMutationOrigin;
+      startCommandCorrelationId: string | null;
+      prompt: Record<string, unknown>;
+    },
+  ) {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    let run;
+    try {
+      const opencode = createWorkspaceOpencodeClient(config, workspace);
+      const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
+      if (!isRecord(statuses)) {
+        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      }
+      const targetStatus = Object.prototype.hasOwnProperty.call(statuses, input.sessionId)
+        ? statuses[input.sessionId]
+        : undefined;
+      if (targetStatus !== undefined) {
+        const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
+        if (!parsedStatus.success) {
+          throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+        }
+        if (parsedStatus.data.type !== "idle") {
+          throw new SessionMutationError(
+            "session_busy",
+            sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null,
+          );
+        }
+      }
+
+      // Every contender reads authoritative engine state first. This synchronous
+      // reservation then decides which idle local/remote start may dispatch.
+      run = sessionMutations.reserveStart({
+        workspaceId: workspace.id,
+        sessionId: input.sessionId,
+        origin: input.origin,
+        startCommandCorrelationId: input.startCommandCorrelationId,
+      });
+    } catch (error) {
+      remapSessionMutationError(error);
+    }
+    try {
+      await dispatchSessionPromptAsync(config, workspace, input.sessionId, input.prompt);
+      return jsonResponse({
+        run: sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId }) ?? run,
+      }, 202);
+    } catch (error) {
+      sessionMutations.rollbackStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId });
+      throw error;
+    }
+  }
+
+  async function abortSessionRun(
+    ctx: RequestContext,
+    input: { sessionId: string; runId: string; abortCommandCorrelationId: string | null },
+  ) {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    let reservation;
+    try {
+      reservation = sessionMutations.reserveAbort({
+        workspaceId: workspace.id,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        abortCommandCorrelationId: input.abortCommandCorrelationId,
+      });
+    } catch (error) {
+      remapSessionMutationError(error);
+    }
+    try {
+      const abortRequested = await dispatchSessionAbort(config, workspace, input.sessionId);
+      if (!abortRequested) {
+        throw new ApiError(502, "opencode_abort_not_accepted", "OpenCode did not accept the abort request");
+      }
+      const run = sessionMutations.acceptAbort({
+        workspaceId: workspace.id,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        abortCommandCorrelationId: input.abortCommandCorrelationId,
+      });
+      return jsonResponse({ run: run ?? reservation.run, abortRequested: true }, 202);
+    } catch (error) {
+      sessionMutations.rollbackAbort({
+        workspaceId: workspace.id,
+        sessionId: input.sessionId,
+        runId: input.runId,
+        abortCommandCorrelationId: input.abortCommandCorrelationId,
+        previousStatus: reservation.previousStatus,
+      });
+      throw error;
+    }
+  }
+
+  async function observeSessionRun(
+    ctx: RequestContext,
+    input: { sessionId: string; runId: string; status: SessionMutationObservationStatus },
+  ) {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    try {
+      return jsonResponse(sessionMutations.observe({ workspaceId: workspace.id, ...input }));
+    } catch (error) {
+      remapSessionMutationError(error);
+    }
+  }
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/start", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(startRunBodySchema, await readJsonBody(ctx.request));
+    return startSessionRun(ctx, { sessionId, ...body, prompt: body.prompt as Record<string, unknown> });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/:runId/abort", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const runId = parseRunIdentifier(ctx.params.runId, "runId");
+    const body = parseRunBody(abortRunBodySchema, await readJsonBody(ctx.request));
+    return abortSessionRun(ctx, { sessionId, runId, ...body });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/:runId/observations", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const runId = parseRunIdentifier(ctx.params.runId, "runId");
+    const body = parseRunBody(observeRunBodySchema, await readJsonBody(ctx.request));
+    return observeSessionRun(ctx, { sessionId, runId, ...body });
+  });
+
+  // Existing in-flight callers use these aliases while Electron and renderer migrate.
+  addRoute(routes, "POST", "/workspace/:id/session-runs/:sessionId/start", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(legacyStartRunBodySchema, await readJsonBody(ctx.request));
+    return startSessionRun(ctx, {
+      sessionId,
+      origin: body.origin === "local" ? "local-renderer" : "remote-control",
+      startCommandCorrelationId: body.commandId,
+      prompt: body.prompt as Record<string, unknown>,
+    });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/session-runs/:sessionId/abort", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(legacyAbortRunBodySchema, await readJsonBody(ctx.request));
+    return abortSessionRun(ctx, {
+      sessionId,
+      runId: body.expectedRunId,
+      abortCommandCorrelationId: body.commandId,
+    });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/session-runs/:sessionId/observe", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(legacyObserveRunBodySchema, await readJsonBody(ctx.request));
+    const status = body.observation === "error" ? "failed" : body.observation;
+    return observeSessionRun(ctx, { sessionId, runId: body.expectedRunId, status });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/session-runs", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse({ items: sessionMutations.listActive(workspace.id) });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {

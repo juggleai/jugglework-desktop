@@ -176,6 +176,21 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
+  test("accepts only strict session.unbound controller rejections", () => {
+    const envelope = {
+      protocolVersion: 1,
+      payloadVersion: 1,
+      messageId: "7398fb8c-7b8c-4ec0-a822-2d52aa621275",
+      sentAt: "2026-08-08T12:00:00.000Z",
+      encryption: { mode: "none", keyId: null },
+      type: "session.unbound",
+      payload: { controlSessionId: "476bf830-e98b-408f-9517-503de904fe01", reason: "snapshot_required" },
+    }
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse(envelope).success, true)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...envelope, payload: { ...envelope.payload, reason: "unknown" } }).success, false)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...envelope, payload: { ...envelope.payload, extra: true } }).success, false)
+  })
+
   test("rejects operations not advertised by the target device", () => {
     const unadvertisedRequest = {
       operation: "session.snapshot",

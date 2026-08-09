@@ -39,7 +39,7 @@ function snapshotBody(directory = WORKSPACE_PATH) {
         {
           info: { id: "msg_1", sessionID: "ses_1", role: "assistant", time: { created: 3_000, completed: 4_000 } },
           parts: [
-            { id: "prt_text", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "visible" },
+            { id: "prt_text", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "visible /Users/alice/private Bearer abc.def token=secret" },
             { id: "prt_reason", messageID: "msg_1", sessionID: "ses_1", type: "reasoning", text: "thinking" },
             { id: "prt_hidden", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "hidden", synthetic: true },
             { id: "prt_ignored", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "ignored", ignored: true },
@@ -50,7 +50,7 @@ function snapshotBody(directory = WORKSPACE_PATH) {
               sessionID: "ses_1",
               type: "tool",
               tool: "bash",
-              state: { status: "completed", input: { command: "pwd" }, output: "ok", metadata: { title: "Shell" } },
+              state: { status: "completed", input: { command: "cat /Users/alice/.env", authorization: "Bearer abc" }, output: { token: "secret" }, metadata: { title: "Shell" } },
             },
           ],
         },
@@ -207,13 +207,16 @@ describe("remote-control read adapters", () => {
       name: "bash",
       title: "Shell",
       status: "completed",
-      input: { command: "pwd" },
-      output: "ok",
+      input: null,
+      output: null,
     });
     assert.equal(firstResult.value.todos[0].id, secondResult.value.todos[0].id);
     assert.equal(firstResult.value.capturedAt, "2026-08-09T00:00:00.000Z");
     assert.deepEqual(firstResult.value.interactions, []);
-    assert.doesNotMatch(JSON.stringify(firstResult), /file:\/\/|secret\.txt|hidden|ignored|private|collaborator|token/);
+    const serialized = JSON.stringify(firstResult);
+    assert.match(serialized, /\[LOCAL_PATH\]/);
+    assert.match(serialized, /\[REDACTED\]/);
+    assert.doesNotMatch(serialized, /file:\/\/|secret\.txt|hidden|ignored|\/Users\/|Bearer abc|token=secret|collaborator/);
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
   });
 

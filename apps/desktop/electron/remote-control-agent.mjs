@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 
+import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
+
 export const REMOTE_CONTROL_AGENT_SCHEMA_VERSION = 1;
 export const REMOTE_CONTROL_AGENT_PROTOCOL_VERSION = 1;
 export const REMOTE_CONTROL_AGENT_PAYLOAD_VERSION = 1;
@@ -62,6 +64,11 @@ const MAX_TIMER_DELAY = 24 * 60 * 60 * 1_000;
 const TOKEN_REFRESH_MARGIN = 60_000;
 const RECONNECT_MAX_DELAY = 30_000;
 const DEFAULT_POLICY_MAX_AGE_MS = 6 * 60_000;
+const DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS = 1_500;
+const MAX_ACTIVE_RUNS = 100;
+const MAX_CONTROLLER_DISPLAY_NAME_LENGTH = 80;
+const MAX_CONTROLLER_DISPLAY_NAMES = 5;
+const ACTIVE_RUN_STATUSES = new Set(["started", "running", "waiting", "retrying", "aborting"]);
 
 const ERROR_MESSAGES = Object.freeze({
   invalid_request: "The remote operation request is invalid.",
@@ -131,7 +138,12 @@ const ERROR_MESSAGES = Object.freeze({
  *   logger?: RemoteControlLogger,
  *   allowInsecureLoopback?: boolean,
  *   policyMaxAgeMs?: number,
- *   onCommandReceived?: (input: { operation: string, commandId: string, actorDisplayName: string | null }) => void,
+ *   localStopAckTimeoutMs?: number,
+ *   getActiveRuns?: () => unknown,
+ *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, connectionGeneration: number }) => boolean | void,
+ *   onSessionUnbound?: (input: { controlSessionId: string, reason: "closed" | "expired" | "not_found" | "snapshot_required" }) => void,
+ *   onTransportReset?: (input: { hadActiveControl: boolean, transition: number | null }) => void,
+ *   onControlRevoked?: (input: { source: "local" | "cloud", transition: number }) => void,
  * }} RemoteControlAgentOptions
  */
 
@@ -446,6 +458,23 @@ function validWireLifecycle(value) {
   return validJournalLifecycle(value);
 }
 
+/** @param {unknown} value */
+function normalizeActiveRuns(value) {
+  if (!Array.isArray(value)) return [];
+  const result = [];
+  const seen = new Set();
+  for (const run of value) {
+    if (result.length >= MAX_ACTIVE_RUNS) break;
+    if (!hasExactKeys(run, ["workspaceId", "sessionId", "runId", "status"]) || !isIdentifier(run.workspaceId) ||
+        !isIdentifier(run.sessionId) || !isIdentifier(run.runId) || !ACTIVE_RUN_STATUSES.has(run.status)) continue;
+    const key = `${run.workspaceId}\u0000${run.sessionId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ workspaceId: run.workspaceId, sessionId: run.sessionId, runId: run.runId, status: run.status });
+  }
+  return result;
+}
+
 /**
  * Creates the Electron Main remote-control connection owner. The factory has no
  * Electron import; Electron APIs and every transport/persistence boundary are
@@ -474,7 +503,12 @@ export function createRemoteControlAgent(options) {
     logger = {},
     allowInsecureLoopback = false,
     policyMaxAgeMs = DEFAULT_POLICY_MAX_AGE_MS,
-    onCommandReceived = null,
+    localStopAckTimeoutMs = DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS,
+    getActiveRuns = () => [],
+    onSessionBinding = null,
+    onSessionUnbound = null,
+    onTransportReset = null,
+    onControlRevoked = null,
   } = options;
   if (!settingsStore || typeof settingsStore.read !== "function" || !credentialStore ||
     typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
@@ -484,7 +518,13 @@ export function createRemoteControlAgent(options) {
     typeof now !== "function" || typeof randomUUID !== "function" || !timers || typeof timers.setTimeout !== "function" ||
     typeof timers.clearTimeout !== "function" || typeof appVersion !== "string" || !SEMVER_PATTERN.test(appVersion) || appVersion.length > 64 ||
     !new Set(["darwin", "windows", "linux"]).has(platform) ||
-    !Number.isSafeInteger(policyMaxAgeMs) || policyMaxAgeMs < 1_000) {
+    !Number.isSafeInteger(policyMaxAgeMs) || policyMaxAgeMs < 1_000 ||
+    !Number.isSafeInteger(localStopAckTimeoutMs) || localStopAckTimeoutMs < 1 || localStopAckTimeoutMs > 10_000 ||
+    typeof getActiveRuns !== "function" ||
+    !(onSessionBinding === null || typeof onSessionBinding === "function") ||
+    !(onSessionUnbound === null || typeof onSessionUnbound === "function") ||
+    !(onTransportReset === null || typeof onTransportReset === "function") ||
+    !(onControlRevoked === null || typeof onControlRevoked === "function")) {
     throw new TypeError("RemoteControlAgent dependencies are invalid.");
   }
 
@@ -520,9 +560,15 @@ export function createRemoteControlAgent(options) {
   let tokenExpiryTimer = null;
   /** @type {unknown} */
   let policyExpiryTimer = null;
+  /** @type {{ target: RemoteControlSocket, connectionGeneration: number, correlationId: string, timer: unknown, promise: Promise<Readonly<Record<string, unknown>>>, resolve: (value: Readonly<Record<string, unknown>>) => void } | null} */
+  let pendingLocalStop = null;
   const intentionalSockets = new WeakSet();
   const failedSockets = new WeakSet();
   const inFlightCommands = new Map();
+  /** @type {Map<string, string>} */
+  const activeControlSessions = new Map();
+  let transportTransition = 0;
+  let revocationTransition = 0;
 
   function timestamp() {
     const value = new Date(now());
@@ -565,6 +611,19 @@ export function createRemoteControlAgent(options) {
     clearTimer("policy-expiry");
   }
 
+  function finishLocalStop() {
+    const pending = pendingLocalStop;
+    if (!pending) return;
+    pendingLocalStop = null;
+    timers.clearTimeout(pending.timer);
+    if (socket === pending.target) {
+      socket = null;
+      connectionGeneration = null;
+    }
+    closeSocket(pending.target);
+    pending.resolve(status());
+  }
+
   /** @param {RemoteControlSocket | null} target */
   function closeSocket(target) {
     if (!target) return;
@@ -572,8 +631,42 @@ export function createRemoteControlAgent(options) {
     try { target.close(1000, "remote control stopped"); } catch {}
   }
 
+  function activeRuns() {
+    try { return normalizeActiveRuns(getActiveRuns()); } catch { return []; }
+  }
+
+  /** @param {string} value */
+  function boundedControllerDisplayName(value) {
+    return [...value].slice(0, MAX_CONTROLLER_DISPLAY_NAME_LENGTH).join("");
+  }
+
+  function controllerDisplayNames() {
+    const names = [];
+    const seen = new Set();
+    for (const displayName of activeControlSessions.values()) {
+      if (seen.has(displayName)) continue;
+      seen.add(displayName);
+      names.push(displayName);
+      if (names.length >= MAX_CONTROLLER_DISPLAY_NAMES) break;
+    }
+    return names;
+  }
+
+  function notifyTransportReset() {
+    const hadActiveControl = activeControlSessions.size > 0;
+    activeControlSessions.clear();
+    const transition = hadActiveControl ? ++transportTransition : null;
+    try { onTransportReset?.({ hadActiveControl, transition }); } catch {}
+  }
+
+  /** @param {"local" | "cloud"} source */
+  function notifyControlRevoked(source) {
+    try { onControlRevoked?.({ source, transition: ++revocationTransition }); } catch {}
+  }
+
   /** Synchronously fences async completions, cancels timers, and closes transport. */
   function invalidateTransport() {
+    notifyTransportReset();
     lifecycleGeneration += 1;
     connectionAttempt += 1;
     clearTimers();
@@ -670,7 +763,7 @@ export function createRemoteControlAgent(options) {
       connectionGeneration,
       appVersion,
       capabilities,
-      activeRuns: [],
+      activeRuns: activeRuns(),
       policyVersion: context.policyVersion,
       localControlEnabled: true,
     });
@@ -725,12 +818,14 @@ export function createRemoteControlAgent(options) {
   function transportFailed(target, code) {
     if (target !== socket || intentionalSockets.has(target) || failedSockets.has(target)) return;
     failedSockets.add(target);
+    notifyTransportReset();
     lastErrorCode = code;
     clearTimer("heartbeat");
     clearTimer("refresh");
     socket = null;
     connectionGeneration = null;
     try { target.close(); } catch {}
+    if (pendingLocalStop?.target === target) finishLocalStop();
     scheduleReconnect(lifecycleGeneration);
     log("warn", code);
   }
@@ -749,7 +844,7 @@ export function createRemoteControlAgent(options) {
 
   /** @param {unknown} value @param {RemoteControlSocket} target @param {number} generation */
   async function handleMessage(value, target, generation) {
-    if (target !== socket || generation !== lifecycleGeneration) return;
+    if (target !== socket) return;
     const envelope = parseBaseEnvelope(value);
     if (!envelope) {
       protocolBlocked = true;
@@ -758,6 +853,19 @@ export function createRemoteControlAgent(options) {
       state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
       return;
     }
+    if (pendingLocalStop?.target === target && envelope.type === "device.local_stop_ack") {
+      const payload = envelope.payload;
+      if (!hasExactKeys(payload, ["deviceId", "connectionGeneration", "correlationId", "closedControlSessions"]) ||
+          payload.deviceId !== enrollment?.deviceId ||
+          payload.connectionGeneration !== pendingLocalStop.connectionGeneration ||
+          payload.correlationId !== pendingLocalStop.correlationId ||
+          !Number.isSafeInteger(payload.closedControlSessions) || payload.closedControlSessions < 0) {
+        lastErrorCode = "invalid_local_stop_ack";
+      }
+      finishLocalStop();
+      return;
+    }
+    if (generation !== lifecycleGeneration) return;
     if (envelope.type === "connection.welcome") {
       const payload = envelope.payload;
       if (!hasExactKeys(payload, ["deviceId", "connectionGeneration", "heartbeatSeconds", "staleSeconds", "offlineSeconds"]) ||
@@ -790,13 +898,32 @@ export function createRemoteControlAgent(options) {
         transportFailed(target, "invalid_revocation");
         return;
       }
+      const changed = !revoked;
       revoked = true;
       localDisabledLatch = true;
       lastErrorCode = "device_revoked";
+      activeControlSessions.clear();
       invalidateTransport();
+      if (changed) notifyControlRevoked("cloud");
       enrollment = null;
       state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
       try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+      return;
+    }
+    if (envelope.type === "session.unbound") {
+      if (!hasExactKeys(envelope.payload, ["controlSessionId", "reason"]) ||
+          !UUID_PATTERN.test(envelope.payload.controlSessionId) ||
+          !["closed", "expired", "not_found", "snapshot_required"].includes(envelope.payload.reason)) {
+        transportFailed(target, "invalid_session_unbound");
+        return;
+      }
+      try {
+        onSessionUnbound?.({
+          controlSessionId: envelope.payload.controlSessionId,
+          reason: envelope.payload.reason,
+        });
+      } catch {}
+      activeControlSessions.delete(envelope.payload.controlSessionId);
       return;
     }
     if (envelope.type === "protocol.error") {
@@ -806,9 +933,12 @@ export function createRemoteControlAgent(options) {
       } else {
         lastErrorCode = envelope.payload.code;
         if (envelope.payload.code === "device_revoked") {
+          const changed = !revoked;
           revoked = true;
           localDisabledLatch = true;
+          activeControlSessions.clear();
           invalidateTransport();
+          if (changed) notifyControlRevoked("cloud");
           enrollment = null;
           state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
           try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
@@ -845,14 +975,23 @@ export function createRemoteControlAgent(options) {
         }, envelope.payload.commandId);
         return;
       }
-      if (typeof onCommandReceived === "function") {
+      const args = envelope.payload.request.arguments;
+      if (isIdentifier(args.workspaceId) && isIdentifier(args.sessionId)) {
         try {
-          onCommandReceived({
-            operation: envelope.payload.request?.operation,
-            commandId: envelope.payload.commandId,
-            actorDisplayName: envelope.payload.actor?.displayName ?? null,
+          const accepted = onSessionBinding?.({
+            controlSessionId: envelope.payload.controlSessionId,
+            deviceId: envelope.payload.deviceId,
+            workspaceId: args.workspaceId,
+            sessionId: args.sessionId,
+            connectionGeneration,
           });
-        } catch { /* notifications must never block command handling */ }
+          if (accepted !== false) {
+            activeControlSessions.set(
+              envelope.payload.controlSessionId,
+              boundedControllerDisplayName(envelope.payload.actor.displayName),
+            );
+          }
+        } catch {}
       }
       void handleCommand(envelope.payload, generation);
       return;
@@ -999,7 +1138,7 @@ export function createRemoteControlAgent(options) {
         connectionGeneration: provisionalGeneration,
         appVersion,
         capabilities,
-        activeRuns: [],
+        activeRuns: activeRuns(),
         policyVersion: context.policyVersion,
         localControlEnabled: true,
       });
@@ -1085,6 +1224,7 @@ export function createRemoteControlAgent(options) {
       return;
     }
     const prior = socket;
+    if (prior) notifyTransportReset();
     socket = nextSocket;
     connectionGeneration = null;
     bindSocket(nextSocket, generation, token.expiresAt);
@@ -1184,12 +1324,43 @@ export function createRemoteControlAgent(options) {
     return status();
   }
 
-  /** Immediately closes transport and rejects future operations until persisted local disablement is observed. */
+  /** Immediately rejects operations, then gives Cloud a bounded opportunity to acknowledge device-wide closure. */
   function stopAll() {
+    if (pendingLocalStop) return pendingLocalStop.promise;
+    const changed = !localDisabledLatch;
     localDisabledLatch = true;
-    invalidateTransport();
+    activeControlSessions.clear();
+    notifyTransportReset();
+    lifecycleGeneration += 1;
+    connectionAttempt += 1;
+    clearTimers();
+    if (changed) notifyControlRevoked("local");
     state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
-    return status();
+    const target = socket;
+    const generation = connectionGeneration;
+    if (!target || generation === null || !enrollment?.deviceId) {
+      socket = null;
+      connectionGeneration = null;
+      closeSocket(target);
+      return Promise.resolve(status());
+    }
+    const correlationId = messageId();
+    /** @type {(value: Readonly<Record<string, unknown>>) => void} */
+    let resolve = () => {};
+    const promise = new Promise((settle) => { resolve = settle; });
+    const timer = timers.setTimeout(finishLocalStop, localStopAckTimeoutMs);
+    pendingLocalStop = { target, connectionGeneration: generation, correlationId, timer, promise, resolve };
+    try {
+      target.send(JSON.stringify(baseEnvelope("device.local_stop", {
+        deviceId: enrollment.deviceId,
+        connectionGeneration: generation,
+        correlationId,
+      })));
+    } catch {
+      lastErrorCode = "transport_send_failed";
+      finishLocalStop();
+    }
+    return promise;
   }
 
   /** Stops transport synchronously before deleting the platform-protected key. */
@@ -1206,9 +1377,18 @@ export function createRemoteControlAgent(options) {
   async function stop() {
     if (!started && socket === null && reconnectTimer === null && heartbeatTimer === null && tokenRefreshTimer === null) return status();
     started = false;
+    activeControlSessions.clear();
     invalidateTransport();
     state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
     return status();
+  }
+
+  /** @param {unknown} event @param {{ connectionGeneration?: unknown }} [options] */
+  function publishSessionEvent(event, options = {}) {
+    const parsed = desktopRemoteSessionEventSchema.safeParse(event);
+    if (!parsed.success || !socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null ||
+        options.connectionGeneration !== connectionGeneration || parsed.data.deviceId !== enrollment?.deviceId) return false;
+    return send(socket, "session.event", parsed.data);
   }
 
   /** Returns content- and credential-free diagnostic state. */
@@ -1221,11 +1401,13 @@ export function createRemoteControlAgent(options) {
       enrolled: enrollment?.state === "enrolled",
       revoked,
       localControlEnabled: contextAllowsConnection(),
+      activeControlSessionCount: activeControlSessions.size,
+      controllerDisplayNames: controllerDisplayNames(),
       lifecycleGeneration,
       connectionGeneration,
       lastErrorCode,
     });
   }
 
-  return Object.freeze({ start, syncContext, enroll, refreshLocalSettings, stopAll, deleteCredential, stop, status });
+  return Object.freeze({ start, syncContext, enroll, refreshLocalSettings, stopAll, deleteCredential, publishSessionEvent, stop, status });
 }

@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync } from "node:fs";
@@ -49,6 +50,9 @@ import { createRemoteControlInteractionStore } from "./remote-control-interactio
 import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
 import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
 import { createRemoteControlAgent } from "./remote-control-agent.mjs";
+import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
+import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -576,7 +580,8 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
 }
 
 async function focusMainWindowFromNotification() {
-  const win = await createMainWindow();
+  const win = mainWindow;
+  if (!win) return;
   if (win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
@@ -1013,7 +1018,11 @@ const workspaceStore = createWorkspaceStore({
 });
 const remoteControlSettingsStore = createRemoteControlSettingsStore({ app });
 const remoteControlCommandJournal = createRemoteControlCommandJournal({ app });
+const remoteControlNotificationController = createRemoteControlNotificationController({
+  notify: ({ title, body }) => showDesktopNotification({ title, body }),
+});
 let remoteControlAgent = null;
+let remoteSessionEventBridge = null;
 let remoteControlReadRegistrations = [];
 let remoteControlMutationRegistrations = [];
 const sessionMutationCoordinator = createSessionMutationCoordinator();
@@ -1027,6 +1036,8 @@ function stoppedRemoteControlAgentStatus() {
     enrolled: false,
     revoked: false,
     localControlEnabled: false,
+    activeControlSessionCount: 0,
+    controllerDisplayNames: [],
     lifecycleGeneration: 0,
     connectionGeneration: null,
     lastErrorCode: null,
@@ -1070,20 +1081,21 @@ function createMainRemoteControlAgent() {
       return `${currentDisplayAppName} on ${host || normalizePlatform(process.platform)}`.slice(0, 500);
     },
     allowInsecureLoopback: isDevMode,
+    getActiveRuns: () => sessionMutationCoordinator.activeRuns(),
+    onSessionBinding: (binding) => remoteSessionEventBridge?.bind(binding),
+    onSessionUnbound: ({ controlSessionId }) => remoteSessionEventBridge?.unbind(controlSessionId),
+    onTransportReset: ({ hadActiveControl, transition }) => {
+      remoteSessionEventBridge?.clear();
+      if (hadActiveControl && transition !== null) {
+        remoteControlNotificationController.accept({ origin: "live", type: "control.disconnected", transition });
+      }
+    },
+    onControlRevoked: ({ source, transition }) => {
+      remoteControlNotificationController.accept({ origin: "live", type: "control.revoked", source, transition });
+    },
     logger: {
       warn: (_message, metadata) => console.warn("[desktop-remote] state warning", metadata),
       error: (_message, metadata) => console.error("[desktop-remote] state error", metadata),
-    },
-    onCommandReceived: ({ operation, actorDisplayName }) => {
-      try {
-        const { Notification } = require("electron");
-        const isMutation = operation === "session.prompt" || operation === "session.abort" ||
-          operation === "interaction.permission.reply" || operation === "interaction.question.reply";
-        const title = isMutation ? "远程操作请求" : "远程读取请求";
-        const body = `${actorDisplayName || "Cloud"} 请求执行 ${operation}`;
-        const notification = new Notification({ title, body, silent: !isMutation });
-        notification.show();
-      } catch { /* notifications are best-effort */ }
     },
   });
 }
@@ -1278,6 +1290,40 @@ remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
   }),
   coordinator: sessionMutationCoordinator,
 });
+
+function createMainRemoteSessionEventBridge() {
+  const managedRuntimeClient = createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  });
+  return createRemoteSessionEventBridge({
+    sseClient: createManagedRuntimeSseClient({
+      getAccess: () => runtimeManager.managedServerAccess(),
+      fetcher: electronNet.fetch,
+    }),
+    coordinator: sessionMutationCoordinator,
+    listActiveRuns: ({ workspaceId }) => managedRuntimeClient.getJson(
+      `/workspace/${encodeURIComponent(workspaceId)}/session-runs`,
+    ),
+    observeRun: async ({ workspaceId, sessionId, runId, status }) => {
+      return managedRuntimeClient.postJson(
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
+        { status },
+      );
+    },
+    publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
+    randomUUID,
+    now: Date.now,
+    timers: {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+    },
+    logger: {
+      warn: (_message, metadata) => console.warn("[desktop-remote] session event warning", metadata),
+    },
+    onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
+  });
+}
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
@@ -1866,10 +1912,23 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlStopAll": async (event) => {
       void event;
-      remoteControlAgent?.stopAll();
-      const settings = await remoteControlSettingsStore.disable();
-      await remoteControlAgent?.refreshLocalSettings();
-      return settings;
+      let stopping;
+      let stopError;
+      try {
+        stopping = remoteControlAgent?.stopAll();
+      } catch (error) {
+        stopError = error;
+      }
+      try {
+        const settings = await remoteControlSettingsStore.disable();
+        await stopping;
+        await remoteControlAgent?.refreshLocalSettings();
+        if (stopError) throw stopError;
+        return settings;
+      } catch (error) {
+        await stopping;
+        throw error;
+      }
   },
   "desktopRemoteControlContextSync": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
@@ -2796,6 +2855,7 @@ if (!app.requestSingleInstanceLock()) {
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
     void Promise.all([
+      remoteSessionEventBridge?.stop(),
       remoteControlAgent?.stop(),
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
@@ -2839,6 +2899,7 @@ if (!app.requestSingleInstanceLock()) {
       app,
       applicationMenu,
     });
+    remoteSessionEventBridge = createMainRemoteSessionEventBridge();
     remoteControlAgent = createMainRemoteControlAgent();
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");

@@ -87,7 +87,7 @@ function canonicalPath(value) {
 }
 
 /** @param {number | undefined} value */
-function timestamp(value) {
+export function normalizeRemoteTimestamp(value) {
   const date = new Date(Number(value));
   return Number.isFinite(value) && Number.isFinite(date.getTime()) ? date.toISOString() : ISO_EPOCH;
 }
@@ -95,6 +95,23 @@ function timestamp(value) {
 /** @param {unknown} value @param {number} max */
 function boundedText(value, max) {
   return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+/**
+ * Transcript text is user-visible content, but remote snapshots must not carry
+ * machine-local paths or credential values accidentally echoed by tools/models.
+ * Preserve surrounding prose while replacing only recognizable sensitive
+ * substrings. Tool input/output is omitted separately below.
+ * @param {unknown} value
+ * @param {number} max
+ */
+function safeRemoteText(value, max) {
+  return boundedText(value, max)
+    .replace(/\bBearer\b(?:\s+(?!\[REDACTED\])[^\s"'`,;\]}]+){1,4}/gi, "Bearer [REDACTED]")
+    .replace(/(["']?(?:authorization|token|access[_-]?token|client[_-]?token|api[_-]?key|password|secret)["']?\s*:\s*)["'][^"']*["']/gi, "$1\"[REDACTED]\"")
+    .replace(/((?:authorization|token|access[_-]?token|client[_-]?token|api[_-]?key|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/(?:\/Users\/|\/home\/)[^\s"'`<>]+/g, "[LOCAL_PATH]")
+    .replace(/[A-Za-z]:\\Users\\[^\s"'`<>]+/g, "[LOCAL_PATH]");
 }
 
 /** @param {unknown} value */
@@ -128,10 +145,10 @@ function toolStatus(state) {
 }
 
 /** @param {z.infer<typeof partSchema>} part */
-function normalizePart(part) {
+export function normalizeRemoteMessagePart(part) {
   if (part.synthetic === true || part.ignored === true) return null;
   if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
-    return { type: part.type, id: part.id, text: boundedText(part.text, SNAPSHOT_PART_TEXT_LIMIT) };
+    return { type: part.type, id: part.id, text: safeRemoteText(part.text, SNAPSHOT_PART_TEXT_LIMIT) };
   }
   if (part.type !== "tool" || typeof part.tool !== "string" || !identifierSchema.safeParse(part.tool).success) return null;
   /** @type {Record<string, unknown>} */
@@ -143,27 +160,30 @@ function normalizePart(part) {
     type: "tool",
     id: part.id,
     name: part.tool,
-    title: title === null ? null : boundedText(title.trim(), 500) || null,
+    title: title === null ? null : safeRemoteText(title.trim(), 500) || null,
     status: toolStatus(state),
-    input: safeJson(state.input),
-    output: state.status === "error" ? safeJson(state.error) : safeJson(state.output),
+    // Tool payloads routinely contain paths, environment values, command
+    // output, and provider credentials. Phase 1 exposes only semantic tool
+    // identity/status/title; payload expansion requires a later explicit spec.
+    input: null,
+    output: null,
   };
 }
 
 /** @param {z.infer<typeof messageSchema>} message @param {string} sessionId */
-function normalizeMessage(message, sessionId) {
+export function normalizeRemoteMessage(message, sessionId) {
   if (message.info.sessionID !== sessionId || !["user", "assistant", "system", "tool"].includes(message.info.role)) return null;
   const parts = message.parts.flatMap((part) => {
     if (part.sessionID !== sessionId || part.messageID !== message.info.id) return [];
-    const normalized = normalizePart(part);
+    const normalized = normalizeRemoteMessagePart(part);
     return normalized ? [normalized] : [];
   });
   if (parts.length === 0) return null;
   return {
     id: message.info.id,
     role: message.info.role,
-    createdAt: timestamp(message.info.time?.created),
-    completedAt: Number.isFinite(message.info.time?.completed) ? timestamp(message.info.time?.completed) : null,
+    createdAt: normalizeRemoteTimestamp(message.info.time?.created),
+    completedAt: Number.isFinite(message.info.time?.completed) ? normalizeRemoteTimestamp(message.info.time?.completed) : null,
     parts,
   };
 }
@@ -189,13 +209,13 @@ function boundedTranscript(messages) {
 }
 
 /** @param {z.infer<typeof todoSchema>} todo @param {string} sessionId @param {number} index */
-function normalizeTodo(todo, sessionId, index) {
+export function normalizeRemoteTodo(todo, sessionId, index) {
   const content = boundedText(todo.content.trim(), 10_000);
   if (!content) return null;
   const digest = createHash("sha256").update(`${sessionId}\u0000${index}\u0000${content}`).digest("hex").slice(0, 24);
   return {
     id: `todo_${digest}`,
-    content,
+    content: safeRemoteText(content, 10_000),
     status: ["pending", "in_progress", "completed", "cancelled"].includes(todo.status) ? todo.status : "pending",
     priority: ["low", "medium", "high"].includes(todo.priority) ? todo.priority : "medium",
   };
@@ -257,20 +277,20 @@ function workspaceSummary(workspace) {
     : typeof workspace.name === "string" && workspace.name.trim()
       ? workspace.name.trim()
       : path.basename(workspace.path) || "Workspace";
-  return { id: workspace.id, name: boundedText(requestedName, 500) || "Workspace" };
+  return { id: workspace.id, name: safeRemoteText(requestedName, 500) || "Workspace" };
 }
 
 /** @param {z.infer<typeof sessionSchema>} session @param {LocalWorkspace} workspace @param {unknown} status */
 function sessionSummary(session, workspace, status = null) {
   if (canonicalPath(session.directory) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
-  const title = boundedText((session.title || session.slug || "Untitled session").trim(), 1_000) || "Untitled session";
+  const title = safeRemoteText((session.title || session.slug || "Untitled session").trim(), 1_000) || "Untitled session";
   return {
     id: session.id,
     workspaceId: workspace.id,
     title,
     status: sessionStatus(status),
-    createdAt: timestamp(session.time?.created),
-    updatedAt: timestamp(session.time?.updated ?? session.time?.created),
+    createdAt: normalizeRemoteTimestamp(session.time?.created),
+    updatedAt: normalizeRemoteTimestamp(session.time?.updated ?? session.time?.created),
     activeRunId: null,
   };
 }
@@ -336,7 +356,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       }
       // Fall back to local workspace store if managed server returns nothing.
       const source = managedWorkspaces.length > 0 ? managedWorkspaces : (await localWorkspaces(workspaceStore)).map((w) => ({ id: w.id, name: typeof w.name === "string" ? w.name : "", path: w.path, workspaceType: "local" }));
-      const result = { workspaces: source.map((w) => ({ id: w.id, name: boundedText(w.name || path.basename(w.path || "") || "Workspace", 500) || "Workspace" })) };
+      const result = { workspaces: source.map((w) => ({ id: w.id, name: safeRemoteText(w.name || path.basename(w.path || "") || "Workspace", 500) || "Workspace" })) };
       return desktopRemoteOperationResultSchema.parse({ operation: "workspace.list", payloadVersion: 1, result }).result;
     }),
     registration("session.list", (value) => parseArguments(value, ["workspaceId"]), async ({ arguments: args }) => {
@@ -385,11 +405,11 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         workspace: workspaceSummary(workspace),
         session: { ...summary, status: sessionStatus(response.item.status) },
         messages: boundedTranscript(response.item.messages.flatMap((message) => {
-          const normalized = normalizeMessage(message, args.sessionId);
+          const normalized = normalizeRemoteMessage(message, args.sessionId);
           return normalized ? [normalized] : [];
         })),
         todos: response.item.todos.flatMap((todo, index) => {
-          const normalized = normalizeTodo(todo, args.sessionId, index);
+          const normalized = normalizeRemoteTodo(todo, args.sessionId, index);
           return normalized ? [normalized] : [];
         }),
         interactions: pendingInteractions,

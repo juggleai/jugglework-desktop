@@ -1,4 +1,14 @@
-import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
+import type {
+  AgentPartInput,
+  FilePartInput,
+  Message,
+  OutputFormat,
+  Part,
+  Session,
+  SubtaskPartInput,
+  TextPartInput,
+  Todo,
+} from "@opencode-ai/sdk/v2/client";
 import {
   agentContextDiagnosticsReportSchema,
   agentContextDiagnosticsRequestSchema,
@@ -89,6 +99,60 @@ export type JuggleWorkSessionSnapshot = {
     | { type: "busy" }
     | { type: "retry"; attempt: number; message: string; next: number };
 };
+
+export type JuggleWorkSessionRunOrigin = "local-renderer" | "remote-control";
+export type JuggleWorkSessionRunStatus = "starting" | "running" | "waiting" | "retrying" | "aborting";
+export type JuggleWorkSessionRunObservation =
+  | JuggleWorkSessionRunStatus
+  | "idle"
+  | "completed"
+  | "failed"
+  | "aborted";
+
+export type JuggleWorkSessionRun = {
+  workspaceId: string;
+  sessionId: string;
+  runId: string;
+  generation: number;
+  origin: JuggleWorkSessionRunOrigin;
+  startCommandCorrelationId: string | null;
+  abortCommandCorrelationId: string | null;
+  status: JuggleWorkSessionRunStatus;
+  observedActive: boolean;
+  startedAt: number;
+  updatedAt: number;
+  activeObservedAt: number | null;
+  abortRequestedAt: number | null;
+};
+
+export type JuggleWorkSessionPrompt = {
+  messageID?: string;
+  model?: { providerID: string; modelID: string };
+  agent?: string;
+  noReply?: boolean;
+  tools?: Record<string, boolean>;
+  format?: OutputFormat;
+  system?: string;
+  variant?: string;
+  parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>;
+  reasoning_effort?: string;
+};
+
+export type JuggleWorkInteractionOrigin = "local-renderer" | "remote-control";
+export type JuggleWorkPermissionResponse = "allow_once" | "always" | "reject";
+export type JuggleWorkQuestionAnswer = { questionId: string; values: string[] };
+export type JuggleWorkInteractionResolution = { interactionId: string; status: "resolved" };
+export type JuggleWorkPermissionReplyInput =
+  | {
+      origin: "local-renderer";
+      commandCorrelationId: string | null;
+      response: JuggleWorkPermissionResponse;
+    }
+  | {
+      origin: "remote-control";
+      commandCorrelationId: string | null;
+      response: Exclude<JuggleWorkPermissionResponse, "always">;
+    };
 
 export type JuggleWorkPluginItem = {
   spec: string;
@@ -1492,6 +1556,77 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken, timeoutMs: timeouts.sessionRead },
       );
     },
+    startSessionRun: (
+      workspaceId: string,
+      sessionId: string,
+      input: {
+        origin: JuggleWorkSessionRunOrigin;
+        startCommandCorrelationId: string | null;
+        prompt: JuggleWorkSessionPrompt;
+      },
+    ) => requestJson<{ run: JuggleWorkSessionRun }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/start`, {
+      token,
+      hostToken,
+      method: "POST",
+      body: input,
+      timeoutMs: 0,
+    }),
+    abortSessionRun: (
+      workspaceId: string,
+      sessionId: string,
+      runId: string,
+      input: { abortCommandCorrelationId: string | null },
+    ) =>
+      requestJson<{ run: JuggleWorkSessionRun; abortRequested: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/abort`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+      ),
+    observeSessionRun: (
+      workspaceId: string,
+      sessionId: string,
+      runId: string,
+      input: { status: JuggleWorkSessionRunObservation },
+    ) => requestJson<{
+      cleared: boolean;
+      run: JuggleWorkSessionRun | null;
+      terminalStatus: "completed" | "failed" | "aborted" | null;
+    }>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
+      { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+    ),
+    listActiveSessionRuns: (workspaceId: string) => requestJson<{
+      items: JuggleWorkSessionRun[];
+    }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/session-runs`, {
+      token,
+      hostToken,
+      timeoutMs: timeouts.sessionRead,
+    }),
+    replyPermissionInteraction: (
+      workspaceId: string,
+      sessionId: string,
+      interactionId: string,
+      input: JuggleWorkPermissionReplyInput,
+    ) => requestJson<JuggleWorkInteractionResolution>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/permission/reply`,
+      { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+    ),
+    replyQuestionInteraction: (
+      workspaceId: string,
+      sessionId: string,
+      interactionId: string,
+      input: {
+        origin: JuggleWorkInteractionOrigin;
+        commandCorrelationId: string | null;
+        answers: JuggleWorkQuestionAnswer[];
+      },
+    ) => requestJson<JuggleWorkInteractionResolution>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/question/reply`,
+      { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+    ),
     exportWorkspace: (
       workspaceId: string,
       options?: { sensitiveMode?: JuggleWorkWorkspaceExportSensitiveMode },

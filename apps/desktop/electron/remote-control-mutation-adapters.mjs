@@ -9,7 +9,6 @@ import {
   RemoteControlOperationExecutionError,
 } from "./remote-control-operations.mjs";
 import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
-import { SessionMutationError } from "./session-mutation-coordinator.mjs";
 
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 
@@ -17,7 +16,7 @@ const ISO_EPOCH = new Date(0).toISOString();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
 /** @typedef {{ getJson(pathname: string): Promise<unknown>, postJson(pathname: string, body: unknown): Promise<unknown> }} ManagedRuntimeClient */
-/** @typedef {{ beginRun(input: { workspaceId: string, sessionId: string }): { runId: string, generation: number }, recordPromptAccepted(input: { workspaceId: string, sessionId: string, runId: string }): void, resolveRun(input: { workspaceId: string, sessionId: string, expectedRunId: string }): { runId: string }, markAborting(input: { workspaceId: string, sessionId: string, runId: string }): void, markTerminal(input: { workspaceId: string, sessionId: string }): void, activeRuns(): unknown[] }} Coordinator */
+/** @typedef {{ recordServerRun(input: unknown): boolean, activeRuns(): unknown[] }} Coordinator */
 
 /** @param {unknown} value */
 function parseArguments(value, keys) {
@@ -56,16 +55,39 @@ function timestamp() {
 /** @param {unknown} error @param {string} notFoundCode */
 function mapClientError(error, notFoundCode) {
   if (error instanceof RemoteControlOperationExecutionError) throw error;
-  if (error instanceof SessionMutationError) {
-    throw new RemoteControlOperationExecutionError(
-      error.code,
-      error.currentRunId ? { currentRunId: error.currentRunId } : undefined,
-    );
+  if (error instanceof ManagedRuntimeClientError && (error.serverCode === "session_busy" || error.serverCode === "run_mismatch")) {
+    throw new RemoteControlOperationExecutionError(error.serverCode, { currentRunId: error.currentRunId });
   }
   if (error instanceof ManagedRuntimeClientError && error.code === "http_error" && error.status === 404) {
     throw new RemoteControlOperationExecutionError(notFoundCode);
   }
   throw new RemoteControlOperationExecutionError("internal_error");
+}
+
+const INTERACTION_ERROR_CODES = new Set(["already_resolved", "interaction_expired", "interaction_not_found"]);
+
+/** @param {unknown} error */
+function mapInteractionClientError(error) {
+  if (error instanceof RemoteControlOperationExecutionError) throw error;
+  if (error instanceof ManagedRuntimeClientError && error.code === "http_error") {
+    if (INTERACTION_ERROR_CODES.has(error.serverCode)) {
+      throw new RemoteControlOperationExecutionError(error.serverCode);
+    }
+    if (error.status === 400) throw new RemoteControlOperationExecutionError("invalid_request");
+  }
+  throw new RemoteControlOperationExecutionError("internal_error");
+}
+
+/** @param {unknown} response @param {string} interactionId @param {"interaction.permission.reply" | "interaction.question.reply"} operation */
+function resolvedInteractionResult(response, interactionId, operation) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new RemoteControlOperationExecutionError("internal_error");
+  }
+  const result = /** @type {Record<string, unknown>} */ (response);
+  if (Object.keys(result).length !== 2 || result.interactionId !== interactionId || result.status !== "resolved") {
+    throw new RemoteControlOperationExecutionError("internal_error");
+  }
+  return desktopRemoteOperationResultSchema.parse({ operation, payloadVersion: 1, result }).result;
 }
 
 /**
@@ -144,7 +166,7 @@ async function readSession(client, workspaceId, sessionId) {
  * }} options
  */
 export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, now = Date.now }) {
-  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || !coordinator || typeof coordinator.beginRun !== "function") {
+  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || !coordinator || typeof coordinator.recordServerRun !== "function") {
     throw new TypeError("Remote mutation adapter dependencies are invalid.");
   }
 
@@ -170,20 +192,22 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         throw new TypeError("Remote mutation arguments are invalid.");
       }
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt });
-    }, async ({ arguments: args }) => {
+    }, async ({ arguments: args, correlationId }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId);
         if (canonicalPath(session.directory) !== workspace.path) {
           throw new RemoteControlOperationExecutionError("session_not_found");
         }
-        const { runId, generation } = coordinator.beginRun({ workspaceId: workspace.id, sessionId: args.sessionId });
-        await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(args.sessionId)}/prompt_async`,
-          { parts: [{ type: "text", text: args.prompt }] },
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/start`,
+          { origin: "remote-control", startCommandCorrelationId: correlationId, prompt: { parts: [{ type: "text", text: args.prompt }] } },
         );
-        coordinator.recordPromptAccepted({ workspaceId: workspace.id, sessionId: args.sessionId, runId });
-        const result = { runId, generation };
+        if (!response || typeof response !== "object" || !("run" in response)) throw new TypeError("Invalid start response.");
+        const run = response.run;
+        if (!coordinator.recordServerRun(run)) throw new TypeError("Stale start response.");
+        const recordedRun = /** @type {{ runId: string, generation: number }} */ (run);
+        const result = { runId: recordedRun.runId, generation: recordedRun.generation };
         return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: 1, result }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
@@ -192,17 +216,17 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
     registration("session.abort", (value) => {
       parseArguments(value, ["workspaceId", "sessionId", "expectedRunId"]);
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), expectedRunId: String(value.expectedRunId) });
-    }, async ({ arguments: args }) => {
+    }, async ({ arguments: args, correlationId }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
-        const { runId } = coordinator.resolveRun({ workspaceId: workspace.id, sessionId: args.sessionId, expectedRunId: args.expectedRunId });
-        coordinator.markAborting({ workspaceId: workspace.id, sessionId: args.sessionId, runId });
-        await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(args.sessionId)}/abort`,
-          {},
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/${encodeURIComponent(args.expectedRunId)}/abort`,
+          { abortCommandCorrelationId: correlationId },
         );
-        coordinator.markTerminal({ workspaceId: workspace.id, sessionId: args.sessionId });
-        const result = { runId, abortRequested: true };
+        if (!response || typeof response !== "object" || !("run" in response) || !("abortRequested" in response) || response.abortRequested !== true ||
+            !coordinator.recordServerRun(response.run)) throw new TypeError("Invalid abort response.");
+        const recordedRun = /** @type {{ runId: string }} */ (response.run);
+        const result = { runId: recordedRun.runId, abortRequested: true };
         return desktopRemoteOperationResultSchema.parse({ operation: "session.abort", payloadVersion: 1, result }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
@@ -221,19 +245,16 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         throw new TypeError("Remote mutation arguments are invalid.");
       }
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), interactionId: String(value.interactionId), response: /** @type {"allow_once" | "reject"} */ (value.response) });
-    }, async ({ arguments: args }) => {
+    }, async ({ arguments: args, correlationId }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
-        // Map desktop schema to OpenCode: "allow_once" → "once", "reject" → "reject"
-        const opencodeReply = args.response === "allow_once" ? "once" : "reject";
-        await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/opencode/permission/${encodeURIComponent(args.interactionId)}/reply`,
-          { reply: opencodeReply },
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/permission/reply`,
+          { origin: "remote-control", commandCorrelationId: correlationId, response: args.response },
         );
-        const result = { interactionId: args.interactionId, status: "resolved" };
-        return desktopRemoteOperationResultSchema.parse({ operation: "interaction.permission.reply", payloadVersion: 1, result }).result;
+        return resolvedInteractionResult(response, args.interactionId, "interaction.permission.reply");
       } catch (error) {
-        mapClientError(error, "interaction_not_found");
+        mapInteractionClientError(error);
       }
     }),
     registration("interaction.question.reply", (value) => {
@@ -262,19 +283,16 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         interactionId: String(value.interactionId),
         answers: value.answers.map((/** @type {Record<string, unknown>} */ a) => ({ questionId: String(a.questionId), values: /** @type {string[]} */ (a.values) })),
       });
-    }, async ({ arguments: args }) => {
+    }, async ({ arguments: args, correlationId }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
-        // OpenCode question reply expects answers as string[][] (one per question)
-        const opencodeAnswers = args.answers.map((a) => a.values);
-        await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/opencode/question/${encodeURIComponent(args.interactionId)}/reply`,
-          { answers: opencodeAnswers },
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/question/reply`,
+          { origin: "remote-control", commandCorrelationId: correlationId, answers: args.answers },
         );
-        const result = { interactionId: args.interactionId, status: "resolved" };
-        return desktopRemoteOperationResultSchema.parse({ operation: "interaction.question.reply", payloadVersion: 1, result }).result;
+        return resolvedInteractionResult(response, args.interactionId, "interaction.question.reply");
       } catch (error) {
-        mapClientError(error, "interaction_not_found");
+        mapInteractionClientError(error);
       }
     }),
   ];

@@ -31,7 +31,7 @@ function isFiniteNumber(value) {
 }
 
 /** @param {unknown} raw @param {string} sessionId */
-function normalizePermissionInteraction(raw, sessionId) {
+export function normalizeRemotePermissionInteraction(raw, sessionId, now = Date.now()) {
   if (!raw || typeof raw !== "object") return null;
   const entry = /** @type {Record<string, unknown>} */ (raw);
   const id = typeof entry.id === "string" ? entry.id : "";
@@ -40,7 +40,6 @@ function normalizePermissionInteraction(raw, sessionId) {
   const action = isString(entry.action) ? entry.action : isString(entry.permission) ? entry.permission : "Permission required";
   const resources = Array.isArray(entry.resources) ? entry.resources.filter(isString) : Array.isArray(entry.patterns) ? entry.patterns.filter(isString) : [];
   const description = resources.length > 0 ? `${action}: ${resources.join(", ")}`.slice(0, 2000) : action.slice(0, 2000);
-  const now = Date.now();
   return {
     id,
     type: /** @type {"permission"} */ ("permission"),
@@ -57,7 +56,7 @@ function normalizePermissionInteraction(raw, sessionId) {
 }
 
 /** @param {unknown} raw @param {string} sessionId */
-function normalizeQuestionInteraction(raw, sessionId) {
+export function normalizeRemoteQuestionInteraction(raw, sessionId, now = Date.now()) {
   if (!raw || typeof raw !== "object") return null;
   const entry = /** @type {Record<string, unknown>} */ (raw);
   const id = typeof entry.id === "string" ? entry.id : "";
@@ -88,7 +87,6 @@ function normalizeQuestionInteraction(raw, sessionId) {
     }];
   });
   if (questions.length === 0) return null;
-  const now = Date.now();
   return {
     id,
     type: /** @type {"question"} */ ("question"),
@@ -134,7 +132,7 @@ export function createRemoteControlInteractionStore({ managedRuntimeClient }) {
             : Array.isArray(permRaw.value) ? permRaw.value : [];
         if (Array.isArray(items)) {
           for (const item of items) {
-            const normalized = normalizePermissionInteraction(item, sessionId);
+            const normalized = normalizeRemotePermissionInteraction(item, sessionId);
             if (normalized) interactions.push(normalized);
           }
         }
@@ -147,7 +145,7 @@ export function createRemoteControlInteractionStore({ managedRuntimeClient }) {
             : Array.isArray(questionRaw.value) ? questionRaw.value : [];
         if (Array.isArray(items)) {
           for (const item of items) {
-            const normalized = normalizeQuestionInteraction(item, sessionId);
+            const normalized = normalizeRemoteQuestionInteraction(item, sessionId);
             if (normalized) interactions.push(normalized);
           }
         }

@@ -4,9 +4,9 @@ export const REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION = 1;
 /** @typedef {"invalid_request" | "feature_disabled" | "policy_unavailable" | "forbidden" | "operation_unsupported" | "payload_version_unsupported" | "capability_not_advertised" | "workspace_not_found" | "session_not_found" | "session_busy" | "run_mismatch" | "interaction_not_found" | "interaction_expired" | "already_resolved" | "internal_error"} RemoteControlOperationErrorCode */
 /** @typedef {{ operation: string, payloadVersions: number[] }} RemoteControlOperationCapability */
 /** @typedef {{ schemaVersion: number, operations: RemoteControlOperationCapability[], features: string[] }} RemoteControlCapabilityAdvertisement */
-/** @typedef {{ schemaVersion: number, code: RemoteControlOperationErrorCode, message: string, retryable: boolean, correlationId: string | null }} RemoteControlOperationError */
+/** @typedef {{ schemaVersion: number, code: RemoteControlOperationErrorCode, message: string, retryable: boolean, correlationId: string | null, currentRunId?: string | null }} RemoteControlOperationError */
 /** @typedef {{ ok: boolean, value?: unknown, error?: RemoteControlOperationError }} RemoteControlOperationDispatchResult */
-/** @typedef {{ operation: string, payloadVersion: number, arguments: unknown, context: unknown }} RemoteControlOperationExecutionInput */
+/** @typedef {{ operation: string, payloadVersion: number, arguments: unknown, context: unknown, correlationId: string | null }} RemoteControlOperationExecutionInput */
 /**
  * @typedef {{
  *   operation: string,
@@ -73,13 +73,13 @@ const ERROR_DETAILS = Object.freeze({
 export class RemoteControlOperationExecutionError extends Error {
   /**
    * @param {string} code
-   * @param {{ currentRunId?: string } | undefined} [metadata]
+   * @param {{ currentRunId?: string | null } | undefined} [metadata]
    */
   constructor(code, metadata) {
     super("The remote operation failed.");
     this.name = "RemoteControlOperationExecutionError";
     this.code = code;
-    if (metadata && typeof metadata.currentRunId === "string") {
+    if (metadata && (typeof metadata.currentRunId === "string" || metadata.currentRunId === null)) {
       this.currentRunId = metadata.currentRunId;
     }
   }
@@ -100,7 +100,7 @@ function safeCorrelationId(value) {
 }
 
 /** @param {RemoteControlOperationErrorCode} code @param {unknown} correlationId @returns {RemoteControlOperationError} */
-function operationError(code, correlationId) {
+function operationError(code, correlationId, currentRunId = null) {
   const [message, retryable] = ERROR_DETAILS[code];
   return {
     schemaVersion: REMOTE_CONTROL_OPERATION_SCHEMA_VERSION,
@@ -108,6 +108,7 @@ function operationError(code, correlationId) {
     message,
     retryable,
     correlationId: safeCorrelationId(correlationId),
+    ...(code === "session_busy" || code === "run_mismatch" ? { currentRunId: safeCorrelationId(currentRunId) } : {}),
   };
 }
 
@@ -282,11 +283,12 @@ export function createRemoteControlOperationRegistry({
         payloadVersion: request.payloadVersion,
         arguments: validatedArguments,
         context,
+        correlationId: safeCorrelationId(correlationId),
       });
       return { ok: true, value };
     } catch (error) {
       if (error instanceof RemoteControlOperationExecutionError && Object.hasOwn(ERROR_DETAILS, error.code)) {
-        return rejected(/** @type {RemoteControlOperationErrorCode} */ (error.code), correlationId);
+        return { ok: false, error: operationError(/** @type {RemoteControlOperationErrorCode} */ (error.code), correlationId, error.currentRunId) };
       }
       return rejected("internal_error", correlationId);
     }

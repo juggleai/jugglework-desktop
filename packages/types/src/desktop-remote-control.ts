@@ -1077,6 +1077,19 @@ const deviceRevokedEnvelopeSchema = z
   })
   .strict()
 
+const sessionUnboundEnvelopeSchema = z
+  .object({
+    ...envelopeBaseShape,
+    type: z.literal("session.unbound"),
+    payload: z
+      .object({
+        controlSessionId: z.string().uuid(),
+        reason: z.enum(["closed", "expired", "not_found", "snapshot_required"]),
+      })
+      .strict(),
+  })
+  .strict()
+
 const protocolErrorEnvelopeSchema = z
   .object({
     ...envelopeBaseShape,
@@ -1131,6 +1144,7 @@ export const desktopRemoteWssEnvelopeSchema = z.discriminatedUnion("type", [
   commandLifecycleEnvelopeSchema,
   sessionEventEnvelopeSchema,
   deviceRevokedEnvelopeSchema,
+  sessionUnboundEnvelopeSchema,
   protocolErrorEnvelopeSchema,
   encryptedPayloadEnvelopeSchema,
 ])

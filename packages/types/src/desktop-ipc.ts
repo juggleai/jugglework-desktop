@@ -481,6 +481,8 @@ export type DesktopRemoteControlAgentStatus = {
   enrolled: boolean;
   revoked: boolean;
   localControlEnabled: boolean;
+  activeControlSessionCount: number;
+  controllerDisplayNames: string[];
   lifecycleGeneration: number;
   connectionGeneration: number | null;
   lastErrorCode: string | null;

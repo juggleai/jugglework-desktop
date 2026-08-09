@@ -52,13 +52,15 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
   enrolled: false,
   revoked: false,
   localControlEnabled: false,
+  activeControlSessionCount: 0,
+  controllerDisplayNames: [],
   lifecycleGeneration: 0,
   connectionGeneration: null,
   lastErrorCode: null,
 };
 
 function statusPresentation(status: DesktopRemoteControlAgentStatus) {
-  if (status.connected) return { label: "已在线", tone: "ready" as const };
+  if (status.connected) return { label: "传输已连接", tone: "ready" as const };
   if (status.state === "connecting" || status.state === "awaiting_welcome" || status.state === "backoff") {
     return { label: "连接中", tone: "warning" as const };
   }
@@ -66,6 +68,56 @@ function statusPresentation(status: DesktopRemoteControlAgentStatus) {
   if (status.enrolled) return { label: "已注册，当前离线", tone: "warning" as const };
   if (status.state === "error") return { label: "异常", tone: "error" as const };
   return { label: "未注册", tone: "neutral" as const };
+}
+
+type RemoteControlActivityIndicatorProps = {
+  status: DesktopRemoteControlAgentStatus;
+  busy: boolean;
+  onStopAll: () => void;
+};
+
+export function RemoteControlActivityIndicator({
+  status,
+  busy,
+  onStopAll,
+}: RemoteControlActivityIndicatorProps) {
+  if (status.activeControlSessionCount > 0) {
+    const controllers = status.controllerDisplayNames.join("、");
+    return (
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-xs"
+        data-testid="remote-control-active-indicator"
+        role="status"
+      >
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
+        <span className="font-medium text-green-700 dark:text-green-400">远程控制活跃中</span>
+        <span className="text-muted-foreground">
+          {status.activeControlSessionCount} 个控制会话
+          {controllers ? ` · 控制者：${controllers}` : ""}
+        </span>
+        <Button
+          className="ml-auto"
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={onStopAll}
+        >
+          全部停止远程控制
+        </Button>
+      </div>
+    );
+  }
+  if (!status.connected) return null;
+  return (
+    <div
+      className="flex items-center gap-2 rounded-xl border border-dls-border p-3 text-xs text-muted-foreground"
+      data-testid="remote-control-transport-connected"
+      role="status"
+    >
+      <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+      <span>传输已连接，当前没有活跃远程控制</span>
+    </div>
+  );
 }
 
 export function DesktopRemoteControlSection() {
@@ -244,17 +296,15 @@ export function DesktopRemoteControlSection() {
         <div className="grid grid-cols-2 gap-2 rounded-xl border border-dls-border p-3 text-xs text-muted-foreground md:grid-cols-4">
           <span>状态：{status.state}</span>
           <span>已注册：{status.enrolled ? "是" : "否"}</span>
-          <span>连接：{status.connected ? "✅ 在线" : "离线"}</span>
+          <span>连接：{status.connected ? "传输已连接" : "离线"}</span>
           <span>Generation：{status.connectionGeneration ?? "—"}</span>
         </div>
 
-        {status.connected ? (
-          <div className="flex items-center gap-2 rounded-xl bg-green-500/5 border border-green-500/20 p-3 text-xs">
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
-            <span className="text-green-600 dark:text-green-400">远程控制活跃中</span>
-            <span className="text-muted-foreground">Cloud 可发送只读和写操作到此 Desktop</span>
-          </div>
-        ) : null}
+        <RemoteControlActivityIndicator
+          status={status}
+          busy={busy}
+          onStopAll={() => void setEnabled(false)}
+        />
 
         <div className="flex items-center gap-4 rounded-xl border border-dls-border p-3">
           <label className="flex items-center gap-2 text-xs">
