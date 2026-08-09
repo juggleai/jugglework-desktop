@@ -342,9 +342,24 @@
 }
 
 /* Empty conversation surface */
-.jw-im-empty-surface { min-width: 0; background: var(--ui-surface); }
-.jw-im-empty-surface .tyn-chat-body { width: 100%; }
+.jw-im-empty-surface {
+  min-width: 0;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+.jw-im-empty-surface .tyn-chat-body,
+.jw-im-empty-surface .tyn-chat-none-box {
+  width: 100%;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  transition: color 160ms ease, background-color 160ms ease;
+}
 .jw-im-empty-surface .tyn-chat-none-bg { transform: translateY(-2px); }
+.jw-im-empty-surface .fontcolor-title { color: var(--ui-text); }
+.jw-im-empty-surface .fontcolor-second { color: var(--ui-text-secondary); }
+:host([data-theme="dark"]) .jw-im-empty-surface .blank-main-icon {
+  background-image: url("./snailchat-assets/images/blank-main-dark.png");
+}
 
 /* Active conversation */
 .jw-im-chat-surface {

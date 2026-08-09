@@ -24,11 +24,8 @@ import { isRecommendedModel } from "../../../../app/defaults";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { t } from "@/i18n";
 
-export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
-export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
-
 export function resolveModelPickerSubtitle(subtitle: string | undefined) {
-  return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE;
+  return subtitle ?? t("model_picker.default_subtitle");
 }
 
 export type ModelPickerModalProps = {
@@ -248,7 +245,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
         {/* Footer */}
         <DialogFooter className="shrink-0">
           <DialogClose render={<Button variant="outline" />}>
-            Done
+            {t("model_picker.done")}
           </DialogClose>
         </DialogFooter>
       </DialogContent>
@@ -294,7 +291,7 @@ function ProviderAccordion({
           <div className="min-w-0 flex-1">
             <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
             <span className="ml-2 text-[11px] text-dls-secondary">
-              {totalModels} model{totalModels === 1 ? "" : "s"}
+              {t("model_picker.model_count", { count: totalModels })}
             </span>
           </div>
           <span className="flex shrink-0 items-center gap-1.5">
@@ -319,9 +316,9 @@ function ProviderAccordion({
                 : "bg-green-3 text-green-11 hover:bg-green-4",
             ].join(" ")}
             onClick={(e) => { e.stopPropagation(); onToggleProvider?.(group.id, group.isDisabled); }}
-            title={group.isDisabled ? "Enable this provider" : "Disable this provider"}
+            title={group.isDisabled ? t("model_picker.enable_provider") : t("model_picker.disable_provider")}
           >
-            {group.isDisabled ? "Enable" : "Enabled"}
+            {group.isDisabled ? t("model_picker.enable") : t("model_picker.enabled")}
           </button>
         ) : null}
       </div>
@@ -332,7 +329,7 @@ function ProviderAccordion({
           {group.recommended.length > 0 ? (
             <>
               <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                Recommended
+                {t("model_picker.recommended")}
               </div>
               {group.recommended.map((opt) => (
                 <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
@@ -343,7 +340,7 @@ function ProviderAccordion({
             <>
               {group.recommended.length > 0 ? (
                 <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                  All models
+                  {t("model_picker.all_models")}
                 </div>
               ) : null}
               {group.other.map((opt) => (

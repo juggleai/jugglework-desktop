@@ -144,7 +144,7 @@ import {
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
-import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
+import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { SessionSearchDialog } from "./session-search-dialog";
@@ -2545,7 +2545,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
       query={modelPicker.query}
       setQuery={modelPicker.setQuery}
-      subtitle={selectedModelUnavailable ? MODEL_PICKER_UNAVAILABLE_SUBTITLE : undefined}
+      subtitle={selectedModelUnavailable ? t("model_picker.unavailable_subtitle") : undefined}
       target={modelPickerTargetSessionId ? "session" : "default"}
       current={resolveModelForSession(modelPickerTargetSessionId).model ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
       onSelect={(next: ModelRef) => {
