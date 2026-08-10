@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 
@@ -7,6 +8,15 @@ import {
   createRemoteControlAgent,
   normalizeRemoteControlAgentContext,
 } from "./remote-control-agent.mjs";
+import {
+  canonicalRemoteControlAAD,
+  decryptRemoteControlPayload,
+  deriveRemoteControlE2EEKey,
+  encryptRemoteControlPayload,
+  remoteControlE2EEKeyId,
+} from "./remote-control-e2ee.mjs";
+import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
+import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
 
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const COMMAND_ID = "22222222-2222-4222-8222-222222222222";
@@ -211,11 +221,14 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
   capabilities = readCapabilities,
+  operationRegistry: operationRegistryOverride = null,
+  e2eeKeyStore = null,
+  signingCredential = {},
   prepare = async () => ({ action: "execute", commandId: COMMAND_ID }),
   dispatch = async () => ({ ok: true, value: { workspaces: [] } }),
   tokenLifetime = 120_000,
@@ -247,10 +260,10 @@ function harness({
     read: async () => credential,
     prepareEnrollment: async () => ({}),
     completeEnrollment: async () => ({}),
-    getSigningCredential: async () => ({}),
+    getSigningCredential: async () => signingCredential,
     delete: async () => { deleteCalls += 1; credential = null; },
   };
-  const operationRegistry = {
+  const operationRegistry = operationRegistryOverride ?? {
     advertise: async () => JSON.parse(JSON.stringify(capabilities)),
     dispatch: async (request, /** @type {Record<string, any>} */ options) => {
       dispatchCalls.push({ request, options });
@@ -286,6 +299,7 @@ function harness({
   const agent = createRemoteControlAgent({
     settingsStore: { read: async () => ({ ...settings }) },
     credentialStore,
+    e2eeKeyStore,
     operationRegistry,
     commandJournal,
     createCloudClient,
@@ -689,6 +703,128 @@ describe("remote-control agent context and lifecycle", () => {
 });
 
 describe("remote-control agent command handling", () => {
+  it("dispatches encrypted session.create through the production registry after reconnect and key rotation", async () => {
+    const rawPublic = (key) => {
+      const jwk = key.export({ format: "jwk" });
+      return Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, "base64url"), Buffer.from(jwk.y, "base64url")]).toString("base64url");
+    };
+    const oldDesktop = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const currentDesktop = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const controller = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const signing = generateKeyPairSync("ed25519");
+    const signingPublicKey = signing.publicKey.export({ format: "jwk" }).x;
+    const signingCredential = {
+      deviceId: DEVICE_ID,
+      keyId: "55555555-5555-4555-8555-555555555555",
+      publicKey: signingPublicKey,
+      publicKeyFingerprint: createHash("sha256").update(Buffer.from(signingPublicKey, "base64url")).digest("hex"),
+      privateKey: signing.privateKey,
+    };
+    const oldDesktopPublic = rawPublic(oldDesktop.publicKey);
+    const currentDesktopPublic = rawPublic(currentDesktop.publicKey);
+    const controllerPublic = rawPublic(controller.publicKey);
+    const oldDesktopKeyId = remoteControlE2EEKeyId(oldDesktopPublic);
+    const currentDesktopKeyId = remoteControlE2EEKeyId(currentDesktopPublic);
+    const controllerKeyId = remoteControlE2EEKeyId(controllerPublic);
+    const oldAdvertisement = { keyId: oldDesktopKeyId, publicKey: oldDesktopPublic, algorithm: "P-256/HKDF-SHA-256/AES-256-GCM", createdAt: new Date(NOW - 1_000).toISOString() };
+    const currentAdvertisement = { keyId: currentDesktopKeyId, publicKey: currentDesktopPublic, algorithm: "P-256/HKDF-SHA-256/AES-256-GCM", createdAt: new Date(NOW).toISOString() };
+    const encryptedGates = { ...readGates, sessionMutation: true, payloadEncryption: true };
+    const calls = [];
+    const registrations = createRemoteControlMutationRegistrations({
+      workspaceStore: { readWorkspaceState: async () => ({ workspaces: [{ id: "ws_1", path: "/tmp/ws_1" }] }) },
+      managedRuntimeClient: {
+        getJson: async () => ({ items: [{ id: "ws_1", path: "/tmp/ws_1", workspaceType: "local" }] }),
+        postJson: async (pathname, body) => {
+          calls.push({ pathname, body });
+          return { item: { id: "ses_created", directory: "/tmp/ws_1" }, started: false };
+        },
+      },
+      coordinator: { recordServerRun: () => true, activeRuns: () => [] },
+    });
+    const registry = createRemoteControlOperationRegistry({
+      registrations,
+      getFeatureGates: (context) => /** @type {any} */ (context).featureGates,
+      isOperationAllowed: ({ context }) => /** @type {any} */ (context).policyFresh === true,
+      isPayloadEncryptionReady: () => true,
+    });
+    let activeCalls = 0;
+    const e2eeKeyStore = {
+      active: async () => (++activeCalls === 1 ? oldAdvertisement : currentAdvertisement),
+      advertisement: async (keyId) => {
+        if (keyId !== oldDesktopKeyId) throw new Error("unexpected retained key");
+        return oldAdvertisement;
+      },
+      privateKey: async (keyId) => {
+        if (keyId !== oldDesktopKeyId) throw new Error("unexpected retained key");
+        return oldDesktop.privateKey;
+      },
+      revokeAll: async () => {},
+    };
+    const fixture = harness({ operationRegistry: registry, e2eeKeyStore, signingCredential });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext({ featureGates: encryptedGates }));
+    const first = fixture.sockets[0];
+    first.open();
+    await settle();
+    const firstHello = frames(first, "device.hello")[0];
+    assert.ok(firstHello, `encrypted hello was not sent: ${JSON.stringify(fixture.agent.status())}`);
+    assert.equal(firstHello.payload.payloadEncryption.keyId, oldDesktopKeyId);
+    first.unexpectedClose();
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    const socket = fixture.sockets[1];
+    socket.open();
+    await settle();
+    socket.receive(welcome(78));
+    await settle();
+    assert.equal(frames(socket, "device.hello")[0].payload.payloadEncryption.keyId, currentDesktopKeyId);
+
+    const oldSignedAdvertisement = frames(first, "device.hello")[0].payload.payloadEncryption;
+    const inboundKey = deriveRemoteControlE2EEKey({
+      privateKey: controller.privateKey, peerPublicKey: oldDesktopPublic, controlSessionId: CONTROL_ID,
+      deviceId: DEVICE_ID, desktopKeyId: oldDesktopKeyId, desktopStatementHash: oldSignedAdvertisement.statementHash,
+      controllerKeyId, direction: "controller-to-desktop",
+    });
+    const request = { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "Encrypted session" } };
+    const routing = {
+      kind: "command", commandId: COMMAND_ID, controlSessionId: CONTROL_ID, deviceId: DEVICE_ID,
+      actor: { userId: "controller-1", displayName: "Controller" }, operation: "session.create",
+      workspaceId: "ws_1", sessionId: null, idempotencyKey: "create-encrypted-1", payloadHash: "",
+      createdAt: new Date(NOW).toISOString(), expiresAt: new Date(NOW + 30_000).toISOString(),
+      desktopKeyId: oldDesktopKeyId, desktopStatementHash: oldSignedAdvertisement.statementHash,
+      controllerKeyId, controllerPublicKey: controllerPublic,
+    };
+    const payload = encryptRemoteControlPayload({
+      key: inboundKey,
+      aad: canonicalRemoteControlAAD({
+        kind: "command", protocolVersion: 1, payloadVersion: 1, controlSessionId: CONTROL_ID, deviceId: DEVICE_ID,
+        operation: "session.create", workspaceId: "ws_1", sessionId: null, idempotencyKey: routing.idempotencyKey,
+        desktopKeyId: oldDesktopKeyId, desktopStatementHash: oldSignedAdvertisement.statementHash, controllerKeyId,
+      }),
+      value: request,
+    });
+    routing.payloadHash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    socket.receive({
+      protocolVersion: 1, payloadVersion: 1, messageId: MESSAGE_ID, sentAt: new Date(NOW).toISOString(),
+      encryption: { mode: "e2ee-v1", keyId: oldDesktopKeyId }, type: "encrypted.payload", routing, payload,
+    });
+    for (let index = 0; index < 4 && calls.length === 0; index += 1) await settle();
+    assert.deepEqual(calls, [{ pathname: "/workspace/ws_1/sessions", body: { title: "Encrypted session" } }]);
+    assert.deepEqual(frames(socket, "command.lifecycle").map((frame) => frame.payload.status), ["accepted", "running"]);
+    const terminal = frames(socket, "encrypted.payload").at(-1);
+    assert.equal(terminal.routing.status, "succeeded");
+    assert.equal(terminal.routing.desktopStatementHash, oldSignedAdvertisement.statementHash);
+    const outboundKey = deriveRemoteControlE2EEKey({
+      privateKey: controller.privateKey, peerPublicKey: oldDesktopPublic, controlSessionId: CONTROL_ID,
+      deviceId: DEVICE_ID, desktopKeyId: oldDesktopKeyId, desktopStatementHash: oldSignedAdvertisement.statementHash,
+      controllerKeyId, direction: "desktop-to-controller",
+    });
+    assert.deepEqual(decryptRemoteControlPayload({
+      key: outboundKey,
+      aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...terminal.routing }),
+      payload: terminal.payload,
+    }).result.result, { sessionId: "ses_created" });
+  });
+
   it("exposes only a bounded actor identity from a validated accepted session binding", async () => {
     const capabilities = /** @type {typeof readCapabilities} */ ({
       schemaVersion: 1,

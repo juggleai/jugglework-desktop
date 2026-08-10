@@ -1,6 +1,14 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 
 import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
+import {
+  canonicalRemoteControlAAD,
+  createSignedRemoteControlE2EEKeyAdvertisement,
+  decryptRemoteControlPayload,
+  deriveRemoteControlE2EEKey,
+  encryptRemoteControlPayload,
+} from "./remote-control-e2ee.mjs";
 
 export const REMOTE_CONTROL_AGENT_SCHEMA_VERSION = 1;
 export const REMOTE_CONTROL_AGENT_PROTOCOL_VERSION = 1;
@@ -39,6 +47,7 @@ const OPERATION_NAMES = new Set([
   "session.create",
   "session.prompt",
   "session.abort",
+  "session.pending.cancel",
   "interaction.permission.reply",
   "interaction.question.reply",
 ]);
@@ -54,6 +63,7 @@ const MUTATION_OPERATIONS = new Set([
   "session.create",
   "session.prompt",
   "session.abort",
+  "session.pending.cancel",
   "interaction.permission.reply",
   "interaction.question.reply",
 ]);
@@ -109,7 +119,7 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {keyof typeof ERROR_MESSAGES} RemoteControlErrorCode */
 /** @typedef {{ schemaVersion: 1, enrollment: boolean, readOnlyControl: boolean, sessionMutation: boolean, interactions: boolean, backgroundLifecycle: boolean, eventCompaction: boolean, multiInstanceRouting: boolean, payloadEncryption: boolean, busySessionSteer: boolean, busySessionEnqueue: boolean, nativeMobile: boolean }} RemoteControlFeatureGates */
 /** @typedef {{ schemaVersion: 1, signedIn: boolean, controlPlaneBaseUrl: string | null, userId: string | null, organizationId: string | null, policyFresh: boolean, featureGates: RemoteControlFeatureGates, policyVersion: string | null, validatedAt: string | null }} RemoteControlAgentContext */
-/** @typedef {{ schemaVersion: number, enabled: boolean, backgroundMode: boolean, launchAtLogin: boolean }} RemoteControlSettings */
+/** @typedef {{ schemaVersion: number, enabled: boolean, backgroundMode: boolean, launchAtLogin: boolean, allowBusySessionSteer: boolean, allowBusySessionEnqueue: boolean }} RemoteControlSettings */
 /** @typedef {{ schemaVersion: number, state: string, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, deviceId?: string }} RemoteControlCredentialView */
 /** @typedef {{ schemaVersion: number, operations: Array<{ operation: string, payloadVersions: number[] }>, features: string[] }} RemoteControlCapabilities */
 /** @typedef {{ status: string, occurredAt: string, result: unknown, error: unknown }} JournalLifecycle */
@@ -127,6 +137,7 @@ const ERROR_MESSAGES = Object.freeze({
  * @typedef {{
  *   settingsStore: RemoteControlSettingsStore,
  *   credentialStore: RemoteControlCredentialStore,
+ *   e2eeKeyStore?: { active(): Promise<{ keyId: string, publicKey: string, algorithm: string, createdAt: string }>, advertisement(keyId: string): Promise<{ keyId: string, publicKey: string, algorithm: string, createdAt: string }>, privateKey(keyId: string): Promise<unknown>, revokeAll(): Promise<void> },
  *   operationRegistry: RemoteControlOperationRegistry,
  *   commandJournal: RemoteControlCommandJournal,
  *   createCloudClient(controlPlaneBaseUrl: string): RemoteControlCloudClient,
@@ -392,6 +403,8 @@ function validRequest(value) {
       isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && args.prompt.length <= 200_000;
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
+    case "session.pending.cancel": return hasExactKeys(args, ["workspaceId", "sessionId", "pendingOperationId"]) &&
+      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && isIdentifier(args.pendingOperationId);
     case "interaction.permission.reply": return hasExactKeys(args, ["workspaceId", "sessionId", "interactionId", "response"]) &&
       isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && isIdentifier(args.interactionId) &&
       (args.response === "allow_once" || args.response === "reject");
@@ -418,6 +431,15 @@ function parseBaseEnvelope(value) {
     value.protocolVersion !== 1 || value.payloadVersion !== 1 || !UUID_PATTERN.test(value.messageId) || !isTimestamp(value.sentAt) ||
     !hasExactKeys(value.encryption, ["mode", "keyId"]) || value.encryption.mode !== "none" || value.encryption.keyId !== null ||
     typeof value.type !== "string") return null;
+  return value;
+}
+
+function parseEncryptedEnvelope(value) {
+  if (!hasExactKeys(value, ["protocolVersion", "payloadVersion", "messageId", "sentAt", "encryption", "type", "routing", "payload"]) ||
+      value.protocolVersion !== 1 || value.payloadVersion !== 1 || !UUID_PATTERN.test(value.messageId) || !isTimestamp(value.sentAt) ||
+      !hasExactKeys(value.encryption, ["mode", "keyId"]) || value.encryption.mode !== "e2ee-v1" || !isIdentifier(value.encryption.keyId) ||
+      value.type !== "encrypted.payload" || !isRecord(value.routing) || !hasExactKeys(value.payload, ["nonce", "ciphertext"]) ||
+      typeof value.payload.nonce !== "string" || typeof value.payload.ciphertext !== "string") return null;
   return value;
 }
 
@@ -504,6 +526,7 @@ export function createRemoteControlAgent(options) {
   const {
     settingsStore,
     credentialStore,
+    e2eeKeyStore = null,
     operationRegistry,
     commandJournal,
     createCloudClient,
@@ -526,6 +549,7 @@ export function createRemoteControlAgent(options) {
   } = options;
   if (!settingsStore || typeof settingsStore.read !== "function" || !credentialStore ||
     typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
+    !(e2eeKeyStore === null || (typeof e2eeKeyStore.active === "function" && typeof e2eeKeyStore.advertisement === "function" && typeof e2eeKeyStore.privateKey === "function" && typeof e2eeKeyStore.revokeAll === "function")) ||
     !operationRegistry || typeof operationRegistry.advertise !== "function" || typeof operationRegistry.dispatch !== "function" ||
     !commandJournal || typeof commandJournal.prepare !== "function" || typeof commandJournal.complete !== "function" ||
     typeof createCloudClient !== "function" || typeof createWebSocket !== "function" || typeof getDisplayName !== "function" ||
@@ -549,7 +573,7 @@ export function createRemoteControlAgent(options) {
   /** @type {RemoteControlAgentContext | null} */
   let context = null;
   /** @type {RemoteControlSettings} */
-  let settings = { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false };
+  let settings = { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
   /** @type {RemoteControlCredentialView | null} */
   let enrollment = null;
   /** @type {RemoteControlSocket | null} */
@@ -581,6 +605,8 @@ export function createRemoteControlAgent(options) {
   const inFlightCommands = new Map();
   /** @type {Map<string, string>} */
   const activeControlSessions = new Map();
+  const encryptedControlSessions = new Map();
+  let advertisedE2EEKey = null;
   let transportTransition = 0;
   let revocationTransition = 0;
 
@@ -732,6 +758,30 @@ export function createRemoteControlAgent(options) {
     };
   }
 
+  function encryptedEnvelope(routing, payload, keyId) {
+    return {
+      protocolVersion: 1,
+      payloadVersion: 1,
+      messageId: messageId(),
+      sentAt: timestamp().toISOString(),
+      encryption: { mode: "e2ee-v1", keyId },
+      type: "encrypted.payload",
+      routing,
+      payload,
+    };
+  }
+
+  function sendRaw(target, envelope) {
+    if (target !== socket) return false;
+    try {
+      target.send(JSON.stringify(envelope));
+      return true;
+    } catch {
+      transportFailed(target, "transport_send_failed");
+      return false;
+    }
+  }
+
   /** @param {RemoteControlSocket} target @param {string} type @param {unknown} payload */
   function send(target, type, payload) {
     if (target !== socket) return false;
@@ -747,6 +797,21 @@ export function createRemoteControlAgent(options) {
   /** @param {JournalLifecycle} lifecycle @param {string} commandId */
   function sendLifecycle(lifecycle, commandId) {
     if (!socket || !validWireLifecycle(lifecycle)) return false;
+    const session = [...encryptedControlSessions.values()].find((value) => value.commandIds.has(commandId));
+    if (session && TERMINAL_STATUSES.has(lifecycle.status)) {
+      const routing = {
+        kind: "command-result", commandId, controlSessionId: session.controlSessionId,
+        deviceId: enrollment.deviceId, operation: session.operations.get(commandId), status: lifecycle.status,
+        desktopKeyId: session.desktopKeyId, desktopStatementHash: session.desktopStatementHash,
+        controllerKeyId: session.controllerKeyId,
+      };
+      const payload = encryptRemoteControlPayload({
+        key: session.outboundKey,
+        aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...routing }),
+        value: { result: lifecycle.result, error: lifecycle.error },
+      });
+      return sendRaw(socket, encryptedEnvelope(routing, payload, session.desktopKeyId));
+    }
     return send(socket, "command.lifecycle", { commandId, ...lifecycle });
   }
 
@@ -780,6 +845,7 @@ export function createRemoteControlAgent(options) {
       activeRuns: activeRuns(),
       policyVersion: context.policyVersion,
       localControlEnabled: true,
+      ...(advertisedE2EEKey ? { payloadEncryption: advertisedE2EEKey } : {}),
     });
     if (target === socket) scheduleHeartbeat(target.__remoteHeartbeatSeconds ?? 30, target, generation);
   }
@@ -859,6 +925,84 @@ export function createRemoteControlAgent(options) {
   /** @param {unknown} value @param {RemoteControlSocket} target @param {number} generation */
   async function handleMessage(value, target, generation) {
     if (target !== socket) return;
+    const encrypted = parseEncryptedEnvelope(value);
+    if (encrypted) {
+      if (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null ||
+          !context?.featureGates.payloadEncryption || !advertisedCapabilities.features.includes("payload.e2ee-v1") ||
+          !e2eeKeyStore || !advertisedE2EEKey) {
+        protocolBlocked = true;
+        lastErrorCode = "encryption_required";
+        invalidateTransport();
+        state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
+        return;
+      }
+      const routing = encrypted.routing;
+      try {
+        if (!hasExactKeys(routing, ["kind", "commandId", "controlSessionId", "deviceId", "actor", "operation", "workspaceId", "sessionId", "idempotencyKey", "payloadHash", "createdAt", "expiresAt", "desktopKeyId", "desktopStatementHash", "controllerKeyId", "controllerPublicKey"]) ||
+            routing.kind !== "command" || routing.deviceId !== enrollment?.deviceId || encrypted.encryption.keyId !== routing.desktopKeyId ||
+            !UUID_PATTERN.test(routing.commandId ?? "") || !UUID_PATTERN.test(routing.controlSessionId ?? "") ||
+            !HASH_PATTERN.test(routing.desktopStatementHash ?? "") || !isIdentifier(routing.controllerKeyId) || !isIdentifier(routing.controllerPublicKey) ||
+            !OPERATION_NAMES.has(routing.operation) || !isIdentifier(routing.idempotencyKey) || !HASH_PATTERN.test(routing.payloadHash ?? "") ||
+            !isTimestamp(routing.createdAt) || !isTimestamp(routing.expiresAt) ||
+            !(routing.workspaceId === null || isIdentifier(routing.workspaceId)) || !(routing.sessionId === null || isIdentifier(routing.sessionId)) ||
+            !hasExactKeys(routing.actor, ["userId", "displayName"]) || !isIdentifier(routing.actor.userId) || !isDisplayText(routing.actor.displayName)) {
+          throw new Error("invalid routing");
+        }
+        let session = encryptedControlSessions.get(routing.controlSessionId);
+        if (!session) {
+          const [privateKey, advertisement, signingCredential] = await Promise.all([
+            e2eeKeyStore.privateKey(routing.desktopKeyId),
+            e2eeKeyStore.advertisement(routing.desktopKeyId),
+            credentialStore.getSigningCredential(credentialContext(/** @type {RemoteControlAgentContext} */ (context))),
+          ]);
+          const expected = createSignedRemoteControlE2EEKeyAdvertisement(advertisement, signingCredential);
+          if (expected.statementHash !== routing.desktopStatementHash) throw new Error("changed signed Desktop statement");
+          const binding = {
+            privateKey, peerPublicKey: routing.controllerPublicKey, controlSessionId: routing.controlSessionId,
+            deviceId: routing.deviceId, desktopKeyId: routing.desktopKeyId, desktopStatementHash: routing.desktopStatementHash,
+            controllerKeyId: routing.controllerKeyId,
+          };
+          session = {
+            controlSessionId: routing.controlSessionId, desktopKeyId: routing.desktopKeyId,
+            desktopStatementHash: routing.desktopStatementHash, controllerKeyId: routing.controllerKeyId,
+            controllerPublicKey: routing.controllerPublicKey,
+            inboundKey: deriveRemoteControlE2EEKey({ ...binding, direction: "controller-to-desktop" }),
+            outboundKey: deriveRemoteControlE2EEKey({ ...binding, direction: "desktop-to-controller" }),
+            commandIds: new Set(), operations: new Map(),
+          };
+          encryptedControlSessions.set(routing.controlSessionId, session);
+        } else if (session.desktopKeyId !== routing.desktopKeyId || session.desktopStatementHash !== routing.desktopStatementHash ||
+                   session.controllerKeyId !== routing.controllerKeyId || session.controllerPublicKey !== routing.controllerPublicKey) {
+          throw new Error("changed encryption binding");
+        }
+        const aad = canonicalRemoteControlAAD({
+          kind: "command", protocolVersion: 1, payloadVersion: 1, controlSessionId: routing.controlSessionId,
+          deviceId: routing.deviceId, operation: routing.operation, workspaceId: routing.workspaceId,
+          sessionId: routing.sessionId, idempotencyKey: routing.idempotencyKey, desktopKeyId: routing.desktopKeyId,
+          desktopStatementHash: routing.desktopStatementHash, controllerKeyId: routing.controllerKeyId,
+        });
+        const request = decryptRemoteControlPayload({ key: session.inboundKey, aad, payload: encrypted.payload });
+        const command = {
+          schemaVersion: 1, commandId: routing.commandId, controlSessionId: routing.controlSessionId,
+          deviceId: routing.deviceId, actor: routing.actor, request, idempotencyKey: routing.idempotencyKey,
+          payloadHash: routing.payloadHash, createdAt: routing.createdAt, expiresAt: routing.expiresAt,
+        };
+        if (!validCommandEnvelope(baseEnvelope("command.deliver", command), enrollment?.deviceId ?? "") ||
+            (routing.workspaceId ?? null) !== (request.arguments.workspaceId ?? null) ||
+            (routing.sessionId ?? null) !== (request.arguments.sessionId ?? null) ||
+            createHash("sha256").update(JSON.stringify(encrypted.payload)).digest("hex") !== routing.payloadHash ||
+            !capabilityAdvertised(advertisedCapabilities, request)) throw new Error("invalid decrypted command");
+        session.commandIds.add(command.commandId);
+        session.operations.set(command.commandId, request.operation);
+        await acceptCommand(command, generation, connectionGeneration);
+      } catch {
+        protocolBlocked = true;
+        lastErrorCode = "encrypted_payload_invalid";
+        invalidateTransport();
+        state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
+      }
+      return;
+    }
     const envelope = parseBaseEnvelope(value);
     if (!envelope) {
       protocolBlocked = true;
@@ -880,6 +1024,13 @@ export function createRemoteControlAgent(options) {
       return;
     }
     if (generation !== lifecycleGeneration) return;
+    if (context?.featureGates.payloadEncryption && envelope.type === "connection.welcome" && !advertisedE2EEKey) {
+      protocolBlocked = true;
+      lastErrorCode = "encryption_negotiation_failed";
+      invalidateTransport();
+      state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
+      return;
+    }
     if (envelope.type === "connection.welcome") {
       const payload = envelope.payload;
       if (!hasExactKeys(payload, ["deviceId", "connectionGeneration", "heartbeatSeconds", "staleSeconds", "offlineSeconds"]) ||
@@ -917,11 +1068,13 @@ export function createRemoteControlAgent(options) {
       localDisabledLatch = true;
       lastErrorCode = "device_revoked";
       activeControlSessions.clear();
+      encryptedControlSessions.clear();
       invalidateTransport();
       if (changed) notifyControlRevoked("cloud");
       enrollment = null;
       state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
       try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+      try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
       return;
     }
     if (envelope.type === "session.unbound") {
@@ -938,6 +1091,7 @@ export function createRemoteControlAgent(options) {
         });
       } catch {}
       activeControlSessions.delete(envelope.payload.controlSessionId);
+      encryptedControlSessions.delete(envelope.payload.controlSessionId);
       return;
     }
     if (envelope.type === "protocol.error") {
@@ -951,11 +1105,13 @@ export function createRemoteControlAgent(options) {
           revoked = true;
           localDisabledLatch = true;
           activeControlSessions.clear();
+          encryptedControlSessions.clear();
           invalidateTransport();
           if (changed) notifyControlRevoked("cloud");
           enrollment = null;
           state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
           try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+          try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
           return;
         }
         protocolBlocked = envelope.payload.retryable !== true;
@@ -967,6 +1123,13 @@ export function createRemoteControlAgent(options) {
       return;
     }
     if (envelope.type === "command.deliver") {
+      if (context?.featureGates.payloadEncryption) {
+        protocolBlocked = true;
+        lastErrorCode = "encryption_downgrade";
+        invalidateTransport();
+        state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
+        return;
+      }
       if (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null) return;
       if (!validCommandEnvelope(envelope, enrollment?.deviceId ?? "")) {
         const rejected = rejectedCommandEnvelope(envelope, enrollment?.deviceId ?? "");
@@ -989,31 +1152,27 @@ export function createRemoteControlAgent(options) {
         }, envelope.payload.commandId);
         return;
       }
-      const args = envelope.payload.request.arguments;
-      if (isIdentifier(args.workspaceId) && isIdentifier(args.sessionId)) {
-        try {
-          const accepted = onSessionBinding?.({
-            controlSessionId: envelope.payload.controlSessionId,
-            deviceId: envelope.payload.deviceId,
-            workspaceId: args.workspaceId,
-            sessionId: args.sessionId,
-            connectionGeneration,
-          });
-          if (accepted !== false) {
-            activeControlSessions.set(
-              envelope.payload.controlSessionId,
-              boundedControllerDisplayName(envelope.payload.actor.displayName),
-            );
-          }
-        } catch {}
-      }
-      void handleCommand(envelope.payload, generation);
+      void acceptCommand(envelope.payload, generation, connectionGeneration);
       return;
     }
     protocolBlocked = true;
     lastErrorCode = "unexpected_message_type";
     invalidateTransport();
     state = REMOTE_CONTROL_AGENT_STATUS.ERROR;
+  }
+
+  async function acceptCommand(command, generation, activeGeneration) {
+    const args = command.request.arguments;
+    if (isIdentifier(args.workspaceId) && isIdentifier(args.sessionId)) {
+      try {
+        const accepted = onSessionBinding?.({
+          controlSessionId: command.controlSessionId, deviceId: command.deviceId,
+          workspaceId: args.workspaceId, sessionId: args.sessionId, connectionGeneration: activeGeneration,
+        });
+        if (accepted !== false) activeControlSessions.set(command.controlSessionId, boundedControllerDisplayName(command.actor.displayName));
+      } catch {}
+    }
+    await handleCommand(command, generation);
   }
 
   /** @param {Record<string, any>} command @param {number} generation */
@@ -1146,6 +1305,23 @@ export function createRemoteControlAgent(options) {
         return;
       }
       advertisedCapabilities = capabilities;
+      advertisedE2EEKey = null;
+      if (context.featureGates.payloadEncryption) {
+        if (!capabilities.features.includes("payload.e2ee-v1") || !e2eeKeyStore) {
+          transportFailed(target, "encryption_unavailable");
+          return;
+        }
+        try {
+          const [advertisement, signingCredential] = await Promise.all([
+            e2eeKeyStore.active(),
+            credentialStore.getSigningCredential(credentialContext(/** @type {RemoteControlAgentContext} */ (context))),
+          ]);
+          advertisedE2EEKey = createSignedRemoteControlE2EEKeyAdvertisement(advertisement, signingCredential);
+        } catch {
+          transportFailed(target, "encryption_key_unavailable");
+          return;
+        }
+      }
       provisionalGeneration += 1;
       send(target, "device.hello", {
         deviceId: enrollment.deviceId,
@@ -1155,6 +1331,7 @@ export function createRemoteControlAgent(options) {
         activeRuns: activeRuns(),
         policyVersion: context.policyVersion,
         localControlEnabled: true,
+        ...(advertisedE2EEKey ? { payloadEncryption: advertisedE2EEKey } : {}),
       });
       state = REMOTE_CONTROL_AGENT_STATUS.AWAITING_WELCOME;
       scheduleTokenRefresh(expiresAt, target, generation);
@@ -1266,9 +1443,16 @@ export function createRemoteControlAgent(options) {
     let next;
     try { next = await settingsStore.read(); } catch { next = null; }
     if (generation !== lifecycleGeneration && !started) return status();
-    const valid = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin"]) && next.schemaVersion === 1 &&
-      typeof next.enabled === "boolean" && typeof next.backgroundMode === "boolean" && typeof next.launchAtLogin === "boolean";
-    settings = valid ? { ...next } : { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false };
+    const legacy = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin"]);
+    const current = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"]);
+    const valid = (legacy || current) && next.schemaVersion === 1 && typeof next.enabled === "boolean" &&
+      typeof next.backgroundMode === "boolean" && typeof next.launchAtLogin === "boolean" &&
+      (!current || (typeof next.allowBusySessionSteer === "boolean" && typeof next.allowBusySessionEnqueue === "boolean"));
+    settings = valid ? {
+      ...next,
+      allowBusySessionSteer: current ? next.allowBusySessionSteer : false,
+      allowBusySessionEnqueue: current ? next.allowBusySessionEnqueue : false,
+    } : { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
     if (!settings.enabled) localDisabledLatch = false;
     if (!settings.enabled) invalidateTransport();
     await reconcile();
@@ -1299,6 +1483,7 @@ export function createRemoteControlAgent(options) {
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
       invalidateTransport();
+      encryptedControlSessions.clear();
       enrollment = null;
       revoked = false;
       protocolBlocked = false;
@@ -1344,6 +1529,7 @@ export function createRemoteControlAgent(options) {
     const changed = !localDisabledLatch;
     localDisabledLatch = true;
     activeControlSessions.clear();
+    encryptedControlSessions.clear();
     notifyTransportReset();
     lifecycleGeneration += 1;
     connectionAttempt += 1;
@@ -1380,9 +1566,11 @@ export function createRemoteControlAgent(options) {
   /** Stops transport synchronously before deleting the platform-protected key. */
   async function deleteCredential() {
     invalidateTransport();
+    encryptedControlSessions.clear();
     enrollment = null;
     revoked = false;
     await credentialStore.delete();
+    await e2eeKeyStore?.revokeAll();
     state = started ? REMOTE_CONTROL_AGENT_STATUS.UNENROLLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
     return status();
   }
@@ -1392,6 +1580,7 @@ export function createRemoteControlAgent(options) {
     if (!started && socket === null && reconnectTimer === null && heartbeatTimer === null && tokenRefreshTimer === null) return status();
     started = false;
     activeControlSessions.clear();
+    encryptedControlSessions.clear();
     invalidateTransport();
     state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
     return status();
@@ -1402,6 +1591,24 @@ export function createRemoteControlAgent(options) {
     const parsed = desktopRemoteSessionEventSchema.safeParse(event);
     if (!parsed.success || !socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null ||
         options.connectionGeneration !== connectionGeneration || parsed.data.deviceId !== enrollment?.deviceId) return false;
+    if (context?.featureGates.payloadEncryption) {
+      const session = encryptedControlSessions.get(parsed.data.controlSessionId);
+      if (!session) return false;
+      const occurredAt = new Date(parsed.data.occurredAt).toISOString();
+      const routing = {
+        kind: "session-event", eventId: parsed.data.eventId, controlSessionId: parsed.data.controlSessionId,
+        deviceId: parsed.data.deviceId, workspaceId: parsed.data.workspaceId, sessionId: parsed.data.sessionId,
+        sourceSequence: parsed.data.sequence, eventType: parsed.data.data.type, occurredAt,
+        desktopKeyId: session.desktopKeyId, desktopStatementHash: session.desktopStatementHash,
+        controllerKeyId: session.controllerKeyId,
+      };
+      const payload = encryptRemoteControlPayload({
+        key: session.outboundKey,
+        aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...routing }),
+        value: parsed.data.data,
+      });
+      return sendRaw(socket, encryptedEnvelope(routing, payload, session.desktopKeyId));
+    }
     return send(socket, "session.event", parsed.data);
   }
 

@@ -10,6 +10,8 @@ import {
   desktopRemoteOperationRequestSchema,
   desktopRemoteOperationResultSchema,
   desktopRemoteCommandDeliverySchema,
+  desktopRemoteControlSessionSchema,
+  desktopRemoteDeviceSchema,
   desktopRemoteMutationOperationValues,
   desktopRemoteWssEnvelopeSchema,
   isDesktopRemoteOperationEnabled,
@@ -201,6 +203,75 @@ describe("desktop remote-control contracts", () => {
     assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...envelope, payload: { ...envelope.payload, extra: true } }).success, false)
   })
 
+  test("accepts exact encrypted command, result, and source-sequenced event routing", () => {
+    const desktopKeyId = `p256:${"A".repeat(43)}`
+    const controllerKeyId = `p256:${"B".repeat(42)}A`
+    const desktopStatementHash = "a".repeat(64)
+    const base = {
+      protocolVersion: 1,
+      payloadVersion: 1,
+      messageId: "7398fb8c-7b8c-4ec0-a822-2d52aa621275",
+      sentAt: "2026-08-08T12:00:00.000Z",
+      encryption: { mode: "e2ee-v1", keyId: desktopKeyId },
+      type: "encrypted.payload",
+      payload: { nonce: "AAECAwQFBgcICQoL", ciphertext: "AAAAAAAAAAAAAAAAAAAAAAA" },
+    } as const
+    const commandRouting = {
+      kind: "command", commandId: "d75f8dfa-e73b-491f-95bc-e5316cdbdd41",
+      controlSessionId: "476bf830-e98b-408f-9517-503de904fe01", deviceId: "abf98cef-fac7-486d-af73-f81c2bfa070d",
+      actor: { userId: "user-1", displayName: "Test User" }, operation: "session.create",
+      workspaceId: "workspace-1", sessionId: null, idempotencyKey: "create-1", payloadHash: "b".repeat(64),
+      createdAt: "2026-08-08T12:00:00.000Z", expiresAt: "2026-08-08T12:00:30.000Z",
+      desktopKeyId, desktopStatementHash, controllerKeyId, controllerPublicKey: `BA${"A".repeat(85)}`,
+    } as const
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...base, routing: commandRouting }).success, true)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...base, routing: {
+      kind: "command-result", commandId: commandRouting.commandId, controlSessionId: commandRouting.controlSessionId,
+      deviceId: commandRouting.deviceId, operation: "session.create", status: "succeeded",
+      desktopKeyId, desktopStatementHash, controllerKeyId,
+    } }).success, true)
+    const event = { ...base, routing: {
+      kind: "session-event", eventId: "dcaa5db8-3c66-4d04-bbc1-fb685c208049", controlSessionId: commandRouting.controlSessionId,
+      deviceId: commandRouting.deviceId, workspaceId: "workspace-1", sessionId: "session-1", sourceSequence: 7,
+      eventType: "todos.replace", occurredAt: "2026-08-08T12:00:00.123Z", desktopKeyId, desktopStatementHash, controllerKeyId,
+    } }
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse(event).success, true)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...event, routing: { ...event.routing, sequence: 7 } }).success, false)
+    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...base, encryption: { mode: "e2ee-v1", keyId: controllerKeyId }, routing: commandRouting }).success, false)
+  })
+
+  test("shares one strict signed Desktop key statement shape across device and control-session contracts", () => {
+    const signedStatement = "jugglework.desktop-remote.e2ee-key-advertisement.v1\nstatement"
+    const signingIdentity = {
+      algorithm: "Ed25519", keyId: "11111111-1111-4111-8111-111111111111",
+      publicKey: "A".repeat(43), fingerprint: "a".repeat(64),
+    } as const
+    const payloadEncryption = {
+      mode: "e2ee-v1", keyId: `p256:${"A".repeat(43)}`, publicKey: `BA${"A".repeat(85)}`,
+      algorithm: "P-256/HKDF-SHA-256/AES-256-GCM", createdAt: "2026-08-08T12:00:00.000Z",
+      signedStatement, statementHash: "b".repeat(64), signature: "A".repeat(86), signingIdentity,
+    } as const
+    const device = {
+      schemaVersion: 1, id: "abf98cef-fac7-486d-af73-f81c2bfa070d", ownerUserId: "user-1", organizationId: "org-1",
+      displayName: "Desktop", platform: "darwin", appVersion: "1.2.0", protocolVersion: 1,
+      enrollmentStatus: "enrolled", presence: "online", localControlEnabled: true,
+      capabilities: { schemaVersion: 1, operations: [], features: ["payload.e2ee-v1"] }, activeRuns: [], connectionGeneration: 7,
+      payloadEncryption, enrolledAt: "2026-08-08T12:00:00.000Z", lastSeenAt: "2026-08-08T12:00:00.000Z", revokedAt: null,
+    } as const
+    assert.equal(desktopRemoteDeviceSchema.safeParse(device).success, true)
+    assert.equal(desktopRemoteControlSessionSchema.safeParse({
+      schemaVersion: 1, id: "476bf830-e98b-408f-9517-503de904fe01", actor: { userId: "user-1", displayName: "Test User" },
+      deviceId: device.id, workspaceId: "workspace-1", sessionId: null, mode: "view", status: "active",
+      createdAt: device.enrolledAt, lastActiveAt: device.enrolledAt, expiresAt: "2026-08-08T12:02:00.000Z", closedAt: null,
+      payloadEncryption: {
+        mode: "e2ee-v1", desktopKeyId: payloadEncryption.keyId, desktopPublicKey: payloadEncryption.publicKey,
+        desktopStatementHash: payloadEncryption.statementHash, desktopSignedStatement: payloadEncryption.signedStatement,
+        desktopSignature: payloadEncryption.signature, desktopSigningIdentity: payloadEncryption.signingIdentity,
+        controllerKeyId: `p256:${"B".repeat(42)}A`,
+      },
+    }).success, true)
+  })
+
   test("rejects operations not advertised by the target device", () => {
     const unadvertisedRequest = {
       operation: "session.snapshot",
@@ -222,7 +293,7 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
-  test("rejects persistent permission and queue-like argument expansion", () => {
+  test("rejects persistent permission and unsupported busy-session expansion", () => {
     assert.equal(
       desktopRemoteOperationRequestSchema.safeParse({
         operation: "interaction.permission.reply",
@@ -244,11 +315,18 @@ describe("desktop remote-control contracts", () => {
           workspaceId: "workspace-1",
           sessionId: "session-1",
           prompt: "Continue",
-          whenBusy: "enqueue",
+          whenBusy: "later",
         },
       }).success,
       false,
     )
+    for (const whenBusy of ["reject", "steer", "enqueue"] as const) {
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+        operation: "session.prompt",
+        payloadVersion: 1,
+        arguments: { workspaceId: "workspace-1", sessionId: "session-1", prompt: "Continue", whenBusy },
+      }).success, true)
+    }
   })
 
   test("accepts only strict bounded session.create requests and results", () => {

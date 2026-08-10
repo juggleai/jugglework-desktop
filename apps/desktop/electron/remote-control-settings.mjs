@@ -10,6 +10,8 @@ export const disabledRemoteControlSettings = Object.freeze({
   enabled: false,
   backgroundMode: false,
   launchAtLogin: false,
+  allowBusySessionSteer: false,
+  allowBusySessionEnqueue: false,
 });
 
 /** @returns {import("@jugglework/types/desktop-ipc").DesktopRemoteControlSettings} */
@@ -21,13 +23,15 @@ export function normalizeRemoteControlSettings(value) {
     return { ...disabledRemoteControlSettings };
   }
   const keys = Object.keys(value);
-  if (keys.some((key) => !["schemaVersion", "enabled", "backgroundMode", "launchAtLogin"].includes(key))) {
+  if (keys.some((key) => !["schemaVersion", "enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key))) {
     return { ...disabledRemoteControlSettings };
   }
   if (
     typeof value.enabled !== "boolean" ||
     typeof value.backgroundMode !== "boolean" ||
-    typeof value.launchAtLogin !== "boolean"
+    typeof value.launchAtLogin !== "boolean" ||
+    typeof value.allowBusySessionSteer !== "boolean" ||
+    typeof value.allowBusySessionEnqueue !== "boolean"
   ) {
     return { ...disabledRemoteControlSettings };
   }
@@ -36,6 +40,8 @@ export function normalizeRemoteControlSettings(value) {
     enabled: value.enabled,
     backgroundMode: value.enabled && value.backgroundMode,
     launchAtLogin: value.enabled && value.launchAtLogin,
+    allowBusySessionSteer: value.enabled && value.allowBusySessionSteer,
+    allowBusySessionEnqueue: value.enabled && value.allowBusySessionEnqueue,
   };
 }
 
@@ -128,7 +134,7 @@ export function createRemoteControlSettingsStore({ app, filePath, fileSystem = {
 
   async function update(input) {
     const record = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-    if (Object.keys(record).some((key) => !["enabled", "backgroundMode", "launchAtLogin"].includes(key)) ||
+    if (Object.keys(record).some((key) => !["enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key)) ||
       Object.values(record).some((value) => typeof value !== "boolean")) {
       throw new TypeError("Remote-control settings update is invalid.");
     }
@@ -141,6 +147,10 @@ export function createRemoteControlSettingsStore({ app, filePath, fileSystem = {
           typeof record.backgroundMode === "boolean" ? record.backgroundMode : previous.backgroundMode,
         launchAtLogin:
           typeof record.launchAtLogin === "boolean" ? record.launchAtLogin : previous.launchAtLogin,
+        allowBusySessionSteer:
+          typeof record.allowBusySessionSteer === "boolean" ? record.allowBusySessionSteer : previous.allowBusySessionSteer,
+        allowBusySessionEnqueue:
+          typeof record.allowBusySessionEnqueue === "boolean" ? record.allowBusySessionEnqueue : previous.allowBusySessionEnqueue,
       });
     });
   }

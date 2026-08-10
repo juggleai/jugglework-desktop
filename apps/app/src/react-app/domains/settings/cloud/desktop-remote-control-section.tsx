@@ -42,6 +42,8 @@ const disabledSettings: DesktopRemoteControlSettings = {
   enabled: false,
   backgroundMode: false,
   launchAtLogin: false,
+  allowBusySessionSteer: false,
+  allowBusySessionEnqueue: false,
 };
 
 const stoppedStatus: DesktopRemoteControlAgentStatus = {
@@ -168,7 +170,7 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const setSetting = async (key: "backgroundMode" | "launchAtLogin", value: boolean) => {
+  const setSetting = async (key: "backgroundMode" | "launchAtLogin" | "allowBusySessionSteer" | "allowBusySessionEnqueue", value: boolean) => {
     setBusy(true);
     setError(null);
     try {
@@ -325,6 +327,29 @@ export function DesktopRemoteControlSection() {
             />
             <span>开机自动启动</span>
           </label>
+        </div>
+        <div className="flex flex-col gap-3 rounded-xl border border-dls-border p-3">
+          <p className="text-xs text-muted-foreground">运行中会话能力默认关闭，需要 Cloud 策略和本机授权同时允许。</p>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-xs">
+              <Switch
+                checked={settings.allowBusySessionSteer}
+                disabled={busy || !settings.enabled || gates.busySessionSteer !== true}
+                onCheckedChange={(checked) => void setSetting("allowBusySessionSteer", checked)}
+                aria-label="允许远程 steer 运行中会话"
+              />
+              <span>允许远程 steer</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs">
+              <Switch
+                checked={settings.allowBusySessionEnqueue}
+                disabled={busy || !settings.enabled || gates.busySessionEnqueue !== true}
+                onCheckedChange={(checked) => void setSetting("allowBusySessionEnqueue", checked)}
+                aria-label="允许远程持久排队"
+              />
+              <span>允许远程排队</span>
+            </label>
+          </div>
         </div>
       </SettingsSection>
 

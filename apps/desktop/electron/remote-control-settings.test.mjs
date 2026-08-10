@@ -41,9 +41,29 @@ test("remote-control settings persist explicit local enablement atomically", asy
     enabled: true,
     backgroundMode: true,
     launchAtLogin: false,
+    allowBusySessionSteer: false,
+    allowBusySessionEnqueue: false,
   });
   assert.deepEqual(JSON.parse(await readFile(filePath, "utf8")), await store.read());
   assert.deepEqual(await store.disable(), disabledRemoteControlSettings);
+});
+
+test("busy-session policies are independent, explicit, and default false", async () => {
+  const { store } = await isolatedStore();
+  await store.update({ enabled: true, allowBusySessionSteer: true });
+  assert.deepEqual(await store.read(), {
+    schemaVersion: 1,
+    enabled: true,
+    backgroundMode: false,
+    launchAtLogin: false,
+    allowBusySessionSteer: true,
+    allowBusySessionEnqueue: false,
+  });
+  await store.update({ allowBusySessionEnqueue: true, allowBusySessionSteer: false });
+  assert.equal((await store.read()).allowBusySessionSteer, false);
+  assert.equal((await store.read()).allowBusySessionEnqueue, true);
+  await store.update({ enabled: false });
+  assert.deepEqual(await store.read(), disabledRemoteControlSettings);
 });
 
 test("failed settings writes fail closed in memory", async () => {

@@ -16,7 +16,7 @@ export const REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION = 1;
  *   execute(input: RemoteControlOperationExecutionInput): unknown | Promise<unknown>
  * }} RemoteControlOperationRegistration
  */
-/** @typedef {{ registrations?: RemoteControlOperationRegistration[], getFeatureGates?: (context: unknown) => unknown | Promise<unknown>, isOperationAllowed?: (input: { operation: string, context: unknown }) => boolean | Promise<boolean> }} RemoteControlOperationRegistryOptions */
+/** @typedef {{ registrations?: RemoteControlOperationRegistration[], getFeatureGates?: (context: unknown) => unknown | Promise<unknown>, isOperationAllowed?: (input: { operation: string, context: unknown }) => boolean | Promise<boolean>, isPayloadEncryptionReady?: (context: unknown) => boolean | Promise<boolean>, getBusySessionPolicy?: (context: unknown) => { steer: boolean, enqueue: boolean } | Promise<{ steer: boolean, enqueue: boolean }> }} RemoteControlOperationRegistryOptions */
 /** @typedef {{ advertisedCapabilities?: unknown, context?: unknown, correlationId?: unknown }} RemoteControlOperationDispatchOptions */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilityAdvertisement>, dispatch(request: unknown, options?: RemoteControlOperationDispatchOptions): Promise<RemoteControlOperationDispatchResult> }} RemoteControlOperationRegistry */
 
@@ -28,6 +28,7 @@ const OPERATION_DEFINITIONS = [
   ["session.create", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.prompt", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.abort", ["enrollment", "readOnlyControl", "sessionMutation"]],
+  ["session.pending.cancel", ["enrollment", "readOnlyControl", "sessionMutation"]],
   [
     "interaction.permission.reply",
     ["enrollment", "readOnlyControl", "sessionMutation", "interactions"],
@@ -182,11 +183,13 @@ export function createRemoteControlOperationRegistry({
   registrations = [],
   getFeatureGates = () => ({}),
   isOperationAllowed = () => false,
+  isPayloadEncryptionReady = () => false,
+  getBusySessionPolicy = () => ({ steer: false, enqueue: false }),
 } = {}) {
   if (!Array.isArray(registrations)) {
     throw new TypeError("Remote operation registrations must be an array.");
   }
-  if (typeof getFeatureGates !== "function" || typeof isOperationAllowed !== "function") {
+  if (typeof getFeatureGates !== "function" || typeof isOperationAllowed !== "function" || typeof isPayloadEncryptionReady !== "function" || typeof getBusySessionPolicy !== "function") {
     throw new TypeError("Remote operation policy dependencies must be functions.");
   }
 
@@ -209,6 +212,23 @@ export function createRemoteControlOperationRegistry({
       gates = null;
     }
 
+    let payloadEncryptionReady = false;
+    if (isRecord(gates) && gates.payloadEncryption === true) {
+      try {
+        payloadEncryptionReady = await isPayloadEncryptionReady(context) === true;
+      } catch {}
+    }
+    let busyPolicy = { steer: false, enqueue: false };
+    try {
+      const value = await getBusySessionPolicy(context);
+      if (isRecord(value)) busyPolicy = { steer: value.steer === true, enqueue: value.enqueue === true };
+    } catch {}
+    const mutationEnabled = isRecord(gates) && gates.enrollment === true && gates.readOnlyControl === true && gates.sessionMutation === true;
+    const features = [];
+    if (payloadEncryptionReady) features.push("payload.e2ee-v1");
+    if (mutationEnabled && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
+    if (mutationEnabled && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
+
     return {
       schemaVersion: REMOTE_CONTROL_OPERATION_SCHEMA_VERSION,
       operations: REMOTE_CONTROL_OPERATION_NAMES.flatMap((operation) => {
@@ -217,7 +237,7 @@ export function createRemoteControlOperationRegistry({
           ? [{ operation, payloadVersions: [...registration.payloadVersions] }]
           : [];
       }),
-      features: [],
+      features,
     };
   }
 

@@ -50,6 +50,7 @@ import { createRemoteControlInteractionStore } from "./remote-control-interactio
 import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
 import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
 import { createRemoteControlAgent } from "./remote-control-agent.mjs";
+import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
@@ -1054,14 +1055,28 @@ function createMainRemoteControlAgent() {
     platform: normalizePlatform(process.platform),
     allowInsecureLoopback: isDevMode,
   });
+  const e2eeKeyStore = createRemoteControlE2EEKeyStore({
+    app,
+    safeStorage,
+    platform: normalizePlatform(process.platform),
+  });
   const operationRegistry = createRemoteControlOperationRegistry({
     registrations: [...remoteControlReadRegistrations, ...remoteControlMutationRegistrations],
     getFeatureGates: (context) => /** @type {any} */ (context)?.featureGates ?? null,
     isOperationAllowed: ({ context }) => /** @type {any} */ (context)?.policyFresh === true,
+    isPayloadEncryptionReady: async () => {
+      await e2eeKeyStore.active();
+      return true;
+    },
+    getBusySessionPolicy: async () => {
+      const settings = await remoteControlSettingsStore.read();
+      return { steer: settings.allowBusySessionSteer, enqueue: settings.allowBusySessionEnqueue };
+    },
   });
   return createRemoteControlAgent({
     settingsStore: remoteControlSettingsStore,
     credentialStore,
+    e2eeKeyStore,
     operationRegistry,
     commandJournal: remoteControlCommandJournal,
     createCloudClient: (controlPlaneBaseUrl) => /** @type {any} */ (createRemoteControlCloudClient({

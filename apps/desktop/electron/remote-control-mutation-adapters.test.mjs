@@ -195,14 +195,14 @@ test("session.prompt uses the semantic start API and forwards command correlatio
   const { registrations, client } = harness();
   const prompt = registrations.find((r) => r.operation === "session.prompt");
   const result = await prompt.execute({
-    arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, prompt: "do something" },
+    arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, prompt: "do something", whenBusy: "reject" },
     context: { featureGates: { sessionMutation: true } },
     correlationId: "cmd-prompt",
   });
-  assert.deepEqual(result, { runId: "run_test", generation: 1 });
+  assert.deepEqual(result, { disposition: "started", runId: "run_test", generation: 1 });
   const postCall = client.calls.find((c) => c.method === "POST");
   assert.equal(postCall.pathname, "/workspace/ws_test/sessions/ses_test/runs/start");
-  assert.deepEqual(postCall.body, { origin: "remote-control", startCommandCorrelationId: "cmd-prompt", prompt: { parts: [{ type: "text", text: "do something" }] } });
+  assert.deepEqual(postCall.body, { origin: "remote-control", startCommandCorrelationId: "cmd-prompt", whenBusy: "reject", prompt: { parts: [{ type: "text", text: "do something" }] } });
 });
 
 test("session.prompt rejects a remote workspace", async () => {
