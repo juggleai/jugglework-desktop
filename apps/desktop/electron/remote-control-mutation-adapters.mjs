@@ -263,16 +263,17 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           { origin: "remote-control", startCommandCorrelationId: correlationId, whenBusy: args.whenBusy, prompt: { parts: [{ type: "text", text: args.prompt }] } },
         );
         if (!response || typeof response !== "object") throw new TypeError("Invalid start response.");
+        const responseRecord = /** @type {Record<string, any>} */ (response);
         let result;
-        if ("run" in response) {
-          const run = response.run;
+        if ("run" in responseRecord) {
+          const run = responseRecord.run;
           if (!coordinator.recordServerRun(run)) throw new TypeError("Stale start response.");
           const recordedRun = /** @type {{ runId: string, generation: number }} */ (run);
           result = { disposition: "started", runId: recordedRun.runId, generation: recordedRun.generation };
-        } else if (response.disposition === "enqueued" && identifierSchema.safeParse(response.pendingOperationId).success && Number.isSafeInteger(response.position) && response.position > 0) {
-          result = { disposition: "enqueued", pendingOperationId: response.pendingOperationId, position: response.position };
-        } else if (response.disposition === "steered" && identifierSchema.safeParse(response.pendingOperationId).success && identifierSchema.safeParse(response.admittedId).success) {
-          result = { disposition: "steered", pendingOperationId: response.pendingOperationId, admittedId: response.admittedId };
+        } else if (responseRecord.disposition === "enqueued" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && Number.isSafeInteger(responseRecord.position) && responseRecord.position > 0) {
+          result = { disposition: "enqueued", pendingOperationId: responseRecord.pendingOperationId, position: responseRecord.position };
+        } else if (responseRecord.disposition === "steered" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && identifierSchema.safeParse(responseRecord.admittedId).success) {
+          result = { disposition: "steered", pendingOperationId: responseRecord.pendingOperationId, admittedId: responseRecord.admittedId };
         } else throw new TypeError("Invalid start response.");
         return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: 1, result }).result;
       } catch (error) {
@@ -289,9 +290,10 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           `/workspace/${encodeURIComponent(args.workspaceId)}/sessions/${encodeURIComponent(args.sessionId)}/pending/${encodeURIComponent(args.pendingOperationId)}/cancel`,
           { commandCorrelationId: correlationId },
         );
-        if (!response || typeof response !== "object" || response.pendingOperationId !== args.pendingOperationId ||
-          !["cancelled", "already_cancelled", "not_cancellable"].includes(response.status)) throw new TypeError("Invalid cancel response.");
-        return desktopRemoteOperationResultSchema.parse({ operation: "session.pending.cancel", payloadVersion: 1, result: response }).result;
+        const responseRecord = /** @type {Record<string, any>} */ (response);
+        if (!response || typeof response !== "object" || responseRecord.pendingOperationId !== args.pendingOperationId ||
+          !["cancelled", "already_cancelled", "not_cancellable"].includes(responseRecord.status)) throw new TypeError("Invalid cancel response.");
+        return desktopRemoteOperationResultSchema.parse({ operation: "session.pending.cancel", payloadVersion: 1, result: responseRecord }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
       }

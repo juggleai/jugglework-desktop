@@ -334,7 +334,7 @@ export function DesktopRemoteControlSection() {
             <label className="flex items-center gap-2 text-xs">
               <Switch
                 checked={settings.allowBusySessionSteer}
-                disabled={busy || !settings.enabled || gates.busySessionSteer !== true}
+                disabled={busy || !settings.enabled || gates?.busySessionSteer !== true}
                 onCheckedChange={(checked) => void setSetting("allowBusySessionSteer", checked)}
                 aria-label="允许远程 steer 运行中会话"
               />
@@ -343,7 +343,7 @@ export function DesktopRemoteControlSection() {
             <label className="flex items-center gap-2 text-xs">
               <Switch
                 checked={settings.allowBusySessionEnqueue}
-                disabled={busy || !settings.enabled || gates.busySessionEnqueue !== true}
+                disabled={busy || !settings.enabled || gates?.busySessionEnqueue !== true}
                 onCheckedChange={(checked) => void setSetting("allowBusySessionEnqueue", checked)}
                 aria-label="允许远程持久排队"
               />

@@ -181,7 +181,7 @@ function isIdentifier(value) {
 
 /** @param {unknown} code @param {unknown} reason */
 function transportCloseErrorCode(code, reason) {
-  const closeCode = Number.isSafeInteger(code) && code >= 1000 && code <= 4999 ? code : null;
+  const closeCode = typeof code === "number" && Number.isSafeInteger(code) && code >= 1000 && code <= 4999 ? code : null;
   const text = Buffer.isBuffer(reason) || reason instanceof Uint8Array
     ? Buffer.from(reason).toString("utf8")
     : typeof reason === "string" ? reason : "";

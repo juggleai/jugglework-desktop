@@ -216,6 +216,31 @@ function serializeSDKError(error: unknown): string {
   return String(error);
 }
 
+/**
+ * A cloud admin can replace a provider instead of editing it in place. Cloud
+ * provider IDs are then new (`lpr_*`), while locally persisted session and
+ * default-model preferences still point at the retired ID.  Reuse the model
+ * only when the live cloud catalog provides one unambiguous, exact model-ID
+ * match.  Do not apply this to user-managed providers or fuzzy matches.
+ */
+function findReplacementCloudModel(
+  model: ModelRef | null,
+  providers: ProviderListResponse | null | undefined,
+): ModelRef | null {
+  if (!model || !isCloudManagedProviderKey(model.providerID)) return null;
+  if (isModelAvailableInConnectedProviders(providers, model)) return null;
+
+  const candidates = getConnectedProviderItems(providers).filter(
+    (provider) =>
+      provider.id !== model.providerID &&
+      isCloudManagedProviderKey(provider.id) &&
+      Boolean(provider.models?.[model.modelID]),
+  );
+  if (candidates.length !== 1) return null;
+
+  return { providerID: candidates[0].id, modelID: model.modelID };
+}
+
 function describeTaskCreateError(error: unknown) {
   const message = describeRouteError(error);
   const lower = message.toLowerCase();
@@ -849,6 +874,26 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
   const autoOpenedUnavailableModelRef = useRef<string | null>(null);
+
+  // Repair local preferences left behind when an organization replaces a
+  // cloud-managed provider. This runs only after cloud sync is authoritative
+  // and only for an exact, unambiguous model match (see helper above).
+  useEffect(() => {
+    if (!cloudProviderSyncReady) return;
+    const replacement = findReplacementCloudModel(activeModel, cloudProviderList);
+    if (!replacement) return;
+
+    applyModelSelection(replacement, selectedSessionId);
+    toast("已切换到当前可用的云端模型", {
+      description: `${replacement.providerID}/${replacement.modelID}`,
+    });
+  }, [
+    activeModel,
+    applyModelSelection,
+    cloudProviderList,
+    cloudProviderSyncReady,
+    selectedSessionId,
+  ]);
 
   useEffect(() => {
     if (!selectedModelUnavailableKey) {
@@ -2259,9 +2304,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           const workspace = workspaces.find((item) => item.id === workspaceId);
-          if (client && workspace && !sessionsByWorkspaceId[workspaceId]?.length) {
-            setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspaceId])));
-            void loadWorkspaceSessionsInBackground([workspace]);
+          if (client && workspace) {
+            void loadWorkspaceSessionsInBackground([workspace], {
+              selectedWorkspaceId: workspaceId,
+            });
           }
           // Fire Tauri updates but don't await them — they're bookkeeping and
           // awaiting 2 IPC roundtrips on every click used to stall rapid
@@ -2296,6 +2342,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             navigateToWorkspaceSession(workspaceId);
           }
           return true;
+        },
+        onExpandWorkspace: (workspaceId) => {
+          const workspace = workspaces.find((item) => item.id === workspaceId);
+          if (!client || !workspace) return;
+          void loadWorkspaceSessionsInBackground([workspace]);
         },
         onOpenSession: (workspaceId, sessionId) => {
           setLegacySelectedWorkspaceId(workspaceId);

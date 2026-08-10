@@ -226,8 +226,8 @@ export function createRemoteControlOperationRegistry({
     const mutationEnabled = isRecord(gates) && gates.enrollment === true && gates.readOnlyControl === true && gates.sessionMutation === true;
     const features = [];
     if (payloadEncryptionReady) features.push("payload.e2ee-v1");
-    if (mutationEnabled && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
-    if (mutationEnabled && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
+    if (mutationEnabled && isRecord(gates) && gates.busySessionSteer === true && busyPolicy.steer) features.push("session.steer");
+    if (mutationEnabled && isRecord(gates) && gates.busySessionEnqueue === true && busyPolicy.enqueue) features.push("session.enqueue");
 
     return {
       schemaVersion: REMOTE_CONTROL_OPERATION_SCHEMA_VERSION,

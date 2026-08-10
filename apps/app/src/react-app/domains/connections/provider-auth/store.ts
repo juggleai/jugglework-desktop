@@ -1991,6 +1991,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
     const liveProviders = await refreshCloudOrgProviders({ force: true });
     const liveProviderMap = new Map(liveProviders.map((provider) => [provider.id, provider]));
+    // The import baseline only says that we *previously* wrote a cloud
+    // provider. It is not proof that its runtime config block still exists:
+    // a config cleanup or an interrupted migration can leave the baseline
+    // intact while the engine has no such provider at all. In that case a
+    // reload cannot recover anything, so force one idempotent re-import.
+    // Treat an unreadable engine list as unknown rather than re-importing on
+    // a transient startup/network error.
+    const engineProviderList = await refreshProviders().catch(() => null);
+    const engineProviderIds = engineProviderList
+      ? new Set((engineProviderList.all ?? []).map((provider) => provider.id))
+      : null;
     const failures: string[] = [];
     const processedLiveProviderIds = new Set<string>();
     let configChanged = false;
@@ -2009,7 +2020,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       processedLiveProviderIds.add(liveProvider.id);
 
-      if (!isCloudProviderOutOfSync(liveProvider, importedProvider)) {
+      const missingFromEngine = engineProviderIds !== null &&
+        !engineProviderIds.has(importedProvider.providerId);
+      if (!isCloudProviderOutOfSync(liveProvider, importedProvider) && !missingFromEngine) {
         continue;
       }
 

@@ -240,7 +240,7 @@ function harness({
   onControlRevoked = () => {},
 } = {}) {
   const clock = new FakeClock();
-  let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false };
+  let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
   let credential = enrolled ? enrolledCredential() : null;
   let uuid = 10;
   let tokenCalls = 0;
