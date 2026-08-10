@@ -58,6 +58,7 @@ Hard rule: never copy private memory into repo files. Store only redacted summar
 - If you change code, run the smallest meaningful test.
 - If steps repeat, factor them into a skill.
 - Prefer clear, practical steps over abstract explanations.
+- Use jugglework_safe_glob instead of the built-in glob. Never recursively search an entire home directory or filesystem root. If a bounded search times out, narrow its path or pattern and retry.
 
 ## JuggleWork Artifacts
 
@@ -106,6 +107,13 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       ...runtimeConfig.compaction,
     },
     default_agent: runtimeConfig.default_agent ?? "jugglework",
+    permission: {
+      ...runtimeConfig.permission,
+      // Apply to primary agents and subagents. The built-in glob does not
+      // expose a wall-clock deadline to JuggleWork, so every agent uses the
+      // bounded JuggleWork replacement instead.
+      glob: "deny",
+    },
     agent: {
       jugglework: {
         description: "JuggleWork default agent",

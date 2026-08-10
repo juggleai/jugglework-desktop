@@ -13,6 +13,7 @@
  * tighten them instead of widening call sites.
  */
 import type { ConnectLinkVerifyFailure, ConnectLinkVerifyResult } from "./connect-link.js";
+import type { DesktopRemoteFeatureGates } from "./desktop-remote-control.js";
 import type { WorkspaceWire } from "./workspace.js";
 
 // ---------------------------------------------------------------------------
@@ -443,6 +444,50 @@ export type RunningAppsResult = {
   apps: string[];
 };
 
+export type DesktopRemoteControlSettings = {
+  schemaVersion: 1;
+  enabled: boolean;
+  backgroundMode: boolean;
+  launchAtLogin: boolean;
+};
+
+export type DesktopRemoteControlAgentContext = {
+  schemaVersion: 1;
+  signedIn: boolean;
+  controlPlaneBaseUrl: string | null;
+  userId: string | null;
+  organizationId: string | null;
+  policyFresh: boolean;
+  featureGates: DesktopRemoteFeatureGates;
+  policyVersion: string | null;
+  validatedAt: string | null;
+};
+
+export type DesktopRemoteControlAgentStatus = {
+  schemaVersion: 1;
+  state:
+    | "stopped"
+    | "disabled"
+    | "waiting_for_context"
+    | "unenrolled"
+    | "connecting"
+    | "awaiting_welcome"
+    | "connected"
+    | "backoff"
+    | "revoked"
+    | "error";
+  started: boolean;
+  connected: boolean;
+  enrolled: boolean;
+  revoked: boolean;
+  localControlEnabled: boolean;
+  activeControlSessionCount: number;
+  controllerDisplayNames: string[];
+  lifecycleGeneration: number;
+  connectionGeneration: number | null;
+  lastErrorCode: string | null;
+};
+
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
@@ -522,6 +567,24 @@ export type DesktopCommandMap = {
   getJuggleWorkUiMcpCommand: { args: []; result: string[] };
   getComputerUseMcpCommand: { args: []; result: string[] };
   getJuggleWorkUiMcpEnvironment: { args: []; result: Record<string, string> };
+
+  // Main-owned remote-control opt-in. Renderer state is never authoritative.
+  desktopRemoteControlSettingsRead: { args: []; result: DesktopRemoteControlSettings };
+  desktopRemoteControlSettingsUpdate: {
+    args: [input: Partial<Omit<DesktopRemoteControlSettings, "schemaVersion">>];
+    result: DesktopRemoteControlSettings;
+  };
+  desktopRemoteControlStopAll: { args: []; result: DesktopRemoteControlSettings };
+  desktopRemoteControlContextSync: {
+    args: [input: DesktopRemoteControlAgentContext];
+    result: DesktopRemoteControlAgentStatus;
+  };
+  desktopRemoteControlEnroll: {
+    args: [input: { grant: string }];
+    result: DesktopRemoteControlAgentStatus;
+  };
+  desktopRemoteControlCredentialDelete: { args: []; result: DesktopRemoteControlAgentStatus };
+  desktopRemoteControlStatusRead: { args: []; result: DesktopRemoteControlAgentStatus };
 
   // Computer use
   checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };

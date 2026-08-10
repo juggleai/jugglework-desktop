@@ -38,6 +38,35 @@ describe("Den desktop config client", () => {
     expect(headers[0]?.get("x-jugglework-legacy-org-id")).toBe("org_test");
   });
 
+  test("creates a short-lived Desktop enrollment grant in the active organization", async () => {
+    const requests: Array<{ url: string; headers: Headers; body: unknown }> = [];
+    const fetchMock: typeof fetch = async (input, init) => {
+      requests.push({
+        url: String(input),
+        headers: new Headers(init?.headers),
+        body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+      });
+      return new Response(JSON.stringify({
+        schemaVersion: 1,
+        grant: "jwenroll_abcdefghijklmnop",
+        expiresAt: "2026-08-09T12:02:00Z",
+      }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    await expect(
+      createDenClient({ baseUrl: "https://den.test", token: "session-token" })
+        .createDesktopRemoteEnrollmentGrant("org_test"),
+    ).resolves.toMatchObject({ schemaVersion: 1, grant: "jwenroll_abcdefghijklmnop" });
+    expect(requests[0]?.url).toBe("https://den.test/jwork/api/v1/desktop-devices/enrollment-grants");
+    expect(requests[0]?.headers.get("authorization")).toBe("Bearer session-token");
+    expect(requests[0]?.headers.get("x-jugglework-legacy-org-id")).toBe("org_test");
+    expect(requests[0]?.body).toEqual({ schemaVersion: 1 });
+  });
+
   test("falls back to latestAppVersion for older Den version metadata", async () => {
     const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
       minAppVersion: "0.11.207",
@@ -87,6 +116,40 @@ describe("Den desktop config client", () => {
     expect(normalizeDenDesktopConfig({
       allowAlphaUpdates: "false",
     }).allowAlphaUpdates).toBeUndefined();
+  });
+
+  test("normalizes remote-control gates fail closed", () => {
+    const disabled = {
+      schemaVersion: 1,
+      enrollment: false,
+      readOnlyControl: false,
+      sessionMutation: false,
+      interactions: false,
+      backgroundLifecycle: false,
+      eventCompaction: false,
+      multiInstanceRouting: false,
+      payloadEncryption: false,
+      busySessionSteer: false,
+      busySessionEnqueue: false,
+      nativeMobile: false,
+    };
+    expect(normalizeDenDesktopConfig({}).desktopRemoteFeatureGates).toEqual(disabled);
+    expect(normalizeDenDesktopConfig({
+      desktopRemoteFeatureGates: { schemaVersion: 1, enrollment: true },
+    }).desktopRemoteFeatureGates).toEqual(disabled);
+
+    const enabledRead = {
+      ...disabled,
+      enrollment: true,
+      readOnlyControl: true,
+    };
+    expect(normalizeDenDesktopConfig({
+      desktopRemoteFeatureGates: enabledRead,
+      desktopRemotePolicyVersion: " policy-42 ",
+    })).toMatchObject({
+      desktopRemoteFeatureGates: enabledRead,
+      desktopRemotePolicyVersion: "policy-42",
+    });
   });
 
   test("selects targeted onboarding prompts by priority before default fallback", () => {

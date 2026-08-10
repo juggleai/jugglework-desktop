@@ -188,6 +188,58 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe("workspace session read APIs", () => {
+  test("creates an empty session with a valid Unicode scalar title", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+      readOnly: false,
+    });
+    const title = "😀".repeat(120);
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions`, {
+      method: "POST",
+      headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: `  ${title}  ` }),
+    });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({
+      item: {
+        id: "ses_created",
+        title,
+        slug: "created-session",
+        directory: workspaceRoot,
+        time: { created: 300, updated: 300 },
+      },
+      started: false,
+    });
+    expect(mock.requests.filter((request) => request.pathname === "/session" && request.method === "POST")).toHaveLength(1);
+    expect(mock.requests.some((request) => request.pathname.includes("prompt"))).toBe(false);
+
+    for (const invalidTitle of [
+      "embedded\u0000nul",
+      "next\u0085line",
+      "high\ud800surrogate",
+      "low\udc00surrogate",
+      "😀".repeat(121),
+    ]) {
+      const rejected = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions`, {
+        method: "POST",
+        headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
+        body: JSON.stringify({ title: invalidTitle }),
+      });
+      expect(rejected.status).toBe(400);
+    }
+
+    const formatCharacter = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions`, {
+      method: "POST",
+      headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "join\u200dthis" }),
+    });
+    expect(formatCharacter.status).toBe(201);
+    expect(mock.requests.filter((request) => request.pathname === "/session" && request.method === "POST")).toHaveLength(2);
+  });
+
   test("creates a session and starts its prompt without UI navigation", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();

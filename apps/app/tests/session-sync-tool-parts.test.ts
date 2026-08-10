@@ -112,6 +112,35 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("preserves task child-session metadata for stalled status presentation", () => {
+    const part = {
+      id: "part-task",
+      sessionID: "session-a",
+      messageID: "msg-a",
+      type: "tool" as const,
+      callID: "call-task",
+      tool: "task",
+      state: {
+        status: "completed" as const,
+        input: { description: "Map cloud relay" },
+        output: "done",
+        title: "Task",
+        metadata: { sessionId: "child-session", background: true },
+        time: { start: 10, end: 20 },
+      },
+    } satisfies Extract<Part, { type: "tool" }>;
+
+    expect(parseDynamicToolUIPart(part)).toMatchObject({
+      callProviderMetadata: {
+        opencode: {
+          toolMetadata: { sessionId: "child-session", background: true },
+          toolStartedAt: 10,
+          toolEndedAt: 20,
+        },
+      },
+    });
+  });
+
   test("maps env var request tools for rich chat rendering", () => {
     const part = writeToolPart("running", { key: "NOTION_TOKEN" }, { tool: "request_env_var" });
     expect(parseDynamicToolUIPart(part)).toMatchObject({

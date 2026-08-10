@@ -572,6 +572,13 @@ const {
   resetOpencodeCache,
   opencodeMcpAuth,
   setWindowDecorations,
+  desktopRemoteControlSettingsRead,
+  desktopRemoteControlSettingsUpdate,
+  desktopRemoteControlStopAll,
+  desktopRemoteControlContextSync,
+  desktopRemoteControlEnroll,
+  desktopRemoteControlCredentialDelete,
+  desktopRemoteControlStatusRead,
 } = desktopBridge;
 
 export {
@@ -640,4 +647,11 @@ export {
   resetOpencodeCache,
   opencodeMcpAuth,
   setWindowDecorations,
+  desktopRemoteControlSettingsRead,
+  desktopRemoteControlSettingsUpdate,
+  desktopRemoteControlStopAll,
+  desktopRemoteControlContextSync,
+  desktopRemoteControlEnroll,
+  desktopRemoteControlCredentialDelete,
+  desktopRemoteControlStatusRead,
 };

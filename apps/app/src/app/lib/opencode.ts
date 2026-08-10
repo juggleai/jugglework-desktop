@@ -1,24 +1,27 @@
-import { createOpencodeClient, type Message, type Part, type Session, type Todo } from "@opencode-ai/sdk/v2/client";
+import {
+  createOpencodeClient,
+  type Message,
+  type Part,
+  type PermissionRequest,
+  type QuestionRequest,
+  type QuestionV2Request,
+  type Session,
+  type Todo,
+} from "@opencode-ai/sdk/v2/client";
 
 import { desktopFetch } from "./desktop";
-import { createJuggleWorkServerClient, JuggleWorkServerError } from "./jugglework-server";
+import {
+  createJuggleWorkServerClient,
+  JuggleWorkServerError,
+  type JuggleWorkSessionRunObservation,
+} from "./jugglework-server";
 import { isDesktopRuntime } from "./runtime-env";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
   | ({ data?: undefined; error: unknown } & { request: Request; response: Response });
 
-type PromptAsyncParameters = {
-  sessionID: string;
-  directory?: string;
-  messageID?: string;
-  model?: { providerID: string; modelID: string };
-  agent?: string;
-  noReply?: boolean;
-  tools?: { [key: string]: boolean };
-  system?: string;
-  variant?: string;
-  parts?: unknown[];
+type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>["session"]["promptAsync"]>[0] & {
   reasoning_effort?: string;
 };
 
@@ -53,6 +56,17 @@ type SessionMessagesParameters = {
   directory?: string;
   limit?: number;
 };
+
+type SessionAbortParameters = {
+  sessionID: string;
+  directory?: string;
+};
+
+type MutationOptions = { throwOnError?: boolean };
+type LegacyPermissionReplyParameters = Parameters<ReturnType<typeof createOpencodeClient>["permission"]["reply"]>[0];
+type V2PermissionReplyParameters = Parameters<ReturnType<typeof createOpencodeClient>["v2"]["session"]["permission"]["reply"]>[0];
+type LegacyQuestionReplyParameters = Parameters<ReturnType<typeof createOpencodeClient>["question"]["reply"]>[0];
+type V2QuestionReplyParameters = Parameters<ReturnType<typeof createOpencodeClient>["v2"]["session"]["question"]["reply"]>[0];
 
 export type OpencodeAuth = {
   username?: string;
@@ -172,16 +186,16 @@ function createSyntheticResult<T>(
   return { error: input.error, request, response };
 }
 
-async function wrapJuggleWorkRead<T>(
+async function wrapJuggleWorkMutation<T>(
   url: string,
-  read: () => Promise<T>,
+  mutation: () => Promise<T>,
   options?: { throwOnError?: boolean },
 ): Promise<FieldsResult<T>> {
   try {
-    return createSyntheticResult(url, "GET", { ok: true, data: await read() });
+    return createSyntheticResult(url, "POST", { ok: true, data: await mutation() });
   } catch (error) {
     if (options?.throwOnError) throw error;
-    return createSyntheticResult(url, "GET", {
+    return createSyntheticResult(url, "POST", {
       ok: false,
       error,
       status: error instanceof JuggleWorkServerError ? error.status : 500,
@@ -192,6 +206,70 @@ async function wrapJuggleWorkRead<T>(
 function shouldFallbackToLegacySessionRead(error: unknown): boolean {
   if (!(error instanceof JuggleWorkServerError)) return false;
   return error.status === 404 || error.status === 405 || error.status === 501;
+}
+
+function sessionRunKey(mount: { baseUrl: string; workspaceId: string }, sessionId: string): string {
+  return `${mount.baseUrl}\0${mount.workspaceId}\0${sessionId}`;
+}
+
+const mountedSessionRunIds = new Map<string, string>();
+
+function commandCorrelationId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  throw new Error("Secure correlation ID generation is unavailable.");
+}
+
+function sdkData<T>(result: { data?: T; error?: unknown }): T {
+  if (result.error !== undefined) throw result.error;
+  if (result.data !== undefined) return result.data;
+  throw new Error("OpenCode returned no data.");
+}
+
+function interactionNotFound(interactionId: string): JuggleWorkServerError {
+  return new JuggleWorkServerError(404, "interaction_not_found", `Pending interaction ${interactionId} was not found.`);
+}
+
+function normalizedQuestionId(question: { question: string; id?: string }): string {
+  return question.id || `q_${question.question.slice(0, 32)}`;
+}
+
+function semanticQuestionAnswers(
+  pending: QuestionRequest | QuestionV2Request,
+  answers: string[][] | undefined,
+): Array<{ questionId: string; values: string[] }> {
+  const values = answers ?? [];
+  if (values.length > pending.questions.length) {
+    throw new JuggleWorkServerError(400, "invalid_question_answers", "Question answers do not match the pending question schema.");
+  }
+  return values.map((answer, index) => ({
+    questionId: normalizedQuestionId(pending.questions[index]!),
+    values: answer,
+  }));
+}
+
+function sessionRunObservation(raw: unknown): { sessionId: string; status: JuggleWorkSessionRunObservation } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const event = "payload" in raw && raw.payload && typeof raw.payload === "object" ? raw.payload : raw;
+  if (!("type" in event) || typeof event.type !== "string") return null;
+  const properties = "properties" in event && event.properties && typeof event.properties === "object" ? event.properties : null;
+  if (!properties || !("sessionID" in properties) || typeof properties.sessionID !== "string") return null;
+  if (event.type === "session.idle") return { sessionId: properties.sessionID, status: "idle" };
+  if (event.type === "session.error") return { sessionId: properties.sessionID, status: "failed" };
+  if (event.type !== "session.status" || !("status" in properties)) return null;
+  const status = properties.status && typeof properties.status === "object" && "type" in properties.status
+    ? properties.status.type
+    : properties.status;
+  if (status === "busy") return { sessionId: properties.sessionID, status: "running" };
+  if (status === "retry") return { sessionId: properties.sessionID, status: "retrying" };
+  if (status === "idle" || status === "completed" || status === "failed" || status === "aborted") {
+    return { sessionId: properties.sessionID, status };
+  }
+  return null;
 }
 
 async function wrapJuggleWorkReadWithFallback<T>(
@@ -372,10 +450,103 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const session = client.session as typeof client.session;
   const juggleworkMount = auth?.mode === "jugglework" ? resolveJuggleWorkWorkspaceMount(baseUrl) : null;
-  const juggleworkSessionClient =
-    juggleworkMount && auth?.token
-      ? createJuggleWorkServerClient({ baseUrl: juggleworkMount.baseUrl, token: auth.token })
-      : null;
+  const juggleworkSessionClient = juggleworkMount
+    ? createJuggleWorkServerClient({ baseUrl: juggleworkMount.baseUrl, token: auth?.token })
+    : null;
+
+  if (juggleworkMount && juggleworkSessionClient) {
+    const permission = client.permission;
+    const legacyPermissionList = permission.list.bind(permission);
+    (permission as any).reply = (
+      parameters: LegacyPermissionReplyParameters,
+      options?: MutationOptions,
+    ) => {
+      const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/interactions/${encodeURIComponent(parameters.requestID)}/permission/reply`;
+      return wrapJuggleWorkMutation(url, async () => {
+        const pending = sdkData(await legacyPermissionList()).find((item) => item.id === parameters.requestID);
+        if (!pending) throw interactionNotFound(parameters.requestID);
+        await juggleworkSessionClient.replyPermissionInteraction(
+          juggleworkMount.workspaceId,
+          pending.sessionID,
+          parameters.requestID,
+          {
+            origin: "local-renderer",
+            commandCorrelationId: commandCorrelationId(),
+            response: parameters.reply === "once" ? "allow_once" : parameters.reply ?? "reject",
+          },
+        );
+        return true;
+      }, options);
+    };
+
+    const v2Permission = client.v2.session.permission;
+    (v2Permission as any).reply = (
+      parameters: V2PermissionReplyParameters,
+      options?: MutationOptions,
+    ) => {
+      const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/interactions/${encodeURIComponent(parameters.requestID)}/permission/reply`;
+      return wrapJuggleWorkMutation(url, async () => {
+        await juggleworkSessionClient.replyPermissionInteraction(
+          juggleworkMount.workspaceId,
+          parameters.sessionID,
+          parameters.requestID,
+          {
+            origin: "local-renderer",
+            commandCorrelationId: commandCorrelationId(),
+            response: parameters.reply === "once" ? "allow_once" : parameters.reply ?? "reject",
+          },
+        );
+      }, options);
+    };
+
+    const question = client.question;
+    const legacyQuestionList = question.list.bind(question);
+    (question as any).reply = (
+      parameters: LegacyQuestionReplyParameters,
+      options?: MutationOptions,
+    ) => {
+      const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/interactions/${encodeURIComponent(parameters.requestID)}/question/reply`;
+      return wrapJuggleWorkMutation(url, async () => {
+        const pending = sdkData(await legacyQuestionList()).find((item) => item.id === parameters.requestID);
+        if (!pending) throw interactionNotFound(parameters.requestID);
+        await juggleworkSessionClient.replyQuestionInteraction(
+          juggleworkMount.workspaceId,
+          pending.sessionID,
+          parameters.requestID,
+          {
+            origin: "local-renderer",
+            commandCorrelationId: commandCorrelationId(),
+            answers: semanticQuestionAnswers(pending, parameters.answers),
+          },
+        );
+        return true;
+      }, options);
+    };
+
+    const v2Question = client.v2.session.question;
+    const v2QuestionList = v2Question.list.bind(v2Question);
+    (v2Question as any).reply = (
+      parameters: V2QuestionReplyParameters,
+      options?: MutationOptions,
+    ) => {
+      const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/interactions/${encodeURIComponent(parameters.requestID)}/question/reply`;
+      return wrapJuggleWorkMutation(url, async () => {
+        const listed = sdkData(await v2QuestionList({ sessionID: parameters.sessionID }));
+        const pending = listed.data.find((item) => item.id === parameters.requestID);
+        if (!pending) throw interactionNotFound(parameters.requestID);
+        await juggleworkSessionClient.replyQuestionInteraction(
+          juggleworkMount.workspaceId,
+          parameters.sessionID,
+          parameters.requestID,
+          {
+            origin: "local-renderer",
+            commandCorrelationId: commandCorrelationId(),
+            answers: semanticQuestionAnswers(pending, parameters.questionV2Reply.answers),
+          },
+        );
+      }, options);
+    };
+  }
   // TODO(2026-04-12): remove the old-server compatibility path here once all
   // JuggleWork servers expose the workspace-scoped session read APIs.
   const sessionOverrides = session as any as {
@@ -384,6 +555,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     messages: (parameters: SessionMessagesParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Array<{ info: Message; parts: Part[] }>>>;
     todo: (parameters: SessionLookupParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<Todo[]>>;
     promptAsync: (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
+    abort: (parameters: SessionAbortParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<boolean>>;
     command: (parameters: CommandParameters, options?: { throwOnError?: boolean }) => Promise<FieldsResult<{}>>;
   };
 
@@ -458,12 +630,44 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     if (!juggleworkMount && !("reasoning_effort" in parameters)) {
       return promptAsyncOriginal(parameters, options);
     }
-    const { sessionID, directory: requestDirectory, ...body } = parameters;
+    const { sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...body } = parameters;
+    if (juggleworkMount && juggleworkSessionClient) {
+      const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/runs/start`;
+      return wrapJuggleWorkMutation(url, async () => {
+        const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
+          origin: "local-renderer",
+          startCommandCorrelationId: commandCorrelationId(),
+          prompt: body,
+        });
+        mountedSessionRunIds.set(sessionRunKey(juggleworkMount, sessionID), result.run.runId);
+        return {};
+      }, options);
+    }
     return postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
       headers: Object.keys(headers).length ? headers : undefined,
       directory: requestDirectory ?? directory,
       throwOnError: options?.throwOnError,
     });
+  };
+
+  const abortOriginal = sessionOverrides.abort.bind(session);
+  sessionOverrides.abort = async (parameters: SessionAbortParameters, options?: { throwOnError?: boolean }) => {
+    if (!juggleworkMount || !juggleworkSessionClient) return abortOriginal(parameters, options);
+    const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(parameters.sessionID)}/runs/active/abort`;
+    return wrapJuggleWorkMutation(url, async () => {
+      const key = sessionRunKey(juggleworkMount, parameters.sessionID);
+      const activeRunId = (await juggleworkSessionClient.listActiveSessionRuns(juggleworkMount.workspaceId)).items
+        .find((run) => run.sessionId === parameters.sessionID)?.runId;
+      if (!activeRunId) {
+        mountedSessionRunIds.delete(key);
+        return false;
+      }
+      mountedSessionRunIds.set(key, activeRunId);
+      await juggleworkSessionClient.abortSessionRun(juggleworkMount.workspaceId, parameters.sessionID, activeRunId, {
+        abortCommandCorrelationId: commandCorrelationId(),
+      });
+      return true;
+    }, options);
   };
 
   const commandOriginal = sessionOverrides.command.bind(session);
@@ -478,6 +682,46 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
       throwOnError: options?.throwOnError,
     });
   };
+
+  if (juggleworkMount && juggleworkSessionClient) {
+    const eventClient = client.event as any;
+    const subscribeOriginal = eventClient.subscribe.bind(eventClient);
+    eventClient.subscribe = async (...args: unknown[]) => {
+      const subscription = await subscribeOriginal(...args);
+      const stream = subscription.stream as AsyncIterable<unknown>;
+      return {
+        ...subscription,
+        stream: (async function* () {
+          for await (const event of stream) {
+            const observation = sessionRunObservation(event);
+            if (observation) {
+              const key = sessionRunKey(juggleworkMount, observation.sessionId);
+              const expectedRunId = mountedSessionRunIds.get(key);
+              if (expectedRunId) {
+                try {
+                  const result = await juggleworkSessionClient.observeSessionRun(
+                    juggleworkMount.workspaceId,
+                    observation.sessionId,
+                    expectedRunId,
+                    { status: observation.status },
+                  );
+                  if (result.cleared && mountedSessionRunIds.get(key) === expectedRunId) {
+                    mountedSessionRunIds.delete(key);
+                  }
+                } catch {
+                  if (observation.status === "completed" || observation.status === "failed" || observation.status === "aborted") {
+                    if (mountedSessionRunIds.get(key) === expectedRunId) mountedSessionRunIds.delete(key);
+                  }
+                  // Another observer or a newer run may already have fenced this observation.
+                }
+              }
+            }
+            yield event;
+          }
+        })(),
+      };
+    };
+  }
 
   return client;
 }

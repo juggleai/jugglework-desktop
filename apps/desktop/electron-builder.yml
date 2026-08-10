@@ -12,8 +12,12 @@ toolsets:
   appimage: "1.0.3"
 files:
   - electron/**/*
+  - "!electron/**/*.test.mjs"
+  - dist/runtime/**/*
   - server/**/*
   - "!server/dist/opencode-plugins/**"
+  - "!node_modules/@jugglework/types/src/**"
+  - "!node_modules/.pnpm/@jugglework+types*/node_modules/@jugglework/types/src/**"
   - package.json
 extraResources:
   - from: ../app/dist

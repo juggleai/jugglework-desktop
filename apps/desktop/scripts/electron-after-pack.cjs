@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const asar = require("@electron/asar");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
@@ -45,6 +46,37 @@ function resolveMacAppPath(context) {
   return fallback ? path.join(context.appOutDir, fallback) : null;
 }
 
+function resolvePackagedResourcesPath(context) {
+  if (context.electronPlatformName === "darwin") {
+    const appPath = resolveMacAppPath(context);
+    return appPath ? path.join(appPath, "Contents", "Resources") : null;
+  }
+  return path.join(context.appOutDir, "resources");
+}
+
+function verifyCompiledRuntimeContracts(context) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const archivePath = resourcesPath ? path.join(resourcesPath, "app.asar") : null;
+  if (!archivePath || !fs.existsSync(archivePath)) {
+    throw new Error(`Missing packaged app.asar at ${archivePath ?? "unknown path"}`);
+  }
+
+  const entries = asar.listPackage(archivePath);
+  const runtimePackageRoot = "/node_modules/@jugglework/types/";
+  const compiledContract = "/dist/runtime/desktop-remote-control.js";
+  if (!entries.includes(compiledContract)) {
+    throw new Error(`Missing compiled Electron runtime contract: ${compiledContract}`);
+  }
+
+  const leakedSources = entries.filter((entry) => (
+    entry.startsWith(runtimePackageRoot) ||
+    (entry.startsWith("/dist/runtime/") && /\.(?:ts|tsx|map)$/.test(entry))
+  ));
+  if (leakedSources.length > 0) {
+    throw new Error(`TypeScript sources leaked into the packaged runtime: ${leakedSources.join(", ")}`);
+  }
+}
+
 function signComputerUseHelper(context) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
@@ -85,6 +117,8 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
 }
 
 async function afterPack(context) {
+  verifyCompiledRuntimeContracts(context);
+
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
 

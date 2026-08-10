@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { desktopPolicyKeys } from "@jugglework/types/den/desktop-policies";
+import { desktopRemoteDisabledFeatureGates } from "@jugglework/types/desktop-remote-control";
 
 import {
   checkDesktopAppRestriction,
@@ -27,7 +28,11 @@ import {
   setDenBootstrapConfig,
   type DenDesktopConfig,
 } from "../../../app/lib/den";
-import { applyBrandAppName, applyBrandIcon } from "../../../app/lib/desktop";
+import {
+  applyBrandAppName,
+  applyBrandIcon,
+  desktopRemoteControlContextSync,
+} from "../../../app/lib/desktop";
 import { createJuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import {
   denSessionUpdatedEvent,
@@ -59,7 +64,10 @@ const DesktopConfigContext = createContext<DesktopConfigStore | undefined>(
 );
 
 const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
-const DESKTOP_CONFIG_REFRESH_MS = 60 * 60 * 1000;
+// Remote-control authorization is short-lived and fail-closed. Refresh at the
+// agent-token cadence instead of treating the one-hour presentation cache as
+// sufficient authorization.
+const DESKTOP_CONFIG_REFRESH_MS = 5 * 60 * 1000;
 const DESKTOP_CONFIG_CACHE_PREFIX = "jugglework.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
@@ -70,6 +78,8 @@ const DESKTOP_CONFIG_ITEMS = [
   "brandIconUrl",
   "brandAccentColor",
   "connectEnabled",
+  "desktopRemoteFeatureGates",
+  "desktopRemotePolicyVersion",
   "onboardingPrompts",
   "onboardingPromptDescriptions",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
@@ -153,6 +163,21 @@ type DesktopConfigState = {
   loading: boolean;
 };
 
+type RemotePolicyValidation = {
+  contextKey: string;
+  validatedAt: string;
+};
+
+function currentRemotePolicyContextKey(userId: string | null | undefined): string {
+  const settings = readDenSettings();
+  const baseUrl = settings.baseUrl.trim();
+  const organizationId = settings.activeOrgId?.trim() ?? "";
+  const normalizedUserId = userId?.trim() ?? "";
+  return baseUrl && organizationId && normalizedUserId
+    ? `${baseUrl}\u0000${organizationId}\u0000${normalizedUserId}`
+    : "";
+}
+
 /**
  * React port of the Solid `DesktopConfigProvider`
  * (`apps/app/src/app/cloud/desktop-config-provider.tsx` on dev).
@@ -161,7 +186,8 @@ type DesktopConfigState = {
  * (`packages/types/den/desktop-policies.ts` shape) and caches it in
  * localStorage so gates like `allowZenModel` can apply immediately on the
  * next boot without waiting for the HTTP round-trip. Re-fetches on Den
- * session / settings events and on a one-hour interval.
+ * session / settings events and on a five-minute interval; only a fresh
+ * network result may authorize remote control.
  */
 export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) {
   const denAuth = useDenAuth();
@@ -169,6 +195,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     config: DEFAULT_DESKTOP_CONFIG,
     loading: true,
   });
+  const [remotePolicyValidation, setRemotePolicyValidation] = useState<RemotePolicyValidation | null>(null);
   const { config, loading } = desktopConfigState;
   // Bumped whenever the browser tells us the Den session or settings changed.
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
@@ -251,6 +278,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const token = settings.authToken?.trim() ?? "";
     const activeOrgId = settings.activeOrgId?.trim() ?? "";
     const cacheKey = getDesktopConfigCacheKey();
+    const policyContextKey = currentRemotePolicyContextKey(denAuth.user?.id);
 
     if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
@@ -277,6 +305,12 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
       applyDesktopConfigActions(nextConfig);
+      if (policyContextKey) {
+        setRemotePolicyValidation({
+          contextKey: policyContextKey,
+          validatedAt: new Date().toISOString(),
+        });
+      }
       return nextConfig;
     } catch (error) {
       if (currentRun !== refreshRunRef.current) {
@@ -297,6 +331,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       }
 
       const fallbackConfig = cached ?? DEFAULT_DESKTOP_CONFIG;
+      setRemotePolicyValidation(null);
       applyDesktopConfigActions(fallbackConfig);
       if (requireFresh) throw error;
       return fallbackConfig;
@@ -305,7 +340,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         setDesktopConfigState((current) => ({ ...current, loading: false }));
       }
     }
-  }, [applyDesktopConfigActions, isSignedIn]);
+  }, [applyDesktopConfigActions, denAuth.user?.id, isSignedIn]);
 
   const refresh = useCallback(
     async () => {
@@ -326,6 +361,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     void settingsVersion;
 
     if (!isSignedIn) {
+      setRemotePolicyValidation(null);
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({ ...current, loading: false }));
       return;
@@ -359,6 +395,45 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       window.clearInterval(interval);
     };
   }, [desktopConfigHandler, isSignedIn]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    const settings = readDenSettings();
+    const userId = denAuth.status === "signed_in" ? denAuth.user?.id?.trim() ?? "" : "";
+    const organizationId = settings.activeOrgId?.trim() ?? "";
+    const controlPlaneBaseUrl = settings.baseUrl.trim();
+    const contextKey = currentRemotePolicyContextKey(userId);
+    const policyFresh = Boolean(
+      userId &&
+      organizationId &&
+      controlPlaneBaseUrl &&
+      remotePolicyValidation?.contextKey === contextKey,
+    );
+    const context = policyFresh
+      ? {
+          schemaVersion: 1 as const,
+          signedIn: true,
+          controlPlaneBaseUrl,
+          userId,
+          organizationId,
+          policyFresh: true,
+          featureGates: config.desktopRemoteFeatureGates ?? desktopRemoteDisabledFeatureGates,
+          policyVersion: config.desktopRemotePolicyVersion ?? null,
+          validatedAt: remotePolicyValidation?.validatedAt ?? null,
+        }
+      : {
+          schemaVersion: 1 as const,
+          signedIn: false,
+          controlPlaneBaseUrl: null,
+          userId: null,
+          organizationId: null,
+          policyFresh: false,
+          featureGates: desktopRemoteDisabledFeatureGates,
+          policyVersion: null,
+          validatedAt: null,
+        };
+    void desktopRemoteControlContextSync(context).catch(() => undefined);
+  }, [config.desktopRemoteFeatureGates, config.desktopRemotePolicyVersion, denAuth.status, denAuth.user?.id, remotePolicyValidation]);
 
   const connectEnabled = config.connectEnabled === true;
 

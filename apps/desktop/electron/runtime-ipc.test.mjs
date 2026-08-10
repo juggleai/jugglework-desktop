@@ -23,6 +23,8 @@ describe("runtime IPC", () => {
       },
     });
 
+    assert.deepEqual(Object.keys(handlers).sort(), ["engineDispose", "runtimeStatus", "workspaceActivate"]);
+    assert.equal(Object.hasOwn(handlers, "managedServerAccess"), false);
     assert.equal(await handlers.runtimeStatus(), runtimeStatus);
     assert.equal(
       await handlers.workspaceActivate({ workspacePath: "/workspace" }),
