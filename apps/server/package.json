@@ -1,6 +1,6 @@
 {
   "name": "jugglework-server",
-  "version": "1.1.30",
+  "version": "1.2.0",
   "description": "Filesystem-backed API for JuggleWork remote clients",
   "type": "module",
   "bin": {
