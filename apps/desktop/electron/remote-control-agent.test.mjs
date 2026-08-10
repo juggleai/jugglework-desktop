@@ -161,8 +161,8 @@ class FakeSocket extends EventEmitter {
     this.emit("message", JSON.stringify(value));
   }
 
-  unexpectedClose() {
-    this.emit("close", 1006);
+  unexpectedClose(code = 1006, reason = Buffer.alloc(0)) {
+    this.emit("close", code, reason);
   }
 }
 
@@ -503,6 +503,13 @@ describe("remote-control agent context and lifecycle", () => {
     await settle();
     assert.equal(first.sent.length, staleSent);
     assert.equal(fixture.sockets.length, 2);
+  });
+
+  it("retains the server close code and sanitized reason for diagnostics", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.unexpectedClose(1008, Buffer.from("invalid device identity"));
+    assert.equal(fixture.agent.status().lastErrorCode, "transport_closed_1008_invalid_device_identity");
   });
 
   it("synchronously resets transport state on failure and socket replacement", async () => {

@@ -179,6 +179,17 @@ function isIdentifier(value) {
     value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+/** @param {unknown} code @param {unknown} reason */
+function transportCloseErrorCode(code, reason) {
+  const closeCode = Number.isSafeInteger(code) && code >= 1000 && code <= 4999 ? code : null;
+  const text = Buffer.isBuffer(reason) || reason instanceof Uint8Array
+    ? Buffer.from(reason).toString("utf8")
+    : typeof reason === "string" ? reason : "";
+  const safeReason = text.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64);
+  if (closeCode === null) return "transport_closed";
+  return safeReason ? `transport_closed_${closeCode}_${safeReason}` : `transport_closed_${closeCode}`;
+}
+
 /** @param {unknown} value */
 function isDisplayText(value) {
   return typeof value === "string" && value.length >= 1 && value.length <= 500 && value.trim() === value &&
@@ -399,8 +410,9 @@ function validRequest(value) {
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
     case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
-    case "session.prompt": return hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) && isIdentifier(args.workspaceId) &&
-      isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && args.prompt.length <= 200_000;
+    case "session.prompt": return (hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) || hasExactKeys(args, ["workspaceId", "sessionId", "prompt", "whenBusy"])) &&
+      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && args.prompt.length <= 200_000 &&
+      (!Object.hasOwn(args, "whenBusy") || ["reject", "steer", "enqueue"].includes(args.whenBusy));
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
     case "session.pending.cancel": return hasExactKeys(args, ["workspaceId", "sessionId", "pendingOperationId"]) &&
@@ -1342,9 +1354,9 @@ export function createRemoteControlAgent(options) {
       else void handleMessage(decoded, target, generation);
     });
     target.on("error", () => transportFailed(target, "transport_error"));
-    target.on("close", () => {
+    target.on("close", (code, reason) => {
       if (target !== socket || intentionalSockets.has(target)) return;
-      transportFailed(target, "transport_closed");
+      transportFailed(target, transportCloseErrorCode(code, reason));
     });
   }
 
