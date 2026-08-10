@@ -8,6 +8,9 @@ import {
   desktopRemoteCapabilityAdvertisementSchema,
   desktopRemoteDisabledFeatureGates,
   desktopRemoteOperationRequestSchema,
+  desktopRemoteOperationResultSchema,
+  desktopRemoteCommandDeliverySchema,
+  desktopRemoteMutationOperationValues,
   desktopRemoteWssEnvelopeSchema,
   isDesktopRemoteOperationEnabled,
   parseDesktopRemoteFeatureGatesOrDisabled,
@@ -85,6 +88,13 @@ describe("desktop remote-control contracts", () => {
 
     const mutation = { ...readOnly, sessionMutation: true }
     assert.equal(isDesktopRemoteOperationEnabled("session.prompt", mutation), true)
+    assert.equal(isDesktopRemoteOperationEnabled("session.create", mutation), true)
+    assert.equal(
+      createDesktopRemoteCapabilityAdvertisement(mutation).operations.some(
+        ({ operation }) => operation === "session.create",
+      ),
+      true,
+    )
     assert.equal(
       isDesktopRemoteOperationEnabled("interaction.permission.reply", mutation),
       false,
@@ -239,5 +249,60 @@ describe("desktop remote-control contracts", () => {
       }).success,
       false,
     )
+  })
+
+  test("accepts only strict bounded session.create requests and results", () => {
+    const request = {
+      operation: "session.create",
+      payloadVersion: 1,
+      arguments: { workspaceId: "workspace-1", title: "😀".repeat(120) },
+    }
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse(request).success, true)
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      ...request,
+      arguments: { workspaceId: "workspace-1", title: "join\u200dthis" },
+    }).success, true)
+    for (const argumentsValue of [
+      { workspaceId: "workspace-1", title: "" },
+      { workspaceId: "workspace-1", title: " New " },
+      { workspaceId: "workspace-1", title: "embedded\u0000nul" },
+      { workspaceId: "workspace-1", title: "next\u0085line" },
+      { workspaceId: "workspace-1", title: "high\ud800surrogate" },
+      { workspaceId: "workspace-1", title: "low\udc00surrogate" },
+      { workspaceId: "workspace-1", title: "😀".repeat(121) },
+      { workspaceId: "workspace-1", title: "New", prompt: "Start" },
+      { workspaceId: "workspace-1", title: "New", path: "/tmp" },
+      { workspaceId: "workspace-1", title: "New", parentId: "session-1" },
+      { workspaceId: "workspace-1", title: "New", model: "model-1" },
+      { workspaceId: "workspace-1", title: "New", agent: "agent-1" },
+      { workspaceId: "workspace-1", title: "New", tools: {} },
+      { workspaceId: "workspace-1", title: "New", sessionId: "session-1" },
+    ]) {
+      assert.equal(desktopRemoteOperationRequestSchema.safeParse({ ...request, arguments: argumentsValue }).success, false)
+    }
+
+    const result = { operation: "session.create", payloadVersion: 1, result: { sessionId: "session-new" } }
+    assert.equal(desktopRemoteOperationResultSchema.safeParse(result).success, true)
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({ ...result, result: {} }).success, false)
+    assert.equal(desktopRemoteOperationResultSchema.safeParse({ ...result, result: { sessionId: "", title: "New" } }).success, false)
+  })
+
+  test("classifies session.create as a mutation requiring idempotency", () => {
+    assert.equal(desktopRemoteMutationOperationValues.includes("session.create"), true)
+    const request = {
+      operation: "session.create",
+      payloadVersion: 1,
+      arguments: { workspaceId: "workspace-1", title: "New session" },
+    } as const
+    assert.equal(desktopRemoteCommandDeliverySchema.safeParse({
+      ...commandEnvelope.payload,
+      request,
+      idempotencyKey: null,
+    }).success, false)
+    assert.equal(desktopRemoteCommandDeliverySchema.safeParse({
+      ...commandEnvelope.payload,
+      request,
+      idempotencyKey: "create-1",
+    }).success, true)
   })
 })

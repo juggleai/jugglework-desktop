@@ -25,6 +25,7 @@ const OPERATION_DEFINITIONS = [
   ["workspace.list", ["enrollment", "readOnlyControl"]],
   ["session.list", ["enrollment", "readOnlyControl"]],
   ["session.snapshot", ["enrollment", "readOnlyControl"]],
+  ["session.create", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.prompt", ["enrollment", "readOnlyControl", "sessionMutation"]],
   ["session.abort", ["enrollment", "readOnlyControl", "sessionMutation"]],
   [

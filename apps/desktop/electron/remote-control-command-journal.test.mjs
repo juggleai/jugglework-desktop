@@ -126,6 +126,23 @@ describe("remote-control command journal", () => {
     });
   });
 
+  it("persists and replays session.create as an idempotent mutation", async () => {
+    const { filePath, journal } = await isolatedJournal();
+    const create = command({ operation: "session.create" });
+    assert.deepEqual(await journal.prepare(create), { action: "execute", commandId: "command-1" });
+    const lifecycle = successLifecycle({
+      result: { operation: "session.create", payloadVersion: 1, result: { sessionId: "ses_created" } },
+    });
+    await journal.complete("command-1", lifecycle);
+    const restarted = createRemoteControlCommandJournal({ filePath, now: () => NOW });
+    assert.deepEqual(await restarted.prepare({ ...create, commandId: "command-redelivery" }), {
+      action: "replay",
+      commandId: "command-1",
+      lifecycle,
+    });
+    assert.equal((await restarted.prepare({ ...create, commandId: "command-no-key", idempotencyKey: null })).action, "reject");
+  });
+
   it("keys idempotent mutations by device and key and conflicts on a different supplied hash", async () => {
     const { journal } = await isolatedJournal();
     await journal.prepare(command());

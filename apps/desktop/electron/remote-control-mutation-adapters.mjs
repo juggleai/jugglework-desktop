@@ -12,6 +12,19 @@ import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
 
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 
+/** @param {unknown} value */
+function isSessionCreateTitle(value) {
+  if (typeof value !== "string" || value.trim() !== value || /\p{Cc}/u.test(value)) return false;
+  let scalarCount = 0;
+  for (const scalar of value) {
+    const codePoint = scalar.codePointAt(0);
+    if (codePoint === undefined || (codePoint >= 0xd800 && codePoint <= 0xdfff) || ++scalarCount > 120) return false;
+  }
+  return scalarCount >= 1;
+}
+
+const sessionCreateTitleSchema = z.string().refine(isSessionCreateTitle);
+
 const ISO_EPOCH = new Date(0).toISOString();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
@@ -137,6 +150,28 @@ async function authorizedWorkspace(workspaceStore, client, workspaceId) {
   return workspace;
 }
 
+/** @param {unknown} response @param {LocalWorkspace} workspace */
+function createdSessionResult(response, workspace) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    throw new RemoteControlOperationExecutionError("internal_error");
+  }
+  const result = /** @type {Record<string, unknown>} */ (response);
+  if (Object.keys(result).length !== 2 || !Object.hasOwn(result, "item") || !Object.hasOwn(result, "started") || result.started !== false ||
+      !result.item || typeof result.item !== "object" || Array.isArray(result.item) || Object.keys(result.item).length > 32 ||
+      Buffer.byteLength(JSON.stringify(response), "utf8") > 64 * 1024) {
+    throw new RemoteControlOperationExecutionError("internal_error");
+  }
+  const item = /** @type {Record<string, unknown>} */ (result.item);
+  const sessionId = identifierSchema.safeParse(item.id);
+  const directory = canonicalPath(item.directory);
+  if (!sessionId.success || !directory || directory !== workspace.path ||
+      (Object.hasOwn(item, "workspaceId") && item.workspaceId !== workspace.id)) {
+    throw new RemoteControlOperationExecutionError("internal_error");
+  }
+  const operationResult = { sessionId: sessionId.data };
+  return desktopRemoteOperationResultSchema.parse({ operation: "session.create", payloadVersion: 1, result: operationResult }).result;
+}
+
 /**
  * @param {ManagedRuntimeClient} client
  * @param {string} workspaceId
@@ -179,6 +214,26 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
   });
 
   return [
+    registration("session.create", (value) => {
+      const parsed = z.object({ workspaceId: identifierSchema, title: sessionCreateTitleSchema }).strict().parse(value);
+      return Object.freeze(parsed);
+    }, async ({ arguments: args }) => {
+      try {
+        const locallyAuthorized = (await localWorkspaces(workspaceStore)).find((entry) => entry.id === args.workspaceId);
+        if (!locallyAuthorized) throw new RemoteControlOperationExecutionError("workspace_not_found");
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        if (workspace.workspaceType === "remote" || workspace.path !== locallyAuthorized.path) {
+          throw new RemoteControlOperationExecutionError("workspace_not_found");
+        }
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
+          { title: args.title },
+        );
+        return createdSessionResult(response, workspace);
+      } catch (error) {
+        mapClientError(error, "workspace_not_found");
+      }
+    }),
     registration("session.prompt", (value) => {
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 3) {
         throw new TypeError("Remote mutation arguments are invalid.");

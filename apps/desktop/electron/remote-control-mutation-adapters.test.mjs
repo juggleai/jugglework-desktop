@@ -23,7 +23,8 @@ function fakeWorkspaceStore() {
   };
 }
 
-function fakeManagedClient({ postResult = null, getStatus = 404, sessionDirectory = WORKSPACE_PATH, workspaces = null } = {}) {
+/** @param {{ postResult?: unknown, getStatus?: number, sessionDirectory?: string, workspaces?: any[] | null }} [options] */
+function fakeManagedClient({ postResult, getStatus = 404, sessionDirectory = WORKSPACE_PATH, workspaces = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -52,6 +53,11 @@ function fakeManagedClient({ postResult = null, getStatus = 404, sessionDirector
       if (pathname.endsWith("/abort")) {
         return postResult ?? { run: serverRun({ status: "aborting", abortCommandCorrelationId: body.abortCommandCorrelationId, abortRequestedAt: 1002, updatedAt: 1002 }), abortRequested: true };
       }
+      if (pathname === `/workspace/${WORKSPACE_ID}/sessions`) {
+        return postResult === undefined
+          ? { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: false }
+          : postResult;
+      }
       return postResult;
     },
   };
@@ -78,7 +84,7 @@ function serverRun(overrides = {}) {
 
 function harness(options = {}) {
   const coordinator = createSessionMutationCoordinator();
-  const client = options.client ?? fakeManagedClient({ postResult: null, getStatus: 204, workspaces: [{ id: WORKSPACE_ID, name: "Test", path: WORKSPACE_PATH, workspaceType: "local" }] });
+  const client = options.client ?? fakeManagedClient({ getStatus: 204, workspaces: [{ id: WORKSPACE_ID, name: "Test", path: WORKSPACE_PATH, workspaceType: "local" }] });
   const registrations = createRemoteControlMutationRegistrations({
     workspaceStore: fakeWorkspaceStore(),
     managedRuntimeClient: client,
@@ -107,6 +113,83 @@ test("session.prompt registration validates strict arguments", () => {
   assert.throws(() => prompt.validateArguments({ workspaceId: "ws_test", sessionId: "ses_test" }));
   assert.throws(() => prompt.validateArguments({ workspaceId: "ws_test", sessionId: "ses_test", prompt: "" }));
 });
+
+test("session.create validates strict Unicode-bounded arguments", () => {
+  const { registrations } = harness();
+  const create = registrations.find((r) => r.operation === "session.create");
+  assert.deepEqual(create.validateArguments({ workspaceId: WORKSPACE_ID, title: "😀".repeat(120) }), {
+    workspaceId: WORKSPACE_ID,
+    title: "😀".repeat(120),
+  });
+  assert.deepEqual(create.validateArguments({ workspaceId: WORKSPACE_ID, title: "join\u200dthis" }), {
+    workspaceId: WORKSPACE_ID,
+    title: "join\u200dthis",
+  });
+  for (const value of [
+    { workspaceId: WORKSPACE_ID, title: "" },
+    { workspaceId: WORKSPACE_ID, title: " New " },
+    { workspaceId: WORKSPACE_ID, title: "embedded\u0000nul" },
+    { workspaceId: WORKSPACE_ID, title: "next\u0085line" },
+    { workspaceId: WORKSPACE_ID, title: "high\ud800surrogate" },
+    { workspaceId: WORKSPACE_ID, title: "low\udc00surrogate" },
+    { workspaceId: WORKSPACE_ID, title: "😀".repeat(121) },
+    { workspaceId: WORKSPACE_ID, title: "New", prompt: "Start" },
+    { workspaceId: WORKSPACE_ID, title: "New", path: WORKSPACE_PATH },
+  ]) assert.throws(() => create.validateArguments(value));
+});
+
+test("session.create posts only title and returns only the authoritative session ID", async () => {
+  const { registrations, client } = harness();
+  const create = registrations.find((r) => r.operation === "session.create");
+  const result = await create.execute({
+    arguments: { workspaceId: WORKSPACE_ID, title: "New session" },
+    context: {},
+    correlationId: "cmd-create",
+  });
+  assert.deepEqual(result, { sessionId: "ses_created" });
+  assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
+    method: "POST",
+    pathname: "/workspace/ws_test/sessions",
+    body: { title: "New session" },
+  });
+});
+
+test("session.create rejects remote or server-only workspaces before creation", async () => {
+  for (const workspaceId of ["ws_remote", "ws_server_only"]) {
+    const client = fakeManagedClient({
+      getStatus: 204,
+      workspaces: [{ id: workspaceId, path: "/server/path", workspaceType: "local" }],
+    });
+    const create = harness({ client }).registrations.find((r) => r.operation === "session.create");
+    await assert.rejects(
+      create.execute({ arguments: { workspaceId, title: "New" }, context: {} }),
+      (error) => error instanceof RemoteControlOperationExecutionError && error.code === "workspace_not_found",
+    );
+    assert.equal(client.calls.some((call) => call.method === "POST"), false);
+  }
+});
+
+for (const response of [
+  null,
+  { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: true },
+  { item: { id: "", directory: WORKSPACE_PATH }, started: false },
+  { item: { id: "ses_created", directory: "/different/path" }, started: false },
+  { item: { id: "ses_created", directory: WORKSPACE_PATH, workspaceId: "ws_other" }, started: false },
+  { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: false, extra: true },
+]) {
+  test(`session.create rejects malformed or mismatched success: ${JSON.stringify(response)}`, async () => {
+    const client = fakeManagedClient({
+      getStatus: 204,
+      postResult: response,
+      workspaces: [{ id: WORKSPACE_ID, path: WORKSPACE_PATH, workspaceType: "local" }],
+    });
+    const create = harness({ client }).registrations.find((r) => r.operation === "session.create");
+    await assert.rejects(
+      create.execute({ arguments: { workspaceId: WORKSPACE_ID, title: "New" }, context: {} }),
+      (error) => error instanceof RemoteControlOperationExecutionError && error.code === "internal_error",
+    );
+  });
+}
 
 test("session.prompt uses the semantic start API and forwards command correlation", async () => {
   const { registrations, client } = harness();

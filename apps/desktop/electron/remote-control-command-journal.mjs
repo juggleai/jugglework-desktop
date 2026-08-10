@@ -40,6 +40,7 @@ export const REMOTE_CONTROL_COMMAND_JOURNAL_DEFAULT_LIMITS = Object.freeze({
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rejected", "expired", "cancelled"]);
 const MUTATION_OPERATIONS = new Set([
+  "session.create",
   "session.prompt",
   "session.abort",
   "interaction.permission.reply",

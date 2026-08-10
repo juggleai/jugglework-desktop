@@ -81,6 +81,23 @@ describe("remote-control operation registry", () => {
     assert.deepEqual(await registry.advertise(), advertised());
   });
 
+  it("registers session.create behind all mutation gates", async () => {
+    const create = {
+      operation: "session.create",
+      payloadVersions: [1],
+      requiredGates: [...REMOTE_CONTROL_REQUIRED_GATES["session.create"]],
+      validateArguments: (value) => value,
+      execute: async () => ({ sessionId: "ses_created" }),
+    };
+    const registry = createRemoteControlOperationRegistry({
+      registrations: [create],
+      getFeatureGates: () => ({ ...enabledReadGates, sessionMutation: true }),
+      isOperationAllowed: () => true,
+    });
+    assert.deepEqual(await registry.advertise(), advertised("session.create"));
+    assert.deepEqual(REMOTE_CONTROL_REQUIRED_GATES["session.create"], ["enrollment", "readOnlyControl", "sessionMutation"]);
+  });
+
   it("requires explicit closed registrations", () => {
     assert.throws(
       () => createRemoteControlOperationRegistry({ registrations: [readRegistration({ operation: "http.proxy" })] }),

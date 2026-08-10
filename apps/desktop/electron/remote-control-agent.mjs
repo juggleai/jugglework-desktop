@@ -36,6 +36,7 @@ const OPERATION_NAMES = new Set([
   "workspace.list",
   "session.list",
   "session.snapshot",
+  "session.create",
   "session.prompt",
   "session.abort",
   "interaction.permission.reply",
@@ -50,6 +51,7 @@ const FEATURE_NAMES = new Set([
   "native-mobile",
 ]);
 const MUTATION_OPERATIONS = new Set([
+  "session.create",
   "session.prompt",
   "session.abort",
   "interaction.permission.reply",
@@ -170,6 +172,17 @@ function isIdentifier(value) {
 function isDisplayText(value) {
   return typeof value === "string" && value.length >= 1 && value.length <= 500 && value.trim() === value &&
     !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/** @param {unknown} value */
+function isSessionCreateTitle(value) {
+  if (typeof value !== "string" || value.trim() !== value || /\p{Cc}/u.test(value)) return false;
+  let scalarCount = 0;
+  for (const scalar of value) {
+    const codePoint = scalar.codePointAt(0);
+    if (codePoint === undefined || (codePoint >= 0xd800 && codePoint <= 0xdfff) || ++scalarCount > 120) return false;
+  }
+  return scalarCount >= 1;
 }
 
 /** @param {unknown} value */
@@ -374,6 +387,7 @@ function validRequest(value) {
     case "workspace.list": return hasExactKeys(args, []);
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
+    case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
     case "session.prompt": return hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && args.prompt.length <= 200_000;
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&

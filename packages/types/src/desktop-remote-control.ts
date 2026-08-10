@@ -19,6 +19,25 @@ const identifierSchema = z
   .max(256)
   .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "identifier cannot contain control characters")
 const displayTextSchema = z.string().trim().min(1).max(500)
+
+function sessionCreateTitleScalarCount(value: string): number | null {
+  if (/\p{Cc}/u.test(value)) return null
+  let count = 0
+  for (const scalar of value) {
+    const codePoint = scalar.codePointAt(0)
+    if (codePoint === undefined || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return null
+    count += 1
+  }
+  return count
+}
+
+const sessionCreateTitleSchema = z
+  .string()
+  .refine((value) => value === value.trim(), "title must be trimmed")
+  .refine((value) => {
+    const scalarCount = sessionCreateTitleScalarCount(value)
+    return scalarCount !== null && scalarCount >= 1 && scalarCount <= 120
+  }, "title must contain 1 to 120 Unicode scalar values without control characters")
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
 const semverSchema = z
   .string()
@@ -30,6 +49,7 @@ export const desktopRemoteOperationValues = [
   "workspace.list",
   "session.list",
   "session.snapshot",
+  "session.create",
   "session.prompt",
   "session.abort",
   "interaction.permission.reply",
@@ -46,6 +66,7 @@ export const desktopRemoteReadOperationValues = [
 ] as const satisfies readonly DesktopRemoteOperation[]
 
 export const desktopRemoteMutationOperationValues = [
+  "session.create",
   "session.prompt",
   "session.abort",
   "interaction.permission.reply",
@@ -158,6 +179,7 @@ export const desktopRemoteRequiredFeatureGatesByOperation = {
   "workspace.list": ["enrollment", "readOnlyControl"],
   "session.list": ["enrollment", "readOnlyControl"],
   "session.snapshot": ["enrollment", "readOnlyControl"],
+  "session.create": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.prompt": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.abort": ["enrollment", "readOnlyControl", "sessionMutation"],
   "interaction.permission.reply": [
@@ -599,6 +621,18 @@ const sessionPromptRequestSchema = z
       .strict(),
   })
   .strict()
+const sessionCreateRequestSchema = z
+  .object({
+    operation: z.literal("session.create"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+    arguments: z
+      .object({
+        workspaceId: identifierSchema,
+        title: sessionCreateTitleSchema,
+      })
+      .strict(),
+  })
+  .strict()
 const sessionAbortRequestSchema = z
   .object({
     operation: z.literal("session.abort"),
@@ -661,6 +695,7 @@ export const desktopRemoteOperationRequestSchema = z.discriminatedUnion(
     workspaceListRequestSchema,
     sessionListRequestSchema,
     sessionSnapshotRequestSchema,
+    sessionCreateRequestSchema,
     sessionPromptRequestSchema,
     sessionAbortRequestSchema,
     permissionReplyRequestSchema,
@@ -681,6 +716,13 @@ const interactionResolutionResultSchema = z
 export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
   "operation",
   [
+    z
+      .object({
+        operation: z.literal("session.create"),
+        payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+        result: z.object({ sessionId: identifierSchema }).strict(),
+      })
+      .strict(),
     z
       .object({
         operation: z.literal("workspace.list"),

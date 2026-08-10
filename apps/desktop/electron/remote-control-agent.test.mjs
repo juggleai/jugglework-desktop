@@ -950,6 +950,105 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.completeCalls.length, 0);
   });
 
+  it("accepts and replays session.create without deriving a session binding", async () => {
+    const lifecycle = {
+      status: "succeeded",
+      occurredAt: new Date(NOW + 1_000).toISOString(),
+      result: { operation: "session.create", payloadVersion: 1, result: { sessionId: "ses_created" } },
+      error: null,
+    };
+    const bindings = [];
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.create", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({
+      capabilities,
+      prepare: async () => ({ action: "replay", commandId: COMMAND_ID, lifecycle }),
+      onSessionBinding: (binding) => { bindings.push(binding); },
+    });
+    const socket = await connect(fixture);
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "😀".repeat(120) } },
+      idempotencyKey: "create-1",
+    }));
+    await settle();
+    assert.equal(fixture.dispatchCalls.length, 0);
+    assert.deepEqual(bindings, []);
+    assert.equal(fixture.agent.status().activeControlSessionCount, 0);
+    assert.deepEqual(frames(socket, "command.lifecycle")[0].payload, { commandId: COMMAND_ID, ...lifecycle });
+  });
+
+  it("rejects invalid session.create title Unicode before journaling", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.create", payloadVersions: [1] }],
+      features: [],
+    });
+    for (const title of [
+      " New ",
+      "embedded\u0000nul",
+      "next\u0085line",
+      "high\ud800surrogate",
+      "low\udc00surrogate",
+      "😀".repeat(121),
+    ]) {
+      const fixture = harness({ capabilities });
+      const socket = await connect(fixture);
+      socket.receive(welcome());
+      await settle();
+      socket.receive(delivery({
+        request: { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title } },
+        idempotencyKey: "create-1",
+      }));
+      await settle();
+      assert.equal(fixture.prepareCalls.length, 0);
+      assert.equal(fixture.dispatchCalls.length, 0);
+      assert.equal(frames(socket, "command.lifecycle")[0].payload.error.code, "invalid_request");
+    }
+  });
+
+  it("does not reject non-control Unicode format characters in session.create titles", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.create", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities });
+    const socket = await connect(fixture);
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "join\u200dthis" } },
+      idempotencyKey: "create-1",
+    }));
+    await settle();
+    assert.equal(fixture.prepareCalls.length, 1);
+    assert.equal(fixture.dispatchCalls.length, 1);
+  });
+
+  it("rejects session.create without idempotency before journaling", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.create", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities });
+    const socket = await connect(fixture);
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "New" } },
+      idempotencyKey: null,
+    }));
+    await settle();
+    assert.equal(fixture.prepareCalls.length, 0);
+    assert.equal(fixture.dispatchCalls.length, 0);
+  });
+
   it("coalesces a live duplicate until the original terminal result can be replayed", async () => {
     /** @type {() => void} */
     let finishDispatch = () => {};

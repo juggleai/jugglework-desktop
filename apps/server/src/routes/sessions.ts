@@ -59,6 +59,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function sessionCreateTitleScalarCount(value: string): number | null {
+  if (/\p{Cc}/u.test(value)) return null;
+  let count = 0;
+  for (const scalar of value) {
+    const codePoint = scalar.codePointAt(0);
+    if (codePoint === undefined || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return null;
+    count += 1;
+  }
+  return count;
+}
+
+function parseSessionCreateTitle(value: unknown): string {
+  if (typeof value !== "string" || sessionCreateTitleScalarCount(value) === null) {
+    throw new ApiError(400, "invalid_payload", "title contains invalid Unicode characters");
+  }
+  const title = value.trim();
+  const scalarCount = sessionCreateTitleScalarCount(title);
+  if (scalarCount === null || scalarCount < 1 || scalarCount > 120) {
+    throw new ApiError(400, "invalid_payload", "title must contain 1 to 120 Unicode scalar values");
+  }
+  return title;
+}
+
 const runIdentifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
 const promptBodySchema = z.object({
   messageID: runIdentifierSchema.optional(),
@@ -302,10 +325,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
-    const title = requireStringField(body, "title");
-    if (title.length > 120) {
-      throw new ApiError(400, "invalid_payload", "title must be 120 characters or fewer");
-    }
+    const title = parseSessionCreateTitle(body.title);
     const prompt = optionalStringField(body, "prompt");
     if (prompt && prompt.length > 100_000) {
       throw new ApiError(400, "invalid_payload", "prompt must be 100000 characters or fewer");
