@@ -28,7 +28,7 @@ function harness({ publish = () => true, observeRun, listActiveRuns = async () =
   };
   const coordinator = {
     getActiveRunId: () => runId,
-    recordServerRun: (run) => { mirroredRuns.push(run); return true; },
+    recordServerRun: (run) => { mirroredRuns.push(run); if (typeof run?.runId === "string") runId = run.runId; return true; },
     clearTerminalRun: (input) => { terminalCalls.push(input); if (input.runId === runId) runId = null; return true; },
   };
   const bridge = createRemoteSessionEventBridge({
@@ -92,6 +92,24 @@ describe("remote session event bridge", () => {
     await Promise.resolve();
     assert.deepEqual(h.mirroredRuns, [serverRun]);
     assert.deepEqual(h.notificationEvents, []);
+  });
+
+  it("hydrates a queued run only after authoritative admission produces a status event", async () => {
+    const admitted = { runId: "run_admitted", origin: "remote-control" };
+    let listCalls = 0;
+    const h = harness({
+      listActiveRuns: async () => {
+        listCalls += 1;
+        return listCalls === 1 ? { items: [] } : { items: [admitted] };
+      },
+    });
+    h.setRunId(null);
+    h.bridge.bind(h.binding);
+    await Promise.resolve();
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    assert.equal(listCalls, 2);
+    assert.deepEqual(h.mirroredRuns, [admitted]);
+    assert.equal(h.observationCalls[0].input.runId, "run_admitted");
   });
 
   it("emits content-minimized waiting and terminal notification source events after projection", async () => {

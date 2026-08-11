@@ -394,10 +394,15 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         ? context.featureGates
         : {};
       let pendingInteractions = [];
+      let pendingOperations = [];
       if (interactions && contextGates.interactions === true) {
         const rawInteractions = await interactions.listPending({ workspaceId: workspace.id, sessionId: args.sessionId });
         pendingInteractions = Array.isArray(rawInteractions) ? rawInteractions : [];
       }
+      const pending = await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/pending`);
+      const pendingRecord = /** @type {Record<string, unknown>} */ (pending);
+      if (!pending || typeof pending !== "object" || !Array.isArray(pendingRecord.items)) throw new RemoteControlOperationExecutionError("internal_error");
+      pendingOperations = pendingRecord.items;
       const captured = new Date(now());
       if (!Number.isFinite(captured.getTime())) throw new RemoteControlOperationExecutionError("internal_error");
       const result = {
@@ -413,6 +418,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
           return normalized ? [normalized] : [];
         }),
         interactions: pendingInteractions,
+        pendingOperations,
         capturedAt: captured.toISOString(),
       };
       return desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result }).result;

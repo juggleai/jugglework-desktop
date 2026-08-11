@@ -157,6 +157,8 @@ const ERROR_MESSAGES = Object.freeze({
  *   onSessionUnbound?: (input: { controlSessionId: string, reason: "closed" | "expired" | "not_found" | "snapshot_required" }) => void,
  *   onTransportReset?: (input: { hadActiveControl: boolean, transition: number | null }) => void,
  *   onControlRevoked?: (input: { source: "local" | "cloud", transition: number }) => void,
+ *   onPolicyExpired?: () => void,
+ *   onAuthorizationChanged?: (authorized: boolean) => void,
  * }} RemoteControlAgentOptions
  */
 
@@ -411,7 +413,7 @@ function validRequest(value) {
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
     case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
     case "session.prompt": return (hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) || hasExactKeys(args, ["workspaceId", "sessionId", "prompt", "whenBusy"])) &&
-      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && args.prompt.length <= 200_000 &&
+      isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && Buffer.byteLength(args.prompt, "utf8") <= 200_000 &&
       (!Object.hasOwn(args, "whenBusy") || ["reject", "steer", "enqueue"].includes(args.whenBusy));
     case "session.abort": return hasExactKeys(args, ["workspaceId", "sessionId", "expectedRunId"]) && isIdentifier(args.workspaceId) &&
       isIdentifier(args.sessionId) && isIdentifier(args.expectedRunId);
@@ -558,6 +560,8 @@ export function createRemoteControlAgent(options) {
     onSessionUnbound = null,
     onTransportReset = null,
     onControlRevoked = null,
+    onPolicyExpired = null,
+    onAuthorizationChanged = null,
   } = options;
   if (!settingsStore || typeof settingsStore.read !== "function" || !credentialStore ||
     typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
@@ -574,12 +578,15 @@ export function createRemoteControlAgent(options) {
     !(onSessionBinding === null || typeof onSessionBinding === "function") ||
     !(onSessionUnbound === null || typeof onSessionUnbound === "function") ||
     !(onTransportReset === null || typeof onTransportReset === "function") ||
-    !(onControlRevoked === null || typeof onControlRevoked === "function")) {
+    !(onControlRevoked === null || typeof onControlRevoked === "function") ||
+    !(onPolicyExpired === null || typeof onPolicyExpired === "function") ||
+    !(onAuthorizationChanged === null || typeof onAuthorizationChanged === "function")) {
     throw new TypeError("RemoteControlAgent dependencies are invalid.");
   }
 
   let started = false;
   let revoked = false;
+  let suspended = false;
   let protocolBlocked = false;
   let localDisabledLatch = false;
   /** @type {RemoteControlAgentContext | null} */
@@ -621,6 +628,8 @@ export function createRemoteControlAgent(options) {
   let advertisedE2EEKey = null;
   let transportTransition = 0;
   let revocationTransition = 0;
+  let authorizationActive = false;
+  let resumePolicyFloor = null;
 
   function timestamp() {
     const value = new Date(now());
@@ -716,6 +725,14 @@ export function createRemoteControlAgent(options) {
     try { onControlRevoked?.({ source, transition: ++revocationTransition }); } catch {}
   }
 
+  /** @param {boolean} value */
+  function setAuthorizationActive(value) {
+    const next = value === true;
+    if (next === authorizationActive) return;
+    authorizationActive = next;
+    try { onAuthorizationChanged?.(next); } catch {}
+  }
+
   /** Synchronously fences async completions, cancels timers, and closes transport. */
   function invalidateTransport() {
     notifyTransportReset();
@@ -731,10 +748,16 @@ export function createRemoteControlAgent(options) {
   function contextAllowsConnection() {
     const validatedAt = context?.validatedAt === null ? Number.NaN : Date.parse(context?.validatedAt ?? "");
     const policyAge = timestamp().getTime() - validatedAt;
-    return started && !revoked && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
+    return started && !suspended && !revoked && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
       context.policyFresh === true && context.featureGates.schemaVersion === 1 &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
       context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
+  }
+
+  function executionSleepAuthorized() {
+    const validatedAt = Date.parse(context?.validatedAt ?? "");
+    return contextAllowsConnection() && context?.featureGates.sessionMutation === true &&
+      (resumePolicyFloor === null || validatedAt >= resumePolicyFloor);
   }
 
   function schedulePolicyExpiry() {
@@ -746,8 +769,10 @@ export function createRemoteControlAgent(options) {
       policyExpiryTimer = null;
       if (generation !== lifecycleGeneration || contextAllowsConnection()) return;
       lastErrorCode = "policy_unavailable";
+      setAuthorizationActive(false);
       invalidateTransport();
       state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
+      try { onPolicyExpired?.(); } catch {}
     }, delay);
   }
 
@@ -1078,6 +1103,7 @@ export function createRemoteControlAgent(options) {
       const changed = !revoked;
       revoked = true;
       localDisabledLatch = true;
+      setAuthorizationActive(false);
       lastErrorCode = "device_revoked";
       activeControlSessions.clear();
       encryptedControlSessions.clear();
@@ -1116,6 +1142,7 @@ export function createRemoteControlAgent(options) {
           const changed = !revoked;
           revoked = true;
           localDisabledLatch = true;
+          setAuthorizationActive(false);
           activeControlSessions.clear();
           encryptedControlSessions.clear();
           invalidateTransport();
@@ -1466,8 +1493,12 @@ export function createRemoteControlAgent(options) {
       allowBusySessionEnqueue: current ? next.allowBusySessionEnqueue : false,
     } : { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
     if (!settings.enabled) localDisabledLatch = false;
-    if (!settings.enabled) invalidateTransport();
+    if (!settings.enabled) {
+      setAuthorizationActive(false);
+      invalidateTransport();
+    }
     await reconcile();
+    setAuthorizationActive(executionSleepAuthorized());
     return status();
   }
 
@@ -1486,6 +1517,7 @@ export function createRemoteControlAgent(options) {
     let next;
     try { next = normalizeRemoteControlAgentContext(input, { allowInsecureLoopback }); }
     catch (error) {
+      setAuthorizationActive(false);
       context = null;
       protocolBlocked = false;
       invalidateTransport();
@@ -1494,6 +1526,7 @@ export function createRemoteControlAgent(options) {
     }
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
+      setAuthorizationActive(false);
       invalidateTransport();
       encryptedControlSessions.clear();
       enrollment = null;
@@ -1503,10 +1536,12 @@ export function createRemoteControlAgent(options) {
     }
     context = next;
     if (!next.signedIn || !next.policyFresh || !next.featureGates.enrollment || !next.featureGates.readOnlyControl) {
+      setAuthorizationActive(false);
       invalidateTransport();
     }
     schedulePolicyExpiry();
     await reconcile();
+    setAuthorizationActive(executionSleepAuthorized());
     return status();
   }
 
@@ -1540,6 +1575,7 @@ export function createRemoteControlAgent(options) {
     if (pendingLocalStop) return pendingLocalStop.promise;
     const changed = !localDisabledLatch;
     localDisabledLatch = true;
+    setAuthorizationActive(false);
     activeControlSessions.clear();
     encryptedControlSessions.clear();
     notifyTransportReset();
@@ -1577,6 +1613,7 @@ export function createRemoteControlAgent(options) {
 
   /** Stops transport synchronously before deleting the platform-protected key. */
   async function deleteCredential() {
+    setAuthorizationActive(false);
     invalidateTransport();
     encryptedControlSessions.clear();
     enrollment = null;
@@ -1591,10 +1628,34 @@ export function createRemoteControlAgent(options) {
   async function stop() {
     if (!started && socket === null && reconnectTimer === null && heartbeatTimer === null && tokenRefreshTimer === null) return status();
     started = false;
+    setAuthorizationActive(false);
     activeControlSessions.clear();
     encryptedControlSessions.clear();
     invalidateTransport();
     state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
+    return status();
+  }
+
+  /** Fences transport immediately and invalidates policy obtained before system sleep. */
+  async function suspend() {
+    if (suspended) return status();
+    suspended = true;
+    resumePolicyFloor = timestamp().getTime();
+    setAuthorizationActive(false);
+    if (context?.signedIn) context = Object.freeze({ ...context, policyFresh: false, validatedAt: null });
+    lastErrorCode = "device_offline";
+    invalidateTransport();
+    state = started ? REMOTE_CONTROL_AGENT_STATUS.DISABLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
+    try { onPolicyExpired?.(); } catch {}
+    return status();
+  }
+
+  /** Re-enters normal reconciliation; a post-suspend context sync must supply fresh policy and a new token. */
+  async function resume() {
+    if (!suspended) return status();
+    suspended = false;
+    await reconcile();
+    setAuthorizationActive(executionSleepAuthorized());
     return status();
   }
 
@@ -1642,5 +1703,5 @@ export function createRemoteControlAgent(options) {
     });
   }
 
-  return Object.freeze({ start, syncContext, enroll, refreshLocalSettings, stopAll, deleteCredential, publishSessionEvent, stop, status });
+  return Object.freeze({ start, syncContext, enroll, refreshLocalSettings, stopAll, deleteCredential, publishSessionEvent, suspend, resume, stop, status });
 }

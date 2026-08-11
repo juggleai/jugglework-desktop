@@ -327,6 +327,11 @@ describe("desktop remote-control contracts", () => {
         arguments: { workspaceId: "workspace-1", sessionId: "session-1", prompt: "Continue", whenBusy },
       }).success, true)
     }
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      operation: "session.prompt",
+      payloadVersion: 1,
+      arguments: { workspaceId: "workspace-1", sessionId: "session-1", prompt: "界".repeat(66_667), whenBusy: "reject" },
+    }).success, false)
   })
 
   test("accepts only strict bounded session.create requests and results", () => {

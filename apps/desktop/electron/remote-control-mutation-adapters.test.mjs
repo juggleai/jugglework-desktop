@@ -205,6 +205,38 @@ test("session.prompt uses the semantic start API and forwards command correlatio
   assert.deepEqual(postCall.body, { origin: "remote-control", startCommandCorrelationId: "cmd-prompt", whenBusy: "reject", prompt: { parts: [{ type: "text", text: "do something" }] } });
 });
 
+for (const [name, postResult, expected] of [
+  ["enqueued", { disposition: "enqueued", pendingOperationId: "pending_queue", position: 2 }, { disposition: "enqueued", pendingOperationId: "pending_queue", position: 2 }],
+  ["steered", { disposition: "steered", pendingOperationId: "pending_steer", admittedId: "pending_steer" }, { disposition: "steered", pendingOperationId: "pending_steer", admittedId: "pending_steer" }],
+]) {
+  test(`session.prompt accepts ${name} disposition`, async () => {
+    const client = fakeManagedClient({ postResult, getStatus: 204, workspaces: [{ id: WORKSPACE_ID, name: "Test", path: WORKSPACE_PATH, workspaceType: "local" }] });
+    const prompt = harness({ client }).registrations.find((r) => r.operation === "session.prompt");
+    assert.deepEqual(await prompt.execute({
+      arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, prompt: "busy", whenBusy: name === "steered" ? "steer" : "enqueue" },
+      context: {}, correlationId: `cmd-${name}`,
+    }), expected);
+  });
+}
+
+for (const status of ["cancelled", "already_cancelled", "not_cancellable"]) {
+  test(`session.pending.cancel accepts ${status}`, async () => {
+    const client = fakeManagedClient({ postResult: { pendingOperationId: "pending_cancel", status }, getStatus: 204, workspaces: [{ id: WORKSPACE_ID, name: "Test", path: WORKSPACE_PATH, workspaceType: "local" }] });
+    const cancel = harness({ client }).registrations.find((r) => r.operation === "session.pending.cancel");
+    assert.deepEqual(await cancel.execute({
+      arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, pendingOperationId: "pending_cancel" },
+      context: {}, correlationId: `cmd-${status}`,
+    }), { pendingOperationId: "pending_cancel", status });
+  });
+}
+
+test("session.prompt and agent validation bound prompts by UTF-8 bytes", async () => {
+  const prompt = harness().registrations.find((r) => r.operation === "session.prompt");
+  assert.throws(() => prompt.validateArguments({
+    workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, prompt: "界".repeat(66_667), whenBusy: "reject",
+  }), /invalid/i);
+});
+
 test("session.prompt rejects a remote workspace", async () => {
   const { registrations } = harness();
   const prompt = registrations.find((r) => r.operation === "session.prompt");

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { installMacCloseToHide } from "./window-close-behavior.mjs";
+import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 
 class FakeWindow extends EventEmitter {
   hideCount = 0;
@@ -12,8 +12,8 @@ class FakeWindow extends EventEmitter {
   }
 }
 
-/** @param {{ platform?: NodeJS.Platform, quitting?: boolean }} options */
-function fixture({ platform = "darwin", quitting = false } = {}) {
+/** @param {{ platform?: NodeJS.Platform, quitting?: boolean, canHide?: boolean }} options */
+function fixture({ platform = "darwin", quitting = false, canHide = true } = {}) {
   const window = new FakeWindow();
   const event = {
     prevented: false,
@@ -25,6 +25,7 @@ function fixture({ platform = "darwin", quitting = false } = {}) {
     window,
     platform,
     canQuit: () => quitting,
+    canHide: () => canHide,
   });
   return { window, event, dispose };
 }
@@ -50,10 +51,30 @@ test("other platforms keep their native close behavior", () => {
   assert.equal(target.window.hideCount, 0);
 });
 
+test("macOS does not hide a window when background continuation is unsafe", () => {
+  const target = fixture({ canHide: false });
+  target.window.emit("close", target.event);
+  assert.equal(target.event.prevented, false);
+  assert.equal(target.window.hideCount, 0);
+});
+
 test("dispose removes the close interception", () => {
   const target = fixture();
   target.dispose();
   target.window.emit("close", target.event);
   assert.equal(target.event.prevented, false);
   assert.equal(target.window.hideCount, 0);
+});
+
+test("window-all-closed quits when requested background mode has no indicator", () => {
+  const background = { enabled: true, backgroundMode: true };
+  assert.equal(windowAllClosedAction({ platform: "darwin", settings: background, backgroundIndicatorActive: false }), "quit");
+  assert.equal(windowAllClosedAction({ platform: "win32", settings: background, backgroundIndicatorActive: false }), "quit");
+  assert.equal(windowAllClosedAction({ platform: "linux", settings: background, backgroundIndicatorActive: true }), "keep-running");
+});
+
+test("window-all-closed preserves native non-background platform behavior", () => {
+  const foreground = { enabled: true, backgroundMode: false };
+  assert.equal(windowAllClosedAction({ platform: "darwin", settings: foreground, backgroundIndicatorActive: false }), "keep-running");
+  assert.equal(windowAllClosedAction({ platform: "win32", settings: foreground, backgroundIndicatorActive: false }), "quit");
 });

@@ -298,6 +298,25 @@ export function createRemoteControlOperationRegistry({
       return rejected("invalid_request", correlationId);
     }
 
+    if (request.operation === "session.prompt" && isRecord(validatedArguments)) {
+      const whenBusy = validatedArguments.whenBusy ?? "reject";
+      if (whenBusy === "steer" || whenBusy === "enqueue") {
+        let busyPolicy = { steer: false, enqueue: false };
+        try {
+          const value = await getBusySessionPolicy(context);
+          if (isRecord(value)) busyPolicy = { steer: value.steer === true, enqueue: value.enqueue === true };
+        } catch {
+          return rejected("policy_unavailable", correlationId);
+        }
+        const feature = whenBusy === "steer" ? "session.steer" : "session.enqueue";
+        const gate = whenBusy === "steer" ? "busySessionSteer" : "busySessionEnqueue";
+        if (!isRecord(gates) || gates[gate] !== true || busyPolicy[whenBusy] !== true ||
+          !isRecord(advertisedCapabilities) || !Array.isArray(advertisedCapabilities.features) || !advertisedCapabilities.features.includes(feature)) {
+          return rejected("feature_disabled", correlationId);
+        }
+      }
+    }
+
     try {
       const value = await registration.execute({
         operation: registration.operation,

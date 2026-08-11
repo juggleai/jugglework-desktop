@@ -67,11 +67,20 @@ function sessionKey(workspaceId, sessionId) {
  * Generation fences survive terminal clearing so delayed responses cannot
  * resurrect an old run.
  */
-export function createSessionMutationCoordinator() {
+export function createSessionMutationCoordinator({ onActiveRemoteRunCountChanged = null } = {}) {
+  if (!(onActiveRemoteRunCountChanged === null || typeof onActiveRemoteRunCountChanged === "function")) {
+    throw new TypeError("Session mutation coordinator dependencies are invalid.");
+  }
   /** @type {Map<string, ReturnType<typeof serverRun>>} */
   const runs = new Map();
   /** @type {Map<string, { generation: number, runId: string }>} */
   const fences = new Map();
+
+  function notifyActiveRemoteRunCount() {
+    if (!onActiveRemoteRunCountChanged) return;
+    const count = [...runs.values()].filter((run) => run.origin === "remote-control").length;
+    try { onActiveRemoteRunCountChanged(count); } catch {}
+  }
 
   /** @param {unknown} input */
   function recordServerRun(input) {
@@ -91,6 +100,7 @@ export function createSessionMutationCoordinator() {
     }
     runs.set(key, incoming);
     fences.set(key, { generation: incoming.generation, runId: incoming.runId });
+    notifyActiveRemoteRunCount();
     return true;
   }
 
@@ -100,6 +110,7 @@ export function createSessionMutationCoordinator() {
     const current = runs.get(key);
     if (!current || current.runId !== runId) return false;
     runs.delete(key);
+    notifyActiveRemoteRunCount();
     return true;
   }
 
@@ -117,5 +128,16 @@ export function createSessionMutationCoordinator() {
     }));
   }
 
-  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, activeRuns });
+  function clearRemoteRuns() {
+    let changed = false;
+    for (const [key, run] of runs) {
+      if (run.origin !== "remote-control") continue;
+      runs.delete(key);
+      changed = true;
+    }
+    if (changed) notifyActiveRemoteRunCount();
+    return changed;
+  }
+
+  return Object.freeze({ recordServerRun, clearTerminalRun, getActiveRunId, activeRuns, clearRemoteRuns });
 }

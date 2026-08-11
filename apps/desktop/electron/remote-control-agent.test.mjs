@@ -221,7 +221,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -238,6 +238,8 @@ function harness({
   onSessionUnbound = () => {},
   onTransportReset = () => {},
   onControlRevoked = () => {},
+  onPolicyExpired = () => {},
+  onAuthorizationChanged = () => {},
 } = {}) {
   const clock = new FakeClock();
   let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
@@ -322,6 +324,8 @@ function harness({
     onSessionUnbound,
     onTransportReset,
     onControlRevoked,
+    onPolicyExpired,
+    onAuthorizationChanged,
   });
   return {
     agent,
@@ -483,6 +487,58 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(socket.closeCalls, 1);
     assert.equal(fixture.agent.status().localControlEnabled, false);
     assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
+  });
+
+  it("suspend reports offline, fences transport and timers, and resume waits for fresh policy and token", async () => {
+    const authorizations = [];
+    let policyExpired = 0;
+    const fixture = harness({
+      capabilities: { ...readCapabilities, operations: [{ operation: "session.create", payloadVersions: [1] }] },
+      onAuthorizationChanged: (authorized) => authorizations.push(authorized),
+      onPolicyExpired: () => { policyExpired += 1; },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext({ featureGates: { ...readGates, sessionMutation: true } }));
+    const socket = fixture.sockets[0];
+    socket.open();
+    await settle();
+    socket.receive(welcome(77));
+    await settle();
+    assert.deepEqual(authorizations, [true]);
+
+    const suspending = fixture.agent.suspend();
+    assert.equal(socket.closeCalls, 1);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_offline");
+    assert.equal(fixture.agent.status().localControlEnabled, false);
+    assert.equal(fixture.clock.nextDelay(), null);
+    await suspending;
+    assert.deepEqual(authorizations, [true, false]);
+    assert.equal(policyExpired, 1);
+
+    await fixture.agent.resume();
+    await fixture.agent.resume();
+    assert.equal(fixture.sockets.length, 1);
+    assert.equal(fixture.clock.nextDelay(), null);
+    fixture.clock.time += 1;
+    await fixture.agent.syncContext(signedInContext({
+      validatedAt: new Date(fixture.clock.time).toISOString(),
+      policyVersion: "policy-2",
+      featureGates: { ...readGates, sessionMutation: true },
+    }));
+    assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.tokenCalls, 2);
+  });
+
+  it("authorizes execution sleep only while session mutation policy is fresh and enabled", async () => {
+    const authorizations = [];
+    const fixture = harness({ onAuthorizationChanged: (authorized) => authorizations.push(authorized) });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    assert.deepEqual(authorizations, []);
+    await fixture.agent.syncContext(signedInContext({ featureGates: { ...readGates, sessionMutation: true } }));
+    assert.deepEqual(authorizations, [true]);
+    await fixture.agent.syncContext(signedInContext());
+    assert.deepEqual(authorizations, [true, false]);
   });
 
   it("reconnects with bounded jitter and ignores stale socket events", async () => {

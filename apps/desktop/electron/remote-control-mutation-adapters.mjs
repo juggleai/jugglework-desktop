@@ -245,7 +245,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           throw new TypeError("Remote mutation arguments are invalid.");
         }
       }
-      if (typeof value.prompt !== "string" || value.prompt.trim().length < 1 || value.prompt.length > 200_000) {
+      if (typeof value.prompt !== "string" || value.prompt.trim().length < 1 || Buffer.byteLength(value.prompt, "utf8") > 200_000) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
       const whenBusy = Object.hasOwn(value, "whenBusy") ? value.whenBusy : "reject";

@@ -36,13 +36,15 @@ function observationStatus(type, data) {
  *   logger?: { warn?: (message: string, metadata?: object) => void },
  *   coalesceMs?: number,
  *   onNotificationEvent?: (event: unknown) => void,
+ *   onStop?: () => void,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, onNotificationEvent = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, onNotificationEvent = null, onStop = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
-      typeof publish !== "function" || !(onNotificationEvent === null || typeof onNotificationEvent === "function")) {
+       typeof publish !== "function" || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
+       !(onStop === null || typeof onStop === "function")) {
     throw new TypeError("Remote session event bridge dependencies are invalid.");
   }
 
@@ -114,7 +116,18 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           ? (identifier(data.sessionID) ? data.sessionID : identifier(data.sessionId) ? data.sessionId : null)
           : null;
         const status = observationStatus(type, data);
-        const runId = sessionId && status ? coordinator.getActiveRunId({ workspaceId, sessionId }) : null;
+        let runId = sessionId && status ? coordinator.getActiveRunId({ workspaceId, sessionId }) : null;
+        // A queued operation is intentionally absent from the mirror until the
+        // server admits it. Hydrate that new authoritative run on its first SSE
+        // status rather than treating the queued item itself as active.
+        if (sessionId && status && !runId) {
+          try {
+            const response = await listActiveRuns({ workspaceId });
+            if (!current() || !isRecord(response) || !Array.isArray(response.items)) return;
+            for (const run of response.items) coordinator.recordServerRun(run);
+            runId = coordinator.getActiveRunId({ workspaceId, sessionId });
+          } catch {}
+        }
         projector.accept(workspaceId, raw);
         if (!current() || !sessionId || !status || !runId) return;
         try {
@@ -205,6 +218,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     if (stopped) return;
     stopped = true;
     clear();
+    try { onStop?.(); } catch {}
   }
 
   return Object.freeze({ bind, unbind, clear, stop });

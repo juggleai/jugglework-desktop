@@ -19,6 +19,7 @@ import {
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
+import type { SessionPendingOperationPump } from "../session-pending-operation-pump.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -55,6 +56,7 @@ interface RegisterSessionRoutesOptions {
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
   sessionPendingOperations: SessionPendingOperationStore;
+  sessionPendingOperationPump: SessionPendingOperationPump;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -101,7 +103,12 @@ const promptBodySchema = z.object({
   reasoning_effort: z.string().max(256).optional(),
 }).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
-  parts: z.tuple([z.object({ type: z.literal("text"), text: z.string().min(1).max(200_000) }).strict()]),
+  parts: z.tuple([z.object({
+    type: z.literal("text"),
+    text: z.string().min(1)
+      .refine((value) => value.trim().length > 0)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= 200_000),
+  }).strict()]),
 }).strict();
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({
@@ -175,6 +182,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     dispatchSessionAbort,
     sessionMutations,
     sessionPendingOperations,
+    sessionPendingOperationPump,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -564,25 +572,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
                 .filter((item) => item.mode === "enqueue" && item.state === "pending" && item.queueSequence <= pending.queueSequence).length;
               return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position }, 202);
             }
-            // Persist before admission. OpenCode v2 steer uses the prompt endpoint
-            // with delivery=steer; the operation is no longer cancellable once claimed.
-            const claimed = sessionPendingOperations.claimNext(workspace.id, input.sessionId, "steer");
-            if (!claimed || claimed.id !== pending.id) throw new ApiError(409, "session_busy", "A prior steer operation is pending");
-            try {
-              const opencode = createWorkspaceOpencodeClient(config, workspace);
-              const result = await opencode.session.promptAsync({
-                sessionID: input.sessionId,
-                parts: [{ type: "text", text }],
-                delivery: "steer",
-              } as Parameters<typeof opencode.session.promptAsync>[0]);
-              if (result.error !== undefined) throw new ApiError(502, "opencode_request_failed", "OpenCode rejected steer");
-              const admittedId = input.startCommandCorrelationId;
-              sessionPendingOperations.markAdmitted(pending.id, admittedId);
-              return jsonResponse({ disposition: "steered", pendingOperationId: pending.id, admittedId }, 202);
-            } catch (error) {
-              sessionPendingOperations.markFailed(pending.id, "steer_not_admitted");
-              throw error;
-            }
+            // Return the durable ID while it is still pending/cancellable. The
+            // lifecycle pump claims and submits it asynchronously as steer.
+            void sessionPendingOperationPump.wake();
+            return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position: 1 }, 202);
           }
           throw new SessionMutationError(
             "session_busy",
@@ -665,22 +658,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     try {
       const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });
       if (observation.cleared) {
-        const next = sessionPendingOperations.claimNext(workspace.id, input.sessionId, "enqueue");
-        if (next) {
-          try {
-            const run = sessionMutations.reserveStart({
-              workspaceId: workspace.id,
-              sessionId: input.sessionId,
-              origin: "remote-control",
-              startCommandCorrelationId: next.commandCorrelationId,
-            });
-            await dispatchSessionPromptAsync(config, workspace, input.sessionId, { parts: [{ type: "text", text: next.prompt }] });
-            sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId });
-            sessionPendingOperations.markAdmitted(next.id, run.runId);
-          } catch (error) {
-            sessionPendingOperations.markFailed(next.id, "enqueue_admission_failed");
+        for (const admitted of sessionPendingOperations.list(workspace.id, input.sessionId)) {
+          if (admitted.state === "admitted" && admitted.admittedId === input.runId) {
+            sessionPendingOperations.markCompleted(admitted.id);
           }
         }
+        void sessionPendingOperationPump.wake();
       }
       return jsonResponse(observation);
     } catch (error) {
@@ -709,10 +692,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       return jsonResponse({ pendingOperationId, status: result.cancelled ? "cancelled" : "already_cancelled" });
     } catch (error) {
       if (error instanceof SessionPendingOperationError && error.code === "not_cancellable") {
-        return jsonResponse({ pendingOperationId, status: "not_cancellable" }, 409);
+        return jsonResponse({ pendingOperationId, status: "not_cancellable" });
       }
       throw error;
     }
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/pending", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const pending = sessionPendingOperations.list(workspace.id, sessionId)
+      .filter((item) => item.state === "pending");
+    return jsonResponse({ items: pending.map((item, index) => ({ id: item.id, mode: item.mode, position: index + 1, status: "pending" })) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/:runId/abort", "client", async (ctx) => {
@@ -767,6 +759,27 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     return jsonResponse({ items: sessionMutations.listActive(workspace.id) });
+  });
+
+  addRoute(routes, "POST", "/remote-control/pending/cancel-all", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = parseRunBody(z.object({ commandCorrelationId: runIdentifierSchema }).strict(), await readJsonBody(ctx.request));
+    return jsonResponse({ cancelled: await sessionPendingOperationPump.cancelAll(body.commandCorrelationId) });
+  });
+
+  addRoute(routes, "POST", "/remote-control/pending/enable", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const body = parseRunBody(z.object({ enabled: z.boolean(), steer: z.boolean(), enqueue: z.boolean() }).strict(), await readJsonBody(ctx.request));
+    const policy = {
+      steer: body.enabled && body.steer,
+      enqueue: body.enabled && body.enqueue,
+    };
+    const cancelled = policy.steer || policy.enqueue
+      ? sessionPendingOperationPump.enable(policy).cancelled
+      : await sessionPendingOperationPump.cancelAll("policy_disabled");
+    return jsonResponse({ enabled: policy.steer || policy.enqueue, ...policy, cancelled });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {

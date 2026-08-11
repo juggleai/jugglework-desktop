@@ -607,6 +607,12 @@ export const desktopRemoteSessionSnapshotSchema = z
     messages: z.array(desktopRemoteMessageSchema).max(100_000),
     todos: z.array(desktopRemoteTodoSchema).max(10_000),
     interactions: z.array(desktopRemoteInteractionSchema).max(1_000),
+    pendingOperations: z.array(z.object({
+      id: identifierSchema,
+      mode: z.enum(["steer", "enqueue"]),
+      position: z.number().int().positive(),
+      status: z.literal("pending"),
+    }).strict()).max(1_000),
     capturedAt: dateTimeSchema,
   })
   .strict()
@@ -654,7 +660,12 @@ const sessionPromptRequestSchema = z
       .object({
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
-        prompt: z.string().trim().min(1).max(200_000),
+        prompt: z.string().min(1)
+          .refine((value) => value.trim().length > 0, "prompt must not be blank")
+          .refine(
+            (value) => new TextEncoder().encode(value).byteLength <= 200_000,
+            "prompt must be at most 200000 UTF-8 bytes",
+          ),
         whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
       })
       .strict(),

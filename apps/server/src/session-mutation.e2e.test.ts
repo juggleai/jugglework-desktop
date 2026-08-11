@@ -37,6 +37,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<v
 
 function startMockOpencode() {
   const prompts: Array<{ sessionId: string; body: unknown; directory: string | null }> = [];
+  const v2Prompts: Array<{ sessionId: string; body: { id?: string; delivery?: string; prompt?: unknown }; directory: string | null }> = [];
   const aborts: string[] = [];
   const commands: Array<{ sessionId: string; body: unknown }> = [];
   const shells: Array<{ sessionId: string; body: unknown }> = [];
@@ -49,6 +50,7 @@ function startMockOpencode() {
   const heldShells = new Map<string, ReturnType<typeof deferred<void>>>();
   const failedPrompts = new Set<string>();
   const failedMessageIds = new Set<string>();
+  const failedV2Ids = new Set<string>();
   const failedShells = new Set<string>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -58,6 +60,24 @@ function startMockOpencode() {
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
+      }
+
+      const v2PromptMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/prompt$/);
+      if (request.method === "POST" && v2PromptMatch) {
+        const sessionId = decodeURIComponent(v2PromptMatch[1]!);
+        const body = await request.json() as { id?: string; delivery?: string; prompt?: unknown };
+        v2Prompts.push({ sessionId, body, directory: request.headers.get("x-opencode-directory") });
+        if (body.id && failedV2Ids.delete(body.id)) return Response.json({ name: "PromptFailure" }, { status: 500 });
+        return Response.json({
+          data: {
+            admittedSeq: v2Prompts.length,
+            id: body.id,
+            sessionID: sessionId,
+            prompt: body.prompt,
+            delivery: body.delivery,
+            timeCreated: Date.now(),
+          },
+        });
       }
 
       const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/);
@@ -111,6 +131,7 @@ function startMockOpencode() {
   return {
     server,
     prompts,
+    v2Prompts,
     aborts,
     commands,
     shells,
@@ -123,6 +144,7 @@ function startMockOpencode() {
     heldShells,
     failedPrompts,
     failedMessageIds,
+    failedV2Ids,
     failedShells,
   };
 }
@@ -157,11 +179,19 @@ async function startHarness(enginePort: number) {
   };
   const server = await startServer(config) as Served;
   stops.push(() => server.stop(true));
+  const collaboratorHeaders = { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" };
+  const enabled = await fetch(`http://127.0.0.1:${server.port}/remote-control/pending/enable`, {
+    method: "POST",
+    headers: collaboratorHeaders,
+    body: JSON.stringify({ enabled: true, steer: true, enqueue: true }),
+  });
+  if (!enabled.ok) throw new Error("Failed to enable pending-operation test fixture");
   return {
     base: `http://127.0.0.1:${server.port}`,
     root,
-    collaboratorHeaders: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
+    collaboratorHeaders,
     hostHeaders: { "X-JuggleWork-Host-Token": config.hostToken, "Content-Type": "application/json" },
+    config,
   };
 }
 
@@ -170,6 +200,198 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("busy steer is durably admitted through the OpenCode v2 steer delivery", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_steer", { type: "busy" });
+
+    const response = await fetch(`${runPath(harness.base, "ses_steer")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "remote-control",
+        startCommandCorrelationId: "cmd_steer",
+        whenBusy: "steer",
+        prompt: { parts: [{ type: "text", text: "Change direction" }] },
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    const result = await response.json() as { disposition: string; pendingOperationId: string; position: number };
+    expect(result).toMatchObject({ disposition: "enqueued", position: 1 });
+    await waitUntil(() => engine.v2Prompts.length === 1);
+    expect(engine.v2Prompts).toEqual([{
+      sessionId: "ses_steer",
+      body: { id: result.pendingOperationId, delivery: "steer", prompt: { text: "Change direction" } },
+      directory: harness.root,
+    }]);
+  });
+
+  test("busy enqueue acknowledges FIFO positions and terminal observations promote one at a time", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_queue", { type: "idle" });
+    const started = await fetch(`${runPath(harness.base, "ses_queue")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_running", prompt: { parts: [{ type: "text", text: "Current" }] } }),
+    });
+    const running = (await started.json() as { run: { runId: string } }).run;
+    engine.statuses.set("ses_queue", { type: "busy" });
+
+    const queued = [];
+    for (const [command, prompt] of [["cmd_first", "First"], ["cmd_second", "Second"]]) {
+      const response = await fetch(`${runPath(harness.base, "ses_queue")}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: command, whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: prompt }] } }),
+      });
+      expect(response.status).toBe(202);
+      queued.push(await response.json() as { pendingOperationId: string; position: number });
+    }
+    expect(queued.map((item) => item.position)).toEqual([1, 2]);
+    expect(engine.v2Prompts).toHaveLength(0);
+
+    engine.statuses.set("ses_queue", { type: "idle" });
+    await fetch(`${runPath(harness.base, "ses_queue")}/${running.runId}/observations`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
+    });
+    await waitUntil(() => engine.v2Prompts.length === 1);
+    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: queued[0]!.pendingOperationId, delivery: "queue", prompt: { text: "First" } });
+    const admittedCancel = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_queue/pending/${queued[0]!.pendingOperationId}/cancel`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ commandCorrelationId: "cancel_admitted" }),
+    });
+    await expect(admittedCancel.json()).resolves.toEqual({ pendingOperationId: queued[0]!.pendingOperationId, status: "not_cancellable" });
+
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    const promotedRun = (await active.json() as { items: Array<{ runId: string }> }).items[0]!;
+    await fetch(`${runPath(harness.base, "ses_queue")}/${promotedRun.runId}/observations`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
+    });
+    await waitUntil(() => engine.v2Prompts.length === 2);
+    expect(engine.v2Prompts[1]?.body).toMatchObject({ id: queued[1]!.pendingOperationId, delivery: "queue", prompt: { text: "Second" } });
+  });
+
+  test("failed queue promotion rolls back its local reservation", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_rollback_queue", { type: "busy" });
+    const queuedResponse = await fetch(`${runPath(harness.base, "ses_rollback_queue")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_fail_queue", whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: "Fail admission" }] } }),
+    });
+    const queued = await queuedResponse.json() as { pendingOperationId: string };
+    engine.failedV2Ids.add(queued.pendingOperationId);
+    engine.statuses.set("ses_rollback_queue", { type: "idle" });
+    await waitUntil(() => engine.v2Prompts.length === 1);
+    await waitUntil(async () => {
+      const response = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+      return (await response.json() as { items: unknown[] }).items.length === 0;
+    });
+
+    const retry = await fetch(`${runPath(harness.base, "ses_rollback_queue")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_after_failure", prompt: { parts: [{ type: "text", text: "Starts after rollback" }] } }),
+    });
+    expect(retry.status).toBe(202);
+  });
+
+  test("pending cancellation is idempotent and prevents later admission", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_cancel_queue", { type: "busy" });
+    const queued = await (await fetch(`${runPath(harness.base, "ses_cancel_queue")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_cancel_queue", whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: "Cancel me" }] } }),
+    })).json() as { pendingOperationId: string };
+    const cancelPath = `${harness.base}/workspace/ws_1/sessions/ses_cancel_queue/pending/${queued.pendingOperationId}/cancel`;
+    for (const [commandCorrelationId, expected] of [["cancel_one", "cancelled"], ["cancel_two", "already_cancelled"]]) {
+      const response = await fetch(cancelPath, { method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ commandCorrelationId }) });
+      await expect(response.json()).resolves.toEqual({ pendingOperationId: queued.pendingOperationId, status: expected });
+    }
+    engine.statuses.set("ses_cancel_queue", { type: "idle" });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(engine.v2Prompts).toHaveLength(0);
+  });
+
+  test("Stop All cancels only not-yet-admitted remote queue rows", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_stop_all", { type: "busy" });
+    for (const command of ["cmd_stop_one", "cmd_stop_two"]) {
+      await fetch(`${runPath(harness.base, "ses_stop_all")}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: command, whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: command }] } }),
+      });
+    }
+    const stopped = await fetch(`${harness.base}/remote-control/pending/cancel-all`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ commandCorrelationId: "stop_all_command" }),
+    });
+    await expect(stopped.json()).resolves.toEqual({ cancelled: 2 });
+    engine.statuses.set("ses_stop_all", { type: "idle" });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(engine.v2Prompts).toHaveLength(0);
+  });
+
+  test("mode policy route cancels persisted rows that stay cancelled after re-enable", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_policy_queue", { type: "busy" });
+    const queued = await (await fetch(`${runPath(harness.base, "ses_policy_queue")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "remote-control",
+        startCommandCorrelationId: "cmd_policy_queue",
+        whenBusy: "enqueue",
+        prompt: { parts: [{ type: "text", text: "Must remain cancelled" }] },
+      }),
+    })).json() as { pendingOperationId: string };
+
+    const disabled = await fetch(`${harness.base}/remote-control/pending/enable`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ enabled: true, steer: true, enqueue: false }),
+    });
+    await expect(disabled.json()).resolves.toEqual({ enabled: true, steer: true, enqueue: false, cancelled: 1 });
+    const cancelled = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_policy_queue/pending/${queued.pendingOperationId}/cancel`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ commandCorrelationId: "confirm_policy_cancel" }),
+    });
+    await expect(cancelled.json()).resolves.toEqual({ pendingOperationId: queued.pendingOperationId, status: "already_cancelled" });
+
+    await fetch(`${harness.base}/remote-control/pending/enable`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ enabled: true, steer: true, enqueue: true }),
+    });
+    engine.statuses.set("ses_policy_queue", { type: "idle" });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(engine.v2Prompts).toHaveLength(0);
+  });
+
+  test("restart pump admits an idle persisted queue row once with its durable ID", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_restart_queue", { type: "busy" });
+    const queued = await (await fetch(`${runPath(harness.base, "ses_restart_queue")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_restart_queue", whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: "After restart" }] } }),
+    })).json() as { pendingOperationId: string };
+
+    const firstStop = stops.pop();
+    await firstStop?.();
+    engine.statuses.set("ses_restart_queue", { type: "idle" });
+    const restarted = await startServer(harness.config) as Served;
+    stops.push(() => restarted.stop(true));
+    await fetch(`http://127.0.0.1:${restarted.port}/remote-control/pending/enable`, {
+      method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ enabled: true, steer: true, enqueue: true }),
+    });
+    await waitUntil(() => engine.v2Prompts.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(engine.v2Prompts).toHaveLength(1);
+    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: queued.pendingOperationId, delivery: "queue", prompt: { text: "After restart" } });
+  });
+
   test("rejects authoritative engine activity without fabricating a run id", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

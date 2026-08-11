@@ -14,6 +14,16 @@ const enabledReadGates = {
   interactions: false,
 };
 
+function promptRegistration() {
+  return {
+    operation: "session.prompt",
+    payloadVersions: [1],
+    requiredGates: [...REMOTE_CONTROL_REQUIRED_GATES["session.prompt"]],
+    validateArguments: (value) => value,
+    execute: async ({ arguments: args }) => ({ disposition: args.whenBusy === "steer" ? "steered" : "enqueued" }),
+  };
+}
+
 /** @typedef {NonNullable<Parameters<typeof createRemoteControlOperationRegistry>[0]>["registrations"][number]} OperationRegistration */
 /** @typedef {Parameters<OperationRegistration["execute"]>[0]} OperationExecutionInput */
 
@@ -104,6 +114,52 @@ describe("remote-control operation registry", () => {
       isPayloadEncryptionReady: () => { throw new Error("must not run"); },
     });
     assert.deepEqual((await disabled.advertise()).features, []);
+  });
+
+  it("rechecks decrypted busy modes against separate gate, local policy, and current advertisement", async () => {
+    const request = (whenBusy) => ({
+      operation: "session.prompt",
+      payloadVersion: 1,
+      arguments: { workspaceId: "ws", sessionId: "ses", prompt: "decrypted", whenBusy },
+    });
+    for (const whenBusy of ["steer", "enqueue"]) {
+      const feature = `session.${whenBusy}`;
+      const gate = whenBusy === "steer" ? "busySessionSteer" : "busySessionEnqueue";
+      const baseGates = { ...enabledReadGates, sessionMutation: true, busySessionSteer: true, busySessionEnqueue: true };
+      for (const missing of ["gate", "policy", "advertisement"]) {
+        const registry = createRemoteControlOperationRegistry({
+          registrations: [promptRegistration()],
+          getFeatureGates: () => missing === "gate" ? { ...baseGates, [gate]: false } : baseGates,
+          getBusySessionPolicy: () => missing === "policy"
+            ? { steer: whenBusy !== "steer", enqueue: whenBusy !== "enqueue" }
+            : { steer: true, enqueue: true },
+          isOperationAllowed: () => true,
+        });
+        const result = await registry.dispatch(request(whenBusy), {
+          // This request models arguments already decrypted by the E2EE agent.
+          advertisedCapabilities: {
+            schemaVersion: 1,
+            operations: [{ operation: "session.prompt", payloadVersions: [1] }],
+            features: missing === "advertisement" ? [] : [feature],
+          },
+        });
+        assert.equal(result.error.code, "feature_disabled", `${whenBusy} accepted without ${missing}`);
+      }
+
+      const enabled = createRemoteControlOperationRegistry({
+        registrations: [promptRegistration()],
+        getFeatureGates: () => baseGates,
+        getBusySessionPolicy: () => ({ steer: true, enqueue: true }),
+        isOperationAllowed: () => true,
+      });
+      assert.deepEqual(await enabled.dispatch(request(whenBusy), {
+        advertisedCapabilities: {
+          schemaVersion: 1,
+          operations: [{ operation: "session.prompt", payloadVersions: [1] }],
+          features: [feature],
+        },
+      }), { ok: true, value: { disposition: whenBusy === "steer" ? "steered" : "enqueued" } });
+    }
   });
 
   it("fails closed when the secure-key readiness check fails", async () => {

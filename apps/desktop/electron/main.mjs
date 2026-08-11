@@ -38,7 +38,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
-import { installMacCloseToHide } from "./window-close-behavior.mjs";
+import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
@@ -49,11 +49,16 @@ import { createRemoteControlMutationRegistrations } from "./remote-control-mutat
 import { createRemoteControlInteractionStore } from "./remote-control-interaction-store.mjs";
 import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
 import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
-import { createRemoteControlAgent } from "./remote-control-agent.mjs";
+import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./remote-control-agent.mjs";
 import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
+import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
+import { createRemoteControlBackgroundIndicator } from "./remote-control-background-indicator.mjs";
+import { applyLaunchAtLogin as applyLaunchAtLoginSetting, shouldStartHidden } from "./launch-at-login.mjs";
+import { createRemoteControlPendingPolicySynchronizer } from "./remote-control-pending-policy.mjs";
+import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings, stopAllRemoteControl } from "./remote-control-settings-lifecycle.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -94,13 +99,17 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   nativeImage,
   nativeTheme,
   net: electronNet,
   Notification: ElectronNotification,
+  powerMonitor,
+  powerSaveBlocker,
   session,
   shell,
   systemPreferences,
+  Tray,
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const WebSocketClient = require("ws");
@@ -585,8 +594,10 @@ async function focusMainWindowFromNotification() {
   if (!win) return;
   if (win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
+  if (process.platform === "win32") win.setSkipTaskbar(false);
   win.show();
   win.focus();
+  flushPendingDeepLinks();
 }
 
 /**
@@ -1024,9 +1035,48 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
 });
 let remoteControlAgent = null;
 let remoteSessionEventBridge = null;
+const remoteControlSleepController = createRemoteControlSleepController({
+  powerSaveBlocker,
+  logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+});
+const remoteControlPowerMonitorController = createRemoteControlPowerMonitorController({
+  powerMonitor,
+  getAgent: () => remoteControlAgent,
+  logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+});
+const remoteControlPendingPolicy = createRemoteControlPendingPolicySynchronizer({
+  readSettings: () => remoteControlSettingsStore.read(),
+  normalizeContext: (input) => normalizeRemoteControlAgentContext(input, { allowInsecureLoopback: isDevMode }),
+  postPolicy: async (policy) => {
+    const managedRuntimeClient = createManagedRuntimeClient({
+      getAccess: () => runtimeManager.managedServerAccess(),
+      fetcher: electronNet.fetch,
+    });
+    await managedRuntimeClient.postJson("/remote-control/pending/enable", policy);
+  },
+});
 let remoteControlReadRegistrations = [];
 let remoteControlMutationRegistrations = [];
-const sessionMutationCoordinator = createSessionMutationCoordinator();
+const sessionMutationCoordinator = createSessionMutationCoordinator({
+  onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
+});
+let startMainWindowHidden = false;
+let remoteControlBackgroundModeRequested = false;
+const remoteControlBackgroundIndicator = createRemoteControlBackgroundIndicator({
+  createTray: () => {
+    const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+    if (!image || image.isEmpty()) throw new Error("Tray icon unavailable.");
+    return new Tray(image);
+  },
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+  restoreWindow: async () => {
+    startMainWindowHidden = false;
+    await createMainWindow();
+    await focusMainWindowFromNotification();
+  },
+  stopAll: () => executeRemoteControlStopAll(),
+  logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+});
 
 function stoppedRemoteControlAgentStatus() {
   return {
@@ -1107,6 +1157,13 @@ function createMainRemoteControlAgent() {
     },
     onControlRevoked: ({ source, transition }) => {
       remoteControlNotificationController.accept({ origin: "live", type: "control.revoked", source, transition });
+    },
+    onPolicyExpired: () => {
+      void remoteControlPendingPolicy.fence().catch(() => undefined);
+    },
+    onAuthorizationChanged: (authorized) => {
+      remoteControlSleepController.setAuthorized(authorized);
+      if (!authorized) sessionMutationCoordinator.clearRemoteRuns();
     },
     logger: {
       warn: (_message, metadata) => console.warn("[desktop-remote] state warning", metadata),
@@ -1405,6 +1462,7 @@ function createMainRemoteSessionEventBridge() {
       warn: (_message, metadata) => console.warn("[desktop-remote] session event warning", metadata),
     },
     onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
+    onStop: () => remoteControlSleepController.setAuthorized(false),
   });
 }
 
@@ -1974,6 +2032,39 @@ function applyNativeTheme(mode) {
   return true;
 }
 
+async function executeRemoteControlStopAll() {
+  remoteControlSleepController.setAuthorized(false);
+  return stopAllRemoteControl({
+    disableSettings: () => remoteControlSettingsStore.disable(),
+    applyLocalEffects: applyRemoteControlLocalEffects,
+    stopRemote: async () => {
+      let stopping;
+      let stopError;
+      try {
+        stopping = remoteControlAgent?.stopAll();
+      } catch (error) {
+        stopError = error;
+      }
+      let queueStopError;
+      try {
+        const managedRuntimeClient = createManagedRuntimeClient({
+          getAccess: () => runtimeManager.managedServerAccess(),
+          fetcher: electronNet.fetch,
+        });
+        await managedRuntimeClient.postJson("/remote-control/pending/cancel-all", {
+          commandCorrelationId: randomUUID(),
+        });
+      } catch (error) {
+        queueStopError = error;
+      }
+      await stopping;
+      await remoteControlAgent?.refreshLocalSettings();
+      if (stopError) throw stopError;
+      if (queueStopError) throw queueStopError;
+    },
+  });
+}
+
 // Desktop IPC command registry. Every command invokable from the renderer's
 // desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
 // entry here; handlers receive the ipcMain event followed by the renderer
@@ -1989,33 +2080,21 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
       const settings = await remoteControlSettingsStore.update(args[0] ?? {});
-      await remoteControlAgent?.refreshLocalSettings();
-      applyLaunchAtLogin(settings);
-      return settings;
+      return reconcilePersistedRemoteControlSettings({
+        settings,
+        applyLaunchAtLogin,
+        updateBackgroundIndicator: updateRemoteControlBackgroundIndicator,
+        refreshLocalSettings: () => remoteControlAgent?.refreshLocalSettings(),
+        synchronizePendingPolicy: () => remoteControlPendingPolicy.synchronize(),
+      });
   },
   "desktopRemoteControlStopAll": async (event) => {
       void event;
-      let stopping;
-      let stopError;
-      try {
-        stopping = remoteControlAgent?.stopAll();
-      } catch (error) {
-        stopError = error;
-      }
-      try {
-        const settings = await remoteControlSettingsStore.disable();
-        await stopping;
-        await remoteControlAgent?.refreshLocalSettings();
-        if (stopError) throw stopError;
-        return settings;
-      } catch (error) {
-        await stopping;
-        throw error;
-      }
+      return executeRemoteControlStopAll();
   },
   "desktopRemoteControlContextSync": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
-      return remoteControlAgent.syncContext(args[0]);
+      return remoteControlPendingPolicy.syncContext(args[0], (input) => remoteControlAgent.syncContext(input));
   },
   "desktopRemoteControlEnroll": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
@@ -2777,14 +2856,17 @@ async function createMainWindow() {
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.setTitle(currentDisplayAppName);
-    if (process.platform === "win32") mainWindow?.setSkipTaskbar(false);
-    mainWindow?.show();
-    flushPendingDeepLinks();
+    if (!startMainWindowHidden) {
+      if (process.platform === "win32") mainWindow?.setSkipTaskbar(false);
+      mainWindow?.show();
+      flushPendingDeepLinks();
+    }
   });
 
   installMacCloseToHide({
     window: mainWindow,
     canQuit: () => runtimeDisposedForQuit,
+    canHide: () => !remoteControlBackgroundModeRequested || remoteControlBackgroundIndicator.active(),
   });
 
   mainWindow.on("closed", () => {
@@ -2939,6 +3021,9 @@ if (!app.requestSingleInstanceLock()) {
     if (runtimeDisposedForQuit) return;
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
+    remoteControlPowerMonitorController.stop();
+    remoteControlBackgroundIndicator.stop();
+    remoteControlSleepController.stop();
     showShutdownScreen();
     void Promise.all([
       remoteSessionEventBridge?.stop(),
@@ -2950,19 +3035,19 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("second-instance", async (_event, argv) => {
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
+    startMainWindowHidden = false;
+    await createMainWindow();
+    await focusMainWindowFromNotification();
     queueDeepLinks(forwardedDeepLinks(argv));
+    flushPendingDeepLinks();
   });
 
   app.on("open-url", async (event, url) => {
     event.preventDefault();
+    startMainWindowHidden = false;
     await createMainWindow();
     queueDeepLinks([url]);
+    await focusMainWindowFromNotification();
   });
 
   app.whenReady().then(async () => {
@@ -2987,6 +3072,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     remoteSessionEventBridge = createMainRemoteSessionEventBridge();
     remoteControlAgent = createMainRemoteControlAgent();
+    remoteControlPowerMonitorController.start();
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
@@ -3001,6 +3087,8 @@ if (!app.requestSingleInstanceLock()) {
       console.warn("[jugglechat-skills] install failed", error);
     });
     await runtimeManager.prepareFreshRuntime().catch(() => undefined);
+    // The new managed server remains fenced until a fresh organization policy
+    // context is synchronized by the renderer.
 
     // Use Tauri's existing workspace state file as canonical so rollback and
     // Electron see the same workspace list. Import the short-lived
@@ -3015,6 +3103,11 @@ if (!app.requestSingleInstanceLock()) {
     }));
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
+    const remoteSettings = await remoteControlSettingsStore.read();
+    let wasOpenedAsHidden = false;
+    try { wasOpenedAsHidden = app.getLoginItemSettings().wasOpenedAsHidden === true; } catch {}
+    startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings, wasOpenedAsHidden });
+    if (!updateRemoteControlBackgroundIndicator(remoteSettings)) startMainWindowHidden = false;
     const win = await createMainWindow();
     if (process.platform === "linux") {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
@@ -3030,31 +3123,26 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("activate", async () => {
+    startMainWindowHidden = false;
     if (BrowserWindow.getAllWindows().length === 0) {
       await createMainWindow();
+      await focusMainWindowFromNotification();
       return;
     }
-    const win = await createMainWindow();
-    win.show();
-    win.focus();
+    await createMainWindow();
+    await focusMainWindowFromNotification();
   });
 
   app.on("window-all-closed", () => {
-    // When remote control background mode is enabled, keep running in the
-    // system tray even after all windows close (all platforms).
     if (remoteControlSettingsStore) {
       remoteControlSettingsStore.read().then((settings) => {
-        if (settings.backgroundMode && settings.enabled) {
-          // Keep the process alive for remote control; do not quit.
-          return;
-        }
-        if (process.platform !== "darwin") {
-          app.quit();
-        }
+        if (windowAllClosedAction({
+          platform: process.platform,
+          settings,
+          backgroundIndicatorActive: remoteControlBackgroundIndicator.active(),
+        }) === "quit") app.quit();
       }).catch(() => {
-        if (process.platform !== "darwin") {
-          app.quit();
-        }
+        app.quit();
       });
     } else if (process.platform !== "darwin") {
       app.quit();
@@ -3072,12 +3160,23 @@ if (!app.requestSingleInstanceLock()) {
  * @param {{ launchAtLogin: boolean }} settings
  */
 function applyLaunchAtLogin(settings) {
-  try {
-    app.setLoginItemSettings({
-      openAtLogin: settings.launchAtLogin === true,
-      args: ["--hidden"],
-    });
-  } catch {
-    // setLoginItemSettings can fail on some platforms; silently ignore.
-  }
+  return applyLaunchAtLoginSetting({
+    app,
+    platform: process.platform,
+    enabled: settings.launchAtLogin === true,
+    logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+  });
+}
+
+function updateRemoteControlBackgroundIndicator(settings) {
+  remoteControlBackgroundModeRequested = settings.enabled === true && settings.backgroundMode === true;
+  return remoteControlBackgroundIndicator.update(settings);
+}
+
+function applyRemoteControlLocalEffects(settings) {
+  return applyPersistedRemoteControlLocalEffects({
+    settings,
+    applyLaunchAtLogin,
+    updateBackgroundIndicator: updateRemoteControlBackgroundIndicator,
+  });
 }

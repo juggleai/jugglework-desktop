@@ -68,6 +68,7 @@ function harness(overrides = {}) {
     "/workspace/ws_local/opencode/session/status": { ses_1: { type: "busy" } },
     "/workspace/ws_local/sessions/ses_1": { item: session() },
     "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": snapshotBody(),
+    "/workspace/ws_local/sessions/ses_1/pending": { items: [] },
     ...(overrides.responses ?? {}),
   };
   const registrations = createRemoteControlReadRegistrations({

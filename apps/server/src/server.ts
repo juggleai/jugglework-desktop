@@ -63,6 +63,7 @@ import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
+import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -847,6 +848,13 @@ export async function startServer(config: ServerConfig, options: {
   const engineMcpServerState = beginEngineMcpServerState(config);
   const sessionMutations = createSessionMutationCoordinator();
   const sessionPendingOperations = await createSessionPendingOperationStore({ config });
+  let sessionPendingOperationPump: SessionPendingOperationPump | null = null;
+  let sessionPendingOperationsClosed = false;
+  const closeSessionPendingOperations = () => {
+    if (sessionPendingOperationsClosed) return;
+    sessionPendingOperationsClosed = true;
+    sessionPendingOperations.close();
+  };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const routes = createRoutes(
     config,
@@ -857,6 +865,7 @@ export async function startServer(config: ServerConfig, options: {
     engineMcpServerState,
     sessionMutations,
     sessionPendingOperations,
+    () => sessionPendingOperationPump,
     interactionResolutions,
   );
 
@@ -1039,8 +1048,39 @@ export async function startServer(config: ServerConfig, options: {
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
     reloadBaselineRefreshers.delete(config);
+    closeSessionPendingOperations();
     throw error;
   }
+
+  sessionPendingOperationPump = createSessionPendingOperationPump({
+    store: sessionPendingOperations,
+    sessionMutations,
+    async getSessionStatus(workspaceId, sessionId, signal) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
+      if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      const status = statuses[sessionId];
+      if (status === undefined) return "idle";
+      if (!isRecord(status) || typeof status.type !== "string") {
+        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      }
+      return status.type === "idle" ? "idle" : "busy";
+    },
+    async admit(operation, signal) {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, operation.workspaceId);
+      const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
+        sessionID: operation.sessionId,
+        id: operation.id,
+        prompt: { text: operation.prompt },
+        delivery: operation.mode === "steer" ? "steer" : "queue",
+      }, { signal });
+      const admitted = result.data?.data;
+      const expectedDelivery = operation.mode === "steer" ? "steer" : "queue";
+      if (result.error !== undefined || !admitted || admitted.id !== operation.id || admitted.sessionID !== operation.sessionId || admitted.delivery !== expectedDelivery) {
+        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid queue admission");
+      }
+    },
+  });
 
   return {
     ...server,
@@ -1048,7 +1088,22 @@ export async function startServer(config: ServerConfig, options: {
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
-      await server.stop();
+      const errors: unknown[] = [];
+      let pendingPumpClosed = false;
+      try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
+        errors.push(error);
+        // The pump is generation-fenced and cannot start more work. If a
+        // non-cooperative transport eventually settles, release SQLite then.
+        void sessionPendingOperationPump?.drained().then(closeSessionPendingOperations, () => undefined);
+      }
+      try { await server.stop(); } catch (error) { errors.push(error); }
+      // A non-cooperative upstream call may still unwind through the queue
+      // store. Keep that SQLite handle alive rather than closing under it.
+      if (pendingPumpClosed) {
+        try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
   };
 }
@@ -1630,6 +1685,7 @@ function createRoutes(
   engineMcpServerState: EngineMcpServerState,
   sessionMutations: SessionMutationCoordinator,
   sessionPendingOperations: SessionPendingOperationStore,
+  getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
 ): Route[] {
   const routes: Route[] = [];
@@ -1689,6 +1745,15 @@ function createRoutes(
     dispatchSessionAbort,
     sessionMutations,
     sessionPendingOperations,
+    sessionPendingOperationPump: {
+      wake: () => getSessionPendingOperationPump()?.wake() ?? Promise.resolve(),
+      cancelAll: (commandCorrelationId) => getSessionPendingOperationPump()?.cancelAll(commandCorrelationId)
+        ?? Promise.resolve(sessionPendingOperations.cancelAllPendingRemote(commandCorrelationId).cancelled),
+      enable: (policy) => getSessionPendingOperationPump()?.enable(policy)
+        ?? sessionPendingOperations.enableRemoteAcceptance(policy),
+      close: () => getSessionPendingOperationPump()?.close() ?? Promise.resolve(),
+      drained: () => getSessionPendingOperationPump()?.drained() ?? Promise.resolve(),
+    },
   });
 
   registerInteractionRoutes({

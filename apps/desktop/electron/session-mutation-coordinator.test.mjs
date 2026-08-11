@@ -73,3 +73,26 @@ test("terminal clearing is exact-run fenced and cannot clear a replacement", () 
   assert.equal(coordinator.clearTerminalRun({ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }), false);
   assert.equal(coordinator.getActiveRunId({ workspaceId: "ws_1", sessionId: "ses_1" }), "run_2");
 });
+
+test("notifies only for admitted remote runs and stale terminal cannot release a replacement", () => {
+  const counts = [];
+  const coordinator = createSessionMutationCoordinator({ onActiveRemoteRunCountChanged: (count) => counts.push(count) });
+  coordinator.recordServerRun(run({ origin: "local-renderer", runId: "local_1" }));
+  coordinator.recordServerRun(run({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_1" }));
+  assert.deepEqual(counts, [0, 1]);
+  coordinator.recordServerRun(run({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_2", generation: 2, updatedAt: 2_001 }));
+  assert.equal(coordinator.clearTerminalRun({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_1" }), false);
+  assert.deepEqual(counts, [0, 1, 1]);
+  assert.equal(coordinator.clearTerminalRun({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_2" }), true);
+  assert.deepEqual(counts, [0, 1, 1, 0]);
+});
+
+test("authorization loss clears remote mirrors without clearing local runs or generation fences", () => {
+  const coordinator = createSessionMutationCoordinator();
+  coordinator.recordServerRun(run({ origin: "local-renderer", runId: "local_1" }));
+  coordinator.recordServerRun(run({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_1" }));
+  assert.equal(coordinator.clearRemoteRuns(), true);
+  assert.equal(coordinator.getActiveRunId({ workspaceId: "ws_1", sessionId: "ses_1" }), "local_1");
+  assert.equal(coordinator.getActiveRunId({ workspaceId: "ws_2", sessionId: "ses_2" }), null);
+  assert.equal(coordinator.recordServerRun(run({ workspaceId: "ws_2", sessionId: "ses_2", runId: "remote_1" })), false);
+});
