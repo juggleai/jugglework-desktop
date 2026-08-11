@@ -81,6 +81,40 @@ describe("remote-control operation registry", () => {
     assert.deepEqual(await registry.advertise(), advertised());
   });
 
+  it("advertises E2EE only when its gate and secure local key storage are ready", async () => {
+    let ready = true;
+    let checks = 0;
+    const registry = createRemoteControlOperationRegistry({
+      registrations: [readRegistration()],
+      getFeatureGates: () => ({ ...enabledReadGates, payloadEncryption: true }),
+      isOperationAllowed: () => true,
+      isPayloadEncryptionReady: async () => {
+        checks += 1;
+        return ready;
+      },
+    });
+
+    assert.deepEqual((await registry.advertise()).features, ["payload.e2ee-v1"]);
+    ready = false;
+    assert.deepEqual((await registry.advertise()).features, []);
+    assert.equal(checks, 2);
+
+    const disabled = createRemoteControlOperationRegistry({
+      getFeatureGates: () => ({ ...enabledReadGates, payloadEncryption: false }),
+      isPayloadEncryptionReady: () => { throw new Error("must not run"); },
+    });
+    assert.deepEqual((await disabled.advertise()).features, []);
+  });
+
+  it("fails closed when the secure-key readiness check fails", async () => {
+    const registry = createRemoteControlOperationRegistry({
+      getFeatureGates: () => ({ ...enabledReadGates, payloadEncryption: true }),
+      isPayloadEncryptionReady: async () => { throw new Error("keychain unavailable"); },
+    });
+
+    assert.deepEqual((await registry.advertise()).features, []);
+  });
+
   it("registers session.create behind all mutation gates", async () => {
     const create = {
       operation: "session.create",

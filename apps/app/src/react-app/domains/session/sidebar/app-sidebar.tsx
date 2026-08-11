@@ -680,6 +680,7 @@ export type AppSidebarProps = {
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
   onSelectWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  onExpandWorkspace?: (workspaceId: string) => void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
@@ -764,11 +765,13 @@ export function AppSidebar(props: AppSidebarProps) {
       next.add(id);
       return next;
     });
-  }, []);
+    props.onExpandWorkspace?.(id);
+  }, [props.onExpandWorkspace]);
 
   const toggleWorkspaceExpanded = React.useCallback((workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
+    const willExpand = !expandedWorkspaceIds.has(id);
     setExpandedWorkspaceIds((previous) => {
       const next = new Set(previous);
       if (next.has(id)) {
@@ -778,7 +781,8 @@ export function AppSidebar(props: AppSidebarProps) {
       }
       return next;
     });
-  }, []);
+    if (willExpand) props.onExpandWorkspace?.(id);
+  }, [expandedWorkspaceIds, props.onExpandWorkspace]);
 
   const toggleSessionExpanded = React.useCallback((sessionId: string) => {
     const id = sessionId.trim();
@@ -1329,7 +1333,7 @@ function WorkspaceSidebarGroup({
   const statusLabel = (() => {
     if (showRemoteConnectionIssue) return t("workspace_list.unavailable");
     if (connectionState.status === "error") return connectionState.message?.trim() || taskLoadError.message;
-    if (group.status === "error") return taskLoadError.label;
+    if (group.status === "error") return taskLoadError.message;
     if (isConnectionActionBusy) return t("workspace_list.connecting");
     if (isRemoteWorkspace && connectionState.status === "connected") return connectionState.message?.trim() || t("workspace_list.connected");
     return "";

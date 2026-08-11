@@ -62,6 +62,7 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -845,6 +846,7 @@ export async function startServer(config: ServerConfig, options: {
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
   const sessionMutations = createSessionMutationCoordinator();
+  const sessionPendingOperations = await createSessionPendingOperationStore({ config });
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const routes = createRoutes(
     config,
@@ -854,6 +856,7 @@ export async function startServer(config: ServerConfig, options: {
     restartReloadWatchers,
     engineMcpServerState,
     sessionMutations,
+    sessionPendingOperations,
     interactionResolutions,
   );
 
@@ -1626,6 +1629,7 @@ function createRoutes(
   onWorkspacesChanged: () => void,
   engineMcpServerState: EngineMcpServerState,
   sessionMutations: SessionMutationCoordinator,
+  sessionPendingOperations: SessionPendingOperationStore,
   interactionResolutions: InteractionResolutionCoordinator,
 ): Route[] {
   const routes: Route[] = [];
@@ -1684,6 +1688,7 @@ function createRoutes(
     dispatchSessionPromptAsync,
     dispatchSessionAbort,
     sessionMutations,
+    sessionPendingOperations,
   });
 
   registerInteractionRoutes({

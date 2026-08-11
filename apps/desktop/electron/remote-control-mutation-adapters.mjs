@@ -68,7 +68,9 @@ function timestamp() {
 /** @param {unknown} error @param {string} notFoundCode */
 function mapClientError(error, notFoundCode) {
   if (error instanceof RemoteControlOperationExecutionError) throw error;
-  if (error instanceof ManagedRuntimeClientError && (error.serverCode === "session_busy" || error.serverCode === "run_mismatch")) {
+  if (error instanceof ManagedRuntimeClientError && ["session_busy", "run_mismatch", "pending_operation_not_found", "pending_operation_not_cancellable"].includes(error.serverCode)) {
+    if (error.serverCode === "pending_operation_not_found") throw new RemoteControlOperationExecutionError("pending_operation_not_found");
+    if (error.serverCode === "pending_operation_not_cancellable") throw new RemoteControlOperationExecutionError("pending_operation_not_cancellable");
     throw new RemoteControlOperationExecutionError(error.serverCode, { currentRunId: error.currentRunId });
   }
   if (error instanceof ManagedRuntimeClientError && error.code === "http_error" && error.status === 404) {
@@ -235,7 +237,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       }
     }),
     registration("session.prompt", (value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 3) {
+      if (!value || typeof value !== "object" || Array.isArray(value) || ![3, 4].includes(Object.keys(value).length)) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
       for (const key of ["workspaceId", "sessionId"]) {
@@ -246,7 +248,9 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       if (typeof value.prompt !== "string" || value.prompt.trim().length < 1 || value.prompt.length > 200_000) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
-      return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt });
+      const whenBusy = Object.hasOwn(value, "whenBusy") ? value.whenBusy : "reject";
+      if (!["reject", "steer", "enqueue"].includes(whenBusy)) throw new TypeError("Remote mutation arguments are invalid.");
+      return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt, whenBusy });
     }, async ({ arguments: args, correlationId }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
@@ -256,14 +260,40 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         }
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/start`,
-          { origin: "remote-control", startCommandCorrelationId: correlationId, prompt: { parts: [{ type: "text", text: args.prompt }] } },
+          { origin: "remote-control", startCommandCorrelationId: correlationId, whenBusy: args.whenBusy, prompt: { parts: [{ type: "text", text: args.prompt }] } },
         );
-        if (!response || typeof response !== "object" || !("run" in response)) throw new TypeError("Invalid start response.");
-        const run = response.run;
-        if (!coordinator.recordServerRun(run)) throw new TypeError("Stale start response.");
-        const recordedRun = /** @type {{ runId: string, generation: number }} */ (run);
-        const result = { runId: recordedRun.runId, generation: recordedRun.generation };
+        if (!response || typeof response !== "object") throw new TypeError("Invalid start response.");
+        const responseRecord = /** @type {Record<string, any>} */ (response);
+        let result;
+        if ("run" in responseRecord) {
+          const run = responseRecord.run;
+          if (!coordinator.recordServerRun(run)) throw new TypeError("Stale start response.");
+          const recordedRun = /** @type {{ runId: string, generation: number }} */ (run);
+          result = { disposition: "started", runId: recordedRun.runId, generation: recordedRun.generation };
+        } else if (responseRecord.disposition === "enqueued" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && Number.isSafeInteger(responseRecord.position) && responseRecord.position > 0) {
+          result = { disposition: "enqueued", pendingOperationId: responseRecord.pendingOperationId, position: responseRecord.position };
+        } else if (responseRecord.disposition === "steered" && identifierSchema.safeParse(responseRecord.pendingOperationId).success && identifierSchema.safeParse(responseRecord.admittedId).success) {
+          result = { disposition: "steered", pendingOperationId: responseRecord.pendingOperationId, admittedId: responseRecord.admittedId };
+        } else throw new TypeError("Invalid start response.");
         return desktopRemoteOperationResultSchema.parse({ operation: "session.prompt", payloadVersion: 1, result }).result;
+      } catch (error) {
+        mapClientError(error, "session_not_found");
+      }
+    }),
+    registration("session.pending.cancel", (value) => {
+      parseArguments(value, ["workspaceId", "sessionId", "pendingOperationId"]);
+      return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), pendingOperationId: String(value.pendingOperationId) });
+    }, async ({ arguments: args, correlationId }) => {
+      try {
+        await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const response = await managedRuntimeClient.postJson(
+          `/workspace/${encodeURIComponent(args.workspaceId)}/sessions/${encodeURIComponent(args.sessionId)}/pending/${encodeURIComponent(args.pendingOperationId)}/cancel`,
+          { commandCorrelationId: correlationId },
+        );
+        const responseRecord = /** @type {Record<string, any>} */ (response);
+        if (!response || typeof response !== "object" || responseRecord.pendingOperationId !== args.pendingOperationId ||
+          !["cancelled", "already_cancelled", "not_cancellable"].includes(responseRecord.status)) throw new TypeError("Invalid cancel response.");
+        return desktopRemoteOperationResultSchema.parse({ operation: "session.pending.cancel", payloadVersion: 1, result: responseRecord }).result;
       } catch (error) {
         mapClientError(error, "session_not_found");
       }

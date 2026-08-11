@@ -449,6 +449,8 @@ export type DesktopRemoteControlSettings = {
   enabled: boolean;
   backgroundMode: boolean;
   launchAtLogin: boolean;
+  allowBusySessionSteer: boolean;
+  allowBusySessionEnqueue: boolean;
 };
 
 export type DesktopRemoteControlAgentContext = {

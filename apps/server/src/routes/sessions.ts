@@ -18,6 +18,7 @@ import {
   type SessionGroupState,
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
+import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -53,6 +54,7 @@ interface RegisterSessionRoutesOptions {
   ) => Promise<void>;
   dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
   sessionMutations: SessionMutationCoordinator;
+  sessionPendingOperations: SessionPendingOperationStore;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -111,6 +113,7 @@ const startRunBodySchema = z.discriminatedUnion("origin", [
     origin: z.literal("remote-control"),
     startCommandCorrelationId: runIdentifierSchema.nullable(),
     prompt: remotePromptBodySchema,
+    whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
   }).strict(),
 ]);
 const legacyStartRunBodySchema = z.discriminatedUnion("origin", [
@@ -118,6 +121,7 @@ const legacyStartRunBodySchema = z.discriminatedUnion("origin", [
   z.object({ origin: z.literal("remote"), commandId: runIdentifierSchema, prompt: remotePromptBodySchema }).strict(),
 ]);
 const abortRunBodySchema = z.object({ abortCommandCorrelationId: runIdentifierSchema.nullable() }).strict();
+const cancelPendingBodySchema = z.object({ commandCorrelationId: runIdentifierSchema }).strict();
 const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, commandId: runIdentifierSchema }).strict();
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
@@ -170,6 +174,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     dispatchSessionPromptAsync,
     dispatchSessionAbort,
     sessionMutations,
+    sessionPendingOperations,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -520,6 +525,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       origin: SessionMutationOrigin;
       startCommandCorrelationId: string | null;
       prompt: Record<string, unknown>;
+      whenBusy?: "reject" | "steer" | "enqueue";
     },
   ) {
     ensureWritable(config);
@@ -541,6 +547,43 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
         }
         if (parsedStatus.data.type !== "idle") {
+          if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
+            const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
+              isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
+              ? input.prompt.parts[0].text : null;
+            if (!text || !input.startCommandCorrelationId) throw new ApiError(400, "invalid_payload", "Remote pending prompt is invalid");
+            const pending = sessionPendingOperations.create({
+              workspaceId: workspace.id,
+              sessionId: input.sessionId,
+              mode: input.whenBusy,
+              prompt: text,
+              commandCorrelationId: input.startCommandCorrelationId,
+            });
+            if (input.whenBusy === "enqueue") {
+              const position = sessionPendingOperations.list(workspace.id, input.sessionId)
+                .filter((item) => item.mode === "enqueue" && item.state === "pending" && item.queueSequence <= pending.queueSequence).length;
+              return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position }, 202);
+            }
+            // Persist before admission. OpenCode v2 steer uses the prompt endpoint
+            // with delivery=steer; the operation is no longer cancellable once claimed.
+            const claimed = sessionPendingOperations.claimNext(workspace.id, input.sessionId, "steer");
+            if (!claimed || claimed.id !== pending.id) throw new ApiError(409, "session_busy", "A prior steer operation is pending");
+            try {
+              const opencode = createWorkspaceOpencodeClient(config, workspace);
+              const result = await opencode.session.promptAsync({
+                sessionID: input.sessionId,
+                parts: [{ type: "text", text }],
+                delivery: "steer",
+              } as Parameters<typeof opencode.session.promptAsync>[0]);
+              if (result.error !== undefined) throw new ApiError(502, "opencode_request_failed", "OpenCode rejected steer");
+              const admittedId = input.startCommandCorrelationId;
+              sessionPendingOperations.markAdmitted(pending.id, admittedId);
+              return jsonResponse({ disposition: "steered", pendingOperationId: pending.id, admittedId }, 202);
+            } catch (error) {
+              sessionPendingOperations.markFailed(pending.id, "steer_not_admitted");
+              throw error;
+            }
+          }
           throw new SessionMutationError(
             "session_busy",
             sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null,
@@ -562,6 +605,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     try {
       await dispatchSessionPromptAsync(config, workspace, input.sessionId, input.prompt);
       return jsonResponse({
+        disposition: "started",
         run: sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId }) ?? run,
       }, 202);
     } catch (error) {
@@ -619,7 +663,26 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     try {
-      return jsonResponse(sessionMutations.observe({ workspaceId: workspace.id, ...input }));
+      const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });
+      if (observation.cleared) {
+        const next = sessionPendingOperations.claimNext(workspace.id, input.sessionId, "enqueue");
+        if (next) {
+          try {
+            const run = sessionMutations.reserveStart({
+              workspaceId: workspace.id,
+              sessionId: input.sessionId,
+              origin: "remote-control",
+              startCommandCorrelationId: next.commandCorrelationId,
+            });
+            await dispatchSessionPromptAsync(config, workspace, input.sessionId, { parts: [{ type: "text", text: next.prompt }] });
+            sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId });
+            sessionPendingOperations.markAdmitted(next.id, run.runId);
+          } catch (error) {
+            sessionPendingOperations.markFailed(next.id, "enqueue_admission_failed");
+          }
+        }
+      }
+      return jsonResponse(observation);
     } catch (error) {
       remapSessionMutationError(error);
     }
@@ -630,6 +693,26 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
     const body = parseRunBody(startRunBodySchema, await readJsonBody(ctx.request));
     return startSessionRun(ctx, { sessionId, ...body, prompt: body.prompt as Record<string, unknown> });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/pending/:pendingOperationId/cancel", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const pendingOperationId = parseRunIdentifier(ctx.params.pendingOperationId, "pendingOperationId");
+    const body = parseRunBody(cancelPendingBodySchema, await readJsonBody(ctx.request));
+    const pending = sessionPendingOperations.get(pendingOperationId);
+    if (!pending || pending.workspaceId !== workspace.id || pending.sessionId !== sessionId) throw new ApiError(404, "pending_operation_not_found", "Pending operation not found");
+    try {
+      const result = sessionPendingOperations.cancel(pendingOperationId, body.commandCorrelationId);
+      return jsonResponse({ pendingOperationId, status: result.cancelled ? "cancelled" : "already_cancelled" });
+    } catch (error) {
+      if (error instanceof SessionPendingOperationError && error.code === "not_cancellable") {
+        return jsonResponse({ pendingOperationId, status: "not_cancellable" }, 409);
+      }
+      throw error;
+    }
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/:runId/abort", "client", async (ctx) => {

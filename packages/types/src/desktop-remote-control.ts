@@ -39,6 +39,26 @@ const sessionCreateTitleSchema = z
     return scalarCount !== null && scalarCount >= 1 && scalarCount <= 120
   }, "title must contain 1 to 120 Unicode scalar values without control characters")
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+const p256KeyIdSchema = z.string().regex(/^p256:[A-Za-z0-9_-]{43}$/)
+const p256PublicKeySchema = z.string().regex(/^B[A-P][A-Za-z0-9_-]{85}$/)
+const ed25519PublicKeySchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+const ed25519SignatureSchema = z.string().regex(/^[A-Za-z0-9_-]{86}$/)
+const signingFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/)
+const signedE2EEKeyAdvertisementSchema = z.object({
+  keyId: p256KeyIdSchema,
+  publicKey: p256PublicKeySchema,
+  algorithm: z.literal("P-256/HKDF-SHA-256/AES-256-GCM"),
+  createdAt: dateTimeSchema,
+  signedStatement: z.string().min(1).max(1_024),
+  statementHash: sha256Schema,
+  signature: ed25519SignatureSchema,
+  signingIdentity: z.object({
+    algorithm: z.literal("Ed25519"),
+    keyId: z.string().uuid(),
+    publicKey: ed25519PublicKeySchema,
+    fingerprint: signingFingerprintSchema,
+  }).strict(),
+}).strict()
 const semverSchema = z
   .string()
   .trim()
@@ -52,6 +72,7 @@ export const desktopRemoteOperationValues = [
   "session.create",
   "session.prompt",
   "session.abort",
+  "session.pending.cancel",
   "interaction.permission.reply",
   "interaction.question.reply",
 ] as const
@@ -69,6 +90,7 @@ export const desktopRemoteMutationOperationValues = [
   "session.create",
   "session.prompt",
   "session.abort",
+  "session.pending.cancel",
   "interaction.permission.reply",
   "interaction.question.reply",
 ] as const satisfies readonly DesktopRemoteOperation[]
@@ -182,6 +204,7 @@ export const desktopRemoteRequiredFeatureGatesByOperation = {
   "session.create": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.prompt": ["enrollment", "readOnlyControl", "sessionMutation"],
   "session.abort": ["enrollment", "readOnlyControl", "sessionMutation"],
+  "session.pending.cancel": ["enrollment", "readOnlyControl", "sessionMutation"],
   "interaction.permission.reply": [
     "enrollment",
     "readOnlyControl",
@@ -342,6 +365,8 @@ export const desktopRemoteDeviceSchema = z
     localControlEnabled: z.boolean(),
     capabilities: desktopRemoteCapabilityAdvertisementSchema,
     activeRuns: z.array(desktopRemoteActiveRunSchema).max(100),
+    connectionGeneration: z.number().int().nonnegative(),
+    payloadEncryption: signedE2EEKeyAdvertisementSchema.extend({ mode: z.literal("e2ee-v1") }).strict().optional(),
     enrolledAt: dateTimeSchema,
     lastSeenAt: dateTimeSchema.nullable(),
     revokedAt: dateTimeSchema.nullable(),
@@ -386,6 +411,19 @@ export const desktopRemoteControlSessionSchema = z
     lastActiveAt: dateTimeSchema,
     expiresAt: dateTimeSchema,
     closedAt: dateTimeSchema.nullable(),
+    payloadEncryption: z.object({
+      mode: z.literal("e2ee-v1"),
+      desktopKeyId: p256KeyIdSchema,
+      desktopPublicKey: p256PublicKeySchema,
+      desktopStatementHash: sha256Schema,
+      desktopSignedStatement: z.string().min(1).max(1_024),
+      desktopSignature: ed25519SignatureSchema,
+      desktopSigningIdentity: z.object({
+        algorithm: z.literal("Ed25519"), keyId: z.string().uuid(), publicKey: ed25519PublicKeySchema,
+        fingerprint: signingFingerprintSchema,
+      }).strict(),
+      controllerKeyId: p256KeyIdSchema,
+    }).strict().optional(),
   })
   .strict()
   .superRefine((session, context) => {
@@ -617,6 +655,7 @@ const sessionPromptRequestSchema = z
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
         prompt: z.string().trim().min(1).max(200_000),
+        whenBusy: z.enum(["reject", "steer", "enqueue"]).default("reject"),
       })
       .strict(),
   })
@@ -642,6 +681,19 @@ const sessionAbortRequestSchema = z
         workspaceId: identifierSchema,
         sessionId: identifierSchema,
         expectedRunId: identifierSchema,
+      })
+      .strict(),
+  })
+  .strict()
+const sessionPendingCancelRequestSchema = z
+  .object({
+    operation: z.literal("session.pending.cancel"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+    arguments: z
+      .object({
+        workspaceId: identifierSchema,
+        sessionId: identifierSchema,
+        pendingOperationId: identifierSchema,
       })
       .strict(),
   })
@@ -698,6 +750,7 @@ export const desktopRemoteOperationRequestSchema = z.discriminatedUnion(
     sessionCreateRequestSchema,
     sessionPromptRequestSchema,
     sessionAbortRequestSchema,
+    sessionPendingCancelRequestSchema,
     permissionReplyRequestSchema,
     questionReplyRequestSchema,
   ],
@@ -748,7 +801,21 @@ export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
       .object({
         operation: z.literal("session.prompt"),
         payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
-        result: z.object({ runId: identifierSchema, generation: z.number().int().positive() }).strict(),
+        result: z.discriminatedUnion("disposition", [
+          z.object({ disposition: z.literal("started"), runId: identifierSchema, generation: z.number().int().positive() }).strict(),
+          z.object({ disposition: z.literal("steered"), pendingOperationId: identifierSchema, admittedId: identifierSchema }).strict(),
+          z.object({ disposition: z.literal("enqueued"), pendingOperationId: identifierSchema, position: z.number().int().positive() }).strict(),
+        ]),
+      })
+      .strict(),
+    z
+      .object({
+        operation: z.literal("session.pending.cancel"),
+        payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+        result: z.object({
+          pendingOperationId: identifierSchema,
+          status: z.enum(["cancelled", "already_cancelled", "not_cancellable"]),
+        }).strict(),
       })
       .strict(),
     z
@@ -993,7 +1060,7 @@ const noEncryptionSchema = z
   .object({ mode: z.literal("none"), keyId: z.null() })
   .strict()
 const e2eeEncryptionSchema = z
-  .object({ mode: z.literal("e2ee-v1"), keyId: identifierSchema })
+  .object({ mode: z.literal("e2ee-v1"), keyId: p256KeyIdSchema })
   .strict()
 export const desktopRemoteEncryptionSchema = z.discriminatedUnion("mode", [
   noEncryptionSchema,
@@ -1024,6 +1091,7 @@ const desktopHelloEnvelopeSchema = z
         activeRuns: z.array(desktopRemoteActiveRunSchema).max(100),
         policyVersion: identifierSchema.nullable(),
         localControlEnabled: z.boolean(),
+        payloadEncryption: signedE2EEKeyAdvertisementSchema.nullable().optional(),
       })
       .strict(),
   })
@@ -1042,6 +1110,7 @@ const desktopHeartbeatEnvelopeSchema = z
         activeRuns: z.array(desktopRemoteActiveRunSchema).max(100),
         policyVersion: identifierSchema.nullable(),
         localControlEnabled: z.boolean(),
+        payloadEncryption: signedE2EEKeyAdvertisementSchema.nullable().optional(),
       })
       .strict(),
   })
@@ -1152,29 +1221,43 @@ const encryptedPayloadEnvelopeSchema = z
       z
         .object({
           kind: z.literal("command"),
-          deviceId: z.string().uuid(),
-          controlSessionId: z.string().uuid(),
-          commandId: z.string().uuid(),
+          commandId: z.string().uuid(), controlSessionId: z.string().uuid(), deviceId: z.string().uuid(),
+          actor: desktopRemoteActorSchema, operation: desktopRemoteOperationSchema,
+          workspaceId: identifierSchema.nullable(), sessionId: identifierSchema.nullable(),
+          idempotencyKey: identifierSchema, payloadHash: sha256Schema,
+          createdAt: dateTimeSchema, expiresAt: dateTimeSchema,
+          desktopKeyId: p256KeyIdSchema, desktopStatementHash: sha256Schema,
+          controllerKeyId: p256KeyIdSchema, controllerPublicKey: p256PublicKeySchema,
         })
         .strict(),
       z
         .object({
-          kind: z.literal("event"),
-          deviceId: z.string().uuid(),
-          controlSessionId: z.string().uuid(),
-          eventId: z.string().uuid(),
-          sequence: z.number().int().positive(),
+          kind: z.literal("command-result"), commandId: z.string().uuid(), controlSessionId: z.string().uuid(),
+          deviceId: z.string().uuid(), operation: desktopRemoteOperationSchema,
+          status: z.enum(["succeeded", "failed", "rejected", "expired", "cancelled"]),
+          desktopKeyId: p256KeyIdSchema, desktopStatementHash: sha256Schema, controllerKeyId: p256KeyIdSchema,
         })
         .strict(),
+      z.object({
+        kind: z.literal("session-event"), eventId: z.string().uuid(), controlSessionId: z.string().uuid(),
+        deviceId: z.string().uuid(), workspaceId: identifierSchema, sessionId: identifierSchema,
+        sourceSequence: z.number().int().positive(), eventType: identifierSchema, occurredAt: dateTimeSchema,
+        desktopKeyId: p256KeyIdSchema, desktopStatementHash: sha256Schema, controllerKeyId: p256KeyIdSchema,
+      }).strict(),
     ]),
     payload: z
       .object({
-        nonce: z.string().base64url().min(16).max(256),
-        ciphertext: z.string().base64url().min(1).max(16_000_000),
+        nonce: z.string().base64url().length(16),
+        ciphertext: z.string().base64url().min(23).max(16_000_000),
       })
       .strict(),
   })
   .strict()
+  .superRefine((envelope, context) => {
+    if (envelope.encryption.keyId !== envelope.routing.desktopKeyId) {
+      context.addIssue({ code: "custom", message: "encrypted envelope key does not match routing", path: ["encryption", "keyId"] })
+    }
+  })
 
 export const desktopRemoteWssEnvelopeSchema = z.discriminatedUnion("type", [
   desktopHelloEnvelopeSchema,
