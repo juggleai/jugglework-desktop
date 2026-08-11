@@ -1528,10 +1528,25 @@ function assertJuggleWorkServerReady(info) {
 
 async function bootRuntimeForSelectedWorkspace() {
   const list = await workspaceStore.readWorkspaceState();
-  const selectedId = list.selectedId || list.activeId || list.workspaces[0]?.id || "";
-  const workspace = selectedId
-    ? list.workspaces.find((entry) => entry?.id === selectedId)
-    : list.workspaces[0];
+  const requestedId = list.selectedId || list.activeId || "";
+  const requestedWorkspace = requestedId
+    ? list.workspaces.find((entry) => entry?.id === requestedId)
+    : undefined;
+  const fallbackWorkspace = list.workspaces.find((entry) => (
+    entry?.workspaceType !== "remote" && String(entry?.path ?? "").trim()
+  )) ?? list.workspaces[0];
+  const workspace = requestedWorkspace ?? fallbackWorkspace;
+  if (!requestedWorkspace && workspace) {
+    console.warn("[runtime] selected workspace is unavailable; repairing selection before boot", {
+      selectedWorkspaceId: requestedId || null,
+      fallbackWorkspaceId: workspace.id ?? null,
+    });
+    await workspaceStore.writeWorkspaceState({
+      ...list,
+      selectedId: String(workspace.id ?? ""),
+      watchedId: String(workspace.id ?? ""),
+    }).catch(() => undefined);
+  }
   const workspaceRoot = String(workspace?.path ?? "").trim();
   if (!workspaceRoot || workspace?.workspaceType === "remote") {
     return { ok: true, skipped: true, reason: "no-local-workspace" };

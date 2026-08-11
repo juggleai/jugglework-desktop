@@ -169,7 +169,15 @@ function initialize(sqlite: Sqlite): void {
   const version = statement(sqlite, "SELECT schema_version AS schemaVersion FROM session_pending_operation_meta WHERE singleton = 1").get();
   if (version === undefined || version === null) {
     statement(sqlite, "INSERT INTO session_pending_operation_meta(singleton, schema_version, remote_accepting, steer_enabled, enqueue_enabled, acceptance_generation) VALUES (1, ?, 0, 0, 0, 1)").run(SESSION_PENDING_OPERATION_SCHEMA_VERSION);
-  } else if (isRecord(version) && version.schemaVersion === 1) {
+  } else {
+    const schemaVersion = isRecord(version) ? Number(version.schemaVersion) : Number.NaN;
+    if (!Number.isInteger(schemaVersion) || schemaVersion < 1 || schemaVersion > SESSION_PENDING_OPERATION_SCHEMA_VERSION) {
+      throw new SessionPendingOperationError("store_unavailable");
+    }
+
+    // Repair columns independently of the stored version. Older releases could
+    // persist schema_version=2 before all v2 columns reached disk, leaving a
+    // nominally current database that could no longer start.
     const addColumn = (table: string, name: string, definition: string) => {
       const columns = statement(sqlite, `PRAGMA table_info(${table})`).all();
       if (!(Array.isArray(columns) && columns.some((column) => isRecord(column) && column.name === name))) {
@@ -183,9 +191,10 @@ function initialize(sqlite: Sqlite): void {
     addColumn("session_pending_operations", "acceptance_generation", "INTEGER NOT NULL DEFAULT 1");
     addColumn("session_pending_operations", "admitted_at", "INTEGER NULL");
     addColumn("session_pending_operations", "idle_observed_at", "INTEGER NULL");
-    statement(sqlite, "UPDATE session_pending_operation_meta SET schema_version = 2 WHERE singleton = 1").run();
-  } else if (!isRecord(version) || version.schemaVersion !== SESSION_PENDING_OPERATION_SCHEMA_VERSION) {
-    throw new SessionPendingOperationError("store_unavailable");
+    if (schemaVersion !== SESSION_PENDING_OPERATION_SCHEMA_VERSION) {
+      statement(sqlite, "UPDATE session_pending_operation_meta SET schema_version = ? WHERE singleton = 1")
+        .run(SESSION_PENDING_OPERATION_SCHEMA_VERSION);
+    }
   }
   try { sqlite.exec("PRAGMA secure_delete = ON"); } catch {}
 }

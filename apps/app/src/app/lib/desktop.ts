@@ -216,9 +216,18 @@ async function invokeElectronHelper<C extends DesktopCommandName>(
 // Pure utility — resolves the selected workspace ID from a workspace list
 // payload, handling legacy fields.
 export function resolveWorkspaceListSelectedId(
-  list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
+  list: Pick<WorkspaceList, "selectedId" | "activeId"> & Partial<Pick<WorkspaceList, "workspaces">> | null | undefined,
 ): string {
-  return list?.selectedId?.trim() || list?.activeId?.trim() || "";
+  const selectedId = list?.selectedId?.trim() || "";
+  const activeId = list?.activeId?.trim() || "";
+  if (!Array.isArray(list?.workspaces)) return selectedId || activeId;
+
+  const workspaceIds = new Set(
+    list.workspaces.map((workspace) => workspace.id?.trim()).filter((id): id is string => Boolean(id)),
+  );
+  if (selectedId && workspaceIds.has(selectedId)) return selectedId;
+  if (activeId && workspaceIds.has(activeId)) return activeId;
+  return list.workspaces.find((workspace) => workspace.id?.trim())?.id?.trim() || "";
 }
 
 // ---------------------------------------------------------------------------

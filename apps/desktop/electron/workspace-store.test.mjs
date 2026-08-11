@@ -140,6 +140,44 @@ test("keeps persisted empty desktop workspace state authoritative", async () => 
   }
 });
 
+test("repairs dangling workspace selection to an available workspace", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
+  const userData = path.join(root, "userData");
+  const availableWorkspace = path.join(root, "available-workspace");
+  await mkdir(availableWorkspace, { recursive: true });
+  await mkdir(userData, { recursive: true });
+
+  await writeFile(
+    path.join(userData, "jugglework-workspaces.json"),
+    JSON.stringify({
+      selectedId: "ws_removed",
+      activeId: "ws_removed",
+      watchedId: "ws_removed",
+      workspaces: [
+        { id: "ws_available", path: availableWorkspace, workspaceType: "local" },
+      ],
+    }),
+    "utf8",
+  );
+
+  const store = createWorkspaceStore({
+    app: { getPath: (name) => name === "userData" ? userData : root },
+    defaultDenBaseUrl: "https://example.test",
+    defaultRequireSignin: false,
+    forceRequireSignin: false,
+  });
+
+  const state = await store.readWorkspaceState();
+  assert.equal(state.selectedId, "ws_available");
+  assert.equal(state.activeId, "ws_available");
+  assert.equal(state.watchedId, "ws_available");
+
+  const persisted = JSON.parse(await readFile(path.join(userData, "jugglework-workspaces.json"), "utf8"));
+  assert.equal(persisted.selectedWorkspaceId, "ws_available");
+  assert.equal(persisted.activeId, "ws_available");
+  assert.equal(persisted.watchedWorkspaceId, "ws_available");
+});
+
 test("prefers server config workspaces when desktop state is missing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "jugglework-workspace-store-"));
   const userData = path.join(root, "userData");

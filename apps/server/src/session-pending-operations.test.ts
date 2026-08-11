@@ -139,6 +139,45 @@ describe("session pending operation store", () => {
     store.close();
   });
 
+  test("repairs a partial current schema instead of failing startup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jugglework-pending-v2-partial-"));
+    directories.push(directory);
+    const path = join(directory, "runtime.sqlite");
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(path);
+    db.exec(`
+      CREATE TABLE session_pending_operation_meta (
+        singleton INTEGER PRIMARY KEY,
+        schema_version INTEGER NOT NULL,
+        remote_accepting INTEGER NOT NULL DEFAULT 1,
+        acceptance_generation INTEGER NOT NULL DEFAULT 1
+      );
+      INSERT INTO session_pending_operation_meta(singleton, schema_version, remote_accepting, acceptance_generation)
+        VALUES (1, 2, 0, 37);
+      CREATE TABLE session_pending_operations (
+        id TEXT PRIMARY KEY, workspace_id TEXT, session_id TEXT, mode TEXT, prompt TEXT, origin TEXT,
+        command_correlation_id TEXT, state TEXT, queue_sequence INTEGER, admitted_id TEXT, error_code TEXT,
+        created_at INTEGER, updated_at INTEGER, acceptance_generation INTEGER NOT NULL DEFAULT 1,
+        admitted_at INTEGER, idle_observed_at INTEGER
+      );
+      CREATE TABLE session_pending_operation_audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, pending_operation_id TEXT, workspace_id TEXT, session_id TEXT,
+        mode TEXT, action TEXT, command_correlation_id TEXT, outcome TEXT, occurred_at INTEGER
+      );
+    `);
+    db.close();
+
+    const store = await createSessionPendingOperationStore({ path });
+    expect(store.acceptance()).toMatchObject({ enabled: false, steer: false, enqueue: false, generation: 38 });
+    store.close();
+
+    const inspected = new Database(path);
+    const columns = inspected.query("PRAGMA table_info(session_pending_operation_meta)").all() as Array<{ name: string }>;
+    inspected.close();
+    expect(columns.map((column) => column.name)).toContain("steer_enabled");
+    expect(columns.map((column) => column.name)).toContain("enqueue_enabled");
+  });
+
   test("bounds identifiers and locally stored prompt content", async () => {
     const { path, store } = await fixture();
     expect(() => store.create({ workspaceId: "ws", sessionId: "ses", mode: "enqueue", prompt: "", commandCorrelationId: "cmd" })).toThrow("invalid_request");

@@ -954,10 +954,44 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const migratedActiveId = activeId ? idMap.get(activeId) ?? activeId : null;
     if (migratedSelectedId !== selectedId || migratedWatchedId !== watchedId || migratedActiveId !== activeId) changed = true;
 
+    // A workspace can be removed by an older build, an interrupted migration,
+    // or an external state repair while its selection aliases are left behind.
+    // Never let those dangling IDs prevent the desktop runtime from booting.
+    const workspaceIds = new Set(
+      dedupedWorkspaces
+        .map((workspace) => String(workspace?.id ?? "").trim())
+        .filter(Boolean),
+    );
+    const fallbackWorkspaceId = String(
+      dedupedWorkspaces.find((workspace) => String(workspace?.id ?? "").trim())?.id ?? "",
+    ).trim();
+    const resolvedSelectedId = workspaceIds.has(migratedSelectedId)
+      ? migratedSelectedId
+      : workspaceIds.has(migratedActiveId)
+        ? migratedActiveId
+        : fallbackWorkspaceId;
+    const resolvedWatchedId = migratedWatchedId && workspaceIds.has(migratedWatchedId)
+      ? migratedWatchedId
+      : resolvedSelectedId || null;
+    const resolvedActiveId = resolvedSelectedId || null;
+    if (
+      resolvedSelectedId !== migratedSelectedId
+      || resolvedWatchedId !== migratedWatchedId
+      || resolvedActiveId !== migratedActiveId
+    ) {
+      console.warn("[workspace] repaired dangling desktop workspace selection", {
+        selectedWorkspaceId: migratedSelectedId || null,
+        activeWorkspaceId: migratedActiveId,
+        watchedWorkspaceId: migratedWatchedId,
+        fallbackWorkspaceId: resolvedSelectedId || null,
+      });
+      changed = true;
+    }
+
     const nextState = {
-      selectedId: migratedSelectedId,
-      watchedId: migratedWatchedId,
-      activeId: migratedActiveId,
+      selectedId: resolvedSelectedId,
+      watchedId: resolvedWatchedId,
+      activeId: resolvedActiveId,
       workspaces: dedupedWorkspaces,
     };
 
