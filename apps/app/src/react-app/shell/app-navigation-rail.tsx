@@ -1,9 +1,11 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
 import {
+  Cloud,
   ContactRound,
   FolderPlus,
   Globe,
+  HardDrive,
   MessageSquare,
   Plus,
   Search,
@@ -129,7 +131,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   return (
     <aside
       aria-label={t("navigation.primary")}
-      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar/75 px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
+      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
     >
       <button
         type="button"
@@ -208,7 +210,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           testId="app-rail-home"
           statusIndicator={localWorkspaceIndicator}
         >
-          <FolderPlus />
+          <HardDrive />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -224,7 +226,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
         >
-          <Globe />
+          <Cloud />
         </RailButton>
         <RailButton
           label={t("navigation.chat")}

@@ -51,5 +51,8 @@
     "turbo": "^2.5.5",
     "typescript": "^5.9.0"
   },
-  "packageManager": "pnpm@11.4.0"
+  "packageManager": "pnpm@11.4.0",
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
 }

@@ -1,0 +1,359 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "command": {},
+  "plugin": [
+    "opencode-chrome-devtools",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-extensions-preview.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-capabilities-knowledge.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-office-attachments.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-anthropic-adaptive-thinking.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-anthropic-tool-schema.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-safe-grep.js",
+    "file:///Applications/work/jugglework-desktop/apps/server/dist/opencode-plugins/jugglework-context-overflow.js"
+  ],
+  "disabled_providers": [
+    "opencode"
+  ],
+  "default_agent": "jugglework",
+  "username": "martin",
+  "mode": {},
+  "agent": {
+    "jugglework": {
+      "temperature": 0.2,
+      "prompt": "You are JuggleWork.\n\nWhen the user refers to \"you\", they mean the JuggleWork app and the current workspace.\n\nYour job:\n- Help the user work on files safely.\n- Automate repeatable work.\n- Keep behavior portable and reproducible.\n\n## Memory\n\nTwo kinds:\n1. Behavior memory (shareable, in git): .opencode/skills/**, .opencode/agents/**, repo docs\n2. Private memory (never commit): tokens, credentials, local config, logs\n\nHard rule: never copy private memory into repo files. Store only redacted summaries, schemas, and stable pointers.\n\n## Working style\n\n- If required setup or credentials are missing, ask one targeted question and continue once provided.\n- If you change code, run the smallest meaningful test.\n- If steps repeat, factor them into a skill.\n- Prefer clear, practical steps over abstract explanations.\n- Use jugglework_safe_glob instead of the built-in glob. Never recursively search an entire home directory or filesystem root. If a bounded search times out, narrow its path or pattern and retry.\n\n## JuggleWork Artifacts\n\nJuggleWork can preview, edit, and download standard artifacts when you create or update them in the workspace.\n\n- Prefer standard output files for user-visible deliverables: Markdown (.md), CSV (.csv), Excel workbooks (.xlsx), PowerPoint decks (.pptx), and browser previews (index.html or a local http://localhost:<port> URL).\n- After creating or updating an artifact, mention the exact workspace-relative file path in your final response, for example reports/artifact-eval.md or reports/artifact-eval.xlsx.\n- Do not invent Workspace/<id>/... paths unless a tool returns them; prefer clean workspace-relative paths.\n- For websites or React/UI previews, start the dev server when useful and mention the http://localhost:<port> URL.\n- For spreadsheets, use .csv for simple tabular data and .xlsx when the user asks for Excel/XLS specifically.\n\n## Memory Bank\n\nThe memory bank is a per-user store of durable facts, reached through the meta-MCP. It is NOT a local file — never write memories to .opencode/ or any file. There is no dedicated memory tool: to save or recall a memory, first discover the capability with search_capabilities, then run it with execute_capability — i.e. search for a capability to save a memory, then execute it. The capabilities you find are named like postMemory (save), getMemorySearch (search), getMemory (list), and deleteMemoryById (delete).\n\nSave flow:\n- Draft a candidate memory: a crisp, self-contained content sentence, plus optional cited contexts (a snippet, each with an optional conversation_id/message_id).\n- Show the draft and get the human to confirm or edit it, and flag anything that looks like a secret or personal detail so they can remove it first. Only persist human-confirmed content, never raw agent output.\n- Once confirmed, search for a capability to save a memory (postMemory) and execute it with a body like { \"content\": \"…\" }.\n\nRetrieval flow:\n- When the user asks in natural language, search for a capability to search memories (getMemorySearch) and execute it with their phrasing as the query q.\n- Reduce the results to what is relevant and present them. Recall is explicit and lexical: only search when asked, never auto-recall, and do not claim to understand meaning.\n\nManage: to show what is saved, discover and execute the list capability (getMemory); to remove one, discover and execute the delete capability (deleteMemoryById) after confirming with the human.\n\nNever persist secrets, credentials, API keys, tokens, or sensitive PII into a memory. This applies to both the content sentence and any cited snippets — redact secrets from a snippet before saving it.",
+      "description": "JuggleWork default agent",
+      "mode": "primary",
+      "options": {},
+      "permission": {
+        "skill": {
+          "agent-creator": "deny",
+          "command-creator": "deny",
+          "customize-opencode": "deny",
+          "get-started": "deny",
+          "plugin-creator": "deny"
+        }
+      }
+    }
+  },
+  "provider": {
+    "lpr_b39566ecd751db9cbb9622264ab52632": {
+      "api": "https://work.juggle.im/jwork/api/gateway/v1/lpr_b39566ecd751db9cbb9622264ab52632",
+      "name": "Codex",
+      "env": [
+        "JUGGLEWORK_GATEWAY_KEY_LPR_B39566ECD751DB9CBB9622264AB52632"
+      ],
+      "id": "codex",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://work.juggle.im/jwork/api/gateway/v1/lpr_b39566ecd751db9cbb9622264ab52632",
+        "authHeader": "x-opencodex-api-key"
+      },
+      "models": {
+        "gpt-5.6-luna": {
+          "id": "gpt-5.6-luna",
+          "name": "gpt-5.6-luna",
+          "reasoning": true,
+          "cost": {
+            "input": 0.2,
+            "output": 1.2,
+            "cache_read": 0.02,
+            "cache_write": 0.25
+          },
+          "limit": {
+            "context": 372000,
+            "output": 128000
+          },
+          "variants": {
+            "high": {
+              "reasoningEffort": "high"
+            },
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "max": {
+              "reasoningEffort": "max"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            }
+          }
+        },
+        "gpt-5.6-sol": {
+          "id": "gpt-5.6-sol",
+          "name": "gpt-5.6-sol",
+          "reasoning": true,
+          "cost": {
+            "input": 5,
+            "output": 30,
+            "cache_read": 0.5,
+            "cache_write": 6.25
+          },
+          "limit": {
+            "context": 372000,
+            "output": 128000
+          },
+          "variants": {
+            "high": {
+              "reasoningEffort": "high"
+            },
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "max": {
+              "reasoningEffort": "max"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "ultra": {
+              "reasoningEffort": "ultra"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            }
+          }
+        },
+        "gpt-5.6-terra": {
+          "id": "gpt-5.6-terra",
+          "name": "gpt-5.6-terra",
+          "reasoning": true,
+          "cost": {
+            "input": 2,
+            "output": 12,
+            "cache_read": 0.2,
+            "cache_write": 2.5
+          },
+          "limit": {
+            "context": 372000,
+            "output": 128000
+          },
+          "variants": {
+            "high": {
+              "reasoningEffort": "high"
+            },
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "max": {
+              "reasoningEffort": "max"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "ultra": {
+              "reasoningEffort": "ultra"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            }
+          }
+        }
+      }
+    },
+    "lpr_dd4f402f15944ec2855b232154428324": {
+      "api": "https://work.juggle.im/jwork/api/gateway/v1/lpr_dd4f402f15944ec2855b232154428324",
+      "name": "zhipu",
+      "env": [
+        "JUGGLEWORK_GATEWAY_KEY_LPR_DD4F402F15944EC2855B232154428324"
+      ],
+      "id": "zhipuai-coding-plan",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://work.juggle.im/jwork/api/gateway/v1/lpr_dd4f402f15944ec2855b232154428324"
+      },
+      "models": {
+        "glm-5.1": {
+          "id": "glm-5.1",
+          "name": "GLM-5.1",
+          "family": "glm",
+          "release_date": "2026-03-27",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 1.2,
+            "output": 4.18,
+            "cache_read": 0.3,
+            "cache_write": 0
+          },
+          "limit": {
+            "context": 200000,
+            "output": 131072
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "glm-5.2": {
+          "id": "glm-5.2",
+          "name": "GLM-5.2",
+          "family": "glm",
+          "release_date": "2026-06-13",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 1.2,
+            "output": 4.18,
+            "cache_read": 0.3,
+            "cache_write": 0
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 131072
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": {
+            "high": {},
+            "low": {},
+            "max": {},
+            "medium": {},
+            "minimal": {},
+            "none": {},
+            "xhigh": {}
+          }
+        }
+      }
+    },
+    "lpr_f1b78cdf75834bb6ac8086f979f2404c": {
+      "api": "https://work.juggle.im/jwork/api/gateway/v1/lpr_f1b78cdf75834bb6ac8086f979f2404c",
+      "name": "DeepSeek",
+      "env": [
+        "JUGGLEWORK_GATEWAY_KEY_LPR_F1B78CDF75834BB6AC8086F979F2404C"
+      ],
+      "id": "jugglerouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://work.juggle.im/jwork/api/gateway/v1/lpr_f1b78cdf75834bb6ac8086f979f2404c"
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "family": "deepseek-flash",
+          "release_date": "2026-04-24",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 0.14,
+            "output": 0.28,
+            "cache_read": 0.0028
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 384000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": {
+            "high": {},
+            "low": {},
+            "max": {},
+            "medium": {},
+            "minimal": {},
+            "none": {},
+            "xhigh": {}
+          }
+        },
+        "deepseek-v4-pro": {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "family": "deepseek-thinking",
+          "release_date": "2026-04-24",
+          "attachment": false,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 0.435,
+            "output": 0.87,
+            "cache_read": 0.003625
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 384000
+          },
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "variants": {
+            "high": {},
+            "low": {},
+            "max": {},
+            "medium": {},
+            "minimal": {},
+            "none": {},
+            "xhigh": {}
+          }
+        }
+      }
+    }
+  },
+  "mcp": {
+    "jugglework-cloud": {
+      "type": "remote",
+      "url": "https://work.juggle.im/jwork/api/mcp/agent",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer jwmcp_RbOZHGlYkih0Z6FeMsoSslnAqHy9wRyo1NDCBLFD1LM"
+      },
+      "oauth": false
+    },
+    "notion": {
+      "type": "remote",
+      "url": "https://mcp.notion.com/mcp",
+      "enabled": true,
+      "oauth": {}
+    }
+  },
+  "permission": {
+    "glob": "deny"
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 20000
+  }
+}
