@@ -39,6 +39,7 @@ import { WorkspaceAppRoute } from "./workspace-app-route";
 import { ShellConfigProvider } from "./shell-config";
 import { resolveSigninGateDecision } from "./signin-gate";
 import { WelcomeRoute } from "./welcome-route";
+import { NotificationCenterController } from "./notification-center";
 
 
 type DenSigninGateProps = {
@@ -302,6 +303,7 @@ export function AppRoot() {
         <AppMenuProvider>
         <JuggleWorkControlProvider>
           <JuggleWorkRouteControlActions />
+          <NotificationCenterController />
           <JuggleWorkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />

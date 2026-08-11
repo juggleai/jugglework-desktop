@@ -101,6 +101,7 @@ import { ProjectExtensionsPanel } from "@/react-app/domains/settings/pages/proje
 import { buildProjectConnectors } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
+import { NotificationCenterView } from "@/react-app/shell/notification-center";
 import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
 import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
@@ -268,6 +269,8 @@ export function parseSettingsPath(pathname: string): {
 
   const [head, tail] = trimmed.split("/");
   switch (head) {
+    case "notifications":
+      return { tab: head, redirectPath: null };
     case "general":
       return { tab: "preferences", redirectPath: "preferences" };
     case "ai":
@@ -2129,6 +2132,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const settingsView = (() => {
     switch (route.tab) {
+      case "notifications":
+        return <NotificationCenterView />;
       case "general":
         return (
           <GeneralSettingsView

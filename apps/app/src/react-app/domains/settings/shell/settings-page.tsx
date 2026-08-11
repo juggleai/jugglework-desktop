@@ -2,6 +2,7 @@
 import type * as React from "react";
 import {
   BrainCircuit,
+  Bell,
   Bug,
   Cable,
   CloudCog,
@@ -47,9 +48,12 @@ import {
 import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { AppNavigationRail } from "../../../shell/app-navigation-rail";
 import type { OpenCreateWorkspace } from "../../workspace/types";
+import { useNotificationStore } from "../../../kernel/notification-store";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
+    case "notifications":
+      return Bell;
     case "ai":
       return Zap;
     case "preferences":
@@ -91,6 +95,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
 
 export function getSettingsTabLabel(tab: SettingsTab) {
   switch (tab) {
+    case "notifications":
+      return t("notifications.title");
     case "ai":
       return t("settings.tab_ai");
     case "preferences":
@@ -134,6 +140,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
+    case "notifications":
+      return t("notifications.empty_hint");
     case "ai":
       return t("settings.tab_description_ai");
     case "preferences":
@@ -180,7 +188,7 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 }
 
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["appearance", "updates", "ai"];
+  const tabs: SettingsTab[] = ["notifications", "appearance", "updates", "ai"];
   if (developerMode) tabs.push("debug");
   return tabs;
 }
@@ -207,10 +215,20 @@ export function SettingsBetaBadge({ className }: { className?: string }) {
   );
 }
 
-function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
+export function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
+  const unreadCount = useNotificationStore((state) => (
+    tab === "notifications"
+      ? state.notifications.filter((notification) => notification.readAt === null).length
+      : 0
+  ));
   return (
     <>
       <span>{getSettingsTabLabel(tab)}</span>
+      {unreadCount > 0 ? (
+        <span className="ml-auto flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-4 text-primary-foreground">
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </span>
+      ) : null}
       {isSettingsTabBeta(tab) ? <SettingsBetaBadge className="ml-auto" /> : null}
     </>
   );

@@ -206,6 +206,19 @@ export function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: str
   return ordered;
 }
 
+/**
+ * Keep the workspace lane stable across server refreshes. Some servers return
+ * the active workspace first, so using the response order directly would make
+ * the sidebar jump whenever the user opens a session in another workspace.
+ */
+export function resolveWorkspaceRefreshOrderIds(
+  preferredOrderIds: string[],
+  currentWorkspaces: RouteWorkspace[],
+): string[] {
+  if (preferredOrderIds.length > 0) return preferredOrderIds;
+  return currentWorkspaces.map((workspace) => workspace.id);
+}
+
 export function toSessionGroups(
   workspaces: RouteWorkspace[],
   sessionsByWorkspaceId: Record<string, RouteSession[]>,

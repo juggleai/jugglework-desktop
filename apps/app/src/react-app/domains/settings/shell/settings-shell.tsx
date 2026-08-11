@@ -18,11 +18,11 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
-import { NotificationBell } from "../../../shell/notification-center";
 import type { SettingsTab } from "../../../../app/types";
 import {
   SettingsPage,
   SettingsBetaBadge,
+  SettingsSidebarTabLabel,
   SettingsSidebar,
   getCloudSettingsTabs,
   getGlobalSettingsTabs,
@@ -192,7 +192,6 @@ export function SettingsShell(props: SettingsShellProps) {
                 ) : null}
               </div>
               <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
-                <NotificationBell />
                 <Button
                   variant="ghost"
                   type="button"
@@ -235,7 +234,7 @@ function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "
         render={(
           <Button variant="outline" size="sm" className="min-w-0 max-w-46 justify-start gap-2">
             <ActiveIcon className="size-4 shrink-0" />
-            <span className="truncate">{getSettingsTabLabel(props.activeTab)}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{getSettingsTabLabel(props.activeTab)}</span>
             {isSettingsTabBeta(props.activeTab) ? <SettingsBetaBadge /> : null}
             <ChevronDown className="ml-auto size-4 shrink-0" />
           </Button>
@@ -255,8 +254,7 @@ function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "
                   className={props.activeTab === tab ? "bg-foreground/10 text-accent-foreground" : undefined}
                 >
                   <Icon />
-                  <span>{getSettingsTabLabel(tab)}</span>
-                  {isSettingsTabBeta(tab) ? <SettingsBetaBadge className="ml-auto" /> : null}
+                  <SettingsSidebarTabLabel tab={tab} />
                 </DropdownMenuItem>
               );
             })}

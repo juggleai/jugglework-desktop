@@ -3,7 +3,7 @@
 // Actions are serializable descriptors — not callbacks — so entries can be
 // acted on after an app restart. See shell/notifications.ts for the
 // notifyEvent/notifyAlert entry points and shell/notification-center.tsx for
-// the bell UI.
+// the Settings UI.
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 

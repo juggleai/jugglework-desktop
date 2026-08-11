@@ -11,15 +11,15 @@ import {
   Pin,
   PinOff,
   Plus,
-  Share2,
   Trash2,
   RefreshCw,
   RotateCcw,
   Settings,
+  Folder,
   FolderOpen,
   Tag,
 } from "lucide-react";
-import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
+import { LayoutGroup, LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
@@ -111,7 +111,6 @@ import {
   isSessionArchived,
   partitionArchivedSessions,
   resolveWorkspaceSessionIndicator,
-  workspaceKindLabel,
   workspaceLabel,
 } from "./utils";
 import type { FlattenedSessionRow, SessionListItem, SessionTreeState } from "./utils";
@@ -129,6 +128,7 @@ import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
+import { SessionCircularProgress } from "./session-circular-progress";
 
 /** Fixed left lane from Paper — activity/chevron slot; never shifts the title. */
 const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center";
@@ -153,8 +153,8 @@ function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicat
     : t("workspace_list.session_streaming");
 
   return (
-    <span className={LEFT_ACTIVITY_SLOT}>
-      <SessionDotMatrixLoader label={title} />
+    <span className={LEFT_ACTIVITY_SLOT} role="status" title={title} aria-label={title}>
+      <SessionCircularProgress />
     </span>
   );
 }
@@ -516,13 +516,17 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         }
       />
       <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-56">
+        <DropdownMenuItem
+          onClick={() => ctx.onCreateTaskInWorkspace(workspace.id)}
+          disabled={ctx.newTaskDisabled}
+        >
+          <Plus className="size-4" />
+          {t("session.cmd_new_session_title")}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => ctx.onOpenRenameWorkspace(workspace.id)}>
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => ctx.onShareWorkspace(workspace.id)}>
-          <Share2 className="size-4" />
-          {t("workspace_list.share")}
         </DropdownMenuItem>
         {workspace.workspaceType === "local" ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
@@ -960,21 +964,9 @@ export function AppSidebar(props: AppSidebarProps) {
     }
     return entries;
   }, [visibleWorkspaceSessionGroups]);
-
   const createTaskLabel = taskScope === "remote"
     ? t("navigation.create_cloud_task")
     : t("navigation.create_local_task");
-
-  const reorderVisibleWorkspaces = React.useCallback((visibleIds: string[]) => {
-    const orderedVisibleIds = [...visibleIds];
-    const merged = props.workspaceSessionGroups.map((group) => {
-      const visible = taskScope === "remote"
-        ? group.workspace.workspaceType === "remote"
-        : group.workspace.workspaceType !== "remote";
-      return visible ? orderedVisibleIds.shift() ?? group.workspace.id : group.workspace.id;
-    });
-    props.onReorderWorkspaces?.(merged);
-  }, [props.onReorderWorkspaces, props.workspaceSessionGroups, taskScope]);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -1032,24 +1024,28 @@ export function AppSidebar(props: AppSidebarProps) {
                 {pinnedSessions.length > 0 ? (
                   <GlobalPinnedSessions entries={pinnedSessions} />
                 ) : null}
-                <Reorder.Group
-                  as="div"
-                  axis="y"
-                  values={visibleWorkspaceSessionGroups.map((group) => group.workspace.id)}
-                  onReorder={reorderVisibleWorkspaces}
-                  className="flex flex-col gap-px"
-                >
+                <div className="flex flex-col gap-0">
                   {visibleWorkspaceSessionGroups.map((group) => (
-                    <WorkspaceReorderItem
+                    <m.div
                       key={group.workspace.id}
-                      group={group}
-                      className=""
-                      showInitialLoading={props.showInitialLoading}
-                      previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
-                      showMoreSessions={showMoreSessions}
-                    />
+                      layout="position"
+                      transition={{ layout: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
+                    >
+                      {/* Keep session projection local to its workspace. When a
+                          preceding workspace changes height, this outer block
+                          slides once and its session rows travel with it. */}
+                      <LayoutGroup id={`workspace-sessions-${group.workspace.id}`} inherit={false}>
+                        <WorkspaceSidebarGroup
+                          group={group}
+                          className="py-0"
+                          showInitialLoading={props.showInitialLoading}
+                          previewCount={isFiltering ? Number.MAX_SAFE_INTEGER : previewCount(group.workspace.id)}
+                          showMoreSessions={showMoreSessions}
+                        />
+                      </LayoutGroup>
+                    </m.div>
                   ))}
-                </Reorder.Group>
+                </div>
                 {visibleWorkspaceSessionGroups.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center px-5 py-10 text-center text-xs text-dls-secondary">
                     {isFiltering ? t("workspace_list.no_matching_sessions") : t("workspace.no_tasks")}
@@ -1221,105 +1217,26 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
   ));
 }
 
-type WorkspaceReorderItemProps = {
-  className: string;
-  group: WorkspaceSessionGroup;
-  showInitialLoading?: boolean;
-  previewCount: number;
-  showMoreSessions: (workspaceId: string, totalRoots: number) => void;
-};
-
-// TIPS: 普通点击工作区标题只应「选中」，不应改变工作区顺序。framer-motion 的
-// dragControls.start 一旦在 pointerdown 时立即调用，就会把这次点击当作一次拖拽，
-// 触发 onReorder 把该工作区重排（在不等高列表中常被移动到首位）。因此这里加一个
-// 位移阈值：只有当指针实际拖动超过阈值时才真正启动拖拽排序。
-const WORKSPACE_DRAG_THRESHOLD_PX = 5;
-
-function WorkspaceReorderItem({
-  className,
-  group,
-  showInitialLoading,
-  previewCount,
-  showMoreSessions,
-}: WorkspaceReorderItemProps) {
-  const dragControls = useDragControls();
-
-  const startDragOnThreshold = React.useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      // 仅响应主键（鼠标左键 / 触摸 / 笔），忽略右键与中键。
-      if (event.button !== 0) return;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      let dragStarted = false;
-
-      const cleanup = () => {
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", cleanup);
-        window.removeEventListener("pointercancel", cleanup);
-      };
-
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        if (dragStarted) return;
-        const moved = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
-        if (moved < WORKSPACE_DRAG_THRESHOLD_PX) return;
-        dragStarted = true;
-        cleanup();
-        dragControls.start(moveEvent);
-      };
-
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", cleanup);
-      window.addEventListener("pointercancel", cleanup);
-    },
-    [dragControls],
-  );
-
-  return (
-    <Reorder.Item
-      as="div"
-      value={group.workspace.id}
-      id={group.workspace.id}
-      layout="position"
-      dragElastic={0}
-      dragListener={false}
-      dragControls={dragControls}
-      transformTemplate={(_latest, generated) =>
-        // Keep Motion's translate-based reorder movement, but drop projection scale
-        // so expanded workspace contents don't stretch during collapse/expand.
-        generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")
-      }
-      className="relative"
-    >
-      <WorkspaceSidebarGroup
-        className={className}
-        group={group}
-        showInitialLoading={showInitialLoading}
-        previewCount={previewCount}
-        showMoreSessions={showMoreSessions}
-        onWorkspaceTitlePointerDown={startDragOnThreshold}
-      />
-    </Reorder.Item>
-  );
-}
-
 type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   workspace: WorkspaceInfo;
+  sessionCount: number;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
   isExpanded: boolean;
+  showActivity: boolean;
   onToggleExpanded: () => void;
-  onTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceHeader({
   workspace,
+  sessionCount,
   statusLabel,
   isError,
   isLoading,
   isExpanded,
+  showActivity,
   onToggleExpanded,
-  onTitlePointerDown,
   onClick,
   ...props
 }: WorkspaceHeaderProps) {
@@ -1327,7 +1244,8 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "h-11 group-hover/workspace-header:bg-sidebar-accent group-hover/workspace-header:text-sidebar-accent-foreground mac:group-hover/workspace-header:bg-black/5 dark:mac:group-hover/workspace-header:bg-white/10",
+        "relative h-12 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
+        "group-hover/workspace-header:bg-sidebar-accent/25",
       )}
       onClick={(event) => {
         onClick?.(event);
@@ -1335,18 +1253,24 @@ function WorkspaceHeader({
       }}
       aria-expanded={isExpanded}
     >
-      {isLoading ? (
-        <SessionDotMatrixLoader label={t("workspace.loading_tasks")} />
-      ) : (
-        <WorkspaceIcon workspaceId={workspace.id} sizeClass="size-4" />
-      )}
+      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-sidebar-foreground">
+        {isExpanded ? (
+          <FolderOpen className={cn("size-4.5", isLoading && "animate-pulse")} strokeWidth={1.8} />
+        ) : (
+          <Folder className={cn("size-4.5", isLoading && "animate-pulse")} strokeWidth={1.8} />
+        )}
+      </span>
       <div
-        className="min-w-0 flex-1 cursor-grab touch-none transition-[padding] duration-75 active:cursor-grabbing group-hover/workspace-header:pr-16 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-16 group-has-data-popup-open/workspace-header:pr-11 group-hover/workspace-header:group-has-data-popup-open/workspace-header:pr-16 pr-2"
-        onPointerDown={onTitlePointerDown}
+        className={cn("min-w-0 flex-1", showActivity ? "pr-14" : "pr-7")}
       >
-        <span className="block truncate">{workspaceLabel(workspace)}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
+          <span className="shrink-0 rounded-md bg-foreground/[0.07] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+            {sessionCount}
+          </span>
+        </span>
         {statusLabel ? (
-          <span className={cn("block text-xs", isError ? "text-destructive" : "text-muted-foreground")}>
+          <span className={cn("mt-0.5 block truncate text-[11px] leading-none", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
           </span>
         ) : null}
@@ -1361,7 +1285,6 @@ type WorkspaceSidebarGroupProps = {
   showInitialLoading?: boolean;
   previewCount: number;
   showMoreSessions: (workspaceId: string, totalRoots: number) => void;
-  onWorkspaceTitlePointerDown: React.PointerEventHandler<HTMLDivElement>;
 };
 
 function WorkspaceSidebarGroup({
@@ -1370,7 +1293,6 @@ function WorkspaceSidebarGroup({
   showInitialLoading,
   previewCount,
   showMoreSessions,
-  onWorkspaceTitlePointerDown,
 }: WorkspaceSidebarGroupProps) {
   const ctx = useSidebarContext();
   const workspace = group.workspace;
@@ -1410,8 +1332,7 @@ function WorkspaceSidebarGroup({
     if (group.status === "error") return taskLoadError.label;
     if (isConnectionActionBusy) return t("workspace_list.connecting");
     if (isRemoteWorkspace && connectionState.status === "connected") return connectionState.message?.trim() || t("workspace_list.connected");
-    if (!ctx.developerMode) return "";
-    return workspaceKindLabel(workspace);
+    return "";
   })();
 
   const pinnedIds = usePinnedSessionIds();
@@ -1423,6 +1344,13 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
+  const hasActiveWork = React.useMemo(
+    () => activeSessions.some((session) => (
+      isActiveWorkSessionStatus(ctx.sessionStatusById?.[session.id])
+    )),
+    [activeSessions, ctx.sessionStatusById],
+  );
+  const showWorkspaceActivity = hasActiveWork && !isExpanded;
   const sessionRows = flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -1437,6 +1365,24 @@ function WorkspaceSidebarGroup({
     () => sessionRows.flatMap((row) => (row.depth === 0 ? [row.session.id] : [])),
     [sessionRows],
   );
+  const workspaceLayoutKey = React.useMemo(
+    () => [
+      wsGroups.map((group) => group.id).join(","),
+      sessionRows
+        .map((row) => `${row.depth}:${row.session.id}:${wsAssignments[row.session.id] ?? ""}`)
+        .join("|"),
+    ].join("::"),
+    [sessionRows, wsAssignments, wsGroups],
+  );
+  const previousWorkspaceLayoutKeyRef = React.useRef<string | null>(null);
+  const sessionLayoutChanged = previousWorkspaceLayoutKeyRef.current === null
+    || previousWorkspaceLayoutKeyRef.current !== workspaceLayoutKey;
+  React.useLayoutEffect(() => {
+    previousWorkspaceLayoutKeyRef.current = workspaceLayoutKey;
+  }, [workspaceLayoutKey]);
+  // Disable row-level layout projection when only an ancestor workspace moved.
+  // The workspace wrapper performs the single FLIP animation in that case.
+  const workspaceLayoutDependency = sessionLayoutChanged ? workspaceLayoutKey : undefined;
   const activeRootCount = React.useMemo(
     () => getRootSessions(activeSessions).filter((session) => !pinnedIds.has(session.id)).length,
     [activeSessions, pinnedIds],
@@ -1461,51 +1407,36 @@ function WorkspaceSidebarGroup({
             <div className="group/workspace-header relative max-md:hidden">
               <WorkspaceHeader
                 workspace={workspace}
+                sessionCount={getRootSessions(activeSessions).length}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={group.status === "loading" || isConnecting}
                 isExpanded={isExpanded}
+                showActivity={showWorkspaceActivity}
                 onToggleExpanded={() => ctx.toggleWorkspaceExpanded(workspace.id)}
-                onTitlePointerDown={onWorkspaceTitlePointerDown}
               />
-              <div data-workspace-actions className="group/workspace-actions absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    ctx.onCreateTaskInWorkspace(workspace.id);
-                  }}
-                  disabled={ctx.newTaskDisabled}
-                  aria-label={t("session.new_task")}
-                >
-                  <Plus className="size-4" />
-                </Button>
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                {showWorkspaceActivity ? (
+                  <span
+                    className="flex size-6 items-center justify-center"
+                    role="status"
+                    title={t("workspace_list.session_streaming")}
+                    aria-label={t("workspace_list.session_streaming")}
+                  >
+                    <SessionCircularProgress />
+                  </span>
+                ) : null}
                 <WorkspaceActionsMenu
                   workspace={workspace}
                   isConnectionActionBusy={isConnectionActionBusy}
                   canRecover={canRecover}
-                  className="size-6 text-muted-foreground opacity-0 group-hover/workspace-header:opacity-100 group-focus-within/workspace-actions:opacity-100 data-popup-open:opacity-100"
+                  className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground data-popup-open:bg-background/60 data-popup-open:text-foreground"
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-1/2 size-6 -translate-y-1/2 text-muted-foreground flex items-center justify-center group/expand-collapse-button"
-                aria-label={isExpanded ? t("sidebar.collapse") : t("sidebar.expand")}
-                aria-expanded={isExpanded}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  ctx.toggleWorkspaceExpanded(workspace.id);
-                }}
-              >
-                <ChevronRight className={cn("size-4 transition-transform duration-200 text-muted-foreground group-hover/expand-collapse-button:text-foreground", isExpanded && "rotate-90")} />
-              </Button>
             </div>
 
             <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-              <SidebarMenuSub className="pt-px">
+              <SidebarMenuSub className="ml-3 mt-0 border-l-0 pb-1 pl-1 pt-0">
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
@@ -1541,6 +1472,7 @@ function WorkspaceSidebarGroup({
                         workspaceId={workspace.id}
                         forcedExpandedSessionIds={forcedExpandedSessionIds}
                         store={store}
+                        layoutDependency={workspaceLayoutDependency}
                       />
                     ) : (
                       <Reorder.Group
@@ -1564,7 +1496,8 @@ function WorkspaceSidebarGroup({
                             workspaceId={workspace.id}
                             forcedExpandedSessionIds={forcedExpandedSessionIds}
                             isPinned={pinnedIds.has(row.session.id)}
-                            draggable={row.depth === 0}
+                            reorderable={row.depth === 0}
+                            layoutDependency={workspaceLayoutDependency}
                           />
                         ))}
                       </Reorder.Group>
@@ -1634,6 +1567,7 @@ function WorkspaceSidebarGroup({
 }
 
 const SESSION_DRAG_TYPE = "application/x-jugglework-session-id";
+let activeSessionDragWorkspaceId: string | null = null;
 const EMPTY_PINNED_IDS = new Set<string>();
 const UNGROUPED_GROUP_ID = "__jugglework_ungrouped";
 
@@ -1859,7 +1793,10 @@ function GroupDropZone({ groupId, workspaceId, children }: {
         dragOver && "bg-accent/40 ring-1 ring-accent/60",
       )}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) {
+        if (
+          activeSessionDragWorkspaceId === workspaceId
+          && e.dataTransfer.types.includes(SESSION_DRAG_TYPE)
+        ) {
           e.preventDefault();
           setDragOver(true);
         }
@@ -1872,9 +1809,21 @@ function GroupDropZone({ groupId, workspaceId, children }: {
       }}
       onDrop={(e) => {
         setDragOver(false);
-        const sessionId = e.dataTransfer.getData(SESSION_DRAG_TYPE);
-        if (sessionId) {
-          store.getState().assignGroup(workspaceId, sessionId, groupId);
+        if (activeSessionDragWorkspaceId !== workspaceId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const payload = e.dataTransfer.getData(SESSION_DRAG_TYPE);
+        try {
+          const parsed = JSON.parse(payload) as { sessionId?: unknown; workspaceId?: unknown };
+          if (
+            typeof parsed.sessionId === "string"
+            && parsed.sessionId
+            && parsed.workspaceId === workspaceId
+          ) {
+            store.getState().assignGroup(workspaceId, parsed.sessionId, groupId);
+          }
+        } catch {
+          // Ignore stale or malformed drag payloads.
         }
       }}
     >
@@ -1884,7 +1833,7 @@ function GroupDropZone({ groupId, workspaceId, children }: {
 }
 
 /** Renders sessions partitioned by group. Empty groups always show. Ungrouped sessions render at the end. */
-function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree, workspaceId, forcedExpandedSessionIds, store }: {
+function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree, workspaceId, forcedExpandedSessionIds, store, layoutDependency }: {
   sessionRows: FlattenedSessionRow[];
   groups: SessionGroupDefinition[];
   assignments: Record<string, string>;
@@ -1893,6 +1842,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
   workspaceId: string;
   forcedExpandedSessionIds: Set<string>;
   store: typeof useSessionManagementStore;
+  layoutDependency?: string;
 }) {
   const ctx = useSidebarContext();
   const [previewCountByGroup, setPreviewCountByGroup] = React.useState<Record<string, number>>({});
@@ -1951,6 +1901,8 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
         workspaceId={workspaceId}
         forcedExpandedSessionIds={forcedExpandedSessionIds}
         isPinned={pinnedIds.has(row.session.id)}
+        groupDraggable={row.depth === 0}
+        layoutDependency={layoutDependency}
       />
       {(childrenByParent.get(row.session.id) ?? []).map(renderRow)}
     </React.Fragment>
@@ -1975,6 +1927,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
         renderRow={renderRow}
         previewCount={limit}
         onShowMore={() => showMoreInGroup(group.id, rows.length)}
+        layoutDependency={layoutDependency}
       />
     );
   };
@@ -2034,7 +1987,9 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
                       workspaceId={workspaceId}
                       forcedExpandedSessionIds={forcedExpandedSessionIds}
                       isPinned={pinnedIds.has(row.session.id)}
-                      draggable={row.depth === 0}
+                      reorderable={row.depth === 0}
+                      groupDraggable={row.depth === 0}
+                      layoutDependency={layoutDependency}
                     />
                     {(childrenByParent.get(row.session.id) ?? []).map(renderRow)}
                   </React.Fragment>
@@ -2060,7 +2015,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
   );
 }
 
-function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore }: {
+function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore, layoutDependency }: {
   group: SessionGroupDefinition;
   rows: FlattenedSessionRow[];
   expanded: boolean;
@@ -2069,6 +2024,7 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
   renderRow: (row: FlattenedSessionRow) => React.ReactNode;
   previewCount: number;
   onShowMore: () => void;
+  layoutDependency?: string;
 }) {
   const dragControls = useDragControls();
   const visibleRows = rows.slice(0, previewCount);
@@ -2080,6 +2036,12 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
       value={group.id}
       id={group.id}
       layout="position"
+      layoutDependency={layoutDependency}
+      transition={{
+        layout: layoutDependency
+          ? { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
+          : { duration: 0 },
+      }}
       dragElastic={0}
       dragListener={false}
       dragControls={dragControls}
@@ -2141,7 +2103,9 @@ type SessionMenuItemProps = {
   workspaceId: string;
   forcedExpandedSessionIds: Set<string>;
   isPinned?: boolean;
-  draggable?: boolean;
+  reorderable?: boolean;
+  groupDraggable?: boolean;
+  layoutDependency?: string;
   workspaceName?: string;
 };
 
@@ -2152,7 +2116,9 @@ function SessionMenuItem({
   forcedExpandedSessionIds,
   depth,
   isPinned = false,
-  draggable = false,
+  reorderable = false,
+  groupDraggable = false,
+  layoutDependency,
   workspaceName,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
@@ -2179,11 +2145,15 @@ function SessionMenuItem({
     ctx.onPrefetchSession?.(workspaceId, session.id);
   };
 
-  const dragProps = depth === 0 ? {
+  const dragProps = depth === 0 && groupDraggable ? {
     draggable: true,
     onDragStart: (e: React.DragEvent) => {
-      e.dataTransfer.setData(SESSION_DRAG_TYPE, session.id);
+      activeSessionDragWorkspaceId = workspaceId;
+      e.dataTransfer.setData(SESSION_DRAG_TYPE, JSON.stringify({ sessionId: session.id, workspaceId }));
       e.dataTransfer.effectAllowed = "move";
+    },
+    onDragEnd: () => {
+      activeSessionDragWorkspaceId = null;
     },
   } : {};
 
@@ -2200,7 +2170,10 @@ function SessionMenuItem({
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
     // The left activity slot is the indent — dot-matrix sits in the chevron
     // lane and the title starts in the group-label lane without shifting.
-    "relative h-12 rounded-[11px] transition-[padding,background-color] duration-75 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] data-active:font-medium",
+    "relative h-12 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
+    isSelected
+      ? "!bg-black/[0.045] hover:!bg-black/[0.055] group-hover/menu-sub-item:!bg-black/[0.055] dark:!bg-white/[0.08] dark:hover:!bg-white/[0.095] dark:group-hover/menu-sub-item:!bg-white/[0.095]"
+      : "hover:!bg-black/[0.025] group-hover/menu-sub-item:!bg-black/[0.025] dark:hover:!bg-white/[0.045] dark:group-hover/menu-sub-item:!bg-white/[0.045]",
     depth > 0 && "ps-7",
   );
 
@@ -2247,7 +2220,7 @@ function SessionMenuItem({
     </SidebarMenuSubItem>
   );
 
-  if (!draggable) return item;
+  if (!reorderable) return item;
 
   return (
     <Reorder.Item
@@ -2255,6 +2228,12 @@ function SessionMenuItem({
       value={session.id}
       id={session.id}
       layout="position"
+      layoutDependency={layoutDependency}
+      transition={{
+        layout: layoutDependency
+          ? { duration: 0.18, ease: [0.22, 1, 0.36, 1] }
+          : { duration: 0 },
+      }}
       dragElastic={0}
       transformTemplate={(_latest, generated) => generated.replace(/ ?scale[XY]?\([^)]*\)/g, "")}
     >

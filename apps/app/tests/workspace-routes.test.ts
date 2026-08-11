@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { classifyRouteSessionReadError } from "../src/react-app/shell/route-workspaces";
+import {
+  classifyRouteSessionReadError,
+  orderRouteWorkspaces,
+  resolveWorkspaceRefreshOrderIds,
+  type RouteWorkspace,
+} from "../src/react-app/shell/route-workspaces";
 import {
   mergeWorkspaceRouteSession,
   parseWorkspaceAppPath,
@@ -132,5 +137,29 @@ describe("workspace route session read errors", () => {
     expect(classifyRouteSessionReadError(Object.assign(new Error("upstream"), { status: 502 }))).toBe("retryable");
     expect(classifyRouteSessionReadError(new Error("request timed out"))).toBe("retryable");
     expect(classifyRouteSessionReadError(Object.assign(new Error("forbidden"), { status: 403 }))).toBe("error");
+  });
+});
+
+describe("workspace refresh order", () => {
+  const workspaces = (...ids: string[]) => ids.map((id) => ({ id })) as RouteWorkspace[];
+
+  test("keeps the current workspace positions when the server returns the active workspace first", () => {
+    const current = workspaces("workspace-b", "workspace-a");
+    const refreshed = workspaces("workspace-a", "workspace-b", "workspace-c");
+    const orderIds = resolveWorkspaceRefreshOrderIds([], current);
+
+    expect(orderRouteWorkspaces(refreshed, orderIds).map((workspace) => workspace.id)).toEqual([
+      "workspace-b",
+      "workspace-a",
+      "workspace-c",
+    ]);
+  });
+
+  test("prefers the persisted workspace order when one exists", () => {
+    const current = workspaces("workspace-a", "workspace-b");
+    expect(resolveWorkspaceRefreshOrderIds(["workspace-b", "workspace-a"], current)).toEqual([
+      "workspace-b",
+      "workspace-a",
+    ]);
   });
 });

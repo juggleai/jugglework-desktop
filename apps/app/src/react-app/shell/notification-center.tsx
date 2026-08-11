@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import {
   Bell,
   CircleCheck,
@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import {
@@ -18,12 +17,11 @@ import {
   type AppNotification,
   type NotificationSeverity,
 } from "@/react-app/kernel/notification-store";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { requestOpenModelPicker } from "./new-providers-listener";
 import { useControlAction, type JuggleWorkControlAction } from "./control/control-provider";
 import { openNotificationCenterEvent } from "./notifications";
 import { useReloadCoordinator } from "./reload-coordinator";
-import { useShellConfig } from "./shell-config";
 
 const SEVERITY_ICONS: Record<NotificationSeverity, LucideIcon> = {
   info: Info,
@@ -52,19 +50,12 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 /**
- * Notification bell with unread badge + popover panel. Mounted in the
- * session and settings headers; hidden via the `notifications` shell flag.
- * Closing the panel marks everything read.
+ * Keeps notification automation and the global "open notification center"
+ * event available even though the notification UI now lives in Settings.
  */
-export function NotificationBell() {
-  const { config } = useShellConfig();
-  const [open, setOpen] = useState(false);
+export function NotificationCenterController() {
   const notifications = useNotificationStore((state) => state.notifications);
-  const markAllRead = useNotificationStore((state) => state.markAllRead);
-  const clearAll = useNotificationStore((state) => state.clearAll);
-  const reloadCoordinator = useReloadCoordinator();
   const navigate = useNavigate();
-
   const notificationsListAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "notifications.list",
     label: "List notifications",
@@ -72,44 +63,49 @@ export function NotificationBell() {
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
-    execute: () => notifications.map((n) => ({
-      id: n.id,
-      kind: n.kind,
-      severity: n.severity,
-      title: n.title,
-      body: n.body,
-      count: n.count,
-      readAt: n.readAt,
-      actionType: n.action?.type ?? null,
-      actionLabel: n.actionLabel ?? null,
+    execute: () => notifications.map((notification) => ({
+      id: notification.id,
+      kind: notification.kind,
+      severity: notification.severity,
+      title: notification.title,
+      body: notification.body,
+      count: notification.count,
+      readAt: notification.readAt,
+      actionType: notification.action?.type ?? null,
+      actionLabel: notification.actionLabel ?? null,
     })),
   }), [notifications]);
   useControlAction(notificationsListAction);
 
-  const unreadCount = useMemo(
-    () => notifications.filter((notification) => notification.readAt === null).length,
-    [notifications],
-  );
+  useEffect(() => {
+    const openSettingsNotifications = () => navigate("/settings/notifications");
+    window.addEventListener(openNotificationCenterEvent, openSettingsNotifications);
+    return () => window.removeEventListener(openNotificationCenterEvent, openSettingsNotifications);
+  }, [navigate]);
+
+  return null;
+}
+
+/** Full notification center rendered as the first item in Global Settings. */
+export function NotificationCenterView() {
+  const notifications = useNotificationStore((state) => state.notifications);
+  const markAllRead = useNotificationStore((state) => state.markAllRead);
+  const clearAll = useNotificationStore((state) => state.clearAll);
+  const reloadCoordinator = useReloadCoordinator();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const handler = () => setOpen(true);
-    window.addEventListener(openNotificationCenterEvent, handler);
-    return () => window.removeEventListener(openNotificationCenterEvent, handler);
-  }, []);
-
-  const handleOpenChange = useCallback(
-    (next: boolean) => {
-      setOpen(next);
-      if (!next) markAllRead();
-    },
-    [markAllRead],
-  );
+    const isVisible = /\/settings\/notifications\/?$/.test(location.pathname);
+    if (isVisible && notifications.some((notification) => notification.readAt === null)) {
+      markAllRead();
+    }
+  }, [location.pathname, markAllRead, notifications]);
 
   const runAction = useCallback(
     (notification: AppNotification) => {
       const action = notification.action;
       if (!action) return;
-      setOpen(false);
       markAllRead();
       if (action.type === "open-model-picker") {
         requestOpenModelPicker(action.providerIds);
@@ -124,65 +120,39 @@ export function NotificationBell() {
     [markAllRead, navigate, reloadCoordinator],
   );
 
-  if (!config.notifications) return null;
-
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger
-        render={
+    <section className="overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
+      <div className="flex min-h-12 items-center justify-between border-b border-dls-border px-4 py-2.5">
+        <p className="text-sm font-semibold">{t("notifications.title")}</p>
+        {notifications.length > 0 ? (
           <Button
             variant="ghost"
-            size="icon-sm"
-            className="rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground"
-            title={t("notifications.title")}
-            aria-label={
-              unreadCount > 0
-                ? `${t("notifications.title")} (${unreadCount})`
-                : t("notifications.title")
-            }
+            size="sm"
+            className="text-xs text-muted-foreground"
+            onClick={clearAll}
           >
-            <Bell size={17} />
-            {unreadCount > 0 ? (
-              <span className="absolute right-0.5 top-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3 text-primary-foreground">
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            ) : null}
+            {t("notifications.clear_all")}
           </Button>
-        }
-      />
-      <PopoverContent align="end" sideOffset={8} className="w-96 gap-0 p-0">
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <p className="text-sm font-semibold">{t("notifications.title")}</p>
-          {notifications.length > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-muted-foreground"
-              onClick={clearAll}
-            >
-              {t("notifications.clear_all")}
-            </Button>
-          ) : null}
+        ) : null}
+      </div>
+      {notifications.length === 0 ? (
+        <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
+          <Bell className="mb-2 size-6 text-muted-foreground/60" />
+          <p className="text-sm font-medium">{t("notifications.empty")}</p>
+          <p className="text-xs text-muted-foreground">{t("notifications.empty_hint")}</p>
         </div>
-        {notifications.length === 0 ? (
-          <div className="flex flex-col items-center gap-1 px-6 py-10 text-center">
-            <Bell className="mb-2 size-5 text-muted-foreground/60" />
-            <p className="text-sm font-medium">{t("notifications.empty")}</p>
-            <p className="text-xs text-muted-foreground">{t("notifications.empty_hint")}</p>
-          </div>
-        ) : (
-          <div className="max-h-96 overflow-y-auto py-1">
-            {notifications.map((notification) => (
-              <NotificationRow
-                key={notification.id}
-                notification={notification}
-                onAction={runAction}
-              />
-            ))}
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+      ) : (
+        <div className="max-h-[calc(100vh-12rem)] overflow-y-auto py-1">
+          {notifications.map((notification) => (
+            <NotificationRow
+              key={notification.id}
+              notification={notification}
+              onAction={runAction}
+            />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -202,14 +172,14 @@ function NotificationRow({
   return (
     <div
       className={cn(
-        "flex items-start gap-3 px-4 py-3",
+        "flex items-start gap-3 border-b border-dls-border px-4 py-3 last:border-b-0",
         unread ? "bg-primary/5" : "opacity-80",
       )}
     >
       <Icon className={cn("mt-0.5 size-4 shrink-0", SEVERITY_CLASSES[notification.severity])} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="min-w-0 truncate text-sm font-medium">
+          <p className="min-w-0 break-words text-sm font-medium">
             {notification.title}
             {showCount ? (
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
@@ -223,7 +193,7 @@ function NotificationRow({
           </span>
         </div>
         {notification.body ? (
-          <p className="line-clamp-2 text-xs text-muted-foreground">{notification.body}</p>
+          <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{notification.body}</p>
         ) : null}
         {notification.action && notification.actionLabel ? (
           <div className="mt-1.5">

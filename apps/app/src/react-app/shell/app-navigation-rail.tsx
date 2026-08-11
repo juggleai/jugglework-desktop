@@ -3,9 +3,9 @@ import { useEffect } from "react";
 import {
   Cloud,
   ContactRound,
+  FolderOpen,
   FolderPlus,
   Globe,
-  HardDrive,
   MessageSquare,
   Plus,
   Search,
@@ -23,8 +23,10 @@ import { t } from "@/i18n";
 import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
+import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
+import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/session-circular-progress";
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
@@ -55,6 +57,7 @@ type RailButtonProps = {
   children: React.ReactNode;
   testId?: string;
   badge?: number;
+  badgeLabel?: string;
   statusIndicator?: WorkspaceSessionIndicator;
 };
 
@@ -66,6 +69,7 @@ function RailButton({
   children,
   testId,
   badge = 0,
+  badgeLabel,
   statusIndicator = null,
 }: RailButtonProps) {
   return (
@@ -86,19 +90,21 @@ function RailButton({
       {children}
       {statusIndicator ? (
         <span
-          className="absolute right-0.5 top-0.5 flex size-2.5 items-center justify-center"
+          className={cn(
+            "absolute flex items-center justify-center",
+            statusIndicator === "running" ? "right-0 top-0 size-4" : "right-0.5 top-0.5 size-2.5",
+          )}
           title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
           aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
         >
           {statusIndicator === "running" ? (
-            <span className="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2">
-              <span className="block size-full animate-ping rounded-full bg-green-9/35" />
-            </span>
-          ) : null}
-          <span className="relative size-2.5 rounded-full bg-green-9" />
+            <SessionCircularProgress />
+          ) : (
+            <span className="relative size-2.5 rounded-full bg-green-9" />
+          )}
         </span>
       ) : null}
-      {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={t("chat.unread_count", { count: badge })}>{badge > 99 ? "99+" : badge}</span> : null}
+      {badge > 0 ? <span className="absolute -right-1 -top-1 flex min-w-5 h-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-label={badgeLabel ?? t("chat.unread_count", { count: badge })}>{badge > 99 ? "99+" : badge}</span> : null}
     </button>
   );
 }
@@ -110,6 +116,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
   const totalUnreadCount = useJuggleChatStore((state) => state.totalUnreadCount);
+  const notificationUnreadCount = useNotificationStore((state) => (
+    state.notifications.reduce(
+      (count, notification) => count + (notification.readAt === null ? 1 : 0),
+      0,
+    )
+  ));
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
 
   useEffect(() => {
@@ -210,7 +222,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           testId="app-rail-home"
           statusIndicator={localWorkspaceIndicator}
         >
-          <HardDrive />
+          <FolderOpen className="size-5" strokeWidth={1.8} />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -226,7 +238,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
         >
-          <Cloud />
+          <Cloud className="size-5" strokeWidth={1.8} />
         </RailButton>
         <RailButton
           label={t("navigation.chat")}
@@ -253,6 +265,8 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={props.settingsActive}
           onClick={props.onOpenSettings}
           testId="app-rail-settings"
+          badge={notificationUnreadCount}
+          badgeLabel={`${t("notifications.title")} (${notificationUnreadCount})`}
         >
           <Settings />
         </RailButton>

@@ -49,6 +49,7 @@ import {
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  resolveWorkspaceRefreshOrderIds,
   type RouteSession,
   type RouteWorkspace,
 } from "./route-workspaces";
@@ -57,6 +58,7 @@ import {
   readLastSessionFor,
   readWorkspaceOrderIds,
   writeActiveWorkspaceId,
+  writeWorkspaceOrderIds,
 } from "./session-memory";
 import {
   legacySessionRoute,
@@ -157,6 +159,29 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const hydratedRouteSessionIdsRef = useRef<Record<string, string>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
+  const stabilizeWorkspaceOrder = useCallback((candidates: RouteWorkspace[]) => {
+    const orderIds = resolveWorkspaceRefreshOrderIds(
+      workspaceOrderIdsRef.current,
+      workspacesRef.current,
+    );
+    const ordered = orderRouteWorkspaces(candidates, orderIds);
+
+    // Seed a durable baseline after the first successful load and append newly
+    // discovered workspaces without disturbing existing positions.
+    const stableOrderIds = ordered.map((workspace) => workspace.id);
+    const currentOrderIds = workspaceOrderIdsRef.current;
+    if (
+      stableOrderIds.length > 0
+      && (stableOrderIds.length !== currentOrderIds.length
+        || stableOrderIds.some((id, index) => id !== currentOrderIds[index]))
+    ) {
+      workspaceOrderIdsRef.current = stableOrderIds;
+      setWorkspaceOrderIds(stableOrderIds);
+      writeWorkspaceOrderIds(stableOrderIds);
+    }
+
+    return ordered;
+  }, []);
   const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
@@ -385,7 +410,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setClient(null);
         setBaseUrl("");
         setToken("");
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
         setSessionsByWorkspaceId({});
@@ -410,9 +435,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         hostToken: resolvedHostToken || undefined,
       });
       const list = await juggleworkClient.listWorkspaces();
-      const nextWorkspaces = orderRouteWorkspaces(
+      const nextWorkspaces = stabilizeWorkspaceOrder(
         mergeRouteWorkspaces(list.items, desktopWorkspaces),
-        workspaceOrderIdsRef.current,
       );
 
       // Preserve any sessions we already have cached so switching routes
@@ -512,7 +536,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       });
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         setLegacySelectedWorkspaceId((current) =>
           current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
@@ -529,7 +553,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         markBootRouteReady();
       }
     }
-  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, updateLocalServer, workspaceInferenceSessionId]);
+  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
   const handleRuntimeSessionUpdated = useCallback((update: { sessionId: string; info: Record<string, unknown> }) => {
     if (!selectedWorkspaceId) return;
     setSessionsByWorkspaceId((current) => {

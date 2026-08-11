@@ -16,7 +16,7 @@ import {
   type NotificationInput,
 } from "@/react-app/kernel/notification-store";
 
-/** Window event that asks the notification bell to open its panel. */
+/** Window event that opens the Notifications page in Global Settings. */
 export const openNotificationCenterEvent = "jugglework-open-notification-center";
 
 /** Window event that asks the marketplace view to highlight a plugin. */

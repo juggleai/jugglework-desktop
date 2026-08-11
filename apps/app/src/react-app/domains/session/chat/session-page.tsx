@@ -56,7 +56,6 @@ import {
 import { ShareWorkspaceModal } from "../../workspace/share-workspace-modal";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
 import { OwDotTicker } from "../../../shell/dot-ticker";
-import { NotificationBell } from "../../../shell/notification-center";
 import { useReactRenderWatchdog } from "../../../shell/react-render-watchdog";
 import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
@@ -227,7 +226,6 @@ export type SessionPageProps = {
   environmentClient?: JuggleWorkServerClient | null;
   juggleworkServerToken?: string | null;
   developerMode: boolean;
-  headerStatus: string;
   busyHint: string | null;
   startupPhase: BootPhase;
   providerConnectedIds: string[];
@@ -1202,11 +1200,6 @@ export function SessionPage(props: SessionPageProps) {
                   <span className="truncate">{gitBranch}</span>
                 </span>
               ) : null}
-              {props.developerMode ? (
-                <span className="hidden text-[12px] text-dls-secondary lg:inline">
-                  {props.headerStatus}
-                </span>
-              ) : null}
               {props.busyHint ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.busyHint}
@@ -1234,7 +1227,6 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation (⌘F)</TooltipContent>
                 </Tooltip>
               ) : null}
-              <NotificationBell />
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1245,21 +1237,6 @@ export function SessionPage(props: SessionPageProps) {
                 >
                   <Cloud className="size-3.5" />
                   <span>{t("den.signin_button")}</span>
-                </Button>
-              ) : null}
-              {props.developerMode ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    try {
-                      window.localStorage.removeItem("jugglework.acknowledgedProviders");
-                      window.localStorage.removeItem("jugglework.orgOnboardingSeen");
-                    } catch {}
-                  }}
-                  title="Clears acknowledged providers + org onboarding so they trigger again"
-                >
-                  Reset notifications
                 </Button>
               ) : null}
             </div>

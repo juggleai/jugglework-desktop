@@ -185,6 +185,7 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export const SETTINGS_TAB_VALUES = [
   "general",
+  "notifications",
   "ai",
   "preferences",
   "permissions",

@@ -155,8 +155,14 @@
   flex: 0 0 var(--primary-panel-width);
   overflow: hidden;
   border-right: 1px solid var(--ui-border) !important;
-  background: var(--ui-panel);
+  background: var(--sidebar, var(--ui-panel));
   transition: width 200ms linear, flex-basis 200ms linear;
+}
+.jw-im-list-pane > .jw-list-panel-header,
+.jw-im-list-pane .jg-conversation-body,
+.jw-im-list-pane .jg-conver-list,
+.jw-im-list-pane .tyn-aside-body {
+  background: var(--sidebar, var(--ui-panel));
 }
 .jw-im-root.is-list-collapsed .jw-im-list-pane {
   width: 0;
@@ -1399,7 +1405,7 @@
 }
 .jw-im-contacts-layout .jw-im-list-pane,
 .jw-im-contacts-layout .tyn-aside-body {
-  background: var(--ui-panel);
+  background: var(--sidebar, var(--ui-panel));
 }
 .jw-im-contacts-layout .jw-im-list-pane,
 .jw-im-contacts-layout .jw-im-contact-main-header {
@@ -1407,7 +1413,10 @@
 }
 .jw-im-contacts-layout .jw-im-contact-main-header {
   color: var(--ui-text);
-  background: var(--ui-surface);
+  background: #fafafc;
+}
+.jw-im-chat-surface .jw-im-chat-header {
+  background: #fafafc;
 }
 .jw-im-contacts-layout .jg-conversation-tool,
 .jw-im-contacts-layout .tyn-aside-contact-item,
