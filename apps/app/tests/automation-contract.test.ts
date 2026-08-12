@@ -180,13 +180,26 @@ describe("Desktop automation catalog and routes", () => {
   test("uses compact workspace-styled schedule selection and an effective Today action", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     const frequency = page.slice(page.indexOf("function CalendarFrequencySelect"), page.indexOf("function PermissionDialog"));
-    expect(page).toMatch(/<div className="flex flex-wrap items-start gap-3"><CalendarFields/);
-    expect(frequency).toMatch(/className="relative w-44"/);
+    expect(page).toMatch(/<CalendarFields value=\{value\} onChange=\{onChange\}/);
+    expect(page).toMatch(/function CalendarFields[\s\S]+flex flex-nowrap items-center gap-3/);
+    expect(frequency).toMatch(/className="relative w-36 shrink-0"/);
     expect(frequency).toMatch(/pr-4 text-left/);
     expect(frequency).toMatch(/role="listbox"[\s\S]+rounded-2xl border border-dls-border/);
     expect(frequency).toMatch(/option\.label[\s\S]+selected \? <Check className="size-4 shrink-0/);
     expect(page).not.toMatch(/<select value=\{value\.frequency\}/);
     expect(page).toMatch(/const currentDate = today\(\);[\s\S]+setCursor\(startOfMonth\(currentDate\)\);[\s\S]+pickDay\(currentDate\)/);
+  });
+
+  test("uses compact multi-selects for weekly, monthly, and yearly calendar values", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fields = page.slice(page.indexOf("function CalendarFields"), page.indexOf("type CalendarFrequency"));
+    const multiSelect = page.slice(page.indexOf("function CompactMultiSelect"), page.indexOf("function CalendarFrequencySelect"));
+    expect(fields).toMatch(/frequency === "weekly"[\s\S]+<CompactMultiSelect value=\{value\.weekdays\}/);
+    expect(fields).toMatch(/frequency === "monthly"[\s\S]+<CompactMultiSelect value=\{monthlyScheduleDays\(value\)\}/);
+    expect(fields).toMatch(/frequency === "yearly"[\s\S]+<CompactMultiSelect value=\{yearlyScheduleMonths\(value\)\}/);
+    expect(fields).toMatch(/months: \[1\][\s\S]+dayOfMonth: 1/);
+    expect(multiSelect).toMatch(/aria-multiselectable="true"/);
+    expect(multiSelect).toMatch(/relative w-44 shrink-0/);
   });
 
   test("uses the project checkbox visual and vertically centers the risk acknowledgement", () => {
@@ -207,6 +220,8 @@ describe("Desktop automation catalog and routes", () => {
     expect(editor).toMatch(/mac:titlebar-no-drag[\s\S]+<AutomationBreadcrumb/);
     expect(editor).toMatch(/ml-auto flex shrink-0 gap-1\.5 mac:titlebar-no-drag/);
     expect(editor).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
+    expect(editor).toMatch(/max-w-6xl px-6 pb-8 pt-3 lg:px-10/);
+    expect(editor).toMatch(/<div className="mt-4 space-y-7">/);
   });
 
   test("matches the fixed draggable editor header on task and run-list pages", () => {

@@ -63,8 +63,10 @@ export type AutomationCalendarSchedule = {
 } & (
   | { frequency: "daily" }
   | { frequency: "weekly"; weekdays: number[] }
-  | { frequency: "monthly"; dayOfMonth: number }
-  | { frequency: "yearly"; month: number; dayOfMonth: number }
+  /** 每月可选择多个执行日；`dayOfMonth` 仅用于兼容旧版已保存任务。 */
+  | { frequency: "monthly"; dayOfMonths: number[]; dayOfMonth?: number }
+  /** 每年可选择多个执行月份，并在这些月份的同一天执行；`month` 仅用于兼容旧版已保存任务。 */
+  | { frequency: "yearly"; months: number[]; dayOfMonth: number; month?: number }
 );
 
 /** 客户端和 Embedded Server 共同识别的版本化调度联合类型。 */

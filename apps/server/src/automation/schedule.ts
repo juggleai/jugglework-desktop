@@ -136,11 +136,11 @@ export function automationScheduleSummary(schedule: AutomationSchedule, locale =
       : `Weekly on ${days} at ${schedule.localTime} · ${timeZone}`;
   }
   if (schedule.frequency === "monthly") return locale.startsWith("zh")
-    ? `每月 ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${timeZone}`
-    : `Monthly on day ${schedule.dayOfMonth} at ${schedule.localTime} · ${timeZone}`;
+    ? `每月 ${monthlyDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${timeZone}`
+    : `Monthly on day ${monthlyDays(schedule).join(", ")} at ${schedule.localTime} · ${timeZone}`;
   return locale.startsWith("zh")
-    ? `每年 ${schedule.month} 月 ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${timeZone}`
-    : `Yearly on ${schedule.month}/${schedule.dayOfMonth} at ${schedule.localTime} · ${timeZone}`;
+    ? `每年 ${yearlyMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${timeZone}`
+    : `Yearly in month ${yearlyMonths(schedule).join(", ")} on day ${schedule.dayOfMonth} at ${schedule.localTime} · ${timeZone}`;
 }
 
 /** 同时返回摘要和精确的下一次触发时间。 */
@@ -191,8 +191,18 @@ function calendarMatches(schedule: Extract<AutomationSchedule, { kind: "calendar
     const weekday = value.getUTCDay() || 7;
     return schedule.weekdays.includes(weekday);
   }
-  if (schedule.frequency === "monthly") return value.getUTCDate() === schedule.dayOfMonth;
-  return value.getUTCMonth() + 1 === schedule.month && value.getUTCDate() === schedule.dayOfMonth;
+  if (schedule.frequency === "monthly") return monthlyDays(schedule).includes(value.getUTCDate());
+  return yearlyMonths(schedule).includes(value.getUTCMonth() + 1) && value.getUTCDate() === schedule.dayOfMonth;
+}
+
+/** 读取每月执行日，并兼容旧版单值字段。 */
+function monthlyDays(schedule: Extract<AutomationSchedule, { kind: "calendar"; frequency: "monthly" }>): number[] {
+  return schedule.dayOfMonths?.length ? schedule.dayOfMonths : schedule.dayOfMonth ? [schedule.dayOfMonth] : [];
+}
+
+/** 读取每年执行月份，并兼容旧版单值字段。 */
+function yearlyMonths(schedule: Extract<AutomationSchedule, { kind: "calendar"; frequency: "yearly" }>): number[] {
+  return schedule.months?.length ? schedule.months : schedule.month ? [schedule.month] : [];
 }
 
 /** 判断本地日期是否落在按间隔任务允许的星期内；未配置或配置为空表示不限制。 */

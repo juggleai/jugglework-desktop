@@ -7,8 +7,8 @@ Calendar mode SHALL support:
 
 - Daily: required local execution time.
 - Weekly: one or more unique ISO weekdays plus required local execution time.
-- Monthly: required day-of-month 1–31 plus required local execution time.
-- Yearly: required month 1–12, day-of-month 1–31, and required local execution time.
+- Monthly: one or more unique days-of-month 1–31 plus required local execution time.
+- Yearly: one or more unique months 1–12, required day-of-month 1–31, and required local execution time.
 
 Interval mode SHALL require a positive integer amount and unit `minute`, `hour`, or `day`, SHALL carry an anchor date/time interpreted in the schedule timezone, and MAY carry an optional set of unique ISO weekdays that restricts which local days can fire. Once mode SHALL require one future local date/time interpreted in the schedule timezone.
 
@@ -25,8 +25,12 @@ The editor SHALL expose interval mode as amount, unit, and weekday restriction o
 - **THEN** the occurrence is not executed
 
 #### Scenario: User configures a yearly task like the reference
-- **WHEN** the user selects 周期, 每年, month 1, day 21, time 18:12, and a valid timezone
-- **THEN** the saved calendar payload contains yearly frequency, month 1, day 21, local time 18:12, and that timezone only
+- **WHEN** the user selects 周期, 每年, months 1 and 6, day 21, time 18:12, and a valid timezone
+- **THEN** the saved calendar payload contains yearly frequency, months 1 and 6, day 21, local time 18:12, and that timezone only
+
+#### Scenario: User configures multiple monthly dates
+- **WHEN** the user selects 周期, 每月, dates 1 and 15, and 09:00
+- **THEN** the calculator produces one occurrence on both selected dates at 09:00 in the stored timezone
 
 #### Scenario: User configures multiple weekly days
 - **WHEN** the user selects 周期, 每周, Monday and Friday, and 09:00

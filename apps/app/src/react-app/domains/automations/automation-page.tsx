@@ -1095,11 +1095,11 @@ function AutomationEditor(props: {
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-6xl px-6 pb-8 pt-5 lg:px-10">
+        <div className="mx-auto w-full max-w-6xl px-6 pb-8 pt-3 lg:px-10">
           {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
           {error ? <Notice tone="error">{error}</Notice> : null}
 
-          <div className="mt-7 space-y-7">
+          <div className="mt-4 space-y-7">
             <Field label={t("automation.name")}><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_placeholder")} aria-label={t("automation.name")} /></Field>
             <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
               <WorkspaceSingleSelect
@@ -1687,7 +1687,7 @@ function ScheduleEditor({ value, onChange, client, activeRange }: {
   return (
     <Field label={t("automation.frequency")} hint={t("automation.frequency_hint")}>
       <div className="mb-4 inline-flex rounded-xl bg-dls-hover p-1">{(["calendar", "interval", "once"] as const).map((kind) => <button key={kind} type="button" onClick={() => setKind(kind)} className={cn("rounded-lg px-5 py-2 text-sm", value.kind === kind && "bg-background font-medium shadow-sm")}>{kind === "calendar" ? t("automation.period") : kind === "interval" ? t("automation.interval") : t("automation.once")}</button>)}</div>
-      {value.kind === "calendar" ? <div className="flex flex-wrap items-start gap-3"><CalendarFields value={value} onChange={onChange} /></div> : null}
+      {value.kind === "calendar" ? <CalendarFields value={value} onChange={onChange} /> : null}
       {value.kind === "interval" ? (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm">{t("automation.schedule_every")}</span>
@@ -1911,18 +1911,97 @@ function summaryWithoutTimezone(summary: string, timezone: string): string {
 }
 
 function CalendarFields({ value, onChange }: { value: Extract<AutomationSchedule, { kind: "calendar" }>; onChange: (schedule: AutomationSchedule) => void }) {
-  return <>
+  // TIPS:频率、对应多选项、日期和时间固定在一行；控件采用紧凑宽度，不用换行掩盖表单层级。
+  return <div className="flex flex-nowrap items-center gap-3">
     <CalendarFrequencySelect value={value.frequency} onChange={(frequency) => {
       if (frequency === "daily") onChange({ version: 1, kind: "calendar", frequency, localTime: value.localTime, timezone: value.timezone });
       if (frequency === "weekly") onChange({ version: 1, kind: "calendar", frequency, weekdays: [1], localTime: value.localTime, timezone: value.timezone });
-      if (frequency === "monthly") onChange({ version: 1, kind: "calendar", frequency, dayOfMonth: 1, localTime: value.localTime, timezone: value.timezone });
-      if (frequency === "yearly") onChange({ version: 1, kind: "calendar", frequency, month: 1, dayOfMonth: 1, localTime: value.localTime, timezone: value.timezone });
+      if (frequency === "monthly") onChange({ version: 1, kind: "calendar", frequency, dayOfMonths: [1], localTime: value.localTime, timezone: value.timezone });
+      if (frequency === "yearly") onChange({ version: 1, kind: "calendar", frequency, months: [1], dayOfMonth: 1, localTime: value.localTime, timezone: value.timezone });
     }} />
-    {value.frequency === "weekly" ? <div className="basis-full"><WeekdayPicker value={value.weekdays} onChange={(weekdays) => onChange({ ...value, weekdays })} label={t("automation.schedule_weekday_pick")} /></div> : null}
-    {value.frequency === "monthly" ? <input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_day_of_month")} /> : null}
-    {value.frequency === "yearly" ? <><input type="number" min={1} max={12} value={value.month} onChange={(event) => onChange({ ...value, month: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_month")} /><input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_day_of_month")} /></> : null}
-    <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={cn(FIELD, "w-36")} aria-label={t("automation.schedule_run_time")} />
-  </>;
+    {value.frequency === "weekly" ? <CompactMultiSelect value={value.weekdays} options={weekdayShortLabels().map((label, index) => ({ value: index + 1, label }))} onChange={(weekdays) => onChange({ ...value, weekdays })} label={t("automation.schedule_weekday_pick")} columns={7} /> : null}
+    {value.frequency === "monthly" ? <CompactMultiSelect value={monthlyScheduleDays(value)} options={numberOptions(31, t("automation.schedule_day_suffix"))} onChange={(dayOfMonths) => onChange({ ...value, dayOfMonths })} label={t("automation.schedule_day_of_month")} columns={7} /> : null}
+    {value.frequency === "yearly" ? <>
+      <CompactMultiSelect value={yearlyScheduleMonths(value)} options={numberOptions(12, t("automation.schedule_month_suffix"))} onChange={(months) => onChange({ ...value, months })} label={t("automation.schedule_month")} columns={4} />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={cn(FIELD, "w-20 text-center")} aria-label={t("automation.schedule_day_of_month")} />
+        <span className="text-sm text-dls-secondary">{t("automation.schedule_day_suffix")}</span>
+      </div>
+    </> : null}
+    <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={cn(FIELD, "w-32 shrink-0")} aria-label={t("automation.schedule_run_time")} />
+  </div>;
+}
+
+type MultiSelectOption = { value: number; label: string };
+
+/**
+ * 紧凑数值多选器
+ * @param value 已选数值
+ * @param options 可选数值及展示文案
+ * @param onChange 选择变更回调
+ * @param label 无障碍名称
+ * @param columns 浮层网格列数
+ */
+function CompactMultiSelect({ value, options, onChange, label, columns }: {
+  value: number[];
+  options: MultiSelectOption[];
+  onChange: (value: number[]) => void;
+  label: string;
+  columns: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss);
+  const selected = options.filter((option) => value.includes(option.value));
+  const selectedLabel = selected.length <= 2
+    ? selected.map((option) => option.label).join("、")
+    : t("automation.schedule_selected_count").replace("{count}", String(selected.length));
+
+  return (
+    <div ref={containerRef} className="relative w-44 shrink-0">
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={() => setOpen((current) => !current)} className={cn(FIELD, "flex items-center gap-2 pr-3 text-left")}>
+        <span className="min-w-0 flex-1 truncate">{selectedLabel || label}</span>
+        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div role="listbox" aria-label={label} aria-multiselectable="true" className="absolute left-0 top-full z-40 mt-2 w-max min-w-full rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+          <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${columns}, minmax(42px, 1fr))` }}>
+            {options.map((option) => {
+              const checked = value.includes(option.value);
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={checked}
+                  onClick={() => onChange(checked ? value.filter((item) => item !== option.value) : [...value, option.value].sort((left, right) => left - right))}
+                  className={cn("flex h-9 items-center justify-center rounded-lg px-2 text-sm transition-colors hover:bg-dls-hover", checked && "bg-dls-text text-background hover:bg-dls-text")}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 生成从 1 开始的月份或日期选项。 */
+function numberOptions(count: number, suffix: string): MultiSelectOption[] {
+  return Array.from({ length: count }, (_, index) => ({ value: index + 1, label: `${index + 1}${suffix}` }));
+}
+
+/** 读取每月执行日，并兼容旧版单值字段。 */
+function monthlyScheduleDays(schedule: Extract<AutomationSchedule, { kind: "calendar"; frequency: "monthly" }>): number[] {
+  return schedule.dayOfMonths?.length ? schedule.dayOfMonths : schedule.dayOfMonth ? [schedule.dayOfMonth] : [];
+}
+
+/** 读取每年执行月份，并兼容旧版单值字段。 */
+function yearlyScheduleMonths(schedule: Extract<AutomationSchedule, { kind: "calendar"; frequency: "yearly" }>): number[] {
+  return schedule.months?.length ? schedule.months : schedule.month ? [schedule.month] : [];
 }
 
 type CalendarFrequency = Extract<AutomationSchedule, { kind: "calendar" }>["frequency"];
@@ -1942,7 +2021,7 @@ function CalendarFrequencySelect(props: { value: CalendarFrequency; onChange: (f
   const selectedLabel = options.find((option) => option.value === props.value)?.label ?? "";
 
   return (
-    <div ref={containerRef} className="relative w-44">
+    <div ref={containerRef} className="relative w-36 shrink-0">
       <button
         type="button"
         aria-haspopup="listbox"
@@ -2060,6 +2139,9 @@ function validateEditor(value: { name: string; workspaceId: string; prompt: stri
   if (value.schedule.kind === "once" && (!value.schedule.localDate || !value.schedule.localTime)) return "请选择单次任务的未来日期和时间";
   if (value.schedule.kind === "interval" && (!Number.isInteger(value.schedule.every) || value.schedule.every < 1)) return "间隔必须为正整数";
   if (value.schedule.kind === "calendar" && value.schedule.frequency === "weekly" && !value.schedule.weekdays.length) return "每周任务至少选择一个星期";
+  if (value.schedule.kind === "calendar" && value.schedule.frequency === "monthly" && !monthlyScheduleDays(value.schedule).length) return "每月任务至少选择一个日期";
+  if (value.schedule.kind === "calendar" && value.schedule.frequency === "yearly" && !yearlyScheduleMonths(value.schedule).length) return "每年任务至少选择一个月份";
+  if (value.schedule.kind === "calendar" && value.schedule.frequency === "yearly" && (!Number.isInteger(value.schedule.dayOfMonth) || value.schedule.dayOfMonth < 1 || value.schedule.dayOfMonth > 31)) return "每年任务的日期必须为 1–31 的整数";
   return null;
 }
 
@@ -2123,8 +2205,8 @@ function scheduleLabel(schedule: AutomationSchedule): string {
   }
   if (schedule.frequency === "daily") return `每天 ${schedule.localTime} · ${schedule.timezone}`;
   if (schedule.frequency === "weekly") return `每周 ${schedule.weekdays.map((day) => `周${"一二三四五六日"[day - 1]}`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
-  if (schedule.frequency === "monthly") return `每月 ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${schedule.timezone}`;
-  return `每年 ${schedule.month} 月 ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${schedule.timezone}`;
+  if (schedule.frequency === "monthly") return `每月 ${monthlyScheduleDays(schedule).map((day) => `${day} 日`).join("、")} ${schedule.localTime} · ${schedule.timezone}`;
+  return `每年 ${yearlyScheduleMonths(schedule).map((month) => `${month} 月`).join("、")} ${schedule.dayOfMonth} 日 ${schedule.localTime} · ${schedule.timezone}`;
 }
 
 function readTemplateId(state: unknown): string | null {

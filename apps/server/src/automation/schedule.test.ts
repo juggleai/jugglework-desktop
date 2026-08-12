@@ -28,7 +28,7 @@ test("monthly and yearly recurrence skip invalid calendar dates", () => {
       version: 1,
       kind: "calendar",
       frequency: "monthly",
-      dayOfMonth: 31,
+      dayOfMonths: [31],
       localTime: "09:00",
       timezone: "UTC",
     }, undefined, Date.parse("2026-04-01T00:00:00Z")),
@@ -39,12 +39,38 @@ test("monthly and yearly recurrence skip invalid calendar dates", () => {
       version: 1,
       kind: "calendar",
       frequency: "yearly",
-      month: 2,
+      months: [2],
       dayOfMonth: 29,
       localTime: "09:00",
       timezone: "UTC",
     }, undefined, Date.parse("2026-01-01T00:00:00Z")),
     Date.parse("2028-02-29T09:00:00Z"),
+  );
+});
+
+test("monthly days and yearly months support multiple selected values", () => {
+  assert.equal(
+    nextAutomationOccurrence({
+      version: 1,
+      kind: "calendar",
+      frequency: "monthly",
+      dayOfMonths: [10, 20],
+      localTime: "09:00",
+      timezone: "UTC",
+    }, undefined, Date.parse("2026-08-10T09:00:00Z")),
+    Date.parse("2026-08-20T09:00:00Z"),
+  );
+  assert.equal(
+    nextAutomationOccurrence({
+      version: 1,
+      kind: "calendar",
+      frequency: "yearly",
+      months: [2, 8],
+      dayOfMonth: 21,
+      localTime: "09:00",
+      timezone: "UTC",
+    }, undefined, Date.parse("2026-02-21T09:00:00Z")),
+    Date.parse("2026-08-21T09:00:00Z"),
   );
 });
 

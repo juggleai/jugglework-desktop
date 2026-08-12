@@ -16,7 +16,7 @@ const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const SENSITIVE_KEY_PATTERN = /(^|_)(authorization|credential|password|secret|access.?token|refresh.?token|api.?key)($|_)/i;
 const SCHEDULE_KEYS = new Set([
   "version", "kind", "timezone", "localDate", "localTime", "every", "unit",
-  "anchorLocalDate", "anchorLocalTime", "frequency", "weekdays", "dayOfMonth", "month",
+  "anchorLocalDate", "anchorLocalTime", "frequency", "weekdays", "dayOfMonth", "dayOfMonths", "month", "months",
 ]);
 
 export type AutomationValidationContext = {
@@ -235,15 +235,25 @@ export function validateAutomationSchedule(schedule: AutomationSchedule | undefi
     return { ...schedule, weekdays };
   }
   if (schedule.frequency === "monthly") {
-    requireRange(schedule.dayOfMonth, 1, 31, "schedule.dayOfMonth");
-    return { ...schedule };
+    const dayOfMonths = normalizeIntegerChoices(schedule.dayOfMonths ?? (schedule.dayOfMonth ? [schedule.dayOfMonth] : []), 1, 31, "schedule.dayOfMonths", "每月任务至少选择一个有效日期");
+    return { version: 1, kind: "calendar", frequency: "monthly", timezone: schedule.timezone, localTime: schedule.localTime, dayOfMonths };
   }
   if (schedule.frequency === "yearly") {
-    requireRange(schedule.month, 1, 12, "schedule.month");
+    const months = normalizeIntegerChoices(schedule.months ?? (schedule.month ? [schedule.month] : []), 1, 12, "schedule.months", "每年任务至少选择一个有效月份");
     requireRange(schedule.dayOfMonth, 1, 31, "schedule.dayOfMonth");
-    return { ...schedule };
+    return { version: 1, kind: "calendar", frequency: "yearly", timezone: schedule.timezone, localTime: schedule.localTime, months, dayOfMonth: schedule.dayOfMonth };
   }
   invalid("schedule.frequency", "周期频率无效");
+}
+
+/** 校验、去重并排序调度中的多选整数。 */
+function normalizeIntegerChoices(values: unknown, min: number, max: number, field: string, message: string): number[] {
+  if (!Array.isArray(values)) invalid(field, message);
+  const normalized = [...new Set(values)].sort((left, right) => left - right);
+  if (!normalized.length || normalized.some((value) => typeof value !== "number" || !Number.isInteger(value) || value < min || value > max)) {
+    invalid(field, message);
+  }
+  return normalized as number[];
 }
 
 /** 校验可选的闭区间生效日期。 */
