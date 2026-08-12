@@ -1118,28 +1118,33 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
   const open = ctx.filteringSessions || expanded;
 
   return (
-    <SidebarGroup data-global-archived-sessions className="pb-1 pt-1">
+    <SidebarGroup data-global-archived-sessions className="py-0">
       <SidebarGroupContent>
         <Collapsible open={open} onOpenChange={setExpanded} className="group/archived">
           <CollapsibleTrigger
             render={
               <button
                 type="button"
-                className="group/separator flex w-full cursor-pointer items-center gap-1.5 px-3 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50"
+                className="flex h-12 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-sidebar-foreground shadow-none transition-colors duration-150 hover:bg-sidebar-accent/25"
               >
-                <Archive className="size-3 shrink-0 text-muted-foreground" />
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {t("session_management.archived_label")}
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-transparent">
+                  <Archive className="size-4.5" strokeWidth={1.8} />
                 </span>
-                <span className="text-[10px] tabular-nums text-muted-foreground/70">{entries.length}</span>
-                <ChevronRight className="ml-auto size-3.5 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <span className="truncate text-[13px] font-normal">
+                    {t("session_management.archived_label")}
+                  </span>
+                  <span className="shrink-0 rounded-md bg-foreground/[0.07] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                    {entries.length}
+                  </span>
+                </span>
               </button>
             }
           />
-          <CollapsibleContent>
+          <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuSub>
+                <SidebarMenuSub className="ml-3 mt-0 border-l-0 pb-1 pl-1 pt-0">
                   {entries.map((entry) => (
                     <GlobalArchivedSessionItem
                       key={`${entry.group.workspace.id}:${entry.session.id}`}
@@ -1178,7 +1183,6 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
       workspaceId={group.workspace.id}
       forcedExpandedSessionIds={forcedExpandedSessionIds}
       isPinned={pinnedIds.has(session.id)}
-      workspaceName={workspaceLabel(group.workspace)}
     />
   );
 }
