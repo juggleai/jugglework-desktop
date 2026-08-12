@@ -284,7 +284,7 @@ type AssistantRenderGroup =
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string; isStreaming: boolean }
   | { kind: "file"; part: FileUIPart }
-  | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
+  | { kind: "tools"; parts: Array<ToolUIPart | DynamicToolUIPart> }
 
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
@@ -345,7 +345,12 @@ export function getAssistantRenderGroups(
     }
 
     if (isToolUIPart(part)) {
-      groups.push({ kind: "tool", part })
+      const previous = groups.at(-1)
+      if (previous?.kind === "tools") {
+        previous.parts.push(part)
+      } else {
+        groups.push({ kind: "tools", parts: [part] })
+      }
     }
   }
 
@@ -356,4 +361,20 @@ export function getAssistantRenderGroups(
   }
 
   return groups
+}
+
+export function mergeAssistantProcessItems(items: UIMessageWithIndex[]): UIMessageWithIndex | null {
+  const first = items[0]
+  const last = items.at(-1)
+  if (!first || !last) return null
+
+  return {
+    index: last.index,
+    message: {
+      ...last.message,
+      // Keep a stable, real message id while streamed process messages are appended.
+      id: first.message.id,
+      parts: items.flatMap((item) => item.message.parts),
+    },
+  }
 }

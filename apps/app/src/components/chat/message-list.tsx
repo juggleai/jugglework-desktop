@@ -68,6 +68,7 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
+import { redactSensitiveCommand } from "@/components/chat/reasoning-redaction"
 import {
   isApplyPatchToolPart,
   isBashToolPart,
@@ -90,10 +91,12 @@ import type { ThreadStatus } from "@/lib/messages"
 import {
   collectToolParts,
   getActiveToolLabel,
+  getToolActivityLabel,
+  isToolPartInFlight,
 } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import { currentLocale, t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
@@ -152,6 +155,60 @@ function MessageTimestamp({ message, className }: { message: UIMessage; classNam
 
 interface ToolMessageProps {
   part: ToolUIPart | DynamicToolUIPart
+}
+
+export function toolRunPreviewLabel(part: ToolUIPart | DynamicToolUIPart): string {
+  if (isBashToolPart(part)) {
+    const command = redactSensitiveCommand(part.input?.command).trim()
+    const description = redactSensitiveCommand(part.input?.description).trim()
+    return description || command || getToolActivityLabel(part)
+  }
+
+  return getToolActivityLabel(part)
+}
+
+function ToolRunGroup({
+  parts,
+  isStreaming,
+}: {
+  parts: Array<ToolUIPart | DynamicToolUIPart>
+  isStreaming: boolean
+}) {
+  const [open, setOpen] = React.useState(false)
+  const firstRunningPart = parts.find(isToolPartInFlight)
+  const previewPart = firstRunningPart ?? parts[0]
+  if (!previewPart) return null
+
+  const running = parts.some(isToolPartInFlight)
+  const label = toolRunPreviewLabel(previewPart)
+
+  React.useEffect(() => {
+    if (!isStreaming) setOpen(false)
+  }, [isStreaming])
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="w-full" data-testid="task-tool-run">
+      <CollapsibleTrigger
+        className="group/tool-run flex w-full min-w-0 cursor-pointer items-center gap-2 py-0.5 text-left text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-2"
+        aria-label={`${open ? "Collapse" : "Expand"} ${parts.length} tool ${parts.length === 1 ? "call" : "calls"}`}
+        data-testid="task-tool-run-toggle"
+      >
+        <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/tool-run:rotate-90" />
+        {running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
+        <span className="min-w-0 truncate">{label}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+        <div className="space-y-2 pb-1 pl-6 pt-2">
+          {parts.map((part, index) => (
+            <ToolMessage
+              key={part.type === "dynamic-tool" ? part.toolCallId : `tool-${index}`}
+              part={part}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
 
 /**
@@ -413,13 +470,15 @@ type AssistantMessageProps = {
 }
 
 const AssistantMessage = React.memo(
-  ({ message, presentation = "default" }: AssistantMessageProps) => {
+  ({ message, isStreaming, presentation = "default" }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const isProcess = presentation === "process"
     const assistantRenderGroups = React.useMemo(
       () => getAssistantRenderGroups(message.parts, showThinking),
       [message.parts, showThinking]
     )
+
+    if (assistantRenderGroups.length === 0) return null
 
     return (
       <Message
@@ -476,8 +535,8 @@ const AssistantMessage = React.memo(
             }
 
             return (
-              <div key={`tool-${index}`} className={cn("w-full", isProcess && "py-0.5")}>
-                <ToolMessage part={group.part} />
+              <div key={`tools-${index}`} className={cn("w-full", isProcess && "py-0.5")}>
+                <ToolRunGroup parts={group.parts} isStreaming={isStreaming} />
               </div>
             )
           })}
@@ -869,6 +928,7 @@ function MessageGroup({
   }
 
   const { processItems, summaryItems } = splitAssistantTaskMessages(items)
+  const processDisplayItem = mergeAssistantProcessItems(processItems)
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
@@ -888,7 +948,7 @@ function MessageGroup({
     const isLastMessage = item.index === messages.length - 1
 
     return (
-      <div key={item.message.id}>
+      <React.Fragment key={item.message.id}>
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
@@ -897,12 +957,12 @@ function MessageGroup({
           presentation={presentation}
         />
         <MessageArtifacts message={item.message} />
-      </div>
+      </React.Fragment>
     )
   }
 
   return (
-      <div className="group/message-group mt-5 flex flex-col gap-0">
+    <div className="group/message-group mt-5 flex flex-col gap-0">
       {showProcessDisclosure ? (
         <Collapsible open={processOpen} onOpenChange={setProcessOpen} className="mx-auto w-full max-w-5xl px-3 md:px-8">
           <CollapsibleTrigger
@@ -923,8 +983,17 @@ function MessageGroup({
             <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/process:rotate-90" />
           </CollapsibleTrigger>
           <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-            <div className="space-y-2 pb-5 pt-4">
-              {processItems.map((item, groupIndex) => renderItem(item, groupIndex, "process"))}
+            <div className={cn("pt-4", isLiveGroup ? "pb-1" : "pb-5")}>
+              {processDisplayItem ? (
+                <MessageComponent
+                  message={processDisplayItem.message}
+                  isLastMessage={processDisplayItem.index === messages.length - 1}
+                  isStreaming={isLiveGroup}
+                  isLastStep={processItems.length === items.length}
+                  presentation="process"
+                />
+              ) : null}
+              <ArtifactList messages={processItems.map((item) => item.message)} includeTargetFallbacks={false} />
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -939,7 +1008,9 @@ function MessageGroup({
           </div>
         </div>
       ) : null}
-      <div className={cn((showProcessDisclosure || showTaskTiming) && "pt-5")}>
+      <div className={cn(
+        (showProcessDisclosure || showTaskTiming) && (isLiveGroup && processOpen ? "pt-2" : "pt-5"),
+      )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
       {lastTextMessage && !isStreaming && (

@@ -18,8 +18,8 @@ interface BashToolProps {
 }
 
 export function BashTool({ part }: BashToolProps) {
-  const displayCommand = redactSensitiveCommand(part.input.command)
-  const displayDescription = redactSensitiveCommand(part.input.description)
+  const displayCommand = redactSensitiveCommand(part.input?.command)
+  const displayDescription = redactSensitiveCommand(part.input?.description)
   const displayOutput = typeof part.output === "string"
     ? redactSensitiveReasoning(part.output)
     : part.output

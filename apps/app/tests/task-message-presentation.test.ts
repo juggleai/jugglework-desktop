@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import type { DynamicToolUIPart, UIMessage } from "ai"
 
+import { toolRunPreviewLabel } from "../src/components/chat/message-list"
 import {
   formatTaskDuration,
+  getAssistantRenderGroups,
   getTaskTiming,
+  mergeAssistantProcessItems,
   splitAssistantTaskMessages,
 } from "../src/components/chat/utils"
 
@@ -91,5 +94,65 @@ describe("task message presentation", () => {
     expect(split.processItems.flatMap((item) => item.message.parts).some((part) => part.type === "dynamic-tool")).toBe(true)
     expect(split.summaryItems).toHaveLength(1)
     expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Final summary" }])
+  })
+
+  test("collapses consecutive tool calls into one render group without hiding text updates", () => {
+    const firstTool: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-1",
+      state: "output-available",
+      input: { command: "git status", description: "" },
+      output: "clean",
+    }
+    const secondTool: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-2",
+      state: "input-available",
+      input: { command: "pnpm test", description: "" },
+    }
+
+    const groups = getAssistantRenderGroups([
+      { type: "text", text: "Checking the workspace" },
+      firstTool,
+      secondTool,
+      { type: "text", text: "Checks passed" },
+    ], false)
+
+    expect(groups.map((group) => group.kind)).toEqual(["text", "tools", "text"])
+    expect(groups[1]?.kind === "tools" ? groups[1].parts : []).toEqual([firstTool, secondTool])
+  })
+
+  test("merges streamed process messages so tool runs can collapse across message boundaries", () => {
+    const tool: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-1",
+      state: "input-available",
+      input: { command: "pnpm test", description: "" },
+    }
+    const items = [
+      { index: 1, message: message("assistant-1", "assistant", 1_700_000_001_000, [{ type: "text", text: "Starting" }, tool]) },
+      { index: 2, message: message("assistant-2", "assistant", 1_700_000_002_000, [tool, { type: "text", text: "Still working" }]) },
+    ]
+
+    const merged = mergeAssistantProcessItems(items)
+
+    expect(merged?.index).toBe(2)
+    expect(merged?.message.id).toBe("assistant-1")
+    expect(merged?.message.parts).toEqual(items.flatMap((item) => item.message.parts))
+  })
+
+  test("renders a safe preview for a partially streamed bash call", () => {
+    const partialTool = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-partial",
+      state: "input-streaming",
+      input: {},
+    } as DynamicToolUIPart
+
+    expect(toolRunPreviewLabel(partialTool)).toBe("Running a command")
   })
 })
