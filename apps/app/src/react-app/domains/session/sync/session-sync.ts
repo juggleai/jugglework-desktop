@@ -6,7 +6,7 @@ import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
 import { normalizeEvent } from "@/app/utils";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
+import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import { createSessionErrorUIMessage, describeOpencodeSessionError, snapshotToUIMessages } from "./usechat-adapter";
 import {
   parseDynamicToolUIPart,
@@ -19,6 +19,7 @@ import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
+import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 
 type SyncOptions = {
   workspaceId: string;
@@ -705,7 +706,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID || !props.status) return;
     useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, props.status);
     const tracked = isTrackedSession(entry, props.sessionID);
-    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+    if (tracked) {
+      queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+      if (isLiveStatus(props.status)) {
+        // A provider/SSE interruption can recover. Once authoritative live
+        // activity resumes, remove the provisional interruption receipt.
+        queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
+          current.filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
+        );
+      }
+    }
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: props.status });
     if (input && tracked && !isLiveStatus(props.status)) {
       void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
@@ -812,7 +822,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -822,10 +832,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (info.role === "assistant") useSessionActivityStore.getState().markProgress(workspaceId, info.sessionID);
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
+    const completed = info.time?.completed;
+    const timingMetadata = {
+      ...(typeof created === "number" ? { created } : {}),
+      ...(typeof completed === "number" ? { completed } : {}),
+      ...(info.role === "assistant" && typeof info.finish === "string" ? { finish: info.finish } : {}),
+    };
     const next = {
       id: info.id,
       role: info.role,
-      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
       parts: [],
     } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
@@ -957,9 +973,24 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       trackTaskCompleted(props.sessionID, Date.now() - runStartedAt);
       notifyDesktopEvent({ type: "task.completed", sessionId: props.sessionID });
     }
-    useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
+    const activityStore = useSessionActivityStore.getState();
+    const recordedFinishReason = activityStore.getFinishReason(workspaceId, props.sessionID);
+    activityStore.setRunStatus(workspaceId, props.sessionID, idleStatus);
     const tracked = isTrackedSession(entry, props.sessionID);
-    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    if (tracked) {
+      queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+      const todos = queryClient.getQueryData<Todo[]>(todoKey(workspaceId, props.sessionID)) ?? [];
+      queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) => {
+        const result = reconcileRunCompletionDiagnostic(current, todos, { finishReason: recordedFinishReason });
+        activityStore.setCompletionDiagnostic(
+          workspaceId,
+          props.sessionID!,
+          Boolean(result.diagnostic),
+          result.diagnostic?.finishReason ?? recordedFinishReason,
+        );
+        return result.messages;
+      });
+    }
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: idleStatus });
     if (input && tracked) {
       void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
@@ -1102,10 +1133,30 @@ function startSync(input: SyncOptions) {
       }
       if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
+      const activityStore = useSessionActivityStore.getState();
+      const liveSessionIds = Object.entries(activityStore.recordsByWorkspaceId[input.workspaceId] ?? {})
+        .flatMap(([sessionId, record]) => record.runActive ? [sessionId] : []);
       if (
         !controller.signal.aborted &&
         (connectionController.signal.aborted || shouldRetrySyncSubscribe(error))
       ) {
+        if (liveSessionIds.length > 0 && !connectionController.signal.aborted) {
+          activityStore.markProviderDisconnected(input.workspaceId);
+          const queryClient = getReactQueryClient();
+          for (const sessionId of liveSessionIds) {
+            const todos = queryClient.getQueryData<Todo[]>(todoKey(input.workspaceId, sessionId)) ?? [];
+            queryClient.setQueryData<UIMessage[]>(transcriptKey(input.workspaceId, sessionId), (current = []) => {
+              const result = reconcileRunCompletionDiagnostic(current, todos, { finishReason: "provider_disconnected" });
+              activityStore.setCompletionDiagnostic(
+                input.workspaceId,
+                sessionId,
+                Boolean(result.diagnostic),
+                result.diagnostic?.finishReason ?? "provider_disconnected",
+              );
+              return result.messages;
+            });
+          }
+        }
         scheduleRetry();
       }
     } finally {
@@ -1189,14 +1240,25 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
 export function seedSessionState(workspaceId: string, snapshot: JuggleWorkSessionSnapshot) {
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
-  const incoming = snapshotToUIMessages(snapshot);
+  const incomingSnapshotMessages = snapshotToUIMessages(snapshot);
+  const completion = snapshot.status.type === "idle"
+    ? reconcileRunCompletionDiagnostic(incomingSnapshotMessages, snapshot.todos)
+    : { messages: incomingSnapshotMessages, diagnostic: null };
+  const incoming = completion.messages;
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
-  useSessionActivityStore.getState().seedSessionRun(
+  const activityStore = useSessionActivityStore.getState();
+  activityStore.seedSessionRun(
     workspaceId,
     snapshot.session.id,
     snapshot.status,
     assistantOutputAfterLatestUser(incoming),
+  );
+  activityStore.setCompletionDiagnostic(
+    workspaceId,
+    snapshot.session.id,
+    Boolean(completion.diagnostic),
+    completion.diagnostic?.finishReason ?? null,
   );
 
   // The snapshot's revert cursor is authoritative: messages at/after it are

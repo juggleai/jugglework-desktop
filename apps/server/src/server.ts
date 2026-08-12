@@ -2511,6 +2511,7 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
+    hasActiveSessionRuns: (workspaceId) => sessionMutations.listActive(workspaceId).length > 0,
     reloadOpencodeEngine: (routeConfig, workspace) =>
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });

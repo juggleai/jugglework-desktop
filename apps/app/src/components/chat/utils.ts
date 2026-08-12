@@ -35,6 +35,56 @@ export function getLastTextPart(message: UIMessage): UIMessage | null {
   return lastTextPart ? { ...message, parts: [lastTextPart] } : null
 }
 
+export function splitAssistantTaskMessages(items: UIMessageWithIndex[]) {
+  const finalItemIndex = items.findLastIndex((item) =>
+    item.message.parts.some((part) => part.type === "text" && part.text.trim().length > 0),
+  )
+  if (finalItemIndex === -1) {
+    return { processItems: items, summaryItems: [] as UIMessageWithIndex[] }
+  }
+
+  const processItems: UIMessageWithIndex[] = []
+  let summaryItem: UIMessageWithIndex | null = null
+
+  items.forEach((item, itemIndex) => {
+    if (itemIndex !== finalItemIndex) {
+      processItems.push(item)
+      return
+    }
+
+    const lastTextPartIndex = item.message.parts.findLastIndex(
+      (part) => part.type === "text" && part.text.trim().length > 0,
+    )
+    const lastProcessPartIndex = item.message.parts.findLastIndex(
+      (part) => part.type !== "text" && part.type !== "file",
+    )
+    const summaryTextIndexes = new Set(
+      item.message.parts.flatMap((part, partIndex) =>
+        part.type === "text" && part.text.trim().length > 0 && partIndex > lastProcessPartIndex
+          ? [partIndex]
+          : [],
+      ),
+    )
+    if (summaryTextIndexes.size === 0) summaryTextIndexes.add(lastTextPartIndex)
+    const summaryParts = item.message.parts.filter(
+      (part, partIndex) => part.type === "file" || summaryTextIndexes.has(partIndex),
+    )
+    const processParts = item.message.parts.filter(
+      (part, partIndex) => part.type !== "file" && !summaryTextIndexes.has(partIndex),
+    )
+
+    if (processParts.length > 0) {
+      processItems.push({ ...item, message: { ...item.message, parts: processParts } })
+    }
+    summaryItem = { ...item, message: { ...item.message, parts: summaryParts } }
+  })
+
+  return {
+    processItems,
+    summaryItems: summaryItem ? [summaryItem] : [],
+  }
+}
+
 export function getFileTitle(part: Pick<FileUIPart, "filename" | "url">) {
   if (part.filename) {
     return part.filename
@@ -87,6 +137,98 @@ export function getMessageCreated(message: UIMessage): number | null {
 
   const created: unknown = opencode.created
   return typeof created === "number" ? created : null
+}
+
+export function getMessageCompleted(message: UIMessage): number | null {
+  const metadata: unknown = message.metadata
+  if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null
+
+  const opencode: unknown = metadata.opencode
+  if (!opencode || typeof opencode !== "object" || !("completed" in opencode)) return null
+
+  const completed: unknown = opencode.completed
+  return typeof completed === "number" ? completed : null
+}
+
+function normalizeTimestamp(timestamp: number): number {
+  return timestamp < 1e12 ? timestamp * 1000 : timestamp
+}
+
+function getToolEndedAt(message: UIMessage): number[] {
+  return message.parts.flatMap((part) => {
+    if (!isToolUIPart(part)) return []
+    const metadata = part.callProviderMetadata?.opencode
+    if (!metadata || typeof metadata !== "object" || !("toolEndedAt" in metadata)) return []
+    const endedAt = metadata.toolEndedAt
+    return typeof endedAt === "number" ? [normalizeTimestamp(endedAt)] : []
+  })
+}
+
+export interface TaskTiming {
+  startedAt: number
+  endedAt: number
+  running: boolean
+}
+
+export function getTaskTiming(
+  messages: UIMessage[],
+  userMessageIndex: number,
+  isStreaming: boolean,
+  now = Date.now(),
+): TaskTiming | null {
+  const userMessage = messages[userMessageIndex]
+  const created = userMessage ? getMessageCreated(userMessage) : null
+  if (!userMessage || userMessage.role !== "user" || created === null) return null
+
+  const startedAt = normalizeTimestamp(created)
+  let nextUserIndex = messages.findIndex(
+    (message, index) => index > userMessageIndex && message.role === "user",
+  )
+  if (nextUserIndex === -1) nextUserIndex = messages.length
+
+  const running = isStreaming && nextUserIndex === messages.length
+  if (running) {
+    return { startedAt, endedAt: Math.max(startedAt, now), running: true }
+  }
+
+  const taskMessages = messages.slice(userMessageIndex + 1, nextUserIndex)
+  const observedTimes = taskMessages.flatMap((message) => {
+    const completed = getMessageCompleted(message)
+    const messageCreated = getMessageCreated(message)
+    return [
+      ...(completed === null ? [] : [normalizeTimestamp(completed)]),
+      ...getToolEndedAt(message),
+      ...(messageCreated === null ? [] : [normalizeTimestamp(messageCreated)]),
+    ]
+  })
+  const nextUserCreated = messages[nextUserIndex] ? getMessageCreated(messages[nextUserIndex]) : null
+  if (observedTimes.length === 0 && nextUserCreated !== null) {
+    observedTimes.push(normalizeTimestamp(nextUserCreated))
+  }
+
+  return {
+    startedAt,
+    endedAt: Math.max(startedAt, ...observedTimes),
+    running: false,
+  }
+}
+
+export function formatTaskDuration(durationMs: number, locale: "en" | "zh" = "en"): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const seconds = totalSeconds % 60
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const minutes = totalMinutes % 60
+  const hours = Math.floor(totalMinutes / 60)
+
+  if (locale === "zh") {
+    if (hours > 0) return `${hours}小时 ${minutes}分钟 ${seconds}秒`
+    if (totalMinutes > 0) return `${totalMinutes}分钟 ${seconds}秒`
+    return `${totalSeconds}秒`
+  }
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (totalMinutes > 0) return `${totalMinutes}m ${seconds}s`
+  return `${totalSeconds}s`
 }
 
 export function formatMessageTimestamp(timestampMs: number): string {

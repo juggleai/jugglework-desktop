@@ -201,10 +201,20 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
 export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMessage[] {
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
+    const completed = message.info.time && "completed" in message.info.time
+      ? message.info.time.completed
+      : undefined;
+    const timingMetadata = {
+      ...(typeof created === "number" ? { created } : {}),
+      ...(typeof completed === "number" ? { completed } : {}),
+      ...(message.info.role === "assistant" && typeof message.info.finish === "string"
+        ? { finish: message.info.finish }
+        : {}),
+    };
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           if (part.synthetic || part.ignored) return [];

@@ -110,6 +110,7 @@ const LIVE_ACTIVITY_STATUSES: SessionActivityStatus[] = [
   "stalled",
   "compacting",
   "waiting",
+  "incomplete",
 ];
 
 /**

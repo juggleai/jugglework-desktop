@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   Copy,
   Download,
   FileIcon,
@@ -48,6 +49,11 @@ import {
 } from "@/components/descriptive-button"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -86,10 +92,46 @@ import {
   getActiveToolLabel,
 } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
-import { t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { currentLocale, t } from "@/i18n"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
+
+function TaskDuration({ messages, userMessageIndex, isStreaming }: {
+  messages: UIMessage[]
+  userMessageIndex: number
+  isStreaming: boolean
+}) {
+  const timing = React.useMemo(
+    () => getTaskTiming(messages, userMessageIndex, isStreaming),
+    [messages, userMessageIndex, isStreaming],
+  )
+  const [now, setNow] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    if (!timing?.running) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [timing?.running, timing?.startedAt])
+
+  if (!timing) return null
+
+  const endedAt = timing.running ? Math.max(timing.startedAt, now) : timing.endedAt
+  const locale = currentLocale() === "zh" ? "zh" : "en"
+  const label = locale === "zh" ? "耗时" : "Elapsed"
+  const duration = formatTaskDuration(endedAt - timing.startedAt, locale)
+
+  return (
+    <span
+      className="inline-flex items-center text-sm font-medium tracking-[-0.01em] tabular-nums text-muted-foreground"
+      data-testid="task-duration"
+      title={`${label}: ${duration}`}
+    >
+      {label} {duration}
+    </span>
+  )
+}
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -367,11 +409,13 @@ type AssistantMessageProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  presentation?: "default" | "process" | "summary"
 }
 
 const AssistantMessage = React.memo(
-  ({ message }: AssistantMessageProps) => {
+  ({ message, presentation = "default" }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const isProcess = presentation === "process"
     const assistantRenderGroups = React.useMemo(
       () => getAssistantRenderGroups(message.parts, showThinking),
       [message.parts, showThinking]
@@ -379,7 +423,10 @@ const AssistantMessage = React.memo(
 
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
+        className={cn(
+          "flex w-full flex-col items-start gap-2",
+          isProcess ? "px-0" : "mx-auto max-w-5xl px-3 md:px-8",
+        )}
         data-message-id={message.id}
         data-message-role={message.role}
       >
@@ -389,7 +436,12 @@ const AssistantMessage = React.memo(
               return (
                 <MessageContent
                   key={`text-${index}`}
-                  className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                  className={cn(
+                    "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-foreground",
+                    isProcess
+                      ? "text-sm leading-6 text-foreground/90 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-7 [&_li]:my-1.5 [&_p]:my-2.5 [&_p]:leading-7",
+                  )}
                   markdown
                   highlightQuery={highlightQuery}
                 >
@@ -402,7 +454,12 @@ const AssistantMessage = React.memo(
               return (
                 <MessageContent
                   key={`reasoning-${index}`}
-                  className="text-muted-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                  className={cn(
+                    "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-muted-foreground",
+                    isProcess
+                      ? "text-sm leading-6 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-7 [&_p]:leading-7",
+                  )}
                   markdown
                 >
                   {group.text}
@@ -419,7 +476,7 @@ const AssistantMessage = React.memo(
             }
 
             return (
-              <div key={`tool-${index}`} className="w-full">
+              <div key={`tool-${index}`} className={cn("w-full", isProcess && "py-0.5")}>
                 <ToolMessage part={group.part} />
               </div>
             )
@@ -506,7 +563,7 @@ const UserMessage = React.memo(
 
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-end gap-2 px-2 md:px-10"
+        className="mx-auto flex w-full max-w-5xl flex-col items-end gap-2 px-3 md:px-8"
         data-message-id={message.id}
         data-message-role={message.role}
       >
@@ -549,7 +606,7 @@ const UserMessage = React.memo(
                 {!isStreaming && (
                   <MessageActions
                     className={cn(
-                      "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                      "flex items-center gap-0 opacity-60 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100"
                     )}
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
@@ -626,10 +683,11 @@ type MessageComponentProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  presentation?: "default" | "process" | "summary"
 }
 
 const MessageComponent = React.memo(
-  ({ message, isLastMessage, isStreaming, isLastStep }: MessageComponentProps) => {
+  ({ message, isLastMessage, isStreaming, isLastStep, presentation }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
@@ -645,6 +703,7 @@ const MessageComponent = React.memo(
           isLastMessage={isLastMessage}
           isStreaming={isStreaming}
           isLastStep={isLastStep}
+          presentation={presentation}
         />
       )
     }
@@ -799,34 +858,33 @@ function MessageGroup({
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const isLiveGroup = isStreaming && lastItem !== undefined && lastItem.index === messages.length - 1
-  const stepsRef = React.useRef<HTMLDivElement>(null)
+  const [processOpen, setProcessOpen] = React.useState(() => isLiveGroup)
 
-  // Keep the capped step run pinned to the latest step while streaming.
   React.useEffect(() => {
-    const node = stepsRef.current
-    if (node && isLiveGroup) {
-      node.scrollTop = node.scrollHeight
-    }
-  })
+    setProcessOpen(isLiveGroup)
+  }, [isLiveGroup])
 
   if (!lastItem || isMessageEmptyGroup(items)) {
     return null;
   }
 
-  const renderableItems = getRenderableMessages(items)
-  const lastTextMessage = getLastTextPart(lastItem.message)
-
-  // Leading messages without prose (tool/reasoning steps) render inside a
-  // height-capped scroll area so long runs stay compact; messages with text
-  // or files render inline below it.
-  let stepCount = 0
-  while (stepCount < items.length && !getRenderableMessage(items[stepCount].message)) {
-    stepCount += 1
+  const { processItems, summaryItems } = splitAssistantTaskMessages(items)
+  const renderableItems = getRenderableMessages(summaryItems)
+  const summaryItem = summaryItems.at(-1)
+  const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
+  const showProcessDisclosure = processItems.length > 0
+  let userMessageIndex = items[0]?.index ?? -1
+  while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
+    userMessageIndex -= 1
   }
-  const stepItems = items.slice(0, stepCount)
-  const proseItems = items.slice(stepCount)
+  userMessageIndex = messages[userMessageIndex - 1]?.role === "user" ? userMessageIndex - 1 : -1
+  const showTaskTiming = userMessageIndex >= 0 && getMessageCreated(messages[userMessageIndex]) !== null
 
-  const renderItem = (item: UIMessageWithIndex, groupIndex: number) => {
+  const renderItem = (
+    item: UIMessageWithIndex,
+    groupIndex: number,
+    presentation: "process" | "summary",
+  ) => {
     const isLastMessage = item.index === messages.length - 1
 
     return (
@@ -836,6 +894,7 @@ function MessageGroup({
           isLastMessage={isLastMessage}
           isStreaming={isLastMessage && isStreaming}
           isLastStep={groupIndex === items.length - 1}
+          presentation={presentation}
         />
         <MessageArtifacts message={item.message} />
       </div>
@@ -843,15 +902,48 @@ function MessageGroup({
   }
 
   return (
-      <div className="flex flex-col gap-2 group/message-group">
-      {stepItems.length > 0 ? (
-        <div ref={stepsRef} className="max-h-[520px] overflow-y-auto">
-          {stepItems.map((item, groupIndex) => renderItem(item, groupIndex))}
+      <div className="group/message-group mt-5 flex flex-col gap-0">
+      {showProcessDisclosure ? (
+        <Collapsible open={processOpen} onOpenChange={setProcessOpen} className="mx-auto w-full max-w-5xl px-3 md:px-8">
+          <CollapsibleTrigger
+            className="group/process flex w-full cursor-pointer items-center gap-1.5 border-b border-border/65 pb-3 text-left text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-4"
+            data-testid="task-process-toggle"
+          >
+            {showTaskTiming ? (
+              <TaskDuration
+                messages={messages}
+                userMessageIndex={userMessageIndex}
+                isStreaming={isLiveGroup}
+              />
+            ) : (
+              <span className="text-sm font-medium">
+                {currentLocale() === "zh" ? "执行过程" : "Process"}
+              </span>
+            )}
+            <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/process:rotate-90" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+            <div className="space-y-2 pb-5 pt-4">
+              {processItems.map((item, groupIndex) => renderItem(item, groupIndex, "process"))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : showTaskTiming ? (
+        <div className="mx-auto w-full max-w-5xl px-3 md:px-8">
+          <div className="border-b border-border/65 pb-3">
+            <TaskDuration
+              messages={messages}
+              userMessageIndex={userMessageIndex}
+              isStreaming={isLiveGroup}
+            />
+          </div>
         </div>
       ) : null}
-      {proseItems.map((item, groupIndex) => renderItem(item, stepItems.length + groupIndex))}
+      <div className={cn((showProcessDisclosure || showTaskTiming) && "pt-5")}>
+        {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
+      </div>
       {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-2 px-3 pt-1 text-muted-foreground opacity-60 transition-opacity duration-200 group-hover/message-group:opacity-100 focus-within:opacity-100 md:px-8">
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (

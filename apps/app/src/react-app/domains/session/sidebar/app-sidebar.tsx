@@ -716,7 +716,7 @@ function useSessionTree(
 }
 
 function isSessionActivityStatus(status: string | undefined): status is SessionActivityStatus {
-  return status === "idle" || status === "thinking" || status === "responding" || status === "stalled" || status === "error" || status === "compacting" || status === "waiting";
+  return status === "idle" || status === "thinking" || status === "responding" || status === "stalled" || status === "error" || status === "compacting" || status === "waiting" || status === "incomplete";
 }
 
 export function AppSidebar(props: AppSidebarProps) {

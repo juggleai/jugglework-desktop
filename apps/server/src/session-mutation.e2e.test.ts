@@ -61,6 +61,9 @@ function startMockOpencode() {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
       }
+      if (request.method === "POST" && url.pathname === "/instance/dispose") {
+        return Response.json({ disposed: true });
+      }
 
       const v2PromptMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/prompt$/);
       if (request.method === "POST" && v2PromptMatch) {
@@ -777,6 +780,41 @@ describe("authoritative session mutation APIs", () => {
     await expect(stale.json()).resolves.toMatchObject({ code: "run_mismatch", details: { currentRunId: second.runId } });
     const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(active.json()).resolves.toMatchObject({ items: [{ runId: second.runId }] });
+  });
+
+  test("engine reload is blocked until the authoritative active run clears", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_reload_gate")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_reload_gate",
+        prompt: { parts: [{ type: "text", text: "Run" }] },
+      }),
+    });
+    const { run } = await started.json() as { run: { runId: string } };
+
+    const blocked = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
+
+    const terminal = await fetch(`${runPath(harness.base, "ses_reload_gate")}/${run.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(terminal.status).toBe(200);
+
+    const reloaded = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+    });
+    expect(reloaded.status).toBe(200);
   });
 
   test("semantic mutation and active-state APIs require collaborator scope", async () => {

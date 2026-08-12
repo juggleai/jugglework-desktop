@@ -82,4 +82,18 @@ describe("session activity reconciliation", () => {
 
     expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt).toBe(startedAt);
   });
+
+  test("keeps an incomplete completion diagnostic reload-blocking after idle", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+    store.setCompletionDiagnostic(workspaceId, sessionId, true, "tool_loop_terminated");
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("incomplete");
+    expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBe("tool_loop_terminated");
+
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+    expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
+  });
 });

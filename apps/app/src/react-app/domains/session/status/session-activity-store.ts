@@ -3,7 +3,7 @@ import { create } from "zustand";
 
 import { t } from "../../../../i18n";
 
-export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting";
+export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting" | "incomplete";
 
 export const SESSION_STALLED_AFTER_MS = 5 * 60_000;
 
@@ -15,6 +15,8 @@ type SessionActivityRecord = {
   assistantOutput: boolean;
   errorActive: boolean;
   errorMessage: string | null;
+  completionBlocked: boolean;
+  finishReason: string | null;
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
@@ -36,6 +38,7 @@ type SessionActivityStore = {
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
+  getFinishReason: (workspaceId: string, sessionId: string) => string | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
@@ -46,6 +49,9 @@ type SessionActivityStore = {
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
+  setCompletionDiagnostic: (workspaceId: string, sessionId: string, blocked: boolean, finishReason?: string | null) => void;
+  markFinishReason: (workspaceId: string, sessionId: string, finishReason: string) => void;
+  markProviderDisconnected: (workspaceId: string) => void;
   clearError: (workspaceId: string, sessionId: string) => void;
   setCompacting: (workspaceId: string, sessionId: string, compacting: boolean) => void;
   removeSession: (workspaceId: string, sessionId: string) => void;
@@ -57,6 +63,8 @@ const createRecord = (): SessionActivityRecord => ({
   assistantOutput: false,
   errorActive: false,
   errorMessage: null,
+  completionBlocked: false,
+  finishReason: null,
   compacting: false,
   waitingPermissionIds: [],
   waitingQuestionIds: [],
@@ -88,6 +96,7 @@ function statusForRecord(record: SessionActivityRecord): SessionActivityStatus {
   if (record.errorActive) return "error";
   if (record.waitingPermissionIds.length > 0 || record.waitingQuestionIds.length > 0) return "waiting";
   if (record.compacting) return "compacting";
+  if (record.completionBlocked) return "incomplete";
   if (!record.runActive) return "idle";
   if (record.stalledAt !== null) return "stalled";
   return record.assistantOutput ? "responding" : "thinking";
@@ -162,6 +171,9 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
 
     return record.errorMessage;
   },
+  getFinishReason: (workspaceId, sessionId) => (
+    get().recordsByWorkspaceId[workspaceId.trim()]?.[sessionId.trim()]?.finishReason ?? null
+  ),
   seedWorkspaceSessions: (workspaceId, sessions) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -184,6 +196,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
               assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
               errorActive: runActive ? false : record.errorActive,
               errorMessage: runActive ? null : record.errorMessage,
+              completionBlocked: runActive ? false : record.completionBlocked,
+              finishReason: runActive ? null : record.finishReason,
               compacting: runActive ? record.compacting : false,
               waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
               waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -212,6 +226,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         assistantOutput: runActive && assistantOutput,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
+        completionBlocked: runActive ? false : record.completionBlocked,
+        finishReason: runActive ? null : record.finishReason,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -236,6 +252,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
+        completionBlocked: runActive ? false : record.completionBlocked,
+        finishReason: runActive ? null : record.finishReason,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -350,6 +368,41 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       stalledAt: null,
     })));
   },
+  setCompletionDiagnostic: (workspaceId, sessionId, blocked, finishReason) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    if (!workspace || !session) return;
+    set((state) => updateRecord(state, workspace, session, (record) => ({
+      ...record,
+      completionBlocked: blocked,
+      finishReason: finishReason?.trim() || record.finishReason,
+    })));
+  },
+  markFinishReason: (workspaceId, sessionId, finishReason) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    const reason = finishReason.trim();
+    if (!workspace || !session || !reason) return;
+    set((state) => updateRecord(state, workspace, session, (record) => ({ ...record, finishReason: reason })));
+  },
+  markProviderDisconnected: (workspaceId) => {
+    const workspace = workspaceId.trim();
+    if (!workspace) return;
+    set((state) => {
+      let nextState = state;
+      for (const [sessionId, record] of Object.entries(state.recordsByWorkspaceId[workspace] ?? {})) {
+        if (!record.runActive) continue;
+        nextState = {
+          ...nextState,
+          ...updateRecord(nextState, workspace, sessionId, (current) => ({
+            ...current,
+            finishReason: "provider_disconnected",
+          })),
+        };
+      }
+      return nextState;
+    });
+  },
   clearError: (workspaceId, sessionId) => {
     const workspace = workspaceId.trim();
     const session = sessionId.trim();
@@ -405,5 +458,6 @@ export function getSessionActivityStatusLabel(status: SessionActivityStatus) {
   if (status === "waiting") return t("session.assistant_waiting");
   if (status === "compacting") return t("session.assistant_compacting");
   if (status === "error") return t("session.assistant_error");
+  if (status === "incomplete") return "Task incomplete";
   return t("session.assistant_idle");
 }

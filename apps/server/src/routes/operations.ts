@@ -15,6 +15,7 @@ interface RegisterOperationRoutesOptions {
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   reloadOpencodeEngine: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
+  hasActiveSessionRuns: (workspaceId: string) => boolean;
 }
 
 export function registerOperationRoutes(options: RegisterOperationRoutesOptions): void {
@@ -26,6 +27,7 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
     requireClientScope,
     resolveWorkspace,
     reloadOpencodeEngine,
+    hasActiveSessionRuns,
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
@@ -39,6 +41,9 @@ export function registerOperationRoutes(options: RegisterOperationRoutesOptions)
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     requireClientScope(ctx, "collaborator");
+    if (hasActiveSessionRuns(workspace.id)) {
+      throw new ApiError(409, "engine_reload_blocked_active_runs", "Configuration reload is deferred until active tasks finish");
+    }
 
     await reloadOpencodeEngine(config, workspace);
 

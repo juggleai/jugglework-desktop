@@ -85,6 +85,7 @@ export type SessionErrorTurn = {
 };
 
 export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";
+export const SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX = "session-run-diagnostic:";
 
 export type StepGroupMode = "exploration" | "standalone";
 
