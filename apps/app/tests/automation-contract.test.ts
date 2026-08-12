@@ -149,4 +149,50 @@ describe("Desktop automation catalog and routes", () => {
     expect(connectorSelect).not.toMatch(/rounded-md border border-\[#ebebeb\]/);
     expect(connectorSelect).toMatch(/aria-multiselectable="true"/);
   });
+
+  test("keeps the empty automation state compact and uses its internal create action", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/!props\.history && tasks\.length > 0 \? \([\s\S]+navigate\("\/automations\/new"\)/);
+    expect(page).toMatch(/<section className="flex min-h-\[364px\] flex-col items-center justify-center text-center">/);
+    expect(page).not.toMatch(/min-h-\[520px\]/);
+    expect(page).toMatch(/tasks\.length === 0 \? <FirstAutomation/);
+  });
+
+  test("uses project confirm dialogs for single and batch automation deletion", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/import \{ ConfirmModal \} from "@\/react-app\/design-system\/modals\/confirm-modal"/);
+    expect(page).toMatch(/open=\{batchDeleteOpen\}[\s\S]+automation\.batch_delete_confirm[\s\S]+variant="danger"/);
+    expect(page).toMatch(/open=\{Boolean\(pendingDelete\)\}[\s\S]+automation\.delete_confirm[\s\S]+variant="danger"/);
+    expect(page).not.toMatch(/window\.confirm\(t\("automation\.(?:batch_)?delete_confirm/);
+  });
+
+  test("uses the same project dialog layout when discarding a new automation draft", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/const \[discardConfirmOpen, setDiscardConfirmOpen\] = useState\(false\)/);
+    expect(page).toMatch(/pendingDiscardActionRef\.current = action;[\s\S]+setDiscardConfirmOpen\(true\)/);
+    expect(page).toMatch(/open=\{discardConfirmOpen\}[\s\S]+automation\.discard_confirm[\s\S]+variant="warning"/);
+    expect(page).toMatch(/const confirmDiscard = \(\) => \{[\s\S]+setEditorDirty\(false\);[\s\S]+action\?\.\(\)/);
+    expect(page).not.toMatch(/window\.confirm\(t\("automation\.discard_confirm"\)\)/);
+  });
+
+  test("uses compact workspace-styled schedule selection and an effective Today action", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const frequency = page.slice(page.indexOf("function CalendarFrequencySelect"), page.indexOf("function PermissionDialog"));
+    expect(page).toMatch(/<div className="flex flex-wrap items-start gap-3"><CalendarFields/);
+    expect(frequency).toMatch(/className="relative w-44"/);
+    expect(frequency).toMatch(/pr-4 text-left/);
+    expect(frequency).toMatch(/role="listbox"[\s\S]+rounded-2xl border border-dls-border/);
+    expect(frequency).toMatch(/option\.label[\s\S]+selected \? <Check className="size-4 shrink-0/);
+    expect(page).not.toMatch(/<select value=\{value\.frequency\}/);
+    expect(page).toMatch(/const currentDate = today\(\);[\s\S]+setCursor\(startOfMonth\(currentDate\)\);[\s\S]+pickDay\(currentDate\)/);
+  });
+
+  test("uses the project checkbox visual and vertically centers the risk acknowledgement", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const permission = page.slice(page.indexOf("function PermissionDialog"), page.indexOf("function Field"));
+    expect(permission).toMatch(/role="checkbox"[\s\S]+aria-checked=\{props\.accepted\}/);
+    expect(permission).toMatch(/items-center gap-3 text-left text-sm/);
+    expect(permission).toMatch(/rounded-md border border-\[#ebebeb\][\s\S]+props\.accepted && "border-dls-text bg-dls-text text-background"/);
+    expect(permission).not.toMatch(/type="checkbox"|items-start|mt-0\.5 size-5/);
+  });
 });

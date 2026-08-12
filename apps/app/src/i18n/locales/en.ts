@@ -2464,7 +2464,7 @@ export default {
   "project_extensions.instructions_title": "Project instructions",
   "project_extensions.instructions_desc": "Edit the project AGENTS.md to set background and conventions",
   "project_extensions.instructions_placeholder": "Write project background, conventions and collaboration rules here…",
-  "project_extensions.panel_title": "Project settings",
+  "project_extensions.panel_title": "Settings",
   "project_extensions.detail_tab_overview": "Overview",
   "project_extensions.detail_tab_files": "Files",
   "project_extensions.detail_connect_only": "This skill comes from JuggleWork Connect and has no local files.",

@@ -51,6 +51,7 @@ import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mc
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "@/react-app/domains/session/surface/composer/editor";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
+import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
 import { AUTOMATION_TEMPLATES, type AutomationTemplate } from "./templates";
@@ -100,6 +101,8 @@ export function AutomationPage(props: AutomationPageProps) {
   const editorVisible = location.pathname === "/automations/new" || Boolean(editingId);
   const templatesVisible = location.pathname === "/automations/templates";
   const [editorDirty, setEditorDirty] = useState(false);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const pendingDiscardActionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!editorVisible || !editorDirty) return;
@@ -111,9 +114,26 @@ export function AutomationPage(props: AutomationPageProps) {
   if (!LOCAL_AUTOMATION_ENABLED) return <Navigate to={props.sessionPath} replace />;
 
   const navigateAfterDiscard = (action: () => void) => {
-    if (editorVisible && editorDirty && !window.confirm(t("automation.discard_confirm"))) return;
+    if (editorVisible && editorDirty) {
+      pendingDiscardActionRef.current = action;
+      setDiscardConfirmOpen(true);
+      return;
+    }
     setEditorDirty(false);
     action();
+  };
+
+  const cancelDiscard = () => {
+    pendingDiscardActionRef.current = null;
+    setDiscardConfirmOpen(false);
+  };
+
+  const confirmDiscard = () => {
+    const action = pendingDiscardActionRef.current;
+    pendingDiscardActionRef.current = null;
+    setDiscardConfirmOpen(false);
+    setEditorDirty(false);
+    action?.();
   };
 
   return (
@@ -159,6 +179,16 @@ export function AutomationPage(props: AutomationPageProps) {
           />
         )}
       </main>
+      <ConfirmModal
+        open={discardConfirmOpen}
+        title={t("automation.cancel")}
+        message={t("automation.discard_confirm")}
+        confirmLabel={t("common.confirm")}
+        cancelLabel={t("automation.cancel")}
+        variant="warning"
+        onCancel={cancelDiscard}
+        onConfirm={confirmDiscard}
+      />
     </div>
   );
 }
@@ -183,6 +213,7 @@ function AutomationDashboard(props: {
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
 
   // TIPS:`silent` 用于操作后的就地刷新。整页 loading 会把列表整个换成占位文案，一次
   // 暂停/删除就闪一下，看起来像是页面被重载了；只有首屏和筛选条件变化才该出现占位。
@@ -232,7 +263,6 @@ function AutomationDashboard(props: {
   const deleteSelected = useCallback(async () => {
     if (!props.client || !selectedIds.size || batchBusy) return;
     const targets = tasks.filter((record) => selectedIds.has(record.definition.id));
-    if (!window.confirm(t("automation.batch_delete_confirm", { count: targets.length }))) return;
     setBatchBusy(true);
     let removed = 0;
     try {
@@ -285,7 +315,7 @@ function AutomationDashboard(props: {
               </button>
             </>
           ) : null}
-          {!props.history ? (
+          {!props.history && tasks.length > 0 ? (
             <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-sm font-medium text-background hover:opacity-90">
               <Plus className="size-4" />{t("automation.add")}
             </button>
@@ -315,7 +345,7 @@ function AutomationDashboard(props: {
               onToggleAll={() => setSelectedIds((current) => (
                 current.size === visibleTasks.length ? new Set() : new Set(visibleTasks.map((task) => task.definition.id))
               ))}
-              onDelete={() => void deleteSelected()}
+              onDelete={() => setBatchDeleteOpen(true)}
             />
           ) : null}
           {tasks.length === 0 ? <FirstAutomation onCreate={() => navigate("/automations/new")} /> : (
@@ -336,6 +366,19 @@ function AutomationDashboard(props: {
         </>
       ) : null}
       {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-auto mt-6 rounded-xl border border-dls-border px-5 py-2 text-sm">加载更多</button> : null}
+      <ConfirmModal
+        open={batchDeleteOpen}
+        title={t("automation.delete")}
+        message={t("automation.batch_delete_confirm", { count: selectedIds.size })}
+        confirmLabel={t("automation.delete")}
+        cancelLabel={t("automation.cancel")}
+        variant="danger"
+        onCancel={() => setBatchDeleteOpen(false)}
+        onConfirm={() => {
+          setBatchDeleteOpen(false);
+          void deleteSelected();
+        }}
+      />
     </div>
   );
 }
@@ -369,7 +412,7 @@ function SegmentedTabs({ history }: { history: boolean }) {
 
 function FirstAutomation({ onCreate }: { onCreate: () => void }) {
   return (
-    <section className="flex min-h-[520px] flex-col items-center justify-center text-center">
+    <section className="flex min-h-[364px] flex-col items-center justify-center text-center">
       <AlarmClock className="mb-7 size-20 stroke-[1.25] text-dls-border" aria-hidden="true" />
       <h1 className="text-xl font-medium">{t("automation.empty_tasks")}</h1>
       <button type="button" onClick={onCreate} className="mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-dls-text px-6 font-medium text-background"><Plus className="size-4" />{t("automation.add")}</button>
@@ -387,9 +430,9 @@ function TaskList(props: {
 }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AutomationDefinition | null>(null);
   const mutate = async (task: AutomationDefinition, action: "run" | "pause" | "resume" | "delete") => {
     if (!props.client || busy) return;
-    if (action === "delete" && !window.confirm(t("automation.delete_confirm", { name: task.name }))) return;
     setBusy(task.id);
     try {
       // TIPS:立即执行只是把一条 manual run 排进本机调度器，任务列表本身不会有任何变化——
@@ -419,27 +462,49 @@ function TaskList(props: {
     [t("automation.ended")]: props.tasks.filter((task) => task.definition.lifecycle === "completed"),
   };
   return (
-    <div className="mt-10 space-y-8">
-      {Object.entries(groups).map(([label, tasks]) => tasks.length ? (
-        <section key={label}>
-          <h2 className="mb-3 text-sm text-dls-secondary">{label}</h2>
-          <div className="space-y-1">
-            {tasks.map((record) => (
-              <TaskRow
-                key={record.definition.id}
-                record={record}
-                busy={busy === record.definition.id}
-                selecting={props.selecting}
-                selected={props.selectedIds.has(record.definition.id)}
-                onToggleSelected={() => props.onToggleSelected(record.definition.id)}
-                onOpen={() => navigate(`/automations/${encodeURIComponent(record.definition.id)}`)}
-                onAction={(action) => void mutate(record.definition, action)}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null)}
-    </div>
+    <>
+      <div className="mt-10 space-y-8">
+        {Object.entries(groups).map(([label, tasks]) => tasks.length ? (
+          <section key={label}>
+            <h2 className="mb-3 text-sm text-dls-secondary">{label}</h2>
+            <div className="space-y-1">
+              {tasks.map((record) => (
+                <TaskRow
+                  key={record.definition.id}
+                  record={record}
+                  busy={busy === record.definition.id}
+                  selecting={props.selecting}
+                  selected={props.selectedIds.has(record.definition.id)}
+                  onToggleSelected={() => props.onToggleSelected(record.definition.id)}
+                  onOpen={() => navigate(`/automations/${encodeURIComponent(record.definition.id)}`)}
+                  onAction={(action) => {
+                    if (action === "delete") {
+                      setPendingDelete(record.definition);
+                      return;
+                    }
+                    void mutate(record.definition, action);
+                  }}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null)}
+      </div>
+      <ConfirmModal
+        open={Boolean(pendingDelete)}
+        title={t("automation.delete")}
+        message={pendingDelete ? t("automation.delete_confirm", { name: pendingDelete.name }) : ""}
+        confirmLabel={t("automation.delete")}
+        cancelLabel={t("automation.cancel")}
+        variant="danger"
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          const task = pendingDelete;
+          setPendingDelete(null);
+          if (task) void mutate(task, "delete");
+        }}
+      />
+    </>
   );
 }
 
@@ -1589,7 +1654,7 @@ function ScheduleEditor({ value, onChange, client, activeRange }: {
   return (
     <Field label={t("automation.frequency")} hint={t("automation.frequency_hint")}>
       <div className="mb-4 inline-flex rounded-xl bg-dls-hover p-1">{(["calendar", "interval", "once"] as const).map((kind) => <button key={kind} type="button" onClick={() => setKind(kind)} className={cn("rounded-lg px-5 py-2 text-sm", value.kind === kind && "bg-background font-medium shadow-sm")}>{kind === "calendar" ? t("automation.period") : kind === "interval" ? t("automation.interval") : t("automation.once")}</button>)}</div>
-      {value.kind === "calendar" ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><CalendarFields value={value} onChange={onChange} /></div> : null}
+      {value.kind === "calendar" ? <div className="flex flex-wrap items-start gap-3"><CalendarFields value={value} onChange={onChange} /></div> : null}
       {value.kind === "interval" ? (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm">{t("automation.schedule_every")}</span>
@@ -1743,7 +1808,17 @@ function DateRangeField({ startDate, endDate, onChange }: {
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-dls-border pt-3 text-sm">
             <span className="text-dls-secondary">{pendingStart ? t("automation.range_pick_end") : t("automation.range_pick_start")}</span>
-            <button type="button" onClick={() => setCursor(startOfMonth(today()))} className="rounded-md px-2 py-1 hover:bg-dls-hover">{t("automation.range_today")}</button>
+            <button
+              type="button"
+              onClick={() => {
+                const currentDate = today();
+                setCursor(startOfMonth(currentDate));
+                pickDay(currentDate);
+              }}
+              className="rounded-md px-2 py-1 hover:bg-dls-hover"
+            >
+              {t("automation.range_today")}
+            </button>
           </div>
         </div>
       ) : null}
@@ -1804,18 +1879,78 @@ function summaryWithoutTimezone(summary: string, timezone: string): string {
 
 function CalendarFields({ value, onChange }: { value: Extract<AutomationSchedule, { kind: "calendar" }>; onChange: (schedule: AutomationSchedule) => void }) {
   return <>
-    <select value={value.frequency} onChange={(event) => {
-      const frequency = event.target.value;
+    <CalendarFrequencySelect value={value.frequency} onChange={(frequency) => {
       if (frequency === "daily") onChange({ version: 1, kind: "calendar", frequency, localTime: value.localTime, timezone: value.timezone });
       if (frequency === "weekly") onChange({ version: 1, kind: "calendar", frequency, weekdays: [1], localTime: value.localTime, timezone: value.timezone });
       if (frequency === "monthly") onChange({ version: 1, kind: "calendar", frequency, dayOfMonth: 1, localTime: value.localTime, timezone: value.timezone });
       if (frequency === "yearly") onChange({ version: 1, kind: "calendar", frequency, month: 1, dayOfMonth: 1, localTime: value.localTime, timezone: value.timezone });
-    }} className={FIELD} aria-label={t("automation.schedule_frequency_label")}><option value="daily">{t("automation.schedule_daily")}</option><option value="weekly">{t("automation.schedule_weekly")}</option><option value="monthly">{t("automation.schedule_monthly")}</option><option value="yearly">{t("automation.schedule_yearly")}</option></select>
-    {value.frequency === "weekly" ? <div className="col-span-full"><WeekdayPicker value={value.weekdays} onChange={(weekdays) => onChange({ ...value, weekdays })} label={t("automation.schedule_weekday_pick")} /></div> : null}
-    {value.frequency === "monthly" ? <input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={FIELD} aria-label={t("automation.schedule_day_of_month")} /> : null}
-    {value.frequency === "yearly" ? <><input type="number" min={1} max={12} value={value.month} onChange={(event) => onChange({ ...value, month: Number(event.target.value) })} className={FIELD} aria-label={t("automation.schedule_month")} /><input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={FIELD} aria-label={t("automation.schedule_day_of_month")} /></> : null}
-    <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={FIELD} aria-label={t("automation.schedule_run_time")} />
+    }} />
+    {value.frequency === "weekly" ? <div className="basis-full"><WeekdayPicker value={value.weekdays} onChange={(weekdays) => onChange({ ...value, weekdays })} label={t("automation.schedule_weekday_pick")} /></div> : null}
+    {value.frequency === "monthly" ? <input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_day_of_month")} /> : null}
+    {value.frequency === "yearly" ? <><input type="number" min={1} max={12} value={value.month} onChange={(event) => onChange({ ...value, month: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_month")} /><input type="number" min={1} max={31} value={value.dayOfMonth} onChange={(event) => onChange({ ...value, dayOfMonth: Number(event.target.value) })} className={cn(FIELD, "w-32")} aria-label={t("automation.schedule_day_of_month")} /></> : null}
+    <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={cn(FIELD, "w-36")} aria-label={t("automation.schedule_run_time")} />
   </>;
+}
+
+type CalendarFrequency = Extract<AutomationSchedule, { kind: "calendar" }>["frequency"];
+
+/** 周期频率单选器，使用与工作空间一致的浮层和行尾对号样式。 */
+function CalendarFrequencySelect(props: { value: CalendarFrequency; onChange: (frequency: CalendarFrequency) => void }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss);
+  const options: Array<{ value: CalendarFrequency; label: string }> = [
+    { value: "daily", label: t("automation.schedule_daily") },
+    { value: "weekly", label: t("automation.schedule_weekly") },
+    { value: "monthly", label: t("automation.schedule_monthly") },
+    { value: "yearly", label: t("automation.schedule_yearly") },
+  ];
+  const selectedLabel = options.find((option) => option.value === props.value)?.label ?? "";
+
+  return (
+    <div ref={containerRef} className="relative w-44">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t("automation.schedule_frequency_label")}
+        onClick={() => setOpen((value) => !value)}
+        className={cn(FIELD, "flex items-center gap-2 pr-4 text-left")}
+      >
+        <span className="min-w-0 flex-1 truncate">{selectedLabel}</span>
+        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div role="listbox" aria-label={t("automation.schedule_frequency_label")} className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
+          <div className="p-2">
+            {options.map((option) => {
+              const selected = option.value === props.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => {
+                    props.onChange(option.value);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-dls-hover",
+                    selected && "bg-dls-hover/70",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                  {selected ? <Check className="size-4 shrink-0 text-dls-text" strokeWidth={2.5} aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function PermissionDialog(props: { accepted: boolean; saving: boolean; onAccepted: (accepted: boolean) => void; onCancel: () => void; onConfirm: () => void }) {
@@ -1825,7 +1960,22 @@ function PermissionDialog(props: { accepted: boolean; saving: boolean; onAccepte
         <h2 id="automation-permission-title" className="flex items-center gap-3 text-xl font-semibold"><span className="text-orange-9">⚠</span>{t("automation.permission_title")}</h2>
         <p className="mt-3 text-sm leading-6 text-dls-secondary">{t("automation.permission_body")}</p>
         <ul className="mt-4 list-disc space-y-2 pl-6 text-sm"><li>{t("automation.permission_files")}</li><li>{t("automation.permission_connectors")}</li><li>{t("automation.permission_commands")}</li></ul>
-        <label className="mt-6 flex cursor-pointer items-start gap-3 text-sm"><input autoFocus type="checkbox" checked={props.accepted} onChange={(event) => props.onAccepted(event.target.checked)} className="mt-0.5 size-5" /><span>{t("automation.permission_accept")}</span></label>
+        <button
+          autoFocus
+          type="button"
+          role="checkbox"
+          aria-checked={props.accepted}
+          onClick={() => props.onAccepted(!props.accepted)}
+          className="mt-6 flex w-full cursor-pointer items-center gap-3 text-left text-sm"
+        >
+          <span className={cn(
+            "flex size-5 shrink-0 items-center justify-center rounded-md border border-[#ebebeb] transition-colors dark:border-dls-border",
+            props.accepted && "border-dls-text bg-dls-text text-background",
+          )}>
+            {props.accepted ? <Check size={13} strokeWidth={3} aria-hidden="true" /> : null}
+          </span>
+          <span className="leading-5">{t("automation.permission_accept")}</span>
+        </button>
         <div className="mt-7 flex justify-end gap-3"><button type="button" onClick={props.onCancel} className="h-11 rounded-xl border border-dls-border px-6">{t("automation.cancel")}</button><button type="button" disabled={!props.accepted || props.saving} onClick={props.onConfirm} className="h-11 rounded-xl bg-dls-text px-6 text-background disabled:opacity-35">{t("automation.permission_confirm")}</button></div>
       </div>
     </div>

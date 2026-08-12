@@ -2467,7 +2467,7 @@ export default {
   "project_extensions.instructions_title": "项目指令",
   "project_extensions.instructions_desc": "编辑项目 AGENTS.md，设定项目背景与规范",
   "project_extensions.instructions_placeholder": "在此填写项目背景、规范与协作约定…",
-  "project_extensions.panel_title": "项目设置",
+  "project_extensions.panel_title": "设置",
   "project_extensions.detail_tab_overview": "概述",
   "project_extensions.detail_tab_files": "文件",
   "project_extensions.detail_connect_only": "该技能来自 JuggleWork Connect，无本地文件。",
