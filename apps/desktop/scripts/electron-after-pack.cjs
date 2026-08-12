@@ -64,12 +64,16 @@ function verifyCompiledRuntimeContracts(context) {
   const entries = asar.listPackage(archivePath);
   const runtimePackageRoot = "/node_modules/@jugglework/types/";
   const compiledContract = "/dist/runtime/desktop-remote-control.js";
+  const automationContract = `${runtimePackageRoot}dist/automation.js`;
   if (!entries.includes(compiledContract)) {
     throw new Error(`Missing compiled Electron runtime contract: ${compiledContract}`);
   }
+  if (!entries.includes(automationContract)) {
+    throw new Error(`Missing packaged automation runtime contract: ${automationContract}`);
+  }
 
   const leakedSources = entries.filter((entry) => (
-    entry.startsWith(runtimePackageRoot) ||
+    (entry.startsWith(`${runtimePackageRoot}src/`) && /\.(?:ts|tsx|map)$/.test(entry)) ||
     (entry.startsWith("/dist/runtime/") && /\.(?:ts|tsx|map)$/.test(entry))
   ));
   if (leakedSources.length > 0) {

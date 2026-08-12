@@ -233,6 +233,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@jugglework/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@opencode-ai/sdk':
         specifier: ^1.18.7
         version: 1.18.7
@@ -270,9 +273,6 @@ importers:
       '@electron/asar':
         specifier: ^3.4.1
         version: 3.4.1
-      '@jugglework/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       electron:
         specifier: ^35.0.0
         version: 35.7.5
@@ -294,6 +294,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@jugglework/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@opencode-ai/sdk':
         specifier: ^1.18.7
         version: 1.18.7
@@ -316,9 +319,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@jugglework/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
