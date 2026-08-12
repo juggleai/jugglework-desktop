@@ -24,6 +24,16 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
+import type {
+  AutomationDefinitionRecord,
+  AutomationDraft,
+  AutomationListResponse,
+  AutomationRun,
+  AutomationRunListResponse,
+  AutomationSyncMutation,
+  AutomationSchedule,
+  AutomationActiveRange,
+} from "@jugglework/types/automation";
 
 export type JuggleWorkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
@@ -1408,6 +1418,91 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.binary,
       }),
     listWorkspaces: () => requestJson<JuggleWorkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken, timeoutMs: timeouts.listWorkspaces }),
+    /** 分页读取本机自动化任务。 */
+    listAutomations: (options?: { cursor?: string; limit?: number }) => {
+      const query = new URLSearchParams();
+      if (options?.cursor) query.set("cursor", options.cursor);
+      if (options?.limit) query.set("limit", String(options.limit));
+      return requestJson<AutomationListResponse>(baseUrl, `/automations${query.size ? `?${query}` : ""}`, {
+        token, hostToken, timeoutMs: timeouts.config,
+      });
+    },
+    /** 读取指定本机工作空间当前可用于自动化的模型、Agent 和技能。 */
+    /**
+     * 读取自动化可选依赖。
+     * @param workspaceId 工作空间 ID；留空时服务端回落到第一个本机工作空间，便于未选工作空间时也能展示列表
+     */
+    listAutomationDependencies: (workspaceId?: string) => requestJson<{
+      models: Array<{ providerId: string; providerName: string; modelId: string; modelName: string; variants: string[] }>;
+      agents: Array<{ id: string; name: string; description: string }>;
+      skills: Array<{ id: string; name: string; description: string }>;
+      connectors?: Array<{ id: string; label: string; ready: boolean }>;
+    }>(baseUrl, `/automations/dependencies${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ""}`, {
+      token, hostToken, timeoutMs: timeouts.config,
+    }),
+    /** 校验频率并返回与 Embedded Server 一致的摘要及下一次运行。 */
+    previewAutomationSchedule: (schedule: AutomationSchedule, activeRange?: AutomationActiveRange) =>
+      requestJson<{ summary: string; nextRunAt: number | null }>(baseUrl, "/automations/preview", {
+        token, hostToken, method: "POST", body: { schedule, activeRange, locale: "zh-CN" }, timeoutMs: timeouts.config,
+      }),
+    /** 按 ID 读取本机自动化任务。 */
+    getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}`, { token, hostToken, timeoutMs: timeouts.config },
+    ),
+    /** 原子创建本机自动化任务。 */
+    createAutomation: (draft: AutomationDraft) => requestJson<{ item: AutomationDefinitionRecord }>(
+      baseUrl, "/automations", { token, hostToken, method: "POST", body: draft, timeoutMs: timeouts.config },
+    ),
+    /** 以乐观锁更新本机自动化任务。 */
+    updateAutomation: (automationId: string, baseRevision: number, draft: AutomationDraft) =>
+      requestJson<{ item: AutomationDefinitionRecord }>(baseUrl, `/automations/${encodeURIComponent(automationId)}`, {
+        token, hostToken, method: "PUT", body: { baseRevision, draft }, timeoutMs: timeouts.config,
+      }),
+    /** 暂停或恢复本机自动化任务。 */
+    setAutomationPaused: (automationId: string, baseRevision: number, paused: boolean) =>
+      requestJson<{ item: AutomationDefinitionRecord }>(baseUrl, `/automations/${encodeURIComponent(automationId)}/${paused ? "pause" : "resume"}`, {
+        token, hostToken, method: "POST", body: { baseRevision }, timeoutMs: timeouts.config,
+      }),
+    /** 读取去除权限确认、默认暂停的复制草稿。 */
+    duplicateAutomation: (automationId: string) => requestJson<{ draft: AutomationDraft; sourceAutomationId: string }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}/duplicate`, {
+        token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config,
+      },
+    ),
+    /** 立即创建一次手动运行。 */
+    runAutomation: (automationId: string) => requestJson<{ item: AutomationRun }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}/run`, {
+        token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.config,
+      },
+    ),
+    /** 创建任务墓碑并保留运行历史。 */
+    deleteAutomation: (automationId: string, baseRevision: number) => requestJson<{ item: AutomationDefinitionRecord }>(
+      baseUrl, `/automations/${encodeURIComponent(automationId)}`, {
+        token, hostToken, method: "DELETE", body: { baseRevision }, timeoutMs: timeouts.config,
+      },
+    ),
+    /** 分页读取本机自动化运行记录。 */
+    listAutomationRuns: (options?: { cursor?: string; limit?: number; automationId?: string; status?: string; trigger?: string; scheduledFrom?: number; scheduledTo?: number }) => {
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(options ?? {})) if (value !== undefined) query.set(key, String(value));
+      return requestJson<AutomationRunListResponse>(baseUrl, `/automation-runs${query.size ? `?${query}` : ""}`, {
+        token, hostToken, timeoutMs: timeouts.config,
+      });
+    },
+    /** 读取到期的自动化云同步 outbox。 */
+    readAutomationOutbox: (limit = 20) => requestJson<{ items: AutomationSyncMutation[] }>(
+      baseUrl, `/automation-sync/outbox?limit=${limit}`, { token, hostToken, timeoutMs: timeouts.config },
+    ),
+    /** 确认云端已经接受完全匹配的本地版本。 */
+    acknowledgeAutomationOutbox: (mutation: Pick<AutomationSyncMutation, "mutationId" | "entityId" | "localRevision">) =>
+      requestJson<{ ok: true }>(baseUrl, "/automation-sync/ack", {
+        token, hostToken, method: "POST", body: mutation, timeoutMs: timeouts.config,
+      }),
+    /** 持久化同步失败和退避截止时间。 */
+    failAutomationOutbox: (input: { mutationId: string; errorCode: string; errorMessage: string; nextAttemptAt: number }) =>
+      requestJson<{ ok: true }>(baseUrl, "/automation-sync/fail", {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.config,
+      }),
     createLocalWorkspace: (payload: { folderPath: string; name: string; preset: string }) =>
       requestJson<WorkspaceList>(baseUrl, "/workspaces/local", {
         token,

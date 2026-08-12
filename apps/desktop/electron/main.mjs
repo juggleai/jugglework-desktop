@@ -589,7 +589,7 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
   });
 }
 
-async function focusMainWindowFromNotification() {
+async function focusMainWindowFromNotification(href) {
   const win = mainWindow;
   if (!win) return;
   if (win.isDestroyed()) return;
@@ -598,6 +598,11 @@ async function focusMainWindowFromNotification() {
   win.show();
   win.focus();
   flushPendingDeepLinks();
+  const internalHref = typeof href === "string" && href.startsWith("/") && !href.startsWith("//") ? href : "";
+  if (internalHref && !win.webContents.isDestroyed()) {
+    // TIPS: 通知只允许跳转应用内 HashRouter 路径，禁止把任意 URL 注入渲染进程。
+    await win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(`#${internalHref}`)}`);
+  }
 }
 
 /**
@@ -627,7 +632,7 @@ function showDesktopNotification(input) {
   try {
     const notification = new ElectronNotification(options);
     notification.on("click", () => {
-      void focusMainWindowFromNotification();
+      void focusMainWindowFromNotification(Reflect.get(record, "href"));
     });
     notification.show();
     return { ok: true };

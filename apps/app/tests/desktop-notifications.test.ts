@@ -92,6 +92,28 @@ describe("desktop notifications", () => {
     });
   });
 
+  test("automation failures are important and include an internal details target", async () => {
+    setPreference("important");
+
+    notifyDesktopEvent({
+      type: "automation.failed",
+      automationName: "每日汇总",
+      errorText: "连接器需要重新授权",
+      href: "/automations/runs",
+    });
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      command: "desktopNotificationShow",
+      args: [{
+        title: "Automation failed: 每日汇总",
+        body: "连接器需要重新授权",
+        href: "/automations/runs",
+      }],
+    });
+  });
+
   test("focused app suppresses native popups", () => {
     setPreference("all");
     installRuntime({ focused: true });

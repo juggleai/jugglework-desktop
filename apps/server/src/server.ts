@@ -67,6 +67,10 @@ import { createSessionPendingOperationPump, type SessionPendingOperationPump } f
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { registerAutomationRoutes } from "./routes/automations.js";
+import { AutomationRepository } from "./automation/repository.js";
+import { AutomationExecutor } from "./automation/executor.js";
+import { AutomationScheduler } from "./automation/scheduler.js";
 import {
   createSessionMutationCoordinator,
   SessionMutationError,
@@ -856,6 +860,19 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
+  const automationRepository = await AutomationRepository.open(config);
+  const localAutomationEnabled = resolveLocalAutomationEnabled();
+  const automationExecutor = new AutomationExecutor({
+    config,
+    repository: automationRepository,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+  });
+  const automationScheduler = new AutomationScheduler({
+    repository: automationRepository,
+    executor: automationExecutor,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -867,6 +884,9 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations,
     () => sessionPendingOperationPump,
     interactionResolutions,
+    automationRepository,
+    automationScheduler,
+    (event, fields) => logger.log("info", event, fields),
   );
 
   const serverOptions: {
@@ -1049,6 +1069,9 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     reloadBaselineRefreshers.delete(config);
     closeSessionPendingOperations();
+    void automationScheduler.dispose();
+    automationExecutor.dispose();
+    automationRepository.close();
     throw error;
   }
 
@@ -1082,6 +1105,10 @@ export async function startServer(config: ServerConfig, options: {
     },
   });
 
+  if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
+    automationScheduler.start();
+  }
+
   return {
     ...server,
     stop: async () => {
@@ -1089,6 +1116,8 @@ export async function startServer(config: ServerConfig, options: {
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
       const errors: unknown[] = [];
+      automationExecutor.dispose();
+      try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
         errors.push(error);
@@ -1102,6 +1131,7 @@ export async function startServer(config: ServerConfig, options: {
       if (pendingPumpClosed) {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
+      try { automationRepository.close(); } catch (error) { errors.push(error); }
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
@@ -1486,6 +1516,12 @@ function resolveOutboxEnabled(): boolean {
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
+function resolveLocalAutomationEnabled(): boolean {
+  const raw = (process.env.JUGGLEWORK_LOCAL_AUTOMATION_ENABLED ?? "").trim().toLowerCase();
+  if (!raw) return true;
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
 function resolveInboxMaxBytes(): number {
   const raw = (process.env.JUGGLEWORK_INBOX_MAX_BYTES ?? "").trim();
   const parsed = raw ? Number(raw) : NaN;
@@ -1687,6 +1723,9 @@ function createRoutes(
   sessionPendingOperations: SessionPendingOperationStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
+  automationRepository: AutomationRepository,
+  automationScheduler: AutomationScheduler,
+  automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1788,6 +1827,22 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+  });
+
+  registerAutomationRoutes({
+    routes,
+    config,
+    repository: automationRepository,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    onChanged: () => automationScheduler.notifyChanged(),
+    log: automationLog,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    listWorkspaceMcp: listMcp,
+    enabled: resolveLocalAutomationEnabled(),
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

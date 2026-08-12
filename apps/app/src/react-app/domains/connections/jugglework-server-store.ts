@@ -43,6 +43,7 @@ export type JuggleWorkServerStoreSnapshot = {
   juggleworkServerClient: JuggleWorkServerClient | null;
   juggleworkServerStatus: JuggleWorkServerStatus;
   juggleworkServerCapabilities: JuggleWorkServerCapabilities | null;
+  juggleworkServerCheckedAt: number | null;
   juggleworkServerReady: boolean;
   juggleworkServerWorkspaceReady: boolean;
   resolvedJuggleWorkCapabilities: JuggleWorkServerCapabilities | null;
@@ -224,6 +225,7 @@ export function createJuggleWorkServerStore(options: CreateJuggleWorkServerStore
       juggleworkServerClient,
       juggleworkServerStatus: state.juggleworkServerStatus,
       juggleworkServerCapabilities: state.juggleworkServerCapabilities,
+      juggleworkServerCheckedAt: state.juggleworkServerCheckedAt,
       juggleworkServerReady,
       juggleworkServerWorkspaceReady,
       resolvedJuggleWorkCapabilities,

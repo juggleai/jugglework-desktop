@@ -20,6 +20,11 @@
       "development": "./src/desktop-remote-control.ts",
       "default": "./dist/desktop-remote-control.js"
     },
+    "./automation": {
+      "types": "./src/automation.ts",
+      "development": "./src/automation.ts",
+      "default": "./dist/automation.js"
+    },
     "./jugglework-affordance": {
       "types": "./src/jugglework-affordance.ts",
       "development": "./src/jugglework-affordance.ts",

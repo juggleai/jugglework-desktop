@@ -55,7 +55,7 @@ type EditorProps = {
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
-  onSubmit: (options: { queue: boolean }) => void | Promise<void>;
+  onSubmit?: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
@@ -1231,7 +1231,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           attachments={props.attachments}
           disabled={props.disabled}
         />
-        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        {props.onSubmit ? <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} /> : null}
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />

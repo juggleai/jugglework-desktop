@@ -15,6 +15,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  Share2,
   Folder,
   FolderOpen,
   Tag,
@@ -516,17 +517,13 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         }
       />
       <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-56">
-        <DropdownMenuItem
-          onClick={() => ctx.onCreateTaskInWorkspace(workspace.id)}
-          disabled={ctx.newTaskDisabled}
-        >
-          <Plus className="size-4" />
-          {t("session.cmd_new_session_title")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => ctx.onOpenRenameWorkspace(workspace.id)}>
+        <DropdownMenuItem className="text-sm" onClick={() => ctx.onOpenRenameWorkspace(workspace.id)}>
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
+        </DropdownMenuItem>
+        <DropdownMenuItem className="text-sm" onClick={() => ctx.onShareWorkspace(workspace.id)}>
+          <Share2 className="size-4" />
+          {t("workspace_list.share")}
         </DropdownMenuItem>
         {workspace.workspaceType === "local" ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
@@ -1430,12 +1427,30 @@ function WorkspaceSidebarGroup({
                     <SessionCircularProgress />
                   </span>
                 ) : null}
-                <WorkspaceActionsMenu
-                  workspace={workspace}
-                  isConnectionActionBusy={isConnectionActionBusy}
-                  canRecover={canRecover}
-                  className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground data-popup-open:bg-background/60 data-popup-open:text-foreground"
-                />
+                <div
+                  data-workspace-actions
+                  className="flex items-center gap-1 opacity-0 transition-opacity group-hover/workspace-header:opacity-100 group-focus-within/workspace-header:opacity-100"
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    disabled={ctx.newTaskDisabled}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      ctx.onCreateTaskInWorkspace(workspace.id);
+                    }}
+                    aria-label={t("session.cmd_new_session_title")}
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                  <WorkspaceActionsMenu
+                    workspace={workspace}
+                    isConnectionActionBusy={isConnectionActionBusy}
+                    canRecover={canRecover}
+                    className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground data-popup-open:bg-background/60 data-popup-open:text-foreground"
+                  />
+                </div>
               </div>
             </div>
 

@@ -233,6 +233,51 @@ export type DenMcpToken = {
   resource: string;
 };
 
+/** 服务端声明的自动化稳定 envelope 与投影兼容能力。 */
+export type DenAutomationCapabilities = {
+  envelopeVersions: number[];
+  documentMediaTypes: string[];
+  projections: Record<string, number[]>;
+  limits: Record<string, number>;
+};
+
+/** 服务端返回的自动化镜像，未知字段必须由调用方原样保留。 */
+export type DenAutomationMirror = Record<string, unknown> & {
+  automationId?: string;
+  revision?: number;
+  executorDeviceId?: string;
+  compatibility?: string;
+};
+
+/** 服务端返回的自动化运行镜像，运行详情 envelope 保持开放结构。 */
+export type DenAutomationRunMirror = Record<string, unknown> & {
+  runId?: string;
+  automationId?: string;
+  runRevision?: number;
+};
+
+export type DenAutomationPage<T> = {
+  items: T[];
+  nextCursor?: string;
+};
+
+export type DenAutomationListOptions = {
+  executorDeviceId?: string;
+  state?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type DenAutomationRunListOptions = {
+  automationId?: string;
+  status?: string;
+  triggerSource?: string;
+  startedAfter?: string;
+  startedBefore?: string;
+  cursor?: string;
+  limit?: number;
+};
+
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -2291,6 +2336,92 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       return getWorkers(payload);
     },
 
+    /** 读取自动化稳定 envelope、投影和资源限制能力。 */
+    async getAutomationCapabilities(orgId: string): Promise<DenAutomationCapabilities> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/automations/capabilities", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationCapabilities(payload);
+    },
+
+    /** 分页读取组织内的自动化定义镜像，可按执行设备和生命周期过滤。 */
+    async listAutomationMirrors(orgId: string, options: DenAutomationListOptions = {}): Promise<DenAutomationPage<DenAutomationMirror>> {
+      const params = automationQuery(options);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automations${params}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationPage(payload);
+    },
+
+    /** 读取一个自动化定义的完整稳定 envelope。 */
+    async getAutomationMirror(orgId: string, automationId: string): Promise<DenAutomationMirror> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      if (!isRecord(payload)) throw new DenApiError(500, "invalid_automation_payload", "Automation response was invalid.");
+      return payload;
+    },
+
+    /** 幂等上传一个客户端拥有的自动化定义 envelope。 */
+    async upsertAutomationMirror(orgId: string, automationId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 写入版本化任务墓碑，防止旧离线写复活任务。 */
+    async deleteAutomationMirror(orgId: string, automationId: string, body: { baseRevision: number; mutationId: string }): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "DELETE",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 幂等上传一个自动化运行详情 envelope。 */
+    async upsertAutomationRunMirror(orgId: string, runId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automation-runs/${encodeURIComponent(runId)}`, {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 分页读取自动化运行镜像，可按任务、状态、触发来源和时间区间过滤。 */
+    async listAutomationRunMirrors(orgId: string, options: DenAutomationRunListOptions = {}): Promise<DenAutomationPage<DenAutomationRunMirror>> {
+      const params = automationQuery(options);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automation-runs${params}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationPage(payload);
+    },
+
+    /** 获取绑定任务、运行和定义版本的短期 MCP scope。 */
+    async mintAutomationMcpToken(orgId: string, input: { automationId: string; runId: string; definitionRevision: number }): Promise<DenMcpToken> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: { scopes: ["mcp:read", "mcp:write"], ...input },
+      });
+      const minted = getMcpToken(payload);
+      if (!minted) throw new DenApiError(500, "invalid_mcp_token_payload", "Automation MCP token response was invalid.");
+      return minted;
+    },
+
     async listMemory(orgId: string): Promise<DenMemory[]> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/memory", {
         method: "GET",
@@ -2484,6 +2615,51 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 }
 
 export type DenClient = ReturnType<typeof createDenClient>;
+
+function automationQuery(values: object): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === "") continue;
+    params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function normalizeAutomationCapabilities(payload: unknown): DenAutomationCapabilities {
+  if (!isRecord(payload)) throw new DenApiError(500, "invalid_automation_capabilities", "Automation capabilities response was invalid.");
+  const projections = isRecord(payload.projections)
+    ? Object.fromEntries(Object.entries(payload.projections).map(([kind, versions]) => [kind, numberArray(versions)]))
+    : {};
+  const limits = isRecord(payload.limits)
+    ? Object.fromEntries(Object.entries(payload.limits).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])))
+    : {};
+  return {
+    envelopeVersions: numberArray(payload.envelopeVersions),
+    documentMediaTypes: stringArray(payload.documentMediaTypes),
+    projections,
+    limits,
+  };
+}
+
+function normalizeAutomationPage<T extends Record<string, unknown>>(payload: unknown): DenAutomationPage<T> {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new DenApiError(500, "invalid_automation_page", "Automation list response was invalid.");
+  }
+  const items = payload.items.filter(isRecord) as T[];
+  return {
+    items,
+    ...(typeof payload.nextCursor === "string" && payload.nextCursor ? { nextCursor: payload.nextCursor } : {}),
+  };
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isInteger(item)) : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
 
 /**
  * Mint an org-scoped MCP access token for the Den cloud MCP using the

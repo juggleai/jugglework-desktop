@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
+  AlarmClock,
   Cloud,
   ContactRound,
   FolderOpen,
@@ -29,6 +31,11 @@ import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/
 import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/session-circular-progress";
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
+import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
+import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
+import { visibleLocalWorkspaceIndicator } from "./app-navigation-status";
+
+export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
 export const APP_NAVIGATION_RAIL_WIDTH = 72;
 
@@ -110,6 +117,8 @@ function RailButton({
 }
 
 export function AppNavigationRail(props: AppNavigationRailProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useDenAuth();
   const brandLogoUrl = useBrandLogoUrl();
   const taskScope = useTaskScope();
@@ -160,7 +169,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         )}
       </button>
 
-      <nav className="flex flex-col items-center gap-3">
+      <nav className="flex flex-col items-center gap-3" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
         {props.onOpenTaskSearch ? (
           <RailButton
             label={t("workspace_list.search_sessions")}
@@ -220,7 +229,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={props.homeActive && taskScope === "local"}
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
-          statusIndicator={localWorkspaceIndicator}
+          statusIndicator={visibleLocalWorkspaceIndicator(localWorkspaceIndicator, props.homeActive, taskScope)}
         >
           <FolderOpen className="size-5" strokeWidth={1.8} />
         </RailButton>
@@ -240,6 +249,14 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <Cloud className="size-5" strokeWidth={1.8} />
         </RailButton>
+        {LOCAL_AUTOMATION_ENABLED ? <RailButton
+          label={t("navigation.automations")}
+          active={location.pathname.startsWith("/automations")}
+          onClick={() => navigate("/automations")}
+          testId="app-rail-automations"
+        >
+          <AlarmClock />
+        </RailButton> : null}
         <RailButton
           label={t("navigation.chat")}
           active={props.chatActive && chatView !== "contacts"}

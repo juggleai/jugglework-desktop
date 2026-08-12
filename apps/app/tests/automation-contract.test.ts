@@ -1,0 +1,112 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { AUTOMATION_TEMPLATE_CATALOG_VERSION, AUTOMATION_TEMPLATES } from "../src/react-app/domains/automations/templates";
+import { parseWorkspaceAppPath } from "../src/react-app/shell/workspace-routes";
+import { APP_PRIMARY_RAIL_ORDER } from "../src/react-app/shell/app-navigation-order";
+
+describe("Desktop automation catalog and routes", () => {
+  test("ships twelve stable client-only templates without credentials or absolute paths", () => {
+    expect(AUTOMATION_TEMPLATES).toHaveLength(12);
+    expect(new Set(AUTOMATION_TEMPLATES.map((template) => template.id)).size).toBe(12);
+    const serialized = JSON.stringify(AUTOMATION_TEMPLATES);
+    expect(serialized).not.toMatch(/accessToken|refreshToken|apiKey|password|secret/i);
+    expect(serialized).not.toMatch(/"\/(?:Users|home|var|tmp)\//);
+    for (const template of AUTOMATION_TEMPLATES) {
+      expect(template.version).toBe(AUTOMATION_TEMPLATE_CATALOG_VERSION);
+      expect(template.title.trim()).not.toBe("");
+      expect(template.prompt.trim()).not.toBe("");
+      expect(template.promptTemplate).toEqual({ version: 1, parts: [{ type: "text", text: template.prompt }] });
+      expect(template.localized["zh-CN"].title).toBe(template.title);
+      expect(template.localized["en-US"].title.trim()).not.toBe("");
+      expect(template.recommendedConnectorIds).toEqual([...new Set(template.recommendedConnectorIds)]);
+    }
+  });
+
+  test("recognizes list, history, create and edit deep links as automation surfaces", () => {
+    for (const path of ["/automations", "/automations/runs", "/automations/new", "/automations/task-1"]) {
+      expect(parseWorkspaceAppPath(path)).toEqual({ view: "automations", workspaceId: null });
+    }
+  });
+
+  test("places automation immediately below cloud workspace in the primary rail", () => {
+    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "chat", "contacts"]);
+  });
+
+  test("automation prompt reuses the session editor without a run-task action", () => {
+    const source = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/<LexicalPromptEditor/);
+    const adapter = source.slice(source.indexOf("function AutomationPromptComposer"), source.indexOf("function ScheduleEditor"));
+    expect(adapter).not.toMatch(/run_task|运行任务|onSend/);
+  });
+
+  test("characterizes the live session composer contract before shared reuse", () => {
+    const source = readFileSync(new URL("../src/react-app/domains/session/surface/composer/composer.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/busy: boolean/);
+    expect(source).toMatch(/onSend/);
+    expect(source).toMatch(/LexicalPromptEditor/);
+    expect(source).toMatch(/listAgents/);
+    expect(source).toMatch(/listMcp/);
+  });
+
+  test("keeps template application client-only, accessible, and independent of server catalog versions", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const catalog = readFileSync(new URL("../src/react-app/domains/automations/templates.ts", import.meta.url), "utf8");
+    const rail = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/grid-cols-1[^\n]+md:grid-cols-2[^\n]+xl:grid-cols-3/);
+    expect(page).toMatch(/navigate\("\/automations\/new", \{ state: \{ templateId:/);
+    expect(page).toMatch(/!loading && !props\.history[\s\S]+<TemplateCatalog/);
+    expect(page).toMatch(/tasks\.length === 0 \? <FirstAutomation/);
+    expect(page).toMatch(/onOpenHome=\{\(\) => navigateAfterDiscard\(\(\) => navigate\(props\.sessionPath\)\)\}/);
+    expect(rail).toMatch(/active=\{location\.pathname\.startsWith\("\/automations"\)\}/);
+    expect(page).toMatch(/value\.schedule\.kind === "once"[\s\S]+请选择单次任务的未来日期和时间/);
+    expect(catalog).not.toMatch(/fetch\(|createAutomation|updateAutomation|serverId/);
+    expect(AUTOMATION_TEMPLATES.filter((template) => !template.schedule).length).toBeGreaterThan(0);
+  });
+
+  test("connector picker is multi-select, readiness-gated, localized, and never renders credentials", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/connectorReadinessError/);
+    expect(page).toMatch(/aria-multiselectable="true"/);
+    expect(page).toMatch(/t\("automation\.connector_needs_reconnect"\)/);
+    expect(page).toMatch(/orgConnectors\.connect/);
+    expect(page).not.toMatch(/accessToken|refreshToken|apiKey|password/);
+    for (const locale of ["zh", "en"]) {
+      const table = readFileSync(new URL(`../src/i18n/locales/${locale}.ts`, import.meta.url), "utf8");
+      for (const key of ["connector_needs_reconnect", "connectors_manage", "connectors_placeholder", "connectors_empty"]) {
+        expect(table).toMatch(new RegExp(`"automation\\.${key}"`));
+      }
+    }
+  });
+
+  test("reserves non-id automation segments and keeps batch/template entries out of the empty state", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    // /automations/templates 必须走模板页，不能被解析成 id 为 "templates" 的任务。
+    expect(page).toMatch(/AUTOMATION_RESERVED_SEGMENTS = new Set\(\["new", "runs", "templates"\]\)/);
+    expect(page).toMatch(/templatesVisible = location\.pathname === "\/automations\/templates"/);
+    expect(parseWorkspaceAppPath("/automations/templates")).toEqual({ view: "automations", workspaceId: null });
+    // 有任务时模板画廊只在「从模版添加」页出现，列表底部不再重复一份。
+    expect(page).toMatch(/tasks\.length === 0 \? <TemplateCatalog/);
+    expect(page).toMatch(/t\("automation\.batch_manage"\)/);
+    for (const locale of ["zh", "en"]) {
+      const table = readFileSync(new URL(`../src/i18n/locales/${locale}.ts`, import.meta.url), "utf8");
+      for (const key of ["batch_manage", "batch_delete_confirm", "from_template", "breadcrumb_root"]) {
+        expect(table).toMatch(new RegExp(`"automation\\.${key}"`));
+      }
+    }
+  });
+
+  test("starts the shared local-server connection and keeps local automations out of cloud sync", () => {
+    const root = readFileSync(new URL("../src/react-app/shell/app-root.tsx", import.meta.url), "utf8");
+    const provider = readFileSync(new URL("../src/react-app/domains/connections/root-jugglework-server-provider.tsx", import.meta.url), "utf8");
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+
+    expect(root).toMatch(/<RootJuggleWorkServerProvider>[\s\S]+<AutomationRunNotificationCoordinator \/>[\s\S]+<Routes>/);
+    expect(root).not.toMatch(/AutomationSyncCoordinator/);
+    expect(page).not.toMatch(/syncStateLabel|sync_unavailable_notice|readReadOnlyAutomationMirrors/);
+    expect(provider).toMatch(/store\.start\(\)/);
+    expect(provider).toMatch(/store\.dispose\(\)/);
+    expect(page).toMatch(/juggleworkServerCheckedAt === null/);
+    expect(page).toMatch(/reconnectJuggleWorkServer\(\)/);
+    expect(page).toMatch(/ensureLocalJuggleWorkServerClient\(\)/);
+  });
+});
