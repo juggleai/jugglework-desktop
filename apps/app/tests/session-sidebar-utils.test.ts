@@ -88,4 +88,12 @@ describe("workspace session indicator", () => {
       new Set(),
     )).toBeNull();
   });
+
+  test("ignores unread child sessions that are not directly accessible in the sidebar", () => {
+    expect(resolveWorkspaceSessionIndicator(
+      sessions.filter((session) => !session.parentID),
+      { "session-a": "idle", "session-a-child": "idle", "session-b": "idle" },
+      new Set(["session-a-child"]),
+    )).toBeNull();
+  });
 });

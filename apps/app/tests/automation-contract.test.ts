@@ -109,4 +109,44 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).toMatch(/reconnectJuggleWorkServer\(\)/);
     expect(page).toMatch(/ensureLocalJuggleWorkServerClient\(\)/);
   });
+
+  test("matches automation header controls to the default create-workspace button size", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/inline-flex h-9 rounded-xl bg-dls-hover/);
+    expect(page).toMatch(/placeholder=\{t\("automation\.search"\)\} className="h-9[^\"]+text-sm/);
+    expect(page).toMatch(/inline-flex h-9 items-center gap-1\.5 rounded-xl border[^\"]+text-sm font-medium/);
+    expect(page).not.toMatch(/inline-flex h-11|placeholder=\{t\("automation\.search"\)\} className="h-11/);
+  });
+
+  test("matches the automation editor actions to the session Run task button", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const editorActions = page.slice(page.indexOf('className="ml-auto flex gap-1.5"'), page.indexOf("<ScheduleEditor"));
+    expect(editorActions).toMatch(/h-9 max-h-9 items-center rounded-full[^\"]+text-\[13px\] font-medium/);
+    expect(editorActions).toMatch(/bg-\[var\(--dls-accent\)\] text-\[var\(--dls-accent-fg\)\]/);
+    expect(editorActions).toMatch(/border border-dls-border bg-transparent/);
+    expect(editorActions).not.toMatch(/h-11 rounded-xl/);
+  });
+
+  test("uses a connector-styled single-select for local workspaces", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const workspaceSelect = page.slice(page.indexOf("function WorkspaceSingleSelect"), page.indexOf("type AutomationPromptComposerProps"));
+    expect(page).toMatch(/<WorkspaceSingleSelect[\s\S]+selectedId=\{workspaceId\}[\s\S]+onSelect=\{setWorkspaceId\}/);
+    expect(workspaceSelect).toMatch(/role="listbox"/);
+    expect(workspaceSelect).not.toMatch(/aria-multiselectable/);
+    expect(workspaceSelect).toMatch(/pr-4 text-left/);
+    expect(workspaceSelect).toMatch(/rounded-2xl border border-dls-border[^\"]+shadow-\[var\(--dls-shell-shadow\)\]/);
+    expect(workspaceSelect).toMatch(/role="option"[\s\S]+aria-selected=\{selectedOption\}/);
+    expect(workspaceSelect).toMatch(/props\.onSelect\(workspace\.id\);[\s\S]+setOpen\(false\)/);
+    expect(workspaceSelect).toMatch(/workspaceOptionLabel\(workspace\)[\s\S]+selectedOption \? <Check className="size-4 shrink-0/);
+    expect(workspaceSelect).not.toMatch(/rounded-md border border-\[#ebebeb\]/);
+    expect(page).not.toMatch(/<select value=\{workspaceId\}/);
+  });
+
+  test("shows connector multi-selection with trailing checks instead of checkbox boxes", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const connectorSelect = page.slice(page.indexOf("function ConnectorMultiSelect"), page.indexOf("function useDismissOnOutside"));
+    expect(connectorSelect).toMatch(/option\.label[\s\S]+checked \? <Check className="size-4 shrink-0/);
+    expect(connectorSelect).not.toMatch(/rounded-md border border-\[#ebebeb\]/);
+    expect(connectorSelect).toMatch(/aria-multiselectable="true"/);
+  });
 });

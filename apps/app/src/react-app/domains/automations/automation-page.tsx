@@ -264,7 +264,7 @@ function AutomationDashboard(props: {
           {(!props.history && tasks.length > 0) || (props.history && runs.length > 0) ? (
             <label className="relative hidden sm:block">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-11 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-sm outline-none" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-9 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-sm outline-none" />
             </label>
           ) : null}
           {/* TIPS:有任务之后模板画廊从列表底部挪到「从模版添加」入口后面，列表页只留任务本身。 */}
@@ -274,19 +274,19 @@ function AutomationDashboard(props: {
                 type="button"
                 onClick={() => { setSelecting((value) => !value); setSelectedIds(new Set()); }}
                 className={cn(
-                  "inline-flex h-11 items-center gap-2 rounded-xl border border-dls-border px-4 text-sm transition-colors hover:bg-dls-hover",
+                  "inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover",
                   selecting && "border-dls-text bg-dls-hover",
                 )}
               >
                 <ListChecks className="size-4" />{selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
               </button>
-              <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-11 items-center gap-2 rounded-xl border border-dls-border px-4 text-sm transition-colors hover:bg-dls-hover">
+              <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover">
                 <Newspaper className="size-4" />{t("automation.from_template")}
               </button>
             </>
           ) : null}
           {!props.history ? (
-            <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-11 items-center gap-2 rounded-xl bg-dls-text px-5 text-sm font-medium text-background hover:opacity-90">
+            <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-sm font-medium text-background hover:opacity-90">
               <Plus className="size-4" />{t("automation.add")}
             </button>
           ) : null}
@@ -360,9 +360,9 @@ function SegmentedTabs({ history }: { history: boolean }) {
   const navigate = useNavigate();
   const switchTab = (nextHistory: boolean) => navigate(nextHistory ? "/automations/runs" : "/automations");
   return (
-    <div className="inline-flex rounded-xl bg-dls-hover p-1" role="tablist" aria-label="自动化视图" onKeyDown={(event) => { if (event.key === "ArrowLeft") switchTab(false); if (event.key === "ArrowRight") switchTab(true); }}>
-      <button type="button" role="tab" tabIndex={history ? -1 : 0} aria-selected={!history} onClick={() => switchTab(false)} className={cn("rounded-lg px-5 py-2 text-sm", !history && "bg-background font-semibold shadow-sm")}>{t("automation.tabs.tasks")}</button>
-      <button type="button" role="tab" tabIndex={history ? 0 : -1} aria-selected={history} onClick={() => switchTab(true)} className={cn("rounded-lg px-5 py-2 text-sm", history && "bg-background font-semibold shadow-sm")}>{t("automation.tabs.runs")}</button>
+    <div className="inline-flex h-9 rounded-xl bg-dls-hover p-0.5" role="tablist" aria-label="自动化视图" onKeyDown={(event) => { if (event.key === "ArrowLeft") switchTab(false); if (event.key === "ArrowRight") switchTab(true); }}>
+      <button type="button" role="tab" tabIndex={history ? -1 : 0} aria-selected={!history} onClick={() => switchTab(false)} className={cn("h-8 rounded-lg px-3 text-sm font-medium", !history && "bg-background shadow-sm")}>{t("automation.tabs.tasks")}</button>
+      <button type="button" role="tab" tabIndex={history ? 0 : -1} aria-selected={history} onClick={() => switchTab(true)} className={cn("h-8 rounded-lg px-3 text-sm font-medium", history && "bg-background shadow-sm")}>{t("automation.tabs.runs")}</button>
     </div>
   );
 }
@@ -981,7 +981,24 @@ function AutomationEditor(props: {
           onBack={props.onCancel}
           current={name || t(props.automationId ? "automation.edit_task" : "automation.new_task")}
         />
-        <div className="ml-auto flex gap-3"><button type="button" onClick={props.onCancel} className="h-11 rounded-xl bg-dls-hover px-6">{t("automation.cancel")}</button><button type="button" disabled={saving} onClick={requestSave} className="h-11 rounded-xl bg-dls-text px-6 text-background disabled:opacity-50">{saving ? t("automation.saving") : t("automation.save")}</button></div>
+        <div className="ml-auto flex gap-1.5">
+          <button type="button" onClick={props.onCancel} className="inline-flex h-9 max-h-9 items-center rounded-full border border-dls-border bg-transparent px-4 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3">
+            {t("automation.cancel")}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={requestSave}
+            className={cn(
+              "inline-flex h-9 max-h-9 items-center rounded-full px-4 text-[13px] font-medium transition-colors",
+              saving
+                ? "bg-gray-4 text-gray-10"
+                : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]",
+            )}
+          >
+            {saving ? t("automation.saving") : t("automation.save")}
+          </button>
+        </div>
       </header>
       {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
       {error ? <Notice tone="error">{error}</Notice> : null}
@@ -989,7 +1006,11 @@ function AutomationEditor(props: {
       <div className="mt-7 space-y-7">
         <Field label={t("automation.name")}><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_placeholder")} aria-label={t("automation.name")} /></Field>
         <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
-          <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)} className={FIELD} aria-label={t("automation.workspace")}><option value="">{t("automation.workspace_placeholder")}</option>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.displayName || workspace.name || workspace.id}</option>)}</select>
+          <WorkspaceSingleSelect
+            selectedId={workspaceId}
+            options={workspaces}
+            onSelect={setWorkspaceId}
+          />
         </Field>
         <Field label={t("automation.prompt")}>
           <AutomationPromptComposer
@@ -1056,6 +1077,80 @@ function AutomationEditor(props: {
 }
 
 type ConnectorOption = AutomationConnectorSelection & { ready: boolean };
+
+/**
+ * 工作空间单选器。
+ *
+ * TIPS: 视觉结构与连接器选择器保持一致，但这里是严格单选：选择新项会立即替换旧值并关闭浮层，
+ * 不使用 aria-multiselectable，也不保留多个勾选项。
+ *
+ * @param selectedId 当前选中的工作空间 id
+ * @param options 可选的本地工作空间
+ * @param onSelect 选择工作空间回调
+ */
+function WorkspaceSingleSelect(props: {
+  selectedId: string;
+  options: WorkspaceInfo[];
+  onSelect: (workspaceId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss);
+  const selected = props.options.find((workspace) => workspace.id === props.selectedId);
+  const selectedLabel = selected ? workspaceOptionLabel(selected) : "";
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={t("automation.workspace")}
+        onClick={() => setOpen((value) => !value)}
+        className={cn(FIELD, "flex items-center gap-2 pr-4 text-left")}
+      >
+        <span className={cn("min-w-0 flex-1 truncate", !selectedLabel && "text-dls-secondary")}>
+          {selectedLabel || t("automation.workspace_placeholder")}
+        </span>
+        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div role="listbox" aria-label={t("automation.workspace")} className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
+          <div className="max-h-64 overflow-y-auto p-2">
+            {props.options.length ? props.options.map((workspace) => {
+              const selectedOption = workspace.id === props.selectedId;
+              return (
+                <button
+                  key={workspace.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedOption}
+                  onClick={() => {
+                    props.onSelect(workspace.id);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-dls-hover",
+                    selectedOption && "bg-dls-hover/70",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{workspaceOptionLabel(workspace)}</span>
+                  {selectedOption ? <Check className="size-4 shrink-0 text-dls-text" strokeWidth={2.5} aria-hidden="true" /> : null}
+                </button>
+              );
+            }) : <p className="px-3 py-2 text-sm text-dls-secondary">{t("automation.workspace_placeholder")}</p>}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 获取工作空间选择器中的稳定展示名称。 */
+function workspaceOptionLabel(workspace: WorkspaceInfo): string {
+  return workspace.displayName?.trim() || workspace.name || workspace.id;
+}
 
 type AutomationPromptComposerProps = {
   value: string;
@@ -1327,7 +1422,7 @@ function ConnectorMultiSelect(props: {
         aria-expanded={open}
         aria-label={t("automation.connectors")}
         onClick={() => setOpen((value) => !value)}
-        className={cn(FIELD, "flex items-center gap-2 text-left")}
+        className={cn(FIELD, "flex items-center gap-2 pr-4 text-left")}
       >
         <span className={cn("min-w-0 flex-1 truncate", !summary && "text-dls-secondary")}>
           {summary || t("automation.connectors_placeholder")}
@@ -1348,14 +1443,11 @@ function ConnectorMultiSelect(props: {
                   aria-selected={checked}
                   disabled={!option.ready && !needsAuth}
                   onClick={() => needsAuth ? void props.onConnect(option.id) : props.onToggle(option)}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-dls-hover disabled:opacity-50"
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors hover:bg-dls-hover disabled:opacity-50",
+                    checked && "bg-dls-hover/70",
+                  )}
                 >
-                  <span className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded-md border border-[#ebebeb] dark:border-dls-border",
-                    checked && "border-dls-text bg-dls-text text-background",
-                  )}>
-                    {checked ? <Check size={13} strokeWidth={3} /> : null}
-                  </span>
                   <span className="min-w-0 flex-1 truncate">{option.label}</span>
                   {needsAuth ? (
                     <span className="shrink-0 text-xs text-dls-secondary">
@@ -1364,6 +1456,7 @@ function ConnectorMultiSelect(props: {
                   ) : !option.ready ? (
                     <span className="shrink-0 text-xs text-orange-9">{t("automation.connector_needs_reconnect")}</span>
                   ) : null}
+                  {checked ? <Check className="size-4 shrink-0 text-dls-text" strokeWidth={2.5} aria-hidden="true" /> : null}
                 </button>
               );
             }) : <p className="px-3 py-2 text-sm text-dls-secondary">{t("automation.connectors_empty")}</p>}

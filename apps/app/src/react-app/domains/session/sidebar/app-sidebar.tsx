@@ -730,6 +730,7 @@ export function AppSidebar(props: AppSidebarProps) {
     () => new Set(),
   );
   const previousSessionStatusRef = React.useRef<Record<string, string>>({});
+  const autoExpandedWorkspaceIdRef = React.useRef("");
 
   // Green unread dots: agent finished while the user was on another session.
   React.useEffect(() => {
@@ -737,8 +738,16 @@ export function AppSidebar(props: AppSidebarProps) {
     const previous = previousSessionStatusRef.current;
     const selectedId = props.selectedSessionId;
     const store = useSessionManagementStore.getState();
+    const accessibleMainSessionIds = new Set(
+      props.workspaceSessionGroups.flatMap((group) => group.sessions.filter(isMainSession).map((session) => session.id)),
+    );
+
+    // TIPS: 状态源还会返回子会话，但侧栏只暴露主会话。子会话若进入 unreadIds，用户没有对应
+    // item 可以点击清除，会导致导航栏绿色状态永久残留。
+    store.retainUnread(accessibleMainSessionIds);
 
     for (const [sessionId, status] of Object.entries(statuses)) {
+      if (!accessibleMainSessionIds.has(sessionId)) continue;
       if (sessionId === selectedId) {
         store.clearUnread(sessionId);
         continue;
@@ -751,7 +760,7 @@ export function AppSidebar(props: AppSidebarProps) {
 
     if (selectedId) store.clearUnread(selectedId);
     previousSessionStatusRef.current = statuses;
-  }, [props.selectedSessionId, props.sessionStatusById]);
+  }, [props.selectedSessionId, props.sessionStatusById, props.workspaceSessionGroups]);
 
   const expandWorkspace = React.useCallback((workspaceId: string) => {
     const id = workspaceId.trim();
@@ -797,7 +806,10 @@ export function AppSidebar(props: AppSidebarProps) {
 
   React.useEffect(() => {
     const id = props.selectedWorkspaceId.trim();
-    if (!id) return;
+    if (!id || autoExpandedWorkspaceIdRef.current === id) return;
+    // TIPS: 只在选中的工作区真正变化时自动展开一次。用户手动折叠当前工作区后，普通重渲染
+    // 或 onExpandWorkspace 回调身份变化都不能覆盖这次显式操作。
+    autoExpandedWorkspaceIdRef.current = id;
     expandWorkspace(id);
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
@@ -933,7 +945,7 @@ export function AppSidebar(props: AppSidebarProps) {
     () => resolveWorkspaceSessionIndicator(
       props.workspaceSessionGroups
         .filter((group) => group.workspace.workspaceType === "local")
-        .flatMap((group) => group.sessions),
+        .flatMap((group) => group.sessions.filter(isMainSession)),
       props.sessionStatusById,
       unreadIds,
     ),
@@ -1020,12 +1032,12 @@ export function AppSidebar(props: AppSidebarProps) {
                 layoutScroll
                 data-slot="sidebar-content"
                 data-sidebar="content"
-                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
+                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
               >
                 {pinnedSessions.length > 0 ? (
                   <GlobalPinnedSessions entries={pinnedSessions} />
                 ) : null}
-                <div className="flex flex-col gap-0">
+                <div className="flex flex-col gap-0.5">
                   {visibleWorkspaceSessionGroups.map((group) => (
                     <m.div
                       key={group.workspace.id}
@@ -1088,7 +1100,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
         </div>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuSub>
+            <SidebarMenuSub className="gap-0.5">
               {entries.map((entry) => (
                 <GlobalPinnedSessionTree
                   key={`${entry.group.workspace.id}:${entry.sessionId}`}
@@ -1133,10 +1145,10 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
               </button>
             }
           />
-          <CollapsibleContent>
+          <CollapsibleContent className="flex flex-col gap-0.5">
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuSub>
+                <SidebarMenuSub className="gap-0.5">
                   {entries.map((entry) => (
                     <GlobalArchivedSessionItem
                       key={`${entry.group.workspace.id}:${entry.session.id}`}
@@ -1220,7 +1232,6 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
 
 type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   workspace: WorkspaceInfo;
-  sessionCount: number;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
@@ -1231,7 +1242,6 @@ type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
 
 function WorkspaceHeader({
   workspace,
-  sessionCount,
   statusLabel,
   isError,
   isLoading,
@@ -1245,7 +1255,7 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "relative h-12 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
+        "relative h-10 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
         "group-hover/workspace-header:bg-sidebar-accent/25",
       )}
       onClick={(event) => {
@@ -1264,12 +1274,7 @@ function WorkspaceHeader({
       <div
         className={cn("min-w-0 flex-1", showActivity ? "pr-14" : "pr-7")}
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
-          <span className="shrink-0 rounded-md bg-foreground/[0.07] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-            {sessionCount}
-          </span>
-        </span>
+        <span className="block truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
           <span className={cn("mt-0.5 block truncate text-[11px] leading-none", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
@@ -1408,7 +1413,6 @@ function WorkspaceSidebarGroup({
             <div className="group/workspace-header relative max-md:hidden">
               <WorkspaceHeader
                 workspace={workspace}
-                sessionCount={getRootSessions(activeSessions).length}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={group.status === "loading" || isConnecting}
@@ -1454,8 +1458,8 @@ function WorkspaceSidebarGroup({
               </div>
             </div>
 
-            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-              <SidebarMenuSub className="ml-3 mt-0 border-l-0 pb-1 pl-1 pt-0">
+            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden pt-0.5 transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+              <SidebarMenuSub className="ml-3 mt-0 gap-0.5 border-l-0 pb-1 pl-1 pt-0">
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
@@ -1504,7 +1508,7 @@ function WorkspaceSidebarGroup({
                           const full = [...ids, ...allRootIds.filter((id) => !visible.has(id))];
                           store.getState().reorderSessions(workspace.id, full);
                         }}
-                        className="flex flex-col"
+                        className="flex flex-col gap-0.5"
                       >
                         {sessionRows.map((row) => (
                           <SessionMenuItem
@@ -1965,7 +1969,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
         axis="y"
         values={groups.map((group) => group.id)}
         onReorder={(ids) => store.getState().reorderGroups(workspaceId, ids)}
-        className="flex flex-col"
+        className="flex flex-col gap-0.5"
       >
         {groups.map(renderGroup)}
       </Reorder.Group>
@@ -1981,7 +1985,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
               expanded={ungroupedExpanded}
               onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
             />
-            <CollapsibleContent>
+            <CollapsibleContent className="pt-0.5">
               <Reorder.Group
                 as="div"
                 axis="y"
@@ -1995,7 +1999,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
                   const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
                   store.getState().reorderSessions(workspaceId, full);
                 }}
-                className="flex flex-col"
+                className="flex flex-col gap-0.5"
               >
                 {visibleUngroupedRows.map((row) => (
                   <React.Fragment key={row.session.id}>
@@ -2082,7 +2086,7 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
             workspaceId={workspaceId}
             onTitlePointerDown={(event) => dragControls.start(event)}
           />
-          <CollapsibleContent>
+          <CollapsibleContent className="flex flex-col gap-0.5 pt-0.5">
             {visibleRows.length > 0
               ? (
                 <>
@@ -2189,7 +2193,7 @@ function SessionMenuItem({
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
     // The left activity slot is the indent — dot-matrix sits in the chevron
     // lane and the title starts in the group-label lane without shifting.
-    "relative h-12 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
+    "relative h-10 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
     isSelected
       ? "!bg-black/[0.045] hover:!bg-black/[0.055] group-hover/menu-sub-item:!bg-black/[0.055] dark:!bg-white/[0.08] dark:hover:!bg-white/[0.095] dark:group-hover/menu-sub-item:!bg-white/[0.095]"
       : "hover:!bg-black/[0.025] group-hover/menu-sub-item:!bg-black/[0.025] dark:hover:!bg-white/[0.045] dark:group-hover/menu-sub-item:!bg-white/[0.045]",

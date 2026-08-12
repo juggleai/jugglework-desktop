@@ -69,6 +69,7 @@ type SessionManagementActions = {
   togglePin: (sessionId: string) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
+  retainUnread: (sessionIds: ReadonlySet<string>) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -203,6 +204,13 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             ? { unreadIds: state.unreadIds.filter((id) => id !== sessionId) }
             : state
         )),
+
+      /** 只保留当前侧栏仍可访问的主会话未读状态，清除历史、子会话和已删除会话残留。 */
+      retainUnread: (sessionIds) =>
+        set((state) => {
+          const unreadIds = state.unreadIds.filter((id) => sessionIds.has(id));
+          return unreadIds.length === state.unreadIds.length ? state : { unreadIds };
+        }),
 
       reorderSessions: (workspaceId, sessionIds) =>
         set((state) => ({
