@@ -2564,6 +2564,8 @@ export default {
   "automation.schedule_weekday_pick": "选择每周执行日",
   "automation.schedule_run_date": "执行日期",
   "automation.schedule_run_time": "执行时间",
+  "automation.schedule_hour": "小时",
+  "automation.schedule_minute": "分钟",
   "automation.schedule_frequency_label": "周期频率",
   "automation.schedule_month": "月份",
   "automation.schedule_day_of_month": "每月日期",

@@ -185,6 +185,7 @@ describe("Desktop automation catalog and routes", () => {
     expect(frequency).toMatch(/className="relative w-36 shrink-0"/);
     expect(frequency).toMatch(/pr-4 text-left/);
     expect(frequency).toMatch(/role="listbox"[\s\S]+rounded-2xl border border-dls-border/);
+    expect(frequency).toMatch(/absolute bottom-full left-0 right-0[^"]+mb-2/);
     expect(frequency).toMatch(/option\.label[\s\S]+selected \? <Check className="size-4 shrink-0/);
     expect(page).not.toMatch(/<select value=\{value\.frequency\}/);
     expect(page).toMatch(/const currentDate = today\(\);[\s\S]+setCursor\(startOfMonth\(currentDate\)\);[\s\S]+pickDay\(currentDate\)/);
@@ -200,6 +201,22 @@ describe("Desktop automation catalog and routes", () => {
     expect(fields).toMatch(/months: \[1\][\s\S]+dayOfMonth: 1/);
     expect(multiSelect).toMatch(/aria-multiselectable="true"/);
     expect(multiSelect).toMatch(/relative w-44 shrink-0/);
+    expect(multiSelect).toMatch(/absolute bottom-full left-0[^"]+mb-2/);
+  });
+
+  test("uses theme-matched time and single-date pickers instead of native browser popups", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const schedule = page.slice(page.indexOf("function ScheduleEditor"), page.indexOf("function PermissionDialog"));
+    const time = page.slice(page.indexOf("function TimeField"), page.indexOf("function TimePartList"));
+    const date = page.slice(page.indexOf("function SingleDateField"), page.indexOf("function DateRangeField"));
+    expect(schedule).not.toMatch(/type="time"|type="date"/);
+    expect(schedule).toMatch(/<TimeField value=\{value\.localTime\}/);
+    expect(schedule).toMatch(/<SingleDateField value=\{value\.localDate\}/);
+    expect(time).toMatch(/border border-dls-border bg-background[\s\S]+shadow-\[var\(--dls-shell-shadow\)\]/);
+    expect(time).toMatch(/absolute bottom-full left-0[^"]+mb-2/);
+    expect(date).toMatch(/<CalendarPanel[\s\S]+selectedDate=\{value\}/);
+    expect(date).toMatch(/absolute bottom-full left-0[^"]+mb-2/);
+    expect(date).toMatch(/data-date=\{date\}[\s\S]+aria-current=\{date === today\(\) \? "date"/);
   });
 
   test("uses the project checkbox visual and vertically centers the risk acknowledgement", () => {

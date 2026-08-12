@@ -2561,6 +2561,8 @@ export default {
   "automation.schedule_weekday_pick": "Pick the weekdays to run",
   "automation.schedule_run_date": "Run date",
   "automation.schedule_run_time": "Run time",
+  "automation.schedule_hour": "Hour",
+  "automation.schedule_minute": "Minute",
   "automation.schedule_frequency_label": "Recurrence",
   "automation.schedule_month": "Month",
   "automation.schedule_day_of_month": "Day of month",

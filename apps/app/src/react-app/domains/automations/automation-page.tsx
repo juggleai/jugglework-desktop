@@ -1701,9 +1701,9 @@ function ScheduleEditor({ value, onChange, client, activeRange }: {
         </div>
       ) : null}
       {value.kind === "once" ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={cn(FIELD, "w-36")} aria-label={t("automation.schedule_run_time")} />
-          <input type="date" value={value.localDate} onChange={(event) => onChange({ ...value, localDate: event.target.value })} className={cn(FIELD, "w-44")} aria-label={t("automation.schedule_run_date")} />
+        <div className="flex flex-nowrap items-center gap-3">
+          <TimeField value={value.localTime} onChange={(localTime) => onChange({ ...value, localTime })} label={t("automation.schedule_run_time")} />
+          <SingleDateField value={value.localDate} onChange={(localDate) => onChange({ ...value, localDate })} label={t("automation.schedule_run_date")} />
         </div>
       ) : null}
       <p className="mt-3 text-xs text-dls-secondary">{summaryWithoutTimezone(preview?.summary ?? scheduleLabel(value), value.timezone)}{preview?.nextRunAt ? ` · ${t("automation.schedule_next_run")} ${formatDateTime(preview.nextRunAt)}` : ""}</p>
@@ -1737,6 +1737,181 @@ function WeekdayPicker({ value, onChange, label }: { value: number[]; onChange: 
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * 主题化时间选择器
+ * @param value 本地时间（HH:mm）
+ * @param onChange 时间变更回调
+ * @param label 无障碍名称
+ */
+function TimeField({ value, onChange, label }: { value: string; onChange: (time: string) => void; label: string }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss);
+  const [hour = "00", minute = "00"] = value.split(":");
+  const selectTimePart = (part: "hour" | "minute", next: string) => {
+    onChange(part === "hour" ? `${next}:${minute}` : `${hour}:${next}`);
+  };
+
+  return (
+    <div ref={containerRef} className="relative w-32 shrink-0">
+      <button type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={label} onClick={() => setOpen((current) => !current)} className={cn(FIELD, "flex items-center gap-2 pr-3 text-left")}>
+        <Clock3 className="size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+        <span className="min-w-0 flex-1">{value}</span>
+        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? (
+        <div role="dialog" aria-label={label} className="absolute bottom-full left-0 z-40 mb-2 w-[220px] rounded-2xl border border-dls-border bg-background p-3 shadow-[var(--dls-shell-shadow)]">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2">
+            <TimePartList value={hour} values={numberStrings(24)} onChange={(next) => selectTimePart("hour", next)} label={t("automation.schedule_hour")} />
+            <span className="pt-2 text-base font-semibold text-dls-secondary">:</span>
+            <TimePartList value={minute} values={numberStrings(60)} onChange={(next) => selectTimePart("minute", next)} label={t("automation.schedule_minute")} />
+          </div>
+          <div className="mt-3 flex justify-end border-t border-dls-border pt-3">
+            <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-dls-hover">{t("common.confirm")}</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 时间选择器的小时或分钟列表
+ * @param value 当前值
+ * @param values 可选值
+ * @param onChange 选择回调
+ * @param label 无障碍名称
+ */
+function TimePartList({ value, values, onChange, label }: { value: string; values: string[]; onChange: (value: string) => void; label: string }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    const selected = selectedRef.current;
+    if (list && selected) list.scrollTop = selected.offsetTop - (list.clientHeight - selected.clientHeight) / 2;
+  }, []);
+  return (
+    <div ref={listRef} role="listbox" aria-label={label} className="max-h-52 overflow-y-auto rounded-xl bg-dls-hover/60 p-1">
+      {values.map((option) => {
+        const selected = option === value;
+        return (
+          <button key={option} ref={selected ? selectedRef : undefined} type="button" role="option" aria-selected={selected} onClick={() => onChange(option)} className={cn("flex h-9 w-full items-center justify-center rounded-lg text-sm transition-colors hover:bg-background", selected && "bg-dls-text font-medium text-background hover:bg-dls-text")}>
+            {option}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 生成从 00 开始的两位数字字符串。 */
+function numberStrings(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => String(index).padStart(2, "0"));
+}
+
+/**
+ * 单日期选择器
+ * @param value 已选日期（YYYY-MM-DD）
+ * @param onChange 日期变更回调
+ * @param label 无障碍名称
+ */
+function SingleDateField({ value, onChange, label }: { value: string; onChange: (date: string) => void; label: string }) {
+  const [open, setOpen] = useState(false);
+  const [cursor, setCursor] = useState(() => startOfMonth(value || today()));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissOnOutside(containerRef, open, dismiss);
+  const pickDay = (date: string) => {
+    onChange(date);
+    setCursor(startOfMonth(date));
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} className="relative w-40 shrink-0">
+      <button type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={label} onClick={() => { setOpen((current) => !current); setCursor(startOfMonth(value || today())); }} className={cn(FIELD, "flex items-center gap-2 pr-3 text-left")}>
+        <CalendarDays className="size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{value ? displayDate(value) : t("automation.schedule_run_date")}</span>
+        <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
+      </button>
+      {open ? <CalendarPanel cursor={cursor} onCursorChange={setCursor} selectedDate={value} onSelect={pickDay} label={label} footer={<button type="button" onClick={() => pickDay(today())} className="rounded-md px-2 py-1 hover:bg-dls-hover">{t("automation.range_today")}</button>} /> : null}
+    </div>
+  );
+}
+
+/**
+ * 自动化日期浮层的主题化日历面板
+ * @param cursor 当前展示月份
+ * @param onCursorChange 月份变更回调
+ * @param selectedDate 单选日期
+ * @param rangeStart 区间开始日期
+ * @param rangeEnd 区间结束日期
+ * @param onSelect 日期选择回调
+ * @param label 无障碍名称
+ * @param footer 底部操作区
+ */
+function CalendarPanel({ cursor, onCursorChange, selectedDate, rangeStart = "", rangeEnd = "", onSelect, label, footer }: {
+  cursor: CalendarCursor;
+  onCursorChange: (cursor: CalendarCursor) => void;
+  selectedDate?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  onSelect: (date: string) => void;
+  label: string;
+  footer: React.ReactNode;
+}) {
+  return (
+    <div role="dialog" aria-label={label} className="absolute bottom-full left-0 z-40 mb-2 w-[340px] rounded-2xl border border-dls-border bg-background p-4 shadow-[var(--dls-shell-shadow)]">
+      <div className="mb-3 flex items-center justify-between text-dls-secondary">
+        <div className="flex gap-1">
+          <button type="button" aria-label={t("automation.range_prev_year")} onClick={() => onCursorChange(shiftMonth(cursor, -12))} className="rounded-md px-2 py-1 hover:bg-dls-hover">«</button>
+          <button type="button" aria-label={t("automation.range_prev_month")} onClick={() => onCursorChange(shiftMonth(cursor, -1))} className="rounded-md px-2 py-1 hover:bg-dls-hover">‹</button>
+        </div>
+        <span className="text-sm font-semibold text-dls-text">{formatMonthTitle(cursor)}</span>
+        <div className="flex gap-1">
+          <button type="button" aria-label={t("automation.range_next_month")} onClick={() => onCursorChange(shiftMonth(cursor, 1))} className="rounded-md px-2 py-1 hover:bg-dls-hover">›</button>
+          <button type="button" aria-label={t("automation.range_next_year")} onClick={() => onCursorChange(shiftMonth(cursor, 12))} className="rounded-md px-2 py-1 hover:bg-dls-hover">»</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 text-center text-xs text-dls-secondary">
+        {weekdayInitialLabels().map((day, index) => <span key={index} className="py-1.5">{day}</span>)}
+      </div>
+      <div className="grid grid-cols-7">
+        {monthGrid(cursor).map((date) => {
+          const outside = !date.startsWith(`${cursor.year}-${String(cursor.month).padStart(2, "0")}`);
+          const edge = date === rangeStart || date === rangeEnd;
+          const inside = Boolean(rangeStart && rangeEnd && date > rangeStart && date < rangeEnd);
+          const selected = date === selectedDate;
+          return (
+            <button
+              key={date}
+              type="button"
+              data-date={date}
+              aria-label={displayDate(date)}
+              aria-selected={selected || edge || inside}
+              aria-current={date === today() ? "date" : undefined}
+              onClick={() => onSelect(date)}
+              className={cn(
+                "h-9 text-sm transition-colors",
+                outside && !selected && !edge && !inside && "text-dls-secondary/50",
+                inside && "bg-dls-hover",
+                rangeStart && date === rangeStart && "rounded-l-lg bg-dls-text text-background",
+                rangeEnd && date === rangeEnd && "rounded-r-lg bg-dls-text text-background",
+                selected && "rounded-lg bg-dls-text text-background",
+                !selected && !edge && !inside && "hover:bg-dls-hover",
+              )}
+            >
+              {Number(date.slice(8))}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center justify-between border-t border-dls-border pt-3 text-sm">{footer}</div>
     </div>
   );
 }
@@ -1800,46 +1975,14 @@ function DateRangeField({ startDate, endDate, onChange }: {
         ) : null}
       </div>
       {open ? (
-        <div role="dialog" aria-label={t("automation.active_range")} className="absolute bottom-full left-0 z-40 mb-2 w-[340px] rounded-2xl border border-dls-border bg-background p-4 shadow-[var(--dls-shell-shadow)]">
-          <div className="mb-3 flex items-center justify-between text-dls-secondary">
-            <div className="flex gap-1">
-              <button type="button" aria-label={t("automation.range_prev_year")} onClick={() => setCursor(shiftMonth(cursor, -12))} className="rounded-md px-2 py-1 hover:bg-dls-hover">«</button>
-              <button type="button" aria-label={t("automation.range_prev_month")} onClick={() => setCursor(shiftMonth(cursor, -1))} className="rounded-md px-2 py-1 hover:bg-dls-hover">‹</button>
-            </div>
-            <span className="text-sm font-semibold text-dls-text">{formatMonthTitle(cursor)}</span>
-            <div className="flex gap-1">
-              <button type="button" aria-label={t("automation.range_next_month")} onClick={() => setCursor(shiftMonth(cursor, 1))} className="rounded-md px-2 py-1 hover:bg-dls-hover">›</button>
-              <button type="button" aria-label={t("automation.range_next_year")} onClick={() => setCursor(shiftMonth(cursor, 12))} className="rounded-md px-2 py-1 hover:bg-dls-hover">»</button>
-            </div>
-          </div>
-          <div className="grid grid-cols-7 text-center text-xs text-dls-secondary">
-            {weekdayInitialLabels().map((day, index) => <span key={index} className="py-1.5">{day}</span>)}
-          </div>
-          <div className="grid grid-cols-7">
-            {monthGrid(cursor).map((date) => {
-              const outside = !date.startsWith(`${cursor.year}-${String(cursor.month).padStart(2, "0")}`);
-              const edge = date === rangeStart || date === rangeEnd;
-              const inside = Boolean(rangeStart && rangeEnd && date > rangeStart && date < rangeEnd);
-              return (
-                <button
-                  key={date}
-                  type="button"
-                  onClick={() => pickDay(date)}
-                  className={cn(
-                    "h-9 text-sm transition-colors",
-                    outside && !edge && !inside && "text-dls-secondary/50",
-                    inside && "bg-dls-hover",
-                    date === rangeStart && "rounded-l-lg bg-dls-text text-background",
-                    date === rangeEnd && "rounded-r-lg bg-dls-text text-background",
-                    !edge && !inside && "hover:bg-dls-hover",
-                  )}
-                >
-                  {Number(date.slice(8))}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex items-center justify-between border-t border-dls-border pt-3 text-sm">
+        <CalendarPanel
+          cursor={cursor}
+          onCursorChange={setCursor}
+          rangeStart={rangeStart}
+          rangeEnd={rangeEnd}
+          onSelect={pickDay}
+          label={t("automation.active_range")}
+          footer={<>
             <span className="text-dls-secondary">{pendingStart ? t("automation.range_pick_end") : t("automation.range_pick_start")}</span>
             <button
               type="button"
@@ -1852,8 +1995,8 @@ function DateRangeField({ startDate, endDate, onChange }: {
             >
               {t("automation.range_today")}
             </button>
-          </div>
-        </div>
+          </>}
+        />
       ) : null}
     </div>
   );
@@ -1928,7 +2071,7 @@ function CalendarFields({ value, onChange }: { value: Extract<AutomationSchedule
         <span className="text-sm text-dls-secondary">{t("automation.schedule_day_suffix")}</span>
       </div>
     </> : null}
-    <input type="time" value={value.localTime} onChange={(event) => onChange({ ...value, localTime: event.target.value })} className={cn(FIELD, "w-32 shrink-0")} aria-label={t("automation.schedule_run_time")} />
+    <TimeField value={value.localTime} onChange={(localTime) => onChange({ ...value, localTime })} label={t("automation.schedule_run_time")} />
   </div>;
 }
 
@@ -1965,7 +2108,7 @@ function CompactMultiSelect({ value, options, onChange, label, columns }: {
         <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
       {open ? (
-        <div role="listbox" aria-label={label} aria-multiselectable="true" className="absolute left-0 top-full z-40 mt-2 w-max min-w-full rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
+        <div role="listbox" aria-label={label} aria-multiselectable="true" className="absolute bottom-full left-0 z-40 mb-2 w-max min-w-full rounded-2xl border border-dls-border bg-background p-2 shadow-[var(--dls-shell-shadow)]">
           <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${columns}, minmax(42px, 1fr))` }}>
             {options.map((option) => {
               const checked = value.includes(option.value);
@@ -2034,7 +2177,7 @@ function CalendarFrequencySelect(props: { value: CalendarFrequency; onChange: (f
         <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
       {open ? (
-        <div role="listbox" aria-label={t("automation.schedule_frequency_label")} className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
+        <div role="listbox" aria-label={t("automation.schedule_frequency_label")} className="absolute bottom-full left-0 right-0 z-40 mb-2 overflow-hidden rounded-2xl border border-dls-border bg-background shadow-[var(--dls-shell-shadow)]">
           <div className="p-2">
             {options.map((option) => {
               const selected = option.value === props.value;

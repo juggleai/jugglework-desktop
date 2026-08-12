@@ -53,6 +53,8 @@ The editor MUST validate schedule fields before full-access confirmation. Intege
 
 Every valid draft SHALL show a localized human-readable schedule summary and its calculated next run before save. An invalid or occurrence-free draft SHALL show a field error instead of a misleading next-run value.
 
+The editor SHALL use theme-matched schedule, date, and time pickers rather than platform-native popup styling. The once-date picker SHALL share the same calendar presentation and month/year navigation as the active-range picker. All schedule popup panels—including recurrence frequency, weekday/date/month multi-selects, date calendars, and time pickers—SHALL open above their form controls. All controls SHALL remain usable in both light and dark themes.
+
 #### Scenario: Interval amount is invalid
 - **WHEN** the user enters zero, a negative value, or a decimal interval amount
 - **THEN** Save is blocked and the amount field explains that a positive whole number is required
@@ -64,6 +66,10 @@ Every valid draft SHALL show a localized human-readable schedule summary and its
 #### Scenario: Valid schedule is previewed
 - **WHEN** all schedule fields and optional active range are valid
 - **THEN** the form displays the localized recurrence summary and exact next-run instant that will be persisted
+
+#### Scenario: User picks a once date and time
+- **WHEN** the user opens the once-date or time control
+- **THEN** the popup opens above its form control using the current page theme, and the date control presents the same calendar navigation as the effective-date range
 
 ### Requirement: Interval anchor semantics
 Interval occurrences MUST be derived from the stored anchor and interval amount/unit, never from the prior run's start, completion, failure, or queue delay. The anchor MAY precede save/edit time. Create/edit SHALL choose the first anchor-derived occurrence at or after the local commit time and SHALL NOT create catch-up history for earlier anchor-derived occurrences.
