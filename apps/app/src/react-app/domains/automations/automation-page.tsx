@@ -136,6 +136,20 @@ export function AutomationPage(props: AutomationPageProps) {
     action?.();
   };
 
+  /**
+   * 取消自动化编辑。
+   * TIPS: 新建页的「取消」语义就是放弃尚未创建的草稿并返回列表，不再追加二次确认；
+   * 编辑已有任务时仍保护未保存修改，其他侧栏导航离开新建页也继续走丢弃确认。
+   */
+  const cancelEditor = () => {
+    if (location.pathname === "/automations/new") {
+      setEditorDirty(false);
+      navigate("/automations");
+      return;
+    }
+    navigateAfterDiscard(() => navigate("/automations"));
+  };
+
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
       <AppNavigationRail
@@ -147,7 +161,10 @@ export function AutomationPage(props: AutomationPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      <main className="min-h-0 min-w-0 flex-1 overflow-auto bg-dls-surface/40">
+      <main className={cn(
+        "min-h-0 min-w-0 flex-1 bg-dls-surface/40",
+        templatesVisible ? "overflow-auto" : "overflow-hidden",
+      )}>
         {templatesVisible ? (
           <TemplateGallery
             onBack={() => navigate("/automations")}
@@ -164,7 +181,7 @@ export function AutomationPage(props: AutomationPageProps) {
               duplicateSourceId={location.pathname === "/automations/new" ? new URLSearchParams(location.search).get("duplicate") : null}
               templateId={readTemplateId(location.state)}
               onDirtyChange={setEditorDirty}
-              onCancel={() => navigateAfterDiscard(() => navigate("/automations"))}
+              onCancel={cancelEditor}
               onSaved={() => { setEditorDirty(false); navigate("/automations"); }}
             />
           ) : (
@@ -287,85 +304,93 @@ function AutomationDashboard(props: {
   const visibleRuns = runs.filter((run) => !normalized || `${run.automationName} ${run.workspaceName} ${run.errorMessage ?? ""}`.toLocaleLowerCase().includes(normalized));
 
   return (
-    <div className="mx-auto flex min-h-full max-w-[1500px] flex-col px-6 py-5 lg:px-10">
-      <header className="flex flex-wrap items-center gap-3">
-        <SegmentedTabs history={props.history} />
-        <div className="ml-auto flex items-center gap-3">
-          {(!props.history && tasks.length > 0) || (props.history && runs.length > 0) ? (
-            <label className="relative hidden sm:block">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-9 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-sm outline-none" />
-            </label>
-          ) : null}
-          {/* TIPS:有任务之后模板画廊从列表底部挪到「从模版添加」入口后面，列表页只留任务本身。 */}
-          {!props.history && tasks.length > 0 ? (
-            <>
-              <button
-                type="button"
-                onClick={() => { setSelecting((value) => !value); setSelectedIds(new Set()); }}
-                className={cn(
-                  "inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover",
-                  selecting && "border-dls-text bg-dls-hover",
-                )}
-              >
-                <ListChecks className="size-4" />{selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <header className="z-30 shrink-0 border-b border-dls-border bg-background/95 mac:titlebar-drag">
+        <div className="mx-auto flex h-14 w-full max-w-[1500px] items-center gap-3 px-6 lg:px-10">
+          <div className="mac:titlebar-no-drag">
+            <SegmentedTabs history={props.history} />
+          </div>
+          <div className="ml-auto flex items-center gap-3 mac:titlebar-no-drag">
+            {(!props.history && tasks.length > 0) || (props.history && runs.length > 0) ? (
+              <label className="relative hidden sm:block">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-9 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-sm outline-none" />
+              </label>
+            ) : null}
+            {/* TIPS:有任务之后模板画廊从列表底部挪到「从模版添加」入口后面，列表页只留任务本身。 */}
+            {!props.history && tasks.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setSelecting((value) => !value); setSelectedIds(new Set()); }}
+                  className={cn(
+                    "inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover",
+                    selecting && "border-dls-text bg-dls-hover",
+                  )}
+                >
+                  <ListChecks className="size-4" />{selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
+                </button>
+                <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover">
+                  <Newspaper className="size-4" />{t("automation.from_template")}
+                </button>
+              </>
+            ) : null}
+            {!props.history && tasks.length > 0 ? (
+              <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-sm font-medium text-background hover:opacity-90">
+                <Plus className="size-4" />{t("automation.add")}
               </button>
-              <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover">
-                <Newspaper className="size-4" />{t("automation.from_template")}
-              </button>
-            </>
-          ) : null}
-          {!props.history && tasks.length > 0 ? (
-            <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-sm font-medium text-background hover:opacity-90">
-              <Plus className="size-4" />{t("automation.add")}
-            </button>
-          ) : null}
+            ) : null}
+          </div>
         </div>
       </header>
 
-      {props.history && (runs.length > 0 || status || trigger || fromDate || toDate) ? (
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="运行记录筛选">
-          <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className={FIELD} aria-label="运行状态"><option value="">全部状态</option>{(["queued", "running", "succeeded", "failed", "skipped", "cancelled"] as const).map((value) => <option key={value} value={value}>{runStateLabel(value)}</option>)}</select>
-          <select value={trigger} onChange={(event) => setTrigger(event.target.value as typeof trigger)} className={FIELD} aria-label="触发来源"><option value="">全部触发方式</option>{(["scheduled", "catchup", "manual"] as const).map((value) => <option key={value} value={value}>{triggerLabel(value)}</option>)}</select>
-          <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className={FIELD} aria-label="计划时间从" />
-          <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className={FIELD} aria-label="计划时间至" />
-        </div>
-      ) : null}
-
-      {error ? <Notice tone="error">{error}<button type="button" className="ml-3 underline" onClick={() => void (props.client ? load() : props.onReconnect())}>{t("automation.retry")}</button></Notice> : null}
-      {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : null}
-      {!loading && props.history ? <RunHistory runs={visibleRuns} /> : null}
-      {!loading && !props.history ? (
-        <>
-          {selecting ? (
-            <BatchActionBar
-              total={visibleTasks.length}
-              selected={selectedIds}
-              busy={batchBusy}
-              onToggleAll={() => setSelectedIds((current) => (
-                current.size === visibleTasks.length ? new Set() : new Set(visibleTasks.map((task) => task.definition.id))
-              ))}
-              onDelete={() => setBatchDeleteOpen(true)}
-            />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex min-h-full w-full max-w-[1500px] flex-col px-6 pb-8 pt-5 lg:px-10">
+          {props.history && (runs.length > 0 || status || trigger || fromDate || toDate) ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="运行记录筛选">
+              <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className={FIELD} aria-label="运行状态"><option value="">全部状态</option>{(["queued", "running", "succeeded", "failed", "skipped", "cancelled"] as const).map((value) => <option key={value} value={value}>{runStateLabel(value)}</option>)}</select>
+              <select value={trigger} onChange={(event) => setTrigger(event.target.value as typeof trigger)} className={FIELD} aria-label="触发来源"><option value="">全部触发方式</option>{(["scheduled", "catchup", "manual"] as const).map((value) => <option key={value} value={value}>{triggerLabel(value)}</option>)}</select>
+              <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className={FIELD} aria-label="计划时间从" />
+              <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className={FIELD} aria-label="计划时间至" />
+            </div>
           ) : null}
-          {tasks.length === 0 ? <FirstAutomation onCreate={() => navigate("/automations/new")} /> : (
-            <TaskList
-              tasks={visibleTasks}
-              client={props.client}
-              reload={refresh}
-              selecting={selecting}
-              selectedIds={selectedIds}
-              onToggleSelected={(id) => setSelectedIds((current) => {
-                const next = new Set(current);
-                if (!next.delete(id)) next.add(id);
-                return next;
-              })}
-            />
-          )}
-          {tasks.length === 0 ? <TemplateCatalog onSelect={(template) => navigate("/automations/new", { state: { templateId: template.id } })} /> : null}
-        </>
-      ) : null}
-      {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-auto mt-6 rounded-xl border border-dls-border px-5 py-2 text-sm">加载更多</button> : null}
+
+          {error ? <Notice tone="error">{error}<button type="button" className="ml-3 underline" onClick={() => void (props.client ? load() : props.onReconnect())}>{t("automation.retry")}</button></Notice> : null}
+          {loading ? <div className="flex min-h-72 items-center justify-center text-dls-secondary">{t("automation.loading")}</div> : null}
+          {!loading && props.history ? <RunHistory runs={visibleRuns} /> : null}
+          {!loading && !props.history ? (
+            <>
+              {selecting ? (
+                <BatchActionBar
+                  total={visibleTasks.length}
+                  selected={selectedIds}
+                  busy={batchBusy}
+                  onToggleAll={() => setSelectedIds((current) => (
+                    current.size === visibleTasks.length ? new Set() : new Set(visibleTasks.map((task) => task.definition.id))
+                  ))}
+                  onDelete={() => setBatchDeleteOpen(true)}
+                />
+              ) : null}
+              {tasks.length === 0 ? <FirstAutomation onCreate={() => navigate("/automations/new")} /> : (
+                <TaskList
+                  tasks={visibleTasks}
+                  client={props.client}
+                  reload={refresh}
+                  selecting={selecting}
+                  selectedIds={selectedIds}
+                  onToggleSelected={(id) => setSelectedIds((current) => {
+                    const next = new Set(current);
+                    if (!next.delete(id)) next.add(id);
+                    return next;
+                  })}
+                />
+              )}
+              {tasks.length === 0 ? <TemplateCatalog onSelect={(template) => navigate("/automations/new", { state: { templateId: template.id } })} /> : null}
+            </>
+          ) : null}
+          {!loading && nextCursor ? <button type="button" onClick={() => void load(nextCursor, true)} className="mx-auto mt-6 rounded-xl border border-dls-border px-5 py-2 text-sm">加载更多</button> : null}
+        </div>
+      </div>
       <ConfirmModal
         open={batchDeleteOpen}
         title={t("automation.delete")}
@@ -1040,100 +1065,108 @@ function AutomationEditor(props: {
 
   if (loading) return <div className="flex h-full items-center justify-center text-dls-secondary">正在加载…</div>;
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5 lg:px-10" aria-busy={saving}>
-      <header className="mb-8 flex items-center gap-3">
-        <AutomationBreadcrumb
-          onBack={props.onCancel}
-          current={name || t(props.automationId ? "automation.edit_task" : "automation.new_task")}
-        />
-        <div className="ml-auto flex gap-1.5">
-          <button type="button" onClick={props.onCancel} className="inline-flex h-9 max-h-9 items-center rounded-full border border-dls-border bg-transparent px-4 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3">
-            {t("automation.cancel")}
-          </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={requestSave}
-            className={cn(
-              "inline-flex h-9 max-h-9 items-center rounded-full px-4 text-[13px] font-medium transition-colors",
-              saving
-                ? "bg-gray-4 text-gray-10"
-                : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]",
-            )}
-          >
-            {saving ? t("automation.saving") : t("automation.save")}
-          </button>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" aria-busy={saving}>
+      <header className="z-30 shrink-0 border-b border-dls-border bg-background/95 mac:titlebar-drag">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-6 lg:px-10">
+          <div className="min-w-0 mac:titlebar-no-drag">
+            <AutomationBreadcrumb
+              onBack={props.onCancel}
+              current={name || t(props.automationId ? "automation.edit_task" : "automation.new_task")}
+            />
+          </div>
+          <div className="ml-auto flex shrink-0 gap-1.5 mac:titlebar-no-drag">
+            <button type="button" onClick={props.onCancel} className="inline-flex h-9 max-h-9 items-center rounded-full border border-dls-border bg-transparent px-4 text-[13px] font-medium text-gray-11 transition-colors hover:bg-gray-3">
+              {t("automation.cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={requestSave}
+              className={cn(
+                "inline-flex h-9 max-h-9 items-center rounded-full px-4 text-[13px] font-medium transition-colors",
+                saving
+                  ? "bg-gray-4 text-gray-10"
+                  : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]",
+              )}
+            >
+              {saving ? t("automation.saving") : t("automation.save")}
+            </button>
+          </div>
         </div>
       </header>
-      {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
-      {error ? <Notice tone="error">{error}</Notice> : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-6xl px-6 pb-8 pt-5 lg:px-10">
+          {warningVisible ? <Notice>{t("automation.warning")}<button type="button" aria-label="关闭自动化运行提示" onClick={() => setWarningVisible(false)} className="float-right rounded p-0.5"><X className="size-4" /></button></Notice> : null}
+          {error ? <Notice tone="error">{error}</Notice> : null}
 
-      <div className="mt-7 space-y-7">
-        <Field label={t("automation.name")}><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_placeholder")} aria-label={t("automation.name")} /></Field>
-        <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
-          <WorkspaceSingleSelect
-            selectedId={workspaceId}
-            options={workspaces}
-            onSelect={setWorkspaceId}
-          />
-        </Field>
-        <Field label={t("automation.prompt")}>
-          <AutomationPromptComposer
-            value={prompt}
-            onChange={setPrompt}
-            dependencies={selectableDependencies}
-            dependenciesLoading={dependenciesLoading}
-            model={model}
-            onModelChange={applyModel}
-            selectedModel={selectedModel}
-            agentId={agentId}
-            onAgentChange={setAgentId}
-            editorRef={promptEditorRef}
-            skillIds={skillIds}
-            onInsertSkill={insertSkill}
-            permission={permission}
-            onPermissionChange={setPermission}
-          />
-          <p className="mt-2 text-xs text-dls-secondary">{t("automation.prompt_hint")}</p>
-          {dependenciesError ? (
-            <p className="mt-2 text-xs text-red-9">
-              {t("automation.dependencies_failed")}{dependenciesError}
-              <button type="button" className="ml-2 underline" onClick={() => setReloadDependenciesToken((value) => value + 1)}>{t("automation.retry")}</button>
-            </p>
-          ) : null}
-        </Field>
-        <Field label={t("automation.connectors")} hint={t("automation.connectors_hint")}>
-          <ConnectorMultiSelect
-            selected={connectors}
-            options={connectorOptions}
-            connectingId={orgConnectors.connectingId}
-            onToggle={(option) => setConnectors((current) => (
-              current.some((connector) => connectorKey(connector) === connectorKey(option))
-                ? current.filter((connector) => connectorKey(connector) !== connectorKey(option))
-                : [...current, { id: option.id, label: option.label, source: option.source }]
-            ))}
-            onConnect={orgConnectors.connect}
-            onManage={() => props.onManageConnectors?.()}
-          />
-          {orgConnectors.error ? <p className="mt-2 text-xs text-red-9">{t("automation.connectors_load_failed")}{orgConnectors.error}</p> : null}
-          {template?.recommendedConnectorIds.length ? <p className="mt-2 text-xs text-dls-secondary">{t("automation.connectors_recommended")}{template.recommendedConnectorIds.join("、")}</p> : null}
-        </Field>
-        <ScheduleEditor
-          value={schedule}
-          onChange={applySchedule}
-          client={props.client}
-          activeRange={startDate && endDate ? { startDate, endDate } : undefined}
-        />
-        {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
-        {schedule.kind !== "once" ? (
-          <Field label={t("automation.active_range")} hint={t("automation.active_range_hint")}>
-            <DateRangeField
-              startDate={startDate}
-              endDate={endDate}
-              onChange={(range) => { setStartDate(range.startDate); setEndDate(range.endDate); }}
+          <div className="mt-7 space-y-7">
+            <Field label={t("automation.name")}><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} className={FIELD} placeholder={t("automation.name_placeholder")} aria-label={t("automation.name")} /></Field>
+            <Field label={t("automation.workspace")} hint={t("automation.workspace_hint")}>
+              <WorkspaceSingleSelect
+                selectedId={workspaceId}
+                options={workspaces}
+                onSelect={setWorkspaceId}
+              />
+            </Field>
+            <Field label={t("automation.prompt")}>
+              <AutomationPromptComposer
+                value={prompt}
+                onChange={setPrompt}
+                dependencies={selectableDependencies}
+                dependenciesLoading={dependenciesLoading}
+                model={model}
+                onModelChange={applyModel}
+                selectedModel={selectedModel}
+                agentId={agentId}
+                onAgentChange={setAgentId}
+                editorRef={promptEditorRef}
+                skillIds={skillIds}
+                onInsertSkill={insertSkill}
+                permission={permission}
+                onPermissionChange={setPermission}
+              />
+              <p className="mt-2 text-xs text-dls-secondary">{t("automation.prompt_hint")}</p>
+              {dependenciesError ? (
+                <p className="mt-2 text-xs text-red-9">
+                  {t("automation.dependencies_failed")}{dependenciesError}
+                  <button type="button" className="ml-2 underline" onClick={() => setReloadDependenciesToken((value) => value + 1)}>{t("automation.retry")}</button>
+                </p>
+              ) : null}
+            </Field>
+            <Field label={t("automation.connectors")} hint={t("automation.connectors_hint")}>
+              <ConnectorMultiSelect
+                selected={connectors}
+                options={connectorOptions}
+                connectingId={orgConnectors.connectingId}
+                onToggle={(option) => setConnectors((current) => (
+                  current.some((connector) => connectorKey(connector) === connectorKey(option))
+                    ? current.filter((connector) => connectorKey(connector) !== connectorKey(option))
+                    : [...current, { id: option.id, label: option.label, source: option.source }]
+                ))}
+                onConnect={orgConnectors.connect}
+                onManage={() => props.onManageConnectors?.()}
+              />
+              {orgConnectors.error ? <p className="mt-2 text-xs text-red-9">{t("automation.connectors_load_failed")}{orgConnectors.error}</p> : null}
+              {template?.recommendedConnectorIds.length ? <p className="mt-2 text-xs text-dls-secondary">{t("automation.connectors_recommended")}{template.recommendedConnectorIds.join("、")}</p> : null}
+            </Field>
+            <ScheduleEditor
+              value={schedule}
+              onChange={applySchedule}
+              client={props.client}
+              activeRange={startDate && endDate ? { startDate, endDate } : undefined}
             />
-          </Field>
-        ) : null}
+            {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
+            {schedule.kind !== "once" ? (
+              <Field label={t("automation.active_range")} hint={t("automation.active_range_hint")}>
+                <DateRangeField
+                  startDate={startDate}
+                  endDate={endDate}
+                  onChange={(range) => { setStartDate(range.startDate); setEndDate(range.endDate); }}
+                />
+              </Field>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       {permissionOpen ? <PermissionDialog accepted={riskAccepted} saving={saving} onAccepted={setRiskAccepted} onCancel={() => setPermissionOpen(false)} onConfirm={() => void save()} /> : null}

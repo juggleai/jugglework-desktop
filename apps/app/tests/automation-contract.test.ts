@@ -120,7 +120,7 @@ describe("Desktop automation catalog and routes", () => {
 
   test("matches the automation editor actions to the session Run task button", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
-    const editorActions = page.slice(page.indexOf('className="ml-auto flex gap-1.5"'), page.indexOf("<ScheduleEditor"));
+    const editorActions = page.slice(page.indexOf('className="ml-auto flex shrink-0 gap-1.5 mac:titlebar-no-drag"'), page.indexOf("<ScheduleEditor"));
     expect(editorActions).toMatch(/h-9 max-h-9 items-center rounded-full[^\"]+text-\[13px\] font-medium/);
     expect(editorActions).toMatch(/bg-\[var\(--dls-accent\)\] text-\[var\(--dls-accent-fg\)\]/);
     expect(editorActions).toMatch(/border border-dls-border bg-transparent/);
@@ -166,12 +166,14 @@ describe("Desktop automation catalog and routes", () => {
     expect(page).not.toMatch(/window\.confirm\(t\("automation\.(?:batch_)?delete_confirm/);
   });
 
-  test("uses the same project dialog layout when discarding a new automation draft", () => {
+  test("cancels a new draft directly while retaining discard protection for other navigation", () => {
     const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
     expect(page).toMatch(/const \[discardConfirmOpen, setDiscardConfirmOpen\] = useState\(false\)/);
     expect(page).toMatch(/pendingDiscardActionRef\.current = action;[\s\S]+setDiscardConfirmOpen\(true\)/);
     expect(page).toMatch(/open=\{discardConfirmOpen\}[\s\S]+automation\.discard_confirm[\s\S]+variant="warning"/);
     expect(page).toMatch(/const confirmDiscard = \(\) => \{[\s\S]+setEditorDirty\(false\);[\s\S]+action\?\.\(\)/);
+    expect(page).toMatch(/const cancelEditor = \(\) => \{[\s\S]+location\.pathname === "\/automations\/new"[\s\S]+setEditorDirty\(false\);[\s\S]+navigate\("\/automations"\);[\s\S]+return;/);
+    expect(page).toMatch(/onCancel=\{cancelEditor\}/);
     expect(page).not.toMatch(/window\.confirm\(t\("automation\.discard_confirm"\)\)/);
   });
 
@@ -194,5 +196,28 @@ describe("Desktop automation catalog and routes", () => {
     expect(permission).toMatch(/items-center gap-3 text-left text-sm/);
     expect(permission).toMatch(/rounded-md border border-\[#ebebeb\][\s\S]+props\.accepted && "border-dls-text bg-dls-text text-background"/);
     expect(permission).not.toMatch(/type="checkbox"|items-start|mt-0\.5 size-5/);
+  });
+
+  test("keeps automation editor actions visible in a draggable fixed header", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const editor = page.slice(page.indexOf("function AutomationEditor"), page.indexOf("type ConnectorOption"));
+    expect(page).toMatch(/templatesVisible \? "overflow-auto" : "overflow-hidden"/);
+    expect(editor).toMatch(/flex h-full min-h-0 flex-col overflow-hidden/);
+    expect(editor).toMatch(/<header className="z-30 shrink-0[^\"]+mac:titlebar-drag">/);
+    expect(editor).toMatch(/mac:titlebar-no-drag[\s\S]+<AutomationBreadcrumb/);
+    expect(editor).toMatch(/ml-auto flex shrink-0 gap-1\.5 mac:titlebar-no-drag/);
+    expect(editor).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
+  });
+
+  test("matches the fixed draggable editor header on task and run-list pages", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const dashboard = page.slice(page.indexOf("function AutomationDashboard"), page.indexOf("function SegmentedTabs"));
+    expect(page).toMatch(/templatesVisible \? "overflow-auto" : "overflow-hidden"/);
+    expect(dashboard).toMatch(/flex h-full min-h-0 flex-col overflow-hidden/);
+    expect(dashboard).toMatch(/<header className="z-30 shrink-0 border-b border-dls-border bg-background\/95 mac:titlebar-drag">/);
+    expect(dashboard).toMatch(/mx-auto flex h-14 w-full max-w-\[1500px\]/);
+    expect(dashboard).toMatch(/<div className="mac:titlebar-no-drag">[\s\S]+<SegmentedTabs/);
+    expect(dashboard).toMatch(/ml-auto flex items-center gap-3 mac:titlebar-no-drag/);
+    expect(dashboard).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
   });
 });
