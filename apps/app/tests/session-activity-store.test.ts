@@ -96,4 +96,27 @@ describe("session activity reconciliation", () => {
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
     expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
   });
+
+  test("treats finish_reason stop with an incomplete diagnostic as terminal across stale busy snapshots", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt!;
+    store.refreshStalledStatuses(startedAt + SESSION_STALLED_AFTER_MS + 1);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("stalled");
+
+    store.setCompletionDiagnostic(workspaceId, sessionId, true, "stop");
+
+    const completed = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!;
+    expect(completed.status).toBe("incomplete");
+    expect(completed.runActive).toBeFalse();
+    expect(completed.stalledAt).toBeNull();
+
+    store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "busy" } }]);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("incomplete");
+
+    // A real new run comes through the live status path and remains restartable.
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+    expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
+  });
 });

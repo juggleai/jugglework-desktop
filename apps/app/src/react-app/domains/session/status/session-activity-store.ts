@@ -188,7 +188,11 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           ...nextState,
           ...updateRecord(nextState, id, sessionId, (record) => {
             const normalized = normalizeRunStatus(status);
-            const runActive = normalized === "running" || normalized === "retry";
+            const snapshotRunActive = normalized === "running" || normalized === "retry";
+            // TIPS: 工作区会话列表可能在 session.idle 之后短暂重放旧 busy 快照。已经写入
+            // completion diagnostic 的终态不能被这类列表快照复活；真正的新任务会先通过实时
+            // setRunStatus(running) 清除 completionBlocked，再由快照继续维护。
+            const runActive = snapshotRunActive && !record.completionBlocked;
             const starting = runActive && !record.runActive;
             return {
               ...record,
@@ -218,7 +222,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     if (!workspace || !session) return;
     set((state) => updateRecord(state, workspace, session, (record) => {
       const normalized = normalizeRunStatus(status);
-      const runActive = normalized === "running" || normalized === "retry";
+      const snapshotRunActive = normalized === "running" || normalized === "retry";
+      const runActive = snapshotRunActive && !record.completionBlocked;
       const starting = runActive && !record.runActive;
       return {
         ...record,
@@ -376,6 +381,15 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       ...record,
       completionBlocked: blocked,
       finishReason: finishReason?.trim() || record.finishReason,
+      // Task incomplete 是终态而不是活动状态。即使 provider 断连或 idle 事件乱序，也必须立即
+      // 清掉 loading 相关字段；否则切换会话后旧 busy/stalled 状态会再次出现在侧栏。
+      runActive: blocked ? false : record.runActive,
+      assistantOutput: blocked ? false : record.assistantOutput,
+      compacting: blocked ? false : record.compacting,
+      waitingPermissionIds: blocked ? [] : record.waitingPermissionIds,
+      waitingQuestionIds: blocked ? [] : record.waitingQuestionIds,
+      lastMeaningfulProgressAt: blocked ? null : record.lastMeaningfulProgressAt,
+      stalledAt: blocked ? null : record.stalledAt,
     })));
   },
   markFinishReason: (workspaceId, sessionId, finishReason) => {
