@@ -932,11 +932,7 @@ function MessageGroup({
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
-  // After the task completes, the process was already visible while streaming;
-  // showing it again as a collapsed block is redundant. Keep the disclosure
-  // only while live (to surface the active tool) or as a fallback when there
-  // is no final summary to show.
-  const showProcessDisclosure = processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)
+  const showProcessDisclosure = processItems.length > 0
   let userMessageIndex = items[0]?.index ?? -1
   while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
     userMessageIndex -= 1
