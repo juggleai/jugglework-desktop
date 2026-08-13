@@ -49,3 +49,18 @@ describe("gateway credential mirror", () => {
     expect(storeSource).toContain("await removeGatewayMirror(existingImported.cloudProviderId);");
   });
 });
+
+describe("upgrade from a build without the mirror", () => {
+  test("bumps the metadata version so existing imports are rewritten once", () => {
+    // Providers imported by an older build carry no mirror variable. The sync
+    // pass only re-imports when isCloudProviderOutOfSync says so, and nothing
+    // else about those providers changed — the version counter is what makes
+    // the upgrade self-healing instead of requiring a manual re-import.
+    const configSource = readFileSync(
+      new URL("../src/react-app/domains/connections/provider-auth/cloud-provider-config.ts", import.meta.url),
+      "utf8",
+    );
+    const version = Number(configSource.match(/CLOUD_PROVIDER_METADATA_VERSION = (\d+)/)?.[1]);
+    expect(version).toBeGreaterThanOrEqual(4);
+  });
+});

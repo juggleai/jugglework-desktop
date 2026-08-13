@@ -143,8 +143,13 @@ export const getProviderModelIds = (
  * deployment catalog. 2: that backfill no longer reads the catalog through the
  * HTTP cache, so blocks written from a stale catalog are rewritten. 3: hosted
  * cloud imports also read the deployment catalog, including model variants.
+ * 4: imports also mirror the gateway token to the user env store
+ * (`gatewayMirrorEnvName`) so stdio MCP servers can read it — providers
+ * imported by an older build have no such variable and would otherwise leave
+ * every gateway-backed MCP reporting a missing credential until the member
+ * re-imported by hand.
  */
-export const CLOUD_PROVIDER_METADATA_VERSION = 3;
+export const CLOUD_PROVIDER_METADATA_VERSION = 4;
 
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
