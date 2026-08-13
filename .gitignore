@@ -18,6 +18,9 @@ _worktrees/
 
 # Desktop sidecars
 apps/desktop/resources/sidecars/
+!apps/desktop/resources/sidecars/
+apps/desktop/resources/sidecars/*
+!apps/desktop/resources/sidecars/codex-versions.json
 apps/desktop/server/
 
 # Env

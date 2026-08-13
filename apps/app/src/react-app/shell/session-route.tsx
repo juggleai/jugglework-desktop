@@ -105,14 +105,16 @@ import {
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
-import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
+import { getAgentRuntimeClient, ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
+import { newRuntimeSessionId, selectedRuntimeFor, useRuntimeSelectionStore } from "@/react-app/domains/session/sync/runtime-selection-store";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { buildJuggleWorkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
 import { firstLineLocalFileParts, joinWorkspaceRelativePath, toFileUrl } from "@/react-app/domains/session/sync/prompt-file-parts";
-import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
+import { composerAttachmentsToRuntimeContent, composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
+import { modelSupportsImageInput } from "@/react-app/domains/session/sync/attachment-support";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
@@ -444,6 +446,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const runtimeSelection = useRuntimeSelectionStore();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
   const reloadCoordinator = useReloadCoordinator();
@@ -585,6 +588,34 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   // Agent selection is persisted in local prefs (like the model variant) so
   // it survives reloads instead of silently falling back to "build" (#2101).
   const selectedAgent = local.prefs.selectedAgent;
+  const selectedRuntimeKind = selectedRuntimeFor({
+    workspaceId: selectedWorkspaceId,
+    workspaceType: selectedWorkspace?.workspaceType === "remote" ? "remote" : "local",
+    sessionId: selectedSessionId,
+    state: runtimeSelection,
+  });
+  useEffect(() => {
+    if (!selectedSessionId || selectedRuntimeKind !== "codex") return;
+    const binding = useRuntimeSelectionStore.getState().sessionBindings[selectedSessionId];
+    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+    if (!binding || binding.ready || !orgId || !selectedWorkspaceId || !selectedWorkspaceRoot) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const runtime = getAgentRuntimeClient("codex");
+        await runtime.startWorkspace({ orgId, workspaceId: selectedWorkspaceId, cwd: binding.cwd || selectedWorkspaceRoot });
+        const thread = await runtime.resumeThread({
+          orgId, workspaceId: selectedWorkspaceId, sessionId: selectedSessionId,
+          backendThreadId: binding.backendThreadId, modelProviderId: binding.modelProviderId,
+          modelId: binding.modelId, reasoningEffort: binding.reasoningEffort,
+        });
+        if (!cancelled) useRuntimeSelectionStore.getState().bindThread(thread);
+      } catch (error) {
+        if (!cancelled) toast.error(t("runtime.codex_start_failed"), { description: error instanceof Error ? error.message : t("app.unknown_error") });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedRuntimeKind, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot]);
   const setSelectedAgent = useCallback(
     (agent: string | null) => {
       local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
@@ -937,6 +968,23 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     sessionId: selectedSessionId,
     workspaceRoot: selectedWorkspaceRoot,
   });
+  const runtimePermission = selectedSessionId ? runtimeSelection.sessionBindings[selectedSessionId]?.pendingApproval ?? null : null;
+  const visiblePermission = selectedRuntimeKind === "codex" ? runtimePermission ? {
+    id: runtimePermission.id, sessionID: selectedSessionId ?? "", permission: runtimePermission.kind,
+    patterns: [], metadata: { description: runtimePermission.description }, always: [], receivedAt: Date.now(), protocol: "legacy" as const,
+  } : null : activePermission;
+  const respondVisiblePermission = selectedRuntimeKind === "codex" ? (requestID: string, reply: "once" | "always" | "reject") => {
+    if (!selectedSessionId) return;
+    const binding = useRuntimeSelectionStore.getState().sessionBindings[selectedSessionId];
+    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+    if (!binding || !orgId) return;
+    void getAgentRuntimeClient("codex").respondToApproval({
+      orgId, workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, threadId: binding.threadId, requestId: requestID,
+      decision: reply === "once" ? "allow_once" : reply === "always" ? "allow_session" : "deny",
+    }).then(() => useRuntimeSelectionStore.setState((state) => ({ sessionBindings: {
+      ...state.sessionBindings, [selectedSessionId]: { ...binding, pendingApproval: null },
+    } })));
+  } : respondPermission;
   const showPreparingStatus =
     effectiveLoading ||
     (!canCreateTask && !routeError && !selectedWorkspaceError);
@@ -1102,6 +1150,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const { model, variant } = resolveModelForSession(paneSessionId);
         const behavior = describeModel(model, variant);
         return {
+          runtimeKind: selectedRuntimeFor({
+            workspaceId: selectedWorkspaceId,
+            workspaceType: selectedWorkspace?.workspaceType === "remote" ? "remote" : "local",
+            sessionId: paneSessionId,
+            state: useRuntimeSelectionStore.getState(),
+          }),
           selectedModel: model ?? { providerID: "", modelID: "" },
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
           modelUnavailable: isModelUnavailable(model),
@@ -1153,6 +1207,45 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           throw new Error("Choose a model before compacting this session.");
         }
         if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
+
+        const runtimeBinding = useRuntimeSelectionStore.getState().sessionBindings[targetSessionId];
+        if (runtimeBinding?.runtimeKind === "codex") {
+          if (draft.mode !== "prompt" || draft.command) {
+            throw new Error("Codex currently accepts prompt messages from this composer.");
+          }
+          if (draft.attachments.length > 0 && !selectedWorkspaceEndpoint) {
+            throw new Error("Workspace endpoint is unavailable; images could not be copied for analysis.");
+          }
+          const runtimeProviderList = isCloudManagedProviderKey(targetModel?.providerID ?? "")
+            ? cloudProviderList
+            : providerListQuery.data;
+          const runtimeModel = runtimeProviderList?.all.find((provider) => provider.id === targetModel?.providerID)
+            ?.models?.[targetModel?.modelID ?? ""];
+          if (draft.attachments.length > 0 && !modelSupportsImageInput(runtimeModel)) {
+            throw new Error("The selected model does not support image analysis.");
+          }
+          const imageContent = draft.attachments.length > 0
+            ? await composerAttachmentsToRuntimeContent({
+              attachments: draft.attachments,
+              endpoint: selectedWorkspaceEndpoint!,
+              sessionId: targetSessionId,
+              workspaceRoot: selectedWorkspaceRoot,
+            })
+            : [];
+          const content = [...(text ? [{ type: "text" as const, text }] : []), ...imageContent];
+          const runtime = getAgentRuntimeClient("codex");
+          const scope = {
+            orgId: readDenSettings().activeOrgId?.trim() ?? "", workspaceId: selectedWorkspaceId,
+            sessionId: targetSessionId, threadId: runtimeBinding.threadId,
+          };
+          if (!scope.orgId) throw new Error(t("runtime.codex_unavailable"));
+          if (runtimeBinding.activeTurnId) {
+            await runtime.steerTurn({ ...scope, turnId: runtimeBinding.activeTurnId, content });
+          } else {
+            await runtime.sendTurn({ ...scope, content });
+          }
+          return { outcome: "sent", bypassed: true };
+        }
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -1226,6 +1319,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           },
         });
       },
+      runtimeKind: selectedRuntimeKind,
+      onStopRuntime: selectedRuntimeKind === "codex" ? async (sessionId: string) => {
+        const binding = useRuntimeSelectionStore.getState().sessionBindings[sessionId];
+        const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+        if (!binding || binding.runtimeKind !== "codex" || !binding.activeTurnId || !orgId) return false;
+        await getAgentRuntimeClient("codex").interruptTurn({
+          orgId, workspaceId: selectedWorkspaceId, sessionId, threadId: binding.threadId, turnId: binding.activeTurnId,
+        });
+        return true;
+      } : undefined,
       cloudMcpSubmissionState,
       onOpenConnect: () => navigate("/settings/connect"),
       onDraftChange: () => {
@@ -1493,6 +1596,52 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     if (!endpoint || !endpoint.token) {
       return null;
     }
+    const runtimeKind = selectedRuntimeFor({
+      workspaceId,
+      workspaceType: workspace.workspaceType === "remote" ? "remote" : "local",
+      sessionId: null,
+      state: useRuntimeSelectionStore.getState(),
+    });
+    if (runtimeKind === "codex") {
+      const settings = readDenSettings();
+      const orgId = settings.activeOrgId?.trim() ?? "";
+      const model = resolveModelForSession(null).model;
+      if (!isDesktopRuntime() || workspace.workspaceType === "remote" || !orgId || !model) {
+        toast.error(t("runtime.codex_unavailable"));
+        return null;
+      }
+      const sessionId = newRuntimeSessionId();
+      try {
+        const runtime = getAgentRuntimeClient("codex");
+        await runtime.startWorkspace({ orgId, workspaceId, cwd: workspace.path?.trim() || selectedWorkspaceRoot });
+        const thread = await runtime.createThread({
+          orgId, workspaceId, sessionId, cwd: workspace.path?.trim() || selectedWorkspaceRoot,
+          modelProviderId: model.providerID, modelId: model.modelID,
+          reasoningEffort: resolveModelForSession(null).variant,
+        });
+        useRuntimeSelectionStore.getState().bindThread(thread);
+        const session = {
+          id: sessionId, title: "", slug: sessionId, directory: workspace.path?.trim() || selectedWorkspaceRoot,
+          time: { created: thread.createdAt, updated: thread.createdAt },
+        } as RouteSession;
+        setLegacySelectedWorkspaceId(workspaceId);
+        writeActiveWorkspaceId(workspaceId || null);
+        writeLastSessionFor(workspaceId, sessionId);
+        setSessionsByWorkspaceId((current) => {
+          const next = { ...current, [workspaceId]: [session, ...(current[workspaceId] ?? [])] };
+          sessionsByWorkspaceIdRef.current = next;
+          return next;
+        });
+        navigateToWorkspaceSession(workspaceId, sessionId);
+        focusPromptSoon();
+        return sessionId;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t("app.unknown_error");
+        setRouteError(message);
+        toast.error(t("runtime.codex_start_failed"), { description: message });
+        return null;
+      }
+    }
     const workspaceClient = createClient(
       endpoint.opencodeBaseUrl,
       workspace.path?.trim() || undefined,
@@ -1554,7 +1703,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       }
       return null;
     }
-  }, [endpointForWorkspace, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaces]);
+  }, [endpointForWorkspace, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, resolveModelForSession, retryingWorkspaceIds, selectedWorkspaceId, selectedWorkspaceRoot, sessionProviderAuthStore, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1984,6 +2133,24 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const handleArchiveSession = useCallback(
     async (sessionId: string, archived: boolean) => {
+      const binding = useRuntimeSelectionStore.getState().sessionBindings[sessionId];
+      if (binding?.runtimeKind === "codex") {
+        try {
+          const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+          if (!orgId || !archived) throw new Error(archived ? t("runtime.codex_unavailable") : "Restore the Codex session by opening it from the archive.");
+          await getAgentRuntimeClient("codex").archiveThread({
+            orgId, workspaceId: selectedWorkspaceId, sessionId, threadId: binding.threadId,
+          });
+          useRuntimeSelectionStore.getState().removeSession(sessionId);
+          setSessionsByWorkspaceId((current) => ({
+            ...current, [selectedWorkspaceId]: (current[selectedWorkspaceId] ?? []).filter((session) => session.id !== sessionId),
+          }));
+          if (selectedSessionId === sessionId) navigateToWorkspaceSession(selectedWorkspaceId);
+        } catch (error) {
+          toast.error(t("session_management.archive_failed"), { description: describeRouteError(error) });
+        }
+        return;
+      }
       if (!opencodeClient) return;
       try {
         await setSessionArchived(
@@ -2003,7 +2170,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         );
       }
     },
-    [opencodeClient, refreshRouteState, selectedWorkspaceRoot],
+    [navigateToWorkspaceSession, opencodeClient, refreshRouteState, selectedSessionId, selectedWorkspaceId, selectedWorkspaceRoot, setSessionsByWorkspaceId],
   );
 
   const handleCreateWorkspace = useCallback(async (
@@ -2194,6 +2361,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onSessionCreated={handleRuntimeSessionCreated}
         onSessionUpdated={handleRuntimeSessionUpdated}
         onSessionDeleted={handleRuntimeSessionDeleted}
+        runtimeKind={selectedRuntimeKind}
       />
     ) : null}
     <SessionPage
@@ -2416,6 +2584,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       surface={surfaceProps ? {
         ...surfaceProps,
         onCreateNewSession: () => handleCreateTaskInWorkspace(selectedWorkspaceId),
+        codexRuntimeAvailable: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote",
+        onSelectRuntime: async (kind: "opencode" | "codex") => {
+          const workspaceType = selectedWorkspace?.workspaceType === "remote" ? "remote" : "local";
+          if (kind === selectedRuntimeKind || (kind === "codex" && workspaceType === "remote")) return;
+          useRuntimeSelectionStore.getState().setWorkspaceDraftRuntime(selectedWorkspaceId, kind, workspaceType);
+          if (selectedSessionId) {
+            toast(t("composer.runtime_new_session"));
+            await handleCreateTaskInWorkspace(selectedWorkspaceId);
+          }
+        },
       } : null}
       history={{
         canUndo: false,
@@ -2457,9 +2635,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             }
           : null
       }
-      activePermission={activePermission}
+      activePermission={visiblePermission}
       permissionReplyBusy={permissionReplyBusy}
-      respondPermission={respondPermission}
+      respondPermission={respondVisiblePermission}
       activeQuestion={activeQuestion}
       questionReplyBusy={questionReplyBusy}
       respondQuestion={respondQuestion}
@@ -2485,6 +2663,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               if (!endpoint) return;
               await endpoint.client.deleteSession(endpoint.workspaceId, sessionId);
               clearSessionModelChoice(selectedWorkspaceId, sessionId);
+              useRuntimeSelectionStore.getState().removeSession(sessionId);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }

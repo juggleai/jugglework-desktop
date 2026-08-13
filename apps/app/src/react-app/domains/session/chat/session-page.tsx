@@ -189,6 +189,7 @@ export type SessionModelSurfaceProps = Pick<
   | "onModelChange"
   | "onChangeModel"
   | "onModelVariantChange"
+  | "runtimeKind"
 >;
 
 export type SessionPageSurfaceProps = Omit<

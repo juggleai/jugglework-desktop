@@ -4,6 +4,7 @@ import type { ComposerAttachment } from "../src/app/types";
 import {
   buildChatAttachmentInboxPath,
   composerAttachmentsToWorkspaceFileParts,
+  composerAttachmentsToRuntimeContent,
   composerAttachmentToFilePart,
   resolveAttachmentFileMetadata,
   safeAttachmentFilename,
@@ -84,6 +85,31 @@ function filePartUrl(parts: Awaited<ReturnType<typeof composerAttachmentsToWorks
 }
 
 describe("composer attachment file parts", () => {
+  test("Codex image projection keeps bytes out of IPC and returns an inbox pointer", async () => {
+    const file = new File([JPEG_BYTES], "screen.jpg", { type: "image/jpeg" });
+    const { endpoint } = uploadRecorder("workspace-1");
+    const parts = await composerAttachmentsToRuntimeContent({
+      attachments: [attachmentFor(file)], endpoint, sessionId: "session-1", workspaceRoot: "/workspace",
+      createId: () => "upload-1",
+    });
+    expect(parts).toEqual([{
+      type: "attachment",
+      attachment: {
+        attachmentId: "attachment-1", kind: "image", name: "screen.jpg", mimeType: "image/jpeg",
+        sizeBytes: JPEG_BYTES.length,
+        objectRef: "/workspace/.opencode/jugglework/inbox/chat-attachments/session-1/upload-1-screen.jpg",
+      },
+    }]);
+    expect(JSON.stringify(parts)).not.toContain("base64");
+  });
+
+  test("Codex image projection rejects non-image attachments", async () => {
+    const file = new File([PDF_BYTES], "document.pdf", { type: "application/pdf" });
+    const { endpoint } = uploadRecorder("workspace-1");
+    await expect(composerAttachmentsToRuntimeContent({
+      attachments: [attachmentFor(file)], endpoint, sessionId: "session-1", workspaceRoot: "/workspace",
+    })).rejects.toThrow("image attachments only");
+  });
   test("preserves JPEG filename, mime, data URL, and exact bytes", async () => {
     const file = new File([JPEG_BYTES], "PassaportoPaolo_small.jpg", { type: "image/jpeg" });
     const part = await composerAttachmentToFilePart(attachmentFor(file));

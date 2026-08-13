@@ -1,4 +1,5 @@
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2/client";
+import type { RuntimeContentPart } from "@jugglework/types/agent-runtime";
 
 import type { ComposerAttachment } from "../../../../app/types";
 import { joinWorkspaceRelativePath, toFileUrl } from "./prompt-file-parts";
@@ -259,6 +260,45 @@ async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise
   };
 }
 
+async function uploadComposerAttachments(input: {
+  attachments: ComposerAttachment[];
+  endpoint: ChatAttachmentWorkspaceEndpoint;
+  sessionId: string;
+  workspaceRoot: string;
+  createId?: () => string;
+}) {
+  const workspaceRoot = input.workspaceRoot.trim();
+  if (!workspaceRoot) throw new Error("Workspace path is unavailable; attachments could not be copied for tool access.");
+  const workspaceId = input.endpoint.workspaceId.trim();
+  if (!workspaceId) throw new Error("Workspace endpoint is unavailable; attachments could not be copied for tool access.");
+
+  const uploaded: UploadedChatAttachment[] = [];
+  for (const attachment of input.attachments) {
+    const metadata = resolveAttachmentFileMetadata(attachment.file);
+    const id = input.createId ? input.createId() : randomAttachmentId();
+    const inboxPath = buildChatAttachmentInboxPath({ sessionId: input.sessionId, filename: metadata.filename, id });
+    let result: InboxUploadResult;
+    try {
+      result = await input.endpoint.client.uploadInbox(workspaceId, attachment.file, { path: inboxPath });
+    } catch (error) {
+      throw new Error(uploadErrorMessage(metadata.filename, error));
+    }
+    if (result.ok === false) throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload was rejected`);
+    if (!result.path.trim()) throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload did not return a path`);
+    if (result.bytes !== attachment.file.size) throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: expected ${attachment.file.size} bytes, wrote ${result.bytes}`);
+    const workspacePath = workspaceInboxPath(result.path);
+    uploaded.push({
+      filename: metadata.filename,
+      mime: metadata.mime,
+      bytes: result.bytes,
+      workspacePath,
+      url: toFileUrl(joinWorkspaceRelativePath(workspaceRoot, workspacePath)),
+      file: attachment.file,
+    });
+  }
+  return uploaded;
+}
+
 export async function composerAttachmentsToWorkspaceFileParts(input: {
   attachments: ComposerAttachment[];
   endpoint: ChatAttachmentWorkspaceEndpoint;
@@ -268,59 +308,37 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
 }): Promise<Array<TextPartInput | FilePartInput>> {
   if (input.attachments.length === 0) return [];
 
-  const workspaceRoot = input.workspaceRoot.trim();
-  if (!workspaceRoot) {
-    throw new Error("Workspace path is unavailable; attachments could not be copied for tool access.");
-  }
-
-  const workspaceId = input.endpoint.workspaceId.trim();
-  if (!workspaceId) {
-    throw new Error("Workspace endpoint is unavailable; attachments could not be copied for tool access.");
-  }
-
-  const uploaded: UploadedChatAttachment[] = [];
-  for (const attachment of input.attachments) {
-    const metadata = resolveAttachmentFileMetadata(attachment.file);
-    const id = input.createId ? input.createId() : randomAttachmentId();
-    const inboxPath = buildChatAttachmentInboxPath({
-      sessionId: input.sessionId,
-      filename: metadata.filename,
-      id,
-    });
-
-    let result: InboxUploadResult;
-    try {
-      result = await input.endpoint.client.uploadInbox(workspaceId, attachment.file, { path: inboxPath });
-    } catch (error) {
-      throw new Error(uploadErrorMessage(metadata.filename, error));
-    }
-
-    if (result.ok === false) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload was rejected`);
-    }
-    if (!result.path.trim()) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: upload did not return a path`);
-    }
-    if (result.bytes !== attachment.file.size) {
-      throw new Error(`Failed to copy attachment "${metadata.filename}" into this worker workspace: expected ${attachment.file.size} bytes, wrote ${result.bytes}`);
-    }
-
-    const workspacePath = workspaceInboxPath(result.path);
-    const absolutePath = joinWorkspaceRelativePath(workspaceRoot, workspacePath);
-    uploaded.push({
-      filename: metadata.filename,
-      mime: metadata.mime,
-      bytes: result.bytes,
-      workspacePath,
-      url: toFileUrl(absolutePath),
-      file: attachment.file,
-    });
-  }
+  const uploaded = await uploadComposerAttachments(input);
 
   return [
     attachmentPathNotePart(uploaded),
     ...(await Promise.all(uploaded.map(uploadedAttachmentFilePart))),
   ];
+}
+
+/** Uploads Codex images to the controlled workspace inbox and returns pointer-only IPC payloads. */
+export async function composerAttachmentsToRuntimeContent(input: {
+  attachments: ComposerAttachment[];
+  endpoint: ChatAttachmentWorkspaceEndpoint;
+  sessionId: string;
+  workspaceRoot: string;
+  createId?: () => string;
+}): Promise<RuntimeContentPart[]> {
+  if (input.attachments.some((item) => resolveAttachmentFileMetadata(item.file).kind !== "image")) {
+    throw new Error("Codex currently supports image attachments only.");
+  }
+  const uploaded = await uploadComposerAttachments(input);
+  return uploaded.map((item, index) => ({
+    type: "attachment",
+    attachment: {
+      attachmentId: input.attachments[index]?.id ?? randomAttachmentId(),
+      kind: "image",
+      name: item.filename,
+      mimeType: item.mime,
+      sizeBytes: item.bytes,
+      objectRef: joinWorkspaceRelativePath(input.workspaceRoot.trim(), item.workspacePath),
+    },
+  }));
 }
 
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput> {

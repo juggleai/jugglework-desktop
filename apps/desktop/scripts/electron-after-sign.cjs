@@ -58,17 +58,32 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature) {
   }
 }
 
+function verifyCodexSidecar(appPath, requireDistributionSignature) {
+  const sidecars = path.join(appPath, "Contents", "Resources", "sidecars");
+  const entries = existsSync(sidecars) ? require("node:fs").readdirSync(sidecars) : [];
+  const target = entries.find((entry) => /^codex-(?:aarch64|x86_64)-apple-darwin$/.test(entry));
+  if (!target) return;
+  const executable = path.join(sidecars, target);
+  run("codesign", ["--verify", "--strict", "--verbose=2", executable]);
+  if (!requireDistributionSignature) return;
+  const result = spawnSync("codesign", ["--display", "--verbose=4", executable], { encoding: "utf8" });
+  if (result.status !== 0 || result.stderr.includes("Signature=adhoc")) throw new Error("Codex sidecar requires a Developer ID signature.");
+}
+
 async function afterSign(context) {
   if (context.electronPlatformName !== "darwin") return;
+
+  const appName = `${context.packager.appInfo.productFilename}.app`;
+  const appPath = path.join(context.appOutDir, appName);
+  const requireDistributionSignature = process.env.MACOS_NOTARIZE === "true";
+  verifyComputerUseHelper(appPath, requireDistributionSignature);
+  verifyCodexSidecar(appPath, requireDistributionSignature);
+  run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
 
   if (process.env.MACOS_NOTARIZE !== "true") {
     console.warn("[electron-after-sign] MACOS_NOTARIZE is not true; skipping notarization.");
     return;
   }
-
-  const appName = `${context.packager.appInfo.productFilename}.app`;
-  const appPath = path.join(context.appOutDir, appName);
-  verifyComputerUseHelper(appPath, process.env.MACOS_NOTARIZE === "true");
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "jugglework-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);

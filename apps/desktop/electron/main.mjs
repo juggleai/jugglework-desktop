@@ -23,6 +23,12 @@ import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./me
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { createRuntimeIpcHandlers } from "./runtime-ipc.mjs";
+import { createCodexMainSession } from "./codex-main-session.mjs";
+import { createDenCodexGatewayExchange, createCodexGatewayTokenProvider } from "./codex-gateway-token-provider.mjs";
+import { createCodexProcessManager } from "./codex-process-manager.mjs";
+import { createCodexRuntimeAdapter } from "./codex-runtime-adapter.mjs";
+import { createAgentRuntimeService } from "./agent-runtime-service.mjs";
+import { createRuntimeSessionLedgerClient } from "./runtime-session-ledger-client.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
@@ -1408,6 +1414,53 @@ const runtimeManager = createRuntimeManager({
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
+const codexMainSession = createCodexMainSession();
+const codexGatewayTokenProvider = createCodexGatewayTokenProvider({
+  exchange: createDenCodexGatewayExchange({
+    getSession: () => codexMainSession.get(),
+    fetcher: electronNet.fetch,
+  }),
+});
+const codexProcessManager = createCodexProcessManager({
+  userDataPath: app.getPath("userData"),
+  desktopRoot: path.resolve(__dirname, ".."),
+  resourcesPath: process.resourcesPath,
+  packaged: app.isPackaged,
+  platform: process.platform,
+  arch: process.arch,
+  tokenProvider: codexGatewayTokenProvider,
+  fetcher: electronNet.fetch,
+  clientInfo: { name: "jugglework-desktop", title: "JuggleWork Desktop", version: app.getVersion() },
+  bundledSkillsDir: app.isPackaged
+    ? path.join(process.resourcesPath, "skills", "jugglechat-skills")
+    : path.resolve(__dirname, "../resources/skills/jugglechat-skills"),
+});
+const codexDeviceId = randomUUID();
+const codexRuntimeAdapter = createCodexRuntimeAdapter({
+  processManager: codexProcessManager,
+  resolveLaunch: (input) => ({
+    deviceId: codexDeviceId,
+    providerId: String(input?.modelProviderId ?? "").trim(),
+    model: String(input?.modelId ?? "").trim(),
+    reasoningEffort: input?.reasoningEffort ?? "medium",
+  }),
+});
+const agentRuntimeService = createAgentRuntimeService({ adapters: [codexRuntimeAdapter] });
+const runtimeSessionLedger = createRuntimeSessionLedgerClient({
+  getAccess: () => runtimeManager.managedServerHostAccess(),
+  fetcher: electronNet.fetch,
+});
+const agentRuntimeSubscribers = new Set();
+agentRuntimeService.subscribe((event) => {
+  void runtimeSessionLedger.accept(event).then(() => {
+    for (const webContents of agentRuntimeSubscribers) {
+      if (webContents.isDestroyed()) agentRuntimeSubscribers.delete(webContents);
+      else webContents.send("jugglework:agent-runtime:event", event);
+    }
+  }).catch((error) => {
+    console.warn("[agent-runtime] failed to persist event", { type: event.type, message: error instanceof Error ? error.message : "unknown" });
+  });
+});
 const remoteControlInteractionStore = createRemoteControlInteractionStore({
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
@@ -1506,7 +1559,11 @@ async function disposeRuntimeBeforeQuit() {
   if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
   runtimeDisposeInProgress = true;
   try {
-    await runtimeManager.dispose().catch(() => undefined);
+    await Promise.all([
+      runtimeManager.dispose().catch(() => undefined),
+      codexProcessManager.dispose().catch(() => undefined),
+      agentRuntimeService.dispose().catch(() => undefined),
+    ]);
     runtimeDisposedForQuit = true;
   } finally {
     runtimeDisposeInProgress = false;
@@ -2089,6 +2146,60 @@ async function executeRemoteControlStopAll() {
 // typecheck:electron`.
 /** @type {import("@jugglework/types/desktop-ipc").DesktopCommandHandlers<import("electron").IpcMainInvokeEvent>} */
 const desktopCommandHandlers = {
+  "agentRuntimeStartWorkspace": async (_event, ...args) => agentRuntimeService.startWorkspace(args[0], args[1]),
+  "agentRuntimeStopWorkspace": async (_event, ...args) => agentRuntimeService.stopWorkspace(args[0], args[1]),
+  "agentRuntimeCreateThread": async (_event, ...args) => {
+    const thread = await agentRuntimeService.createThread(args[0], args[1]);
+    const input = args[1];
+    const capabilitySnapshot = thread.runtimeKind === "codex"
+      ? codexProcessManager.capabilitySnapshot(thread.workspaceId)
+      : null;
+    await runtimeSessionLedger.register({
+      schemaVersion: 1, id: thread.sessionId, orgId: thread.orgId, workspaceId: thread.workspaceId,
+      runtimeKind: thread.runtimeKind, backendThreadId: thread.backendThreadId, agentProfileId: null,
+      modelProviderId: thread.modelProviderId, modelId: thread.modelId,
+      reasoningEffort: input.reasoningEffort ?? null, cwd: input.cwd, title: "", runtimeLocked: true,
+      configSnapshot: capabilitySnapshot ? { capabilities: capabilitySnapshot } : {},
+      attachments: [], createdAt: thread.createdAt, updatedAt: thread.createdAt, archivedAt: null,
+    });
+    return thread;
+  },
+  "agentRuntimeResumeThread": async (_event, ...args) => {
+    const thread = await agentRuntimeService.resumeThread(args[0], args[1]);
+    await runtimeSessionLedger.bind(thread);
+    return thread;
+  },
+  "agentRuntimeArchiveThread": async (_event, ...args) => {
+    await agentRuntimeService.archiveThread(args[0], args[1]);
+    await runtimeSessionLedger.archive({ ...args[1], archived: true });
+  },
+  "agentRuntimeSendTurn": async (_event, ...args) => agentRuntimeService.sendTurn(args[0], args[1]),
+  "agentRuntimeSteerTurn": async (_event, ...args) => agentRuntimeService.steerTurn(args[0], args[1]),
+  "agentRuntimeInterruptTurn": async (_event, ...args) => agentRuntimeService.interruptTurn(args[0], args[1]),
+  "agentRuntimeRespondToApproval": async (_event, ...args) => agentRuntimeService.respondToApproval(args[0], args[1]),
+  "agentRuntimeSubscribe": async (event) => {
+      agentRuntimeSubscribers.add(event.sender);
+      event.sender.once("destroyed", () => agentRuntimeSubscribers.delete(event.sender));
+      return { subscribed: true };
+  },
+  "agentRuntimeListSessions": async (_event, ...args) => {
+    const organizationId = codexMainSession.status().organizationId;
+    if (!organizationId) throw new Error("JuggleWork sign-in is required.");
+    return runtimeSessionLedger.list({ ...args[0], orgId: organizationId });
+  },
+  "agentRuntimeSessionSnapshot": async (_event, ...args) => {
+    const organizationId = codexMainSession.status().organizationId;
+    if (!organizationId) throw new Error("JuggleWork sign-in is required.");
+    return runtimeSessionLedger.snapshot({ ...args[0], orgId: organizationId });
+  },
+  "codexSessionSync": async (event, ...args) => {
+      void event;
+      const transition = codexMainSession.sync(args[0] ?? null);
+      if (transition.previousOrganizationId && transition.previousOrganizationId !== transition.organizationId) {
+        await codexProcessManager.stopOrganization(transition.previousOrganizationId);
+      }
+      return codexMainSession.status();
+  },
   "desktopRemoteControlSettingsRead": async (event) => {
       void event;
       return remoteControlSettingsStore.read();

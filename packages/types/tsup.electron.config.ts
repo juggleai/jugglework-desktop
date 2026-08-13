@@ -2,7 +2,10 @@ import { defineConfig } from "tsup"
 
 export default defineConfig({
   entry: {
+    "agent-runtime": "src/agent-runtime.ts",
     "desktop-remote-control": "src/desktop-remote-control.ts",
+    "runtime-session": "src/runtime-session.ts",
+    "codex-gateway": "src/den/codex-gateway.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

@@ -31,6 +31,7 @@ const readArg = (name) => {
 const sidecarOverride = process.env.JUGGLEWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "resources", "sidecars");
 const constantsPath = resolve(__dirname, "..", "..", "..", "constants.json");
+const codexManifestPath = join(__dirname, "..", "resources", "sidecars", "codex-versions.json");
 
 // Build outputs are ignored and can retain retired sidecars from older local
 // builds. Remove those names proactively so package-content inspection and
@@ -227,6 +228,59 @@ const parseChecksum = (content, assetName) => {
   return null;
 };
 
+const prepareCodexSidecar = () => {
+  const manifest = JSON.parse(readFileSync(codexManifestPath, "utf8"));
+  const target = manifest.targets?.[resolvedTargetTriple];
+  if (!target) {
+    console.log(`Codex sidecar is not shipped for target ${resolvedTargetTriple ?? "unknown"}.`);
+    return;
+  }
+  const executablePath = join(sidecarDir, target.executable);
+  const currentVersion = existsSync(executablePath) && !isStubBinary(executablePath)
+    ? readBinaryVersion(executablePath)
+    : null;
+  if (currentVersion?.includes(manifest.codexVersion)) {
+    console.log(`Codex sidecar already present (${currentVersion}).`);
+    return;
+  }
+
+  mkdirSync(sidecarDir, { recursive: true });
+  const archivePath = join(tmpdir(), `codex-${Date.now()}-${target.archive}`);
+  const url = `${manifest.releaseBaseUrl}/${target.archive}`;
+  const download = process.platform === "win32"
+    ? spawnSync("powershell", ["-NoProfile", "-Command", `$ErrorActionPreference='Stop'; Invoke-WebRequest -Uri '${url.replace(/'/g, "''")}' -OutFile '${archivePath.replace(/'/g, "''")}'`], { stdio: "inherit" })
+    : spawnSync("curl", ["-fsSL", "-o", archivePath, url], { stdio: "inherit" });
+  if (download.status !== 0) process.exit(download.status ?? 1);
+  const archiveStat = statSync(archivePath);
+  if (archiveStat.size !== target.archiveBytes || sha256File(archivePath) !== target.archiveSha256) {
+    unlinkSync(archivePath);
+    throw new Error(`Codex archive verification failed for ${target.archive}`);
+  }
+  const extractDir = join(tmpdir(), `codex-${Date.now()}-${resolvedTargetTriple}`);
+  mkdirSync(extractDir, { recursive: true });
+  const extract = target.archive.endsWith(".zip")
+    ? (process.platform === "win32"
+      ? spawnSync("powershell", ["-NoProfile", "-Command", `$ErrorActionPreference='Stop'; Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`], { stdio: "inherit" })
+      : spawnSync("unzip", ["-q", archivePath, "-d", extractDir], { stdio: "inherit" }))
+    : spawnSync("tar", ["-xzf", archivePath, "-C", extractDir], { stdio: "inherit" });
+  if (extract.status !== 0) process.exit(extract.status ?? 1);
+  const candidate = readDirectory(extractDir).find((file) => file.endsWith(`/${target.executable}`) || file.endsWith(`\\${target.executable}`));
+  if (!candidate) throw new Error(`Codex executable ${target.executable} was not found in its archive.`);
+  copyFileSync(candidate, executablePath);
+  if (!isWindowsTarget) chmodSync(executablePath, 0o755);
+  adHocSignDarwin(executablePath);
+  const installedVersion = readBinaryVersion(executablePath);
+  if (!installedVersion?.includes(manifest.codexVersion)) throw new Error(`Unexpected Codex version: ${installedVersion ?? "unavailable"}`);
+  if (manifest.localVerification?.target === resolvedTargetTriple && manifest.localVerification.binarySha256) {
+    // Ad-hoc signing changes Mach-O bytes, so verify the pinned digest before
+    // signing only when the copied archive binary still matches it.
+    const copiedDigest = sha256File(candidate);
+    if (copiedDigest !== manifest.localVerification.binarySha256) throw new Error("Codex executable SHA-256 mismatch.");
+  }
+  unlinkSync(archivePath);
+  console.log(`Prepared Codex sidecar ${target.executable} (${installedVersion}).`);
+};
+
 if (!existingOpencodeVersion && opencodeCandidatePath) {
   existingOpencodeVersion =
     existsSync(opencodeCandidatePath) && !isStubBinary(opencodeCandidatePath)
@@ -361,6 +415,8 @@ adHocSignDarwinSidecars([
   opencodePath,
   opencodeTargetPath,
 ]);
+
+prepareCodexSidecar();
 
 const juggleworkServerVersion = (() => {
   try {

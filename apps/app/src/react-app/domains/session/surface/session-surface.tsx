@@ -30,6 +30,8 @@ import type {
   SlashCommandOption,
   TodoItem,
 } from "@/app/types";
+import type { RuntimeKind } from "@jugglework/types/agent-runtime";
+import { agentRuntimeSessionSnapshot } from "@/app/lib/desktop";
 import {
   publishInspectorSlice,
   recordInspectorEvent,
@@ -168,6 +170,8 @@ export type SessionSurfaceProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  onStopRuntime?: (sessionId: string) => Promise<boolean>;
+  runtimeKind?: RuntimeKind;
   onCreateNewSession: () => Promise<string | null>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
@@ -182,6 +186,8 @@ export type SessionSurfaceProps = {
   selectedAgent: string | null;
   listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
   onSelectAgent: (agent: string | null) => void;
+  codexRuntimeAvailable?: boolean;
+  onSelectRuntime?: (kind: RuntimeKind) => void | Promise<void>;
   listCommands: () => Promise<import("@/app/types").SlashCommandOption[]>;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
@@ -546,7 +552,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    queryFn: async () => props.runtimeKind === "codex"
+      ? await agentRuntimeSessionSnapshot({ workspaceId: props.workspaceId, sessionId: props.sessionId }) as JuggleWorkSessionSnapshot
+      : (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
     staleTime: 500,
   });
 
@@ -1000,18 +1008,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
     // and answers `200: false` while the stream keeps going (#2014).
-    const aborted = await abortSessionSafe(
-      opencodeClient,
-      props.sessionId,
-      props.workspaceRoot.trim() || undefined,
-    );
+    const aborted = props.onStopRuntime
+      ? await props.onStopRuntime(props.sessionId)
+      : await abortSessionSafe(opencodeClient, props.sessionId, props.workspaceRoot.trim() || undefined);
     if (!aborted) {
       setError({ message: t("session.stop_failed") });
       return;
     }
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
+  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.onStopRuntime, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -1918,6 +1924,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}
         onSelectAgent={props.onSelectAgent}
+        runtimeKind={props.runtimeKind ?? "opencode"}
+        codexRuntimeAvailable={props.codexRuntimeAvailable === true}
+        onSelectRuntime={props.onSelectRuntime ?? (() => undefined)}
         listCommands={listCommands}
         listSkills={listSkills}
         skills={toolSkills}

@@ -1,4 +1,5 @@
 import { nativeDeepLinkEvent } from "./deep-link-bridge";
+import type { RuntimeEvent } from "@jugglework/types/agent-runtime";
 
 export type * from "./desktop-types";
 export type {
@@ -67,6 +68,9 @@ declare global {
         command: C,
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
+      agentRuntime?: {
+        onEvent?: (callback: (event: RuntimeEvent) => void) => () => void;
+      };
       shell?: {
         openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
         relaunch?: () => Promise<void>;
@@ -530,6 +534,19 @@ const {
   workspaceAddAuthorizedRoot,
   workspaceExportConfig,
   workspaceImportConfig,
+  codexSessionSync,
+  agentRuntimeStartWorkspace,
+  agentRuntimeStopWorkspace,
+  agentRuntimeCreateThread,
+  agentRuntimeResumeThread,
+  agentRuntimeArchiveThread,
+  agentRuntimeSendTurn,
+  agentRuntimeSteerTurn,
+  agentRuntimeInterruptTurn,
+  agentRuntimeRespondToApproval,
+  agentRuntimeSubscribe,
+  agentRuntimeListSessions,
+  agentRuntimeSessionSnapshot,
   workspaceJuggleWorkRead,
   workspaceJuggleWorkWrite,
   opencodeCommandList,
@@ -605,6 +622,19 @@ export {
   workspaceAddAuthorizedRoot,
   workspaceExportConfig,
   workspaceImportConfig,
+  codexSessionSync,
+  agentRuntimeStartWorkspace,
+  agentRuntimeStopWorkspace,
+  agentRuntimeCreateThread,
+  agentRuntimeResumeThread,
+  agentRuntimeArchiveThread,
+  agentRuntimeSendTurn,
+  agentRuntimeSteerTurn,
+  agentRuntimeInterruptTurn,
+  agentRuntimeRespondToApproval,
+  agentRuntimeSubscribe,
+  agentRuntimeListSessions,
+  agentRuntimeSessionSnapshot,
   workspaceJuggleWorkRead,
   workspaceJuggleWorkWrite,
   opencodeCommandList,

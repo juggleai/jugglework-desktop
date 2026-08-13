@@ -7,6 +7,7 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
 const JUGGLECHAT_SKILL_INVOKE_CHANNEL = "jugglework:jugglechat:skill-invoke";
 const JUGGLECHAT_SKILL_REPLY_CHANNEL = "jugglework:jugglechat:skill-reply";
+const AGENT_RUNTIME_EVENT_CHANNEL = "jugglework:agent-runtime:event";
 
 let activeJuggleChatSkillHandler = null;
 
@@ -103,6 +104,14 @@ try {
 contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("jugglework:desktop", command, ...args);
+  },
+  agentRuntime: {
+    onEvent(callback) {
+      if (typeof callback !== "function") return () => {};
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on(AGENT_RUNTIME_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(AGENT_RUNTIME_EVENT_CHANNEL, handler);
+    },
   },
   shell: {
     openExternal(url) {

@@ -16,6 +16,7 @@ import {
 } from "@/app/lib/app-inspector";
 import {
   resolveWorkspaceListSelectedId,
+  agentRuntimeListSessions,
   workspaceBootstrap,
   type JuggleWorkServerInfo,
   type WorkspaceList,
@@ -28,6 +29,7 @@ import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceConnectionState } from "@/app/types";
 import { normalizeDirectoryPath } from "@/app/utils";
 import { t } from "@/i18n";
+import { useRuntimeSelectionStore } from "@/react-app/domains/session/sync/runtime-selection-store";
 import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
@@ -308,7 +310,15 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
         try {
           const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-          const fetchedItems = response.items ?? [];
+          const runtimeRecords = isDesktopRuntime() && workspace.workspaceType !== "remote"
+            ? await agentRuntimeListSessions({ workspaceId: workspace.id, limit: 200 }).then((value) => value.records).catch(() => [])
+            : [];
+          const runtimeItems = runtimeRecords.map((record) => ({
+            id: record.id, title: record.title, slug: record.id, directory: record.cwd,
+            time: { created: record.createdAt, updated: record.updatedAt, ...(record.archivedAt === null ? {} : { archived: record.archivedAt }) },
+          } as RouteSession));
+          for (const record of runtimeRecords) useRuntimeSelectionStore.getState().hydrateRecord(record);
+          const fetchedItems = [...runtimeItems, ...(response.items ?? []).filter((session) => !runtimeItems.some((item) => item.id === session.id))];
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteJuggleWorkWorkspace
             ? fetchedItems.filter((session) =>

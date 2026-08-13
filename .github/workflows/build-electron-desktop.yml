@@ -56,8 +56,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify Codex contracts and package manifest
+        if: matrix.artifact == 'macos' || matrix.artifact == 'windows'
+        run: pnpm --filter @jugglework/desktop test:codex
+
       - name: Package Electron desktop (unpacked)
         run: pnpm --filter @jugglework/desktop package:electron:dir
+
+      - name: Record Codex package evidence
+        if: matrix.artifact == 'macos' || matrix.artifact == 'windows'
+        shell: bash
+        run: node apps/desktop/scripts/codex-package-evidence.mjs apps/desktop/dist-electron "${{ matrix.artifact }}" > "apps/desktop/dist-electron/codex-package-evidence-${{ matrix.artifact }}.json"
 
       - name: Upload Electron artifacts
         uses: actions/upload-artifact@v4

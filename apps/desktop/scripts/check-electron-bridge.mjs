@@ -30,8 +30,9 @@ const bridgeMethods = destructure[1]
   .filter((name) => !clientOnlyBridgeMethods.has(name));
 
 const electronHandlers = new Set(
-  // Registry entries look like `"workspaceCreate": async (event, ...args) =>`.
-  Array.from(electronMainSource.matchAll(/^  "([^"]+)": async \(event/gm)).map((match) => match[1]),
+  // Registry entries may intentionally ignore Electron's event argument, so
+  // accept both `event` and `_event` while still requiring an async handler.
+  Array.from(electronMainSource.matchAll(/^  "([^"]+)": async \(_?event/gm)).map((match) => match[1]),
 );
 
 const missing = bridgeMethods.filter((name) => !electronHandlers.has(name));

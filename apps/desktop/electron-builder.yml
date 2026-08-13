@@ -64,6 +64,9 @@ mac:
         - opencode
         - opencode-aarch64-apple-darwin
         - opencode-x86_64-apple-darwin
+        - codex-aarch64-apple-darwin
+        - codex-x86_64-apple-darwin
+        - codex-versions.json
         - versions.json
         - versions.json-aarch64-apple-darwin
         - versions.json-x86_64-apple-darwin
@@ -99,6 +102,8 @@ win:
         - opencode.exe
         - opencode-aarch64-pc-windows-msvc.exe
         - opencode-x86_64-pc-windows-msvc.exe
+        - codex-x86_64-pc-windows-msvc.exe
+        - codex-versions.json
         - versions.json
         - versions.json-aarch64-pc-windows-msvc.exe
         - versions.json-x86_64-pc-windows-msvc.exe

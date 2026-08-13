@@ -21,3 +21,11 @@ export function isModelReadableAttachment(mimeType: string) {
   if (mime === "application/pdf" || mime === "application/json") return true;
   return mime.endsWith("+json") || mime.endsWith("+xml") || mime === "application/xml" || mime === "application/javascript";
 }
+
+/** Explicit image capability check; unknown model metadata is not treated as vision support. */
+export function modelSupportsImageInput(model: unknown) {
+  if (!model || typeof model !== "object") return false;
+  const value = model as { attachment?: boolean; modalities?: { input?: unknown } };
+  if (value.attachment === true) return true;
+  return Array.isArray(value.modalities?.input) && value.modalities.input.includes("image");
+}

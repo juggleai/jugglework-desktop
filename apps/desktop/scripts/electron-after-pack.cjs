@@ -9,6 +9,7 @@ const sidecarBases = [
   "opencode",
   "chrome-devtools-mcp",
 ];
+const codexBase = "codex";
 
 function targetTriple(platformName, arch) {
   if (platformName === "darwin") {
@@ -101,6 +102,19 @@ function signComputerUseHelper(context) {
   }
 }
 
+function signCodexSidecar(context, sidecarsDir, triple) {
+  if (context.electronPlatformName !== "darwin") return;
+  const executable = path.join(sidecarsDir, `codex-${triple}`);
+  if (!fs.existsSync(executable)) return;
+  const identity = process.env.CSC_NAME || process.env.APPLE_CODESIGN_IDENTITY || "-";
+  const args = ["--force", "--options", "runtime", "--sign", identity];
+  if (identity !== "-") args.push("--timestamp");
+  args.push(executable);
+  const result = spawnSync("codesign", args, { stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`codesign failed for Codex sidecar with status ${result.status}`);
+}
+
 function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
   const targetPath = path.join(sidecarsDir, targetName);
   if (!fs.existsSync(targetPath)) {
@@ -136,6 +150,17 @@ async function afterPack(context) {
     keep.add(aliasName);
     keep.add(targetName);
   }
+  const codexManifestPath = path.join(sidecarsDir, "codex-versions.json");
+  const codexManifest = fs.existsSync(codexManifestPath) ? JSON.parse(fs.readFileSync(codexManifestPath, "utf8")) : null;
+  const codexTarget = codexManifest?.targets?.[triple];
+  if (codexTarget) {
+    const codexTargetName = `${codexBase}-${triple}${executableSuffix}`;
+    if (!fs.existsSync(path.join(sidecarsDir, codexTargetName))) {
+      throw new Error(`Missing packaged Codex sidecar for target: ${codexTargetName}`);
+    }
+    keep.add(codexTargetName);
+    keep.add("codex-versions.json");
+  }
 
   const versionsAlias = "versions.json";
   const versionsTarget = `versions.json-${triple}${executableSuffix}`;
@@ -153,6 +178,7 @@ async function afterPack(context) {
     }
   }
 
+  signCodexSidecar(context, sidecarsDir, triple);
   signComputerUseHelper(context);
 }
 

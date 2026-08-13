@@ -14,6 +14,12 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
+    "./agent-runtime": {
+      "types": "./src/agent-runtime.ts",
+      "node": "./dist/agent-runtime.js",
+      "development": "./src/agent-runtime.ts",
+      "default": "./src/agent-runtime.ts"
+    },
     "./desktop-remote-control": {
       "types": "./src/desktop-remote-control.ts",
       "node": "./dist/desktop-remote-control.js",
@@ -35,6 +41,12 @@
       "development": "./src/jugglework-provider.ts",
       "default": "./src/jugglework-provider.ts"
     },
+    "./runtime-session": {
+      "types": "./src/runtime-session.ts",
+      "node": "./dist/runtime-session.js",
+      "development": "./src/runtime-session.ts",
+      "default": "./src/runtime-session.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",
@@ -54,6 +66,12 @@
       "types": "./src/den/inference.ts",
       "development": "./src/den/inference.ts",
       "default": "./src/den/inference.ts"
+    },
+    "./den/codex-gateway": {
+      "types": "./src/den/codex-gateway.ts",
+      "node": "./dist/den/codex-gateway.js",
+      "development": "./src/den/codex-gateway.ts",
+      "default": "./src/den/codex-gateway.ts"
     },
     "./den/microsoft-365": {
       "types": "./src/den/microsoft-365.ts",

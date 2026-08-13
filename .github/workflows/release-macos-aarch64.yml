@@ -398,6 +398,10 @@ jobs:
           TARGET: ${{ matrix.target_triple }}
         run: pnpm --filter @jugglework/desktop build:electron
 
+      - name: Verify Codex contracts and package manifest
+        if: matrix.target_triple == 'aarch64-apple-darwin' || matrix.target_triple == 'x86_64-apple-darwin' || matrix.target_triple == 'x86_64-pc-windows-msvc'
+        run: pnpm --filter @jugglework/desktop test:codex
+
       - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
@@ -518,6 +522,19 @@ jobs:
         run: |
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
+
+      - name: Record Codex release package evidence
+        if: matrix.target_triple == 'aarch64-apple-darwin' || matrix.target_triple == 'x86_64-apple-darwin' || matrix.target_triple == 'x86_64-pc-windows-msvc'
+        shell: bash
+        run: node apps/desktop/scripts/codex-package-evidence.mjs apps/desktop/dist-electron "${{ matrix.target_triple }}" > "apps/desktop/dist-electron/codex-package-evidence-${{ matrix.target_triple }}.json"
+
+      - name: Upload Codex release package evidence
+        if: matrix.target_triple == 'aarch64-apple-darwin' || matrix.target_triple == 'x86_64-apple-darwin' || matrix.target_triple == 'x86_64-pc-windows-msvc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-package-evidence-${{ matrix.target_triple }}
+          path: apps/desktop/dist-electron/codex-package-evidence-${{ matrix.target_triple }}.json
+          if-no-files-found: error
 
       - name: Upload Electron release assets
         env:

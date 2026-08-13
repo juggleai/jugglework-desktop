@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "codexVersion": "0.147.0",
+  "releaseTag": "rust-v0.147.0",
+  "releaseBaseUrl": "https://github.com/openai/codex/releases/download/rust-v0.147.0",
+  "appServerProtocol": {
+    "experimental": true,
+    "schemaFile": "codex_app_server_protocol.schemas.json",
+    "sha256": "babfd5c98cd978dd858b4762cdfbc9fba941e1a0e4053de0050e4082ae1f075a"
+  },
+  "targets": {
+    "aarch64-apple-darwin": {
+      "archive": "codex-aarch64-apple-darwin.tar.gz",
+      "archiveBytes": 87984231,
+      "archiveSha256": "75984b81f92a71b0c0f4b3b5cad80e5c57177e4d8c8b4b1e13db703b20dc4358",
+      "executable": "codex-aarch64-apple-darwin"
+    },
+    "x86_64-apple-darwin": {
+      "archive": "codex-x86_64-apple-darwin.tar.gz",
+      "archiveBytes": 95851149,
+      "archiveSha256": "36e782f71d8164cc37c2b89c64948f2180e9a2f8456b27e660da75bc6b5574e2",
+      "executable": "codex-x86_64-apple-darwin"
+    },
+    "x86_64-pc-windows-msvc": {
+      "archive": "codex-x86_64-pc-windows-msvc.exe.zip",
+      "archiveBytes": 100362215,
+      "archiveSha256": "a1c073ede409178502b1ff11bed635d2b644424352f9d4f3999de8272c6aebbd",
+      "executable": "codex-x86_64-pc-windows-msvc.exe"
+    }
+  },
+  "localVerification": {
+    "target": "aarch64-apple-darwin",
+    "binarySha256": "19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37",
+    "verifiedAt": "2026-08-12T05:18:31Z"
+  }
+}

@@ -8,6 +8,11 @@ import {
   type SessionMutationOrigin,
 } from "../session-mutation-coordinator.js";
 import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
+import { buildRuntimeSessionSnapshot } from "../session-read-model.js";
+import { runtimeDbPath } from "../runtime-db.js";
+import { RuntimeSessionStore, RuntimeSessionStoreError } from "../runtime-session-store.js";
+import { runtimeEventSchema } from "@jugglework/types/agent-runtime";
+import { runtimeSessionRecordSchema } from "@jugglework/types/runtime-session";
 import {
   createSessionGroupId,
   normalizeSessionGroupState,
@@ -186,6 +191,19 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
+  async function withRuntimeSessionStore<T>(action: (store: RuntimeSessionStore) => Promise<T> | T): Promise<T> {
+    const store = await RuntimeSessionStore.open(runtimeDbPath(config));
+    try { return await action(store); } finally { store.close(); }
+  }
+
+  function remapRuntimeStoreError(error: unknown): never {
+    if (error instanceof RuntimeSessionStoreError) {
+      const status = error.code === "not_found" ? 404 : error.code === "scope_mismatch" ? 403 : 409;
+      throw new ApiError(status, `runtime_session_${error.code}`, "Runtime session request failed");
+    }
+    throw error;
+  }
+
   function remapSessionReadError(error: unknown): never {
     if (error instanceof ApiError && error.code === "opencode_request_failed") {
       const details = error.details;
@@ -332,6 +350,96 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
     return value.trim();
   }
+
+  // Host-only ledger surface. The browser/client credential can read the
+  // regular session projection but cannot assert an organization or append
+  // backend events; Electron Main is the trust boundary for runtime IPC.
+  addRoute(routes, "PUT", "/workspace/:id/runtime-session/:sessionId", "host-token", async (ctx) => {
+    ensureWritable(config);
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const parsed = runtimeSessionRecordSchema.safeParse(body.record);
+    if (!parsed.success || parsed.data.id !== ctx.params.sessionId || parsed.data.workspaceId !== ctx.params.id) {
+      throw new ApiError(400, "invalid_payload", "Runtime session record is invalid");
+    }
+    try {
+      const record = await withRuntimeSessionStore((store) => store.putSession(parsed.data));
+      return jsonResponse({ record });
+    } catch (error) { remapRuntimeStoreError(error); }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-session/:sessionId/event", "host-token", async (ctx) => {
+    ensureWritable(config);
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const orgId = parseRunIdentifier(body.orgId, "orgId");
+    const backendEventId = parseRunIdentifier(body.backendEventId, "backendEventId");
+    const parsed = runtimeEventSchema.safeParse(body.event);
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "Runtime event is invalid");
+    try {
+      const result = await withRuntimeSessionStore((store) => store.appendEvent(
+        { orgId, workspaceId: ctx.params.id, sessionId: ctx.params.sessionId }, backendEventId, parsed.data,
+      ));
+      return jsonResponse({ inserted: result.inserted });
+    } catch (error) { remapRuntimeStoreError(error); }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-session/:sessionId/backend-thread", "host-token", async (ctx) => {
+    ensureWritable(config);
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const orgId = parseRunIdentifier(body.orgId, "orgId");
+    const runtimeKind = body.runtimeKind === "opencode" || body.runtimeKind === "codex" ? body.runtimeKind : null;
+    if (!runtimeKind) throw new ApiError(400, "invalid_payload", "runtimeKind is invalid");
+    const backendThreadId = parseRunIdentifier(body.backendThreadId, "backendThreadId");
+    try {
+      const record = await withRuntimeSessionStore((store) => store.bindBackendThread(
+        { orgId, workspaceId: ctx.params.id, sessionId: ctx.params.sessionId },
+        { runtimeKind, backendThreadId, updatedAt: Date.now() },
+      ));
+      return jsonResponse({ record });
+    } catch (error) { remapRuntimeStoreError(error); }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-session/:sessionId/archive", "host-token", async (ctx) => {
+    ensureWritable(config);
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const orgId = parseRunIdentifier(body.orgId, "orgId");
+    const archivedAt = body.archived === false ? null : Date.now();
+    try {
+      const record = await withRuntimeSessionStore((store) => store.archiveSession(
+        { orgId, workspaceId: ctx.params.id, sessionId: ctx.params.sessionId }, archivedAt,
+      ));
+      return jsonResponse({ record });
+    } catch (error) { remapRuntimeStoreError(error); }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-session/:sessionId/snapshot", "host-token", async (ctx) => {
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const orgId = parseRunIdentifier(body.orgId, "orgId");
+    try {
+      const snapshot = await withRuntimeSessionStore((store) => {
+        const scope = { orgId, workspaceId: ctx.params.id, sessionId: ctx.params.sessionId };
+        return buildRuntimeSessionSnapshot({ record: store.getSession(scope), events: store.readEvents(scope) });
+      });
+      return jsonResponse(snapshot);
+    } catch (error) { remapRuntimeStoreError(error); }
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/runtime-sessions/query", "host-token", async (ctx) => {
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const orgId = parseRunIdentifier(body.orgId, "orgId");
+    const search = typeof body.search === "string" ? body.search.slice(0, 512) : "";
+    const includeArchived = body.includeArchived === true;
+    const limit = typeof body.limit === "number" && Number.isSafeInteger(body.limit) ? body.limit : 100;
+    const records = await withRuntimeSessionStore((store) => store.searchSessions({
+      orgId, workspaceId: ctx.params.id, search, includeArchived, limit,
+    }));
+    return jsonResponse({ records });
+  });
 
   addRoute(routes, "POST", "/workspace/:id/sessions", "client", async (ctx) => {
     ensureWritable(config);

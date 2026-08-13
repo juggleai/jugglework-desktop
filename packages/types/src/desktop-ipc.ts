@@ -15,6 +15,22 @@
 import type { ConnectLinkVerifyFailure, ConnectLinkVerifyResult } from "./connect-link.js";
 import type { DesktopRemoteFeatureGates } from "./desktop-remote-control.js";
 import type { WorkspaceWire } from "./workspace.js";
+import type {
+  ApprovalDecisionInput,
+  ArchiveThreadInput,
+  CreateThreadInput,
+  InterruptTurnInput,
+  ResumeThreadInput,
+  RuntimeEvent,
+  RuntimeKind,
+  RuntimeThread,
+  RuntimeWorkspace,
+  SendTurnInput,
+  StartWorkspaceInput,
+  SteerTurnInput,
+  StopWorkspaceInput,
+} from "./agent-runtime.js";
+import type { RuntimeSessionRecord } from "./runtime-session.js";
 
 // ---------------------------------------------------------------------------
 // Payload shapes (moved from apps/app/src/app/lib/desktop-types.ts, which
@@ -490,6 +506,17 @@ export type DesktopRemoteControlAgentStatus = {
   lastErrorCode: string | null;
 };
 
+export type CodexMainSessionInput = {
+  baseUrl: string;
+  bearerToken: string;
+  organizationId: string;
+};
+
+export type CodexMainSessionStatus = {
+  authenticated: boolean;
+  organizationId: string | null;
+};
+
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
@@ -525,6 +552,33 @@ export type DesktopCommandMap = {
   };
   workspaceImportConfig: {
     args: [input: { archivePath: string; targetDir: string; name?: string | null }];
+    result: unknown;
+  };
+
+  // One-way sync of the existing JuggleWork login into Main memory. The
+  // bearer credential is never returned by this command or any status API.
+  codexSessionSync: {
+    args: [input: CodexMainSessionInput | null];
+    result: CodexMainSessionStatus;
+  };
+
+  // Unified runtime bridge. Raw OpenCode/Codex protocol objects are excluded.
+  agentRuntimeStartWorkspace: { args: [kind: RuntimeKind, input: StartWorkspaceInput]; result: RuntimeWorkspace };
+  agentRuntimeStopWorkspace: { args: [kind: RuntimeKind, input: StopWorkspaceInput]; result: void };
+  agentRuntimeCreateThread: { args: [kind: RuntimeKind, input: CreateThreadInput]; result: RuntimeThread };
+  agentRuntimeResumeThread: { args: [kind: RuntimeKind, input: ResumeThreadInput]; result: RuntimeThread };
+  agentRuntimeArchiveThread: { args: [kind: RuntimeKind, input: ArchiveThreadInput]; result: void };
+  agentRuntimeSendTurn: { args: [kind: RuntimeKind, input: SendTurnInput]; result: void };
+  agentRuntimeSteerTurn: { args: [kind: RuntimeKind, input: SteerTurnInput]; result: void };
+  agentRuntimeInterruptTurn: { args: [kind: RuntimeKind, input: InterruptTurnInput]; result: void };
+  agentRuntimeRespondToApproval: { args: [kind: RuntimeKind, input: ApprovalDecisionInput]; result: void };
+  agentRuntimeSubscribe: { args: []; result: { subscribed: true } };
+  agentRuntimeListSessions: {
+    args: [input: { workspaceId: string; search?: string; includeArchived?: boolean; limit?: number }];
+    result: { records: RuntimeSessionRecord[] };
+  };
+  agentRuntimeSessionSnapshot: {
+    args: [input: { workspaceId: string; sessionId: string }];
     result: unknown;
   };
 

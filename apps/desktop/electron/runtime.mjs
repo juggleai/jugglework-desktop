@@ -1394,6 +1394,14 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     return snapshot.running && baseUrl && clientToken ? { baseUrl, clientToken } : null;
   }
 
+  /** Main-private Host credential for authoritative runtime ledger writes. */
+  function managedServerHostAccess() {
+    const snapshot = snapshotJuggleWorkServerState(juggleworkServerState);
+    const baseUrl = typeof snapshot.baseUrl === "string" ? snapshot.baseUrl.trim() : "";
+    const hostToken = typeof snapshot.hostToken === "string" ? snapshot.hostToken.trim() : "";
+    return snapshot.running && baseUrl && hostToken ? { baseUrl, hostToken } : null;
+  }
+
   async function juggleworkServerRestart(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths());
     const shouldManageOpencode = Boolean(
@@ -1501,6 +1509,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineInstall,
     juggleworkServerInfo,
     managedServerAccess,
+    managedServerHostAccess,
     juggleworkServerRestart: (options) => withRuntimeLifecycle(() => juggleworkServerRestart(options)),
     workspaceActivate: (input) => withRuntimeLifecycle(() => workspaceActivate(input)),
     engineDispose: (workspacePath) => withRuntimeLifecycle(() => engineDispose(workspacePath)),

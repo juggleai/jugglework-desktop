@@ -10,6 +10,8 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { ApiError } from "./errors.js";
+import type { RuntimeEvent } from "@jugglework/types/agent-runtime";
+import type { RuntimeSessionRecord } from "@jugglework/types/runtime-session";
 
 const sessionTimeSchema = z
   .object({
@@ -147,4 +149,62 @@ export function buildSessionSnapshot(input: {
     },
     "session snapshot",
   );
+}
+
+/** Projects the JuggleWork-authoritative runtime ledger into the existing UI wire shape. */
+export function buildRuntimeSessionSnapshot(input: {
+  record: RuntimeSessionRecord;
+  events: RuntimeEvent[];
+}): SessionSnapshotReadModel {
+  const { record } = input;
+  const messages = new Map<string, SessionMessageReadModel>();
+  let status: SessionStatusReadModel = IDLE_STATUS;
+
+  function message(id: string, role: string, created: number): SessionMessageReadModel {
+    const current = messages.get(id);
+    if (current) return current;
+    const next = { info: { id, sessionID: record.id, role, time: { created } }, parts: [] } as SessionMessageReadModel;
+    messages.set(id, next);
+    return next;
+  }
+
+  for (const event of input.events) {
+    if (!("turnId" in event)) continue;
+    if (event.type === "turn.started") status = { type: "busy" };
+    if (event.type === "turn.completed" || event.type === "turn.interrupted" || event.type === "turn.failed") status = IDLE_STATUS;
+    if (event.type === "user.message") {
+      const target = message(`user:${event.turnId}`, "user", event.occurredAt);
+      target.parts = event.content.map((part, index) => part.type === "text"
+        ? { id: `${event.eventId}:${index}`, messageID: target.info.id, sessionID: record.id, type: "text", text: part.text }
+        : { id: `${event.eventId}:${index}`, messageID: target.info.id, sessionID: record.id, type: "file",
+          mime: part.attachment.mimeType, filename: part.attachment.name, url: part.attachment.objectRef });
+    }
+    if (event.type === "assistant.delta" || event.type === "reasoning.delta") {
+      const target = message(`assistant:${event.turnId}`, "assistant", event.occurredAt);
+      const partType = event.type === "assistant.delta" ? "text" : "reasoning";
+      const partId = `${partType}:${event.turnId}`;
+      const existing = target.parts.find((part) => part.id === partId) as ({ text?: string } & SessionMessageReadModel["parts"][number]) | undefined;
+      if (existing) existing.text = `${existing.text ?? ""}${event.text}`;
+      else target.parts.push({ id: partId, messageID: target.info.id, sessionID: record.id, type: partType, text: event.text });
+    }
+    if (event.type === "tool.started") {
+      const target = message(`assistant:${event.turnId}`, "assistant", event.occurredAt);
+      target.parts.push({ id: event.toolCallId, messageID: target.info.id, sessionID: record.id, type: "tool",
+        tool: event.name, callID: event.toolCallId, state: { status: "running", input: event.arguments } });
+    }
+    if (event.type === "tool.completed") {
+      const target = message(`assistant:${event.turnId}`, "assistant", event.occurredAt);
+      const existing = target.parts.find((part) => part.id === event.toolCallId) as ({ state?: unknown } & SessionMessageReadModel["parts"][number]) | undefined;
+      if (existing) existing.state = { status: event.success ? "completed" : "error", output: event.output };
+    }
+  }
+
+  return parseOrThrow(sessionSnapshotSchema, {
+    session: {
+      id: record.id, title: record.title, directory: record.cwd,
+      time: { created: record.createdAt, updated: record.updatedAt, ...(record.archivedAt === null ? {} : { archived: record.archivedAt }) },
+      runtimeKind: record.runtimeKind, backendThreadId: record.backendThreadId,
+    },
+    messages: [...messages.values()], todos: [], status,
+  }, "runtime session snapshot");
 }

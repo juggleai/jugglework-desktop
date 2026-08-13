@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
+import type { RuntimeKind } from "@jugglework/types/agent-runtime";
 import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
@@ -83,6 +84,9 @@ type ComposerProps = {
   selectedAgent: string | null;
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
+  runtimeKind: RuntimeKind;
+  codexRuntimeAvailable: boolean;
+  onSelectRuntime: (kind: RuntimeKind) => void | Promise<void>;
   listCommands: () => Promise<SlashCommandOption[]>;
   listSkills?: () => Promise<SkillCard[]>;
   skills?: SkillCard[];
@@ -425,7 +429,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
   const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
-  const showAgentPicker = props.selectedAgent !== null || nonDefaultAgents.length > 0;
+  const showAgentPicker = true;
 
   useEffect(() => {
     setSlashOpen(slashOpenNext);
@@ -1756,21 +1760,46 @@ export function ReactSessionComposer(props: ComposerProps) {
                     onClick={() => setAgentMenuOpen((value) => !value)}
                     disabled={props.busy}
                     aria-expanded={agentMenuOpen}
-                    title={t("composer.agent_label")}
+                    title={t("composer.runtime_label")}
                   >
-                    <span className="max-w-[140px] truncate">{props.agentLabel}</span>
+                    <span className="max-w-[140px] truncate">{props.runtimeKind === "codex" ? t("composer.runtime_codex") : props.agentLabel}</span>
                     <ChevronDown size={13} />
                   </button>
                   {agentMenuOpen ? (
                     <div className="absolute left-0 bottom-full z-40 mb-2 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                       <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
-                        {t("composer.agent_label")}
+                        {t("composer.runtime_label")}
                       </div>
                       <div
                         role="presentation"
                         className="max-h-64 space-y-1 overflow-y-auto p-2"
                         onMouseDown={(event) => event.preventDefault()}
                       >
+                        {(["opencode", "codex"] as const).map((kind) => {
+                          const active = props.runtimeKind === kind;
+                          const disabled = kind === "codex" && !props.codexRuntimeAvailable;
+                          return (
+                            <button
+                              key={kind}
+                              type="button"
+                              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"} ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
+                              disabled={disabled}
+                              aria-disabled={disabled}
+                              title={disabled ? t("composer.runtime_codex_local_only") : undefined}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                if (disabled || active) return;
+                                setAgentMenuOpen(false);
+                                void props.onSelectRuntime(kind);
+                              }}
+                            >
+                              <span>{kind === "codex" ? t("composer.runtime_codex") : t("composer.runtime_opencode")}</span>
+                              {active ? <Check size={14} className="text-gray-10" /> : null}
+                            </button>
+                          );
+                        })}
+                        {props.runtimeKind === "opencode" ? <div className="mt-2 border-t border-dls-border pt-2">
+                          <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">{t("composer.agent_profile_label")}</div>
                         <button
                           ref={(element) => {
                             agentItemRefs.current[0] = element;
@@ -1807,6 +1836,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           );
                         })}
+                        </div> : null}
                       </div>
                     </div>
                   ) : null}

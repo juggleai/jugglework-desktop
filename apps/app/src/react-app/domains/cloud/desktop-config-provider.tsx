@@ -31,6 +31,7 @@ import {
 import {
   applyBrandAppName,
   applyBrandIcon,
+  codexSessionSync,
   desktopRemoteControlContextSync,
 } from "../../../app/lib/desktop";
 import { createJuggleWorkServerClient } from "../../../app/lib/jugglework-server";
@@ -395,6 +396,21 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       window.clearInterval(interval);
     };
   }, [desktopConfigHandler, isSignedIn]);
+
+  // Codex exchanges the existing application login for a narrowly scoped,
+  // short-lived gateway token in Main. This one-way handoff never returns a
+  // login or model credential to the renderer.
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    void settingsVersion;
+    const settings = readDenSettings();
+    const bearerToken = settings.authToken?.trim() ?? "";
+    const organizationId = settings.activeOrgId?.trim() ?? "";
+    const input = isSignedIn && bearerToken && organizationId
+      ? { baseUrl: settings.baseUrl, bearerToken, organizationId }
+      : null;
+    void codexSessionSync(input).catch(() => undefined);
+  }, [isSignedIn, settingsVersion]);
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;
