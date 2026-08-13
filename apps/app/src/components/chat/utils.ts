@@ -35,7 +35,15 @@ export function getLastTextPart(message: UIMessage): UIMessage | null {
   return lastTextPart ? { ...message, parts: [lastTextPart] } : null
 }
 
-export function splitAssistantTaskMessages(items: UIMessageWithIndex[]) {
+export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive = false) {
+  // While streaming, don't extract a summary from the last item — the last
+  // text part is likely an interim step description whose tool calls are
+  // still running, not the final summary. Putting everything in process
+  // preserves the correct text→tools ordering.
+  if (isLive) {
+    return { processItems: items, summaryItems: [] as UIMessageWithIndex[] }
+  }
+
   const finalItemIndex = items.findLastIndex((item) =>
     item.message.parts.some((part) => part.type === "text" && part.text.trim().length > 0),
   )

@@ -927,7 +927,7 @@ function MessageGroup({
     return null;
   }
 
-  const { processItems, summaryItems } = splitAssistantTaskMessages(items)
+  const { processItems, summaryItems } = splitAssistantTaskMessages(items, isLiveGroup)
   const processDisplayItem = mergeAssistantProcessItems(processItems)
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
