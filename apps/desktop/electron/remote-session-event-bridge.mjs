@@ -23,6 +23,17 @@ function observationStatus(type, data) {
   return ["starting", "waiting", "aborting", "idle", "completed", "failed", "aborted"].includes(raw) ? raw : null;
 }
 
+function canonicalObservation(raw) {
+  if (!isRecord(raw) || raw.schemaVersion !== 1 || !identifier(raw.sessionId) || !isRecord(raw.data)) return null;
+  const type = raw.data.type;
+  const status = type === "session.status"
+    ? observationStatus("session.status", raw.data)
+    : type === "run.completed" ? "completed"
+      : type === "run.failed" ? "failed"
+        : type === "run.aborted" ? "aborted" : null;
+  return status ? { sessionId: raw.sessionId, status } : null;
+}
+
 /**
  * @param {{
  *   sseClient: { subscribe(input: { workspaceId: string, onEvent(raw: unknown): void | Promise<void>, onReconnectGap(reason: "sequence_gap"): void | Promise<void>, signal: AbortSignal }): Promise<void> },
@@ -109,13 +120,18 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       signal: controller.signal,
       onEvent: async (raw) => {
         if (!current()) return;
+        if (isRecord(raw) && raw.schemaVersion === 1 && Array.isArray(raw.snapshots)) {
+          projector.reconnectGap(workspaceId, "cursor_missing");
+          return;
+        }
+        const canonical = canonicalObservation(raw);
         const event = isRecord(raw) && isRecord(raw.payload) ? raw.payload : raw;
         const data = isRecord(event) ? (isRecord(event.data) ? event.data : event.properties) : null;
         const type = isRecord(event) && typeof event.type === "string" ? event.type : null;
-        const sessionId = isRecord(data)
+        const sessionId = canonical?.sessionId ?? (isRecord(data)
           ? (identifier(data.sessionID) ? data.sessionID : identifier(data.sessionId) ? data.sessionId : null)
-          : null;
-        const status = observationStatus(type, data);
+          : null);
+        const status = canonical?.status ?? observationStatus(type, data);
         let runId = sessionId && status ? coordinator.getActiveRunId({ workspaceId, sessionId }) : null;
         // A queued operation is intentionally absent from the mirror until the
         // server admits it. Hydrate that new authoritative run on its first SSE

@@ -696,7 +696,7 @@ function renderMessages(items) {
     return;
   }
   for (const msg of items) {
-    const info = msg && msg.info ? msg.info : null;
+    const info = msg && msg.info ? msg.info : msg;
     const parts = Array.isArray(msg && msg.parts) ? msg.parts : [];
     const role = info && info.role ? info.role : "message";
     const textParts = parts
@@ -721,16 +721,10 @@ function writeSessionId(workspaceId, sessionId) {
 
 async function resolveDefaultModel(workspaceId) {
   try {
-    const providers = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/config/providers");
-    const def = providers && providers.default ? providers.default : null;
-    if (def && typeof def === "object") {
-      const entries = Object.entries(def);
-      if (entries.length) {
-        const providerID = entries[0][0];
-        const modelID = entries[0][1];
-        if (providerID && modelID) return { providerID, modelID };
-      }
-    }
+    const response = await apiFetch("/workspace/" + encodeURIComponent(workspaceId) + "/agent/v1/runtimes/jugglework/models");
+    const models = Array.isArray(response && response.items) ? response.items : [];
+    const model = models.find((item) => item && item.isDefault) || models[0];
+    if (model && model.providerId && model.id) return { providerId: model.providerId, modelId: model.id };
   } catch {
     // ignore
   }
@@ -740,11 +734,11 @@ async function resolveDefaultModel(workspaceId) {
 async function ensureSession(workspaceId) {
   const existing = readSessionId(workspaceId);
   if (existing) return existing;
-  const created = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/session", {
+  const created = await apiFetch("/workspace/" + encodeURIComponent(workspaceId) + "/agent/v1/sessions", {
     method: "POST",
-    body: JSON.stringify({ title: "JuggleWork Toy UI" }),
+    body: JSON.stringify({ runtimeId: "jugglework", title: "JuggleWork Toy UI" }),
   });
-  const id = created && created.id ? String(created.id) : "";
+  const id = created && created.session && created.session.id ? String(created.session.id) : "";
   if (!id) throw new Error("session_create_failed");
   writeSessionId(workspaceId, id);
   return id;
@@ -790,9 +784,9 @@ async function refreshMessages(workspaceId) {
     renderMessages([]);
     return;
   }
-  const url = "/w/" + encodeURIComponent(workspaceId) + "/opencode/session/" + encodeURIComponent(sessionId) + "/message?limit=50";
-  const msgs = await apiFetch(url);
-  renderMessages(msgs);
+  const url = "/workspace/" + encodeURIComponent(workspaceId) + "/agent/v1/sessions/" + encodeURIComponent(sessionId) + "/snapshot?limit=50";
+  const response = await apiFetch(url);
+  renderMessages(response && response.snapshot ? response.snapshot.messages : []);
 }
 
 async function listArtifacts(workspaceId) {
@@ -937,7 +931,7 @@ async function connectSse(workspaceId) {
   setStatus("Connecting SSE...", "");
   addCheckpoint("sse.connecting");
 
-  const url = "/w/" + encodeURIComponent(workspaceId) + "/opencode/event";
+  const url = "/workspace/" + encodeURIComponent(workspaceId) + "/agent/v1/events";
   const res = await window.fetch(url, {
     headers: { Authorization: "Bearer " + readToken() },
     signal: controller.signal,
@@ -973,15 +967,15 @@ async function connectSse(workspaceId) {
         if (!dataLines.length) continue;
         const raw = dataLines.join("\n");
         try {
-          const event = JSON.parse(raw);
-          const payload = event && event.payload ? event.payload : event;
-          const type = payload && payload.type ? String(payload.type) : (event && event.type ? String(event.type) : "event");
-          addCheckpoint(type, summarizeEvent(payload));
-          if (type.endsWith(".completed") || type.endsWith(".finished") || type.endsWith(".stopped")) {
-            setRun("idle");
-          }
-          if (payload && payload.type === "message.part.updated") {
-            void refreshMessages(workspaceId);
+           const event = JSON.parse(raw);
+           const payload = event && event.data ? event.data : event;
+           const type = payload && payload.type ? String(payload.type) : "event";
+           addCheckpoint(type, summarizeEvent(payload));
+           if (type === "run.completed" || type === "run.failed" || type === "run.aborted") {
+             setRun("idle");
+           }
+           if (type === "message.updated" || type === "message.part.updated" || type === "message.part.delta") {
+             void refreshMessages(workspaceId);
           }
         } catch {
           // ignore
@@ -1388,8 +1382,8 @@ async function main() {
       const body = { parts: [{ type: "text", text: text }] };
       if (model) body.model = model;
       await apiFetch(
-        "/w/" + encodeURIComponent(workspaceId) + "/opencode/session/" + encodeURIComponent(sessionId) + "/prompt_async",
-        { method: "POST", body: JSON.stringify(body) },
+        "/workspace/" + encodeURIComponent(workspaceId) + "/agent/v1/sessions/" + encodeURIComponent(sessionId) + "/runs",
+        { method: "POST", body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: null, whenBusy: "reject", prompt: body }) },
       );
       setStatus("Prompt accepted", "ok");
       addCheckpoint("prompt.accepted");

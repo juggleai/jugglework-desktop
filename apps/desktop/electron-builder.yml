@@ -34,6 +34,8 @@ extraResources:
       - "**/*.md"
       - "**/*.mdx"
       - "docs.json"
+  - from: resources/claude-agent
+    to: claude-agent
 asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**

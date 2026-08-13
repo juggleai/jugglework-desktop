@@ -3,13 +3,9 @@ import { test } from "node:test";
 
 import { createRemoteControlInteractionStore } from "./remote-control-interaction-store.mjs";
 
-function fakeClient({ permissions = [], questions = [] } = {}) {
+function fakeClient({ interactions = [] } = {}) {
   return {
-    async getJson(pathname) {
-      if (pathname.includes("/permission")) return { data: permissions };
-      if (pathname.includes("/question")) return { data: questions };
-      return {};
-    },
+    async getJson() { return { snapshot: { interactions } }; },
   };
 }
 
@@ -20,11 +16,13 @@ test("listPending returns empty for invalid arguments", async () => {
 
 test("listPending returns normalized permission interaction", async () => {
   const client = fakeClient({
-    permissions: [{
+    interactions: [{
       id: "perm_1",
-      sessionID: "ses_1",
-      action: "bash",
-      resources: ["/tmp/test"],
+      sessionId: "ses_1",
+      kind: "permission",
+      state: "pending",
+      title: "bash",
+      requestedAt: 1,
     }],
   });
   const store = createRemoteControlInteractionStore({ managedRuntimeClient: client });
@@ -34,14 +32,17 @@ test("listPending returns normalized permission interaction", async () => {
   assert.equal(result[0].id, "perm_1");
   assert.deepEqual(result[0].permittedResponses, ["allow_once", "reject"]);
   assert.ok(result[0].description.includes("bash"));
-  assert.ok(result[0].description.includes("/tmp/test"));
+  assert.ok(result[0].description.includes("bash"));
 });
 
 test("listPending returns normalized question interaction", async () => {
   const client = fakeClient({
-    questions: [{
+    interactions: [{
       id: "q_1",
-      sessionID: "ses_1",
+      sessionId: "ses_1",
+      kind: "question",
+      state: "pending",
+      requestedAt: 1,
       questions: [{
         question: "Which option?",
         options: [
@@ -62,9 +63,9 @@ test("listPending returns normalized question interaction", async () => {
 
 test("listPending filters out interactions from other sessions", async () => {
   const client = fakeClient({
-    permissions: [
-      { id: "perm_1", sessionID: "ses_1", action: "bash" },
-      { id: "perm_2", sessionID: "ses_other", action: "bash" },
+    interactions: [
+      { id: "perm_1", sessionId: "ses_1", kind: "permission", state: "pending", title: "bash", requestedAt: 1 },
+      { id: "perm_2", sessionId: "ses_other", kind: "permission", state: "pending", title: "bash", requestedAt: 1 },
     ],
   });
   const store = createRemoteControlInteractionStore({ managedRuntimeClient: client });

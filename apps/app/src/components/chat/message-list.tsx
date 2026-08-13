@@ -12,6 +12,7 @@ import {
   Pencil,
   Split,
   Undo2,
+  Square,
 } from "lucide-react"
 import { PaperGrainGradient } from "@jugglework/ui/react"
 import {
@@ -21,7 +22,6 @@ import {
   type FileUIPart,
   type UIMessage,
 } from "ai"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
@@ -306,6 +306,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <JuggleWorkSessionCreateTool part={part} />
   }
 
+  if (part.type === "dynamic-tool" && part.toolName === "claude_subagent") {
+    return <ClaudeSubagentTool part={part} />
+  }
+
   return (
     <Tool
       toolPart={part}
@@ -313,6 +317,36 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       onReopenAuthorization={onMcpReopenAuthorization}
       onRetry={onMcpRetry}
     />
+  )
+}
+
+function ClaudeSubagentTool({ part }: { part: DynamicToolUIPart }) {
+  const { onStopSubagent } = useMessageList()
+  const canonical = part.callProviderMetadata?.canonical as Record<string, unknown> | undefined
+  const input = part.input && typeof part.input === "object" ? part.input as Record<string, unknown> : {}
+  const usage = canonical?.usage && typeof canonical.usage === "object" ? canonical.usage as Record<string, unknown> : null
+  const label = typeof input.label === "string" ? input.label : "Claude subagent"
+  const summary = typeof canonical?.summary === "string" ? canonical.summary : null
+  const parent = typeof canonical?.parentToolCallId === "string" ? canonical.parentToolCallId : null
+  const taskId = typeof canonical?.backendTaskId === "string" ? canonical.backendTaskId : null
+  const runId = typeof canonical?.runId === "string" ? canonical.runId : null
+  const usageText = usage ? [
+    typeof usage.totalTokens === "number" ? `${usage.totalTokens.toLocaleString()} tokens` : null,
+    typeof usage.toolUses === "number" ? `${usage.toolUses} tools` : null,
+    typeof usage.durationMs === "number" ? `${Math.round(usage.durationMs / 1000)}s` : null,
+  ].filter(Boolean).join(" · ") : ""
+  const title = [label, summary, usageText, parent ? `parent ${parent.slice(-8)}` : null].filter(Boolean).join(" · ")
+  return (
+    <div className={parent ? "ml-4 border-l border-border pl-3" : undefined} data-testid="claude-subagent">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1"><Tool title={title} toolPart={part} /></div>
+        {canonical?.stoppable === true && taskId && runId && onStopSubagent ? (
+          <Button type="button" size="xs" variant="outline" onClick={() => void onStopSubagent(runId, taskId)}>
+            <Square className="size-3" /> Stop
+          </Button>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -340,14 +374,24 @@ function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
 
-type RetryStatus = Extract<SessionStatus, { type: "retry" }>
+export type SessionRetryStatus = {
+  attempt: number
+  message: string
+  nextAt: number
+  action?: {
+    title: string
+    message: string
+    link?: string
+    label: string
+  }
+}
 
 function isSessionErrorMessage(message: UIMessage) {
   return message.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)
 }
 
-function retryDelaySeconds(status: RetryStatus) {
-  return Math.max(0, Math.round((status.next - Date.now()) / 1000))
+function retryDelaySeconds(status: SessionRetryStatus) {
+  return Math.max(0, Math.round((status.nextAt - Date.now()) / 1000))
 }
 
 interface FileMessageProps {
@@ -612,7 +656,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, canFork, canRewind, highlightQuery } = useMessageList()
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
@@ -670,7 +714,7 @@ const UserMessage = React.memo(
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
                     <CopyMessageButton messages={[message]} />
-                    {messageText ? (
+                    {messageText && canRewind ? (
                       <MessageAction tooltip={t("session.edit_message_label")}>
                         <Button
                           variant="ghost"
@@ -682,7 +726,7 @@ const UserMessage = React.memo(
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip={t("session.branch_new_chat")}>
+                    {canFork ? <MessageAction tooltip={t("session.branch_new_chat")}>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -691,8 +735,8 @@ const UserMessage = React.memo(
                       >
                         <Split className="rotate-90" />
                       </Button>
-                    </MessageAction>
-                    <MessageAction tooltip={t("session.revert_label")}>
+                    </MessageAction> : null}
+                    {canRewind ? <MessageAction tooltip={t("session.revert_label")}>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -701,14 +745,14 @@ const UserMessage = React.memo(
                       >
                         <Undo2 />
                       </Button>
-                    </MessageAction>
+                    </MessageAction> : null}
                   </MessageActions>
                 )}
               </div>
             }
           />
           <ContextMenuContent className="w-56">
-            {messageText ? (
+            {messageText && canRewind ? (
               <ContextMenuItem onClick={() => onEditUserMessage(message.id, messageText)}>
                 <Pencil className="size-4" />
                 {t("session.edit_message_label")}
@@ -720,14 +764,14 @@ const UserMessage = React.memo(
                 {t("session.message_copy")}
               </ContextMenuItem>
             ) : null}
-            <ContextMenuItem onClick={() => onForkAtMessage(message.id)}>
+            {canFork ? <ContextMenuItem onClick={() => onForkAtMessage(message.id)}>
               <Split className="size-4 rotate-90" />
               {t("session.branch_new_chat")}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
+            </ContextMenuItem> : null}
+            {canRewind ? <ContextMenuItem onClick={() => onRevertToUserMessage(message.id)}>
               <Undo2 className="size-4" />
               {t("session.revert_label")}
-            </ContextMenuItem>
+            </ContextMenuItem> : null}
           </ContextMenuContent>
         </ContextMenu>
       </Message>
@@ -820,7 +864,7 @@ function ErrorMessage({ error }: ErrorMessageProps) {
 }
 
 interface RetryMessageProps {
-  status: RetryStatus
+  status: SessionRetryStatus
 }
 
 function RetryActionButton(props: { link: string; label: string }) {
@@ -910,7 +954,7 @@ function MessageGroup({
   messages,
   isStreaming,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage } = useMessageList()
+  const { onRevertToUserMessage, onForkAtMessage, canFork, canRewind } = useMessageList()
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1023,7 +1067,7 @@ function MessageGroup({
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
               <>
-                <MessageAction tooltip={t("session.branch_new_chat")}>
+                {canFork ? <MessageAction tooltip={t("session.branch_new_chat")}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1032,8 +1076,8 @@ function MessageGroup({
                   >
                     <Split className="rotate-90" />
                   </Button>
-                </MessageAction>
-                <MessageAction tooltip={t("session.revert_label")}>
+                </MessageAction> : null}
+                {canRewind ? <MessageAction tooltip={t("session.revert_label")}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1042,7 +1086,7 @@ function MessageGroup({
                   >
                     <Undo2 />
                   </Button>
-                </MessageAction>
+                </MessageAction> : null}
               </>
             ) : null}
           </MessageActions>
@@ -1057,7 +1101,7 @@ function MessageGroup({
 interface MessageListProps {
   messages: UIMessage[]
   status: ThreadStatus
-  retryStatus?: RetryStatus | null
+  retryStatus?: SessionRetryStatus | null
 }
 
 export function MessageList({ messages, status, retryStatus }: MessageListProps) {

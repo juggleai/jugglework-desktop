@@ -1,5 +1,7 @@
-import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { CanonicalAgentMessage, CanonicalAgentSession, CanonicalSessionSnapshot } from "@jugglework/types/agent-runtime";
 import { z } from "zod";
+import type { AgentRuntimeControlPlane } from "../agent-runtime-control-plane.js";
+import { AgentEngineError } from "../agent-engine/errors.js";
 import { ApiError } from "../errors.js";
 import {
   SessionMutationError,
@@ -7,7 +9,6 @@ import {
   type SessionMutationObservationStatus,
   type SessionMutationOrigin,
 } from "../session-mutation-coordinator.js";
-import { buildSession, buildSessionList, buildSessionMessages, buildSessionSnapshot } from "../session-read-model.js";
 import {
   createSessionGroupId,
   normalizeSessionGroupState,
@@ -27,11 +28,6 @@ type ParseOptionalBoolean = (value: string | null, name: string) => boolean | un
 type ParseOptionalPositiveInteger = (value: string | null, name: string) => number | undefined;
 type ParseOptionalNonNegativeInteger = (value: string | null, name: string) => number | undefined;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
-type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
-type OpencodeClientResult<T, E> =
-  | { data: T | undefined; error: undefined; response: Response }
-  | { data: undefined; error: E; response: Response };
-type UnwrapOpencodeResult = <T, E>(result: OpencodeClientResult<T, E>, path: string) => NonNullable<T>;
 
 interface RegisterSessionRoutesOptions {
   routes: Route[];
@@ -45,15 +41,7 @@ interface RegisterSessionRoutesOptions {
   requireClientScope: (ctx: RequestContext, required: TokenScope) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
-  createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
-  unwrapOpencodeResult: UnwrapOpencodeResult;
-  dispatchSessionPromptAsync: (
-    config: ServerConfig,
-    workspace: WorkspaceInfo,
-    sessionId: string,
-    prompt: Record<string, unknown>,
-  ) => Promise<void>;
-  dispatchSessionAbort: (config: ServerConfig, workspace: WorkspaceInfo, sessionId: string) => Promise<boolean>;
+  controlPlane: AgentRuntimeControlPlane;
   sessionMutations: SessionMutationCoordinator;
   sessionPendingOperations: SessionPendingOperationStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
@@ -137,10 +125,6 @@ const legacyObserveRunBodySchema = z.object({
   expectedRunId: runIdentifierSchema,
   observation: z.enum(["idle", "error", "completed", "failed", "aborted"]),
 }).strict();
-const opencodeTargetSessionStatusSchema = z.object({
-  type: z.enum(["idle", "busy", "running", "retry", "retrying", "waiting"]),
-}).passthrough();
-
 function parseRunBody<T>(schema: z.ZodType<T>, body: Record<string, unknown>): T {
   const parsed = schema.safeParse(body);
   if (!parsed.success) throw new ApiError(400, "invalid_payload", "Session run payload is invalid");
@@ -160,6 +144,11 @@ function remapSessionMutationError(error: unknown): never {
       : "The expected run does not match the active run";
     throw new ApiError(409, error.code, message, { currentRunId: error.currentRunId });
   }
+  if (error instanceof AgentEngineError) {
+    const upstreamStatus = typeof error.details?.status === "number" ? error.details.status : null;
+    const status = error.code === "runtime_request_failed" && upstreamStatus === 404 ? 404 : 502;
+    throw new ApiError(status, error.code, error.message, error.details);
+  }
   throw error;
 }
 
@@ -176,93 +165,49 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope,
     resolveWorkspace,
     resolveWorkspaceWithoutBootstrap,
-    createWorkspaceOpencodeClient,
-    unwrapOpencodeResult,
-    dispatchSessionPromptAsync,
-    dispatchSessionAbort,
+    controlPlane,
     sessionMutations,
     sessionPendingOperations,
     sessionPendingOperationPump,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
-  function remapSessionReadError(error: unknown): never {
-    if (error instanceof ApiError && error.code === "opencode_request_failed") {
-      const details = error.details;
-      const upstreamStatus =
-        isRecord(details) && "status" in details ? Number(details.status) : NaN;
-      if (upstreamStatus === 400) {
-        throw new ApiError(400, "invalid_query", "OpenCode rejected the session read request", details);
-      }
-      if (upstreamStatus === 404) {
-        throw new ApiError(404, "session_not_found", "Session not found", details);
-      }
-    }
-    throw error;
-  }
-
   async function listWorkspaceSessions(
     workspace: WorkspaceInfo,
     input: { roots?: boolean; start?: number; search?: string; limit?: number },
   ) {
+    let sessions: ReturnType<typeof legacySession>[];
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSessionList(
-        unwrapOpencodeResult(
-          await opencode.session.list({
-            roots: input.roots,
-            start: input.start,
-            search: input.search,
-            limit: input.limit,
-          }),
-          "/session",
-        ),
-      );
+      sessions = (await controlPlane.listSessions(workspace.id, input)).map(legacySession);
     } catch (error) {
-      remapSessionReadError(error);
+      remapSessionMutationError(error);
     }
+    return sessions;
   }
 
   async function createWorkspaceSession(
     workspace: WorkspaceInfo,
     input: { title: string; prompt?: string },
   ) {
-    const opencode = createWorkspaceOpencodeClient(config, workspace);
-    const session = buildSession(
-      unwrapOpencodeResult(
-        await opencode.session.create({ title: input.title }),
-        "/session",
-      ),
-    );
-
+    const canonical = await controlPlane.createSession({ workspaceId: workspace.id, title: input.title });
     if (input.prompt) {
-      const result = await opencode.session.promptAsync({
-        sessionID: session.id,
-        parts: [{ type: "text", text: input.prompt }],
+      await controlPlane.startRun({
+        workspaceId: workspace.id,
+        sessionId: canonical.id,
+        origin: "local-renderer",
+        startCommandCorrelationId: null,
+        prompt: { parts: [{ type: "text", text: input.prompt }] },
       });
-      if (result.error !== undefined) {
-        throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-          status: result.response.status,
-          body: result.error,
-          path: `/session/${encodeURIComponent(session.id)}/prompt_async`,
-        });
-      }
     }
-
-    return { item: session, started: Boolean(input.prompt) };
+    return { item: legacySession(canonical), started: Boolean(input.prompt) };
   }
 
   async function readWorkspaceSession(workspace: WorkspaceInfo, sessionId: string) {
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSession(
-        unwrapOpencodeResult(
-          await opencode.session.get({ sessionID: sessionId }),
-          `/session/${encodeURIComponent(sessionId)}`,
-        ),
-      );
+      await controlPlane.bindLegacyOpenCodeSession(workspace.id, sessionId);
+      return legacySession(await controlPlane.readSession(workspace.id, sessionId));
     } catch (error) {
-      remapSessionReadError(error);
+      remapSessionMutationError(error);
     }
   }
 
@@ -272,15 +217,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     input: { limit?: number },
   ) {
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSessionMessages(
-        unwrapOpencodeResult(
-          await opencode.session.messages({ sessionID: sessionId, limit: input.limit }),
-          `/session/${encodeURIComponent(sessionId)}/message`,
-        ),
-      );
+      await controlPlane.bindLegacyOpenCodeSession(workspace.id, sessionId);
+      return (await controlPlane.snapshot(workspace.id, sessionId, input.limit)).messages.map(legacyMessage);
     } catch (error) {
-      remapSessionReadError(error);
+      remapSessionMutationError(error);
     }
   }
 
@@ -290,22 +230,10 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     input: { limit?: number },
   ) {
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      const [session, messages, todos, statuses] = await Promise.all([
-        opencode.session
-          .get({ sessionID: sessionId })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}`)),
-        opencode.session
-          .messages({ sessionID: sessionId, limit: input.limit })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/message`)),
-        opencode.session
-          .todo({ sessionID: sessionId })
-          .then((result) => unwrapOpencodeResult(result, `/session/${encodeURIComponent(sessionId)}/todo`)),
-        opencode.session.status().then((result) => unwrapOpencodeResult(result, "/session/status")),
-      ]);
-      return buildSessionSnapshot({ session, messages, todos, statuses });
+      await controlPlane.bindLegacyOpenCodeSession(workspace.id, sessionId);
+      return legacySnapshot(await controlPlane.snapshot(workspace.id, sessionId, input.limit));
     } catch (error) {
-      remapSessionReadError(error);
+      remapSessionMutationError(error);
     }
   }
 
@@ -539,22 +467,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    let run;
+    await controlPlane.bindLegacyOpenCodeSession(workspace.id, input.sessionId);
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
-      if (!isRecord(statuses)) {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      }
-      const targetStatus = Object.prototype.hasOwnProperty.call(statuses, input.sessionId)
-        ? statuses[input.sessionId]
-        : undefined;
-      if (targetStatus !== undefined) {
-        const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
-        if (!parsedStatus.success) {
-          throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-        }
-        if (parsedStatus.data.type !== "idle") {
+      if (await controlPlane.sessionActivity(workspace.id, input.sessionId) !== "idle") {
           if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
             const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
               isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
@@ -581,29 +496,17 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             "session_busy",
             sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null,
           );
-        }
       }
-
-      // Every contender reads authoritative engine state first. This synchronous
-      // reservation then decides which idle local/remote start may dispatch.
-      run = sessionMutations.reserveStart({
+      const run = await controlPlane.startRun({
         workspaceId: workspace.id,
         sessionId: input.sessionId,
         origin: input.origin,
         startCommandCorrelationId: input.startCommandCorrelationId,
+        prompt: input.prompt,
       });
+      return jsonResponse({ disposition: "started", run }, 202);
     } catch (error) {
       remapSessionMutationError(error);
-    }
-    try {
-      await dispatchSessionPromptAsync(config, workspace, input.sessionId, input.prompt);
-      return jsonResponse({
-        disposition: "started",
-        run: sessionMutations.acceptStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId }) ?? run,
-      }, 202);
-    } catch (error) {
-      sessionMutations.rollbackStart({ workspaceId: workspace.id, sessionId: input.sessionId, runId: run.runId });
-      throw error;
     }
   }
 
@@ -614,38 +517,16 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    let reservation;
     try {
-      reservation = sessionMutations.reserveAbort({
+      const run = await controlPlane.abortRun({
         workspaceId: workspace.id,
         sessionId: input.sessionId,
         runId: input.runId,
         abortCommandCorrelationId: input.abortCommandCorrelationId,
       });
+      return jsonResponse({ run, abortRequested: true }, 202);
     } catch (error) {
       remapSessionMutationError(error);
-    }
-    try {
-      const abortRequested = await dispatchSessionAbort(config, workspace, input.sessionId);
-      if (!abortRequested) {
-        throw new ApiError(502, "opencode_abort_not_accepted", "OpenCode did not accept the abort request");
-      }
-      const run = sessionMutations.acceptAbort({
-        workspaceId: workspace.id,
-        sessionId: input.sessionId,
-        runId: input.runId,
-        abortCommandCorrelationId: input.abortCommandCorrelationId,
-      });
-      return jsonResponse({ run: run ?? reservation.run, abortRequested: true }, 202);
-    } catch (error) {
-      sessionMutations.rollbackAbort({
-        workspaceId: workspace.id,
-        sessionId: input.sessionId,
-        runId: input.runId,
-        abortCommandCorrelationId: input.abortCommandCorrelationId,
-        previousStatus: reservation.previousStatus,
-      });
-      throw error;
     }
   }
 
@@ -656,7 +537,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     try {
-      const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });
+      const observation = controlPlane.observeRun({ workspaceId: workspace.id, ...input });
       if (observation.cleared) {
         for (const admitted of sessionPendingOperations.list(workspace.id, input.sessionId)) {
           if (admitted.state === "admitted" && admitted.admittedId === input.runId) {
@@ -792,12 +673,55 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       throw new ApiError(400, "invalid_payload", "sessionId is required");
     }
 
-    const opencode = createWorkspaceOpencodeClient(config, workspace);
-    unwrapOpencodeResult(
-      await opencode.session.delete({ sessionID: sessionId }),
-      `/session/${encodeURIComponent(sessionId)}`,
-    );
+    await controlPlane.deleteSession(workspace.id, sessionId);
 
     return jsonResponse({ ok: true });
   });
+}
+
+function legacySession(session: CanonicalAgentSession) {
+  const slug = typeof session.configuration.slug === "string" ? session.configuration.slug : undefined;
+  return {
+    id: session.backendSessionId ?? session.id,
+    title: session.title,
+    directory: session.canonicalCwd,
+    time: { created: session.createdAt, updated: session.updatedAt },
+    runtimeId: session.runtimeId,
+    backendSessionId: session.backendSessionId,
+    ...(slug ? { slug } : {}),
+  };
+}
+
+function legacyMessage(message: CanonicalAgentMessage) {
+  return {
+    info: {
+      id: message.id,
+      sessionID: message.sessionId,
+      role: message.role,
+      ...(message.parentId ? { parentID: message.parentId } : {}),
+      time: { created: message.createdAt, ...(message.completedAt === null ? {} : { completed: message.completedAt }) },
+      ...message.metadata,
+    },
+    parts: message.parts.map((part) => ({
+      ...part,
+      messageID: part.messageId,
+      sessionID: part.sessionId,
+      ...(part.type === "file" ? { url: part.uri, filename: part.name } : {}),
+    })),
+  };
+}
+
+function legacyStatus(status: CanonicalAgentSession["status"]) {
+  if (status.type === "running" || status.type === "starting" || status.type === "waiting" || status.type === "aborting") return { type: "busy" as const };
+  if (status.type === "retrying") return { type: "retry" as const, attempt: status.attempt, message: status.message, next: status.nextAt };
+  return { type: "idle" as const };
+}
+
+function legacySnapshot(snapshot: CanonicalSessionSnapshot) {
+  return {
+    session: legacySession(snapshot.session),
+    messages: snapshot.messages.map(legacyMessage),
+    todos: snapshot.todos,
+    status: legacyStatus(snapshot.session.status),
+  };
 }

@@ -16,6 +16,7 @@ import { normalizeModelBehaviorValue } from "../../app/lib/model-behavior";
 export type SessionChoiceOverride = {
   model?: ModelRef | null;
   variant?: string | null;
+  agentProfile?: string | null;
 };
 
 export type ModelPickerTarget = "default" | "session";
@@ -62,7 +63,12 @@ const normalizeSessionChoice = (
   if (hasOwn(value, "variant")) {
     next.variant = normalizeModelBehaviorValue(value.variant ?? null);
   }
-  return hasOwn(next, "variant") || next.model ? next : null;
+  if (typeof value.agentProfile === "string" && value.agentProfile.trim()) {
+    next.agentProfile = value.agentProfile.trim();
+  } else if (hasOwn(value, "agentProfile")) {
+    next.agentProfile = null;
+  }
+  return hasOwn(next, "variant") || hasOwn(next, "agentProfile") || next.model ? next : null;
 };
 
 export function parseSessionChoiceOverrides(
@@ -90,6 +96,9 @@ export function parseSessionChoiceOverrides(
         ...(hasOwn(record, "variant")
           ? { variant: normalizeVariantOverride(record.variant) }
           : {}),
+        ...(hasOwn(record, "agentProfile")
+          ? { agentProfile: typeof record.agentProfile === "string" ? record.agentProfile : null }
+          : {}),
       });
       if (choice) next[sessionId] = choice;
     }
@@ -109,12 +118,13 @@ export function serializeSessionChoiceOverrides(
 
   if (!entries.length) return null;
 
-  const payload: Record<string, { model?: string; variant?: string | null }> =
+  const payload: Record<string, { model?: string; variant?: string | null; agentProfile?: string | null }> =
     {};
   for (const [sessionId, choice] of entries) {
-    const next: { model?: string; variant?: string | null } = {};
+    const next: { model?: string; variant?: string | null; agentProfile?: string | null } = {};
     if (choice.model) next.model = formatModelRef(choice.model);
     if (hasOwn(choice, "variant")) next.variant = choice.variant ?? null;
+    if (hasOwn(choice, "agentProfile")) next.agentProfile = choice.agentProfile ?? null;
     payload[sessionId] = next;
   }
   return JSON.stringify(payload);

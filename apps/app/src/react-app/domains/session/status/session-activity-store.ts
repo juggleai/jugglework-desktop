@@ -76,15 +76,15 @@ const createRecord = (): SessionActivityRecord => ({
 
 function normalizeRunStatus(status: unknown): "idle" | "running" | "retry" {
   if (typeof status === "string") {
-    if (status === "busy" || status === "running") return "running";
-    if (status === "retry") return "retry";
+    if (["busy", "starting", "running", "waiting", "aborting"].includes(status)) return "running";
+    if (status === "retry" || status === "retrying") return "retry";
     return "idle";
   }
 
   if (!status || typeof status !== "object") return "idle";
   const type = "type" in status ? status.type : undefined;
-  if (type === "busy" || type === "running") return "running";
-  if (type === "retry") return "retry";
+  if (type === "busy" || type === "starting" || type === "running" || type === "waiting" || type === "aborting") return "running";
+  if (type === "retry" || type === "retrying") return "retry";
   return "idle";
 }
 

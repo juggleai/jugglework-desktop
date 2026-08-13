@@ -27,35 +27,42 @@ function workspaceState() {
 }
 
 function session(id = "ses_1", directory = WORKSPACE_PATH) {
-  return { id, title: "Session", directory, time: { created: 1_000, updated: 2_000 } };
+  return {
+    id,
+    workspaceId: "ws_local",
+    runtimeId: "claude-agent",
+    title: "Session",
+    canonicalCwd: directory,
+    status: { type: "running" },
+    createdAt: 1_000,
+    updatedAt: 2_000,
+  };
 }
 
 function snapshotBody(directory = WORKSPACE_PATH) {
   return {
-    item: {
-      session: session("ses_1", directory),
-      status: { type: "retry", attempt: 2 },
+    snapshot: {
+      schemaVersion: 1,
+      session: { ...session("ses_1", directory), status: { type: "retrying", attempt: 2, message: "Retry", nextAt: 5_000 } },
       messages: [
         {
-          info: { id: "msg_1", sessionID: "ses_1", role: "assistant", time: { created: 3_000, completed: 4_000 } },
+          id: "msg_1", sessionId: "ses_1", role: "assistant", parentId: null, createdAt: 3_000, completedAt: 4_000,
           parts: [
-            { id: "prt_text", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "visible /Users/alice/private Bearer abc.def token=secret" },
-            { id: "prt_reason", messageID: "msg_1", sessionID: "ses_1", type: "reasoning", text: "thinking" },
-            { id: "prt_hidden", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "hidden", synthetic: true },
-            { id: "prt_ignored", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "ignored", ignored: true },
-            { id: "prt_file", messageID: "msg_1", sessionID: "ses_1", type: "file", url: "file:///private/secret.txt" },
+            { id: "prt_text", messageId: "msg_1", sessionId: "ses_1", type: "text", text: "visible /Users/alice/private Bearer abc.def token=secret", state: "complete", ordinal: 0, createdAt: 3_000, updatedAt: 4_000 },
+            { id: "prt_reason", messageId: "msg_1", sessionId: "ses_1", type: "reasoning", text: "thinking", visibility: "visible", state: "complete", ordinal: 1, createdAt: 3_000, updatedAt: 4_000 },
+            { id: "prt_hidden", messageId: "msg_1", sessionId: "ses_1", type: "reasoning", text: "hidden", visibility: "hidden", state: "complete", ordinal: 2, createdAt: 3_000, updatedAt: 4_000 },
+            { id: "prt_file", messageId: "msg_1", sessionId: "ses_1", type: "file", name: "secret.txt", uri: "file:///private/secret.txt", ordinal: 3, createdAt: 3_000, updatedAt: 4_000 },
             {
-              id: "prt_tool",
-              messageID: "msg_1",
-              sessionID: "ses_1",
-              type: "tool",
-              tool: "bash",
-              state: { status: "completed", input: { command: "cat /Users/alice/.env", authorization: "Bearer abc" }, output: { token: "secret" }, metadata: { title: "Shell" } },
+              id: "prt_tool", messageId: "msg_1", sessionId: "ses_1", type: "tool", toolCallId: "call_1", toolName: "bash",
+              state: "completed", input: { command: "cat /Users/alice/.env", authorization: "Bearer abc" }, output: { token: "secret" },
+              metadata: { title: "Shell" }, ordinal: 4, createdAt: 3_000, updatedAt: 4_000,
             },
           ],
         },
       ],
-      todos: [{ content: "Ship it", status: "completed", priority: "high" }],
+      todos: [{ id: "todo_1", content: "Ship it", status: "completed", priority: "high" }],
+      interactions: [],
+      latestSequence: 1,
     },
   };
 }
@@ -64,11 +71,10 @@ function harness(overrides = {}) {
   const calls = [];
   const responses = {
     "/workspaces": { items: [{ id: "ws_local", name: "Local", path: WORKSPACE_PATH, workspaceType: "local" }] },
-    "/workspace/ws_local/sessions?limit=10000": { items: [session()] },
-    "/workspace/ws_local/opencode/session/status": { ses_1: { type: "busy" } },
-    "/workspace/ws_local/sessions/ses_1": { item: session() },
-    "/workspace/ws_local/sessions/ses_1/snapshot?limit=200": snapshotBody(),
-    "/workspace/ws_local/sessions/ses_1/pending": { items: [] },
+    "/workspace/ws_local/agent/v1/sessions": { items: [session()] },
+    "/workspace/ws_local/agent/v1/sessions/ses_1": { session: session() },
+    "/workspace/ws_local/agent/v1/sessions/ses_1/snapshot?limit=200": snapshotBody(),
+    "/workspace/ws_local/agent/v1/sessions/ses_1/pending": { items: [] },
     ...(overrides.responses ?? {}),
   };
   const registrations = createRemoteControlReadRegistrations({
@@ -168,29 +174,39 @@ describe("remote-control read adapters", () => {
     });
     assert.deepEqual(calls, [
       "/workspaces",
-      "/workspace/ws_local/sessions?limit=10000",
-      "/workspace/ws_local/opencode/session/status",
+      "/workspace/ws_local/agent/v1/sessions",
     ]);
     assert.doesNotMatch(JSON.stringify(dispatched), /private|authorized|http|token/);
     desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result: dispatched.value });
   });
 
+  it("lists durable canonical sessions when a runtime is unavailable", async () => {
+    const { registry } = harness({
+      responses: {
+        "/workspace/ws_local/agent/v1/sessions": { items: [{ ...session(), status: { type: "unavailable", reasonCode: "worker_down", message: "Restarting" } }] },
+      },
+    });
+    const dispatched = await dispatch(registry, "session.list", { workspaceId: "ws_local" });
+    assert.equal(dispatched.ok, true);
+    assert.equal(dispatched.value.sessions.length, 1);
+    assert.equal(dispatched.value.sessions[0].status, "failed");
+  });
+
   it("rejects cross-workspace list entries and snapshot preflight before content", async () => {
     const listHarness = harness({
       responses: {
-        "/workspace/ws_local/sessions?limit=10000": { items: [session("ses_1", "/other/workspace")] },
-        "/workspace/ws_local/opencode/session/status": {},
+        "/workspace/ws_local/agent/v1/sessions": { items: [session("ses_1", "/other/workspace")] },
       },
     });
     assert.equal((await dispatch(listHarness.registry, "session.list", { workspaceId: "ws_local" })).error.code, "session_not_found");
 
     const snapshotHarness = harness({
       responses: {
-        "/workspace/ws_local/sessions/ses_1": { item: session("ses_1", "/other/workspace") },
+        "/workspace/ws_local/agent/v1/sessions/ses_1": { session: session("ses_1", "/other/workspace") },
       },
     });
     assert.equal((await dispatch(snapshotHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" })).error.code, "session_not_found");
-    assert.deepEqual(snapshotHarness.calls, ["/workspaces", "/workspace/ws_local/sessions/ses_1"]);
+    assert.deepEqual(snapshotHarness.calls, ["/workspaces", "/workspace/ws_local/agent/v1/sessions/ses_1"]);
     assert.equal(snapshotHarness.calls.some((value) => value.includes("snapshot")), false);
   });
 
@@ -221,12 +237,23 @@ describe("remote-control read adapters", () => {
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
   });
 
+  it("returns transcript history when auxiliary pending metadata is unavailable", async () => {
+    const { registry } = harness({
+      responses: {
+        "/workspace/ws_local/agent/v1/sessions/ses_1/pending": new Error("pending metadata unavailable"),
+      },
+    });
+    const dispatched = await dispatch(registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    assert.equal(dispatched.ok, true);
+    assert.equal(dispatched.value.messages.length, 1);
+    assert.deepEqual(dispatched.value.pendingOperations, []);
+  });
+
   it("maps malformed responses and raw failures to sanitized internal errors", async () => {
     for (const response of [{ items: [{ id: "bad" }] }, new Error("token at http://127.0.0.1/private")]) {
       const { registry } = harness({
         responses: {
-          "/workspace/ws_local/sessions?limit=10000": response,
-          "/workspace/ws_local/opencode/session/status": {},
+          "/workspace/ws_local/agent/v1/sessions": response,
         },
       });
       const dispatched = await dispatch(registry, "session.list", { workspaceId: "ws_local" });

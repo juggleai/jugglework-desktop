@@ -6,8 +6,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import type { Agent } from "@opencode-ai/sdk/v2/client";
 
+import type { AgentProfileOption } from "@/app/types";
 import { t } from "@/i18n";
 import {
   Command,
@@ -106,7 +106,7 @@ export type CommandPaletteProps = {
   onMoveCurrentSessionToGroup?: (groupId: string) => void;
   extraItems?: PaletteItem[];
   /** Optional: agent picker submode (Switch agent). */
-  listAgents?: () => Promise<Agent[]>;
+  listAgents?: () => Promise<AgentProfileOption[]>;
   selectedAgent?: string | null;
   onSelectAgent?: (agent: string | null) => void;
 };
@@ -119,7 +119,7 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const [mode, setMode] = useState<PaletteMode>("root");
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<AgentProfileOption[]>([]);
 
   useEffect(() => {
     if (!props.open) {

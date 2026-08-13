@@ -13,7 +13,7 @@ import {
   type WorkspaceList,
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
-import { createClient, unwrap } from "../../app/lib/opencode";
+import { createCanonicalAgentClient } from "../../app/lib/agent-client";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
@@ -24,7 +24,7 @@ import type { CreateWorkspaceOptions } from "../domains/workspace/types";
 import { JoinOrganizationDialog } from "../domains/cloud/join-organization-dialog";
 import { resolveJuggleWorkConnection } from "./jugglework-connection";
 import { captureAnalyticsEvent } from "../../app/lib/analytics";
-import { buildJuggleWorkWorkspaceBaseUrl, createJuggleWorkServerClient } from "../../app/lib/jugglework-server";
+import { createJuggleWorkServerClient } from "../../app/lib/jugglework-server";
 import { buildDenAuthUrl, clearDenSession, DEFAULT_DEN_BASE_URL, readDenSettings } from "../../app/lib/den";
 import {
   denSettingsChangedEvent,
@@ -229,11 +229,14 @@ export function WelcomeRoute() {
         if (targetWorkspaceId && sessionBaseUrl && sessionToken) {
           try {
             const workspacePath = targetWorkspace?.path?.trim() || folder;
-            const session = unwrap(await createClient(
-              `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
-              workspacePath || undefined,
-              { token: sessionToken, mode: "jugglework" },
-            ).session.create({ directory: workspacePath || undefined }));
+            const session = await createCanonicalAgentClient({
+              baseUrl: sessionBaseUrl,
+              workspaceId: targetWorkspaceId,
+              token: sessionToken,
+            }).createSession({
+              runtimeId: "jugglework",
+              title: t("session.default_title"),
+            });
             targetSessionId = session.id;
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
           } catch {

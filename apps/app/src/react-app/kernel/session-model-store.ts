@@ -118,8 +118,8 @@ export function setSessionModelChoice(
   // TIPS: 推理档位依附于具体模型，换模型时必须丢弃旧档位，换回同一个模型才保留。
   const keepVariant = Boolean(existing?.model && modelEquals(existing.model, model)) && hasVariant(existing);
   const next: SessionChoiceOverride = keepVariant
-    ? { model, variant: existing?.variant ?? null }
-    : { model };
+    ? { model, variant: existing?.variant ?? null, ...(hasAgentProfile(existing) ? { agentProfile: existing?.agentProfile ?? null } : {}) }
+    : { model, ...(hasAgentProfile(existing) ? { agentProfile: existing?.agentProfile ?? null } : {}) };
 
   writeSessionChoices(workspaceId, { ...current, [id]: next });
 }
@@ -142,7 +142,33 @@ export function setSessionVariantChoice(
   const existing = current[id];
   writeSessionChoices(workspaceId, {
     ...current,
-    [id]: { ...(existing?.model ? { model: existing.model } : {}), variant },
+    [id]: {
+      ...(existing?.model ? { model: existing.model } : {}),
+      variant,
+      ...(hasAgentProfile(existing) ? { agentProfile: existing?.agentProfile ?? null } : {}),
+    },
+  });
+}
+
+const hasAgentProfile = (choice: SessionChoiceOverride | undefined): boolean =>
+  Boolean(choice) && Object.prototype.hasOwnProperty.call(choice, "agentProfile");
+
+export function setSessionAgentProfileChoice(
+  workspaceId: string,
+  sessionId: string,
+  agentProfile: string | null,
+): void {
+  const id = sessionId.trim();
+  if (!id) return;
+  const current = readSessionChoices(workspaceId);
+  const existing = current[id];
+  writeSessionChoices(workspaceId, {
+    ...current,
+    [id]: {
+      ...(existing?.model ? { model: existing.model } : {}),
+      ...(hasVariant(existing) ? { variant: existing?.variant ?? null } : {}),
+      agentProfile: agentProfile?.trim() || null,
+    },
   });
 }
 

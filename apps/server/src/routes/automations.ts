@@ -12,7 +12,7 @@ import { previewAutomationSchedule } from "../automation/schedule.js";
 import { ApiError } from "../errors.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
-import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import type { AgentRuntimeControlPlane } from "../agent-runtime-control-plane.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 /** 会话与自动化共用的内置默认智能体名，选择器里以“默认智能体”呈现，不重复列出。 */
@@ -32,7 +32,7 @@ export interface RegisterAutomationRoutesOptions {
   onChanged?: () => void;
   log?: (event: string, fields: Record<string, string | number | boolean | null>) => void;
   resolveWorkspace?: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
-  createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => ReturnType<typeof createOpencodeClient>;
+  controlPlane?: AgentRuntimeControlPlane;
   listWorkspaceMcp?: (config: ServerConfig, workspaceId: string, workspaceRoot: string) => Promise<McpItem[]>;
   enabled?: boolean;
 }
@@ -54,7 +54,7 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
   // 选定工作空间后按该空间重新查询，从而补上项目级安装的条目。
   addRoute(routes, "GET", "/automations/dependencies", "client", async (ctx) => {
     const requestedId = ctx.url.searchParams.get("workspaceId")?.trim() ?? "";
-    if (!options.resolveWorkspace || !options.createWorkspaceOpencodeClient) {
+    if (!options.resolveWorkspace || !options.controlPlane) {
       throw new ApiError(503, "automation_dependencies_unavailable", "Automation dependencies are unavailable");
     }
     const fallbackId = config.workspaces.find((entry) => entry.workspaceType !== "remote")?.id ?? "";
@@ -62,26 +62,25 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     if (!workspaceId) return jsonResponse({ models: [], agents: [], skills: [], connectors: [] });
     const workspace = await options.resolveWorkspace(config, workspaceId);
     if (workspace.workspaceType !== "local") throw new ApiError(400, "workspace_unavailable", "Automation requires a local workspace");
-    const opencode = options.createWorkspaceOpencodeClient(config, workspace);
-    const [providers, agents, skills, connectors] = await Promise.all([
-      opencode.provider.list(),
-      opencode.app.agents(),
-      opencode.app.skills(),
+    const [models, agents, skills, connectors] = await Promise.all([
+      options.controlPlane.runtimeModels(workspace.id, "jugglework"),
+      options.controlPlane.runtimeAgentProfiles(workspace.id),
+      options.controlPlane.runtimeSkills(workspace.id),
       options.listWorkspaceMcp?.(config, workspace.id, workspace.path) ?? Promise.resolve([]),
     ]);
     return jsonResponse({
-      models: (providers.data?.all ?? []).flatMap((provider) => Object.values(provider.models).map((model) => ({
-        providerId: provider.id,
-        providerName: provider.name,
+      models: models.map((model) => ({
+        providerId: model.providerId,
+        providerName: model.providerId,
         modelId: model.id,
-        modelName: model.name,
-        variants: model.variants ? Object.keys(model.variants) : [],
-      }))),
+        modelName: model.label,
+        variants: model.capabilities.flatMap((item) => item.startsWith("effort:") ? [item.slice("effort:".length)] : []),
+      })),
       // TIPS:与会话输入栏的智能体选择口径一致——隐藏项、子智能体和内置默认智能体都不作为可选项。
-      agents: (agents.data ?? [])
-        .filter((agent) => !agent.hidden && agent.mode !== "subagent" && agent.name !== DEFAULT_AGENT_NAME)
-        .map((agent) => ({ id: agent.name, name: agent.name, description: agent.description ?? "" })),
-      skills: (skills.data ?? []).map((skill) => ({ id: skill.name, name: skill.name, description: skill.description ?? "" })),
+      agents: agents
+        .filter((agent) => agent.id !== DEFAULT_AGENT_NAME)
+        .map((agent) => ({ id: agent.id, name: agent.label, description: agent.description ?? "" })),
+      skills: skills.map((skill) => ({ id: skill.id, name: skill.label, description: skill.description ?? "" })),
       connectors: connectors.map((item) => ({ id: item.name, label: item.name, ready: item.disabledByTools !== true })),
     });
   });

@@ -1,0 +1,151 @@
+[
+  {
+    "protocolVersion": 1,
+    "sequence": 1,
+    "id": "claude-status-running",
+    "type": "agent.event",
+    "createdAt": "2026-08-13T10:00:00.000Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "backendSessionId": "claude-backend-session",
+      "data": {
+        "type": "session.status",
+        "status": { "type": "running" }
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "sequence": 2,
+    "id": "claude-message-final",
+    "type": "agent.event",
+    "createdAt": "2026-08-13T10:00:01.000Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "backendSessionId": "claude-backend-session",
+      "data": {
+        "type": "message.updated",
+        "message": {
+          "id": "claude-message-one",
+          "sessionId": "public-session",
+          "role": "assistant",
+          "parentId": null,
+          "createdAt": 1786615200000,
+          "completedAt": 1786615201000,
+          "parts": [
+            {
+              "id": "claude-part-text",
+              "messageId": "claude-message-one",
+              "sessionId": "public-session",
+              "ordinal": 0,
+              "createdAt": 1786615200000,
+              "updatedAt": 1786615201000,
+              "type": "text",
+              "text": "Hello from Claude",
+              "state": "complete"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "sequence": 3,
+    "id": "claude-tool-waiting",
+    "type": "message.part.updated",
+    "createdAt": "2026-08-13T10:00:01.100Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "runId": "run-one",
+      "backendSessionId": "claude-backend-session",
+      "messageId": "claude-message-one",
+      "part": {
+        "id": "claude-part-tool",
+        "messageId": "claude-message-one",
+        "sessionId": "public-session",
+        "ordinal": 1,
+        "createdAt": 1786615201000,
+        "updatedAt": 1786615201100,
+        "type": "tool",
+        "toolCallId": "claude-tool-call",
+        "toolName": "Read",
+        "state": "waiting",
+        "input": { "path": "README.md" }
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "sequence": 4,
+    "id": "claude-interaction-requested",
+    "type": "agent.event",
+    "createdAt": "2026-08-13T10:00:01.200Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "runId": "run-one",
+      "backendSessionId": "claude-backend-session",
+      "data": {
+        "type": "interaction.requested",
+        "interaction": {
+          "id": "claude-interaction-one",
+          "sessionId": "public-session",
+          "runId": "run-one",
+          "kind": "permission",
+          "state": "pending",
+          "title": "Allow Read?",
+          "toolName": "Read",
+          "input": { "path": "README.md" },
+          "requestedAt": 1786615201200,
+          "deadlineAt": 1786615261200,
+          "resolvedAt": null,
+          "resolution": null,
+          "metadata": { "toolCallId": "claude-tool-call", "toolPartId": "claude-part-tool" }
+        }
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "sequence": 5,
+    "id": "claude-usage",
+    "type": "agent.event",
+    "createdAt": "2026-08-13T10:00:02.000Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "backendSessionId": "claude-backend-session",
+      "data": {
+        "type": "run.usage",
+        "runId": "run-one",
+        "usage": {
+          "inputTokens": 12,
+          "outputTokens": 4,
+          "turns": 1,
+          "estimatedCostUsd": 0.001,
+          "estimateOnly": true
+        }
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "sequence": 6,
+    "id": "claude-completed",
+    "type": "agent.event",
+    "createdAt": "2026-08-13T10:00:03.000Z",
+    "payload": {
+      "workspaceId": "workspace-a",
+      "sessionId": "public-session",
+      "backendSessionId": "claude-backend-session",
+      "data": {
+        "type": "run.completed",
+        "runId": "run-one"
+      }
+    }
+  }
+]

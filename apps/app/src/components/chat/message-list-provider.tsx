@@ -21,6 +21,9 @@ interface MessageListContextValue {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  canFork: boolean
+  canRewind: boolean
+  onStopSubagent?: (runId: string, taskId: string) => Promise<void>
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
@@ -41,6 +44,9 @@ interface MessageListProviderProps {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage: (messageId: string) => void
   onEditUserMessage: (messageId: string, text: string) => void
+  canFork?: boolean
+  canRewind?: boolean
+  onStopSubagent?: (runId: string, taskId: string) => Promise<void>
   onMcpReconnect: (
     action: ChatToolReconnectAction,
     onProgress: (progress: ChatToolReconnectProgress) => void,
@@ -73,6 +79,9 @@ export function MessageListProvider({
   onRevertToUserMessage,
   onForkAtMessage,
   onEditUserMessage,
+  canFork = true,
+  canRewind = true,
+  onStopSubagent,
   onMcpReconnect,
   onMcpReopenAuthorization,
   onMcpRetry,
@@ -91,6 +100,9 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      canFork,
+      canRewind,
+      onStopSubagent,
       onMcpReconnect,
       onMcpReopenAuthorization,
       onMcpRetry,
@@ -108,6 +120,9 @@ export function MessageListProvider({
       onRevertToUserMessage,
       onForkAtMessage,
       onEditUserMessage,
+      canFork,
+      canRewind,
+      onStopSubagent,
       onMcpReconnect,
       onMcpReopenAuthorization,
       onMcpRetry,

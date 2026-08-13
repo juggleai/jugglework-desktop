@@ -14,6 +14,12 @@
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
+    "./agent-runtime": {
+      "types": "./src/agent-runtime/index.ts",
+      "node": "./dist/agent-runtime.js",
+      "development": "./src/agent-runtime/index.ts",
+      "default": "./dist/agent-runtime.js"
+    },
     "./desktop-remote-control": {
       "types": "./src/desktop-remote-control.ts",
       "node": "./dist/desktop-remote-control.js",
@@ -93,7 +99,7 @@
   "scripts": {
     "build": "tsup",
     "build:electron-runtime": "tsup --config tsup.electron.config.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "pnpm build && node --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

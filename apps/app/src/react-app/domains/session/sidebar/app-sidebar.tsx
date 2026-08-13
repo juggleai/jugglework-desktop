@@ -19,6 +19,7 @@ import {
   Folder,
   FolderOpen,
   Tag,
+  Bot,
 } from "lucide-react";
 import { LayoutGroup, LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 
@@ -128,6 +129,7 @@ import { setTaskScope, useTaskScope, workspaceTaskScope } from "./task-scope-sto
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
+import { sessionRuntimeIdentity } from "../agent-runtime-experience";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import { SessionCircularProgress } from "./session-circular-progress";
 
@@ -241,6 +243,12 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
             {t("workspace_list.rename_session")}
           </DropdownMenuItem>
         ) : null}
+        {ctx.onContinueWithClaude ? (
+          <DropdownMenuItem onClick={() => ctx.onContinueWithClaude?.(workspaceId, sessionId)}>
+            <Bot className="size-4" />
+            Continue with Claude Agent
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Tag className="size-4" />
@@ -312,6 +320,12 @@ function SessionMenuContent({ variant, sessionId, workspaceId, isPinned, isArchi
         <ContextMenuItem onClick={() => ctx.onOpenRenameSession?.(sessionId)}>
           <Pencil className="size-4" />
           {t("workspace_list.rename_session")}
+        </ContextMenuItem>
+      ) : null}
+      {ctx.onContinueWithClaude ? (
+        <ContextMenuItem onClick={() => ctx.onContinueWithClaude?.(workspaceId, sessionId)}>
+          <Bot className="size-4" />
+          Continue with Claude Agent
         </ContextMenuItem>
       ) : null}
       <ContextMenuSub>
@@ -684,6 +698,7 @@ export type AppSidebarProps = {
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onContinueWithClaude?: (workspaceId: string, sessionId: string) => void;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -909,6 +924,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
+    onContinueWithClaude: props.onContinueWithClaude,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
     onShareWorkspace: props.onShareWorkspace,
@@ -2154,6 +2170,10 @@ function SessionMenuItem({
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
+  const runtimeIdentity = sessionRuntimeIdentity(session);
+  const runtimeDetail = runtimeIdentity
+    ? [runtimeIdentity.runtime, runtimeIdentity.profile, runtimeIdentity.model, runtimeIdentity.execution].filter(Boolean).join(" · ")
+    : null;
 
   const openSession = () => {
     useSessionManagementStore.getState().clearUnread(session.id);
@@ -2236,7 +2256,10 @@ function SessionMenuItem({
           className={rowButtonClass}
         >
           {leading}
-          <span className="min-w-0 flex-1 truncate" title={itemTitle}>{displayTitle}</span>
+          <span className="min-w-0 flex-1 truncate" title={runtimeDetail ? `${itemTitle} · ${runtimeDetail}` : itemTitle}>
+            {displayTitle}
+            {runtimeIdentity ? <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">{runtimeIdentity.runtime}</span> : null}
+          </span>
         </SidebarMenuSubButton>
       </SessionContextMenu>
       {trailing}

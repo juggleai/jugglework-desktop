@@ -2,11 +2,12 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "ai";
 import { useQuery } from "@tanstack/react-query";
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
+import type { CanonicalSessionSnapshot, CanonicalSessionStatus } from "@jugglework/types/agent-runtime";
 import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { createCanonicalAgentClient } from "@/app/lib/agent-client";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
@@ -21,6 +22,7 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
+  AgentProfileOption,
   McpServerEntry,
   McpStatusMap,
   ModelRef,
@@ -41,6 +43,20 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import {
+  canonicalPermissionToUi,
+  canonicalQuestionToUi,
+  canonicalSnapshotToUIMessages,
+  canonicalTodosToUi,
+  confirmAmbiguousRetry,
+  latestCanonicalRunError,
+  requiresAmbiguousRetryConfirmation,
+} from "../canonical-agent-ui";
+import { canonicalAgentCacheKeys } from "../canonical-agent-cache";
+import {
+  getAgentRuntimeControlStates,
+  type AgentRuntimeControlPolicy,
+} from "../agent-capabilities";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
@@ -80,7 +96,7 @@ import {
   getComposerQueuedDrafts,
   useComposerStateStore,
 } from "./composer-state-store";
-import { MessageList } from "@/components/chat/message-list";
+import { MessageList, type SessionRetryStatus } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import type {
   ChatToolReconnectAction,
@@ -106,7 +122,9 @@ import {
 } from "./connect-capability-inventory";
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
-const IDLE_STATUS: SessionStatus = { type: "idle" };
+type SessionSurfaceStatus = CanonicalSessionStatus | JuggleWorkSessionSnapshot["status"];
+
+const IDLE_STATUS: SessionSurfaceStatus = { type: "idle" };
 const DEFAULT_COMPOSER_CONTROL_TEXT = "Help me outline the next JuggleWork task.";
 const SESSION_SURFACE_SELECTOR = "[data-session-surface-id]";
 const MARKDOWN_PRIMITIVE_EVAL_TEXT = `# Markdown proof heading
@@ -180,7 +198,7 @@ export type SessionSurfaceProps = {
   onModelVariantChange: (value: string | null) => void;
   agentLabel: string;
   selectedAgent: string | null;
-  listAgents: () => Promise<import("@opencode-ai/sdk/v2/client").Agent[]>;
+  listAgents: () => Promise<AgentProfileOption[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<import("@/app/types").SlashCommandOption[]>;
   recentFiles: string[];
@@ -204,6 +222,9 @@ export type SessionSurfaceProps = {
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions, sessionId?: string) => void;
   environmentRuntimeKey?: string | null;
   onApplyEnvironmentChanges?: () => Promise<ApplyEnvironmentChangesResult>;
+  canonicalAgentEnabled?: boolean;
+  runtimeId?: string;
+  runtimeControlPolicy?: AgentRuntimeControlPolicy;
 };
 
 function messageToReadableText(message: UIMessage) {
@@ -268,6 +289,29 @@ function statusLabel(snapshot: JuggleWorkSessionSnapshot | undefined, busy: bool
   if (snapshot?.status.type === "busy") return "Running...";
   if (snapshot?.status.type === "retry") return `Retrying: ${snapshot.status.message}`;
   return "Ready";
+}
+
+function isRetryAction(value: unknown): value is NonNullable<SessionRetryStatus["action"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const action = value as Record<string, unknown>;
+  return typeof action.title === "string"
+    && typeof action.message === "string"
+    && typeof action.label === "string"
+    && (action.link === undefined || typeof action.link === "string");
+}
+
+function sessionRetryStatus(status: SessionSurfaceStatus): SessionRetryStatus | null {
+  if (status.type === "retrying") {
+    return { attempt: status.attempt, message: status.message, nextAt: status.nextAt };
+  }
+  if (status.type !== "retry") return null;
+  const action = "action" in status ? status.action : undefined;
+  return {
+    attempt: status.attempt,
+    message: status.message,
+    nextAt: status.next,
+    ...(isRetryAction(action) ? { action } : {}),
+  };
 }
 
 function controlTextArgument(args: unknown) {
@@ -525,12 +569,65 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const queuedRunObservedBusyRef = useRef(false);
   const composerShellRef = useRef<HTMLDivElement>(null);
   const hydratedKeyRef = useRef<string | null>(null);
+  const activeCanonicalRunRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.juggleworkToken, mode: "jugglework" }),
     [props.opencodeBaseUrl, props.juggleworkToken],
   );
+  const canonicalClient = useMemo(() => props.canonicalAgentEnabled ? createCanonicalAgentClient({
+    baseUrl: props.client.baseUrl,
+    workspaceId: props.workspaceId,
+    token: props.juggleworkToken,
+  }) : null, [props.canonicalAgentEnabled, props.client.baseUrl, props.juggleworkToken, props.workspaceId]);
+  const canonicalSnapshotKey = useMemo(
+    () => canonicalAgentCacheKeys.snapshot(props.workspaceId, props.sessionId),
+    [props.sessionId, props.workspaceId],
+  );
+  const canonicalSnapshotQuery = useQuery<CanonicalSessionSnapshot>({
+    queryKey: canonicalSnapshotKey,
+    queryFn: async () => canonicalClient!.getSessionSnapshot(props.sessionId, { limit: 140 }),
+    enabled: canonicalClient !== null,
+    staleTime: 500,
+  });
+  const runtimeDescriptorQuery = useQuery({
+    queryKey: canonicalAgentCacheKeys.runtimes(props.workspaceId).concat(props.runtimeId ?? "jugglework"),
+    queryFn: async () => canonicalClient!.getRuntime(props.runtimeId ?? "jugglework"),
+    enabled: canonicalClient !== null,
+    staleTime: 30_000,
+  });
+  const canonicalControlStates = useMemo(() => runtimeDescriptorQuery.data
+    ? getAgentRuntimeControlStates(runtimeDescriptorQuery.data, props.runtimeControlPolicy)
+    : null, [props.runtimeControlPolicy, runtimeDescriptorQuery.data]);
+  const controlEnabled = useCallback((control: keyof NonNullable<typeof canonicalControlStates>) => (
+    canonicalClient ? canonicalControlStates?.[control].enabled === true : true
+  ), [canonicalClient, canonicalControlStates]);
+  const [canonicalInteractionBusy, setCanonicalInteractionBusy] = useState(false);
+  const [currentTurnPermissionMode, setCurrentTurnPermissionMode] = useState<"default" | "accept-edits" | "dont-ask">("default");
+  const [currentTurnModel, setCurrentTurnModel] = useState<ModelRef | null>(null);
+  const [currentTurnEffort, setCurrentTurnEffort] = useState<"low" | "medium" | "high" | "xhigh" | "max" | null>(null);
+  const [currentTurnPlanMode, setCurrentTurnPlanMode] = useState(false);
+
+  useEffect(() => {
+    setCurrentTurnPermissionMode("default");
+    setCurrentTurnModel(null);
+    setCurrentTurnEffort(null);
+    setCurrentTurnPlanMode(false);
+  }, [props.sessionId]);
+  const currentTurnModels = runtimeDescriptorQuery.data?.models ?? [];
+  const effectiveCurrentTurnModel = currentTurnModel ?? (() => {
+    const model = currentTurnModels.find((item) => item.isDefault) ?? currentTurnModels[0];
+    return model ? { providerID: model.providerId, modelID: model.id } : null;
+  })();
+  const currentTurnEfforts = currentTurnModels.find((item) => (
+    item.providerId === effectiveCurrentTurnModel?.providerID && item.id === effectiveCurrentTurnModel.modelID
+  ))?.capabilities.flatMap((item) => item.startsWith("effort:")
+    ? [item.slice("effort:".length) as "low" | "medium" | "high" | "xhigh" | "max"]
+    : []) ?? [];
+  const effectiveCurrentTurnEffort = currentTurnEffort && currentTurnEfforts.includes(currentTurnEffort)
+    ? currentTurnEffort
+    : currentTurnEfforts.includes("high") ? "high" : currentTurnEfforts[0] ?? null;
 
   const snapshotQueryKey = useMemo(
     () => reactSnapshotKey(props.workspaceId, props.sessionId),
@@ -547,12 +644,54 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    enabled: canonicalClient === null,
     staleTime: 500,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
   const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
-  const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
+  const statusState = useSharedQueryState<SessionSurfaceStatus>(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
+  const canonicalSnapshot = canonicalSnapshotQuery.data?.session.id === props.sessionId
+    ? canonicalSnapshotQuery.data
+    : null;
+  const canonicalTodos = canonicalSnapshot ? canonicalTodosToUi(canonicalSnapshot) : null;
+  const canonicalPendingInteractions = canonicalSnapshot?.interactions.filter((interaction) => interaction.state === "pending") ?? [];
+  const canonicalPermission = canonicalControlStates?.permission.enabled
+    ? canonicalPendingInteractions.map(canonicalPermissionToUi).find((item) => item !== null) ?? null
+    : null;
+  const canonicalQuestion = canonicalControlStates?.question.enabled
+    ? canonicalPendingInteractions.map(canonicalQuestionToUi).find((item) => item !== null) ?? null
+    : null;
+  const visibleTodos = canonicalSnapshot
+    ? (canonicalControlStates?.todo.enabled ? canonicalTodos ?? [] : [])
+    : props.todos ?? [];
+  const visiblePermission = canonicalSnapshot ? canonicalPermission : props.activePermission ?? null;
+  const visibleQuestion = canonicalSnapshot ? canonicalQuestion : props.activeQuestion ?? null;
+  const respondCanonicalPermission = useCallback(async (requestId: string, reply: "once" | "always" | "reject") => {
+    if (!canonicalClient || canonicalInteractionBusy) return;
+    setCanonicalInteractionBusy(true);
+    try {
+      await canonicalClient.resolveInteraction(props.sessionId, requestId, reply === "reject"
+        ? { outcome: "deny", reason: "User denied the request" }
+        : { outcome: "allow" });
+      await canonicalSnapshotQuery.refetch();
+    } finally {
+      setCanonicalInteractionBusy(false);
+    }
+  }, [canonicalClient, canonicalInteractionBusy, canonicalSnapshotQuery.refetch, props.sessionId]);
+  const respondCanonicalQuestion = useCallback(async (requestId: string, answers: string[][]) => {
+    if (!canonicalClient || canonicalInteractionBusy) return;
+    setCanonicalInteractionBusy(true);
+    try {
+      await canonicalClient.resolveInteraction(props.sessionId, requestId, {
+        outcome: "answer",
+        values: answers.flat(),
+      });
+      await canonicalSnapshotQuery.refetch();
+    } finally {
+      setCanonicalInteractionBusy(false);
+    }
+  }, [canonicalClient, canonicalInteractionBusy, canonicalSnapshotQuery.refetch, props.sessionId]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
@@ -571,6 +710,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
   }, [props.sessionId]);
+
+  useEffect(() => {
+    const message = latestCanonicalRunError(canonicalSnapshot);
+    if (!canonicalSnapshot || !message) return;
+    useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, message);
+  }, [canonicalSnapshot, props.sessionId, props.workspaceId]);
 
   // Publish a composer inspector slice so external drivers can read draft
   // state, attachments, mentions, and sending status from the running app.
@@ -641,10 +786,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     currentSnapshot,
     cachedRendered: rendered,
   });
-  const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
+  const liveStatus: SessionSurfaceStatus = canonicalSnapshot?.session.status
+    ?? statusState
+    ?? snapshot?.status
+    ?? IDLE_STATUS;
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
-  const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const retryStatus = sessionRetryStatus(liveStatus);
+  const sessionRunning = liveStatus.type === "busy"
+    || liveStatus.type === "starting"
+    || liveStatus.type === "running"
+    || liveStatus.type === "waiting"
+    || liveStatus.type === "aborting";
+  const chatStreaming = sending || sessionRunning || retryStatus !== null;
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -654,24 +808,26 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return "submitted";
     }
 
-    if (liveStatus.type === "busy") {
+    if (sessionRunning) {
       return "streaming";
     }
 
-    if (liveStatus.type === "retry") {
+    if (retryStatus) {
       return "retrying";
     }
 
     return "ready";
-  }, [liveStatus, sending]);
+  }, [retryStatus, sending, sessionRunning]);
   const [evalMarkdownMessages, setEvalMarkdownMessages] = useState<UIMessage[]>(EMPTY_TRANSCRIPT);
   useEffect(() => {
     setEvalMarkdownMessages(EMPTY_TRANSCRIPT);
   }, [props.sessionId]);
 
   const baseRenderedMessages = useMemo(
-    () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
-    [snapshot, transcriptState],
+    () => canonicalSnapshot
+      ? canonicalSnapshotToUIMessages(canonicalSnapshot)
+      : deriveRenderedSessionMessages({ transcriptState, snapshot }),
+    [canonicalSnapshot, snapshot, transcriptState],
   );
   const renderedMessages = useMemo(() => {
     if (evalMarkdownMessages.length === 0) return baseRenderedMessages;
@@ -705,7 +861,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     [openTargets],
   );
   const autoOpenTarget = selectAutoOpenTarget(verifiedOpenTargets);
-  const pendingSessionLoad = !snapshot && snapshotQuery.isLoading && renderedMessages.length === 0;
+  const pendingSessionLoad = !snapshot && !canonicalSnapshot
+    && (canonicalClient ? canonicalSnapshotQuery.isLoading : snapshotQuery.isLoading)
+    && renderedMessages.length === 0;
   const assistantOutputAfterAwaitStart = useMemo(() => {
     if (awaitingAssistantBaseline === null) return false;
     return renderedMessages
@@ -800,10 +958,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const model = deriveSessionRenderModel({
     intendedSessionId: props.sessionId,
-    renderedSessionId: renderedMessages.length > 0 || snapshot ? props.sessionId : null,
-    hasSnapshot: Boolean(snapshot) || renderedMessages.length > 0,
-    isFetching: snapshotQuery.isFetching,
-    isError: snapshotQuery.isError || Boolean(error),
+    renderedSessionId: renderedMessages.length > 0 || snapshot || canonicalSnapshot ? props.sessionId : null,
+    hasSnapshot: Boolean(snapshot || canonicalSnapshot) || renderedMessages.length > 0,
+    isFetching: canonicalClient ? canonicalSnapshotQuery.isFetching : snapshotQuery.isFetching,
+    isError: (canonicalClient ? canonicalSnapshotQuery.isError : snapshotQuery.isError) || Boolean(error),
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
@@ -883,7 +1041,44 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
     setError(null);
     try {
-      const result = await props.onSendDraft(nextDraft, props.sessionId);
+      let result: CloudMcpSubmissionResult;
+      if (canonicalClient) {
+        if (!canonicalControlStates) throw new Error("Runtime capabilities are still loading. Try again in a moment.");
+        if (nextDraft.attachments.length > 0) throw new Error("This runtime does not support attachments through the canonical prompt API.");
+        if (nextDraft.mode === "shell" && !canonicalControlStates?.shell.enabled) throw new Error("Shell is unavailable for this runtime or policy.");
+        if (nextDraft.command?.name === "compact" && !canonicalControlStates?.compact.enabled) throw new Error("Compact is unavailable for this runtime or policy.");
+        if (nextDraft.command && nextDraft.command.name !== "compact" && !canonicalControlStates?.command.enabled) {
+          throw new Error("Commands are unavailable for this runtime or policy.");
+        }
+        const text = (nextDraft.resolvedText ?? nextDraft.text).trim();
+        const prompt = nextDraft.command
+          ? { parts: [{ type: "text", text }], command: nextDraft.command }
+          : { parts: [{ type: "text", text }] };
+        const confirmedAmbiguousRetry = confirmAmbiguousRetry(canonicalSnapshot, (message) => window.confirm(message));
+        if (!confirmedAmbiguousRetry) return { outcome: "cancelled", reason: "user_cancelled" };
+        const started = await canonicalClient.startRun(props.sessionId, {
+          prompt,
+          origin: "local-renderer",
+          whenBusy: "reject",
+          ...(requiresAmbiguousRetryConfirmation(canonicalSnapshot) ? { confirmAmbiguousRetry: true } : {}),
+          ...(props.runtimeId === "claude-agent" ? { currentTurn: {
+            ...(canonicalControlStates.currentTurnModel.enabled && effectiveCurrentTurnModel
+              ? { model: { providerId: effectiveCurrentTurnModel.providerID, modelId: effectiveCurrentTurnModel.modelID } }
+              : {}),
+            ...(canonicalControlStates.currentTurnEffort.enabled && effectiveCurrentTurnEffort
+              ? { effort: effectiveCurrentTurnEffort }
+              : {}),
+            ...(canonicalControlStates.currentTurnPermission.enabled
+              ? { permissionMode: currentTurnPermissionMode }
+              : {}),
+            ...(canonicalControlStates.plan.enabled ? { planMode: currentTurnPlanMode } : {}),
+          } } : {}),
+        });
+        activeCanonicalRunRef.current = started.run?.runId ?? null;
+        result = { outcome: "sent", bypassed: true };
+      } else {
+        result = await props.onSendDraft(nextDraft, props.sessionId);
+      }
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
@@ -899,7 +1094,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setAwaitingAssistantBaseline(null);
       throw nextError;
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [appendComposerHistory, canonicalClient, canonicalControlStates, canonicalSnapshot, currentTurnPermissionMode, currentTurnPlanMode, effectiveCurrentTurnEffort, effectiveCurrentTurnModel, props.onSendDraft, props.runtimeId, props.sessionId, props.workspaceId, renderedMessages.length]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -964,12 +1159,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if (canonicalClient && !canonicalControlStates?.enqueue.enabled) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
     queueWaitsForIdleRef.current = true;
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
+  }, [appendQueuedDraft, attachments, buildDraft, canonicalClient, canonicalControlStates?.enqueue.enabled, clearComposer, draft, props.sessionId]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const removed = removeQueuedDraftFromStore(props.sessionId, id);
@@ -1001,18 +1197,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // passes the workspace root), so the abort must target the same scope —
     // without it the server resolves the default project, finds no live run,
     // and answers `200: false` while the stream keeps going (#2014).
-    const aborted = await abortSessionSafe(
-      opencodeClient,
-      props.sessionId,
-      props.workspaceRoot.trim() || undefined,
-    );
+    let aborted = false;
+    if (canonicalClient) {
+      const active = activeCanonicalRunRef.current
+        ? { runId: activeCanonicalRunRef.current }
+        : await canonicalClient.getActiveRun(props.sessionId);
+      if (active) {
+        await canonicalClient.abortRun(props.sessionId, active.runId);
+        activeCanonicalRunRef.current = null;
+        aborted = true;
+      }
+    } else {
+      aborted = await abortSessionSafe(opencodeClient, props.sessionId, props.workspaceRoot.trim() || undefined);
+    }
     if (!aborted) {
       setError({ message: t("session.stop_failed") });
       return;
     }
     captureAnalyticsEvent("task_run_stopped", {});
-    await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
+    if (canonicalClient) await canonicalSnapshotQuery.refetch();
+    else await snapshotQuery.refetch();
+  }, [canonicalClient, canonicalSnapshotQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -1338,7 +1543,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           source: "command",
         },
       ],
-    );
+    ).filter((command) => {
+      if (!canonicalClient) return true;
+      if (command.name === "new") return true;
+      if (command.name === "compact") return controlEnabled("compact");
+      return controlEnabled("command");
+    });
     try {
       const [connect, config] = await Promise.all([
         loadConnectCapabilityInventory(),
@@ -1354,7 +1564,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // Cloud inventory is optional: losing access to Connect must not hide local commands.
       return localCommands;
     }
-  }, [loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
+  }, [canonicalClient, controlEnabled, loadConnectCapabilityInventory, props.client, props.listCommands, props.workspaceId]);
 
   const listSkills = async (): Promise<SkillCard[]> => {
     const [response, connect, config] = await Promise.all([
@@ -1637,10 +1847,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onRevertToMessage, props.sessionId]);
 
   const handleForkAtMessage = useCallback((messageId: string) => {
-    // OpenCode's fork copies messages strictly before the given id, so pass
-    // the next real message to make the branch include the clicked message.
-    props.onForkAtMessage?.(resolveForkBoundaryId(renderedMessages, messageId), props.sessionId);
-  }, [props.onForkAtMessage, props.sessionId, renderedMessages]);
+    // OpenCode copies strictly before its boundary; Claude native fork uses an
+    // inclusive backend message ID. Do not apply OpenCode boundary semantics to Claude.
+    const boundary = props.canonicalAgentEnabled ? messageId : resolveForkBoundaryId(renderedMessages, messageId);
+    props.onForkAtMessage?.(boundary, props.sessionId);
+  }, [props.canonicalAgentEnabled, props.onForkAtMessage, props.sessionId, renderedMessages]);
 
   const handleEditUserMessage = useCallback((messageId: string, text: string) => {
     void (async () => {
@@ -1777,7 +1988,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <div className="text-sm text-dls-secondary">Opening session…</div>
                 </div>
               </div>
-            ) : (snapshotQuery.isError || error) && !snapshot && renderedMessages.length === 0 ? (
+            ) : ((canonicalClient ? canonicalSnapshotQuery.isError : snapshotQuery.isError) || error) && !snapshot && !canonicalSnapshot && renderedMessages.length === 0 ? (
               <div className="px-6 py-8">
                 {error ? (
                   <SessionErrorCard
@@ -1788,7 +1999,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   />
                 ) : (
                   <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-                    {snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load session."}
+                    {(canonicalClient ? canonicalSnapshotQuery.error : snapshotQuery.error) instanceof Error
+                      ? (canonicalClient ? canonicalSnapshotQuery.error : snapshotQuery.error)?.message
+                      : "Failed to load session."}
                   </div>
                 )}
               </div>
@@ -1827,6 +2040,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onRevertToUserMessage={handleRevertToUserMessage}
                       onForkAtMessage={handleForkAtMessage}
                       onEditUserMessage={handleEditUserMessage}
+                      canFork={controlEnabled("fork")}
+                      canRewind={controlEnabled("checkpoint") && controlEnabled("rewind")}
+                      onStopSubagent={canonicalClient && controlEnabled("subagent")
+                        ? async (runId, taskId) => { await canonicalClient.stopSubagent(props.sessionId, runId, taskId); }
+                        : undefined}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}
                       onMcpRetry={handleMcpRetry}
@@ -1834,7 +2052,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       <MessageList
                         messages={renderedMessages}
                         status={status}
-                        retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                        retryStatus={retryStatus}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -1902,24 +2120,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
-        modelPickerOpen={props.modelPickerOpen}
-        selectedModel={props.selectedModel}
+          modelPickerOpen={props.modelPickerOpen}
+          modelControlEnabled={canonicalClient ? controlEnabled("currentTurnModel") : controlEnabled("model")}
+          currentTurnModels={canonicalClient && controlEnabled("currentTurnModel")
+            ? runtimeDescriptorQuery.data?.models.map((item) => ({ providerId: item.providerId, modelId: item.id, label: item.label }))
+            : undefined}
+        selectedModel={canonicalClient && effectiveCurrentTurnModel ? effectiveCurrentTurnModel : props.selectedModel}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
-        onModelChange={props.onModelChange}
+        onModelChange={canonicalClient ? setCurrentTurnModel : props.onModelChange}
         attachments={attachments}
         onAttachFiles={handleAttachFiles}
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
         modelVariantLabel={props.modelVariantLabel}
-        modelVariant={props.modelVariant}
-        modelBehaviorOptions={props.modelBehaviorOptions}
-        onModelVariantChange={props.onModelVariantChange}
+        modelVariant={canonicalClient ? effectiveCurrentTurnEffort : props.modelVariant}
+          modelBehaviorOptions={props.modelBehaviorOptions}
+          effortControlEnabled={canonicalClient ? controlEnabled("currentTurnEffort") : controlEnabled("variant")}
+          currentTurnEfforts={canonicalClient && controlEnabled("currentTurnEffort")
+            ? currentTurnEfforts.map((value) => ({ value, label: value === "xhigh" ? "Extra high" : value.charAt(0).toUpperCase() + value.slice(1) }))
+            : undefined}
+          permissionModeControlEnabled={canonicalClient ? controlEnabled("currentTurnPermission") : false}
+          permissionMode={currentTurnPermissionMode}
+          onPermissionModeChange={setCurrentTurnPermissionMode}
+          planModeControlEnabled={canonicalClient ? controlEnabled("plan") : false}
+          planMode={currentTurnPlanMode}
+          onPlanModeChange={setCurrentTurnPlanMode}
+        onModelVariantChange={canonicalClient
+          ? (value) => setCurrentTurnEffort(value as "low" | "medium" | "high" | "xhigh" | "max" | null)
+          : props.onModelVariantChange}
         agentLabel={props.agentLabel}
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}
         onSelectAgent={props.onSelectAgent}
-        listCommands={listCommands}
+          listCommands={listCommands}
+          commandControlEnabled={controlEnabled("command") || controlEnabled("compact")}
+          enqueueControlEnabled={controlEnabled("enqueue")}
+          subagentControlEnabled={controlEnabled("subagent")}
         listSkills={listSkills}
         skills={toolSkills}
         listMcp={listMcp}
@@ -1941,9 +2178,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0)}
+          compactTopSpacing={Boolean(visibleQuestion || visibleTodos.some((todo) => todo.content.trim()) || visiblePermission || queuedDrafts.length > 0)}
           topAccessory={
-            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0 ? (
+            visibleQuestion || visibleTodos.some((todo) => todo.content.trim()) || visiblePermission || queuedDrafts.length > 0 ? (
               <div>
                 {queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
@@ -1953,24 +2190,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sending={drainingQueueRef.current}
                   />
                 ) : null}
-                {props.activeQuestion ? (
+                {visibleQuestion ? (
                   <QuestionPanel
-                    questions={props.activeQuestion.questions}
-                    busy={props.questionReplyBusy ?? false}
+                    questions={visibleQuestion.questions}
+                    busy={canonicalSnapshot ? canonicalInteractionBusy : props.questionReplyBusy ?? false}
                     onReply={(answers) => {
-                      if (props.activeQuestion) {
-                        props.respondQuestion?.(props.activeQuestion.id, answers);
-                      }
+                      if (canonicalSnapshot) void respondCanonicalQuestion(visibleQuestion.id, answers);
+                      else props.respondQuestion?.(visibleQuestion.id, answers);
                     }}
                   />
-                ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
-                  <TodoPanel todos={props.todos ?? []} />
+                ) : visibleTodos.some((todo) => todo.content.trim()) ? (
+                  <TodoPanel todos={visibleTodos} />
                 ) : null}
-                {props.activePermission ? (
+                {visiblePermission ? (
                   <PermissionApprovalPanel
-                    permission={props.activePermission}
-                    busy={props.permissionReplyBusy}
-                    respondPermission={props.respondPermission}
+                    permission={visiblePermission}
+                    busy={canonicalSnapshot ? canonicalInteractionBusy : props.permissionReplyBusy}
+                    respondPermission={canonicalSnapshot ? (requestId, reply) => void respondCanonicalPermission(requestId, reply) : props.respondPermission}
                     safeStringify={props.safeStringify}
                   />
                 ) : null}

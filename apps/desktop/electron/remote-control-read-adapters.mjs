@@ -19,22 +19,12 @@ const SNAPSHOT_TRANSCRIPT_BUDGET_BYTES = 512 * 1024;
 const SNAPSHOT_PART_TEXT_LIMIT = 128 * 1024;
 const ISO_EPOCH = new Date(0).toISOString();
 const identifierSchema = z.string().trim().min(1).max(256).refine((value) => !/[\u0000-\u001f\u007f]/.test(value));
-const jsonValueSchema = z.json();
-
 const timeSchema = z.object({
   created: z.number().finite().nonnegative().optional(),
   updated: z.number().finite().nonnegative().optional(),
   completed: z.number().finite().nonnegative().optional(),
 }).passthrough();
-const sessionSchema = z.object({
-  id: identifierSchema,
-  title: z.string().nullish(),
-  slug: z.string().nullish(),
-  directory: z.string(),
-  time: timeSchema.optional(),
-}).passthrough();
-const sessionListResponseSchema = z.object({ items: z.array(sessionSchema).max(MAX_SESSION_LIST_ITEMS) }).strict();
-const sessionResponseSchema = z.object({ item: sessionSchema }).strict();
+
 const messageInfoSchema = z.object({
   id: identifierSchema,
   sessionID: identifierSchema,
@@ -49,19 +39,63 @@ const partSchema = z.object({
 }).passthrough();
 const messageSchema = z.object({ info: messageInfoSchema, parts: z.array(partSchema).max(10_000) }).passthrough();
 const todoSchema = z.object({ content: z.string(), status: z.string(), priority: z.string() }).passthrough();
-const statusSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("idle") }).passthrough(),
-  z.object({ type: z.literal("busy") }).passthrough(),
-  z.object({ type: z.literal("retry") }).passthrough(),
-]);
-const statusesResponseSchema = z.record(z.string(), statusSchema);
-const snapshotResponseSchema = z.object({
-  item: z.object({
-    session: sessionSchema,
-    messages: z.array(messageSchema).max(SNAPSHOT_MESSAGE_LIMIT),
-    todos: z.array(todoSchema).max(10_000),
-    status: statusSchema,
-  }).strict(),
+const canonicalSessionStatusSchema = z.object({ type: z.string() }).passthrough();
+const canonicalSessionSchema = z.object({
+  id: identifierSchema,
+  workspaceId: identifierSchema,
+  runtimeId: identifierSchema,
+  title: z.string(),
+  canonicalCwd: z.string(),
+  status: canonicalSessionStatusSchema,
+  createdAt: z.number().finite().nonnegative(),
+  updatedAt: z.number().finite().nonnegative(),
+}).passthrough();
+const canonicalPartSchema = z.object({
+  id: identifierSchema,
+  messageId: identifierSchema,
+  sessionId: identifierSchema,
+  type: z.string(),
+}).passthrough();
+const canonicalMessageSchema = z.object({
+  id: identifierSchema,
+  sessionId: identifierSchema,
+  role: z.enum(["user", "assistant", "system"]),
+  createdAt: z.number().finite().nonnegative(),
+  completedAt: z.number().finite().nonnegative().nullable(),
+  parts: z.array(canonicalPartSchema).max(10_000),
+}).passthrough();
+const canonicalTodoSchema = z.object({
+  id: identifierSchema,
+  content: z.string(),
+  status: z.string(),
+  priority: z.string(),
+}).passthrough();
+const canonicalInteractionSchema = z.object({
+  id: identifierSchema,
+  sessionId: identifierSchema,
+  runId: identifierSchema,
+  kind: z.enum(["permission", "question", "input"]),
+  state: z.enum(["pending", "resolved", "timed_out", "cancelled"]),
+  title: z.string(),
+  description: z.string().optional(),
+  questions: z.array(z.object({
+    id: identifierSchema,
+    prompt: z.string(),
+    options: z.array(z.string()).max(100).optional(),
+    multiple: z.boolean(),
+  }).passthrough()).max(100).optional(),
+  requestedAt: z.number().finite().nonnegative(),
+  deadlineAt: z.number().finite().nonnegative().nullable(),
+}).passthrough();
+const canonicalSessionListResponseSchema = z.object({ items: z.array(canonicalSessionSchema).max(MAX_SESSION_LIST_ITEMS) }).strict();
+const canonicalSessionResponseSchema = z.object({ session: canonicalSessionSchema }).strict();
+const canonicalSnapshotResponseSchema = z.object({
+  snapshot: z.object({
+    session: canonicalSessionSchema,
+    messages: z.array(canonicalMessageSchema).max(SNAPSHOT_MESSAGE_LIMIT),
+    todos: z.array(canonicalTodoSchema).max(10_000),
+    interactions: z.array(canonicalInteractionSchema).max(10_000),
+  }).passthrough(),
 }).strict();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
@@ -114,15 +148,14 @@ function safeRemoteText(value, max) {
     .replace(/[A-Za-z]:\\Users\\[^\s"'`<>]+/g, "[LOCAL_PATH]");
 }
 
-/** @param {unknown} value */
-function safeJson(value) {
-  return jsonValueSchema.safeParse(value).success ? value : null;
-}
-
 /** @param {unknown} status */
 function sessionStatus(status) {
-  if (status && typeof status === "object" && "type" in status && status.type === "busy") return "running";
-  if (status && typeof status === "object" && "type" in status && status.type === "retry") return "retrying";
+  const type = status && typeof status === "object" && "type" in status && typeof status.type === "string" ? status.type : "idle";
+  if (["busy", "starting", "running"].includes(type)) return "running";
+  if (["retry", "retrying"].includes(type)) return "retrying";
+  if (type === "waiting") return "waiting";
+  if (type === "aborting") return "aborting";
+  if (["unavailable", "interrupted"].includes(type)) return "failed";
   return "idle";
 }
 
@@ -133,6 +166,89 @@ function mapClientError(error, notFoundCode) {
     throw new RemoteControlOperationExecutionError(notFoundCode);
   }
   throw new RemoteControlOperationExecutionError("internal_error");
+}
+
+/** Snapshot pending-operation metadata is optional for read-only history. */
+async function readPendingOperations(client, workspaceId, sessionId) {
+  try {
+    const pending = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/agent/v1/sessions/${encodeURIComponent(sessionId)}/pending`);
+    const record = /** @type {Record<string, unknown>} */ (pending);
+    return pending && typeof pending === "object" && Array.isArray(record.items) ? record.items : [];
+  } catch {
+    return [];
+  }
+}
+
+/** @param {z.infer<typeof canonicalPartSchema>} part */
+function normalizeCanonicalRemotePart(part) {
+  if ((part.type === "text" || part.type === "reasoning") && typeof part.text === "string") {
+    if (part.type === "reasoning" && part.visibility === "hidden") return null;
+    return { type: part.type, id: part.id, text: safeRemoteText(part.text, SNAPSHOT_PART_TEXT_LIMIT) };
+  }
+  if (part.type !== "tool" || typeof part.toolName !== "string" || !identifierSchema.safeParse(part.toolName).success) return null;
+  const metadata = part.metadata && typeof part.metadata === "object" ? /** @type {Record<string, unknown>} */ (part.metadata) : null;
+  const title = metadata && typeof metadata.title === "string" ? safeRemoteText(metadata.title.trim(), 500) || null : null;
+  return {
+    type: "tool",
+    id: part.id,
+    name: part.toolName,
+    title,
+    status: part.state === "running" ? "running" : part.state === "completed" ? "completed" : part.state === "error" || part.state === "cancelled" ? "failed" : "pending",
+    input: null,
+    output: null,
+  };
+}
+
+/** @param {z.infer<typeof canonicalMessageSchema>} message @param {string} sessionId */
+export function normalizeCanonicalRemoteMessage(message, sessionId) {
+  if (message.sessionId !== sessionId) return null;
+  const parts = message.parts.flatMap((part) => {
+    if (part.sessionId !== sessionId || part.messageId !== message.id) return [];
+    const normalized = normalizeCanonicalRemotePart(part);
+    return normalized ? [normalized] : [];
+  });
+  if (parts.length === 0) return null;
+  return {
+    id: message.id,
+    role: message.role,
+    createdAt: normalizeRemoteTimestamp(message.createdAt),
+    completedAt: message.completedAt === null ? null : normalizeRemoteTimestamp(message.completedAt),
+    parts,
+  };
+}
+
+/** @param {z.infer<typeof canonicalInteractionSchema>} interaction @param {string} sessionId */
+export function normalizeCanonicalRemoteInteraction(interaction, sessionId) {
+  if (interaction.sessionId !== sessionId || interaction.state !== "pending") return null;
+  const base = {
+    id: interaction.id,
+    sessionId,
+    runId: interaction.runId,
+    status: "pending",
+    title: safeRemoteText(interaction.title.trim(), 500) || "Interaction",
+    resolution: null,
+    createdAt: normalizeRemoteTimestamp(interaction.requestedAt),
+    expiresAt: interaction.deadlineAt === null ? null : normalizeRemoteTimestamp(interaction.deadlineAt),
+  };
+  if (interaction.kind === "permission") {
+    return {
+      ...base,
+      type: "permission",
+      description: safeRemoteText(interaction.description ?? interaction.title, 2_000),
+      permittedResponses: ["allow_once", "reject"],
+    };
+  }
+  if (interaction.kind !== "question" || !interaction.questions?.length) return null;
+  return {
+    ...base,
+    type: "question",
+    questions: interaction.questions.map((question) => ({
+      id: question.id,
+      prompt: safeRemoteText(question.prompt.trim(), 5_000),
+      multiple: question.multiple,
+      options: (question.options ?? []).map((option) => safeRemoteText(option.trim(), 1_000)).filter(Boolean),
+    })),
+  };
 }
 
 /** @param {unknown} state */
@@ -280,17 +396,17 @@ function workspaceSummary(workspace) {
   return { id: workspace.id, name: safeRemoteText(requestedName, 500) || "Workspace" };
 }
 
-/** @param {z.infer<typeof sessionSchema>} session @param {LocalWorkspace} workspace @param {unknown} status */
-function sessionSummary(session, workspace, status = null) {
-  if (canonicalPath(session.directory) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
-  const title = safeRemoteText((session.title || session.slug || "Untitled session").trim(), 1_000) || "Untitled session";
+/** @param {z.infer<typeof canonicalSessionSchema>} session @param {LocalWorkspace} workspace */
+function sessionSummary(session, workspace) {
+  if (session.workspaceId !== workspace.id || canonicalPath(session.canonicalCwd) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
+  const title = safeRemoteText((session.title || "Untitled session").trim(), 1_000) || "Untitled session";
   return {
     id: session.id,
     workspaceId: workspace.id,
     title,
-    status: sessionStatus(status),
-    createdAt: normalizeRemoteTimestamp(session.time?.created),
-    updatedAt: normalizeRemoteTimestamp(session.time?.updated ?? session.time?.created),
+    status: sessionStatus(session.status),
+    createdAt: normalizeRemoteTimestamp(session.createdAt),
+    updatedAt: normalizeRemoteTimestamp(session.updatedAt),
     activeRunId: null,
   };
 }
@@ -298,7 +414,7 @@ function sessionSummary(session, workspace, status = null) {
 /** @param {ManagedRuntimeClient} client @param {string} workspaceId @param {string} sessionId */
 async function readSession(client, workspaceId, sessionId) {
   try {
-    return sessionResponseSchema.parse(await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`)).item;
+    return canonicalSessionResponseSchema.parse(await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/agent/v1/sessions/${encodeURIComponent(sessionId)}`)).session;
   } catch (error) {
     mapClientError(error, "session_not_found");
   }
@@ -362,16 +478,12 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
     registration("session.list", (value) => parseArguments(value, ["workspaceId"]), async ({ arguments: args }) => {
       const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
       let response;
-      let statuses;
-      try {
-        [response, statuses] = await Promise.all([
-          managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions?limit=${MAX_SESSION_LIST_ITEMS}`).then((value) => sessionListResponseSchema.parse(value)),
-          managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/status`).then((value) => statusesResponseSchema.parse(value)),
-        ]);
+       try {
+         response = canonicalSessionListResponseSchema.parse(await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions`));
       } catch (error) {
         mapClientError(error, "workspace_not_found");
       }
-      const result = { sessions: response.items.filter((session) => !session.parentID).map((session) => sessionSummary(session, workspace, statuses[session.id])) };
+       const result = { sessions: response.items.map((session) => sessionSummary(session, workspace)) };
       return desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result }).result;
     }),
     registration("session.snapshot", (value) => parseArguments(value, ["workspaceId", "sessionId"]), async ({ arguments: args, context }) => {
@@ -382,41 +494,40 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
 
       let response;
       try {
-        response = snapshotResponseSchema.parse(await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/snapshot?limit=${SNAPSHOT_MESSAGE_LIMIT}`));
+         response = canonicalSnapshotResponseSchema.parse(await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/snapshot?limit=${SNAPSHOT_MESSAGE_LIMIT}`));
       } catch (error) {
         mapClientError(error, "session_not_found");
       }
-      if (response.item.session.id !== args.sessionId || canonicalPath(response.item.session.directory) !== workspace.path) {
+       if (response.snapshot.session.id !== args.sessionId || response.snapshot.session.workspaceId !== workspace.id || canonicalPath(response.snapshot.session.canonicalCwd) !== workspace.path) {
         throw new RemoteControlOperationExecutionError("session_not_found");
       }
 
       const contextGates = context && typeof context === "object" && context.featureGates && typeof context.featureGates === "object"
         ? context.featureGates
         : {};
-      let pendingInteractions = [];
-      let pendingOperations = [];
-      if (interactions && contextGates.interactions === true) {
-        const rawInteractions = await interactions.listPending({ workspaceId: workspace.id, sessionId: args.sessionId });
-        pendingInteractions = Array.isArray(rawInteractions) ? rawInteractions : [];
-      }
-      const pending = await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/pending`);
-      const pendingRecord = /** @type {Record<string, unknown>} */ (pending);
-      if (!pending || typeof pending !== "object" || !Array.isArray(pendingRecord.items)) throw new RemoteControlOperationExecutionError("internal_error");
-      pendingOperations = pendingRecord.items;
+       const pendingInteractions = contextGates.interactions === true
+         ? response.snapshot.interactions.flatMap((interaction) => {
+             const normalized = normalizeCanonicalRemoteInteraction(interaction, args.sessionId);
+             return normalized ? [normalized] : [];
+           })
+         : [];
+      const pendingOperations = await readPendingOperations(managedRuntimeClient, workspace.id, args.sessionId);
       const captured = new Date(now());
       if (!Number.isFinite(captured.getTime())) throw new RemoteControlOperationExecutionError("internal_error");
       const result = {
         schemaVersion: 1,
         workspace: workspaceSummary(workspace),
-        session: { ...summary, status: sessionStatus(response.item.status) },
-        messages: boundedTranscript(response.item.messages.flatMap((message) => {
-          const normalized = normalizeRemoteMessage(message, args.sessionId);
+         session: { ...summary, status: sessionStatus(response.snapshot.session.status) },
+         messages: boundedTranscript(response.snapshot.messages.flatMap((message) => {
+           const normalized = normalizeCanonicalRemoteMessage(message, args.sessionId);
           return normalized ? [normalized] : [];
         })),
-        todos: response.item.todos.flatMap((todo, index) => {
-          const normalized = normalizeRemoteTodo(todo, args.sessionId, index);
-          return normalized ? [normalized] : [];
-        }),
+         todos: response.snapshot.todos.map((todo) => ({
+           id: todo.id,
+           content: safeRemoteText(todo.content.trim(), 10_000),
+           status: ["pending", "in_progress", "completed", "cancelled"].includes(todo.status) ? todo.status : "pending",
+           priority: ["low", "medium", "high"].includes(todo.priority) ? todo.priority : "medium",
+         })),
         interactions: pendingInteractions,
         pendingOperations,
         capturedAt: captured.toISOString(),

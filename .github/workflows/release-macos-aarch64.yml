@@ -252,6 +252,9 @@ jobs:
       - name: Verify tag matches app versions
         run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
 
+      - name: Test release packaging checks
+        run: node --test scripts/release/verify-electron-updater-assets.test.mjs
+
       - name: Release review (strict)
         run: node scripts/release/review.mjs --strict
 
@@ -432,6 +435,15 @@ jobs:
             ${{ matrix.electron_args }} \
             --publish never
 
+      - name: Verify target Claude Agent installed package
+        shell: bash
+        env:
+          JUGGLEWORK_CLAUDE_ASSETS_DIR: apps/desktop/resources/claude-agent
+        run: |
+          set -euo pipefail
+          node apps/claude-agent-worker/scripts/check-package-content.mjs "$JUGGLEWORK_CLAUDE_ASSETS_DIR"
+          node apps/claude-agent-worker/scripts/installed-smoke.mjs "$JUGGLEWORK_CLAUDE_ASSETS_DIR"
+
       - name: Validate SignPath configuration (Windows)
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
         shell: bash
@@ -518,6 +530,10 @@ jobs:
         run: |
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
+
+      - name: Verify Electron updater assets
+        shell: bash
+        run: node scripts/release/verify-electron-updater-assets.mjs apps/desktop/dist-electron --expected-version "${RELEASE_TAG#v}" --target "${{ matrix.target_triple }}"
 
       - name: Upload Electron release assets
         env:

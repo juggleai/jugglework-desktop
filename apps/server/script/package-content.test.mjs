@@ -24,6 +24,17 @@ function run(command, args) {
   return result.stdout;
 }
 
+function runFailure(command, args, env = {}) {
+  const result = spawnSync(command, args, {
+    cwd: packageRoot,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+    shell: process.platform === "win32",
+  });
+  assert.notEqual(result.status, 0, `${command} ${args.join(" ")} should fail`);
+  return `${result.stdout}${result.stderr}`;
+}
+
 function npmFiles(output) {
   const manifest = JSON.parse(output);
   assert.equal(manifest.length, 1, "npm pack should describe one package");
@@ -42,6 +53,8 @@ function assertPackageContents(files, packer) {
     "package/dist/index.js",
     "package/dist/index.d.ts",
     "package/bin/jugglework-server.mjs",
+    "package/claude-agent-worker/dist/cli.js",
+    "package/claude-agent-worker/sdk-package.json",
     binary,
   ]) {
     assert.ok(included.has(path), `${packer} package is missing ${path}`);
@@ -53,8 +66,18 @@ function assertPackageContents(files, packer) {
 
 test("npm and pnpm package the production server", { timeout: 120_000 }, () => {
   run(pnpm, ["build"]);
+  run(pnpm, ["prepare:claude-worker"]);
   run(pnpm, ["build:bin"]);
   assert.equal(run(process.execPath, ["bin/jugglework-server.mjs", "--version"]).trim(), packageVersion);
+  assert.match(
+    runFailure(process.execPath, ["bin/jugglework-server.mjs", "--version"], {
+      JUGGLEWORK_CLAUDE_AGENT_ENABLED: "1",
+      JUGGLEWORK_CLAUDE_ROLLOUT_STAGE: "ga",
+      JUGGLEWORK_CLAUDE_AGENT_NODE_PATH: "",
+      JUGGLEWORK_CLAUDE_EXECUTABLE_PATH: "",
+    }),
+    /requires JUGGLEWORK_CLAUDE_AGENT_NODE_PATH/,
+  );
 
   assertPackageContents(npmFiles(run(npm, ["pack", "--dry-run", "--json"])), "npm");
   assertPackageContents(pnpmFiles(run(pnpm, ["pack", "--dry-run", "--json"])), "pnpm");

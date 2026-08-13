@@ -92,6 +92,9 @@ import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pa
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
 import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
+import {
+  readCanonicalSessions,
+} from "@/react-app/domains/session/canonical-agent-rollout";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
@@ -935,19 +938,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
   );
   const handleCreatePaletteSession = useCallback(async () => {
-    if (!opencodeClient || !selectedWorkspaceId) {
-      navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
-      return;
-    }
-    try {
-      const session = unwrap(
-        await opencodeClient.session.create({ directory: selectedWorkspaceRoot || undefined }),
-      );
-      navigate(workspaceSessionRoute(selectedWorkspaceId, session.id));
-    } catch (error) {
-      toast.error(describeRouteError(error));
-    }
-  }, [navigate, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot]);
+    navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent("jugglework:new-session")), 0);
+  }, [navigate, selectedWorkspaceId]);
   // Settings refreshes provider auth whenever the picker opens (the session
   // route does not need this; its provider state is kept fresh elsewhere).
   useEffect(() => {
@@ -1258,13 +1251,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             return { workspaceId: workspace.id, sessions: [], error: null as string | null };
           }
           try {
-            const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
+            const responseItems = await readCanonicalSessions({
+              endpoint,
+              options: { limit: 200 },
+            });
             const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
             const items = workspaceRoot && !endpoint.isRemote
-              ? (response.items ?? []).filter((session) =>
+              ? responseItems.filter((session) =>
                   normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
                 )
-              : (response.items ?? []);
+              : responseItems;
             return {
               workspaceId: workspace.id,
               sessions: items,

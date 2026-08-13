@@ -1,5 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import {
   isUnpublishedUpdaterChannelError,
@@ -118,5 +122,52 @@ describe("isUnpublishedUpdaterChannelError", () => {
       isUnpublishedUpdaterChannelError(new Error("HttpError: 404 release-notes.md")),
       false,
     );
+  });
+});
+
+describe("updater outage reliability", () => {
+  it("disables stale quit-time installs after a network check or download failure", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "jugglework-updater-outage-"));
+    const handlers = new Map();
+    const updater = Object.assign(new EventEmitter(), {
+      autoInstallOnAppQuit: true,
+      setFeedURL() {},
+      checkForUpdates: async () => ({ updateInfo: { version: "2.0.0" } }),
+      downloadUpdate: async () => undefined,
+      quitAndInstall() {},
+    });
+    try {
+      registerUpdaterIpc({
+        app: {
+          isPackaged: true,
+          getVersion: () => "1.0.0",
+          getPath: (key) => key === "home" ? root : path.join(root, key),
+        },
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => null,
+        loadAutoUpdater: async () => ({ autoUpdater: updater }),
+      });
+      const check = handlers.get("jugglework:updater:check");
+      const download = handlers.get("jugglework:updater:download");
+      const install = handlers.get("jugglework:updater:installAndRestart");
+
+      assert.equal((await check()).available, true);
+      assert.deepEqual(await download(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+
+      updater.checkForUpdates = async () => { throw new Error("fixture network unavailable"); };
+      assert.match((await check()).reason, /network unavailable/);
+      assert.equal(updater.autoInstallOnAppQuit, false);
+      assert.deepEqual(await install(), { ok: false, reason: "update-not-downloaded" });
+
+      updater.checkForUpdates = async () => ({ updateInfo: { version: "2.0.0" } });
+      assert.equal((await check()).available, true);
+      updater.downloadUpdate = async () => { throw new Error("fixture connection reset"); };
+      assert.match((await download()).reason, /connection reset/);
+      assert.equal(updater.autoInstallOnAppQuit, false);
+      assert.deepEqual(await install(), { ok: false, reason: "update-not-downloaded" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

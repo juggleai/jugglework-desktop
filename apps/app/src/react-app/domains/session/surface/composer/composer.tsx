@@ -1,12 +1,11 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Agent } from "@opencode-ai/sdk/v2/client";
 import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { AgentProfileOption, ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -81,7 +80,7 @@ type ComposerProps = {
   onModelVariantChange: (value: string | null) => void;
   agentLabel: string;
   selectedAgent: string | null;
-  listAgents: () => Promise<Agent[]>;
+  listAgents: () => Promise<AgentProfileOption[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
   listSkills?: () => Promise<SkillCard[]>;
@@ -109,6 +108,19 @@ type ComposerProps = {
   draftScopeKey?: string;
   compactTopSpacing?: boolean;
   topAccessory?: ReactNode;
+  modelControlEnabled?: boolean;
+  effortControlEnabled?: boolean;
+  permissionModeControlEnabled?: boolean;
+  permissionMode?: "default" | "accept-edits" | "dont-ask";
+  onPermissionModeChange?: (value: "default" | "accept-edits" | "dont-ask") => void;
+  planModeControlEnabled?: boolean;
+  planMode?: boolean;
+  onPlanModeChange?: (value: boolean) => void;
+  currentTurnModels?: Array<{ providerId: string; modelId: string; label: string }>;
+  currentTurnEfforts?: Array<{ value: "low" | "medium" | "high" | "xhigh" | "max"; label: string }>;
+  commandControlEnabled?: boolean;
+  enqueueControlEnabled?: boolean;
+  subagentControlEnabled?: boolean;
 };
 
 const FLUSH_PROMPT_EVENT = "jugglework:flushPromptDraft";
@@ -119,7 +131,7 @@ const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const DEFAULT_AGENT_NAME = "jugglework";
 
-function isNonDefaultAgent(agent: Agent) {
+function isNonDefaultAgent(agent: AgentProfileOption) {
   return agent.name !== DEFAULT_AGENT_NAME;
 }
 
@@ -294,7 +306,7 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
 export function ReactSessionComposer(props: ComposerProps) {
   const builtInExtensionsDisabled = useDesktopRestriction("allowBuiltInExtensions");
   let fileInput: HTMLInputElement | undefined;
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<AgentProfileOption[]>([]);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [commands, setCommands] = useState<SlashCommandOption[]>([]);
   const [commandsLoading, setCommandsLoading] = useState(false);
@@ -425,7 +437,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
   const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
-  const showAgentPicker = props.selectedAgent !== null || nonDefaultAgents.length > 0;
+  const showAgentPicker = props.subagentControlEnabled !== false && (props.selectedAgent !== null || nonDefaultAgents.length > 0);
 
   useEffect(() => {
     setSlashOpen(slashOpenNext);
@@ -1492,8 +1504,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                       <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
                         <div className="border-r border-dls-border bg-gray-2/30 p-2">
                           {([
-                            ["agents", t("composer.agents_label")],
-                            ["commands", t("dashboard.commands")],
+                            ...(props.subagentControlEnabled !== false ? [["agents", t("composer.agents_label")] as const] : []),
+                            ...(props.commandControlEnabled !== false ? [["commands", t("dashboard.commands")] as const] : []),
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
                             ["mcps", t("composer.mcps_label")],
@@ -1812,7 +1824,25 @@ export function ReactSessionComposer(props: ComposerProps) {
                   ) : null}
                 </div>
 
-                <ModelSelect
+                {props.currentTurnModels?.length ? (
+                  <label className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2 text-xs text-gray-11">
+                    <span>Model</span>
+                    <select
+                      aria-label="Current turn model"
+                      className="max-w-36 bg-transparent text-gray-12 outline-none"
+                      value={`${props.selectedModel.providerID}/${props.selectedModel.modelID}`}
+                      disabled={props.steering}
+                      onChange={(event) => {
+                        const selected = props.currentTurnModels?.find((model) => `${model.providerId}/${model.modelId}` === event.target.value);
+                        if (selected) props.onModelChange({ providerID: selected.providerId, modelID: selected.modelId });
+                      }}
+                    >
+                      {props.currentTurnModels.map((model) => (
+                        <option key={`${model.providerId}/${model.modelId}`} value={`${model.providerId}/${model.modelId}`}>{model.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : props.modelControlEnabled !== false ? <ModelSelect
                   open={props.modelPickerOpen}
                   value={props.selectedModel}
                   onOpenChange={props.onModelPickerOpenChange}
@@ -1820,12 +1850,27 @@ export function ReactSessionComposer(props: ComposerProps) {
                     if (!props.steering) props.onModelChange(model);
                   }}
                   disabled={props.steering}
-                />
+                /> : null}
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
                 ) : null}
 
-                <ModelBehaviorSelect
+                {props.currentTurnEfforts?.length ? (
+                  <label className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2 text-xs text-gray-11">
+                    <span>Effort</span>
+                    <select
+                      aria-label="Current turn effort"
+                      className="bg-transparent text-gray-12 outline-none"
+                      value={props.modelVariant ?? ""}
+                      disabled={props.steering}
+                      onChange={(event) => props.onModelVariantChange(event.target.value)}
+                    >
+                      {props.currentTurnEfforts.map((effort) => (
+                        <option key={effort.value} value={effort.value}>{effort.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : props.effortControlEnabled !== false ? <ModelBehaviorSelect
                   value={props.modelVariant}
                   label={props.modelVariantLabel}
                   options={props.modelBehaviorOptions}
@@ -1833,7 +1878,34 @@ export function ReactSessionComposer(props: ComposerProps) {
                     if (!props.steering) props.onModelVariantChange(value);
                   }}
                   disabled={props.steering}
-                />
+                /> : null}
+                {props.permissionModeControlEnabled ? (
+                  <label className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2 text-xs text-gray-11">
+                    <span>Permissions</span>
+                    <select
+                      aria-label="Current turn permission mode"
+                      className="bg-transparent text-gray-12 outline-none"
+                      value={props.permissionMode ?? "default"}
+                      disabled={props.steering}
+                      onChange={(event) => props.onPermissionModeChange?.(event.target.value as "default" | "accept-edits" | "dont-ask")}
+                    >
+                      <option value="default">Ask</option>
+                      <option value="accept-edits">Accept edits</option>
+                      <option value="dont-ask">Deny unapproved</option>
+                    </select>
+                  </label>
+                ) : null}
+                {props.planModeControlEnabled ? (
+                  <label className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2 text-xs text-gray-11">
+                    <input
+                      type="checkbox"
+                      checked={props.planMode === true}
+                      disabled={props.steering}
+                      onChange={(event) => props.onPlanModeChange?.(event.target.checked)}
+                    />
+                    Plan only
+                  </label>
+                ) : null}
               </div>
 
               {/*
@@ -1860,7 +1932,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       <Square size={12} fill="currentColor" />
                       <span>{t("composer.stop")}</span>
                     </button>
-                    <button
+                    {props.enqueueControlEnabled !== false ? <button
                       type="button"
                       onClick={canSend ? props.onQueue : undefined}
                       disabled={!canSend}
@@ -1878,7 +1950,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {props.queuedCount}
                         </span>
                       ) : null}
-                    </button>
+                    </button> : null}
                   </>
                 ) : (
                   <button

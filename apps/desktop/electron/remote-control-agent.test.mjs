@@ -799,7 +799,7 @@ describe("remote-control agent command handling", () => {
         getJson: async () => ({ items: [{ id: "ws_1", path: "/tmp/ws_1", workspaceType: "local" }] }),
         postJson: async (pathname, body) => {
           calls.push({ pathname, body });
-          return { item: { id: "ses_created", directory: "/tmp/ws_1" }, started: false };
+          return { session: { id: "ses_created", workspaceId: "ws_1", runtimeId: "jugglework", canonicalCwd: "/tmp/ws_1" } };
         },
       },
       coordinator: { recordServerRun: () => true, activeRuns: () => [] },
@@ -847,7 +847,7 @@ describe("remote-control agent command handling", () => {
       deviceId: DEVICE_ID, desktopKeyId: oldDesktopKeyId, desktopStatementHash: oldSignedAdvertisement.statementHash,
       controllerKeyId, direction: "controller-to-desktop",
     });
-    const request = { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "Encrypted session" } };
+    const request = { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "Encrypted session", runtimeId: "claude-agent" } };
     const routing = {
       kind: "command", commandId: COMMAND_ID, controlSessionId: CONTROL_ID, deviceId: DEVICE_ID,
       actor: { userId: "controller-1", displayName: "Controller" }, operation: "session.create",
@@ -871,7 +871,7 @@ describe("remote-control agent command handling", () => {
       encryption: { mode: "e2ee-v1", keyId: oldDesktopKeyId }, type: "encrypted.payload", routing, payload,
     });
     for (let index = 0; index < 4 && calls.length === 0; index += 1) await settle();
-    assert.deepEqual(calls, [{ pathname: "/workspace/ws_1/sessions", body: { title: "Encrypted session" } }]);
+    assert.deepEqual(calls, [{ pathname: "/workspace/ws_1/agent/v1/sessions", body: { title: "Encrypted session", runtimeId: "claude-agent" } }]);
     assert.deepEqual(frames(socket, "command.lifecycle").map((frame) => frame.payload.status), ["accepted", "running"]);
     const terminal = frames(socket, "encrypted.payload").at(-1);
     assert.equal(terminal.routing.status, "succeeded");

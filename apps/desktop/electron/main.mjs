@@ -41,12 +41,12 @@ import { createWorkspaceStore } from "./workspace-store.mjs";
 import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
+import { createClaudeAnthropicSecretStore } from "./claude-anthropic-secret-store.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
 import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
 import { createManagedRuntimeClient } from "./managed-runtime-client.mjs";
 import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
-import { createRemoteControlInteractionStore } from "./remote-control-interaction-store.mjs";
 import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
 import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
 import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./remote-control-agent.mjs";
@@ -1404,6 +1404,11 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
+const claudeAnthropicSecretStore = createClaudeAnthropicSecretStore({
+  app,
+  getSafeStorage: () => require("electron").safeStorage,
+  platform: normalizePlatform(process.platform),
+});
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
@@ -1411,21 +1416,15 @@ const runtimeManager = createRuntimeManager({
   // Lets the engine read its provider catalog from the connected private
   // cloud instead of the public mirror.
   readDenBaseUrl: () => workspaceStore.readDesktopBootstrapConfigSync()?.baseUrl ?? null,
+  claudeSecretProvider: claudeAnthropicSecretStore,
 });
 const runtimeIpcHandlers = createRuntimeIpcHandlers(runtimeManager);
-const remoteControlInteractionStore = createRemoteControlInteractionStore({
-  managedRuntimeClient: createManagedRuntimeClient({
-    getAccess: () => runtimeManager.managedServerAccess(),
-    fetcher: electronNet.fetch,
-  }),
-});
 remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
     getAccess: () => runtimeManager.managedServerAccess(),
     fetcher: electronNet.fetch,
   }),
-  interactions: remoteControlInteractionStore,
 });
 remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
   workspaceStore,
@@ -1448,11 +1447,11 @@ function createMainRemoteSessionEventBridge() {
     }),
     coordinator: sessionMutationCoordinator,
     listActiveRuns: ({ workspaceId }) => managedRuntimeClient.getJson(
-      `/workspace/${encodeURIComponent(workspaceId)}/session-runs`,
+      `/workspace/${encodeURIComponent(workspaceId)}/agent/v1/runs/active`,
     ),
     observeRun: async ({ workspaceId, sessionId, runId, status }) => {
       return managedRuntimeClient.postJson(
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
+        `/workspace/${encodeURIComponent(workspaceId)}/agent/v1/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/observations`,
         { status },
       );
     },

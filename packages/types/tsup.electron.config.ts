@@ -3,6 +3,7 @@ import { defineConfig } from "tsup"
 export default defineConfig({
   entry: {
     "desktop-remote-control": "src/desktop-remote-control.ts",
+    "agent-runtime-rollout": "src/agent-runtime/rollout.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

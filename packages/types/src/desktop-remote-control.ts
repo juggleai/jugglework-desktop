@@ -679,6 +679,7 @@ const sessionCreateRequestSchema = z
       .object({
         workspaceId: identifierSchema,
         title: sessionCreateTitleSchema,
+        runtimeId: identifierSchema.optional(),
       })
       .strict(),
   })

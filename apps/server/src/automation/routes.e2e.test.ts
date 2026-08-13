@@ -139,19 +139,15 @@ test("dependency lookup falls back to the first local workspace when none is sel
       resolved.push(id);
       return { id, name: "工作空间", path: workspacePath, preset: "default", workspaceType: "local" };
     },
-    createWorkspaceOpencodeClient: () => ({
-      provider: { list: async () => ({ data: { all: [{ id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } }] } }) },
-      app: {
-        agents: async () => ({ data: [
-          { name: "build", description: "", mode: "primary" },
-          { name: "plan", description: "", mode: "primary" },
-          { name: "jugglework", description: "", mode: "primary" },
-          { name: "explore", description: "", mode: "subagent" },
-          { name: "secret", description: "", mode: "primary", hidden: true },
-        ] }),
-        skills: async () => ({ data: [{ name: "prd-writer", description: "PRD" }] }),
-      },
-    }) as never,
+    controlPlane: {
+      runtimeModels: async () => [{ id: "gpt-5", providerId: "openai", label: "GPT-5", capabilities: [], isDefault: true }],
+      runtimeAgentProfiles: async () => [
+        { id: "build", label: "build", description: "" },
+        { id: "plan", label: "plan", description: "" },
+        { id: "jugglework", label: "jugglework", description: "" },
+      ],
+      runtimeSkills: async () => [{ id: "prd-writer", label: "prd-writer", description: "PRD" }],
+    } as never,
     listWorkspaceMcp: async () => [{ name: "lark", config: {}, source: "config.global" }],
   });
   const invoke = async (path: string) => {
@@ -172,8 +168,8 @@ test("dependency lookup falls back to the first local workspace when none is sel
     // 没传 workspaceId 时回落到配置里的第一个本机工作空间，四类依赖都要有值。
     assert.deepEqual(resolved, ["workspace-1"]);
     assert.deepEqual(body.models.map((model) => model.modelId), ["gpt-5"]);
-    assert.deepEqual(body.models.map((model) => model.providerName), ["OpenAI"]);
-    // 与会话输入栏一致：隐藏项、子智能体和内置默认智能体都不出现在可选项里。
+    assert.deepEqual(body.models.map((model) => model.providerName), ["openai"]);
+    // Adapter 已排除隐藏项和子智能体；路由再排除内置默认智能体。
     assert.deepEqual(body.agents.map((agent) => agent.id), ["build", "plan"]);
     assert.deepEqual(body.skills.map((skill) => skill.id), ["prd-writer"]);
     assert.deepEqual(body.connectors, [{ id: "lark", label: "lark", ready: true }]);

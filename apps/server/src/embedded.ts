@@ -21,6 +21,7 @@ import { keepJuggleWorkRuntimeConfigFileFresh, writeJuggleWorkRuntimeConfigFile 
 import { sweepLegacyOpenCodeConfig } from "./legacy-config-sweep.js";
 import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
+import { AnthropicByokCredentialBroker, type ClaudeCredentialBroker, type ClaudeSecretProvider } from "./claude-credentials.js";
 
 export type EmbeddedServerOptions = CliArgs & {
   /** When true, spawn a managed OpenCode child process. */
@@ -36,6 +37,12 @@ export type EmbeddedServerOptions = CliArgs & {
    * back to the public JuggleWork mirror.
    */
   modelsUrl?: string;
+  /** Desktop/headless-owned secure provider. Secrets never enter config or public state. */
+  claudeSecretProvider?: ClaudeSecretProvider;
+  /** Host-owned provider broker. Takes precedence over the Anthropic BYOK store. */
+  claudeCredentialBroker?: ClaudeCredentialBroker;
+  /** Per-profile JuggleWork application data root for Claude config/transcripts. */
+  claudeProfileDataDir?: string;
 };
 
 export type EmbeddedServerHandle = {
@@ -146,7 +153,12 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // legitimately replace port 0 (or an address-in-use preferred port) with an
   // OS-assigned port, and the engine plugin must receive that authoritative
   // callback URL rather than the requested port.
-  server = await duringStartup(() => startServer(config));
+  server = await duringStartup(() => startServer(config, {
+    claudeCredentialBroker: options.claudeCredentialBroker ?? (options.claudeSecretProvider
+      ? new AnthropicByokCredentialBroker(options.claudeSecretProvider)
+      : undefined),
+    claudeProfileDataDir: options.claudeProfileDataDir,
+  }));
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 

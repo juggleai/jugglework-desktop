@@ -3,53 +3,41 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { CanonicalAgentMessage, CanonicalAgentSession, CanonicalSessionSnapshot } from "@jugglework/types/agent-runtime";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
-import { AutomationExecutor } from "./executor.js";
+import { AutomationExecutor, type AutomationAgentRuntime } from "./executor.js";
 import { AutomationRepository } from "./repository.js";
 import { automationSqliteAdapter } from "./sqlite.js";
 
-test("executor creates an auditable full-access session and completes only after idle", async () => {
+test("executor creates an auditable canonical session and completes only after idle", async () => {
   const fixture = await repositoryFixture();
   const definition = automationDefinition();
   fixture.repository.createDefinition(definition, definition);
   const run = fixture.repository.createManualRun(definition, "run-1", 100);
   const createInputs: Array<Record<string, unknown>> = [];
   const promptInputs: Array<Record<string, unknown>> = [];
-  let statusReads = 0;
-  const opencode = {
-    session: {
-      create: async (input: Record<string, unknown>) => { createInputs.push(input); return { data: { id: "session-1" } }; },
-      promptAsync: async (input: Record<string, unknown>) => { promptInputs.push(input); return { data: true, error: undefined }; },
-      status: async () => ({ data: { "session-1": statusReads++ === 0 ? { type: "busy" } : { type: "idle" } } }),
-      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" }, parts: [] }] }),
+  let activityReads = 0;
+  const runtime = runtimeFixture({
+    createSession: async (input) => {
+      createInputs.push(input);
+      return session("session-1");
     },
-    provider: { list: async () => ({ data: { all: [] } }) },
-    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
-    mcp: { status: async () => ({ data: { github: { status: "connected" } } }) },
-    tool: { ids: async () => ({ data: ["read", "github_search", "github_create_issue"] }) },
-  };
+    startRun: async (input) => { promptInputs.push(input.prompt); },
+    activity: async () => activityReads++ === 0 ? "busy" : "idle",
+    snapshot: async () => snapshot("session-1", [assistantMessage("session-1")]),
+  });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(),
-      repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: (() => { let now = 100; return () => ++now; })(),
-      wait: async () => undefined,
-    });
+    const executor = executorFixture(fixture.repository, runtime);
     await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
     const completed = fixture.repository.getRun(run.id)!;
     assert.equal(completed.state, "succeeded");
     assert.equal(completed.sessionId, "session-1");
     assert.deepEqual(completed.concreteModel, { providerId: "provider", modelId: "model" });
-    assert.equal((createInputs[0].metadata as Record<string, unknown>).automationRunId, run.id);
-    assert.deepEqual(createInputs[0].permission, [
-      { permission: "*", pattern: "*", action: "allow" },
-      { permission: "question", pattern: "*", action: "deny" },
-    ]);
+    assert.deepEqual(createInputs[0].configuration, {});
     assert.match(String(promptInputs[0].system), /不得询问用户/);
+    assert.equal((promptInputs[0].metadata as Record<string, unknown>).automationRunId, run.id);
     assert.deepEqual(promptInputs[0].tools, { github_search: false, github_create_issue: false });
   } finally {
     await fixture.close();
@@ -65,26 +53,16 @@ test("executor exposes tools only for selected connected MCP servers", async () 
   fixture.repository.createDefinition(definition, definition);
   const run = fixture.repository.createManualRun(definition, "run-connectors", 100);
   const promptInputs: Array<Record<string, unknown>> = [];
-  const opencode = {
-    session: {
-      create: async () => ({ data: { id: "session-connectors" } }),
-      promptAsync: async (input: Record<string, unknown>) => { promptInputs.push(input); return { data: true, error: undefined }; },
-      status: async () => ({ data: { "session-connectors": { type: "idle" } } }),
-      messages: async () => ({ data: [] }),
-    },
-    provider: { list: async () => ({ data: { all: [] } }) },
-    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
-    mcp: { status: async () => ({ data: { github: { status: "connected" }, linear: { status: "connected" } } }) },
-    tool: { ids: async () => ({ data: ["read", "github_search", "linear_create_issue"] }) },
-  };
+  const runtime = runtimeFixture({
+    startRun: async (input) => { promptInputs.push(input.prompt); },
+    listTools: async () => [
+      { id: "read", source: null, available: true },
+      { id: "github_search", source: "github", available: true },
+      { id: "linear_create_issue", source: "linear", available: true },
+    ],
+  });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(), repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
-    });
-    await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+    await executorFixture(fixture.repository, runtime).execute(fixture.repository.getRunSnapshot(run.id)!);
     assert.equal(fixture.repository.getRun(run.id)?.state, "succeeded");
     assert.deepEqual(promptInputs[0].tools, { github_search: true, linear_create_issue: false });
   } finally {
@@ -101,20 +79,9 @@ test("executor fails closed when a cloud connector has no task-scoped credential
   fixture.repository.createDefinition(definition, definition);
   const run = fixture.repository.createManualRun(definition, "run-cloud", 100);
   let prompts = 0;
-  const opencode = {
-    session: {
-      create: async () => ({ data: { id: "session-cloud" } }),
-      promptAsync: async () => { prompts += 1; return { data: true, error: undefined }; },
-    },
-  };
+  const runtime = runtimeFixture({ startRun: async () => { prompts += 1; } });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(), repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: () => 200, wait: async () => undefined,
-    });
-    await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+    await executorFixture(fixture.repository, runtime).execute(fixture.repository.getRunSnapshot(run.id)!);
     assert.equal(fixture.repository.getRun(run.id)?.errorCode, "connector_scope_unavailable");
     assert.equal(prompts, 0);
   } finally {
@@ -128,22 +95,12 @@ test("preflight failure retains the created audit session and does not dispatch"
   fixture.repository.createDefinition(definition, definition);
   const run = fixture.repository.createManualRun(definition, "run-2", 100);
   let prompts = 0;
-  const opencode = {
-    session: {
-      create: async () => ({ data: { id: "session-audit" } }),
-      promptAsync: async () => { prompts += 1; return { data: true, error: undefined }; },
-    },
-  };
+  const runtime = runtimeFixture({
+    createSession: async () => session("session-audit"),
+    startRun: async () => { prompts += 1; },
+  });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(),
-      repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: () => 200,
-      wait: async () => undefined,
-    });
-    await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+    await executorFixture(fixture.repository, runtime).execute(fixture.repository.getRunSnapshot(run.id)!);
     const failed = fixture.repository.getRun(run.id)!;
     assert.equal(failed.state, "failed");
     assert.equal(failed.errorCode, "file_unavailable");
@@ -154,39 +111,33 @@ test("preflight failure retains the created audit session and does not dispatch"
   }
 });
 
-test("executor consumes a target session error event and sanitizes its failure", async () => {
+test("executor consumes a canonical session error and sanitizes its failure", async () => {
   const fixture = await repositoryFixture();
   const definition = automationDefinition();
   fixture.repository.createDefinition(definition, definition);
-  const run = fixture.repository.createManualRun(definition, "run-event-error", 100);
-  const opencode = {
-    session: {
-      create: async () => ({ data: { id: "session-event-error" } }),
-      promptAsync: async () => ({ data: true, error: undefined }),
-      status: async () => ({ data: { "session-event-error": { type: "busy" } } }),
-      messages: async () => ({ data: [] }),
-    },
-    provider: { list: async () => ({ data: { all: [] } }) },
-    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
-    mcp: { status: async () => ({ data: {} }) },
-    tool: { ids: async () => ({ data: [] }) },
-    event: { subscribe: async () => ({ stream: events([
-      { type: "session.error", properties: { sessionID: "session-event-error", error: { message: "token=private-value provider failed" } } },
-    ]) }) },
-  };
+  const run = fixture.repository.createManualRun(definition, "run-session-error", 100);
+  const runtime = runtimeFixture({
+    createSession: async () => session("session-error"),
+    snapshot: async () => snapshot("session-error", [assistantMessage("session-error", {
+      parts: [{
+        id: "part-error",
+        messageId: "message-assistant",
+        sessionId: "session-error",
+        ordinal: 0,
+        createdAt: 1,
+        updatedAt: 1,
+        type: "error",
+        code: "provider_failed",
+        message: "token=private-value provider failed",
+        retryable: false,
+      }],
+    })]),
+  });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(), repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: () => 200,
-      wait: async () => new Promise<void>(() => undefined),
-    });
-    await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+    await executorFixture(fixture.repository, runtime).execute(fixture.repository.getRunSnapshot(run.id)!);
     const failed = fixture.repository.getRun(run.id)!;
     assert.equal(failed.state, "failed");
     assert.equal(failed.errorCode, "execution_failed");
-    assert.match(failed.errorMessage ?? "", /token=\[redacted\]/);
     assert.doesNotMatch(failed.errorMessage ?? "", /private-value/);
   } finally {
     await fixture.close();
@@ -202,21 +153,13 @@ test("restart reconciliation completes an idle session without redispatch", asyn
     state: "running", sessionId: "session-existing", startedAt: 101,
   }, 101);
   let prompts = 0;
-  const opencode = {
-    session: {
-      get: async () => ({ data: { id: "session-existing" } }),
-      status: async () => ({ data: {} }),
-      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
-      promptAsync: async () => { prompts += 1; return { data: true }; },
-    },
-  };
+  const runtime = runtimeFixture({
+    readSession: async () => session("session-existing"),
+    snapshot: async () => snapshot("session-existing", [assistantMessage("session-existing")]),
+    startRun: async () => { prompts += 1; },
+  });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(), repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => opencode as never,
-      now: () => 200, wait: async () => undefined,
-    });
+    const executor = executorFixture(fixture.repository, runtime);
     await executor.reconcile({ run: running, definition });
     const completed = fixture.repository.getRun(running.id)!;
     assert.equal(completed.state, "succeeded");
@@ -236,14 +179,9 @@ test("restart reconciliation fails a missing session with session_lost", async (
   const running = fixture.repository.updateRun(queued.id, queued.revision, {
     state: "running", sessionId: "session-missing", startedAt: 101,
   }, 101);
+  const runtime = runtimeFixture({ readSession: async () => { throw new Error("not found"); } });
   try {
-    const executor = new AutomationExecutor({
-      config: serverConfig(), repository: fixture.repository,
-      resolveWorkspace: async () => serverConfig().workspaces[0],
-      createWorkspaceOpencodeClient: () => ({ session: { get: async () => ({ data: undefined }) } }) as never,
-      now: () => 200, wait: async () => undefined,
-    });
-    await executor.reconcile({ run: running, definition });
+    await executorFixture(fixture.repository, runtime).reconcile({ run: running, definition });
     assert.equal(fixture.repository.getRun(running.id)?.errorCode, "session_lost");
   } finally {
     await fixture.close();
@@ -266,22 +204,9 @@ test("executor reports stable model, agent, and skill dependency failures", asyn
     fixture.repository.createDefinition(definition, definition);
     const run = fixture.repository.createManualRun(definition, `run-${item.id}`, 100);
     let prompts = 0;
-    const opencode = {
-      session: {
-        create: async () => ({ data: { id: `session-${item.id}` } }),
-        promptAsync: async () => { prompts += 1; return { data: true }; },
-      },
-      provider: { list: async () => ({ data: { all: [] } }) },
-      app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
-    };
+    const runtime = runtimeFixture({ startRun: async () => { prompts += 1; } });
     try {
-      const executor = new AutomationExecutor({
-        config: serverConfig(), repository: fixture.repository,
-        resolveWorkspace: async () => serverConfig().workspaces[0],
-        createWorkspaceOpencodeClient: () => opencode as never,
-        now: () => 200, wait: async () => undefined,
-      });
-      await executor.execute(fixture.repository.getRunSnapshot(run.id)!);
+      await executorFixture(fixture.repository, runtime).execute(fixture.repository.getRunSnapshot(run.id)!);
       assert.equal(fixture.repository.getRun(run.id)?.errorCode, item.expected);
       assert.equal(prompts, 0);
     } finally {
@@ -289,6 +214,70 @@ test("executor reports stable model, agent, and skill dependency failures", asyn
     }
   }
 });
+
+function runtimeFixture(overrides: Partial<AutomationAgentRuntime> = {}): AutomationAgentRuntime {
+  return {
+    createSession: async () => session("session-default"),
+    startRun: async () => undefined,
+    readSession: async (_workspaceId, sessionId) => session(sessionId),
+    snapshot: async (_workspaceId, sessionId) => snapshot(sessionId, []),
+    activity: async () => "idle",
+    listModels: async () => [],
+    listAgentProfiles: async () => [],
+    listSkills: async () => [],
+    listTools: async () => [
+      { id: "read", source: null, available: true },
+      { id: "github_search", source: "github", available: true },
+      { id: "github_create_issue", source: "github", available: true },
+    ],
+    ...overrides,
+  };
+}
+
+function executorFixture(repository: AutomationRepository, runtime: AutomationAgentRuntime): AutomationExecutor {
+  return new AutomationExecutor({
+    config: serverConfig(),
+    repository,
+    resolveWorkspace: async () => serverConfig().workspaces[0],
+    runtime,
+    now: (() => { let now = 100; return () => ++now; })(),
+    wait: async () => undefined,
+  });
+}
+
+function session(id: string): CanonicalAgentSession {
+  return {
+    id,
+    workspaceId: "workspace",
+    runtimeId: "jugglework",
+    backendSessionId: id,
+    title: "Automation",
+    canonicalCwd: "/tmp/workspace",
+    status: { type: "idle" },
+    configuration: {},
+    createdAt: 1,
+    updatedAt: 1,
+    lastError: null,
+  };
+}
+
+function assistantMessage(sessionId: string, patch: Partial<CanonicalAgentMessage> = {}): CanonicalAgentMessage {
+  return {
+    id: "message-assistant",
+    sessionId,
+    role: "assistant",
+    parentId: null,
+    createdAt: 1,
+    completedAt: 2,
+    parts: [],
+    metadata: { providerId: "provider", modelId: "model", agent: "build" },
+    ...patch,
+  };
+}
+
+function snapshot(sessionId: string, messages: CanonicalAgentMessage[]): CanonicalSessionSnapshot {
+  return { schemaVersion: 1, session: session(sessionId), messages, todos: [], interactions: [], latestSequence: 0 };
+}
 
 function automationDefinition(): AutomationDefinition {
   return {
@@ -324,8 +313,4 @@ async function repositoryFixture() {
   const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
   const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
   return { repository, close: async () => { repository.close(); await rm(root, { recursive: true, force: true }); } };
-}
-
-async function* events(values: unknown[]): AsyncGenerator<unknown> {
-  for (const value of values) yield value;
 }

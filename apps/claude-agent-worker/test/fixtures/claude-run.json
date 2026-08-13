@@ -1,0 +1,227 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "apiKeySource": "temporary",
+    "claude_code_version": "2.1.226",
+    "cwd": "/workspace",
+    "tools": ["Read"],
+    "mcp_servers": [],
+    "model": "claude-sonnet-4-6",
+    "permissionMode": "default",
+    "slash_commands": [],
+    "output_style": "default",
+    "skills": [],
+    "plugins": [],
+    "capabilities": ["interrupt_receipt_v1"],
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "stream_event",
+    "event": {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": { "type": "text_delta", "text": "Hello " }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "stream_event",
+    "event": {
+      "type": "content_block_delta",
+      "index": 0,
+      "delta": { "type": "text_delta", "text": "world" }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "stream_event",
+    "event": {
+      "type": "content_block_delta",
+      "index": 1,
+      "delta": { "type": "thinking_delta", "thinking": "Checking." }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "stream_event",
+    "event": {
+      "type": "content_block_start",
+      "index": 2,
+      "content_block": {
+        "type": "tool_use",
+        "id": "toolu_fixture_read",
+        "name": "Read",
+        "input": { "file_path": "/workspace/README.md" }
+      }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "id": "msg_fixture",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-6",
+      "content": [
+        { "type": "text", "text": "Hello world" },
+        { "type": "thinking", "thinking": "Checking.", "signature": "fixture" },
+        {
+          "type": "tool_use",
+          "id": "toolu_fixture_read",
+          "name": "Read",
+          "input": { "file_path": "/workspace/README.md" }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": { "input_tokens": 20, "output_tokens": 8 }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "assistant",
+    "message": {
+      "id": "msg_fixture",
+      "type": "message",
+      "role": "assistant",
+      "model": "claude-sonnet-4-6",
+      "content": [{ "type": "text", "text": "Hello world" }],
+      "stop_reason": "tool_use",
+      "stop_sequence": null,
+      "usage": { "input_tokens": 20, "output_tokens": 8 }
+    },
+    "parent_tool_use_id": null,
+    "uuid": "20000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "tool_progress",
+    "tool_use_id": "toolu_fixture_read",
+    "tool_name": "Read",
+    "parent_tool_use_id": null,
+    "elapsed_time_seconds": 1.5,
+    "uuid": "30000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "system",
+    "subtype": "task_started",
+    "task_id": "task_fixture_subagent",
+    "tool_use_id": "toolu_fixture_read",
+    "description": "Inspect authentication",
+    "subagent_type": "Explore",
+    "uuid": "31000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "system",
+    "subtype": "task_progress",
+    "task_id": "task_fixture_subagent",
+    "tool_use_id": "toolu_fixture_read",
+    "description": "Inspect authentication",
+    "subagent_type": "Explore",
+    "last_tool_name": "Grep",
+    "summary": "Tracing authentication flow",
+    "usage": { "total_tokens": 120, "tool_uses": 3, "duration_ms": 1500 },
+    "uuid": "32000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "system",
+    "subtype": "task_notification",
+    "task_id": "task_fixture_subagent",
+    "tool_use_id": "toolu_fixture_read",
+    "status": "completed",
+    "output_file": "/tmp/fixture",
+    "summary": "Authentication flow inspected",
+    "usage": { "total_tokens": 180, "tool_uses": 4, "duration_ms": 2000 },
+    "uuid": "33000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "user",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_fixture_read",
+          "content": "fixture contents",
+          "is_error": false
+        }
+      ]
+    },
+    "parent_tool_use_id": null,
+    "tool_use_result": { "content": "fixture contents" },
+    "uuid": "40000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "system",
+    "subtype": "api_retry",
+    "attempt": 2,
+    "max_retries": 5,
+    "retry_delay_ms": 250,
+    "error_status": 529,
+    "error": "overloaded",
+    "uuid": "50000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "system",
+    "subtype": "compact_boundary",
+    "compact_metadata": {
+      "trigger": "auto",
+      "pre_tokens": 10000,
+      "post_tokens": 3000,
+      "duration_ms": 120
+    },
+    "uuid": "60000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  },
+  {
+    "type": "result",
+    "subtype": "success",
+    "duration_ms": 2000,
+    "duration_api_ms": 1500,
+    "is_error": false,
+    "num_turns": 2,
+    "result": "Hello world",
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.012,
+    "usage": {
+      "input_tokens": 20,
+      "output_tokens": 8,
+      "cache_read_input_tokens": 4,
+      "cache_creation_input_tokens": 2
+    },
+    "modelUsage": {
+      "claude-sonnet-4-6": {
+        "inputTokens": 20,
+        "outputTokens": 8,
+        "cacheReadInputTokens": 4,
+        "cacheCreationInputTokens": 2,
+        "webSearchRequests": 0,
+        "costUSD": 0.012,
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000
+      }
+    },
+    "permission_denials": [],
+    "uuid": "70000000-0000-4000-8000-000000000001",
+    "session_id": "10000000-0000-4000-8000-000000000001"
+  }
+]

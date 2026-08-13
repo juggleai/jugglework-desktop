@@ -1,0 +1,46 @@
+{
+  "name": "@jugglework/claude-agent-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "jugglework-claude-agent-worker": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js",
+      "default": "./dist/schemas.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun build src/cli.ts --target node --format esm --outfile dist/cli.bundle.js",
+    "prepare:package": "node scripts/package-assets.mjs",
+    "check:package": "node scripts/check-package-content.mjs",
+    "smoke:installed": "node scripts/installed-smoke.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.226",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.15.7",
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@11.4.0"
+}

@@ -1,6 +1,6 @@
 /**
- * Main-process interaction store. Polls the managed server's OpenCode
- * permission/question list endpoints on-demand and projects them into the
+ * Main-process interaction store. Reads the managed server's canonical
+ * snapshot on-demand and projects pending interactions into the
  * shared DesktopRemoteInteraction schema for session.snapshot.
  *
  * This is a pull-based adapter, not a push-based SSE consumer. The remote
@@ -119,36 +119,20 @@ export function createRemoteControlInteractionStore({ managedRuntimeClient }) {
   async function listPending({ workspaceId, sessionId }) {
     if (!isString(workspaceId) || !isString(sessionId)) return [];
     try {
-      const [permRaw, questionRaw] = await Promise.allSettled([
-        managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/permission`),
-        managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/question`),
-      ]);
+      const snapshotRaw = await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspaceId)}/agent/v1/sessions/${encodeURIComponent(sessionId)}/snapshot`);
+      const snapshot = snapshotRaw && typeof snapshotRaw === "object" && "snapshot" in snapshotRaw
+        ? /** @type {Record<string, unknown>} */ (snapshotRaw).snapshot : null;
+      const canonical = snapshot && typeof snapshot === "object" && Array.isArray(/** @type {Record<string, unknown>} */ (snapshot).interactions)
+        ? /** @type {Record<string, unknown>[]} */ (/** @type {Record<string, unknown>} */ (snapshot).interactions) : [];
       const interactions = [];
-      if (permRaw.status === "fulfilled") {
-        const items = permRaw.value && typeof permRaw.value === "object" && "data" in permRaw.value
-          ? /** @type {Record<string, unknown>} */ (permRaw.value).data
-          : permRaw.value && typeof permRaw.value === "object" && Array.isArray(/** @type {Record<string, unknown>} */ (permRaw.value).items)
-            ? /** @type {Record<string, unknown>} */ (permRaw.value).items
-            : Array.isArray(permRaw.value) ? permRaw.value : [];
-        if (Array.isArray(items)) {
-          for (const item of items) {
-            const normalized = normalizeRemotePermissionInteraction(item, sessionId);
-            if (normalized) interactions.push(normalized);
-          }
-        }
-      }
-      if (questionRaw.status === "fulfilled") {
-        const items = questionRaw.value && typeof questionRaw.value === "object" && "data" in questionRaw.value
-          ? /** @type {Record<string, unknown>} */ (questionRaw.value).data
-          : questionRaw.value && typeof questionRaw.value === "object" && Array.isArray(/** @type {Record<string, unknown>} */ (questionRaw.value).items)
-            ? /** @type {Record<string, unknown>} */ (questionRaw.value).items
-            : Array.isArray(questionRaw.value) ? questionRaw.value : [];
-        if (Array.isArray(items)) {
-          for (const item of items) {
-            const normalized = normalizeRemoteQuestionInteraction(item, sessionId);
-            if (normalized) interactions.push(normalized);
-          }
-        }
+      for (const item of canonical) {
+        if (item.state !== "pending" || item.sessionId !== sessionId) continue;
+        const normalized = item.kind === "permission"
+          ? normalizeRemotePermissionInteraction({ ...item, sessionID: sessionId, action: item.title, resources: [] }, sessionId, Number(item.requestedAt))
+          : item.kind === "question"
+            ? normalizeRemoteQuestionInteraction({ ...item, sessionID: sessionId, questions: item.questions }, sessionId, Number(item.requestedAt))
+            : null;
+        if (normalized) interactions.push(normalized);
       }
       return interactions.slice(0, 50);
     } catch {

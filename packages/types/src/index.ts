@@ -1,4 +1,5 @@
 export * from "./agent-context-diagnostics"
+export * from "./agent-runtime/index"
 export * from "./desktop-remote-control"
 export * from "./automation"
 export * from "./jugglework-affordance"

@@ -1,0 +1,188 @@
+---
+title: "Administer and package Claude Agent"
+description: "Plan Claude Agent migration, provisioning, rollout, packaging, capability policy, and rollback"
+---
+
+Claude Agent is an optional, disabled-by-default runtime. The existing
+JuggleWork/OpenCode runtime remains the default, and OpenCode-only installations
+must continue to start when Claude assets or credentials are absent.
+
+This page covers the current implementation contract. Treat the runtime catalog
+and health endpoints as live authority; do not infer readiness from a packaged
+binary or feature flag alone.
+
+## Migration plan
+
+1. Inventory supported Desktop targets, self-hosted launchers, remote clients,
+   authorized workspace roots, provider policy, and retention requirements.
+2. Back up the active `server.json` directory, including `runtime.sqlite`, with
+   JuggleWork stopped. Protect the backup as private transcript data.
+3. Upgrade with Claude disabled and verify existing sessions. Legacy OpenCode
+   sessions without a runtime mapping are recognized lazily as runtime
+   `jugglework`; their backend IDs are preserved.
+4. Verify the package, credential broker, sandbox, runtime health, redacted
+   diagnostics, cancellation, and process cleanup on each target.
+5. Enable a limited cohort. Users create new Claude-bound sessions or use an
+   explicit reviewed continuation; no session is converted in place.
+6. Expand only after worker starts/restarts, query failures, interactions, event
+   lag, queues, usage, crashes, and package/update evidence meet your release
+   criteria.
+
+The public runtime API is under
+`/workspace/:workspaceId/agent/v1`. Useful read-only checks include:
+
+- `GET /runtimes` for descriptors and live capabilities.
+- `GET /runtimes/claude-agent/health` for an actionable status/reason.
+- `GET /support-diagnostics` for redacted counters and worker state.
+
+These endpoints require normal JuggleWork client authorization. Do not paste a
+client or host token into a ticket or shell transcript.
+
+## Desktop provisioning
+
+Supported Desktop packages place a complete target bundle under the installed
+app's real resources directory at `claude-agent`, outside `app.asar`. The bundle
+contains `manifest.json`, the worker, an exact Node 24 executable, and the
+matching Claude platform executable.
+
+| OS | Architecture | Target triple |
+| --- | --- | --- |
+| macOS | Apple silicon | `aarch64-apple-darwin` |
+| macOS | Intel | `x86_64-apple-darwin` |
+| Linux (glibc) | arm64 | `aarch64-unknown-linux-gnu` |
+| Linux (glibc) | x64 | `x86_64-unknown-linux-gnu` |
+| Windows | arm64 | `aarch64-pc-windows-msvc` |
+| Windows | x64 | `x86_64-pc-windows-msvc` |
+
+The package manifest target must match the running process architecture. musl
+Linux, other operating systems/architectures, and an artifact for the wrong
+architecture are unsupported. Desktop resolves the three asset paths from the
+manifest; an operator should not replace one component independently.
+
+The current version contract is an exact Claude Agent SDK `0.3.226`, its
+matching platform package/Claude executable, and Node `24.19.0`. These values
+must be updated together with compatibility tests and release evidence rather
+than treated as semver ranges.
+
+To opt in a separately launched Desktop build, set
+`JUGGLEWORK_CLAUDE_AGENT_ENABLED=1`,
+`JUGGLEWORK_CLAUDE_ROLLOUT_STAGE=opt-in`, and
+`JUGGLEWORK_CLAUDE_USER_OPT_IN=1` in the launch environment and restart the
+app. Internal builds instead require `JUGGLEWORK_CLAUDE_INTERNAL_COHORT=1`; GA
+uses `JUGGLEWORK_CLAUDE_ROLLOUT_STAGE=ga`. Desktop resolves worker, Node, and
+Claude paths from its package. Do not add
+this reserved `JUGGLEWORK_` variable through the user environment-variable UI;
+that store intentionally rejects runtime wiring keys.
+
+## Headless boundary
+
+The published `jugglework-server` npm package includes worker JavaScript and SDK
+diagnostic metadata, but it does not bundle a target Node/Claude pair or expose
+a standalone CLI secret broker. Repository Docker and microsandbox images are
+also OpenCode-only. Leave Claude disabled for those distributions.
+
+An approved source/library host can enable Claude only when it supplies all of:
+
+- `JUGGLEWORK_CLAUDE_AGENT_ENABLED=1`.
+- A readable `JUGGLEWORK_CLAUDE_AGENT_WORKER_PATH`.
+- `JUGGLEWORK_CLAUDE_AGENT_NODE_PATH` pointing to native Node 24 or newer.
+- An executable, matching `JUGGLEWORK_CLAUDE_EXECUTABLE_PATH`.
+- A host-owned `ClaudeCredentialBroker` and absolute per-profile data directory.
+- A deterministic `deny`, preapproved, or bounded-wait headless interaction
+  policy.
+- A supported sandbox that initializes fail-closed, with unsandboxed command
+  escape disabled.
+
+Enabling with an incomplete contract must produce an unavailable/configuration
+error. A Claude-bound session never falls back to OpenCode.
+
+## Runtime flags and kill switches
+
+All advanced flags are off unless their enable value is one of `1`, `true`,
+`yes`, or `on` (case-insensitive). A true kill switch overrides its enable flag.
+
+| Feature | Enable flag | Kill switch / bounds |
+| --- | --- | --- |
+| Claude runtime | `JUGGLEWORK_CLAUDE_AGENT_ENABLED` plus `JUGGLEWORK_CLAUDE_ROLLOUT_STAGE=internal|opt-in|ga`; internal requires `JUGGLEWORK_CLAUDE_INTERNAL_COHORT`, opt-in requires `JUGGLEWORK_CLAUDE_USER_OPT_IN` | `JUGGLEWORK_CLAUDE_AGENT_KILL_SWITCH`; unset/false master flag, ineligible cohort, or unknown stage disables worker creation. |
+| Prewarm | `JUGGLEWORK_CLAUDE_PREWARM_ENABLED` | `JUGGLEWORK_CLAUDE_PREWARM_KILL_SWITCH`; pool size `JUGGLEWORK_CLAUDE_PREWARM_POOL_SIZE` defaults to 2 and is bounded 1-8; idle `JUGGLEWORK_CLAUDE_PREWARM_IDLE_MS` defaults to 30,000 ms and is bounded 1,000-300,000 ms. |
+| Resident sessions | `JUGGLEWORK_CLAUDE_RESIDENT_SESSIONS_ENABLED` | `JUGGLEWORK_CLAUDE_RESIDENT_SESSIONS_KILL_SWITCH`; `JUGGLEWORK_CLAUDE_RESIDENT_IDLE_MS` defaults to 60,000 ms and is bounded 1,000-1,800,000 ms. |
+| Protocol interrupt | `JUGGLEWORK_CLAUDE_PROTOCOL_INTERRUPT_ENABLED` | `JUGGLEWORK_CLAUDE_PROTOCOL_INTERRUPT_KILL_SWITCH`. |
+| Queued input | `JUGGLEWORK_CLAUDE_QUEUED_INPUT_ENABLED` | `JUGGLEWORK_CLAUDE_QUEUED_INPUT_KILL_SWITCH`. |
+| Steer | `JUGGLEWORK_CLAUDE_STEER_ENABLED` | `JUGGLEWORK_CLAUDE_STEER_KILL_SWITCH`. |
+
+An enable flag is necessary but not sufficient. Initialization capabilities and
+policy must also allow the feature. Invalid numeric tuning values fall back to
+the defaults shown above. Prewarm failure is opportunistic and falls back to
+run-per-query.
+
+File checkpointing and rewind are currently reported false by the worker and
+have no deployment flag. Do not promise them in policy or release notes.
+
+## Credential and privacy policy
+
+Desktop currently wires the Anthropic BYOK broker backed by Electron secure
+storage. Gateway, Bedrock, Vertex, and Foundry brokers exist for an approved
+host integration but require explicit provider allowlists and configuration
+validation. Provider environment variables alone do not select a broker.
+
+Before rollout, document:
+
+- Which broker/provider and account boundary are approved.
+- Which gateway or Foundry HTTPS origins and Vertex credential roots are
+  allowlisted.
+- Which workspaces, users, MCP servers, tools, commands, network destinations,
+  and sensitive paths are permitted.
+- Who can approve interactions locally or remotely and the headless timeout
+  result.
+- The 30-day Claude transcript cleanup, 10,000 canonical events per session,
+  90-day/100,000-per-workspace policy-audit limits, canonical projection
+  retention, and backup retention.
+
+See [Claude Agent credentials, privacy, and retention](/start-here/connect-your-stack/claude-agent-credentials-privacy)
+for exact paths and current deletion behavior.
+
+## Package and release gates
+
+For every target, the release must prove:
+
+- SDK and platform optional package versions match exactly.
+- Worker JavaScript is readable; Node and Claude are executable and outside
+  `app.asar`.
+- The packaged manifest target matches the installer target.
+- Authenticated loopback startup, fixture initialization, cancellation,
+  shutdown, redaction canary, and no-orphan checks pass.
+- Signing/notarization and updater hashes/blockmaps are verified after all
+  signing transformations.
+- Third-party license, notice, trademark, privacy, provider-terms, export, and
+  distribution review is recorded for the actual shipped artifacts.
+
+The repository's release gate is `pnpm release:review --strict`. Package and
+installed-worker checks are target-specific and cannot be replaced by a
+cross-compiled build-only check.
+
+Run `pnpm rollout:rehearse` for a no-publish internal/opt-in/GA and rollback
+rehearsal. It writes `tmp/claude-rollout/rollout-evidence.json`; CI uploads the
+same file as a commit-scoped artifact. This proves configuration behavior only,
+not that an external release was published.
+
+## Rollback
+
+1. Stop cohort expansion, set `JUGGLEWORK_CLAUDE_AGENT_KILL_SWITCH=1` (or
+   unset/disable `JUGGLEWORK_CLAUDE_AGENT_ENABLED`), and restart the app/Server
+   so the managed worker stops. Keep canonical Claude sessions readable.
+2. For an advanced-feature incident, set its kill switch to `1`, restart the
+   worker/app, and verify new turns use baseline resumable run-per-query.
+3. Do not replay an interrupted turn automatically. Require the user to inspect
+   side effects and confirm retry.
+4. For package, Node, Claude executable, sandbox, or updater defects, withdraw
+   the affected release/update feed and redeploy the last known-good complete
+   app. Never mix individual runtime assets between releases.
+5. Verify OpenCode-only startup, existing OpenCode session reads/runs, no Claude
+   worker/child processes, and redacted diagnostics.
+6. Preserve the failed artifact, target triple, package manifest, workflow URLs,
+   and sanitized diagnostics for incident review. Do not attach credentials or
+   raw transcripts.
+
+Disabling Claude prevents new Claude mutations but does not delete its local
+canonical state or backend transcript data. Follow the documented retention or
+full-reset process separately.

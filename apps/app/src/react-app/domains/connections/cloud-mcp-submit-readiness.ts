@@ -70,7 +70,7 @@ export type CloudMcpSubmissionResult =
   | { outcome: "sent"; bypassed: boolean }
   | { outcome: "accepted" }
   | { outcome: "blocked"; issue: CloudMcpSubmissionIssue }
-  | { outcome: "cancelled"; reason: "context_changed" | "unmounted" };
+  | { outcome: "cancelled"; reason: "context_changed" | "unmounted" | "user_cancelled" };
 
 export type CloudMcpSubmissionGateState = {
   status: "idle" | "checking" | "repairing" | "sending" | "failed";

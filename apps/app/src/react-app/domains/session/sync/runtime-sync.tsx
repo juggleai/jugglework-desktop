@@ -5,6 +5,7 @@ import type { Session, SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { ensureWorkspaceSessionSync, trackWorkspaceSessionsSync } from "./session-sync";
 
 type ReactSessionRuntimeProps = {
+  enabled?: boolean;
   workspaceId: string;
   sessionId: string | null;
   activeSessionIds?: string[];
@@ -18,6 +19,7 @@ type ReactSessionRuntimeProps = {
 
 export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
   useEffect(() => {
+    if (props.enabled === false) return;
     const input = {
       workspaceId: props.workspaceId,
       baseUrl: props.opencodeBaseUrl,
@@ -33,7 +35,7 @@ export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
       releaseSessions();
       releaseWorkspace();
     };
-  }, [props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.juggleworkToken, props.onSessionCreated, props.onSessionUpdated, props.onSessionDeleted, props.onSessionStatus]);
+  }, [props.enabled, props.workspaceId, props.sessionId, props.activeSessionIds, props.opencodeBaseUrl, props.juggleworkToken, props.onSessionCreated, props.onSessionUpdated, props.onSessionDeleted, props.onSessionStatus]);
 
   return null;
 }

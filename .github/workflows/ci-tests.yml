@@ -12,6 +12,33 @@ permissions:
   contents: read
 
 jobs:
+  claude-rollout-rehearsal:
+    name: Claude staged rollout rehearsal
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Rehearse rollout and generate evidence
+        run: pnpm rollout:rehearse
+      - name: Upload rollout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-rollout-rehearsal-${{ github.sha }}
+          path: tmp/claude-rollout/rollout-evidence.json
+          if-no-files-found: error
+
   desktop-remote-reliability:
     name: Desktop remote reliability (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

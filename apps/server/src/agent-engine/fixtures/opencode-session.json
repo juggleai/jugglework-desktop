@@ -1,0 +1,107 @@
+{
+  "session": {
+    "id": "backend-session",
+    "slug": "recorded-session",
+    "projectID": "project-a",
+    "directory": "/workspace",
+    "title": "Recorded OpenCode session",
+    "version": "1.18.7",
+    "time": { "created": 100, "updated": 200 }
+  },
+  "messages": [
+    {
+      "info": {
+        "id": "message-user",
+        "sessionID": "backend-session",
+        "role": "user",
+        "time": { "created": 110 },
+        "agent": "jugglework",
+        "model": { "providerID": "provider-a", "modelID": "model-a" }
+      },
+      "parts": [
+        {
+          "id": "part-user",
+          "sessionID": "backend-session",
+          "messageID": "message-user",
+          "type": "text",
+          "text": "Run the recorded contract",
+          "time": { "start": 110, "end": 111 }
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "message-assistant",
+        "sessionID": "backend-session",
+        "role": "assistant",
+        "time": { "created": 120, "completed": 180 },
+        "parentID": "message-user",
+        "modelID": "model-a",
+        "providerID": "provider-a",
+        "mode": "build",
+        "agent": "jugglework",
+        "path": { "cwd": "/workspace", "root": "/workspace" },
+        "cost": 0.01,
+        "tokens": { "input": 10, "output": 20, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+        "finish": "stop"
+      },
+      "parts": [
+        {
+          "id": "part-text",
+          "sessionID": "backend-session",
+          "messageID": "message-assistant",
+          "type": "text",
+          "text": "Hello world",
+          "time": { "start": 121, "end": 130 }
+        },
+        {
+          "id": "part-tool",
+          "sessionID": "backend-session",
+          "messageID": "message-assistant",
+          "type": "tool",
+          "callID": "call-read",
+          "tool": "read",
+          "state": {
+            "status": "completed",
+            "input": { "filePath": "/workspace/README.md" },
+            "output": "contents",
+            "title": "Read README",
+            "metadata": {},
+            "time": { "start": 140, "end": 150 }
+          }
+        }
+      ]
+    }
+  ],
+  "todos": [
+    { "id": "todo-one", "content": "Verify adapter", "status": "in_progress", "priority": "high" }
+  ],
+  "permissions": [
+    {
+      "id": "permission-one",
+      "sessionID": "backend-session",
+      "permission": "read",
+      "patterns": ["/workspace/README.md"],
+      "metadata": {},
+      "always": []
+    }
+  ],
+  "questions": [
+    {
+      "id": "question-one",
+      "sessionID": "backend-session",
+      "questions": [
+        {
+          "question": "Continue?",
+          "header": "Continue",
+          "options": [
+            { "label": "Yes", "description": "Continue the run" },
+            { "label": "No", "description": "Stop the run" }
+          ],
+          "multiple": false,
+          "custom": false
+        }
+      ]
+    }
+  ]
+}

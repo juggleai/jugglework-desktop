@@ -23,7 +23,7 @@ export function buildCommandPaletteSessions(
       const sessionId = session.id.trim();
       if (!sessionId) continue;
       const title = getDisplaySessionTitle(session.title ?? "");
-      const updatedAt = session.time.updated ?? session.time.created;
+      const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
       options.push({
         workspaceId: workspace.id,
         sessionId,

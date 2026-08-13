@@ -1,0 +1,129 @@
+---
+title: "Troubleshoot Claude Agent"
+description: "Diagnose Claude Agent feature, package, credential, worker, sandbox, MCP, policy, and interrupted-run failures"
+---
+
+Claude Agent failures are reported separately from default JuggleWork/OpenCode
+failures. Do not respond to a Claude error by changing an OpenCode model or by
+recreating the session under a different runtime.
+
+## Gather safe evidence
+
+1. Confirm the session header says **Claude Agent**.
+2. Open **Settings -> Developer** and export the Runtime debug report. The
+   diagnostics bundle includes categorized runtime counters and worker state,
+   not prompt or transcript bodies.
+3. Record the app version, operating system, process architecture, runtime
+   health status/reason, whether the problem began after an update, and whether
+   it affects a new Claude session.
+4. Review the exported JSON before sharing it. Never add environment dumps,
+   `Authorization` headers, provider records, API keys, worker tokens, raw
+   transcripts, or private file contents.
+
+Administrators can also query the authenticated
+`GET /workspace/:workspaceId/agent/v1/runtimes/claude-agent/health` and
+`GET /workspace/:workspaceId/agent/v1/support-diagnostics` endpoints. Keep the
+client token out of command history and reports.
+
+## Health and startup errors
+
+| Status or reason | Meaning | Action |
+| --- | --- | --- |
+| `feature_disabled` / `disabled` | The default state; no worker manager was created. | An administrator must enable and provision the runtime, then restart JuggleWork. Ordinary users should not add hidden runtime variables. |
+| `unsupported_platform` or `unsupported_architecture` | No supported package target matches this host. | Install a supported native Desktop artifact. Do not use a package for another architecture or assume emulation is a supported target. |
+| `unsupported_node_version` | The worker is not running on Node 24 or newer. | Desktop: reinstall the complete matching app. Approved headless host: correct `JUGGLEWORK_CLAUDE_AGENT_NODE_PATH`. |
+| `worker_not_provisioned` | The worker entry is missing or unreadable. | Reinstall/rebuild the complete package; do not copy an isolated worker from another release. |
+| `claude_executable_not_provisioned` | The native Claude executable is absent or not executable. | Reinstall the complete target artifact and verify endpoint protection/quarantine did not remove it. |
+| `credential_missing` | The selected broker has no usable credential. | Use the deployment's dedicated Claude Agent credential setup. Normal Anthropic model-provider setup is a separate credential path. |
+| `credential_store_unavailable` | Secure storage could not read/decrypt the record. | Unlock/fix the OS secure store. On Linux, configure an eligible secret-service backend; plaintext/basic storage is refused. |
+| `provider_not_approved` or `provider_configuration_invalid` | Provider, origin, region, resource, project, or credential file is outside policy. | Ask the administrator to correct the broker policy. Do not bypass it with workspace files or process-wide secrets. |
+| `starting` or `backoff` | A worker generation is starting or waiting before a bounded restart. | Wait briefly, then export diagnostics if it repeats. |
+| `circuit_open` | Five restart attempts occurred without a stable 60-second generation. | Disable Claude, preserve diagnostics, correct the root cause, and restart to create a clean manager generation. |
+| `failed` / startup timeout | Worker startup, protocol, asset, credential, or sandbox initialization failed. | Use the categorized message and package manifest; reinstall if versions/target do not match. |
+
+## Package checks for operators
+
+In a source checkout, check the staged target bundle without printing its
+contents:
+
+```bash
+node apps/claude-agent-worker/scripts/check-package-content.mjs \
+  apps/desktop/resources/claude-agent
+node apps/claude-agent-worker/scripts/installed-smoke.mjs \
+  apps/desktop/resources/claude-agent
+```
+
+The installed smoke is valid only on a target-compatible host. It checks
+authenticated loopback startup, versions, fixture initialization, cancellation,
+shutdown, secret redaction, and process cleanup. A build-only cross-compile is
+not equivalent.
+
+Do not edit `manifest.json`, make a quarantined executable world-writable, or
+mix `worker`, `node`, and `claude` directories from different releases.
+
+## Run and interaction problems
+
+### The send action says the session is busy
+
+Use reject or enqueue. Steer appears only when resident/queued input and steer
+capabilities are all enabled and reported. Do not assume a prompt was queued if
+the API returned unsupported capability.
+
+### A permission appears stuck
+
+The run can be waiting for an eligible local/remote collaborator or a bounded
+approval timeout. Viewers cannot resolve interactions. If the run is aborted,
+the pending interaction should become cancelled. Capture sanitized diagnostics
+before restarting if it remains pending.
+
+### A tool is denied although Claude approved it
+
+JuggleWork's pre-tool policy is a separate mandatory boundary. Check authorized
+roots, canonical/symlink-resolved path, sensitive paths, command/network rules,
+actor scope, and tool-specific input narrowing. Do not disable the policy to
+make the runtime approval win.
+
+### A turn is interrupted after a crash or network loss
+
+Inspect the workspace and external system first. A mutating tool may have
+completed even if its final event was lost. JuggleWork requires explicit retry
+confirmation and will not replay the turn automatically.
+
+## MCP problems
+
+Claude Agent receives only JuggleWork-approved MCP configuration. A standalone
+`~/.claude` setting or project `.mcp.json` is not loaded implicitly.
+
+- `needs_auth` or `expired`: complete OAuth in JuggleWork, not in the agent
+  process, then reload/reconnect the approved runtime configuration.
+- `removed`: confirm the server is still configured and permitted for this
+  workspace/runtime.
+- `failed`: preserve the server name and non-secret error; do not share headers
+  or token values.
+- `output_truncated`: the internal worker MCP output limit is 32 KiB. Narrow the
+  query or use a bounded artifact workflow instead of increasing output blindly.
+
+## Storage and resume problems
+
+Claude configuration/transcripts are under
+`<profile-data>/claude-agent/config`, and the canonical projection is in the
+active `runtime.sqlite`. JuggleWork does not use standalone `~/.claude` as its
+resume source and does not choose the most recent session by directory.
+
+Do not manually edit JSONL transcripts or SQLite while JuggleWork is running.
+If storage is corrupt, stop the app, preserve a private copy for support, and
+use a new session or the full **Nuke & fresh start** flow only after reviewing
+what it will delete. The reset is broad and is not a transcript repair tool.
+
+See [Claude Agent credentials, privacy, and retention](/start-here/connect-your-stack/claude-agent-credentials-privacy)
+for exact default paths and retention limits.
+
+## Report an issue
+
+Include the sanitized diagnostics bundle, app version, target triple, health
+reason, reproduction steps, and whether rollback/kill switch restores baseline
+run-per-query or OpenCode-only operation. Exclude all credentials, environment
+dumps, raw transcripts, workspace files, and private prompts.
+
+[Open a JuggleWork issue](https://github.com/juggleai/jugglework-desktop/issues)
+only after reviewing every attachment.

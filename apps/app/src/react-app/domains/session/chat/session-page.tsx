@@ -81,6 +81,7 @@ import {
   type ConversationHistoryDirection,
 } from "./conversation-tab-history";
 import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
+import { sessionRuntimeIdentity } from "../agent-runtime-experience";
 
 const STARTUP_SKELETON_ROWS = [
   { id: "intro", titleWidth: "42%", bodyWidth: "88%" },
@@ -253,6 +254,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  onContinueWithClaude?: (workspaceId: string, sessionId: string) => void;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
   settingsSlot?: React.ReactNode;
@@ -283,6 +285,31 @@ function sessionTitleForId(groups: WorkspaceSessionGroup[], id: string | null | 
   const sessionsById = new Map(groups.flatMap((group) => group.sessions.map((session) => [session.id, session] as const)));
   const match = sessionsById.get(id);
   return match ? getDisplaySessionTitle(match.title) : "";
+}
+
+function sessionForId(groups: WorkspaceSessionGroup[], id: string | null | undefined) {
+  if (!id) return null;
+  return groups.flatMap((group) => group.sessions).find((session) => session.id === id) ?? null;
+}
+
+function sessionRuntimeSurfaceProps(groups: WorkspaceSessionGroup[], id: string | null | undefined) {
+  const session = sessionForId(groups, id);
+  return {
+    canonicalAgentEnabled: session?.canonical === true,
+    runtimeId: session?.runtimeId ?? "jugglework",
+  };
+}
+
+function SessionRuntimeLabel(props: { groups: WorkspaceSessionGroup[]; sessionId: string | null | undefined; compact?: boolean }) {
+  const identity = sessionRuntimeIdentity(sessionForId(props.groups, props.sessionId));
+  if (!identity) return null;
+  const detail = [identity.profile, identity.model, identity.execution].filter(Boolean).join(" · ");
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5 text-[10px] font-normal text-muted-foreground" title={[identity.runtime, detail].filter(Boolean).join(" · ")}>
+      <span className="shrink-0 rounded-full border border-border bg-muted/40 px-1.5 py-0.5">{identity.runtime}</span>
+      {!props.compact && detail ? <span className="max-w-48 truncate">{detail}</span> : null}
+    </span>
+  );
 }
 
 function isTrackableAccessibleTarget(target: OpenTarget) {
@@ -1100,7 +1127,7 @@ export function SessionPage(props: SessionPageProps) {
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
           showInitialLoading={sidebarInitialLoading}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession || props.onContinueWithClaude)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
@@ -1118,6 +1145,7 @@ export function SessionPage(props: SessionPageProps) {
           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
             void props.onArchiveSession?.(sessionId, archived);
           } : undefined}
+          onContinueWithClaude={props.onContinueWithClaude}
           onOpenCreateGroupModal={(workspaceId) => {
             setCreateGroupWorkspaceId(workspaceId);
             setCreateGroupLabel("");
@@ -1185,6 +1213,7 @@ export function SessionPage(props: SessionPageProps) {
                   ? t("session.create_or_connect_workspace")
                   : selectedSessionTitle || t("session.default_title")}
               </h1>
+              <SessionRuntimeLabel groups={props.sidebar.workspaceSessionGroups} sessionId={props.selectedSessionId} />
               <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
                 {workspaceName}
               </span>
@@ -1358,7 +1387,10 @@ export function SessionPage(props: SessionPageProps) {
                                 onClick={() => openSessionTab(tab.workspaceId, tab.sessionId)}
                                 title={title}
                               >
-                                {title}
+                                <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="truncate">{title}</span>
+                                  <SessionRuntimeLabel groups={props.sidebar.workspaceSessionGroups} sessionId={tab.sessionId} compact />
+                                </span>
                               </button>
                               <button
                                 type="button"
@@ -1387,12 +1419,17 @@ export function SessionPage(props: SessionPageProps) {
                   ) : null}
                   <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
                     <div
-                      className={cn("min-h-0 min-w-0 flex-1", canRenderSplitSurface && "lg:border-r lg:border-border")}
+                      className={cn("relative min-h-0 min-w-0 flex-1", canRenderSplitSurface && "lg:border-r lg:border-border")}
                       data-workbench-pane="primary"
                       data-workbench-pane-focused={focusedWorkbenchPane === "primary" ? "true" : undefined}
                       onPointerDown={() => focusWorkbenchPane("primary")}
                       onFocusCapture={() => focusWorkbenchPane("primary")}
                     >
+                      {canRenderSplitSurface ? (
+                        <div className="absolute left-3 top-3 z-10 rounded-full bg-background/90 px-2 py-1 shadow-sm ring-1 ring-border">
+                          <SessionRuntimeLabel groups={props.sidebar.workspaceSessionGroups} sessionId={props.selectedSessionId} />
+                        </div>
+                      ) : null}
                       <SessionSurface
                         // Spread `surface` first so the explicit per-workspace
                         // routing props below CAN'T be silently overridden by
@@ -1402,6 +1439,7 @@ export function SessionPage(props: SessionPageProps) {
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
                         {...(props.surface!.resolveSessionModelProps?.(props.selectedSessionId!) ?? {})}
+                        {...sessionRuntimeSurfaceProps(props.sidebar.workspaceSessionGroups, props.selectedSessionId)}
                         client={props.juggleworkServerClient!}
                         environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
@@ -1422,15 +1460,19 @@ export function SessionPage(props: SessionPageProps) {
                     </div>
                     {canRenderSplitSurface ? (
                       <div
-                        className="min-h-0 min-w-0 flex-1 border-t border-border lg:border-t-0"
+                        className="relative min-h-0 min-w-0 flex-1 border-t border-border lg:border-t-0"
                         data-workbench-pane="secondary"
                         data-workbench-pane-focused={focusedWorkbenchPane === "secondary" ? "true" : undefined}
                         onPointerDown={() => focusWorkbenchPane("secondary")}
                         onFocusCapture={() => focusWorkbenchPane("secondary")}
                       >
+                        <div className="absolute left-3 top-3 z-10 rounded-full bg-background/90 px-2 py-1 shadow-sm ring-1 ring-border">
+                          <SessionRuntimeLabel groups={props.sidebar.workspaceSessionGroups} sessionId={splitSessionId} />
+                        </div>
                         <SessionSurface
                           {...props.surface!}
                           {...(props.surface!.resolveSessionModelProps?.(splitSessionId!) ?? {})}
+                          {...sessionRuntimeSurfaceProps(props.sidebar.workspaceSessionGroups, splitSessionId)}
                           client={props.juggleworkServerClient!}
                           environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}

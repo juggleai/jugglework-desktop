@@ -6,16 +6,16 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import type {
-  AgentPartInput,
-  FilePartInput,
   ProviderListResponse,
-  TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
+import type { AgentContinuationContext, AgentContinuationPreview, AgentRuntimeCatalog } from "@jugglework/types/agent-runtime";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { createCanonicalAgentClient } from "@/app/lib/agent-client";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
@@ -24,7 +24,6 @@ import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand,
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
-  buildJuggleWorkWorkspaceBaseUrl,
   readJuggleWorkServerSettings,
 } from "@/app/lib/jugglework-server";
 import {
@@ -88,8 +87,10 @@ import {
 import { useLocal } from "@/react-app/kernel/local-provider";
 import {
   clearSessionModelChoice,
+  readSessionChoices,
   resolveSessionModelChoice,
   setSessionModelChoice,
+  setSessionAgentProfileChoice,
   setSessionVariantChoice,
   useSessionModelChoices,
 } from "@/react-app/kernel/session-model-store";
@@ -106,6 +107,9 @@ import {
 } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
+import { CanonicalAgentRuntime } from "@/react-app/domains/session/canonical-agent-runtime";
+import { canonicalAgentCacheKeys } from "@/react-app/domains/session/canonical-agent-cache";
+import { getAgentRuntimeControlState } from "@/react-app/domains/session/agent-capabilities";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
 import { buildJuggleWorkEnvSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
@@ -116,6 +120,17 @@ import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/ses
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
+import { AgentRuntimePickerDialog } from "@/react-app/domains/session/modals/agent-runtime-picker-dialog";
+import { AgentContinuationDialog } from "@/react-app/domains/session/modals/agent-continuation-dialog";
+import { canonicalSessionToSidebarSession } from "@/react-app/domains/session/canonical-agent-rollout";
+import {
+  describeAgentRuntimeUnavailable,
+  isAgentRuntimeSelectable,
+  readPermittedAgentRuntimeDefault,
+  recordAgentRuntimeDiagnostic,
+  runtimeSessionConfiguration,
+  writePermittedAgentRuntimeDefault,
+} from "@/react-app/domains/session/agent-runtime-experience";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
 import { appMentionInstruction } from "@/react-app/domains/session/surface/composer/app-mentions";
 import { decodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding";
@@ -271,6 +286,11 @@ function focusPromptSoon() {
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
 const UNAVAILABLE_MODEL_AUTO_OPEN_DELAY_MS = 800;
 
+type SessionPromptPart =
+  | { type: "text"; text: string }
+  | { type: "file"; mime: string; url: string; filename?: string }
+  | { type: "agent"; name: string };
+
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
     providerID: EVAL_UNAVAILABLE_PROVIDER_ID,
@@ -290,7 +310,7 @@ async function draftToParts(
   sessionId: string,
   endpoint: ResolvedWorkspaceEndpoint | null,
 ) {
-  const parts: Array<TextPartInput | FilePartInput | AgentPartInput> = [];
+  const parts: SessionPromptPart[] = [];
   const root = workspaceRoot.trim();
 
   const toAbsolutePath = (path: string) => {
@@ -308,7 +328,7 @@ async function draftToParts(
     return segments[segments.length - 1] ?? "file";
   };
 
-  const attachmentFileById = new Map<string, FilePartInput>();
+  const attachmentFileById = new Map<string, Extract<SessionPromptPart, { type: "file" }>>();
   if (draft.attachments.length > 0) {
     if (!endpoint) {
       throw new Error("Workspace endpoint is unavailable; attachments could not be copied for tool access.");
@@ -325,7 +345,7 @@ async function draftToParts(
         continue;
       }
     }
-    const fileParts = uploaded.filter((part): part is FilePartInput => part.type === "file");
+    const fileParts = uploaded.filter((part): part is Extract<SessionPromptPart, { type: "file" }> => part.type === "file");
     for (const [index, attachment] of draft.attachments.entries()) {
       const filePart = fileParts[index];
       if (filePart) attachmentFileById.set(attachment.id, filePart);
@@ -582,14 +602,20 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
-  // Agent selection is persisted in local prefs (like the model variant) so
-  // it survives reloads instead of silently falling back to "build" (#2101).
-  const selectedAgent = local.prefs.selectedAgent;
+  // Agent profile follows the same scope as model/effort: a session override
+  // wins, while the global preference remains the default for future sessions.
+  const selectedAgentChoice = selectedSessionId ? sessionModelChoices[selectedSessionId] : undefined;
+  const selectedAgent = selectedSessionId && Object.prototype.hasOwnProperty.call(selectedAgentChoice ?? {}, "agentProfile")
+    ? selectedAgentChoice?.agentProfile ?? null
+    : local.prefs.selectedAgent;
   const setSelectedAgent = useCallback(
     (agent: string | null) => {
+      if (selectedWorkspaceId && selectedSessionId) {
+        setSessionAgentProfileChoice(selectedWorkspaceId, selectedSessionId, agent);
+      }
       local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
     },
-    [local.setPrefs],
+    [local.setPrefs, selectedSessionId, selectedWorkspaceId],
   );
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
@@ -600,6 +626,22 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
   const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
+  const [runtimePickerOpen, setRuntimePickerOpen] = useState(false);
+  const [runtimePickerCatalog, setRuntimePickerCatalog] = useState<AgentRuntimeCatalog | null>(null);
+  const [runtimePickerSelection, setRuntimePickerSelection] = useState("");
+  const [runtimePickerLoading, setRuntimePickerLoading] = useState(false);
+  const [runtimePickerError, setRuntimePickerError] = useState<string | null>(null);
+  const [runtimePickerRequest, setRuntimePickerRequest] = useState<{
+    workspaceId: string;
+    groupId?: string;
+    prompt?: string;
+  } | null>(null);
+  const [continuationOpen, setContinuationOpen] = useState(false);
+  const [continuationSource, setContinuationSource] = useState<{ workspaceId: string; sessionId: string } | null>(null);
+  const [continuationPreview, setContinuationPreview] = useState<AgentContinuationPreview | null>(null);
+  const [continuationContext, setContinuationContext] = useState<AgentContinuationContext | null>(null);
+  const [continuationLoading, setContinuationLoading] = useState(false);
+  const [continuationError, setContinuationError] = useState<string | null>(null);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
@@ -654,12 +696,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const activeSelectedWorkspaceSessionIds = useMemo(
     () =>
       (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session) => {
-        if (!isActiveSessionStatus(getSessionStatus(session))) return [];
+        if (!isActiveSessionStatus(getSessionStatus(session)) || session.canonical === true) return [];
         const id = String(session?.id ?? "").trim();
         return id ? [id] : [];
       }),
     [selectedWorkspaceId, sessionsByWorkspaceId],
   );
+  const selectedLegacySessionId = useMemo(() => {
+    const session = (sessionsByWorkspaceId[selectedWorkspaceId] ?? []).find((item) => item.id === selectedSessionId);
+    return session?.canonical === true ? null : selectedSessionId;
+  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
 
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => juggleworkServerSettings.remoteAccessEnabled === true,
@@ -720,8 +766,48 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
 
   const workspaceSessionGroups = useMemo(
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set(retryingWorkspaceIds)),
-    [errorsByWorkspaceId, retryingWorkspaceIds, sessionsByWorkspaceId, workspaces],
+    () => toSessionGroups(
+      workspaces,
+      Object.fromEntries(Object.entries(sessionsByWorkspaceId).map(([workspaceId, sessions]) => {
+        const choices = readSessionChoices(workspaceId);
+        return [workspaceId, sessions.map((session) => {
+          const choice = choices[session.id];
+          const model = choice?.model ?? (workspaceId === selectedWorkspaceId ? local.prefs.defaultModel : null);
+          const variant = Object.prototype.hasOwnProperty.call(choice ?? {}, "variant")
+            ? choice?.variant ?? null
+            : workspaceId === selectedWorkspaceId ? local.prefs.modelVariant ?? null : null;
+          return {
+            ...session,
+            runtimeId: session.runtimeId ?? "jugglework",
+            agentProfile: session.agentProfile ?? (Object.prototype.hasOwnProperty.call(choice ?? {}, "agentProfile")
+              ? choice?.agentProfile ?? null
+              : local.prefs.selectedAgent ?? null),
+            runtimeModel: session.runtimeModel ?? (model ? { providerId: model.providerID, modelId: model.modelID } : null),
+            runtimeExecution: session.runtimeExecution ?? (variant ? { effort: variant } : null),
+          };
+        })];
+      })),
+      errorsByWorkspaceId,
+      new Set(retryingWorkspaceIds),
+    ),
+    [errorsByWorkspaceId, local.prefs.defaultModel, local.prefs.modelVariant, local.prefs.selectedAgent, retryingWorkspaceIds, sessionModelChoices, sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
+  );
+  const selectedRouteSession = useMemo(() => (
+    workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)?.sessions
+      .find((session) => session.id === selectedSessionId) ?? null
+  ), [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
+  const selectedCanonicalRuntime = selectedRouteSession?.canonical === true && selectedRouteSession.runtimeId !== "jugglework";
+  const selectedRuntimeDescriptorQuery = useQuery({
+    queryKey: canonicalAgentCacheKeys.runtimes(selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId)
+      .concat(selectedRouteSession?.runtimeId ?? "jugglework"),
+    queryFn: async () => createCanonicalAgentClient(selectedWorkspaceEndpoint!).getRuntime(selectedRouteSession!.runtimeId!),
+    enabled: selectedCanonicalRuntime && Boolean(selectedWorkspaceEndpoint),
+    staleTime: 30_000,
+  });
+  const selectedModelControlEnabled = !selectedCanonicalRuntime || (
+    selectedRuntimeDescriptorQuery.data
+      ? getAgentRuntimeControlState(selectedRuntimeDescriptorQuery.data, "currentTurnModel").enabled
+      : false
   );
   useSessionGroupSync({ workspaces, endpointForWorkspace });
   const selectedWorkspaceGroupState = sessionManagementStore((state) => (
@@ -932,7 +1018,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     respondQuestion,
     todos,
   } = useSessionInteractions({
-    client: opencodeClient,
+    client: selectedRouteSession?.canonical === true ? null : opencodeClient,
     workspaceId: selectedWorkspaceId,
     sessionId: selectedSessionId,
     workspaceRoot: selectedWorkspaceRoot,
@@ -1282,6 +1368,30 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           const targetSessionId = sessionId.trim() || selectedSessionId;
           if (!targetSessionId) return;
           try {
+            if (selectedRouteSession?.canonical === true) {
+              const descriptor = selectedRuntimeDescriptorQuery.data;
+              if (!descriptor?.capabilities.fork) throw new Error("This runtime does not support native conversation fork.");
+              const limitation = descriptor.limitations?.find((item) => item.capability === "fork");
+              const warning = limitation?.message
+                ?? "This copies conversation history only. The fork shares the current working tree and does not restore files or copy checkpoint history.";
+              if (!window.confirm(`${warning}\n\nCreate the fork?`)) return;
+              const endpoint = selectedWorkspace ? endpointForWorkspace(selectedWorkspace) : null;
+              if (!endpoint) throw new Error("Canonical runtime endpoint is unavailable.");
+              const result = await createCanonicalAgentClient(endpoint).forkSession(targetSessionId, {
+                ...(messageId ? { upToMessageId: messageId } : {}),
+              });
+              const forked = canonicalSessionToSidebarSession(result.session);
+              writeLastSessionFor(selectedWorkspaceId, forked.id);
+              rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
+              setSessionsByWorkspaceId((current) => ({
+                ...current,
+                [selectedWorkspaceId]: [forked, ...(current[selectedWorkspaceId] ?? [])],
+              }));
+              navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
+              toast.warning("Conversation fork created", { description: result.filesystemState.warning });
+              void refreshRouteState();
+              return;
+            }
             const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
             writeLastSessionFor(selectedWorkspaceId, forked.id);
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
@@ -1493,17 +1603,19 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     if (!endpoint || !endpoint.token) {
       return null;
     }
-    const workspaceClient = createClient(
-      endpoint.opencodeBaseUrl,
-      workspace.path?.trim() || undefined,
-      { token: endpoint.token, mode: "jugglework" },
-    );
     try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
       setRouteError(null);
-      const session = unwrap(
-        await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-      );
+      const created = await createCanonicalAgentClient(endpoint).createSession({
+        runtimeId: "jugglework",
+        title: t("session.default_title"),
+        configuration: runtimeSessionConfiguration({
+          agentProfile: selectedAgent,
+          model: activeModel,
+          effort: activeModelVariant,
+        }),
+      });
+      const session = canonicalSessionToSidebarSession(created);
       if (workspaceId === selectedWorkspaceId) {
         void sessionProviderAuthStore.runCloudProviderSync("new_chat");
       }
@@ -1556,6 +1668,172 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }
   }, [endpointForWorkspace, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaces]);
 
+  const openAgentRuntimePicker = useCallback(async (request: { workspaceId: string; groupId?: string; prompt?: string }) => {
+    const workspace = workspaces.find((item) => item.id === request.workspaceId);
+    const endpoint = endpointForWorkspace(workspace);
+    if (!workspace || !endpoint) return;
+    setRuntimePickerRequest(request);
+    setRuntimePickerOpen(true);
+    setRuntimePickerCatalog(null);
+    setRuntimePickerError(null);
+    setRuntimePickerLoading(true);
+    try {
+      const agentClient = createCanonicalAgentClient(endpoint);
+      const catalog = await agentClient.listRuntimes();
+      const runtimes = await Promise.all(catalog.runtimes.map(async (runtime) => {
+        if (!runtime.capabilities.models || !isAgentRuntimeSelectable(runtime)) return runtime;
+        try {
+          return { ...runtime, models: await agentClient.listRuntimeModels(runtime.id) };
+        } catch {
+          return runtime;
+        }
+      }));
+      const hydratedCatalog = { ...catalog, runtimes };
+      for (const runtime of runtimes) {
+        if (isAgentRuntimeSelectable(runtime)) continue;
+        recordAgentRuntimeDiagnostic({
+          event: "unavailable",
+          runtimeId: runtime.id,
+          reasonCode: runtime.health.reasonCode,
+          workspaceRemote: workspace.workspaceType === "remote",
+        });
+      }
+      setRuntimePickerCatalog(hydratedCatalog);
+      setRuntimePickerSelection(readPermittedAgentRuntimeDefault(request.workspaceId, hydratedCatalog));
+    } catch (error) {
+      setRuntimePickerError(error instanceof Error ? error.message : "Agent Runtimes could not be loaded.");
+    } finally {
+      setRuntimePickerLoading(false);
+    }
+  }, [endpointForWorkspace, workspaces]);
+
+  useEffect(() => {
+    const open = () => {
+      if (selectedWorkspaceId) void openAgentRuntimePicker({ workspaceId: selectedWorkspaceId });
+    };
+    window.addEventListener("jugglework:new-session", open);
+    return () => window.removeEventListener("jugglework:new-session", open);
+  }, [openAgentRuntimePicker, selectedWorkspaceId]);
+
+  const createSelectedRuntimeSession = useCallback(async () => {
+    const request = runtimePickerRequest;
+    const catalog = runtimePickerCatalog;
+    if (!request || !catalog) return;
+    const runtime = catalog.runtimes.find((item) => item.id === runtimePickerSelection);
+    if (!runtime) return;
+    const unavailableReason = describeAgentRuntimeUnavailable(runtime);
+    if (!isAgentRuntimeSelectable(runtime)) {
+      setRuntimePickerError(unavailableReason ?? `${runtime.label} is unavailable.`);
+      recordAgentRuntimeDiagnostic({
+        event: "unavailable",
+        runtimeId: runtime.id,
+        reasonCode: runtime.health.reasonCode,
+        workspaceRemote: workspaces.find((item) => item.id === request.workspaceId)?.workspaceType === "remote",
+      });
+      return;
+    }
+    const workspace = workspaces.find((item) => item.id === request.workspaceId);
+    const endpoint = endpointForWorkspace(workspace);
+    if (!workspace || !endpoint) return;
+    setRuntimePickerLoading(true);
+    setRuntimePickerError(null);
+    try {
+      writePermittedAgentRuntimeDefault(request.workspaceId, runtime.id, catalog);
+      recordAgentRuntimeDiagnostic({
+        event: "selected",
+        runtimeId: runtime.id,
+        workspaceRemote: workspace.workspaceType === "remote",
+      });
+      const configuredModel = activeModel && runtime.models.some((model) =>
+        model.providerId === activeModel.providerID && model.id === activeModel.modelID)
+        ? activeModel
+        : null;
+      const created = await createCanonicalAgentClient(endpoint).createSession({
+        runtimeId: runtime.id,
+        title: t("session.default_title"),
+        configuration: runtimeSessionConfiguration({
+          agentProfile: selectedAgent,
+          model: configuredModel,
+          effort: configuredModel ? activeModelVariant : null,
+        }),
+      });
+      const session = canonicalSessionToSidebarSession(created);
+      if (request.prompt) saveSessionDraft(request.workspaceId, session.id, { text: request.prompt, mode: "prompt" });
+      if (request.groupId) sessionManagementStore.getState().assignGroup(request.workspaceId, session.id, request.groupId);
+      rememberPendingCreatedSession(request.workspaceId, session.id);
+      setSessionsByWorkspaceId((current) => ({
+        ...current,
+        [request.workspaceId]: [session, ...(current[request.workspaceId] ?? [])],
+      }));
+      writeActiveWorkspaceId(request.workspaceId);
+      writeLastSessionFor(request.workspaceId, session.id);
+      navigateToWorkspaceSession(request.workspaceId, session.id);
+      setRuntimePickerOpen(false);
+      void refreshRouteState();
+    } catch (error) {
+      const code = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "request_failed";
+      recordAgentRuntimeDiagnostic({
+        event: "creation_failed",
+        runtimeId: runtime.id,
+        reasonCode: code,
+        workspaceRemote: workspace.workspaceType === "remote",
+      });
+      setRuntimePickerError(error instanceof Error ? error.message : "Session creation failed.");
+    } finally {
+      setRuntimePickerLoading(false);
+    }
+  }, [activeModel, activeModelVariant, endpointForWorkspace, handleCreateTaskInWorkspace, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, runtimePickerCatalog, runtimePickerRequest, runtimePickerSelection, selectedAgent, setSessionsByWorkspaceId, workspaces]);
+
+  const openContinuation = useCallback(async (workspaceId: string, sessionId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const endpoint = endpointForWorkspace(workspace);
+    if (!workspace || !endpoint) return;
+    setContinuationSource({ workspaceId, sessionId });
+    setContinuationOpen(true);
+    setContinuationPreview(null);
+    setContinuationContext(null);
+    setContinuationError(null);
+    setContinuationLoading(true);
+    try {
+      const preview = await createCanonicalAgentClient(endpoint).previewContinuation(sessionId, "claude-agent");
+      setContinuationPreview(preview);
+      setContinuationContext(preview.context);
+    } catch (error) {
+      setContinuationError(error instanceof Error ? error.message : "Could not prepare the migration preview.");
+    } finally {
+      setContinuationLoading(false);
+    }
+  }, [endpointForWorkspace, workspaces]);
+
+  const confirmContinuation = useCallback(async () => {
+    const source = continuationSource;
+    const context = continuationContext;
+    if (!source || !context) return;
+    const workspace = workspaces.find((item) => item.id === source.workspaceId);
+    const endpoint = endpointForWorkspace(workspace);
+    if (!workspace || !endpoint) return;
+    setContinuationLoading(true);
+    setContinuationError(null);
+    try {
+      const result = await createCanonicalAgentClient(endpoint).continueSession(source.sessionId, "claude-agent", context);
+      const sidebarSession = canonicalSessionToSidebarSession(result.session);
+      rememberPendingCreatedSession(source.workspaceId, sidebarSession.id);
+      setSessionsByWorkspaceId((current) => ({
+        ...current,
+        [source.workspaceId]: [sidebarSession, ...(current[source.workspaceId] ?? [])],
+      }));
+      writeActiveWorkspaceId(source.workspaceId);
+      writeLastSessionFor(source.workspaceId, sidebarSession.id);
+      setContinuationOpen(false);
+      navigateToWorkspaceSession(source.workspaceId, sidebarSession.id);
+      void refreshRouteState();
+    } catch (error) {
+      setContinuationError(error instanceof Error ? error.message : "Could not create the linked Claude session.");
+    } finally {
+      setContinuationLoading(false);
+    }
+  }, [continuationContext, continuationSource, endpointForWorkspace, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, setSessionsByWorkspaceId, workspaces]);
+
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
   // only cycle through tabs the user actually opened (not artifact sessions).
@@ -1595,7 +1873,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   } = useShellShortcuts({
     canCreateTask,
     workspaceId: selectedWorkspaceId,
-    onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
+    onCreateTask: (workspaceId: string) => void openAgentRuntimePicker({ workspaceId }),
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
   });
@@ -1632,7 +1910,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   useSessionControlActions({
     workspaces,
-    sessionsByWorkspaceId,
+    sessionsByWorkspaceId: Object.fromEntries(workspaceSessionGroups.map((group) => [group.workspace.id, group.sessions])),
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     selectedSessionId,
@@ -1641,8 +1919,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     opencodeClient,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
-    createTaskInWorkspace: handleCreateTaskInWorkspace,
+    createTaskInWorkspace: (workspaceId) => openAgentRuntimePicker({ workspaceId }),
     openModelPicker: openModelPickerForControl,
+    canOpenModelPicker: selectedModelControlEnabled,
     refreshRouteState,
   });
 
@@ -1874,6 +2153,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     juggleworkServerStatus: client ? "connected" : "disconnected",
     juggleworkServerUrl: baseUrl,
     runtimeWorkspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
+    agentRuntimeEndpoint: selectedWorkspaceEndpoint ? {
+      baseUrl: selectedWorkspaceEndpoint.baseUrl,
+      workspaceId: selectedWorkspaceEndpoint.workspaceId,
+      token: selectedWorkspaceEndpoint.token || undefined,
+    } : null,
   }), [
     activeReloadBlockingSessions.length,
     baseUrl,
@@ -1883,6 +2167,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     juggleworkServerHostInfoState,
     reloadCoordinator.canReloadWorkspaceEngine,
     selectedWorkspaceEndpoint?.workspaceId,
+    selectedWorkspaceEndpoint?.baseUrl,
+    selectedWorkspaceEndpoint?.token,
   ]);
 
   const diagnosticsCopyPaletteItem = useMemo<PaletteItem>(() => ({
@@ -2067,12 +2353,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         // Best-effort first task creation (mirrors the old welcome flow) — a
         // failure here must not surface as a failed workspace creation.
         const session = createdOnServer && sessionBaseUrl && sessionToken
-          ? await createClient(
-              `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
-              workspacePath || undefined,
-              { token: sessionToken, mode: "jugglework" },
-            ).session.create({ directory: workspacePath || undefined })
-              .then((result) => unwrap(result))
+          ? await createCanonicalAgentClient({
+              baseUrl: sessionBaseUrl,
+              workspaceId: targetWorkspaceId,
+              token: sessionToken,
+            }).createSession({
+              runtimeId: "jugglework",
+              title: t("session.default_title"),
+            }).then(canonicalSessionToSidebarSession)
               .catch(() => null)
           : null;
         setLegacySelectedWorkspaceId(targetWorkspaceId);
@@ -2186,14 +2474,24 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         // prefix) so the React Query cache keys session-sync writes match
         // the keys SessionSurface reads from. Otherwise events arrive but
         // the UI never sees them and gets stuck on "thinking".
+        enabled={selectedLegacySessionId !== null || activeSelectedWorkspaceSessionIds.length > 0}
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
-        sessionId={selectedSessionId}
+        sessionId={selectedLegacySessionId}
         activeSessionIds={activeSelectedWorkspaceSessionIds}
         opencodeBaseUrl={opencodeBaseUrl}
         juggleworkToken={selectedWorkspaceServerToken}
         onSessionCreated={handleRuntimeSessionCreated}
         onSessionUpdated={handleRuntimeSessionUpdated}
         onSessionDeleted={handleRuntimeSessionDeleted}
+      />
+    ) : null}
+    {selectedWorkspaceEndpoint && selectedWorkspaceServerToken ? (
+      <CanonicalAgentRuntime
+        enabled={(workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)?.sessions ?? [])
+          .some((session) => session.canonical === true)}
+        baseUrl={selectedWorkspaceEndpoint.baseUrl}
+        workspaceId={selectedWorkspaceEndpoint.workspaceId}
+        token={selectedWorkspaceServerToken}
       />
     ) : null}
     <SessionPage
@@ -2356,45 +2654,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
-          void handleCreateTaskInWorkspace(workspaceId).then((sessionId) => {
-            if (sessionId && groupId) {
-              sessionManagementStore.getState().assignGroup(workspaceId, sessionId, groupId);
-            }
-          });
+          void openAgentRuntimePicker({ workspaceId, groupId });
         },
         onCreateTaskWithPrompt: (workspaceId, prompt) => {
-          void (async () => {
-            const workspace = workspaces.find((item) => item.id === workspaceId);
-            if (!workspace) return;
-            const endpoint = endpointForWorkspace(workspace);
-            if (!endpoint?.token) return;
-            const workspaceClient = createClient(
-              endpoint.opencodeBaseUrl,
-              workspace.path?.trim() || undefined,
-              { token: endpoint.token, mode: "jugglework" },
-            );
-            try {
-              const session = unwrap(
-                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-              );
-              if (workspaceId === selectedWorkspaceId) {
-                void sessionProviderAuthStore.runCloudProviderSync("new_chat");
-              }
-              saveSessionDraft(workspaceId, session.id, { text: prompt, mode: "prompt" });
-              writeActiveWorkspaceId(workspaceId || null);
-              writeLastSessionFor(workspaceId, session.id);
-              rememberPendingCreatedSession(workspaceId, session.id);
-              setSessionsByWorkspaceId((current) => ({
-                ...current,
-                [workspaceId]: [session, ...(current[workspaceId] ?? [])],
-              }));
-              navigateToWorkspaceSession(workspaceId, session.id);
-              focusPromptSoon();
-            } catch {
-              // Fall back to normal task creation without prompt
-              void handleCreateTaskInWorkspace(workspaceId);
-            }
-          })();
+          void openAgentRuntimePicker({ workspaceId, prompt });
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onShareWorkspace: handleShareWorkspace,
@@ -2415,7 +2678,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       }}
       surface={surfaceProps ? {
         ...surfaceProps,
-        onCreateNewSession: () => handleCreateTaskInWorkspace(selectedWorkspaceId),
+        onCreateNewSession: async () => {
+          await openAgentRuntimePicker({ workspaceId: selectedWorkspaceId });
+          return null;
+        },
       } : null}
       history={{
         canUndo: false,
@@ -2465,15 +2731,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       respondQuestion={respondQuestion}
       safeStringify={safeStringify}
       onRenameSession={
-        opencodeClient
+        selectedWorkspaceEndpoint
           ? async (sessionId, nextTitle) => {
               const trimmed = nextTitle.trim();
               if (!trimmed) return;
-              await opencodeClient.session.update({
-                sessionID: sessionId,
-                title: trimmed,
-                directory: selectedWorkspaceRoot || undefined,
-              });
+              await createCanonicalAgentClient(selectedWorkspaceEndpoint).updateSession(sessionId, { title: trimmed });
               await refreshRouteState();
             }
           : undefined
@@ -2492,7 +2754,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             }
           : undefined
       }
-      onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+      onArchiveSession={selectedRouteSession?.canonical === true ? undefined : opencodeClient ? handleArchiveSession : undefined}
+      onContinueWithClaude={(workspaceId, sessionId) => void openContinuation(workspaceId, sessionId)}
       statusBar={{
         loading: showPreparingStatus,
         reloadBusy: reloadCoordinator.reloadBusy,
@@ -2516,6 +2779,37 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       localError={createWorkspaceError}
       remoteSubmitting={createWorkspaceRemoteBusy}
       remoteError={createWorkspaceRemoteError}
+    />
+    <AgentRuntimePickerDialog
+      open={runtimePickerOpen}
+      catalog={runtimePickerCatalog}
+      selectedRuntimeId={runtimePickerSelection}
+      loading={runtimePickerLoading}
+      error={runtimePickerError}
+      onSelect={setRuntimePickerSelection}
+      onClose={() => {
+        setRuntimePickerOpen(false);
+        setRuntimePickerRequest(null);
+        setRuntimePickerError(null);
+      }}
+      onCreate={() => void createSelectedRuntimeSession()}
+    />
+    <AgentContinuationDialog
+      open={continuationOpen}
+      preview={continuationPreview}
+      context={continuationContext}
+      loading={continuationLoading}
+      error={continuationError}
+      onContextChange={setContinuationContext}
+      onCancel={() => {
+        if (continuationLoading) return;
+        setContinuationOpen(false);
+        setContinuationSource(null);
+        setContinuationPreview(null);
+        setContinuationContext(null);
+        setContinuationError(null);
+      }}
+      onConfirm={() => void confirmContinuation()}
     />
     <CreateRemoteWorkspaceModal
       open={remoteWorkspaceConnectionEditor.workspace !== null}
@@ -2546,12 +2840,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onClose={() => setCommandPaletteOpen(false)}
       onCreateNewSession={() => {
         if (selectedWorkspaceId) {
-          void handleCreateTaskInWorkspace(selectedWorkspaceId);
+          void openAgentRuntimePicker({ workspaceId: selectedWorkspaceId });
         }
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/preferences")}
       onOpenModelPicker={() => {
+        if (!selectedModelControlEnabled) return;
         setModelPickerSessionId(null);
         modelPicker.setQuery("");
         modelPicker.setRecentProviderIds(new Set());
@@ -2591,7 +2886,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal
-      open={modelPicker.open}
+      open={modelPicker.open && selectedModelControlEnabled}
       options={modelPicker.options}
 
       query={modelPicker.query}

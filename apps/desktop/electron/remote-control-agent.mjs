@@ -411,7 +411,9 @@ function validRequest(value) {
     case "workspace.list": return hasExactKeys(args, []);
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
     case "session.snapshot": return hasExactKeys(args, ["workspaceId", "sessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.sessionId);
-    case "session.create": return hasExactKeys(args, ["workspaceId", "title"]) && isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title);
+    case "session.create": return (hasExactKeys(args, ["workspaceId", "title"]) || hasExactKeys(args, ["workspaceId", "title", "runtimeId"])) &&
+      isIdentifier(args.workspaceId) && isSessionCreateTitle(args.title) &&
+      (!Object.hasOwn(args, "runtimeId") || isIdentifier(args.runtimeId));
     case "session.prompt": return (hasExactKeys(args, ["workspaceId", "sessionId", "prompt"]) || hasExactKeys(args, ["workspaceId", "sessionId", "prompt", "whenBusy"])) &&
       isIdentifier(args.workspaceId) && isIdentifier(args.sessionId) && typeof args.prompt === "string" && args.prompt.trim().length >= 1 && Buffer.byteLength(args.prompt, "utf8") <= 200_000 &&
       (!Object.hasOwn(args, "whenBusy") || ["reject", "steer", "enqueue"].includes(args.whenBusy));

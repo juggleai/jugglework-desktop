@@ -39,7 +39,7 @@ import {
   sanitizeJuggleWorkTemplateConfig,
 } from "./blueprint-sessions.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
-import { seedOpencodeSessionMessages } from "./opencode-db.js";
+import { legacyOpencodeSessionImporter } from "./legacy-importers/index.js";
 import { listPortableFiles } from "./portable-files.js";
 import {
   buildWorkspaceImportPreview,
@@ -68,6 +68,16 @@ import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import { registerAgentRuntimeRoutes } from "./routes/agent-runtime.js";
+import { AgentRuntimeRegistry } from "./agent-engine/registry.js";
+import { OpenCodeAgentEngineAdapter } from "./agent-engine/opencode-adapter.js";
+import { CLAUDE_AGENT_MODELS, ClaudeAgentEngineAdapter } from "./agent-engine/claude-adapter.js";
+import type { AgentEnginePort } from "./agent-engine/port.js";
+import { AgentRuntimeRepository } from "./agent-runtime-persistence/repository.js";
+import { AgentRuntimeControlPlane } from "./agent-runtime-control-plane.js";
+import { AgentRuntimeTelemetry } from "./agent-runtime-telemetry.js";
+import { ClaudeAdvancedRollout } from "./claude-advanced-rollout.js";
+import { RolloutGatedClaudeCredentialBroker } from "./claude-credentials.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
@@ -86,6 +96,11 @@ import {
   type CloudMcpHealth,
 } from "./cloud-mcp-health.js";
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
+import {
+  createClaudeWorkerProcessManagerFromEnv,
+  type ClaudeWorkerProcessManager,
+} from "./claude-worker-process-manager.js";
+import { startClaudeInternalToolsServer, type ClaudeInternalToolsServer } from "./claude-internal-tools-server.js";
 import { createAgentDiagnosticsEngineFetch } from "./agent-context-engine-inspection.js";
 import {
   mergeOpencodeConfigs,
@@ -796,51 +811,61 @@ function normalizeOpencodeProxyPath(proxyPath: string): string {
   return normalized || "/";
 }
 
-export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
-  const m = method.toUpperCase();
-  const scope = actor.scope ?? "viewer";
+const MOUNTED_OPENCODE_ENGINE_INTEGRATION_ROOTS = new Set([
+  "app",
+  "command",
+  "config",
+  "file",
+  "find",
+  "formatter",
+  "global",
+  "lsp",
+  "mcp",
+  "path",
+  "project",
+  "provider",
+  "pty",
+  "vcs",
+]);
 
-  if (scope === "viewer" && m !== "GET" && m !== "HEAD") {
-    throw new ApiError(403, "forbidden", "Viewer tokens are read-only");
-  }
-
-  // Prevent viewers from self-approving OpenCode permission requests via the
-  // proxy. OpenCode uses /permission/:requestId/reply (and historically also
-  // a session-scoped variant). Collaborators must be allowed: the SPA's only
-  // credential is the collaborator-scoped client token (JUGGLEWORK_TOKEN), so
-  // an owner-only gate made every interactive permission dialog un-answerable
-  // (403 "Only owner tokens can reply") and left tool calls stuck in
-  // "running" forever (#1918).
-  if (scope === "viewer" && m !== "GET" && m !== "HEAD") {
-    const normalized = normalizeOpencodeProxyPath(proxyPath);
-    if (/\/permission\/[^/]+\/reply$/.test(normalized)) {
-      throw new ApiError(403, "forbidden", "Viewer tokens cannot reply to permission requests");
-    }
-  }
-}
-
-function parseSessionExecutionStartProxyRequest(method: string, proxyPath: string) {
-  if (method !== "POST") return null;
-  const match = normalizeOpencodeProxyPath(proxyPath).match(
-    /^\/session\/([^/]+)\/(command|shell|summarize|compact)$/,
-  );
-  if (!match?.[1]) return null;
-  try {
-    const sessionId = decodeURIComponent(match[1]).trim();
-    return sessionId ? { sessionId, kind: match[2]! } : null;
-  } catch {
-    return null;
-  }
+function isMountedOpencodeEngineIntegrationPath(proxyPath: string): boolean {
+  const path = normalizeOpencodeProxyPath(proxyPath);
+  const segments = path.split("/").filter(Boolean);
+  if (segments.some((segment) => ["event", "session", "permission", "question"].includes(segment))) return false;
+  const root = segments[0];
+  return root !== undefined && MOUNTED_OPENCODE_ENGINE_INTEGRATION_ROOTS.has(root);
 }
 
 export async function startServer(config: ServerConfig, options: {
   interactionResolutions?: InteractionResolutionCoordinator;
+  claudeWorkerManager?: ClaudeWorkerProcessManager | null;
+  claudeCredentialBroker?: import("./claude-credentials.js").ClaudeCredentialBroker;
+  claudeProfileDataDir?: string;
+  claudeMcpCredentialBroker?: import("./claude-mcp-runtime-config.js").ClaudeMcpCredentialBroker;
 } = {}): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
   const logger = createServerLogger(config);
+  const agentRuntimeTelemetry = new AgentRuntimeTelemetry({ workerStatus: "disabled" });
+  const claudeAdvancedRollout = new ClaudeAdvancedRollout({
+    onConfigured: (feature, enabled) => agentRuntimeTelemetry.advancedFeatureConfigured(feature, enabled),
+    onMetric: (feature, outcome) => agentRuntimeTelemetry.advancedFeature(feature, outcome),
+  });
+  const claudeCredentialBroker = options.claudeCredentialBroker
+    ? new RolloutGatedClaudeCredentialBroker(options.claudeCredentialBroker, claudeAdvancedRollout)
+    : undefined;
+  const claudeWorkerManager = options.claudeWorkerManager === undefined
+    ? createClaudeWorkerProcessManagerFromEnv(process.env, {
+        credentialBroker: claudeCredentialBroker,
+        profileDataDir: options.claudeProfileDataDir,
+      })
+    : options.claudeWorkerManager;
+  const unsubscribeWorkerStatus = claudeWorkerManager?.subscribeStatus((snapshot) => {
+    agentRuntimeTelemetry.workerStatus(snapshot.status);
+  });
+  const unsubscribeWorkerCrash = claudeWorkerManager?.subscribeCrash(() => agentRuntimeTelemetry.workerCrash());
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
     watcherHandle.refreshWorkspace(workspaceId, reasons);
@@ -860,13 +885,107 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
+  const agentRuntimeRepository = await AgentRuntimeRepository.open(config);
+  const opencodeAgentEngine = new OpenCodeAgentEngineAdapter({
+    createClient: ({ workspaceId }) => {
+      const workspace = config.workspaces.find((item) => item.id === workspaceId);
+      if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+      return createWorkspaceOpencodeClient(config, workspace);
+    },
+  });
+  const claudeMcpRevisionByWorkspace = new Map<string, number>();
+  let claudeInternalToolsServer: ClaudeInternalToolsServer | null = null;
+  const agentRuntimeRegistry = new AgentRuntimeRegistry({ engines: [
+    opencodeAgentEngine,
+    new ClaudeAgentEngineAdapter(claudeWorkerManager ? {
+      getClient: () => claudeWorkerManager.start(),
+      credentialReadiness: claudeCredentialBroker?.readiness.bind(claudeCredentialBroker),
+      models: CLAUDE_AGENT_MODELS,
+      authorizedRoots: config.authorizedRoots,
+      approvalDeadlineMs: config.approval.timeoutMs,
+      advancedRollout: claudeAdvancedRollout,
+      onTelemetry: (event) => {
+        if (event.type === "mcp") agentRuntimeTelemetry.mcp(event.state);
+        else agentRuntimeTelemetry.crash("transport_lost", "query");
+      },
+      permissionPolicy: config.approval.mode === "auto"
+        ? { mode: "headless", action: "preapproved" }
+        : { mode: "default" },
+      resolveMcpConfiguration: async (context) => {
+        const workspace = config.workspaces.find((item) => item.id === context.workspaceId);
+        if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found");
+        const { createClaudeMcpRuntimeConfiguration } = await import("./claude-mcp-runtime-config.js");
+        const revision = (claudeMcpRevisionByWorkspace.get(context.workspaceId) ?? 0) + 1;
+        claudeMcpRevisionByWorkspace.set(context.workspaceId, revision);
+        const result = await createClaudeMcpRuntimeConfiguration({
+          workspaceId: context.workspaceId,
+          revision,
+          items: await listMcp(config, context.workspaceId, workspace.path),
+          credentialBroker: options.claudeMcpCredentialBroker,
+        });
+        const internalToolsCredential = claudeInternalToolsServer?.leaseCredential();
+        return {
+          configuration: {
+            ...result.configuration,
+            ...(claudeInternalToolsServer && internalToolsCredential ? { internalTools: {
+              url: claudeInternalToolsServer.url,
+              credential: internalToolsCredential.credential,
+              actor: "claude-worker" as const,
+              schemaVersion: 1 as const,
+              credentialExpiresAt: internalToolsCredential.credentialExpiresAt,
+            } } : {}),
+          },
+          release: result.release,
+        };
+      },
+    } : {
+      getClient: async () => { throw new Error("Claude Agent is disabled"); },
+      unavailableHealth: {
+        status: "disabled",
+        checkedAt: Date.now(),
+        reasonCode: "feature_disabled",
+        message: "Claude Agent is disabled on this installation. Enable and provision the Claude Agent runtime, then restart JuggleWork.",
+      },
+    }),
+  ] });
+  const claudeAgentEngine = agentRuntimeRegistry.resolve("claude-agent");
+  const agentRuntimeControlPlane = new AgentRuntimeControlPlane({
+    registry: agentRuntimeRegistry,
+    repository: agentRuntimeRepository,
+    sessionMutations,
+    interactionResolutions,
+    telemetry: agentRuntimeTelemetry,
+    isCurrentTurnControlAllowed: (_workspaceId, _runtimeId, control, value) => (
+      control !== "permissionMode" || value !== "accept-edits" || config.approval.mode === "auto"
+    ),
+    resolveWorkspaceContext: async (workspaceId) => {
+      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
+      return { workspaceId: workspace.id, directory: resolveOpencodeDirectory(workspace) ?? workspace.path };
+    },
+  });
   const automationRepository = await AutomationRepository.open(config);
   const localAutomationEnabled = resolveLocalAutomationEnabled();
   const automationExecutor = new AutomationExecutor({
     config,
     repository: automationRepository,
     resolveWorkspace,
-    createWorkspaceOpencodeClient,
+    runtime: {
+      createSession: (input) => agentRuntimeControlPlane.createSession(input),
+      startRun: async (input) => {
+        await agentRuntimeControlPlane.startRun({
+          ...input,
+          origin: "local-renderer",
+          startCommandCorrelationId: null,
+        });
+      },
+      readSession: (workspaceId, sessionId) => agentRuntimeControlPlane.readSession(workspaceId, sessionId),
+      snapshot: (workspaceId, sessionId, limit) => agentRuntimeControlPlane.snapshot(workspaceId, sessionId, limit),
+      activity: (workspaceId, sessionId) => agentRuntimeControlPlane.sessionActivity(workspaceId, sessionId),
+      listModels: (workspaceId) => agentRuntimeControlPlane.runtimeModels(workspaceId, "jugglework"),
+      listAgentProfiles: (workspaceId) => agentRuntimeControlPlane.runtimeAgentProfiles(workspaceId),
+      listSkills: (workspaceId) => agentRuntimeControlPlane.runtimeSkills(workspaceId),
+      listTools: (workspaceId) => agentRuntimeControlPlane.runtimeTools(workspaceId),
+    },
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,
@@ -884,8 +1003,11 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations,
     () => sessionPendingOperationPump,
     interactionResolutions,
+    agentRuntimeControlPlane,
+    claudeAgentEngine,
     automationRepository,
     automationScheduler,
+    agentRuntimeTelemetry,
     (event, fields) => logger.log("info", event, fields),
   );
 
@@ -924,8 +1046,10 @@ export async function startServer(config: ServerConfig, options: {
       const proxyWorkspaceOpencodeMount = async (mount: { workspaceId: string; restPath: string }) => {
         authMode = "client";
         try {
-          const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await requireClient(request, config, tokens);
+          if (!isMountedOpencodeEngineIntegrationPath(mount.restPath)) {
+            throw new ApiError(404, "not_found", "Not found");
+          }
           const workspace = await resolveWorkspace(config, mount.workspaceId);
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
@@ -935,7 +1059,6 @@ export async function startServer(config: ServerConfig, options: {
             url,
             workspace,
             proxyPath: mount.restPath,
-            sessionMutations,
           });
           return finalize(response);
         } catch (error) {
@@ -982,15 +1105,16 @@ export async function startServer(config: ServerConfig, options: {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
         try {
-          const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          await requireClient(request, config, tokens);
+          if (!isMountedOpencodeEngineIntegrationPath(url.pathname)) {
+            throw new ApiError(404, "not_found", "Not found");
+          }
           proxyService = "opencode";
           const response = await proxyOpencodeRequest({
             config,
             request,
             url,
             workspace: config.workspaces[0],
-            sessionMutations,
           });
           return finalize(response);
         } catch (error) {
@@ -1060,6 +1184,22 @@ export async function startServer(config: ServerConfig, options: {
 
   let server: ServeResult;
   try {
+    const claudeCredentialReadiness = await options.claudeCredentialBroker?.readiness();
+    if (claudeWorkerManager && (!claudeCredentialReadiness || claudeCredentialReadiness.ready)) {
+      claudeInternalToolsServer = await startClaudeInternalToolsServer({
+        config,
+        repository: agentRuntimeRepository,
+        controlPlane: agentRuntimeControlPlane,
+      });
+      await claudeWorkerManager.start();
+      logger.log("info", "Claude Agent Worker is ready");
+    } else if (claudeCredentialReadiness && !claudeCredentialReadiness.ready) {
+      logger.log("info", "Claude Agent Worker is waiting for provider credentials", {
+        provider: claudeCredentialReadiness.provider ?? "unknown",
+        authMethod: claudeCredentialReadiness.authMethod ?? "unknown",
+        reasonCode: claudeCredentialReadiness.reasonCode,
+      });
+    }
     server = await serve({
       ...serverOptions,
       idleTimeout: 120,
@@ -1072,36 +1212,34 @@ export async function startServer(config: ServerConfig, options: {
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
+    agentRuntimeControlPlane.close();
+    await claudeWorkerManager?.stop().catch(() => undefined);
+    await claudeInternalToolsServer?.stop().catch(() => undefined);
+    await agentRuntimeRegistry.dispose();
+    agentRuntimeRepository.close();
+    unsubscribeWorkerStatus?.();
+    unsubscribeWorkerCrash?.();
     throw error;
   }
 
   sessionPendingOperationPump = createSessionPendingOperationPump({
     store: sessionPendingOperations,
     sessionMutations,
+    telemetry: agentRuntimeTelemetry,
     async getSessionStatus(workspaceId, sessionId, signal) {
-      const workspace = await resolveWorkspaceWithoutBootstrap(config, workspaceId);
-      const statuses = unwrapOpencodeResult(await createWorkspaceOpencodeClient(config, workspace).session.status(undefined, { signal }), "/session/status");
-      if (!isRecord(statuses)) throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      const status = statuses[sessionId];
-      if (status === undefined) return "idle";
-      if (!isRecord(status) || typeof status.type !== "string") {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      }
-      return status.type === "idle" ? "idle" : "busy";
+      if (signal.aborted) throw signal.reason;
+      return agentRuntimeControlPlane.sessionActivity(workspaceId, sessionId);
     },
-    async admit(operation, signal) {
-      const workspace = await resolveWorkspaceWithoutBootstrap(config, operation.workspaceId);
-      const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
-        sessionID: operation.sessionId,
-        id: operation.id,
-        prompt: { text: operation.prompt },
-        delivery: operation.mode === "steer" ? "steer" : "queue",
-      }, { signal });
-      const admitted = result.data?.data;
-      const expectedDelivery = operation.mode === "steer" ? "steer" : "queue";
-      if (result.error !== undefined || !admitted || admitted.id !== operation.id || admitted.sessionID !== operation.sessionId || admitted.delivery !== expectedDelivery) {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid queue admission");
-      }
+    async admit(operation, signal, runId) {
+      if (signal.aborted) throw signal.reason;
+      await agentRuntimeControlPlane.dispatchPending({
+        workspaceId: operation.workspaceId,
+        sessionId: operation.sessionId,
+        runId: runId ?? operation.id,
+        requestId: operation.id,
+        mode: operation.mode,
+        prompt: operation.prompt,
+      });
     },
   });
 
@@ -1118,6 +1256,8 @@ export async function startServer(config: ServerConfig, options: {
       const errors: unknown[] = [];
       automationExecutor.dispose();
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
+      try { await claudeWorkerManager?.stop(); } catch (error) { errors.push(error); }
+      try { await claudeInternalToolsServer?.stop(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
         errors.push(error);
@@ -1132,6 +1272,11 @@ export async function startServer(config: ServerConfig, options: {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
+      agentRuntimeControlPlane.close();
+      try { await agentRuntimeRegistry.dispose(); } catch (error) { errors.push(error); }
+      try { agentRuntimeRepository.close(); } catch (error) { errors.push(error); }
+      unsubscribeWorkerStatus?.();
+      unsubscribeWorkerCrash?.();
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
@@ -1186,67 +1331,6 @@ function createWorkspaceOpencodeClient(
   });
 }
 
-function workspaceOpencodeUrl(config: ServerConfig, workspace: WorkspaceInfo, path: string): string {
-  const baseUrl = resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim() ?? "";
-  if (!baseUrl) throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
-  const url = new URL(baseUrl);
-  url.pathname = path;
-  url.search = "";
-  return url.toString();
-}
-
-function workspaceOpencodeHeaders(config: ServerConfig, workspace: WorkspaceInfo): Headers {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-  if (connection.authHeader) headers.set("Authorization", connection.authHeader);
-  const directory = resolveOpencodeDirectory(workspace);
-  if (directory) headers.set("x-opencode-directory", buildOpencodeDirectoryHeader(directory));
-  return headers;
-}
-
-async function dispatchSessionPromptAsync(
-  config: ServerConfig,
-  workspace: WorkspaceInfo,
-  sessionId: string,
-  prompt: Record<string, unknown>,
-): Promise<void> {
-  const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
-  const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
-    method: "POST",
-    headers: workspaceOpencodeHeaders(config, workspace),
-    body: JSON.stringify(prompt),
-  });
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: parseOpencodeErrorBody(await response.text()),
-      path,
-    });
-  }
-}
-
-async function dispatchSessionAbort(
-  config: ServerConfig,
-  workspace: WorkspaceInfo,
-  sessionId: string,
-): Promise<boolean> {
-  const path = `/session/${encodeURIComponent(sessionId)}/abort`;
-  const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
-    method: "POST",
-    headers: workspaceOpencodeHeaders(config, workspace),
-  });
-  if (!response.ok) {
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      status: response.status,
-      body: parseOpencodeErrorBody(await response.text()),
-      path,
-    });
-  }
-  const text = await response.text();
-  if (!text.trim()) return true;
-  return parseOpencodeErrorBody(text) === true;
-}
-
 function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, path: string): NonNullable<T> {
   if (result.data != null) {
     return result.data;
@@ -1267,7 +1351,6 @@ async function proxyOpencodeRequest(input: {
   url: URL;
   workspace?: WorkspaceInfo;
   proxyPath?: string;
-  sessionMutations: SessionMutationCoordinator;
 }) {
   const workspace = input.workspace;
   const baseUrl = workspace ? resolveWorkspaceOpencodeConnection(input.config, workspace).baseUrl?.trim() ?? "" : "";
@@ -1301,61 +1384,13 @@ async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
-  const executionStart = parseSessionExecutionStartProxyRequest(method, proxyPath);
-  let executionRun: ReturnType<SessionMutationCoordinator["reserveStart"]> | null = null;
-  if (executionStart && workspace) {
-    try {
-      executionRun = input.sessionMutations.reserveStart({
-        workspaceId: workspace.id,
-        sessionId: executionStart.sessionId,
-        origin: "local-renderer",
-        startCommandCorrelationId: null,
-      });
-      input.sessionMutations.acceptStart({
-        workspaceId: workspace.id,
-        sessionId: executionStart.sessionId,
-        runId: executionRun.runId,
-      });
-    } catch (error) {
-      if (error instanceof SessionMutationError) {
-        throw new ApiError(409, error.code, "The session already has an active run", {
-          currentRunId: error.currentRunId,
-        });
-      }
-      throw error;
-    }
-  }
-
-  const releaseExecutionRun = () => {
-    if (!executionRun || !workspace || !executionStart) return;
-    input.sessionMutations.rollbackStart({
-      workspaceId: workspace.id,
-      sessionId: executionStart.sessionId,
-      runId: executionRun.runId,
-    });
-  };
-
   // Managed OpenCode proxy traffic is loopback/engine I/O; keep streaming on Node fetch.
-  if (executionStart?.kind === "command") {
-    void loopbackFetch(targetUrl, {
-      method,
-      headers,
-      body,
-    }).catch(() => {
-      // Command failures are surfaced through the OpenCode event stream.
-    }).finally(releaseExecutionRun);
-    return jsonResponse({ ok: true, accepted: true });
-  }
-  try {
-    const response = await loopbackFetch(targetUrl, {
-      method,
-      headers,
-      body,
-    });
-    return sanitizeProxyResponse(response);
-  } finally {
-    releaseExecutionRun();
-  }
+  const response = await loopbackFetch(targetUrl, {
+    method,
+    headers,
+    body,
+  });
+  return sanitizeProxyResponse(response);
 }
 
 /**
@@ -1363,7 +1398,7 @@ async function proxyOpencodeRequest(input: {
  * in the upstream response even after it has already decoded the body for us.
  * Without this the browser sees `content-encoding: gzip` on a plain-text
  * payload and bails out with ERR_CONTENT_DECODING_FAILED, breaking any UI
- * code that reaches through /opencode/* (including session.create).
+ * code that reaches through the mounted engine integration surface.
  */
 function sanitizeProxyResponse(response: Response): Response {
   const headers = new Headers(response.headers);
@@ -1723,8 +1758,11 @@ function createRoutes(
   sessionPendingOperations: SessionPendingOperationStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
+  agentRuntimeControlPlane: AgentRuntimeControlPlane,
+  claudeAgentEngine: AgentEnginePort,
   automationRepository: AutomationRepository,
   automationScheduler: AutomationScheduler,
+  agentRuntimeTelemetry: AgentRuntimeTelemetry,
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1762,8 +1800,13 @@ function createRoutes(
     ensureWritable,
     resolveWorkspace,
     serializeWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
+    reloadOpencodeEngine: async (routeConfig, workspace) => {
+      await reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState);
+      await claudeAgentEngine.reloadConfiguration({
+        workspaceId: workspace.id,
+        directory: resolveOpencodeDirectory(workspace) ?? workspace.path,
+      }).catch(() => undefined);
+    },
   });
 
   registerSessionRoutes({
@@ -1778,10 +1821,7 @@ function createRoutes(
     requireClientScope,
     resolveWorkspace,
     resolveWorkspaceWithoutBootstrap,
-    createWorkspaceOpencodeClient,
-    unwrapOpencodeResult,
-    dispatchSessionPromptAsync,
-    dispatchSessionAbort,
+    controlPlane: agentRuntimeControlPlane,
     sessionMutations,
     sessionPendingOperations,
     sessionPendingOperationPump: {
@@ -1802,9 +1842,21 @@ function createRoutes(
     readJsonBody,
     ensureWritable,
     requireClientScope,
+    controlPlane: agentRuntimeControlPlane,
+  });
+
+  registerAgentRuntimeRoutes({
+    routes,
+    config,
+    controlPlane: agentRuntimeControlPlane,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
     resolveWorkspace,
-    createWorkspaceOpencodeClient,
-    interactionResolutions,
+    sessionPendingOperations,
+    wakeSessionPendingOperations: () => getSessionPendingOperationPump()?.wake() ?? Promise.resolve(),
+    telemetry: agentRuntimeTelemetry,
   });
 
   registerCloudMcpRoutes({
@@ -1840,7 +1892,7 @@ function createRoutes(
     onChanged: () => automationScheduler.notifyChanged(),
     log: automationLog,
     resolveWorkspace,
-    createWorkspaceOpencodeClient,
+    controlPlane: agentRuntimeControlPlane,
     listWorkspaceMcp: listMcp,
     enabled: resolveLocalAutomationEnabled(),
   });
@@ -2755,6 +2807,10 @@ function createRoutes(
       undefined,
       engineMcpServerState,
     ).catch(() => undefined);
+    await claudeAgentEngine.registerMcp({
+      workspaceId: workspace.id,
+      directory: resolveOpencodeDirectory(workspace) ?? workspace.path,
+    }, name, configPayload).catch(() => undefined);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -2797,6 +2853,10 @@ function createRoutes(
     if (removed) {
       deleteEngineMcpRegistration(config, engineMcpServerState, workspace, name);
       await disconnectMcpFromOpencodeEngine(config, workspace, name).catch(() => undefined);
+      await claudeAgentEngine.disconnectMcp({
+        workspaceId: workspace.id,
+        directory: resolveOpencodeDirectory(workspace) ?? workspace.path,
+      }, name).catch(() => undefined);
       emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
         type: "mcp",
         name,
@@ -2838,6 +2898,10 @@ function createRoutes(
       undefined,
       engineMcpServerState,
     ).catch(() => undefined);
+    await claudeAgentEngine.reloadConfiguration({
+      workspaceId: workspace.id,
+      directory: resolveOpencodeDirectory(workspace) ?? workspace.path,
+    }).catch(() => undefined);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -3081,7 +3145,7 @@ function createRoutes(
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    const result = await materializeBlueprintSessions(config, workspace);
+    const result = await materializeBlueprintSessions(config, workspace, agentRuntimeControlPlane);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -4701,7 +4765,11 @@ async function importWorkspace(config: ServerConfig, workspace: WorkspaceInfo, p
   }
 }
 
-async function materializeBlueprintSessions(config: ServerConfig, workspace: WorkspaceInfo): Promise<{
+async function materializeBlueprintSessions(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  controlPlane: AgentRuntimeControlPlane,
+): Promise<{
   ok: boolean;
   created: Array<{ templateId: string; sessionId: string; title: string }>;
   existing: Array<{ templateId: string; sessionId: string }>;
@@ -4723,15 +4791,13 @@ async function materializeBlueprintSessions(config: ServerConfig, workspace: Wor
   }
 
   const created: Array<{ templateId: string; sessionId: string; title: string }> = [];
-  const opencode = createWorkspaceOpencodeClient(config, workspace);
   for (const template of templates) {
-    const result = unwrapOpencodeResult(await opencode.session.create({ title: template.title }), "/session");
-    const sessionId =
-      result && typeof result === "object" && "id" in result && typeof result.id === "string" ? result.id.trim() : "";
+    const result = await controlPlane.createSession({ workspaceId: workspace.id, title: template.title });
+    const sessionId = result.id.trim();
     if (!sessionId) {
       throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
     }
-    seedOpencodeSessionMessages({
+    legacyOpencodeSessionImporter.importMessages({
       sessionId,
       workspaceRoot: resolveOpencodeDirectory(workspace) ?? workspace.path,
       messages: template.messages,

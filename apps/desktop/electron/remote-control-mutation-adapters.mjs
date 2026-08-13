@@ -99,10 +99,12 @@ function resolvedInteractionResult(response, interactionId, operation) {
     throw new RemoteControlOperationExecutionError("internal_error");
   }
   const result = /** @type {Record<string, unknown>} */ (response);
-  if (Object.keys(result).length !== 2 || result.interactionId !== interactionId || result.status !== "resolved") {
+  const interaction = result.interaction && typeof result.interaction === "object" && !Array.isArray(result.interaction)
+    ? /** @type {Record<string, unknown>} */ (result.interaction) : null;
+  if (Object.keys(result).length !== 2 || result.status !== "resolved" || interaction?.id !== interactionId) {
     throw new RemoteControlOperationExecutionError("internal_error");
   }
-  return desktopRemoteOperationResultSchema.parse({ operation, payloadVersion: 1, result }).result;
+  return desktopRemoteOperationResultSchema.parse({ operation, payloadVersion: 1, result: { interactionId, status: "resolved" } }).result;
 }
 
 /**
@@ -158,16 +160,16 @@ function createdSessionResult(response, workspace) {
     throw new RemoteControlOperationExecutionError("internal_error");
   }
   const result = /** @type {Record<string, unknown>} */ (response);
-  if (Object.keys(result).length !== 2 || !Object.hasOwn(result, "item") || !Object.hasOwn(result, "started") || result.started !== false ||
-      !result.item || typeof result.item !== "object" || Array.isArray(result.item) || Object.keys(result.item).length > 32 ||
+  if (Object.keys(result).length !== 1 || !Object.hasOwn(result, "session") ||
+      !result.session || typeof result.session !== "object" || Array.isArray(result.session) || Object.keys(result.session).length > 32 ||
       Buffer.byteLength(JSON.stringify(response), "utf8") > 64 * 1024) {
     throw new RemoteControlOperationExecutionError("internal_error");
   }
-  const item = /** @type {Record<string, unknown>} */ (result.item);
+  const item = /** @type {Record<string, unknown>} */ (result.session);
   const sessionId = identifierSchema.safeParse(item.id);
-  const directory = canonicalPath(item.directory);
+  const directory = canonicalPath(item.canonicalCwd);
   if (!sessionId.success || !directory || directory !== workspace.path ||
-      (Object.hasOwn(item, "workspaceId") && item.workspaceId !== workspace.id)) {
+      item.workspaceId !== workspace.id || !identifierSchema.safeParse(item.runtimeId).success) {
     throw new RemoteControlOperationExecutionError("internal_error");
   }
   const operationResult = { sessionId: sessionId.data };
@@ -181,12 +183,17 @@ function createdSessionResult(response, workspace) {
  */
 async function readSession(client, workspaceId, sessionId) {
   try {
-    const response = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`);
-    if (!response || typeof response !== "object" || !("item" in response)) {
+    const response = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/agent/v1/sessions/${encodeURIComponent(sessionId)}`);
+    if (!response || typeof response !== "object" || !("session" in response)) {
       throw new RemoteControlOperationExecutionError("session_not_found");
     }
-    const item = /** @type {Record<string, unknown>} */ (/** @type {Record<string, unknown>} */ (response).item);
-    return { directory: typeof item.directory === "string" ? item.directory : "", id: typeof item.id === "string" ? item.id : "" };
+    const item = /** @type {Record<string, unknown>} */ (/** @type {Record<string, unknown>} */ (response).session);
+    return {
+      directory: typeof item.canonicalCwd === "string" ? item.canonicalCwd : "",
+      id: typeof item.id === "string" ? item.id : "",
+      workspaceId: typeof item.workspaceId === "string" ? item.workspaceId : "",
+      runtimeId: typeof item.runtimeId === "string" ? item.runtimeId : "",
+    };
   } catch (error) {
     mapClientError(error, "session_not_found");
   }
@@ -217,7 +224,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
 
   return [
     registration("session.create", (value) => {
-      const parsed = z.object({ workspaceId: identifierSchema, title: sessionCreateTitleSchema }).strict().parse(value);
+      const parsed = z.object({ workspaceId: identifierSchema, title: sessionCreateTitleSchema, runtimeId: identifierSchema.optional() }).strict().parse(value);
       return Object.freeze(parsed);
     }, async ({ arguments: args }) => {
       try {
@@ -228,8 +235,8 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           throw new RemoteControlOperationExecutionError("workspace_not_found");
         }
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
-          { title: args.title },
+          `/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions`,
+          { title: args.title, ...(args.runtimeId ? { runtimeId: args.runtimeId } : {}) },
         );
         return createdSessionResult(response, workspace);
       } catch (error) {
@@ -255,11 +262,11 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId);
-        if (canonicalPath(session.directory) !== workspace.path) {
+        if (session.id !== args.sessionId || session.workspaceId !== workspace.id || !session.runtimeId || canonicalPath(session.directory) !== workspace.path) {
           throw new RemoteControlOperationExecutionError("session_not_found");
         }
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/start`,
+          `/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/runs`,
           { origin: "remote-control", startCommandCorrelationId: correlationId, whenBusy: args.whenBusy, prompt: { parts: [{ type: "text", text: args.prompt }] } },
         );
         if (!response || typeof response !== "object") throw new TypeError("Invalid start response.");
@@ -287,7 +294,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(args.workspaceId)}/sessions/${encodeURIComponent(args.sessionId)}/pending/${encodeURIComponent(args.pendingOperationId)}/cancel`,
+          `/workspace/${encodeURIComponent(args.workspaceId)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/pending/${encodeURIComponent(args.pendingOperationId)}/cancel`,
           { commandCorrelationId: correlationId },
         );
         const responseRecord = /** @type {Record<string, any>} */ (response);
@@ -305,7 +312,7 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/${encodeURIComponent(args.expectedRunId)}/abort`,
+          `/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/runs/${encodeURIComponent(args.expectedRunId)}/abort`,
           { abortCommandCorrelationId: correlationId },
         );
         if (!response || typeof response !== "object" || !("run" in response) || !("abortRequested" in response) || response.abortRequested !== true ||
@@ -334,8 +341,12 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/permission/reply`,
-          { origin: "remote-control", commandCorrelationId: correlationId, response: args.response },
+          `/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/resolve`,
+          {
+            origin: "remote-control",
+            commandCorrelationId: correlationId,
+            resolution: args.response === "allow_once" ? { outcome: "allow" } : { outcome: "deny", reason: "Remote collaborator denied the request" },
+          },
         );
         return resolvedInteractionResult(response, args.interactionId, "interaction.permission.reply");
       } catch (error) {
@@ -372,8 +383,8 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/question/reply`,
-          { origin: "remote-control", commandCorrelationId: correlationId, answers: args.answers },
+          `/workspace/${encodeURIComponent(workspace.id)}/agent/v1/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/resolve`,
+          { origin: "remote-control", commandCorrelationId: correlationId, resolution: { outcome: "answer", values: args.answers.flatMap((answer) => answer.values) } },
         );
         return resolvedInteractionResult(response, args.interactionId, "interaction.question.reply");
       } catch (error) {

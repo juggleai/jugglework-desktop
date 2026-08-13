@@ -254,7 +254,15 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
+/**
+ * @param {{
+ *   app: any,
+ *   ipcMain: any,
+ *   getMainWindow: () => any,
+ *   loadAutoUpdater?: () => Promise<any>,
+ * }} options
+ */
+export function registerUpdaterIpc({ app, ipcMain, getMainWindow, loadAutoUpdater = () => import("electron-updater") }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
@@ -277,7 +285,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
     if (autoUpdaterLoaded) return autoUpdaterInstance;
     autoUpdaterLoaded = true;
     try {
-      const mod = await import("electron-updater");
+      const mod = await loadAutoUpdater();
       autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
       if (autoUpdaterInstance) {
         autoUpdaterInstance.autoDownload = false;
@@ -293,6 +301,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
         await enableSquirrelDirectContentsWrite();
         autoUpdaterInstance.on("error", (err) => {
           updateDownloaded = false;
+          preventPendingUpdaterInstall(autoUpdaterInstance);
           if (isUnpublishedUpdaterChannelError(err)) {
             console.info("[updater] no release manifest is published for the selected channel");
           } else {
@@ -348,6 +357,9 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       await writeElectronUpdaterChannel(app, rawChannel);
     }
     const updater = await ensureAutoUpdater();
+    // A new check invalidates a previously downloaded artifact until the
+    // selected channel/version is successfully downloaded again.
+    preventPendingUpdaterInstall(updater);
     try {
       const targetVersion = rawTargetVersion === undefined
         ? null
@@ -382,6 +394,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       checkedUpdateVersion = null;
       checkedUpdateTargetVersion = null;
       updateDownloaded = false;
+      preventPendingUpdaterInstall(updater);
       if (isUnpublishedUpdaterChannelError(error)) {
         return {
           available: false,
@@ -417,6 +430,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
           : null;
       }
       if (!checkedUpdateVersion) {
+        preventPendingUpdaterInstall(updater);
         return { ok: false, reason: "No update available." };
       }
       // Clear any stuck ShipIt state from a prior aborted install so this
@@ -428,6 +442,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       return { ok: true };
     } catch (error) {
       updateDownloaded = false;
+      preventPendingUpdaterInstall(updater);
       return { ok: false, reason: String(error?.message ?? error) };
     }
   });

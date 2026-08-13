@@ -1,0 +1,88 @@
+---
+title: "Use Claude Agent sessions"
+description: "Choose Claude Agent, understand runtime capabilities, and continue an existing session safely"
+---
+
+Claude Agent is a separate agent runtime, not an Anthropic model running inside
+the default JuggleWork/OpenCode runtime. Each session is permanently bound to
+one runtime, and the runtime owns that session's execution behavior.
+
+Claude Agent is disabled by default. It appears as selectable only when your
+installation or administrator has enabled it, packaged the required runtime,
+configured an approved credential, and passed its health checks. JuggleWork
+does not silently substitute another runtime when Claude Agent is unavailable.
+
+## Start a Claude Agent session
+
+1. Create a new session and open the **Agent Runtime** picker.
+2. Select **Claude Agent**. An unavailable row includes the reason it cannot be
+   selected.
+3. Create the session, then choose a supported model and effort setting.
+4. Confirm that the session header or sidebar identifies **Claude Agent** before
+   sending the first prompt.
+
+If you do not choose a runtime, JuggleWork remains the default. A runtime choice
+stored for a workspace affects later new sessions only; it cannot change an
+existing session's binding.
+
+Claude Agent currently offers the `sonnet`, `opus`, and `haiku` model aliases.
+The bundled Claude Agent SDK resolves those aliases. Model availability and the
+controls shown in the UI remain subject to the live runtime descriptor and
+administrator policy.
+
+## Continue an existing session with Claude Agent
+
+Use **Continue with Claude Agent** on an idle source session. This creates a new,
+linked Claude Agent session. It does not convert the source session, change its
+history, or replay its tools.
+
+Before creation, JuggleWork shows an editable migration preview. Review and
+remove anything that should not be sent to the target runtime. The generated
+context is limited to:
+
+- At most 64 attributed user or assistant text entries.
+- At most 40,000 characters from any one entry.
+- At most 120,000 characters across the summary and selected transcript.
+- A summary of at most 8,000 characters.
+
+JuggleWork excludes recognized secret-bearing text, attachments, tool and
+subagent parts, reasoning or hidden content, structured/error parts, pending
+interactions, and backend compaction state. Secret detection is a safeguard,
+not a guarantee; you remain responsible for reviewing the preview.
+
+Continuation is blocked while the source is busy, when the target is the same
+runtime, when the target is unavailable, or when the reviewed context is empty,
+too large, or still matches a secret pattern.
+
+## Capability-driven controls
+
+The runtime descriptor returned by the active installation is authoritative.
+JuggleWork only sends a control when both the runtime and policy advertise it.
+
+| Capability | Current Claude Agent behavior |
+| --- | --- |
+| Basic turns | Streaming text/reasoning, resumable turns, stop/abort, usage, and estimated cost are supported by the baseline run-per-query path. |
+| Permissions and questions | Shared JuggleWork interactions are supported when the worker reports interaction support. Workspace policy still runs before tools. |
+| Queueing | A busy session can reject or durably enqueue another prompt. |
+| MCP | Only JuggleWork-approved runtime MCP configuration is supplied. Claude's standalone user/project settings are not implicitly loaded. |
+| Models, effort, permission mode, and plan mode | Current-turn controls appear only when the worker advertises them. `bypassPermissions` is not an available mode. |
+| Subagents and native fork | Shown only when worker initialization reports support. A native fork shares the current working tree; it does not restore filesystem state. |
+| Prewarm, resident sessions, interrupt, and steer | Experimental and independently disabled by default. Baseline resumable run-per-query remains the fallback. |
+| File checkpointing and rewind | Not advertised by the current worker, so these controls remain unavailable. |
+| Commands, shell, and compact | Not advertised as Claude Agent controls in the current runtime descriptor. |
+
+Do not infer a capability from the app version or runtime name. A control can be
+absent because of the installed SDK, host, runtime health, feature flag, kill
+switch, or organization policy.
+
+## Interrupted turns
+
+If a worker or transport failure occurs after a tool may have changed state,
+JuggleWork marks the turn interrupted or ambiguous. It never automatically
+replays that turn. Inspect the workspace and tool result, then explicitly
+confirm a retry if it is safe.
+
+For credential and local-data behavior, see
+[Claude Agent credentials, privacy, and retention](/start-here/connect-your-stack/claude-agent-credentials-privacy).
+For health errors, see
+[Troubleshoot Claude Agent](/start-here/troubleshooting/claude-agent-runtime).

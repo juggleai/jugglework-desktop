@@ -9,7 +9,9 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 
+import { resolveClaudeAgentRollout } from "../dist/runtime/agent-runtime-rollout.js";
 import { createSandboxRuntime } from "./sandbox-runtime.mjs";
+import { claudeRuntimeEnvironment, resolveClaudeRuntimeAssets } from "./claude-runtime-assets.mjs";
 
 const __runtimeDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -599,7 +601,7 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
   };
 }
 
-export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
+export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths, readDenBaseUrl, claudeSecretProvider = null, startEmbeddedServer: startEmbeddedServerOverride = null, sandboxRuntime: sandboxRuntimeOverride = null }) {
   const engineState = createEngineState();
   const juggleworkServerState = createJuggleWorkServerState();
 
@@ -1070,7 +1072,19 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     }
 
     // Inject user env vars so the server and managed OpenCode inherit them.
-    const serverEnv = await buildChildEnv({});
+    let packagedClaudeEnv = {};
+    const claudeRolloutEnabled = resolveClaudeAgentRollout(process.env).enabled;
+    if (app.isPackaged || claudeRolloutEnabled) {
+      try {
+        const resourcesPath = app.isPackaged
+          ? process.resourcesPath
+          : path.join(desktopRoot, "resources");
+        packagedClaudeEnv = claudeRuntimeEnvironment(await resolveClaudeRuntimeAssets({ resourcesPath }));
+      } catch (error) {
+        if (claudeRolloutEnabled) throw error;
+      }
+    }
+    const serverEnv = await buildChildEnv(packagedClaudeEnv);
     Object.assign(process.env, serverEnv);
 
     // Once the embedded server has a persisted registry, it is the source of
@@ -1124,6 +1138,8 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       // Read at spawn time: switching clouds needs an engine restart to take
       // effect, which juggleworkServerRestart already performs.
       modelsUrl: denModelsCatalogUrl(readDenBaseUrl?.()) ?? undefined,
+      claudeSecretProvider: claudeSecretProvider ?? undefined,
+      claudeProfileDataDir: path.join(userDataDir, "claude-agent"),
     });
     inProcessServer = handle;
     juggleworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

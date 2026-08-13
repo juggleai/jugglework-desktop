@@ -1,11 +1,5 @@
 import type {
-  Message,
-  Part,
-  PermissionRequest as ApiPermissionRequest,
-  PermissionV2Request,
-  QuestionRequest,
   ProviderListResponse,
-  Session,
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
@@ -28,6 +22,22 @@ export type SidebarSessionItem = {
     archived?: number | null;
   };
   directory?: string | null;
+  runtimeId?: string | null;
+  backendSessionId?: string | null;
+  agentProfile?: string | null;
+  runtimeModel?: {
+    providerId: string;
+    modelId: string;
+  } | null;
+  runtimeExecution?: {
+    effort?: string;
+    budget?: {
+      maxTurns?: number;
+      maxCostUsd?: number;
+      maxDurationMs?: number;
+    };
+  } | null;
+  canonical?: boolean;
 };
 
 export type WorkspaceSessionGroup = {
@@ -35,46 +45,6 @@ export type WorkspaceSessionGroup = {
   sessions: SidebarSessionItem[];
   status: "idle" | "loading" | "ready" | "error";
   error?: string | null;
-};
-
-export type PlaceholderMessageInfo = {
-  id: string;
-  sessionID: string;
-  role: "assistant" | "user";
-  time: {
-    created: number;
-    completed?: number;
-  };
-  parentID: string;
-  modelID: string;
-  providerID: string;
-  mode: string;
-  agent: string;
-  path: {
-    cwd: string;
-    root: string;
-  };
-  cost: number;
-  tokens: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: {
-      read: number;
-      write: number;
-    };
-  };
-};
-
-export type PlaceholderAssistantMessage = PlaceholderMessageInfo & {
-  role: "assistant";
-};
-
-export type MessageInfo = Message | PlaceholderMessageInfo;
-
-export type MessageWithParts = {
-  info: MessageInfo;
-  parts: Part[];
 };
 
 export type SessionErrorTurn = {
@@ -86,12 +56,6 @@ export type SessionErrorTurn = {
 
 export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";
 export const SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX = "session-run-diagnostic:";
-
-export type StepGroupMode = "exploration" | "standalone";
-
-export type MessageGroup =
-  | { kind: "text"; part: Part; segment: "intent" | "result" }
-  | { kind: "steps"; id: string; parts: Part[]; segment: "execution"; mode: StepGroupMode };
 
 export type PromptMode = "prompt" | "shell";
 
@@ -141,6 +105,11 @@ export type ComposerDraft = {
   resolvedText?: string;
   /** When set, draft is a slash command invocation */
   command?: { name: string; arguments: string } | undefined;
+};
+
+export type AgentProfileOption = {
+  name: string;
+  description?: string;
 };
 
 export type ArtifactItem = {
@@ -379,14 +348,36 @@ export type ReloadTrigger = {
   path?: string;
 };
 
-export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
+export type PendingPermission = {
+  id: string;
+  sessionID: string;
+  permission: string;
+  patterns: string[];
+  metadata: Record<string, unknown>;
   always: unknown;
+  tool?: { messageID: string; callID: string };
   receivedAt: number;
   protocol: "legacy" | "v2";
-  v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
+  v2?: { action: string; resources: string[]; save?: string[] };
 };
 
-export type PendingQuestion = QuestionRequest & {
+export type PendingQuestionOption = {
+  label: string;
+  description: string;
+};
+
+export type PendingQuestionInfo = {
+  header: string;
+  question: string;
+  options: PendingQuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+};
+
+export type PendingQuestion = {
+  id: string;
+  sessionID: string;
+  questions: PendingQuestionInfo[];
   receivedAt: number;
 };
 
@@ -431,12 +422,6 @@ export type ModelOption = {
    * tell a locally configured provider from a models.dev catalog entry.
    */
   providerSource?: ProviderListItem["source"];
-};
-
-export type SelectedSessionSnapshot = {
-  session: Session | null;
-  status: string;
-  modelLabel: string;
 };
 
 export type WorkspaceState = {

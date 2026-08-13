@@ -18,7 +18,9 @@ _worktrees/
 
 # Desktop sidecars
 apps/desktop/resources/sidecars/
+apps/desktop/resources/claude-agent/
 apps/desktop/server/
+apps/server/claude-agent-worker/
 
 # Env
 .env

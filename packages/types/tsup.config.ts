@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
+    "agent-runtime": "src/agent-runtime/index.ts",
     "desktop-remote-control": "src/desktop-remote-control.ts",
     automation: "src/automation.ts",
     "jugglework-affordance": "src/jugglework-affordance.ts",

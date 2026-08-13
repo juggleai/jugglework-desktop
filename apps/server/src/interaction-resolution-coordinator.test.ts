@@ -131,4 +131,36 @@ describe("interaction resolution coordinator", () => {
     coordinator.observePending(scope("same-id"));
     expect(coordinator.status({ ...scope("same-id"), sessionId: "other" })).toBeNull();
   });
+
+  for (const outcome of ["allow", "deny", "answer", "reject", "timeout", "cancelled"] as const) {
+    test(`delivers exactly one ${outcome} when local, remote, and runtime resolutions race`, async () => {
+      let reservationId = 0;
+      const coordinator = createInteractionResolutionCoordinator({
+        randomUUID: () => `reservation-${++reservationId}`,
+      });
+      const current = scope(`race-${outcome}`);
+      coordinator.observePending(current);
+      const delivered: string[] = [];
+      const attempt = async (origin: "local-renderer" | "remote-control" | "runtime", decision: string) => {
+        await Promise.resolve();
+        try {
+          const reservation = coordinator.reserve({ ...current, origin, commandCorrelationId: origin === "runtime" ? null : origin });
+          delivered.push(decision);
+          coordinator.accept(reservation);
+          return "accepted";
+        } catch (error) {
+          expect(error).toMatchObject({ code: "already_resolved" });
+          return "already_resolved";
+        }
+      };
+      const attempts = outcome === "timeout" || outcome === "cancelled"
+        ? [attempt("runtime", outcome), attempt("local-renderer", "allow"), attempt("remote-control", "deny")]
+        : [attempt("local-renderer", outcome), attempt("remote-control", "competing"), attempt("runtime", "cancelled")];
+      const results = await Promise.all(attempts);
+      expect(delivered).toEqual([outcome]);
+      expect(results.filter((result) => result === "accepted")).toHaveLength(1);
+      expect(results.filter((result) => result === "already_resolved")).toHaveLength(2);
+      expect(coordinator.status(current)).toBe("resolved");
+    });
+  }
 });

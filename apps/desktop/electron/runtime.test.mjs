@@ -244,6 +244,7 @@ describe("Electron managed runtime", () => {
       assert.equal(embeddedStartOptions.manageOpencode, true);
       assert.equal(embeddedStartOptions.opencodeBin, path.join(sidecarDir, "opencode"));
       assert.equal(embeddedStartOptions.workspaces[0], workspacePath);
+      assert.equal(embeddedStartOptions.claudeProfileDataDir, path.join(userDataPath, "claude-agent"));
       assert.deepEqual(manager.managedServerAccess(), {
         baseUrl: `http://127.0.0.1:${embeddedStartOptions.port}`,
         clientToken: embeddedStartOptions.token,

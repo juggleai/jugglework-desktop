@@ -169,6 +169,11 @@ export function ConfigView(props: ConfigViewProps) {
       juggleworkServerStatus: props.juggleworkServerStatus,
       juggleworkServerUrl: props.juggleworkServerUrl,
       runtimeWorkspaceId: props.runtimeWorkspaceId,
+      agentRuntimeEndpoint: props.juggleworkServerUrl.trim() && resolvedWorkspaceId ? {
+        baseUrl: props.juggleworkServerUrl,
+        workspaceId: resolvedWorkspaceId,
+        token: props.juggleworkServerSettings.token?.trim() || undefined,
+      } : null,
     });
   }, [
     hostConnectUrl,
@@ -184,6 +189,7 @@ export function ConfigView(props: ConfigViewProps) {
     props.juggleworkServerStatus,
     props.juggleworkServerUrl,
     props.runtimeWorkspaceId,
+    resolvedWorkspaceId,
   ]);
 
   useEffect(() => {

@@ -14,9 +14,16 @@ type SessionLike = {
   title?: string;
   parentID?: string | null;
   time?: {
-    updated?: number;
-    created?: number;
+    updated?: number | null;
+    created?: number | null;
   };
+  runtimeId?: string | null;
+  agentProfile?: string | null;
+  runtimeModel?: { providerId: string; modelId: string } | null;
+  runtimeExecution?: {
+    effort?: string;
+    budget?: { maxTurns?: number; maxCostUsd?: number; maxDurationMs?: number };
+  } | null;
 };
 
 type SessionControlWorkspace = JuggleWorkWorkspaceInfo & {
@@ -36,6 +43,7 @@ type UseSessionControlActionsInput = {
   navigateToSessionRoot: () => void;
   createTaskInWorkspace: (workspaceId: string) => Promise<unknown> | unknown;
   openModelPicker: () => void;
+  canOpenModelPicker?: boolean;
   refreshRouteState: () => Promise<unknown> | unknown;
 };
 
@@ -73,6 +81,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     navigateToSession,
     navigateToSessionRoot,
     openModelPicker,
+    canOpenModelPicker = true,
     juggleworkClient,
     opencodeClient,
     refreshRouteState,
@@ -105,7 +114,16 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     execute: () => {
-      const out: { sessionId: string; title: string; workspace: string; updatedAt: number }[] = [];
+      const out: {
+        sessionId: string;
+        title: string;
+        workspace: string;
+        updatedAt: number;
+        runtimeId: string | null;
+        agentProfile: string | null;
+        model: string | null;
+        execution: SessionLike["runtimeExecution"];
+      }[] = [];
       for (const workspace of workspaces) {
         const list = sessionsByWorkspaceId[workspace.id] ?? [];
         for (const session of list) {
@@ -114,7 +132,16 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
           if (!sessionId) continue;
           const title = getDisplaySessionTitle(session.title ?? "");
           const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
-          out.push({ sessionId, title, workspace: workspaceLabel(workspace), updatedAt });
+          out.push({
+            sessionId,
+            title,
+            workspace: workspaceLabel(workspace),
+            updatedAt,
+            runtimeId: session.runtimeId ?? null,
+            agentProfile: session.agentProfile ?? null,
+            model: session.runtimeModel ? `${session.runtimeModel.providerId}/${session.runtimeModel.modelId}` : null,
+            execution: session.runtimeExecution ?? null,
+          });
         }
       }
       out.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -223,9 +250,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     description: "Open the current session model picker.",
     effects: { data: "none", ui: "dialog", external: false },
     sideEffect: "none",
-    disabled: !selectedWorkspaceId,
+    disabled: !selectedWorkspaceId || !canOpenModelPicker,
     execute: openModelPicker,
-  }), [openModelPicker, selectedWorkspaceId]);
+  }), [canOpenModelPicker, openModelPicker, selectedWorkspaceId]);
   useControlAction(modelPickerControlAction);
 
   // ---------------------------------------------------------------------------

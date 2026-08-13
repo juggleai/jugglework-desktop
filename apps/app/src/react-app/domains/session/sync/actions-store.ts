@@ -26,9 +26,9 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
-  MessageWithParts,
   ModelRef,
 } from "../../../../app/types";
+import type { MessageWithParts } from "../../../../app/lib/opencode-session-types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";

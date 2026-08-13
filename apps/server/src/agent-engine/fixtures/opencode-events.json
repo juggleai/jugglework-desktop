@@ -1,0 +1,164 @@
+[
+  {
+    "id": "event-message",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "backend-session",
+      "info": {
+        "id": "message-live",
+        "sessionID": "backend-session",
+        "role": "assistant",
+        "time": { "created": 300 },
+        "parentID": "message-user",
+        "modelID": "model-a",
+        "providerID": "provider-a",
+        "mode": "build",
+        "agent": "jugglework",
+        "path": { "cwd": "/workspace", "root": "/workspace" },
+        "cost": 0,
+        "tokens": { "input": 0, "output": 0, "reasoning": 0, "cache": { "read": 0, "write": 0 } }
+      }
+    }
+  },
+  {
+    "id": "event-delta-one",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "backend-session",
+      "messageID": "message-live",
+      "partID": "part-live",
+      "field": "text",
+      "delta": "Hello "
+    }
+  },
+  {
+    "id": "event-delta-two",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "backend-session",
+      "messageID": "message-live",
+      "partID": "part-live",
+      "field": "text",
+      "delta": "world"
+    }
+  },
+  {
+    "id": "event-final-part",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "backend-session",
+      "part": {
+        "id": "part-live",
+        "sessionID": "backend-session",
+        "messageID": "message-live",
+        "type": "text",
+        "text": "Hello world",
+        "time": { "start": 301, "end": 310 }
+      },
+      "time": 310
+    }
+  },
+  {
+    "id": "event-tool-running",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "backend-session",
+      "part": {
+        "id": "part-live-tool",
+        "sessionID": "backend-session",
+        "messageID": "message-live",
+        "type": "tool",
+        "callID": "call-live",
+        "tool": "read",
+        "state": {
+          "status": "running",
+          "input": { "filePath": "/workspace/README.md" },
+          "time": { "start": 311 }
+        }
+      },
+      "time": 311
+    }
+  },
+  {
+    "id": "event-message-final",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "backend-session",
+      "info": {
+        "id": "message-live",
+        "sessionID": "backend-session",
+        "role": "assistant",
+        "time": { "created": 300, "completed": 315 },
+        "parentID": "message-user",
+        "modelID": "model-a",
+        "providerID": "provider-a",
+        "mode": "build",
+        "agent": "jugglework",
+        "path": { "cwd": "/workspace", "root": "/workspace" },
+        "cost": 0.01,
+        "tokens": { "input": 10, "output": 20, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+        "finish": "stop"
+      }
+    }
+  },
+  {
+    "id": "event-retry",
+    "type": "session.next.retried",
+    "properties": {
+      "timestamp": 320,
+      "sessionID": "backend-session",
+      "attempt": 2,
+      "error": { "name": "APIError", "data": { "message": "rate limited", "isRetryable": true } }
+    }
+  },
+  {
+    "id": "event-status",
+    "type": "session.status",
+    "properties": { "sessionID": "backend-session", "status": { "type": "busy" } }
+  },
+  {
+    "id": "event-todo",
+    "type": "todo.updated",
+    "properties": {
+      "sessionID": "backend-session",
+      "todos": [{ "id": "todo-live", "content": "Stream fixtures", "status": "completed", "priority": "medium" }]
+    }
+  },
+  {
+    "id": "event-permission",
+    "type": "permission.asked",
+    "properties": {
+      "id": "permission-live",
+      "sessionID": "backend-session",
+      "permission": "bash",
+      "patterns": ["pnpm test"],
+      "metadata": {},
+      "always": []
+    }
+  },
+  {
+    "id": "event-question",
+    "type": "question.asked",
+    "properties": {
+      "id": "question-live",
+      "sessionID": "backend-session",
+      "questions": [
+        {
+          "question": "Proceed?",
+          "header": "Proceed",
+          "options": [{ "label": "Yes", "description": "Proceed" }],
+          "multiple": false,
+          "custom": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "event-error",
+    "type": "session.error",
+    "properties": {
+      "sessionID": "backend-session",
+      "error": { "name": "APIError", "data": { "message": "provider failed", "isRetryable": true } }
+    }
+  }
+]

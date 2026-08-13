@@ -7,7 +7,10 @@ on:
       - electron-notary-test
     paths:
       - apps/app/**
+      - apps/claude-agent-worker/**
       - apps/desktop/**
+      - apps/server/**
+      - packages/types/**
       - packages/ui/**
       - constants.json
       - pnpm-lock.yaml
@@ -58,6 +61,9 @@ jobs:
 
       - name: Package Electron desktop (unpacked)
         run: pnpm --filter @jugglework/desktop package:electron:dir
+
+      - name: Smoke target Claude Agent runtime
+        run: node apps/claude-agent-worker/scripts/installed-smoke.mjs apps/desktop/resources/claude-agent
 
       - name: Upload Electron artifacts
         uses: actions/upload-artifact@v4

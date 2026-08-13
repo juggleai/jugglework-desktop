@@ -7,7 +7,6 @@
 // composition, handlers, and JSX.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import {
   publishInspectorOpencodeClient,
@@ -37,6 +36,10 @@ import {
   getRemoteWorkspaceConnectionKey,
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
+import {
+  readCanonicalSessions,
+  readCanonicalSession,
+} from "@/react-app/domains/session/canonical-agent-rollout";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useBootState } from "./boot-state";
@@ -307,8 +310,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
 
         try {
-          const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-          const fetchedItems = response.items ?? [];
+          const fetchedItems = await readCanonicalSessions({
+            endpoint,
+            options: { limit: 200 },
+          });
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteJuggleWorkWorkspace
             ? fetchedItems.filter((session) =>
@@ -615,7 +620,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       return next;
     });
   }, [selectedWorkspaceId]);
-  const handleRuntimeSessionCreated = useCallback((session: Session) => {
+  const handleRuntimeSessionCreated = useCallback((session: RouteSession) => {
     if (!selectedWorkspaceId) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);
     setSessionsByWorkspaceId((current) => {
@@ -944,12 +949,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (cancelled) return;
         try {
-          const response = await selectedWorkspaceEndpoint.client.getSession(
-            selectedWorkspaceEndpoint.workspaceId,
-            selectedSessionId,
-          );
+          const item = await readCanonicalSession({
+            endpoint: selectedWorkspaceEndpoint,
+            sessionId: selectedSessionId,
+          });
           if (cancelled) return;
-          if (response.item.id !== selectedSessionId) {
+          if (item.id !== selectedSessionId) {
             setModernRouteSessionResolution({
               key: modernRouteSessionLoadKey,
               status: "error",
@@ -964,7 +969,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               return current;
             }
             hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
-            const nextItems = mergeWorkspaceRouteSession(currentItems, response.item);
+            const nextItems = mergeWorkspaceRouteSession(currentItems, item);
             const next = { ...current, [selectedWorkspaceId]: nextItems };
             sessionsByWorkspaceIdRef.current = next;
             return next;

@@ -4,6 +4,7 @@ import {
   composeDiagnosticsBundleJson,
   type DiagnosticsBundleInputs,
 } from "../src/app/lib/diagnostics-bundle";
+import { CLAUDE_ADVANCED_FEATURES } from "@jugglework/types/agent-runtime";
 
 function baseInputs(): DiagnosticsBundleInputs {
   return {
@@ -86,8 +87,9 @@ describe("diagnostics bundle", () => {
 
     expect(json).toContain('"tokenPresent": true');
     expect(parsed.juggleworkServer.settings.tokenPresent).toBe(true);
-    expect(parsed.juggleworkServer.host.lastStderr).toContain("[redacted]");
-    expect(parsed.opencodeEngine.lastStderr).toContain("[redacted]");
+    expect(parsed.juggleworkServer.settings.urlOverridePresent).toBe(true);
+    expect(parsed.juggleworkServer.host.endpointConfigured).toBe(true);
+    expect(parsed.opencodeEngine.executionConfigured).toBe(false);
     expect(json).not.toContain(settingsSecret);
     expect(json).not.toContain(settingsHostSecret);
     expect(json).not.toContain(clientSecret);
@@ -100,6 +102,11 @@ describe("diagnostics bundle", () => {
     expect(json).not.toContain("opencodePassword");
     expect(json).not.toContain("do-not-include-user");
     expect(json).not.toContain("opencodeUsername");
+    expect(json).not.toContain("/tmp/jugglework");
+    expect(json).not.toContain("/usr/local/bin/opencode");
+    expect(json).not.toContain("server leaked");
+    expect(json).not.toContain("engine leaked");
+    expect(json).not.toContain("http://127.0.0.1:4096");
   });
 
   test("produces valid JSON without desktop info", () => {
@@ -145,5 +152,40 @@ describe("diagnostics bundle", () => {
     expect(json).not.toContain("owt_mcp_synthetic_secret");
     expect(json).not.toContain("owt_den_synthetic_secret");
     expect(json).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+
+  test("includes only strict aggregated agent runtime support diagnostics", () => {
+    const input = baseInputs();
+    const distribution = { count: 0, total: 0, max: 0 };
+    const json = composeDiagnosticsBundleJson({
+      ...input,
+      agentRuntimeSupport: {
+        schemaVersion: 1,
+        capturedAt: 1,
+        windowStartedAt: 1,
+        worker: { status: "healthy", statusChanges: 1, starts: 1, restarts: 0, crashes: 0, circuitOpens: 0 },
+        query: { active: 0, started: 1, completed: 1, failed: 0, aborted: 0, durationMs: distribution },
+        mcp: { events: 0, initializing: 0, pending: 0, connected: 0, failed: 0, needsAuth: 0, expired: 0, removed: 0, outputTruncated: 0 },
+        interaction: { requested: 0, resolved: 0, allowed: 0, denied: 0, answered: 0, rejected: 0, timedOut: 0, cancelled: 0, failed: 0, durationMs: distribution },
+        event: { observed: 0, persisted: 0, duplicates: 0, streamErrors: 0, lagMs: distribution },
+        queue: { created: 0, pending: 0, dispatching: 0, admitted: 0, completed: 0, failed: 0, cancelled: 0, waitMs: distribution },
+        advancedRollout: { features: CLAUDE_ADVANCED_FEATURES.map((feature) => ({
+          feature,
+          enabled: false,
+          attempts: 0,
+          used: 0,
+          fallbacks: 0,
+          flagDisabled: 0,
+          policyDenied: 0,
+          killed: 0,
+          capabilityMissing: 0,
+        })) },
+        usage: { samples: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0, durationMs: 0, estimatedCostUsd: 0 },
+        crash: { total: 0, worker: 0, query: 0, eventStream: 0, lastAt: null, lastReason: null },
+      },
+    });
+    expect(JSON.parse(json).agentRuntimeSupport.query.started).toBe(1);
+    expect(json).not.toContain("prompt");
+    expect(json).not.toContain("transcript");
   });
 });

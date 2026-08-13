@@ -1,6 +1,6 @@
 import { randomUUID as cryptoRandomUUID } from "node:crypto";
 
-export type InteractionOrigin = "local-renderer" | "remote-control";
+export type InteractionOrigin = "local-renderer" | "remote-control" | "runtime";
 export type InteractionKind = "permission" | "question";
 export type InteractionResolutionStatus = "pending" | "reserved" | "resolved" | "expired";
 

@@ -10,6 +10,7 @@ const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
+const claudeRuntimeRoot = resolve(desktopRoot, "resources", "claude-agent");
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const nodeCmd = process.execPath;
@@ -32,6 +33,8 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+run(nodeCmd, [resolve(repoRoot, "apps", "claude-agent-worker", "scripts", "package-assets.mjs"), claudeRuntimeRoot], repoRoot);
+run(nodeCmd, [resolve(repoRoot, "apps", "claude-agent-worker", "scripts", "check-package-content.mjs"), claudeRuntimeRoot], repoRoot);
 // Electron's embedded Node runtime cannot execute workspace TypeScript source.
 // Build shared runtime contracts first, then verify Electron resolves their JS output.
 run(pnpmCmd, ["--filter", "@jugglework/types", "build"], repoRoot);

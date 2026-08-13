@@ -48,7 +48,10 @@ function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promis
         directory: request.headers.get("x-opencode-directory"),
         method: request.method,
       };
-      if (request.method === "POST") record.body = await request.json();
+      if (request.method === "POST") {
+        const text = await request.text();
+        if (text) record.body = JSON.parse(text);
+      }
       requests.push(record);
 
       if (url.pathname === "/session") {
@@ -373,7 +376,7 @@ describe("workspace session read APIs", () => {
     expect(listRequest?.search).toContain(`directory=${encodedDirectory}`);
   });
 
-  test("encodes non-ASCII workspace directory headers for opencode proxy requests", async () => {
+  test("preserves non-ASCII workspace directory headers through canonical reads", async () => {
     const workspaceRoot = await createWorkspaceRoot("项目");
     const mock = startMockOpencode();
     const jugglework = await startJuggleWorkServer({
@@ -381,13 +384,13 @@ describe("workspace session read APIs", () => {
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });
 
-    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/opencode/session`, {
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/agent/v1/sessions`, {
       headers: auth(jugglework.token),
     });
 
     expect(response.status).toBe(200);
-    const proxyRequest = mock.requests.find((request) => request.pathname === "/session");
-    expect(proxyRequest?.directory).toBe(encodeURIComponent(workspaceRoot));
+    const adapterRequest = mock.requests.find((request) => request.pathname === "/session");
+    expect(adapterRequest?.directory).toBe(encodeURIComponent(workspaceRoot));
   });
 
   test("returns 404 when the upstream session is missing", async () => {
@@ -409,33 +412,7 @@ describe("workspace session read APIs", () => {
 
   });
 
-  test("acknowledges proxied session commands before upstream completion", async () => {
-    const workspaceRoot = await createWorkspaceRoot();
-    const command = deferred();
-    const mock = startMockOpencode({ holdCommand: command.promise });
-    const jugglework = await startJuggleWorkServer({
-      workspaceRoot,
-      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
-    });
-
-    const response = await Promise.race([
-      fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/opencode/session/ses_1/command`, {
-        method: "POST",
-        headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
-        body: JSON.stringify({ command: "review", arguments: "" }),
-      }),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
-    ]);
-
-    expect(response).not.toBe("timeout");
-    expect(response instanceof Response ? response.status : 0).toBe(200);
-    await expect(response instanceof Response ? response.json() : null).resolves.toMatchObject({ accepted: true });
-    const sawCommand = await waitUntil(() => mock.requests.some((request) => request.pathname === "/session/ses_1/command"));
-    command.resolve();
-    expect(sawCommand).toBe(true);
-  });
-
-  test("keeps legacy /w workspace opencode proxy alias", async () => {
+  test("rejects removed mounted OpenCode session paths on both workspace aliases", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
     const jugglework = await startJuggleWorkServer({
@@ -443,14 +420,12 @@ describe("workspace session read APIs", () => {
       opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
     });
 
-    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/w/ws_1/opencode/session`, {
-      headers: auth(jugglework.token),
-    });
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(Array.isArray(body)).toBe(true);
-    expect(mock.requests.some((request) => request.pathname === "/session")).toBe(true);
+    for (const path of ["/w/ws_1/opencode/session", "/workspace/ws_1/opencode/event"]) {
+      const response = await fetch(`http://127.0.0.1:${jugglework.server.port}${path}`, { headers: auth(jugglework.token) });
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ code: "not_found" });
+    }
+    expect(mock.requests).toEqual([]);
   });
 
   test("returns 502 when OpenCode returns an invalid session list payload", async () => {

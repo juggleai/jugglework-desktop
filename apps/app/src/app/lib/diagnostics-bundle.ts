@@ -5,7 +5,6 @@ import {
   juggleworkServerInfo,
   type AppBuildInfo,
   type EngineInfo,
-  type OpencodeExecutionSnapshot,
   type JuggleWorkServerInfo,
 } from "./desktop";
 import { readPerfLogs, type PerfLogRecord } from "./perf-log";
@@ -16,6 +15,9 @@ import {
   type JuggleWorkServerStatus,
 } from "./jugglework-server";
 import { isDesktopRuntime } from "../utils";
+import { captureAnalyticsEvent } from "./analytics";
+import { createCanonicalAgentClient } from "./agent-client";
+import type { AgentRuntimeSupportDiagnostics } from "@jugglework/types/agent-runtime";
 
 export type DiagnosticsBundleContext = {
   anyActiveRuns?: boolean;
@@ -29,6 +31,7 @@ export type DiagnosticsBundleContext = {
   juggleworkServerUrl?: string;
   runtimeWorkspaceId?: string | null;
   cloudMcpHealth?: unknown;
+  agentRuntimeEndpoint?: { baseUrl: string; workspaceId: string; token?: string } | null;
 };
 
 export type DiagnosticsBundleInputs = {
@@ -44,17 +47,6 @@ export type DiagnosticsBundleInputs = {
   cloudMcpHealth?: unknown;
 };
 
-type DiagnosticsExecution = {
-  command: string;
-  args: string[];
-  cwd: string;
-  env: Array<{
-    name: string;
-    value: string;
-    redacted: boolean;
-  }>;
-};
-
 function pickAppInfo(info: AppBuildInfo | null) {
   if (!info) return null;
   return {
@@ -65,36 +57,17 @@ function pickAppInfo(info: AppBuildInfo | null) {
   };
 }
 
-function pickExecution(execution: OpencodeExecutionSnapshot | null): DiagnosticsExecution | null {
-  if (!execution) return null;
-  return {
-    command: execution.command,
-    args: execution.args.map((arg) => arg),
-    cwd: execution.cwd,
-    env: execution.env.map((entry) => ({
-      name: entry.name,
-      value: entry.value,
-      redacted: entry.redacted,
-    })),
-  };
-}
-
 function pickEngineInfo(info: EngineInfo | null) {
   if (!info) return null;
   return {
     running: info.running,
     runtime: info.runtime,
     managedByServer: info.managedByServer,
-    baseUrl: info.baseUrl,
-    projectDir: info.projectDir,
     hostname: info.hostname,
     port: info.port,
     pid: info.pid,
-    opencodeBinPath: info.opencodeBinPath,
     opencodeBinSource: info.opencodeBinSource,
-    lastStdout: info.lastStdout,
-    lastStderr: info.lastStderr,
-    execution: pickExecution(info.execution),
+    executionConfigured: info.execution !== null,
   };
 }
 
@@ -103,12 +76,7 @@ function pickHostInfo(info: JuggleWorkServerInfo | null) {
   return {
     running: Boolean(info.running),
     remoteAccessEnabled: info.remoteAccessEnabled,
-    baseUrl: info.baseUrl ?? null,
-    connectUrl: info.connectUrl ?? null,
-    mdnsUrl: info.mdnsUrl ?? null,
-    lanUrl: info.lanUrl ?? null,
-    lastStdout: info.lastStdout ?? null,
-    lastStderr: info.lastStderr ?? null,
+    endpointConfigured: Boolean(info.baseUrl || info.connectUrl || info.mdnsUrl || info.lanUrl),
   };
 }
 
@@ -141,7 +109,7 @@ function scrubKnownSecretValues(value: string, secrets: string[]) {
   return output;
 }
 
-export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): string {
+export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs & { agentRuntimeSupport?: AgentRuntimeSupportDiagnostics | null }): string {
   const context = input.context;
   const urlOverride = input.juggleworkServerSettings.urlOverride?.trim() ?? "";
   const token = input.juggleworkServerSettings.token?.trim() ?? "";
@@ -157,34 +125,33 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
       developerMode: context?.developerMode === true,
     },
     workspace: {
-      runtimeWorkspaceId: context?.runtimeWorkspaceId ?? null,
+      runtimeWorkspaceSelected: Boolean(context?.runtimeWorkspaceId?.trim()),
       clientConnected,
       anyActiveRuns: context?.anyActiveRuns === true,
     },
     juggleworkServer: {
       status: context?.juggleworkServerStatus ?? (clientConnected ? "connected" : "disconnected"),
-      url: context?.juggleworkServerUrl ?? "",
+      urlConfigured: Boolean(context?.juggleworkServerUrl?.trim()),
       settings: {
-        urlOverride: urlOverride || null,
+        urlOverridePresent: Boolean(urlOverride),
         tokenPresent: Boolean(token),
       },
       host: pickHostInfo(input.hostInfo),
     },
     cloudMcp: sanitizeCloudMcpHealthDiagnostic(input.cloudMcpHealth ?? context?.cloudMcpHealth ?? null),
+    agentRuntimeSupport: input.agentRuntimeSupport ?? null,
     reload: {
       canReloadWorkspace: context?.canReloadWorkspace === true,
     },
     sharing: {
-      hostConnectUrl: hostConnectUrl || null,
+      hostConnectUrlPresent: Boolean(hostConnectUrl),
       hostConnectUrlUsesMdns,
     },
     performance: {
       retainedEntries: input.perfLogs.length,
-      recent: input.perfLogs,
     },
     developerLogs: {
       retainedEntries: input.developerLogs.length,
-      recent: input.developerLogs,
     },
   };
   return scrubKnownSecretValues(JSON.stringify(bundle, null, 2), collectSecretValues(input));
@@ -224,6 +191,16 @@ export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleCont
   const engine = await readEngineInfo(desktopRuntime);
   const fetchedHostInfo = hasContextHostInfo ? null : await readHostInfo(desktopRuntime);
   const hostInfo = hasContextHostInfo && context ? context.hostInfo ?? null : fetchedHostInfo;
+  let agentRuntimeSupport: AgentRuntimeSupportDiagnostics | null = null;
+  const endpoint = context?.agentRuntimeEndpoint;
+  if (endpoint?.baseUrl.trim() && endpoint.workspaceId.trim()) {
+    try {
+      agentRuntimeSupport = await createCanonicalAgentClient(endpoint).getSupportDiagnostics();
+      captureAnalyticsEvent("agent_runtime_support_export", { success: true });
+    } catch {
+      captureAnalyticsEvent("agent_runtime_support_export", { success: false });
+    }
+  }
   return composeDiagnosticsBundleJson({
     capturedAt: new Date().toISOString(),
     desktopRuntime,
@@ -234,5 +211,6 @@ export async function buildDiagnosticsBundleJson(context?: DiagnosticsBundleCont
     developerLogs: readDevLogs(80),
     perfLogs: readPerfLogs(80),
     context,
+    agentRuntimeSupport,
   });
 }

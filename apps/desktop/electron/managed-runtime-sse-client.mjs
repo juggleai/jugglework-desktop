@@ -51,7 +51,7 @@ function runtimeAccess(value) {
 }
 
 /**
- * Creates the narrow collaborator-authenticated OpenCode SSE client. Fatal
+ * Creates the narrow collaborator-authenticated canonical agent SSE client. Fatal
  * authorization/not-found responses reject the subscription; transient stream
  * failures reconnect until the caller aborts.
  *
@@ -108,7 +108,7 @@ export function createManagedRuntimeSseClient({
 
     while (!signal.aborted) {
       const access = runtimeAccess(await getAccess());
-      const path = `/workspace/${encodeURIComponent(workspaceId)}/opencode/event`;
+      const path = `/workspace/${encodeURIComponent(workspaceId)}/agent/v1/events`;
       const url = new URL(path, `${access.baseUrl}/`);
       if (url.origin !== new URL(access.baseUrl).origin) throw new ManagedRuntimeSseClientError("unavailable");
       const controller = new AbortController();

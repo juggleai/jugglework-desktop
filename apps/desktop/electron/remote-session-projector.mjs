@@ -3,6 +3,8 @@ import { Buffer } from "node:buffer";
 import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
 
 import {
+  normalizeCanonicalRemoteInteraction,
+  normalizeCanonicalRemoteMessage,
   normalizeRemoteMessage,
   normalizeRemoteMessagePart,
   normalizeRemoteTodo,
@@ -316,6 +318,9 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
   /** @param {string} workspaceId @param {unknown} raw */
   function accept(workspaceId, raw) {
     if (stopped || !isIdentifier(workspaceId)) return;
+    if (isRecord(raw) && raw.schemaVersion === 1 && isIdentifier(raw.sessionId) && isRecord(raw.data)) {
+      return acceptCanonical(workspaceId, raw);
+    }
     const event = unwrapEvent(raw);
     if (!event) return;
     const sessionId = sessionIdOf(event.data);
@@ -408,6 +413,59 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
           error: { schemaVersion: 1, code: "internal_error", message: errorMessage(data.error), retryable: false, correlationId: null },
         }, occurredAt);
       }
+    }
+  }
+
+  /** @param {string} workspaceId @param {Record<string, any>} event */
+  function acceptCanonical(workspaceId, event) {
+    const sessionId = event.sessionId;
+    if (event.workspaceId !== workspaceId || ![...bindings.values()].some((binding) => binding.workspaceId === workspaceId && binding.sessionId === sessionId)) return;
+    const state = stateFor(workspaceId, sessionId);
+    const sequence = durableSequenceOf(event.sequence);
+    const occurredAtMs = Number.isSafeInteger(event.occurredAt) ? event.occurredAt : timestampMs(now());
+    const occurredAt = new Date(occurredAtMs).toISOString();
+    if (sequence !== null) {
+      if (state.durableSequence !== null && sequence <= state.durableSequence) return;
+      if (state.durableSequence !== null && sequence !== state.durableSequence + 1) {
+        state.durableSequence = sequence;
+        requireSnapshot(workspaceId, sessionId, "sequence_gap", occurredAt);
+        return;
+      }
+      state.durableSequence = sequence;
+    }
+    const data = event.data;
+    if (data.type === "message.updated" && isRecord(data.message)) {
+      const message = normalizeCanonicalRemoteMessage(data.message, sessionId);
+      if (message) emitForSession(workspaceId, sessionId, { type: "message.upsert", message }, occurredAt);
+      return;
+    }
+    if (data.type === "todo.updated" && Array.isArray(data.todos)) {
+      const todos = data.todos.slice(0, MAX_TODOS).flatMap((todo, index) => {
+        const normalized = normalizeRemoteTodo(todo, sessionId, index);
+        return normalized ? [normalized] : [];
+      });
+      emitForSession(workspaceId, sessionId, { type: "todos.replace", todos }, occurredAt);
+      return;
+    }
+    if ((data.type === "interaction.requested" || data.type === "interaction.resolved") && isRecord(data.interaction)) {
+      if (data.type === "interaction.resolved") {
+        emitForSession(workspaceId, sessionId, { type: "interaction.remove", interactionId: data.interaction.id }, occurredAt);
+        return;
+      }
+      const interaction = normalizeCanonicalRemoteInteraction(data.interaction, sessionId);
+      if (interaction) emitForSession(workspaceId, sessionId, { type: "interaction.upsert", interaction }, occurredAt);
+      return;
+    }
+    if (data.type === "session.status") return projectStatus(workspaceId, sessionId, data, occurredAt);
+    if (data.type === "run.completed" || data.type === "run.aborted" || data.type === "run.failed") {
+      const status = data.type === "run.failed" ? "failed" : data.type === "run.aborted" ? "aborted" : "completed";
+      emitForSession(workspaceId, sessionId, { type: "session.status", status: status === "completed" ? "idle" : status, run: null }, occurredAt);
+      emitForSession(workspaceId, sessionId, {
+        type: "run.status",
+        runId: data.runId,
+        status,
+        error: data.type === "run.failed" ? { schemaVersion: 1, code: data.code, message: errorMessage(data.message), retryable: data.retryable === true, correlationId: null } : null,
+      }, occurredAt);
     }
   }
 

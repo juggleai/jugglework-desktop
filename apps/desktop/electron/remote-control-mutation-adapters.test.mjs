@@ -34,7 +34,7 @@ function fakeManagedClient({ postResult, getStatus = 404, sessionDirectory = WOR
         return { items: workspaces };
       }
       if (pathname.includes(`/sessions/${SESSION_ID}`)) {
-        return { item: { id: SESSION_ID, directory: sessionDirectory, title: "Test Session" } };
+        return { session: { id: SESSION_ID, workspaceId: WORKSPACE_ID, runtimeId: "claude-agent", canonicalCwd: sessionDirectory, title: "Test Session" } };
       }
       return {};
     },
@@ -47,15 +47,15 @@ function fakeManagedClient({ postResult, getStatus = 404, sessionDirectory = WOR
         /** @type {any} */ (error).status = getStatus;
         throw error;
       }
-      if (pathname.endsWith("/start")) {
+      if (pathname.endsWith("/runs")) {
         return postResult ?? { run: serverRun({ startCommandCorrelationId: body.startCommandCorrelationId }) };
       }
       if (pathname.endsWith("/abort")) {
         return postResult ?? { run: serverRun({ status: "aborting", abortCommandCorrelationId: body.abortCommandCorrelationId, abortRequestedAt: 1002, updatedAt: 1002 }), abortRequested: true };
       }
-      if (pathname === `/workspace/${WORKSPACE_ID}/sessions`) {
+      if (pathname === `/workspace/${WORKSPACE_ID}/agent/v1/sessions`) {
         return postResult === undefined
-          ? { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: false }
+          ? { session: { id: "ses_created", workspaceId: WORKSPACE_ID, runtimeId: "jugglework", canonicalCwd: WORKSPACE_PATH } }
           : postResult;
       }
       return postResult;
@@ -138,19 +138,34 @@ test("session.create validates strict Unicode-bounded arguments", () => {
   ]) assert.throws(() => create.validateArguments(value));
 });
 
-test("session.create posts only title and returns only the authoritative session ID", async () => {
+test("session.create posts canonical runtime selection and returns only the authoritative session ID", async () => {
   const { registrations, client } = harness();
   const create = registrations.find((r) => r.operation === "session.create");
   const result = await create.execute({
-    arguments: { workspaceId: WORKSPACE_ID, title: "New session" },
+    arguments: { workspaceId: WORKSPACE_ID, title: "New session", runtimeId: "claude-agent" },
     context: {},
     correlationId: "cmd-create",
   });
   assert.deepEqual(result, { sessionId: "ses_created" });
   assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
     method: "POST",
-    pathname: "/workspace/ws_test/sessions",
-    body: { title: "New session" },
+    pathname: "/workspace/ws_test/agent/v1/sessions",
+    body: { title: "New session", runtimeId: "claude-agent" },
+  });
+});
+
+test("session.create keeps the legacy omitted-runtime request compatible with the canonical default", async () => {
+  const { registrations, client } = harness();
+  const create = registrations.find((r) => r.operation === "session.create");
+  assert.deepEqual(await create.execute({
+    arguments: { workspaceId: WORKSPACE_ID, title: "Default runtime" },
+    context: {},
+    correlationId: "cmd-create-default",
+  }), { sessionId: "ses_created" });
+  assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
+    method: "POST",
+    pathname: "/workspace/ws_test/agent/v1/sessions",
+    body: { title: "Default runtime" },
   });
 });
 
@@ -171,11 +186,11 @@ test("session.create rejects remote or server-only workspaces before creation", 
 
 for (const response of [
   null,
-  { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: true },
-  { item: { id: "", directory: WORKSPACE_PATH }, started: false },
-  { item: { id: "ses_created", directory: "/different/path" }, started: false },
-  { item: { id: "ses_created", directory: WORKSPACE_PATH, workspaceId: "ws_other" }, started: false },
-  { item: { id: "ses_created", directory: WORKSPACE_PATH }, started: false, extra: true },
+  { session: { id: "", workspaceId: WORKSPACE_ID, runtimeId: "jugglework", canonicalCwd: WORKSPACE_PATH } },
+  { session: { id: "ses_created", workspaceId: WORKSPACE_ID, runtimeId: "jugglework", canonicalCwd: "/different/path" } },
+  { session: { id: "ses_created", workspaceId: "ws_other", runtimeId: "jugglework", canonicalCwd: WORKSPACE_PATH } },
+  { session: { id: "ses_created", workspaceId: WORKSPACE_ID, runtimeId: "", canonicalCwd: WORKSPACE_PATH } },
+  { session: { id: "ses_created", workspaceId: WORKSPACE_ID, runtimeId: "jugglework", canonicalCwd: WORKSPACE_PATH }, extra: true },
 ]) {
   test(`session.create rejects malformed or mismatched success: ${JSON.stringify(response)}`, async () => {
     const client = fakeManagedClient({
@@ -201,7 +216,7 @@ test("session.prompt uses the semantic start API and forwards command correlatio
   });
   assert.deepEqual(result, { disposition: "started", runId: "run_test", generation: 1 });
   const postCall = client.calls.find((c) => c.method === "POST");
-  assert.equal(postCall.pathname, "/workspace/ws_test/sessions/ses_test/runs/start");
+  assert.equal(postCall.pathname, "/workspace/ws_test/agent/v1/sessions/ses_test/runs");
   assert.deepEqual(postCall.body, { origin: "remote-control", startCommandCorrelationId: "cmd-prompt", whenBusy: "reject", prompt: { parts: [{ type: "text", text: "do something" }] } });
 });
 
@@ -287,7 +302,7 @@ test("session.abort succeeds after prompt and sends abort request", async () => 
   assert.deepEqual(abortResult, { runId: "run_test", abortRequested: true });
   const abortCall = client.calls.find((c) => c.method === "POST" && c.pathname.includes("abort"));
   assert.ok(abortCall);
-  assert.equal(abortCall.pathname, "/workspace/ws_test/sessions/ses_test/runs/run_test/abort");
+  assert.equal(abortCall.pathname, "/workspace/ws_test/agent/v1/sessions/ses_test/runs/run_test/abort");
   assert.equal(coordinator.getActiveRunId({ workspaceId: WORKSPACE_ID, sessionId: SESSION_ID }), "run_test");
   assert.equal(coordinator.activeRuns()[0].status, "aborting");
   assert.deepEqual(abortCall.body, { abortCommandCorrelationId: "cmd-abort" });
@@ -320,7 +335,7 @@ test("session.prompt rejects session_busy on double begin", async () => {
 test("permission reply uses the authoritative endpoint and forwards response and command correlation", async () => {
   const client = fakeManagedClient({
     getStatus: 200,
-    postResult: { interactionId: "perm_1", status: "resolved" },
+    postResult: { interaction: { id: "perm_1" }, status: "resolved" },
     workspaces: [{ id: WORKSPACE_ID, path: WORKSPACE_PATH }],
   });
   const permission = interactionRegistration(harness({ client }).registrations, "interaction.permission.reply");
@@ -333,8 +348,8 @@ test("permission reply uses the authoritative endpoint and forwards response and
   assert.deepEqual(result, { interactionId: "perm_1", status: "resolved" });
   assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
     method: "POST",
-    pathname: "/workspace/ws_test/sessions/ses_test/interactions/perm_1/permission/reply",
-    body: { origin: "remote-control", commandCorrelationId: "cmd-permission", response: "allow_once" },
+    pathname: "/workspace/ws_test/agent/v1/sessions/ses_test/interactions/perm_1/resolve",
+    body: { origin: "remote-control", commandCorrelationId: "cmd-permission", resolution: { outcome: "allow" } },
   });
   assert.equal(client.calls.some((call) => call.pathname.includes("/opencode/")), false);
 });
@@ -342,7 +357,7 @@ test("permission reply uses the authoritative endpoint and forwards response and
 test("question reply preserves answer IDs and values on the authoritative endpoint", async () => {
   const client = fakeManagedClient({
     getStatus: 200,
-    postResult: { interactionId: "question_1", status: "resolved" },
+    postResult: { interaction: { id: "question_1" }, status: "resolved" },
     workspaces: [{ id: WORKSPACE_ID, path: WORKSPACE_PATH }],
   });
   const question = interactionRegistration(harness({ client }).registrations, "interaction.question.reply");
@@ -359,8 +374,8 @@ test("question reply preserves answer IDs and values on the authoritative endpoi
   assert.deepEqual(result, { interactionId: "question_1", status: "resolved" });
   assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
     method: "POST",
-    pathname: "/workspace/ws_test/sessions/ses_test/interactions/question_1/question/reply",
-    body: { origin: "remote-control", commandCorrelationId: "cmd-question", answers },
+    pathname: "/workspace/ws_test/agent/v1/sessions/ses_test/interactions/question_1/resolve",
+    body: { origin: "remote-control", commandCorrelationId: "cmd-question", resolution: { outcome: "answer", values: ["Yes", "A", "B"] } },
   });
   assert.equal(client.calls.some((call) => call.pathname.includes("/opencode/")), false);
 });
@@ -411,9 +426,9 @@ test("invalid question answers reported as server 400 map to invalid_request wit
 
 for (const response of [
   null,
-  { interactionId: "wrong", status: "resolved" },
-  { interactionId: "perm_schema", status: "already_resolved" },
-  { interactionId: "perm_schema", status: "resolved", extra: true },
+  { interaction: { id: "wrong" }, status: "resolved" },
+  { interaction: { id: "perm_schema" }, status: "already_resolved" },
+  { interaction: { id: "perm_schema" }, status: "resolved", extra: true },
 ]) {
   test(`interaction reply rejects invalid success schema: ${JSON.stringify(response)}`, async () => {
     const client = fakeManagedClient({

@@ -3,11 +3,9 @@
 // settings-route was missing the remote-workspace clobber fix in
 // mergeRouteWorkspaces and used older session-status logic. One copy now.
 
-import type { Session } from "@opencode-ai/sdk/v2/client";
-
 import type { JuggleWorkWorkspaceInfo } from "@/app/lib/jugglework-server";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
-import type { WorkspaceSessionGroup } from "@/app/types";
+import type { SidebarSessionItem, WorkspaceSessionGroup } from "@/app/types";
 import {
   normalizeDirectoryPath,
   normalizeSessionStatus,
@@ -24,12 +22,7 @@ export type RouteWorkspace = JuggleWorkWorkspaceInfo & {
  * jugglework-server's listSessions, optionally enriched with run-status
  * fields that the sidebar probes defensively via getSessionStatus.
  */
-export type RouteSession = Session & {
-  status?: unknown;
-  state?: unknown;
-  runStatus?: unknown;
-  slug?: string | null;
-};
+export type RouteSession = SidebarSessionItem;
 
 export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   return {
@@ -238,7 +231,8 @@ export function toSessionGroups(
 }
 
 export function isActiveSessionStatus(status: unknown) {
-  return status === "running" || status === "retry" || status === "busy" || status === "streaming";
+  return status === "starting" || status === "running" || status === "retry" || status === "retrying" ||
+    status === "busy" || status === "streaming" || status === "waiting" || status === "aborting";
 }
 
 export function getSessionStatus(session: RouteSession | null | undefined) {

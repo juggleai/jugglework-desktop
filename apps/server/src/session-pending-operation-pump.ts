@@ -1,5 +1,6 @@
 import type { SessionMutationCoordinator } from "./session-mutation-coordinator.js";
 import type { SessionPendingOperation, SessionPendingOperationStore } from "./session-pending-operations.js";
+import type { AgentRuntimeTelemetry } from "./agent-runtime-telemetry.js";
 
 export const SESSION_PENDING_OPERATION_PUMP_INTERVAL_MS = 250;
 export const SESSION_PENDING_OPERATION_PUMP_MAX_SESSIONS = 100;
@@ -12,7 +13,7 @@ export function createSessionPendingOperationPump(options: {
   store: SessionPendingOperationStore;
   sessionMutations: SessionMutationCoordinator;
   getSessionStatus: (workspaceId: string, sessionId: string, signal: AbortSignal) => Promise<"idle" | "busy">;
-  admit: (operation: SessionPendingOperation, signal: AbortSignal) => Promise<void>;
+  admit: (operation: SessionPendingOperation, signal: AbortSignal, runId?: string) => Promise<void>;
   isModeEnabled?: (mode: SessionPendingOperation["mode"]) => boolean | Promise<boolean>;
   intervalMs?: number;
   maxSessionsPerPass?: number;
@@ -20,6 +21,7 @@ export function createSessionPendingOperationPump(options: {
   idleConfirmMs?: number;
   stopTimeoutMs?: number;
   steerCancelGraceMs?: number;
+  telemetry?: AgentRuntimeTelemetry;
 }) {
   const intervalMs = options.intervalMs ?? SESSION_PENDING_OPERATION_PUMP_INTERVAL_MS;
   const maxSessionsPerPass = options.maxSessionsPerPass ?? SESSION_PENDING_OPERATION_PUMP_MAX_SESSIONS;
@@ -77,9 +79,11 @@ export function createSessionPendingOperationPump(options: {
           const acceptance = options.store.acceptance();
           if (acceptance.steer && (!options.isModeEnabled || await options.isModeEnabled("steer"))) {
             try {
-              await options.admit(ambiguousSteer, controller.signal);
+              await options.admit(ambiguousSteer, controller.signal, active?.runId ?? ambiguousSteer.id);
               if (closed || reconcileGeneration !== lifecycleGeneration) return;
               options.store.markAdmitted(ambiguousSteer.id, active?.runId ?? ambiguousSteer.id);
+              options.telemetry?.queueAdmitted(Date.now() - ambiguousSteer.createdAt);
+              options.telemetry?.queueSnapshot(options.store.list());
             } catch {}
           }
           return;
@@ -92,10 +96,12 @@ export function createSessionPendingOperationPump(options: {
             const generation = lifecycleGeneration;
             preAdmissionClaims.add(steer.id);
             try {
-              await options.admit(steer, controller.signal);
+              await options.admit(steer, controller.signal, active?.runId ?? steer.id);
               preAdmissionClaims.delete(steer.id);
               if (closed || generation !== lifecycleGeneration) return;
               options.store.markAdmitted(steer.id, active?.runId ?? steer.id);
+              options.telemetry?.queueAdmitted(Date.now() - steer.createdAt);
+              options.telemetry?.queueSnapshot(options.store.list());
             } catch {
               preAdmissionClaims.delete(steer.id);
               // Outcome may be committed upstream. Preserve dispatching for
@@ -126,6 +132,8 @@ export function createSessionPendingOperationPump(options: {
         if (operation.state === "admitted") {
           if (!options.store.confirmIdle(operation.id, idleConfirmMs)) return;
           options.store.markCompleted(operation.id);
+          options.telemetry?.queueFinished("completed", -1);
+          options.telemetry?.queueSnapshot(options.store.list());
         }
       }
 
@@ -140,7 +148,7 @@ export function createSessionPendingOperationPump(options: {
         // same durable ID; OpenCode's idempotency contract converts this into
         // either the original admission or the first admission, never a new ID.
         try {
-          await options.admit(unfinishedCommit, controller.signal);
+          await options.admit(unfinishedCommit, controller.signal, unfinishedCommit.id);
           if (closed || reconcileGeneration !== lifecycleGeneration) return;
           const recoveryRun = unfinishedCommit.mode === "enqueue" ? options.sessionMutations.reserveStart({
             workspaceId,
@@ -149,6 +157,8 @@ export function createSessionPendingOperationPump(options: {
             startCommandCorrelationId: unfinishedCommit.commandCorrelationId,
           }) : null;
           options.store.markAdmitted(unfinishedCommit.id, recoveryRun?.runId ?? unfinishedCommit.id);
+          options.telemetry?.queueAdmitted(Date.now() - unfinishedCommit.createdAt);
+          options.telemetry?.queueSnapshot(options.store.list());
           if (recoveryRun) options.sessionMutations.acceptStart({ workspaceId, sessionId, runId: recoveryRun.runId });
         } catch {
           // Keep the unknown outcome durable for the next same-ID reconciliation.
@@ -175,7 +185,7 @@ export function createSessionPendingOperationPump(options: {
           origin: "remote-control",
           startCommandCorrelationId: next.commandCorrelationId,
         }) : null;
-        await options.admit(next, controller.signal);
+        await options.admit(next, controller.signal, run?.runId ?? next.id);
         upstreamCommitted = true;
         preAdmissionClaims.delete(next.id);
         if (closed || generation !== lifecycleGeneration) {
@@ -184,6 +194,8 @@ export function createSessionPendingOperationPump(options: {
           return;
         }
         options.store.markAdmitted(next.id, run?.runId ?? next.id);
+        options.telemetry?.queueAdmitted(Date.now() - next.createdAt);
+        options.telemetry?.queueSnapshot(options.store.list());
         if (run) options.sessionMutations.acceptStart({ workspaceId, sessionId, runId: run.runId });
       } catch {
         preAdmissionClaims.delete(next.id);

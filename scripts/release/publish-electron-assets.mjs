@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
 const manifestsOnly = args.includes("--manifests-only");
@@ -21,6 +22,7 @@ if (!repo) {
 
 const distRoot = resolve(distRootArg);
 const outputDir = resolve(process.env.RUNNER_TEMP || ".", "jugglework-electron-manifests");
+rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
 
 function walk(dir) {
@@ -211,11 +213,26 @@ if (!manifestsOnly) {
   runGh(["release", "upload", releaseTag, ...releaseAssets, "--repo", repo, "--clobber"]);
 }
 
+const mergedManifestPaths = [];
 for (const [name, paths] of [...manifestsByName.entries()].sort()) {
   const manifest = mergeManifests(name, paths);
   validateManifest(name, manifest);
   const outputPath = join(outputDir, name);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, stringifyManifest(manifest), "utf8");
+  mergedManifestPaths.push({ name, outputPath });
+}
+
+const updaterVerifier = resolve(dirname(fileURLToPath(import.meta.url)), "verify-electron-updater-assets.mjs");
+const verification = spawnSync(process.execPath, [
+  updaterVerifier,
+  outputDir,
+  "--release-tag",
+  releaseTag,
+], { stdio: "inherit", env: process.env, windowsHide: true });
+if (verification.error) throw verification.error;
+if (verification.status !== 0) process.exit(verification.status ?? 1);
+
+for (const { name, outputPath } of mergedManifestPaths) {
   runGh(["release", "upload", releaseTag, `${outputPath}#${name}`, "--repo", repo, "--clobber"]);
 }

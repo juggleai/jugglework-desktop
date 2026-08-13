@@ -1,15 +1,17 @@
-import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import { t } from "../../i18n";
 import type {
   ArtifactItem,
+  ModelRef,
+  OpencodeEvent,
+  ProviderListItem,
+} from "../types";
+import type {
   MessageGroup,
   MessageInfo,
   MessageWithParts,
-  ModelRef,
-  OpencodeEvent,
-  PlaceholderAssistantMessage,
-  ProviderListItem,
-} from "../types";
+  LegacyOpencodePart,
+  LegacyOpencodeSession,
+} from "../lib/opencode-session-types";
 import type { WorkspaceInfo } from "../lib/desktop";
 
 export function formatModelRef(model: ModelRef) {
@@ -530,7 +532,7 @@ export function parseTemplateFrontmatter(raw: string) {
   return { data, body };
 }
 
-export function upsertSession(list: Session[], next: Session) {
+export function upsertSession(list: LegacyOpencodeSession[], next: LegacyOpencodeSession) {
   const idx = list.findIndex((s) => s.id === next.id);
   if (idx === -1) return [...list, next];
 
@@ -571,30 +573,30 @@ export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | 
   return null;
 }
 
-export function isStepPart(part: Part) {
+export function isStepPart(part: LegacyOpencodePart) {
   return part.type === "reasoning" || part.type === "tool";
 }
 
-export function isUserVisiblePart(part: Part) {
+export function isUserVisiblePart(part: LegacyOpencodePart) {
   const flags = part as { synthetic?: boolean; ignored?: boolean };
   return !flags.synthetic && !flags.ignored;
 }
 
-export function isVisibleTextPart(part: Part) {
+export function isVisibleTextPart(part: LegacyOpencodePart) {
   return part.type === "text" && isUserVisiblePart(part);
 }
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
 
-function isExplorationToolPart(part: Part) {
+function isExplorationToolPart(part: LegacyOpencodePart) {
   if (part.type !== "tool") return false;
   const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 
-export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
+export function groupMessageParts(parts: LegacyOpencodePart[], messageId: string): MessageGroup[] {
   const groups: MessageGroup[] = [];
-  const explorationSteps: Part[] = [];
+  const explorationSteps: LegacyOpencodePart[] = [];
   let textBuffer = "";
   let stepGroupIndex = 0;
   let sawExecution = false;
@@ -603,13 +605,13 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
     if (!textBuffer) return;
     groups.push({
       kind: "text",
-      part: { type: "text", text: textBuffer } as Part,
+      part: { type: "text", text: textBuffer } as LegacyOpencodePart,
       segment: sawExecution ? "result" : "intent",
     });
     textBuffer = "";
   };
 
-  const pushSteps = (stepParts: Part[], mode: "exploration" | "standalone") => {
+  const pushSteps = (stepParts: LegacyOpencodePart[], mode: "exploration" | "standalone") => {
     if (!stepParts.length) return;
     groups.push({
       kind: "steps",
@@ -1021,7 +1023,7 @@ type DeriveArtifactsOptions = {
   maxMessages?: number;
 };
 
-export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string; toolCategory?: string; status?: string } {
+export function summarizeStep(part: LegacyOpencodePart): { title: string; detail?: string; isSkill?: boolean; skillName?: string; toolCategory?: string; status?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
