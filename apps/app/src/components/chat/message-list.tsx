@@ -193,9 +193,9 @@ function ToolRunGroup({
         aria-label={`${open ? "Collapse" : "Expand"} ${parts.length} tool ${parts.length === 1 ? "call" : "calls"}`}
         data-testid="task-tool-run-toggle"
       >
-        <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/tool-run:rotate-90" />
         {running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <ChevronRight className="size-4 shrink-0 opacity-0 transition-all duration-200 group-hover/tool-run:opacity-100 group-data-panel-open/tool-run:rotate-90 group-data-panel-open/tool-run:opacity-100" />
       </CollapsibleTrigger>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="space-y-2 pb-1 pl-6 pt-2">
