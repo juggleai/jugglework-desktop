@@ -28,7 +28,6 @@ export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "thinking" ||
   status === "responding" ||
   status === "stalled" ||
-  status === "incomplete" ||
   status === "compacting";
 
 /** Waiting is "needs you" on the right edge — not left-lane activity. */
@@ -184,7 +183,7 @@ export const buildSessionTreeState = (
     const children = childrenByParent.get(session.id) ?? [];
     let descendantCount = 0;
     const ownStatus = sessionStatusById?.[session.id] ?? "idle";
-    let subtreeActive = ownStatus !== "idle";
+    let subtreeActive = isActiveWorkSessionStatus(ownStatus);
     let subtreeStreaming = isStreamingSessionStatus(ownStatus);
 
     children.forEach((child) => {

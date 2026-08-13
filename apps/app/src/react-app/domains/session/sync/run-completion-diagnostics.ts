@@ -153,13 +153,13 @@ export function reconcileRunCompletionDiagnostic(
   todos: CompletionTodo[],
   options: { finishReason?: string | null } = {},
 ) {
-  const turn = currentTurn(messages);
-  if (!turn) return { messages, diagnostic: null as RunCompletionDiagnostic | null };
-  const diagnosticId = runDiagnosticMessageId(turn.user.id);
-  const withoutCurrentDiagnostic = messages.filter((message) => message.id !== diagnosticId);
-  const diagnostic = analyzeRunCompletion(withoutCurrentDiagnostic, todos, options);
+  // Completion diagnostics are structured session state, not assistant output.
+  // Strip any diagnostics produced by older builds before grouping assistant
+  // messages so a synthetic warning cannot displace the real final summary.
+  const withoutDiagnostics = messages.filter((message) => !isSyntheticDiagnostic(message));
+  const diagnostic = analyzeRunCompletion(withoutDiagnostics, todos, options);
   return {
-    messages: diagnostic ? [...withoutCurrentDiagnostic, diagnostic.message] : withoutCurrentDiagnostic,
+    messages: withoutDiagnostics,
     diagnostic,
   };
 }

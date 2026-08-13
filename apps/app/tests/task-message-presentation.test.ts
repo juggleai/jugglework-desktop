@@ -9,6 +9,7 @@ import {
   mergeAssistantProcessItems,
   splitAssistantTaskMessages,
 } from "../src/components/chat/utils"
+import { reconcileRunCompletionDiagnostic } from "../src/react-app/domains/session/sync/run-completion-diagnostics"
 
 const message = (
   id: string,
@@ -94,6 +95,27 @@ describe("task message presentation", () => {
     expect(split.processItems.flatMap((item) => item.message.parts).some((part) => part.type === "dynamic-tool")).toBe(true)
     expect(split.summaryItems).toHaveLength(1)
     expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Final summary" }])
+  })
+
+  test("keeps the real summary outside process when completion is incomplete", () => {
+    const source = [
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-process", "assistant", 1_700_000_001_000, [{ type: "reasoning", text: "Working", state: "done" }]),
+      message("assistant-final", "assistant", 1_700_000_002_000, [{ type: "text", text: "Real final summary" }]),
+    ]
+    const reconciled = reconcileRunCompletionDiagnostic(source, [
+      { content: "Follow up", status: "pending", priority: "high" },
+    ])
+    const items = reconciled.messages
+      .map((entry, index) => ({ index, message: entry }))
+      .filter((item) => item.message.role === "assistant")
+    const split = splitAssistantTaskMessages(items)
+
+    expect(reconciled.diagnostic?.incomplete).toBe(true)
+    expect(reconciled.messages.some((entry) => entry.id.startsWith("session-run-diagnostic:"))).toBe(false)
+    expect(split.summaryItems).toHaveLength(1)
+    expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Real final summary" }])
+    expect(split.processItems.flatMap((item) => item.message.parts)).not.toContainEqual({ type: "text", text: "Real final summary" })
   })
 
   test("collapses consecutive tool calls into one render group without hiding text updates", () => {

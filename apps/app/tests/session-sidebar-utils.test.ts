@@ -4,6 +4,7 @@ import type { SidebarSessionItem } from "../src/app/types";
 import {
   buildSessionTreeState,
   flattenSessionRows,
+  isActiveWorkSessionStatus,
   resolveWorkspaceSessionIndicator,
 } from "../src/react-app/domains/session/sidebar/utils";
 
@@ -65,6 +66,20 @@ describe("global session pinning", () => {
 });
 
 describe("workspace session indicator", () => {
+  test("treats incomplete as a terminal result rather than active work", () => {
+    expect(isActiveWorkSessionStatus("incomplete")).toBe(false);
+    expect(isActiveWorkSessionStatus("error")).toBe(false);
+    expect(isActiveWorkSessionStatus("waiting")).toBe(false);
+    expect(isActiveWorkSessionStatus("thinking")).toBe(true);
+    expect(isActiveWorkSessionStatus("responding")).toBe(true);
+
+    expect(resolveWorkspaceSessionIndicator(
+      sessions,
+      { "session-a": "incomplete", "session-b": "idle" },
+      new Set(),
+    )).toBeNull();
+  });
+
   test("prioritizes running work across multiple sessions", () => {
     expect(resolveWorkspaceSessionIndicator(
       sessions,

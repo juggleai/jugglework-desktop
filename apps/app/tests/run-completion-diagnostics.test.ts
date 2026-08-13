@@ -75,16 +75,31 @@ describe("run completion diagnostics", () => {
     expect(result).toBeNull();
   });
 
-  test("records an explicit interruption reason in the transcript", () => {
+  test("records an explicit interruption without replacing the real summary", () => {
     const reconciled = reconcileRunCompletionDiagnostic([
       textMessage("user-1", "user", "Implement it"),
-      textMessage("assistant-1", "assistant", "Partial output", "stop"),
+      toolMessage("assistant-tools", "apply_patch", { patchText: "*** Begin Patch" }),
+      textMessage("assistant-1", "assistant", "Real final summary", "stop"),
     ], [], { finishReason: "provider_disconnected" });
 
     expect(reconciled.diagnostic?.finishReason).toBe("provider_disconnected");
-    expect(reconciled.messages.at(-1)?.parts[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("finish_reason: provider_disconnected"),
-    });
+    expect(reconciled.messages.map((message) => message.id)).toEqual(["user-1", "assistant-tools", "assistant-1"]);
+    expect(reconciled.messages.at(-1)?.parts[0]).toMatchObject({ type: "text", text: "Real final summary" });
+  });
+
+  test("removes synthetic diagnostics left by older builds", () => {
+    const reconciled = reconcileRunCompletionDiagnostic([
+      textMessage("user-1", "user", "Implement it"),
+      textMessage("assistant-1", "assistant", "Real final summary", "stop"),
+      {
+        id: "session-run-diagnostic:user-1",
+        role: "assistant",
+        metadata: { opencode: { syntheticRunDiagnostic: true } },
+        parts: [{ type: "text", text: "Task incomplete.\nfinish_reason: stop" }],
+      },
+    ], openTodo);
+
+    expect(reconciled.diagnostic?.finishReason).toBe("stop");
+    expect(reconciled.messages.map((message) => message.id)).toEqual(["user-1", "assistant-1"]);
   });
 });

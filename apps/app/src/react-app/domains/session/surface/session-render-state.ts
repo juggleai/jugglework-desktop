@@ -1,6 +1,7 @@
 import type { UIMessage } from "ai";
 
 import type { JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
+import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX } from "../../../../app/types";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
@@ -40,5 +41,11 @@ export function deriveRenderedSessionMessages(input: {
     ? mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true })
     : liveMessages;
 
-  return applyRevertCursor(messages, revertMessageId);
+  // Older clients may have left synthetic completion diagnostics in the live
+  // cache. They are structured activity state, not assistant transcript, and
+  // would otherwise displace the real final summary during message grouping.
+  return applyRevertCursor(
+    messages.filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
+    revertMessageId,
+  );
 }
