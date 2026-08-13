@@ -14,6 +14,31 @@ import type { DeploymentModelCatalog } from "./deployment-model-catalog";
  * store so the diff/update behaviour can be unit tested directly (#2346).
  */
 
+/**
+ * Name of the user-env variable that carries an imported provider's gateway
+ * token to MCP subprocesses.
+ *
+ * The server declares its own name for this credential (`JUGGLEWORK_GATEWAY_KEY_*`,
+ * from services.GatewayCredentialEnvName) and OpenCode consumes it from auth.json.
+ * A stdio MCP server cannot read auth.json, and the server's name is unusable as
+ * an environment variable here: the user env store refuses writes to
+ * `JUGGLEWORK_*`/`OPENCODE_*` (isReservedEnvKey) and strips them again when
+ * injecting into children (readForInjection, mirrored in the Electron shell
+ * loader). So the desktop mirrors the token under a non-reserved name that
+ * survives both gates.
+ *
+ * The console derives the same name when it binds an MCP component to a
+ * provider — keep this in sync with `gatewayCredentialEnvName` in
+ * webconsole/web/app/(cloud)/dashboard/_components/mcp-component-payload.ts.
+ *
+ * @param cloudProviderId Organization LLM provider record id, e.g. `lpr_a1b2c3`.
+ * @returns The environment variable name holding the gateway token.
+ */
+export const gatewayMirrorEnvName = (cloudProviderId: string): string => {
+  const suffix = cloudProviderId.trim().replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+  return suffix ? `MCP_GATEWAY_KEY_${suffix}` : "MCP_GATEWAY_KEY";
+};
+
 const getStringList = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.filter(

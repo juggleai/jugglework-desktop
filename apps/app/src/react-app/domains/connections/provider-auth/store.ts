@@ -71,6 +71,7 @@ import {
   CLOUD_PROVIDER_METADATA_VERSION,
   formatConfigWithoutCloudProvider,
   getCloudManagedProviderId,
+  gatewayMirrorEnvName,
   getCloudProviderEnv,
   getProviderModelIds,
   isCloudManagedProviderKey,
@@ -999,6 +1000,48 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     throw new Error(describeProviderError(maybe.error, t("providers.request_failed")));
   };
 
+  /**
+   * Write an imported provider's gateway token to the user env store so stdio
+   * MCP servers can read it. Best effort: a workspace without a reachable
+   * JuggleWork server still imports the provider fine, MCPs bound to it just
+   * report a missing credential until the next import.
+   *
+   * @param cloudProviderId Organization LLM provider record id.
+   * @param token The gateway token issued for this member.
+   */
+  const writeGatewayMirror = async (cloudProviderId: string, token: string) => {
+    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
+    if (!juggleworkClient) return;
+    try {
+      await juggleworkClient.upsertUserEnv([
+        { key: gatewayMirrorEnvName(cloudProviderId), value: token },
+      ]);
+    } catch (error) {
+      console.warn(`[cloud-provider] could not store the MCP gateway credential: ${String(error)}`);
+    }
+  };
+
+  /**
+   * Drop a provider's mirrored gateway token. Runs on removal and on re-import
+   * under a new provider id, so a revoked or replaced credential does not linger
+   * in the env store.
+   *
+   * @param cloudProviderId Organization LLM provider record id.
+   */
+  const removeGatewayMirror = async (cloudProviderId: string) => {
+    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
+    if (!juggleworkClient) return;
+    try {
+      await juggleworkClient.deleteUserEnv(gatewayMirrorEnvName(cloudProviderId));
+    } catch (error) {
+      // A 404 just means it was never written (older import, or no server then).
+      const message = String(error).toLowerCase();
+      if (!/not found|404/.test(message)) {
+        console.warn(`[cloud-provider] could not clear the MCP gateway credential: ${String(error)}`);
+      }
+    }
+  };
+
   const removeProviderAuthCredentials = async (providerId: string) => {
     const c = options.client();
     if (!c) {
@@ -1663,8 +1706,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
+        // Mirror the token where stdio MCP servers can reach it. auth.json is
+        // OpenCode's own store and is not visible to a spawned MCP process; see
+        // gatewayMirrorEnvName for why the server's variable name cannot be used.
+        await writeGatewayMirror(cloudProviderId, primaryApiKey);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
+        await removeGatewayMirror(existingImported.cloudProviderId);
         try {
           await removeProviderAuthCredentials(existingImported.providerId);
         } catch (error) {
@@ -1744,6 +1792,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
+      // Revoking the provider must take its mirrored token with it, otherwise a
+      // live gateway credential outlives the provider it belongs to.
+      await removeGatewayMirror(cloudProviderId);
       try {
         await removeProviderAuthCredentials(imported.providerId);
       } catch (error) {

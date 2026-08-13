@@ -1,0 +1,53 @@
+{
+  "name": "jugglework-vision-mcp",
+  "version": "0.3.0",
+  "description": "Multi-provider vision MCP server for image recognition (OCR, scene description, chart extraction). Supports Qwen-VL, OpenAI, Gemini, Claude, OpenRouter, Ollama and any OpenAI-compatible endpoint.",
+  "author": "JuggleWork <support@juggle.im>",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "jugglework-vision-mcp": "index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "providers.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "vision",
+    "ocr",
+    "image-recognition",
+    "qwen-vl",
+    "gpt-4o",
+    "gemini",
+    "model-context-protocol",
+    "jugglework",
+    "claude-desktop",
+    "cursor"
+  ],
+  "scripts": {
+    "check": "node --check index.mjs && node --check providers.mjs",
+    "test": "node --check index.mjs && node --check providers.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juggleai/jugglework-desktop.git",
+    "directory": "packages/jugglework-vision-mcp"
+  },
+  "homepage": "https://github.com/juggleai/jugglework-desktop/tree/main/packages/jugglework-vision-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/juggleai/jugglework-desktop/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  }
+}

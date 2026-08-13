@@ -1,0 +1,5 @@
+# 发布到 npm 时排除开发依赖和测试文件
+node_modules/
+*.test.mjs
+*.test.js
+.npmignore
