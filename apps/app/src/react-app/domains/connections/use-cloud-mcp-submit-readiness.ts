@@ -82,6 +82,18 @@ function missingContextIssue(input: {
   };
 }
 
+/**
+ * 跳过 Connect 门禁并独立提交普通任务
+ * @param send 当前会话的发送函数
+ * @returns 普通任务提交结果
+ */
+export async function submitWithoutCloudMcpGate(
+  send: () => Promise<void>,
+): Promise<CloudMcpSubmissionResult> {
+  await send();
+  return { outcome: "sent", bypassed: true };
+}
+
 export function useCloudMcpSubmitReadiness(
   input: UseCloudMcpSubmitReadinessInput,
 ): CloudMcpSubmitReadiness {
@@ -180,9 +192,14 @@ export function useCloudMcpSubmitReadiness(
   }, []);
 
   const submit = useCallback(async (submission: CloudMcpSubmitInput): Promise<CloudMcpSubmissionResult> => {
+    // TIPS: 普通任务当前明确跳过 Connect readiness。此时不得再进入
+    // workspace/model 级协调器，否则不同会话会共享发送状态或 Promise。
+    if (submission.skipGate) {
+      return submitWithoutCloudMcpGate(submission.send);
+    }
     const initialSnapshot = gateSnapshotRef.current;
     const capturedScopeKey = initialSnapshot.decision.scopeKey;
-    const gateRequired = !submission.skipGate && initialSnapshot.decision.mode !== "bypass";
+    const gateRequired = initialSnapshot.decision.mode !== "bypass";
     let prepare: (() => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
 
     if (gateRequired) {

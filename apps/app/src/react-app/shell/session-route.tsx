@@ -180,6 +180,7 @@ import { useShellShortcuts } from "./use-shell-shortcuts";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
+import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
@@ -452,6 +453,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const restrictionNotice = useRestrictionNotice();
   const [juggleworkServerHostInfoState, setJuggleWorkServerHostInfoState] = useState<JuggleWorkServerInfo | null>(null);
   const [juggleworkServerSettingsVersion, setJuggleWorkServerSettingsVersion] = useState(0);
+  const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
+  const [workspaceActivationErrorId, setWorkspaceActivationErrorId] = useState<string | null>(null);
+  const workspaceActivationGenerationRef = useRef(0);
+  const workspaceNavigationGenerationRef = useRef(0);
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("jugglework.developerMode") === "1";
@@ -922,6 +927,17 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const canCreateTask = Boolean(
     opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
   );
+  const startupWorkspaceActivationFailed = Boolean(
+    selectedWorkspaceId && routeError?.startsWith(`[workspace_activation:${selectedWorkspaceId}]`),
+  );
+  const canAcceptTask = Boolean(
+    canCreateTask &&
+    !activatingWorkspaceId &&
+    workspaceActivationErrorId !== selectedWorkspaceId &&
+    !startupWorkspaceActivationFailed &&
+    !reloadCoordinator.reloadBusy &&
+    !reloadCoordinator.reloadError,
+  );
 
   const {
     activePermission,
@@ -939,7 +955,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   });
   const showPreparingStatus =
     effectiveLoading ||
-    (!canCreateTask && !routeError && !selectedWorkspaceError);
+    Boolean(activatingWorkspaceId) ||
+    (!canAcceptTask && !routeError && !selectedWorkspaceError);
 
   useEffect(() => {
     if (!opencodeClient) {
@@ -1045,6 +1062,72 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     navigate(target, { state: { workspaceId, sessionId, returnPath } });
   }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
 
+  /**
+   * 串行激活目标工作区，并只允许最后一次选择继续导航
+   * @param workspaceId 目标工作区 id
+   * @returns 当前激活是否仍是用户最后一次选择
+   */
+  const activateWorkspaceForNavigation = useCallback(async (workspaceId: string): Promise<boolean> => {
+    const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint) return false;
+    const generation = ++workspaceActivationGenerationRef.current;
+    setActivatingWorkspaceId(workspaceId);
+    setWorkspaceActivationErrorId(null);
+    setRouteError(null);
+    // TIPS: managed OpenCode 由多个工作区共享，activation 会触发 dispose；
+    // 必须串行，避免快速点击 A/B 后两个 reload 交错或旧请求反向覆盖新导航。
+    const activation = serializeWorkspaceActivation(() => (
+      endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true })
+    ));
+    try {
+      await activation;
+      return workspaceActivationGenerationRef.current === generation;
+    } catch {
+      if (workspaceActivationGenerationRef.current === generation) {
+        setWorkspaceActivationErrorId(workspaceId);
+        setRouteError(`[workspace_activation:${workspaceId}] Failed to prepare the workspace runtime.`);
+      }
+      return false;
+    } finally {
+      if (workspaceActivationGenerationRef.current === generation) {
+        setActivatingWorkspaceId(null);
+      }
+    }
+  }, [endpointForWorkspace, setRouteError, workspaces]);
+
+  /**
+   * 打开会话，并保证跨工作区导航先完成运行时激活
+   * @param workspaceId 会话所属工作区 id
+   * @param sessionId 目标会话 id
+   * @param options 已由调用方完成的运行时准备信息
+   */
+  const openSessionForNavigation = useCallback((
+    workspaceId: string,
+    sessionId: string,
+    options?: { workspaceReady?: boolean },
+  ) => {
+    workspaceNavigationGenerationRef.current += 1;
+    setLegacySelectedWorkspaceId(workspaceId);
+    writeActiveWorkspaceId(workspaceId || null);
+    writeLastSessionFor(workspaceId, sessionId);
+    const workspaceAlreadyReady = options?.workspaceReady === true || (
+      workspaceId === selectedWorkspaceId &&
+      !activatingWorkspaceId &&
+      workspaceActivationErrorId !== workspaceId
+    );
+    if (workspaceAlreadyReady) {
+      navigateToWorkspaceSession(workspaceId, sessionId);
+      focusPromptSoon();
+      return;
+    }
+    void activateWorkspaceForNavigation(workspaceId).then((latest) => {
+      if (!latest) return;
+      navigateToWorkspaceSession(workspaceId, sessionId);
+      focusPromptSoon();
+    });
+  }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1085,6 +1168,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
+      taskSubmissionDisabled: !canAcceptTask,
       selectedModel: activeModel ?? { providerID: "", modelID: "" },
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
@@ -1137,6 +1221,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
+        if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1307,6 +1392,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     };
   }, [
     activeModel,
+    canAcceptTask,
     applyModelSelection,
     applyModelVariantSelection,
     client,
@@ -1481,6 +1567,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
 
   const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
+    const navigationGeneration = ++workspaceNavigationGenerationRef.current;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -1489,6 +1576,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ) {
       return null;
     }
+    const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
+      !activatingWorkspaceId &&
+      workspaceActivationErrorId !== workspaceId;
+    if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) {
+      return null;
+    }
+    if (workspaceNavigationGenerationRef.current !== navigationGeneration) return null;
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint || !endpoint.token) {
       return null;
@@ -1504,6 +1598,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
+      if (workspaceNavigationGenerationRef.current !== navigationGeneration) return session.id;
       if (workspaceId === selectedWorkspaceId) {
         void sessionProviderAuthStore.runCloudProviderSync("new_chat");
       }
@@ -1525,8 +1620,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         sessionsByWorkspaceIdRef.current = next;
         return next;
       });
-      navigateToWorkspaceSession(workspaceId, session.id);
-      focusPromptSoon();
+      openSessionForNavigation(workspaceId, session.id, { workspaceReady: true });
       void refreshRouteState();
       return session.id;
     } catch (error) {
@@ -1554,7 +1648,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       }
       return null;
     }
-  }, [endpointForWorkspace, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaces]);
+  }, [activateWorkspaceForNavigation, activatingWorkspaceId, endpointForWorkspace, loading, openSessionForNavigation, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaceActivationErrorId, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1593,7 +1687,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     terminalOpen,
     setTerminalOpen,
   } = useShellShortcuts({
-    canCreateTask,
+    canCreateTask: canAcceptTask,
     workspaceId: selectedWorkspaceId,
     onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
     onNextSessionTab: goToNextSessionTab,
@@ -1619,8 +1713,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     const owner = Object.entries(sessionsByWorkspaceId).find(([, sessions]) =>
       (sessions ?? []).some((session) => session?.id === sessionId),
     )?.[0];
-    navigateToWorkspaceSession(owner || selectedWorkspaceId, sessionId);
-  }, [navigateToWorkspaceSession, selectedWorkspaceId, sessionsByWorkspaceId]);
+    openSessionForNavigation(owner || selectedWorkspaceId, sessionId);
+  }, [openSessionForNavigation, selectedWorkspaceId, sessionsByWorkspaceId]);
 
   const navigateToSessionRootForControl = useCallback(() => {
     navigateToWorkspaceSession(selectedWorkspaceId);
@@ -1636,7 +1730,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     selectedSessionId,
-    canCreateTask,
+    canCreateTask: canAcceptTask,
     juggleworkClient: client,
     opencodeClient,
     navigateToSession: navigateToSessionForControl,
@@ -1868,7 +1962,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const buildCommandDiagnosticsBundle = useCallback(() => buildDiagnosticsBundleJson({
     anyActiveRuns: activeReloadBlockingSessions.length > 0,
     canReloadWorkspace: reloadCoordinator.canReloadWorkspaceEngine,
-    clientConnected: canCreateTask,
+    clientConnected: canAcceptTask,
     developerMode,
     hostInfo: juggleworkServerHostInfoState,
     juggleworkServerStatus: client ? "connected" : "disconnected",
@@ -1877,7 +1971,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }), [
     activeReloadBlockingSessions.length,
     baseUrl,
-    canCreateTask,
+    canAcceptTask,
     client,
     developerMode,
     juggleworkServerHostInfoState,
@@ -2210,7 +2304,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       runtimeWorkspaceId={selectedWorkspaceEndpoint?.workspaceId || null}
       opencodeBaseUrl={opencodeBaseUrl}
       workspaces={workspaces}
-      clientConnected={canCreateTask}
+      clientConnected={canAcceptTask}
       juggleworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
       environmentClient={client}
       juggleworkServerToken={selectedWorkspaceServerToken}
@@ -2295,11 +2389,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         sessionStatusById: sidebarSessionStatusById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
-        newTaskDisabled: !canCreateTask,
+        newTaskDisabled: !canAcceptTask,
         sidebarHydratedFromCache: Object.values(sessionsByWorkspaceId).some((list) => list.length > 0),
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
         onSelectWorkspace: async (workspaceId) => {
-          if (workspaceId === selectedWorkspaceId) return true;
+          if (
+            workspaceId === selectedWorkspaceId &&
+            workspaceActivationErrorId !== workspaceId &&
+            !startupWorkspaceActivationFailed
+          ) return true;
+          const navigationGeneration = ++workspaceNavigationGenerationRef.current;
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2320,13 +2419,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           // Without this, the permissions from opencode.jsonc are never
           // applied on the workspace the user is already on at launch. See
           // issue #870.
-          if (workspaceId) {
-            const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
-            const endpoint = endpointForWorkspace(workspace);
-            if (endpoint) {
-              void endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true }).catch(() => undefined);
-            }
-          }
+          if (workspaceId && !await activateWorkspaceForNavigation(workspaceId)) return false;
+          if (workspaceNavigationGenerationRef.current !== navigationGeneration) return false;
           // If we remember what the user last opened here and that session
           // still exists in our local list, navigate. Otherwise stay put.
           const remembered = readLastSessionFor(workspaceId);
@@ -2348,11 +2442,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           void loadWorkspaceSessionsInBackground([workspace]);
         },
         onOpenSession: (workspaceId, sessionId) => {
-          setLegacySelectedWorkspaceId(workspaceId);
-          writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, sessionId);
-          navigateToWorkspaceSession(workspaceId, sessionId);
-          focusPromptSoon();
+          openSessionForNavigation(workspaceId, sessionId);
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
@@ -2364,8 +2454,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         },
         onCreateTaskWithPrompt: (workspaceId, prompt) => {
           void (async () => {
+            const navigationGeneration = ++workspaceNavigationGenerationRef.current;
             const workspace = workspaces.find((item) => item.id === workspaceId);
             if (!workspace) return;
+            const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
+              !activatingWorkspaceId &&
+              workspaceActivationErrorId !== workspaceId &&
+              !startupWorkspaceActivationFailed;
+            if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) return;
+            if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
             const endpoint = endpointForWorkspace(workspace);
             if (!endpoint?.token) return;
             const workspaceClient = createClient(
@@ -2377,6 +2474,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               const session = unwrap(
                 await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
               );
+              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
               if (workspaceId === selectedWorkspaceId) {
                 void sessionProviderAuthStore.runCloudProviderSync("new_chat");
               }
@@ -2388,9 +2486,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                 ...current,
                 [workspaceId]: [session, ...(current[workspaceId] ?? [])],
               }));
-              navigateToWorkspaceSession(workspaceId, session.id);
-              focusPromptSoon();
+              openSessionForNavigation(workspaceId, session.id);
             } catch {
+              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
               // Fall back to normal task creation without prompt
               void handleCreateTaskInWorkspace(workspaceId);
             }
@@ -2549,7 +2647,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
         }
       }}
-      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+      onOpenSession={openSessionForNavigation}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/preferences")}
       onOpenModelPicker={() => {
         setModelPickerSessionId(null);
@@ -2588,7 +2686,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onClose={() => setSessionSearchOpen(false)}
       sessions={paletteSessionOptions}
       fetchMessages={sessionSearchFetcher}
-      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+      onOpenSession={openSessionForNavigation}
     />
     <ModelPickerModal
       open={modelPicker.open}

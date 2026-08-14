@@ -12,6 +12,7 @@ import {
   type CloudMcpSubmissionGateDecision,
   type CloudMcpSubmissionPreparationResult,
 } from "../src/react-app/domains/connections/cloud-mcp-submit-readiness";
+import { submitWithoutCloudMcpGate } from "../src/react-app/domains/connections/use-cloud-mcp-submit-readiness";
 
 const PROVIDER_MODEL = { provider: "jugglework", model: "gpt-5" };
 
@@ -360,6 +361,27 @@ describe("Cloud MCP pre-send readiness", () => {
     release?.({ outcome: "ready" });
     await Promise.all([first, second]);
     expect(runs).toBe(1);
+  });
+
+  test("ordinary submissions that skip the Connect gate do not share errors across sessions", async () => {
+    let rejectSessionA: ((error: Error) => void) | null = null;
+    const sessionARequest = new Promise<void>((_resolve, reject) => {
+      rejectSessionA = reject;
+    });
+    const sentSessions: string[] = [];
+
+    const sessionA = submitWithoutCloudMcpGate(async () => {
+      sentSessions.push("session-a");
+      await sessionARequest;
+    });
+    const sessionB = submitWithoutCloudMcpGate(async () => {
+      sentSessions.push("session-b");
+    });
+
+    await expect(sessionB).resolves.toEqual({ outcome: "sent", bypassed: true });
+    rejectSessionA?.(new Error("Aborted"));
+    await expect(sessionA).rejects.toThrow("Aborted");
+    expect(sentSessions).toEqual(["session-a", "session-b"]);
   });
 
   test("signed-out, tokenless startup, and explicitly disabled or removed Cloud bypass readiness entirely", async () => {

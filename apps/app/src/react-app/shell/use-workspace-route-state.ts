@@ -32,6 +32,7 @@ import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
+import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -542,14 +543,23 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       writeActiveWorkspaceId(nextWorkspaceId || null);
       // Mark the chosen workspace as active on the server so that the
       // OpenCode engine bound to it re-reads opencode.jsonc and applies
-      // permissions. Fire-and-forget; the route is idempotent and any
-      // transport failure is non-fatal. See issue #870.
+      // permissions. TIPS: activation may dispose/rebuild the workspace
+      // engine, so route readiness must not be released until it completes;
+      // otherwise the first prompt can race /instance/dispose and abort.
       if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
-        launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
         if (nextEndpoint) {
-          void nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId).catch(() => undefined);
+          try {
+            await serializeWorkspaceActivation(() => (
+              nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId)
+            ));
+          } catch (error) {
+            throw new Error(
+              `[workspace_activation:${nextWorkspaceId}] ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         }
       }
       recordInspectorEvent("route.refresh.complete", {

@@ -62,6 +62,7 @@ type ComposerProps = {
   busy: boolean;
   steering: boolean;
   submissionPreparing: boolean;
+  submissionDisabled: boolean;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
@@ -401,13 +402,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
-    if (props.submissionPreparing) return;
+    if (props.submissionPreparing || props.submissionDisabled) return;
     if (resolveComposerSubmitAction(props.busy) === "queue") {
       void props.onQueue();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionPreparing]);
+  }, [props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionDisabled, props.submissionPreparing]);
 
   // 编辑器只显示草稿的文本部分（剥离附件 token），每次变更再把当前附件 token
   // 追加回去，保证草稿这一附件生命周期真源不被破坏。
@@ -1862,10 +1863,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={canSend ? props.onQueue : undefined}
-                      disabled={!canSend}
+                      onClick={canSend && !props.submissionDisabled && !props.submissionPreparing ? props.onQueue : undefined}
+                      disabled={!canSend || props.submissionDisabled || props.submissionPreparing}
                       className={`relative inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors active:scale-[0.98] ${
-                        canSend
+                        canSend && !props.submissionDisabled && !props.submissionPreparing
                           ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                           : "bg-gray-4 text-gray-10"
                       }`}
@@ -1883,10 +1884,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) : (
                   <button
                     type="button"
-                    onClick={canSend && !props.submissionPreparing ? props.onSend : undefined}
-                    disabled={props.disabled || !canSend || props.submissionPreparing}
+                    onClick={canSend && !props.submissionDisabled && !props.submissionPreparing ? props.onSend : undefined}
+                    disabled={props.disabled || props.submissionDisabled || !canSend || props.submissionPreparing}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
-                      !canSend || props.disabled || props.submissionPreparing
+                      !canSend || props.disabled || props.submissionDisabled || props.submissionPreparing
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}

@@ -164,6 +164,7 @@ export type SessionSurfaceProps = {
   onModelClick: () => void;
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
+  taskSubmissionDisabled?: boolean;
   selectedModel: ModelRef;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
@@ -527,6 +528,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
+  const activeSurfaceIdentityRef = useRef(`${props.workspaceId}:${props.sessionId}`);
+  const inFlightSendIdentitiesRef = useRef(new Set<string>());
+  activeSurfaceIdentityRef.current = `${props.workspaceId}:${props.sessionId}`;
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.juggleworkToken, mode: "jugglework" }),
     [props.opencodeBaseUrl, props.juggleworkToken],
@@ -881,25 +885,43 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
-    setError(null);
+    const workspaceId = props.workspaceId;
+    const sessionId = props.sessionId;
+    const surfaceIdentity = `${workspaceId}:${sessionId}`;
+    const isCurrentSurface = () => activeSurfaceIdentityRef.current === surfaceIdentity;
+    if (props.taskSubmissionDisabled) {
+      return { outcome: "cancelled", reason: "context_changed" } as const;
+    }
+    // 同一会话的 prompt acceptance 返回前只允许一次提交；不同会话仍可独立发送。
+    if (inFlightSendIdentitiesRef.current.has(surfaceIdentity)) {
+      return { outcome: "cancelled", reason: "context_changed" } as const;
+    }
+    inFlightSendIdentitiesRef.current.add(surfaceIdentity);
+    if (isCurrentSurface()) setError(null);
     try {
-      const result = await props.onSendDraft(nextDraft, props.sessionId);
+      const result = await props.onSendDraft(nextDraft, sessionId);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
-      appendComposerHistory(props.sessionId, nextDraft.text);
-      useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-      setAwaitingAssistantBaseline(renderedMessages.length);
+      appendComposerHistory(sessionId, nextDraft.text);
+      useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+      if (isCurrentSurface()) setAwaitingAssistantBaseline(renderedMessages.length);
       return result;
     } catch (nextError) {
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
-      setError(parsed);
-      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
-      setAwaitingAssistantBaseline(null);
+      // TIPS: SessionSurface is reused when switching tabs. A late rejection
+      // belongs to the captured session and must never repaint the new tab.
+      if (isCurrentSurface()) {
+        setError(parsed);
+        setAwaitingAssistantBaseline(null);
+      }
+      useSessionActivityStore.getState().setError(workspaceId, sessionId, parsed.message);
       throw nextError;
+    } finally {
+      inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -909,6 +931,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
+    if (props.taskSubmissionDisabled) return;
+    const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
@@ -943,9 +967,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
           .forEach(revokeAttachmentPreview);
       }
     } catch (nextError) {
-      setError(parseSessionError(nextError));
+      if (activeSurfaceIdentityRef.current === surfaceIdentity) {
+        setError(parseSessionError(nextError));
+      }
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -964,12 +990,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if (props.taskSubmissionDisabled) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
     queueWaitsForIdleRef.current = true;
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, props.taskSubmissionDisabled]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const removed = removeQueuedDraftFromStore(props.sessionId, id);
@@ -1035,6 +1062,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       draining: drainingQueueRef.current,
       blocked: cloudQueueBlockedRef.current,
     })) return;
+    if (props.taskSubmissionDisabled) return;
     const target = queuedDrafts[0];
     if (!target) return;
     drainingQueueRef.current = true;
@@ -1066,7 +1094,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         setQueueDrainVersion((version) => version + 1);
       }
     })();
-  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
+  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -1269,13 +1297,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    disabled: props.taskSubmissionDisabled || props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable]);
+  }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable, props.taskSubmissionDisabled]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<JuggleWorkControlAction>(() => ({
@@ -1898,6 +1926,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         busy={chatStreaming}
         steering={steering}
         submissionPreparing={preparingCloudTools}
+        submissionDisabled={Boolean(props.taskSubmissionDisabled)}
         queuedCount={queuedDrafts.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
