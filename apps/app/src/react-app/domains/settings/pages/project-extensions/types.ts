@@ -53,8 +53,10 @@ export type ProjectExtensionsPanelProps = {
   configSlotForConnector?: (entry: McpDirectoryInfo) => React.ReactNode | null;
   /** 已安装技能（含项目级与全局，带 scope）。 */
   installedSkills: SkillItem[];
-  /** 技能弹窗「云端运行」页内容，由宿主注入扩展市场视图。 */
-  cloudSkillsSlot?: React.ReactNode;
+  /** 插件弹窗内容，由宿主注入云端市场视图；入参为标题栏的搜索词。 */
+  pluginsSlot?: (controls: { search: string }) => React.ReactNode;
+  /** 刷新插件（云端市场）列表。 */
+  onRefreshPlugins?: () => void | Promise<void>;
   /** 卸载项目级技能。 */
   onUninstallSkill: (name: string) => void;
   /** 从本地上传技能到项目。 */

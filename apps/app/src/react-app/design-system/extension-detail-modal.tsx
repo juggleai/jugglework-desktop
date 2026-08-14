@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/card";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -505,9 +504,6 @@ export function ExtensionDetailModal({
             ) : null}
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <DialogClose render={<Button variant="outline" />}>
-              Close
-            </DialogClose>
             {connected && onUninstall ? (
               <Button
                 variant="destructive"

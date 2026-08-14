@@ -152,6 +152,14 @@ export type CloudMarketplacesViewProps = {
   skillsOnly?: boolean;
   /** 隐藏分区标题/描述/刷新（宿主已有自己的标题栏时使用）。 */
   hideSectionHeader?: boolean;
+  /** 由宿主接管搜索词；传入后不再渲染内置搜索框。 */
+  searchValue?: string;
+  /** 隐藏「筛选」下拉（按市场过滤），状态筛选按钮仍保留。 */
+  hideMarketplaceFilter?: boolean;
+  /** 卡片按固定行高等高展示。 */
+  uniformCardHeight?: boolean;
+  /** 卡片使用中性配色，不因已安装而整块变绿。 */
+  plainCards?: boolean;
 };
 
 /** 市场包是否包含技能组件。 */
@@ -227,12 +235,22 @@ export function CloudMarketplacesView({
   setBuiltInEnabled,
   skillsOnly = false,
   hideSectionHeader = false,
+  searchValue,
+  hideMarketplaceFilter = false,
+  uniformCardHeight = false,
+  plainCards = false,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [search, setSearch] = React.useState("");
+  const [internalSearch, setInternalSearch] = React.useState("");
+  // TIPS: searchValue 受控时由宿主（插件弹窗标题栏）提供搜索词，内置搜索框不再渲染。
+  const searchControlled = searchValue !== undefined;
+  const search = searchControlled ? searchValue : internalSearch;
+  const setSearch = (value: string) => {
+    if (!searchControlled) setInternalSearch(value);
+  };
   const [statusFilter, setStatusFilter] = React.useState<MarketplaceStatusFilter>("all");
   const [marketplaceFilter, setMarketplaceFilter] = React.useState("all");
   const [detailRow, setDetailRow] = React.useState<MarketplaceRow | null>(null);
@@ -557,11 +575,13 @@ export function CloudMarketplacesView({
       ))}
 
       <div className="space-y-3">
-        <SettingsListSearchInput
-          value={search}
-          onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder={t("marketplace.search_placeholder")}
-        />
+        {!searchControlled ? (
+          <SettingsListSearchInput
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+            placeholder={t("marketplace.search_placeholder")}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {(["all", "available", "installed", "update_available"] as const).map((filter) => (
             <Button
@@ -579,7 +599,7 @@ export function CloudMarketplacesView({
                     : t("marketplace.filter_available")}
             </Button>
           ))}
-          <details className="group relative">
+          <details className={hideMarketplaceFilter ? "hidden" : "group relative"}>
             <summary className="flex h-7 cursor-pointer list-none items-center rounded-md border border-dls-border px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text">
               {t("marketplace.filters")}
             </summary>
@@ -617,7 +637,12 @@ export function CloudMarketplacesView({
       ) : null}
 
       {visibleRows.length > 0 ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">
+        <div
+          className={`grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3${
+            // TIPS: 等高模式下固定行高并让卡片撑满，避免描述长短导致条目高低不一。
+            uniformCardHeight ? " auto-rows-[7rem] [&>div]:h-full [&>div>button]:h-full [&>div>button]:overflow-hidden" : ""
+          }`}
+        >
           {visibleRows.map((row) => {
             const pluginName = row.source === "cloud" ? row.plugin.name : row.source === "built-in" ? row.entry.name : row.item.name;
             const isHighlighted = highlightPluginName != null && pluginName === highlightPluginName;
@@ -633,6 +658,7 @@ export function CloudMarketplacesView({
                 builtInDisabled={builtInExtensionsDisabled}
                 builtInConnectingName={builtInConnectingName}
                 highlighted={isHighlighted}
+                plain={plainCards}
               />
             );
           })}
@@ -700,6 +726,7 @@ function MarketplaceCard(props: {
   builtInDisabled: boolean;
   builtInConnectingName: string | null;
   highlighted?: boolean;
+  plain?: boolean;
 }) {
   const { actionId, row, onOpenDetail } = props;
   const highlightRef = React.useRef<HTMLDivElement>(null);
@@ -733,6 +760,7 @@ function MarketplaceCard(props: {
           disabled={props.builtInDisabled}
           disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
           actionLabel={row.active ? "Manage" : "View setup"}
+          plain={props.plain}
           onClick={() => onOpenDetail(row)}
         />
       </div>
@@ -756,6 +784,7 @@ function MarketplaceCard(props: {
           beta
           connecting={actionBusy}
           actionLabel={actionBusy ? t("mcp.waiting_for_browser") : disconnecting ? t("mcp.org_connection_disconnecting_action") : ready ? t("mcp.view_details") : orgMcpConnectionActionLabel(row.connection)}
+          plain={props.plain}
           onClick={() => onOpenDetail(row)}
         />
         {canDisconnect ? (
@@ -793,6 +822,7 @@ function MarketplaceCard(props: {
         connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
         connecting={actionBusy}
         actionLabel={cloudBuiltIn ? t("mcp.view_details") : deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
+        plain={props.plain}
         onClick={() => onOpenDetail(row)}
       />
     </div>

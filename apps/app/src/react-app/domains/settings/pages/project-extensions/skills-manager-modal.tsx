@@ -1,11 +1,10 @@
 /** @jsxImportSource react */
-import { useMemo, useState, type ReactNode } from "react";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CheckSquare, Plus, Search, Trash2, Upload } from "lucide-react";
 
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -16,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import type { SkillItem } from "../mcp-view";
@@ -25,7 +25,7 @@ import { SkillDetailModal } from "./skill-detail-modal";
 
 function SkillCard({ skill, onUninstall, onOpen }: {
   skill: SkillItem;
-  onUninstall: (name: string) => void;
+  onUninstall: (skill: SkillItem) => void;
   onOpen: (skill: SkillItem) => void;
 }) {
   const isGlobal = skill.scope === "global";
@@ -41,7 +41,7 @@ function SkillCard({ skill, onUninstall, onOpen }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <p className="truncate text-sm font-semibold text-dls-text">{skill.name}</p>
-          {/* TIPS: 本地列表同时包含全局与本工作区技能，用标签区分来源与可管理性。 */}
+          {/* TIPS: 列表混排全局与本工作区技能，用标签区分来源与可管理性（全局只读）。 */}
           <span
             className={cn(
               "shrink-0 rounded-full px-1.5 py-0.5 text-[10px]",
@@ -55,40 +55,34 @@ function SkillCard({ skill, onUninstall, onOpen }: {
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{skill.description}</p>
         ) : null}
       </div>
-      {!isGlobal ? (
-        <button
-          type="button"
-          onClick={(event) => { event.stopPropagation(); onUninstall(skill.name); }}
-          className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-          aria-label={t("project_extensions.uninstall")}
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      ) : null}
+      {/* TIPS: 全局技能同样可卸载（会从用户目录删除，影响所有工作区），删除前统一走确认弹窗。 */}
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); onUninstall(skill); }}
+        className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+        aria-label={t("project_extensions.uninstall")}
+      >
+        <Trash2 className="size-3.5" />
+      </button>
     </div>
   );
 }
 
-type SkillsTab = "local" | "cloud";
-
 /**
- * 技能管理弹窗：分「本地已安装 / 云端运行」两个页签。
- * 本地页展示项目已装技能网格，项目级技能可卸载；全局技能只读并标注「全局」，计数只统计项目级。
- * 云端页由宿主注入扩展市场视图（同一数据源与详情弹窗）。
+ * 技能管理弹窗：展示本地已安装技能，卡片上用标签区分本工作区与全局，两类都可卸载。
+ * 标题行提供搜索、恒为选中态的「我安装的」与「添加技能」入口。
  * @param open 是否打开
  * @param projectDir 项目根目录
- * @param skills 已安装技能（项目级 + 全局）
- * @param cloudSkillsSlot 云端运行页内容（扩展市场视图）
+ * @param skills 已安装技能（本工作区 + 全局）
  * @param onClose 关闭回调
- * @param onUninstall 卸载项目级技能
+ * @param onUninstall 卸载本工作区技能
  * @param onUpload 从本地上传技能
  * @param onRefresh 刷新技能列表
  */
-export function SkillsManagerModal({ open, projectDir, skills, cloudSkillsSlot, onClose, onUninstall, onUpload, onRefresh }: {
+export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninstall, onUpload, onRefresh }: {
   open: boolean;
   projectDir: string;
   skills: SkillItem[];
-  cloudSkillsSlot?: ReactNode;
   onClose: () => void;
   onUninstall: (name: string) => void;
   onUpload: () => void | Promise<void>;
@@ -96,12 +90,18 @@ export function SkillsManagerModal({ open, projectDir, skills, cloudSkillsSlot, 
 }) {
   const [hubOpen, setHubOpen] = useState(false);
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
-  const [tab, setTab] = useState<SkillsTab>("local");
+  const [uninstallTarget, setUninstallTarget] = useState<SkillItem | null>(null);
+  const [query, setQuery] = useState("");
 
-  const projectCount = useMemo(
-    () => skills.filter((skill) => skill.scope !== "global").length,
-    [skills],
-  );
+  // TIPS: 弹窗只呈现「我安装的」技能（本工作区 + 全局），因此该项恒为选中态，仅用搜索词过滤。
+  const visibleSkills = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return skills;
+    return skills.filter((skill) => (
+      skill.name.toLowerCase().includes(keyword) ||
+      (skill.description ?? "").toLowerCase().includes(keyword)
+    ));
+  }, [skills, query]);
 
   const installedSlugs = useMemo(() => {
     const set = new Set<string>();
@@ -111,73 +111,80 @@ export function SkillsManagerModal({ open, projectDir, skills, cloudSkillsSlot, 
 
   return (
     <>
-      <Dialog open={open && !hubOpen && !detailSkill} onOpenChange={(next) => { if (!next) onClose(); }}>
-        <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[1150px] flex-col sm:max-w-[1150px]">
-          <DialogHeader className="gap-2 space-y-0">
-            <div className="flex items-center justify-between gap-4 pr-8">
-              <DialogTitle>{t("project_extensions.group_skill")}</DialogTitle>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <DialogDescription>
-                {t("project_extensions.skill_count", { count: projectCount })}
-              </DialogDescription>
+      <Dialog
+        open={open && !hubOpen && !detailSkill}
+        onOpenChange={(next) => {
+          if (next) return;
+          setQuery("");
+          onClose();
+        }}
+      >
+        <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[1000px] flex-col sm:max-w-[1000px]">
+          <DialogHeader className="space-y-0">
+            {/* TIPS: 标题与搜索、筛选、添加同处一行，右侧留出关闭按钮的位置。 */}
+            <div className="flex items-center gap-3 pr-8">
+              <DialogTitle className="shrink-0">{t("project_extensions.group_skill")}</DialogTitle>
+              <div className="relative w-56 shrink-0">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.currentTarget.value)}
+                  placeholder={t("project_extensions.search_skills")}
+                  className="w-full rounded-lg border border-dls-border bg-dls-surface py-1.5 pl-8 pr-3 text-sm text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
+                />
+              </div>
+              <Button type="button" variant="secondary" size="sm" aria-current="true">
+                <CheckSquare className="size-4" />
+                {t("project_extensions.my_installed")}
+                <span className="text-dls-secondary tabular-nums">{skills.length}</span>
+              </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
                     <Button variant="outline" size="sm">
                       <Plus className="size-4" />
-                      {t("project_extensions.add")}
+                      {t("project_extensions.add_skill")}
                     </Button>
                   }
                 />
                 <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem onClick={() => void onUpload()}>
-                  <Upload className="size-4" />
-                  <div>
-                    <p className="text-sm">{t("project_extensions.upload_skill")}</p>
-                    <p className="text-xs text-dls-secondary">{t("project_extensions.upload_skill_desc")}</p>
-                  </div>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setHubOpen(true)}>
-                  <Plus className="size-4" />
-                  <div>
-                    <p className="text-sm">{t("project_extensions.from_skill_hub")}</p>
-                    <p className="text-xs text-dls-secondary">{t("project_extensions.from_skill_hub_desc")}</p>
-                  </div>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {(["local", "cloud"] as SkillsTab[]).map((key) => (
-                <Button
-                  key={key}
-                  type="button"
-                  variant={tab === key ? "secondary" : "outline"}
-                  size="sm"
-                  onClick={() => setTab(key)}
-                >
-                  {t(`project_extensions.tab_${key}_skills`)}
-                </Button>
-              ))}
+                  <DropdownMenuItem onClick={() => void onUpload()}>
+                    <Upload className="size-4" />
+                    <div>
+                      <p className="text-sm">{t("project_extensions.upload_skill")}</p>
+                      <p className="text-xs text-dls-secondary">{t("project_extensions.upload_skill_desc")}</p>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setHubOpen(true)}>
+                    <Plus className="size-4" />
+                    <div>
+                      <p className="text-sm">{t("project_extensions.from_skill_hub")}</p>
+                      <p className="text-xs text-dls-secondary">{t("project_extensions.from_skill_hub_desc")}</p>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </DialogHeader>
 
-          <div className={cn("min-h-0 flex-1 overflow-y-auto")}>
-            {tab === "cloud" ? (
-              cloudSkillsSlot ?? (
-                <p className="py-10 text-center text-sm text-dls-secondary">
-                  {t("project_extensions.no_cloud_skills")}
-                </p>
-              )
-            ) : skills.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {skills.length === 0 ? (
               <p className="py-10 text-center text-sm text-dls-secondary">
                 {t("project_extensions.no_skills_installed")}
               </p>
+            ) : visibleSkills.length === 0 ? (
+              <p className="py-10 text-center text-sm text-dls-secondary">
+                {t("project_extensions.no_skills_found")}
+              </p>
             ) : (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {skills.map((skill) => (
-                  <SkillCard key={skill.name} skill={skill} onUninstall={onUninstall} onOpen={setDetailSkill} />
+                {visibleSkills.map((skill) => (
+                  <SkillCard
+                    key={`${skill.scope ?? "project"}:${skill.name}`}
+                    skill={skill}
+                    onUninstall={setUninstallTarget}
+                    onOpen={setDetailSkill}
+                  />
                 ))}
               </div>
             )}
@@ -198,6 +205,25 @@ export function SkillsManagerModal({ open, projectDir, skills, cloudSkillsSlot, 
         skill={detailSkill}
         projectDir={projectDir}
         onClose={() => setDetailSkill(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(uninstallTarget)}
+        title={t("skills.uninstall_title")}
+        message={
+          uninstallTarget?.scope === "global"
+            ? t("project_extensions.uninstall_global_warning").replace("{name}", uninstallTarget?.name ?? "")
+            : t("skills.uninstall_warning").replace("{name}", uninstallTarget?.name ?? "")
+        }
+        confirmLabel={t("skills.uninstall")}
+        cancelLabel={t("common.cancel")}
+        confirmButtonVariant="destructive"
+        onCancel={() => setUninstallTarget(null)}
+        onConfirm={() => {
+          const target = uninstallTarget;
+          setUninstallTarget(null);
+          if (target) onUninstall(target.name);
+        }}
       />
     </>
   );

@@ -6,10 +6,11 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { ConnectorPickerModal } from "./connector-picker-modal";
 import { SkillsManagerModal } from "./skills-manager-modal";
+import { PluginsModal } from "./plugins-modal";
 import { InstructionsModal } from "./instructions-modal";
 import type { ProjectExtensionsPanelProps } from "./types";
 
-type ActiveModal = "instructions" | "connector" | "skill" | null;
+type ActiveModal = "instructions" | "connector" | "skill" | "plugin" | null;
 
 /** 分组卡片外壳 */
 function GroupCard({ title, description, count, disabled, onAdd, children }: {
@@ -88,6 +89,12 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         onAdd={() => setModal("skill")}
       />
 
+      <GroupCard
+        title={t("project_extensions.group_plugin")}
+        description={t("project_extensions.plugin_card_desc")}
+        onAdd={() => setModal("plugin")}
+      />
+
       <InstructionsModal
         open={modal === "instructions"}
         projectDir={props.projectDir}
@@ -107,11 +114,16 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         open={modal === "skill"}
         projectDir={props.projectDir}
         skills={props.installedSkills}
-        cloudSkillsSlot={props.cloudSkillsSlot}
         onClose={() => setModal(null)}
         onUninstall={props.onUninstallSkill}
         onUpload={props.onUploadSkill}
         onRefresh={props.onRefreshSkills}
+      />
+      <PluginsModal
+        open={modal === "plugin"}
+        contentSlot={props.pluginsSlot}
+        onClose={() => setModal(null)}
+        onRefresh={props.onRefreshPlugins}
       />
     </div>
   );

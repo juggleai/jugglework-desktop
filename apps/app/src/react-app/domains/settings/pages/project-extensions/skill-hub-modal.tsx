@@ -161,32 +161,32 @@ export function SkillHubModal({ open, projectDir, installedSlugs, onClose, onIns
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next && !installing) onClose(); }}>
       <DialogContent className="flex h-[85vh] max-h-[85vh] max-w-[1000px] flex-col sm:max-w-[1000px]">
+        {/* TIPS: 标题、搜索与页签同处一行，右侧留出关闭按钮的位置。 */}
         <DialogHeader className="flex-row items-center gap-3 space-y-0 pr-8">
           <DialogTitle className="shrink-0">{t("project_extensions.skill_hub_title")}</DialogTitle>
-          <div className="relative w-64">
+          <div className="relative w-56 shrink-0">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
             <input
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
               placeholder={t("project_extensions.search_skills")}
-              className="w-full rounded-lg border border-dls-border bg-dls-surface py-1.5 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-dls-accent/20"
+              className="w-full rounded-lg border border-dls-border bg-dls-surface py-1.5 pl-8 pr-3 text-sm text-dls-text outline-none transition-colors placeholder:text-dls-secondary focus:border-dls-accent"
             />
           </div>
+          <div className="flex items-center gap-1.5">
+            {(["recommended", "skillhub", "installed"] as HubTab[]).map((key) => (
+              <Button
+                key={key}
+                type="button"
+                variant={tab === key ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setTab(key)}
+              >
+                {t(`project_extensions.tab_${key}`)}
+              </Button>
+            ))}
+          </div>
         </DialogHeader>
-
-        <div className="flex items-center gap-1.5">
-          {(["recommended", "skillhub", "installed"] as HubTab[]).map((key) => (
-            <Button
-              key={key}
-              type="button"
-              variant={tab === key ? "secondary" : "outline"}
-              size="sm"
-              onClick={() => setTab(key)}
-            >
-              {t(`project_extensions.tab_${key}`)}
-            </Button>
-          ))}
-        </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {error ? (
