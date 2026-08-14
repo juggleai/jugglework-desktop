@@ -49,6 +49,8 @@ import { useOptionalJuggleWorkServer } from "@/react-app/domains/connections/jug
 import { isOrgMcpConnectionReady } from "@/react-app/domains/connections/native-provider-connections";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import { isDesktopModelBlocked, type DesktopProviderSource } from "@/app/cloud/desktop-app-restrictions";
+import { useCheckDesktopRestriction, useDesktopAllowedModels } from "@/react-app/domains/cloud/desktop-config-provider";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "@/react-app/domains/session/surface/composer/editor";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
@@ -870,6 +872,8 @@ function AutomationEditor(props: {
   const [error, setError] = useState<string | null>(null);
   const [warningVisible, setWarningVisible] = useState(true);
   const [baseline, setBaseline] = useState<string | null>(null);
+  const checkDesktopRestriction = useCheckDesktopRestriction();
+  const allowedModels = useDesktopAllowedModels();
   const orgConnectors = useOrgMcpConnections();
   const promptEditorRef = useRef<LexicalPromptEditorHandle>(null);
   const local = useLocal();
@@ -961,11 +965,28 @@ function AutomationEditor(props: {
     ...(dependencies.connectors ?? legacyConnectors ?? []).map((item) => ({ ...item, source: "local-mcp" as const })),
     ...cloudConnectors,
   ].sort((left, right) => left.label.localeCompare(right.label));
+  // TIPS:模型口径与会话输入栏（ModelSelect）保持一致——服务端只返回已连接 provider，这里再补上
+  // 客户端侧的组织策略：隐藏 legacy 托管 provider、被 allowedModels 目录排除或被 allowZenModel /
+  // allowCustomProviders 关闭的条目，避免自动化里能选到实际跑不起来的模型。
+  const usableModels = useMemo(() => dependencies.models.filter((item) => {
+    if (item.providerId.trim().toLowerCase() === "jugglework") return false;
+    return !isDesktopModelBlocked({
+      model: { providerID: item.providerId, modelID: item.modelId },
+      checkRestriction: checkDesktopRestriction,
+      allowedModels,
+      providerSource: item.providerSource as DesktopProviderSource | undefined,
+    });
+  }), [allowedModels, checkDesktopRestriction, dependencies.models]);
+
   // TIPS:内置默认智能体在选择器里已经以「默认智能体」单独呈现，这里再兜一层，防止旧版本
   // embedded server 没做过滤时又重复列出来。
   const selectableDependencies = useMemo(
-    () => ({ ...dependencies, agents: dependencies.agents.filter((agent) => agent.id !== BUILT_IN_DEFAULT_AGENT) }),
-    [dependencies],
+    () => ({
+      ...dependencies,
+      models: usableModels,
+      agents: dependencies.agents.filter((agent) => agent.id !== BUILT_IN_DEFAULT_AGENT),
+    }),
+    [dependencies, usableModels],
   );
   const selectedModel = model.mode === "explicit" ? dependencies.models.find(
     (item) => item.providerId === model.providerId && item.modelId === model.modelId,
@@ -975,14 +996,14 @@ function AutomationEditor(props: {
   // 执行，明确的模型比隐式路由更可预期。用户一旦手动改过就不再覆盖。
   useEffect(() => {
     if (modelTouched || props.automationId || props.duplicateSourceId) return;
-    if (model.mode === "explicit" || !dependencies.models.length) return;
+    if (model.mode === "explicit" || !usableModels.length) return;
     const preferred = local.prefs.defaultModel;
     const match = preferred
-      ? dependencies.models.find((item) => item.providerId === preferred.providerID && item.modelId === preferred.modelID)
+      ? usableModels.find((item) => item.providerId === preferred.providerID && item.modelId === preferred.modelID)
       : undefined;
-    const fallback = match ?? dependencies.models[0];
+    const fallback = match ?? usableModels[0];
     setModel({ mode: "explicit", providerId: fallback.providerId, modelId: fallback.modelId });
-  }, [dependencies.models, local.prefs.defaultModel, model.mode, modelTouched, props.automationId, props.duplicateSourceId]);
+  }, [usableModels, local.prefs.defaultModel, model.mode, modelTouched, props.automationId, props.duplicateSourceId]);
 
   const applyModel = useCallback((next: AutomationModelSelection) => {
     setModelTouched(true);
@@ -1765,14 +1786,22 @@ function TimeField({ value, onChange, label }: { value: string; onChange: (time:
         <ChevronDown className={cn("size-4 shrink-0 text-dls-secondary transition-transform", open && "rotate-180")} />
       </button>
       {open ? (
-        <div role="dialog" aria-label={label} className="absolute bottom-full left-0 z-40 mb-2 w-[220px] rounded-2xl border border-dls-border bg-background p-3 shadow-[var(--dls-shell-shadow)]">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2">
-            <TimePartList value={hour} values={numberStrings(24)} onChange={(next) => selectTimePart("hour", next)} label={t("automation.schedule_hour")} />
-            <span className="pt-2 text-base font-semibold text-dls-secondary">:</span>
-            <TimePartList value={minute} values={numberStrings(60)} onChange={(next) => selectTimePart("minute", next)} label={t("automation.schedule_minute")} />
-          </div>
-          <div className="mt-3 flex justify-end border-t border-dls-border pt-3">
-            <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-dls-hover">{t("common.confirm")}</button>
+        <div role="dialog" aria-label={label} className="absolute bottom-full left-0 z-40 mb-2 w-[232px] rounded-2xl border border-dls-border bg-background p-3 shadow-[var(--dls-shell-shadow)]">
+          <div className="grid grid-cols-2 gap-2">
+            <TimePartList
+              value={hour}
+              values={numberStrings(24)}
+              onChange={(next) => selectTimePart("hour", next)}
+              label={t("automation.schedule_hour")}
+              title={t("automation.schedule_hour_short")}
+            />
+            <TimePartList
+              value={minute}
+              values={numberStrings(60)}
+              onChange={(next) => selectTimePart("minute", next)}
+              label={t("automation.schedule_minute")}
+              title={t("automation.schedule_minute_short")}
+            />
           </div>
         </div>
       ) : null}
@@ -1786,8 +1815,9 @@ function TimeField({ value, onChange, label }: { value: string; onChange: (time:
  * @param values 可选值
  * @param onChange 选择回调
  * @param label 无障碍名称
+ * @param title 列头文案（时 / 分）
  */
-function TimePartList({ value, values, onChange, label }: { value: string; values: string[]; onChange: (value: string) => void; label: string }) {
+function TimePartList({ value, values, onChange, label, title }: { value: string; values: string[]; onChange: (value: string) => void; label: string; title: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   const selectedRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -1796,15 +1826,19 @@ function TimePartList({ value, values, onChange, label }: { value: string; value
     if (list && selected) list.scrollTop = selected.offsetTop - (list.clientHeight - selected.clientHeight) / 2;
   }, []);
   return (
-    <div ref={listRef} role="listbox" aria-label={label} className="max-h-52 overflow-y-auto rounded-xl bg-dls-hover/60 p-1">
-      {values.map((option) => {
-        const selected = option === value;
-        return (
-          <button key={option} ref={selected ? selectedRef : undefined} type="button" role="option" aria-selected={selected} onClick={() => onChange(option)} className={cn("flex h-9 w-full items-center justify-center rounded-lg text-sm transition-colors hover:bg-background", selected && "bg-dls-text font-medium text-background hover:bg-dls-text")}>
-            {option}
-          </button>
-        );
-      })}
+    <div className="flex min-w-0 flex-col">
+      <div className="pb-1 text-center text-xs text-dls-secondary">{title}</div>
+      {/* TIPS:列表自身不加底色，仅用浅灰药丸标出当前值，滚动条隐藏以保持滚轮式选择器的观感。 */}
+      <div ref={listRef} role="listbox" aria-label={label} className="no-scrollbar max-h-56 overflow-y-auto">
+        {values.map((option) => {
+          const selected = option === value;
+          return (
+            <button key={option} ref={selected ? selectedRef : undefined} type="button" role="option" aria-selected={selected} onClick={() => onChange(option)} className={cn("flex h-10 w-full items-center justify-center rounded-xl text-[15px] tabular-nums text-dls-text transition-colors hover:bg-dls-hover", selected && "bg-dls-hover font-medium")}>
+              {option}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

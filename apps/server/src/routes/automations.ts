@@ -69,10 +69,18 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
       opencode.app.skills(),
       options.listWorkspaceMcp?.(config, workspace.id, workspace.path) ?? Promise.resolve([]),
     ]);
+    // TIPS:与会话输入栏的模型选择口径一致——只列 engine 报告为已连接的 provider，
+    // 且过滤掉没有模型的自定义 provider；否则 models.dev 全量目录里大量没有凭据的模型都会进来。
+    const connectedProviderIds = new Set(providers.data?.connected ?? []);
+    const connectedProviders = (providers.data?.all ?? []).filter((provider) =>
+      connectedProviderIds.has(provider.id)
+      && (provider.source !== "custom" || provider.id === "opencode" || Object.keys(provider.models ?? {}).length > 0)
+    );
     return jsonResponse({
-      models: (providers.data?.all ?? []).flatMap((provider) => Object.values(provider.models).map((model) => ({
+      models: connectedProviders.flatMap((provider) => Object.values(provider.models).map((model) => ({
         providerId: provider.id,
         providerName: provider.name,
+        providerSource: provider.source,
         modelId: model.id,
         modelName: model.name,
         variants: model.variants ? Object.keys(model.variants) : [],

@@ -1433,7 +1433,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
      * @param workspaceId 工作空间 ID；留空时服务端回落到第一个本机工作空间，便于未选工作空间时也能展示列表
      */
     listAutomationDependencies: (workspaceId?: string) => requestJson<{
-      models: Array<{ providerId: string; providerName: string; modelId: string; modelName: string; variants: string[] }>;
+      models: Array<{ providerId: string; providerName: string; providerSource?: string; modelId: string; modelName: string; variants: string[] }>;
       agents: Array<{ id: string; name: string; description: string }>;
       skills: Array<{ id: string; name: string; description: string }>;
       connectors?: Array<{ id: string; label: string; ready: boolean }>;

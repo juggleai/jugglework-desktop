@@ -140,7 +140,20 @@ test("dependency lookup falls back to the first local workspace when none is sel
       return { id, name: "工作空间", path: workspacePath, preset: "default", workspaceType: "local" };
     },
     createWorkspaceOpencodeClient: () => ({
-      provider: { list: async () => ({ data: { all: [{ id: "openai", name: "OpenAI", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } }] } }) },
+      provider: {
+        list: async () => ({
+          data: {
+            all: [
+              { id: "openai", name: "OpenAI", source: "api", models: { "gpt-5": { id: "gpt-5", name: "GPT-5" } } },
+              // 未连接的 provider（models.dev 全量目录里的条目）不能出现在可选模型里。
+              { id: "mistral", name: "Mistral", source: "api", models: { "mistral-large": { id: "mistral-large", name: "Mistral Large" } } },
+              // 已连接但没有模型的自定义 provider 同样排除，与会话输入栏口径一致。
+              { id: "my-proxy", name: "Proxy", source: "custom", models: {} },
+            ],
+            connected: ["openai", "my-proxy"],
+          },
+        }),
+      },
       app: {
         agents: async () => ({ data: [
           { name: "build", description: "", mode: "primary" },
@@ -171,6 +184,7 @@ test("dependency lookup falls back to the first local workspace when none is sel
     };
     // 没传 workspaceId 时回落到配置里的第一个本机工作空间，四类依赖都要有值。
     assert.deepEqual(resolved, ["workspace-1"]);
+    // 只保留 engine 报告为已连接、且确有模型的 provider。
     assert.deepEqual(body.models.map((model) => model.modelId), ["gpt-5"]);
     assert.deepEqual(body.models.map((model) => model.providerName), ["OpenAI"]);
     // 与会话输入栏一致：隐藏项、子智能体和内置默认智能体都不出现在可选项里。
