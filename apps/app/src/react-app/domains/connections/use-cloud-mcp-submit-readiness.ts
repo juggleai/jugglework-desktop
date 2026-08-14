@@ -48,6 +48,7 @@ type CloudMcpSubmitInput = {
 export type CloudMcpSubmitReadiness = {
   state: CloudMcpSubmissionGateState;
   submit: (input: CloudMcpSubmitInput) => Promise<CloudMcpSubmissionResult>;
+  reportFailure: (issue: CloudMcpSubmissionIssue) => CloudMcpSubmissionResult;
 };
 
 function missingContextIssue(input: {
@@ -191,11 +192,35 @@ export function useCloudMcpSubmitReadiness(
     });
   }, []);
 
+  /**
+   * 将发送前的外部恢复失败写入统一的 Connect 提交状态
+   * @param issue 阻塞本次提交的问题
+   * @returns 标准阻塞结果
+   */
+  const reportFailure = useCallback((issue: CloudMcpSubmissionIssue): CloudMcpSubmissionResult => {
+    setState({
+      ...IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
+      status: "failed",
+      issue,
+    });
+    recordInspectorEvent("cloud_mcp.submission_failure", {
+      workspaceId: gateSnapshotRef.current.workspaceId,
+      provider: gateSnapshotRef.current.providerModel?.provider ?? null,
+      model: gateSnapshotRef.current.providerModel?.model ?? null,
+      code: issue.code,
+      stage: issue.stage,
+      retryable: issue.retryable,
+    });
+    return { outcome: "blocked", issue };
+  }, []);
+
   const submit = useCallback(async (submission: CloudMcpSubmitInput): Promise<CloudMcpSubmissionResult> => {
     // TIPS: 普通任务当前明确跳过 Connect readiness。此时不得再进入
     // workspace/model 级协调器，否则不同会话会共享发送状态或 Promise。
     if (submission.skipGate) {
-      return submitWithoutCloudMcpGate(submission.send);
+      const result = await submitWithoutCloudMcpGate(submission.send);
+      setState(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
+      return result;
     }
     const initialSnapshot = gateSnapshotRef.current;
     const capturedScopeKey = initialSnapshot.decision.scopeKey;
@@ -355,5 +380,5 @@ export function useCloudMcpSubmitReadiness(
     });
   }, [waitForAuthResolution]);
 
-  return { state, submit };
+  return { state, submit, reportFailure };
 }

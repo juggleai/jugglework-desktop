@@ -36,7 +36,7 @@ describe("cloud MCP maintenance watchdog", () => {
       }),
       timeoutMs: 10,
     });
-    expect(first).toBe(true);
+    expect(first).toMatchObject({ started: true, completion: { status: "timed_out" } });
     expect(readCloudMcpMaintenanceOutcome(targetKey)?.status).toBe("timed_out");
 
     // The lock must be free: the next tick for the same target executes.
@@ -46,7 +46,7 @@ describe("cloud MCP maintenance watchdog", () => {
         secondRan = true;
       },
     });
-    expect(second).toBe(true);
+    expect(second).toMatchObject({ started: true, completion: { status: "ok" } });
     expect(secondRan).toBe(true);
     expect(readCloudMcpMaintenanceOutcome(targetKey)?.status).toBe("ok");
   });
@@ -76,13 +76,14 @@ describe("cloud MCP maintenance watchdog", () => {
     // held by the second run.
     settleFirst();
     await Promise.resolve();
-    await expect(runSessionMcpMaintenanceTask({
+    const sharedSecond = runSessionMcpMaintenanceTask({
       targetKey,
       task: async () => {},
-    })).resolves.toBe(false);
+    });
 
     settleSecond();
-    await expect(second).resolves.toBe(true);
+    await expect(second).resolves.toMatchObject({ started: true, completion: { status: "ok" } });
+    await expect(sharedSecond).resolves.toMatchObject({ started: false, completion: { status: "ok" } });
   });
 
   test("a throwing tick records the error and releases the lock", async () => {
@@ -93,7 +94,7 @@ describe("cloud MCP maintenance watchdog", () => {
         throw new Error("sync: mint failed with 401");
       },
     });
-    expect(ran).toBe(true);
+    expect(ran).toMatchObject({ started: true, completion: { status: "error" } });
     const outcome = readCloudMcpMaintenanceOutcome(targetKey);
     expect(outcome?.status).toBe("error");
     expect(outcome?.detail).toBe("sync: mint failed with 401");
@@ -101,7 +102,7 @@ describe("cloud MCP maintenance watchdog", () => {
     await expect(runSessionMcpMaintenanceTask({
       targetKey,
       task: async () => {},
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({ started: true, completion: { status: "ok" } });
     expect(readCloudMcpMaintenanceOutcome(targetKey)?.status).toBe("ok");
   });
 

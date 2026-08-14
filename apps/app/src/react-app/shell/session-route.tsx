@@ -457,6 +457,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const [workspaceActivationErrorId, setWorkspaceActivationErrorId] = useState<string | null>(null);
   const workspaceActivationGenerationRef = useRef(0);
   const workspaceNavigationGenerationRef = useRef(0);
+  const activeRouteContextRef = useRef("");
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("jugglework.developerMode") === "1";
@@ -516,6 +517,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
+  activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
@@ -578,9 +580,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     engineReloadBusy: reloadCoordinator.reloadBusy,
     providerModel: cloudMcpProviderModel,
   });
+  const waitForSessionMcpResumeMaintenance = sessionMcpMaintenance.waitForResumeMaintenance;
   const {
     state: cloudMcpSubmissionState,
     submit: submitWithCloudMcpReadiness,
+    reportFailure: reportCloudMcpSubmissionFailure,
   } = useCloudMcpSubmitReadiness({
     cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
@@ -1239,6 +1243,32 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
         if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
+        // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
+        // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
+        const routeContext = activeRouteContextRef.current;
+        const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
+        if (activeRouteContextRef.current !== routeContext) {
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
+        if (resumeMaintenance.outcome === "timed_out") {
+          return reportCloudMcpSubmissionFailure({
+              code: "cloud_mcp_resume_maintenance_timeout",
+              stage: "engine_delivery",
+              retryable: true,
+              message: "JuggleWork Connect is still restoring after the app resumed.",
+              recommendedAction: "Wait a moment, then retry the message.",
+          });
+        }
+        if (resumeMaintenance.outcome === "failed") {
+          return reportCloudMcpSubmissionFailure({
+              code: "cloud_mcp_resume_maintenance_failed",
+              stage: "engine_delivery",
+              retryable: true,
+              message: "JuggleWork Connect could not finish restoring after the app resumed.",
+              recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
+          });
+        }
+
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
           // message, including tasks that do not use connected services.
@@ -1424,6 +1454,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     sessionProviderAuthStore,
+    reportCloudMcpSubmissionFailure,
     sessionsByWorkspaceId,
     submitWithCloudMcpReadiness,
     token,
