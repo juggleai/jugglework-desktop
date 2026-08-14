@@ -59,6 +59,8 @@ type MarketplacePlugin = {
 type RemoteMcpSpec = {
   name: string;
   url: string;
+  /** stdio 型 MCP 的启动命令；有值即表示只能在桌面端本地运行。 */
+  command?: string[];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -87,17 +89,38 @@ function commandName(object: DenPluginConfigObject) {
   return normalized || object.id;
 }
 
+/**
+ * 解析 MCP 配置对象里的服务清单。
+ * TIPS: 后端两种下发形态都要认——`mcpServers`（仅远程 URL）与 opencode 原生的 `mcp`
+ * （server 名 → 配置，可能是 `type: "local"` 的 stdio 命令）。只认前者会导致本地型 MCP
+ * 拿不到任何信息，最终被当成「未就绪」误报成异常。
+ * @param object 插件里的 MCP 配置对象
+ * @returns 每个 server 一条，远程带 url，stdio 带 command
+ */
 function remoteMcpSpecs(object: DenPluginConfigObject): RemoteMcpSpec[] {
   const payload = object.latestVersion?.normalizedPayloadJson;
   if (!payload) return [{ name: object.title, url: "" }];
-  const servers = isRecord(payload.mcpServers) ? payload.mcpServers : null;
+
+  const servers = isRecord(payload.mcpServers)
+    ? payload.mcpServers
+    : isRecord(payload.mcp) ? payload.mcp : null;
   if (servers) {
     const specs = Object.entries(servers).flatMap(([name, config]) => {
-      if (!isRecord(config) || typeof config.url !== "string" || !config.url.trim()) return [];
-      return [{ name: name.trim() || object.title, url: config.url.trim() }];
+      if (!isRecord(config)) return [];
+      const url = typeof config.url === "string" ? config.url.trim() : "";
+      const command = Array.isArray(config.command)
+        ? config.command.filter((part): part is string => typeof part === "string")
+        : [];
+      if (!url && command.length === 0) return [];
+      return [{
+        name: name.trim() || object.title,
+        url,
+        ...(command.length > 0 ? { command } : {}),
+      }];
     });
     if (specs.length > 0) return specs;
   }
+
   return typeof payload.url === "string" && payload.url.trim()
     ? [{ name: object.title, url: payload.url.trim() }]
     : [{ name: object.title, url: "" }];
@@ -181,19 +204,83 @@ function toMcpEntries(
   return specs.map((spec) => {
     const id = `jugglework-connect:${plugin.id}:${object.id}:${spec.name}`;
     const displayName = specs.length === 1 ? object.title : `${object.title} · ${spec.name}`;
+    // TIPS: stdio 型 MCP 由桌面端本地进程承载，云端就绪度对它没有意义，
+    // 先标成「未安装」，装到工作区后由 mergeConnectLocalMcpServers 并入本地条目。
+    const localOnly = !spec.url && (spec.command?.length ?? 0) > 0;
     return {
       entry: {
         id,
         name: displayName,
-        config: { type: "remote", url: spec.url },
+        config: localOnly
+          ? { type: "local", command: spec.command }
+          : { type: "remote", url: spec.url },
         origin: "jugglework-connect",
+        ...(localOnly ? { localServerName: spec.name } : {}),
         marketplaceName: marketplace.name,
         pluginName: plugin.name,
         connectCapabilityName: marketplaceCapabilityName("mcp", object.id),
       },
-      status: remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
+      status: localOnly
+        ? { status: "not_installed" } satisfies McpStatus
+        : remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
     };
   });
+}
+
+function sameCommand(left: string[] | undefined, right: string[] | undefined) {
+  if (!left?.length || !right?.length || left.length !== right.length) return false;
+  return left.every((part, index) => part === right[index]);
+}
+
+/**
+ * 合并本地 MCP 清单与 Connect 下发的 stdio 能力。
+ *
+ * TIPS: 插件装到工作区后，同一个 MCP 会在两份清单里各出现一次——Connect 侧是能力目录里的
+ * 定义（如「图片识别」），本地侧是安装后写进配置的 server（如 `vision`）。这里按 server 名、
+ * 再按启动命令认亲：保留本地那条（只有它有真实运行状态），把插件归属并进去，丢掉 Connect 的
+ * 重复条目；没装下来的 Connect 条目保留并标成「未安装」，因为装之前它确实不可用。
+ *
+ * @param input 本地 MCP、Connect 能力条目与本地运行状态（按 server 名索引）
+ * @returns 去重后的清单，以及 Connect 条目需要覆盖的状态
+ */
+export function mergeConnectLocalMcpServers(input: {
+  localServers: McpServerEntry[];
+  connectServers: McpServerEntry[];
+  localStatuses: McpStatusMap;
+}): { servers: McpServerEntry[]; statuses: McpStatusMap } {
+  const byName = new Map(input.localServers.map((server) => [server.name.trim().toLowerCase(), server]));
+  const provenance = new Map<string, McpServerEntry>();
+  const statuses: McpStatusMap = {};
+  const remaining: McpServerEntry[] = [];
+
+  for (const entry of input.connectServers) {
+    if (entry.config.type !== "local") {
+      remaining.push(entry);
+      continue;
+    }
+    const localName = (entry.localServerName ?? entry.name).trim().toLowerCase();
+    const installed = byName.get(localName)
+      ?? input.localServers.find((server) => sameCommand(server.config.command, entry.config.command));
+    if (installed) {
+      provenance.set(installed.name, entry);
+      continue;
+    }
+    statuses[entry.id ?? entry.name] = { status: "not_installed" };
+    remaining.push(entry);
+  }
+
+  const servers = input.localServers.map((server) => {
+    const source = provenance.get(server.name);
+    if (!source) return server;
+    return {
+      ...server,
+      ...(source.marketplaceName ? { marketplaceName: source.marketplaceName } : {}),
+      ...(source.pluginName ? { pluginName: source.pluginName } : {}),
+      ...(source.connectCapabilityName ? { connectCapabilityName: source.connectCapabilityName } : {}),
+    } satisfies McpServerEntry;
+  });
+
+  return { servers: [...servers, ...remaining], statuses };
 }
 
 function toOrgMcpEntry(connection: DenExternalMcpConnection): { entry: McpServerEntry; status: McpStatus } {

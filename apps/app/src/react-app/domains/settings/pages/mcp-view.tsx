@@ -74,6 +74,8 @@ export type ReactMcpStatus =
   | "needs_client_registration"
   | "failed"
   | "disabled"
+  /** stdio 型能力还没装到本工作区，装上前不可用。 */
+  | "not_installed"
   | "disconnected";
 
 export type SkillItem = {
@@ -153,6 +155,8 @@ const statusDot = (status: ReactMcpStatus) => {
     case "needs_auth":
     case "needs_client_registration":
       return "bg-amber-9";
+    case "not_installed":
+      return "bg-amber-9";
     case "disabled":
       return "bg-gray-8";
     case "disconnected":
@@ -171,6 +175,8 @@ const friendlyStatus = (status: ReactMcpStatus) => {
       return t("mcp.friendly_status_needs_signin");
     case "disabled":
       return t("mcp.friendly_status_paused");
+    case "not_installed":
+      return t("mcp.friendly_status_not_installed");
     case "disconnected":
       return t("mcp.friendly_status_offline");
     default:
@@ -184,6 +190,8 @@ const statusBadgeStyle = (status: ReactMcpStatus) => {
       return "bg-green-3 text-green-11";
     case "needs_auth":
     case "needs_client_registration":
+      return "bg-amber-3 text-amber-11";
+    case "not_installed":
       return "bg-amber-3 text-amber-11";
     case "disabled":
     case "disconnected":

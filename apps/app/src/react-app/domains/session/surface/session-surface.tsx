@@ -102,6 +102,7 @@ import {
 import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
+  mergeConnectLocalMcpServers,
   type ConnectCapabilityInventory,
 } from "./connect-capability-inventory";
 
@@ -1431,8 +1432,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
 
     const connect = await connectPromise;
-    const servers = [...localServers, ...connect.mcpServers];
-    const statuses = { ...connect.mcpStatuses, ...localStatuses };
+    // TIPS: 插件装到工作区后，同一个 stdio MCP 在两份清单里各有一条（能力目录 + 本地配置），
+    // 这里认亲去重，只留本地那条并带上插件归属；没装下来的仍单独列出并标为未安装。
+    const merged = mergeConnectLocalMcpServers({
+      localServers,
+      connectServers: connect.mcpServers,
+      localStatuses,
+    });
+    const servers = merged.servers;
+    const statuses = { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses };
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);

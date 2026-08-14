@@ -6,7 +6,7 @@ import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -222,6 +222,8 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
       return t("mcp.friendly_status_needs_signin");
     case "disabled":
       return t("mcp.friendly_status_paused");
+    case "not_installed":
+      return t("mcp.friendly_status_not_installed");
     case "disconnected":
       return t("mcp.friendly_status_offline");
     case "failed":
@@ -230,11 +232,12 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
   }
 }
 
-type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected";
+type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "not_installed" | "disconnected";
 
 function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStatusMap): McpServerStatus {
   const configured = statuses[name];
   if (configured?.status === "connected") return "connected";
+  if (configured?.status === "not_installed") return "not_installed";
   if (configured?.status === "needs_auth") return "needs_auth";
   if (configured?.status === "needs_client_registration") return "needs_client_registration";
   if (configured?.status === "failed") return "failed";
@@ -244,12 +247,27 @@ function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStat
   return "disconnected";
 }
 
+/**
+ * MCP 状态徽标的悬浮说明。
+ * TIPS: 「异常」可能来自组织未配置、市场未同步、能力未就绪等多种原因，
+ * 后端给出的 error 只存在于状态原始数据里，这里补到 title 上，避免界面只剩一个同质徽标。
+ * @param status 归一化后的展示状态
+ * @param detail 状态原始数据（failed / needs_client_registration 会带 error）
+ */
+function mcpStatusTooltip(status: McpServerStatus, detail: McpStatus | undefined) {
+  const label = formatMcpStatusLabel(status);
+  const reason = detail && "error" in detail && typeof detail.error === "string" ? detail.error.trim() : "";
+  return reason ? `${label} · ${reason}` : label;
+}
+
 function mcpStatusBadgeClass(status: McpServerStatus) {
   switch (status) {
     case "connected":
       return "bg-green-3 text-green-11";
     case "needs_auth":
     case "needs_client_registration":
+      return "bg-amber-3 text-amber-11";
+    case "not_installed":
       return "bg-amber-3 text-amber-11";
     case "disabled":
     case "disconnected":
@@ -1131,6 +1149,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
     status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
+    detail: mcpStatuses[entry.id ?? entry.name],
   }));
 
   const panelRoundedClass =
@@ -1644,7 +1663,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {toolMenuSection === "mcps" ? (
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
+                                {activeMcpItems.map(({ entry, status, detail }) => (
                                   // MCP 仅作只读展示：显示已连接的服务与状态，不可点击、不注入。
                                   <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
@@ -1657,7 +1676,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                                               {t("composer.source_local")}
                                             </span>
                                           ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                          <span
+                                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}
+                                            title={mcpStatusTooltip(status, detail)}
+                                          >
                                             {formatMcpStatusLabel(status)}
                                           </span>
                                         </div>

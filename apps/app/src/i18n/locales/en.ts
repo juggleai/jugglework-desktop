@@ -750,6 +750,7 @@ export default {
   "mcp.friendly_status_issue": "Issue",
   "mcp.friendly_status_needs_signin": "Sign in needed",
   "mcp.friendly_status_offline": "Offline",
+  "mcp.friendly_status_not_installed": "Not installed",
   "mcp.friendly_status_paused": "Paused",
   "mcp.friendly_status_ready": "Ready",
   "mcp.last_synced": "Synced",

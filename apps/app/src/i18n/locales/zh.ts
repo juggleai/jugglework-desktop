@@ -753,6 +753,7 @@ export default {
   "mcp.friendly_status_issue": "异常",
   "mcp.friendly_status_needs_signin": "需要登录",
   "mcp.friendly_status_offline": "离线",
+  "mcp.friendly_status_not_installed": "未安装",
   "mcp.friendly_status_paused": "已暂停",
   "mcp.friendly_status_ready": "就绪",
   "mcp.last_synced": "已同步",

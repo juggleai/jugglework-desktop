@@ -340,6 +340,8 @@ export type McpServerEntry = {
   config: McpServerConfig;
   source?: McpServerSource;
   origin?: CapabilityOrigin;
+  /** stdio 型云端能力落到本地配置时使用的 server 名，用于判断本工作区是否已安装。 */
+  localServerName?: string;
   marketplaceName?: string;
   pluginName?: string;
   connectCapabilityName?: string;
@@ -348,6 +350,8 @@ export type McpServerEntry = {
 export type McpStatus =
   | { status: "connected" }
   | { status: "disabled" }
+  /** stdio 型能力尚未安装到本工作区，装上前不可用。 */
+  | { status: "not_installed" }
   | { status: "failed"; error: string }
   | { status: "needs_auth" }
   | { status: "needs_client_registration"; error: string };
