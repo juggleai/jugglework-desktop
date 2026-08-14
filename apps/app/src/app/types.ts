@@ -352,6 +352,8 @@ export type McpStatus =
   | { status: "disabled" }
   /** stdio 型能力尚未安装到本工作区，装上前不可用。 */
   | { status: "not_installed" }
+  /** 云端能力所需的组织连接尚未建立，需管理员配置后才能调用。 */
+  | { status: "not_configured" }
   | { status: "failed"; error: string }
   | { status: "needs_auth" }
   | { status: "needs_client_registration"; error: string };

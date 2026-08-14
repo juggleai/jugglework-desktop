@@ -1993,6 +1993,8 @@ function createRoutes(
             updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
           }
         : null,
+      // 组织云端插件：远程 MCP 走 Connect 网关，不在工作区留本地副本。
+      cloudGatewayHosted: true,
       resolved,
     });
     const imported = result.item;

@@ -120,6 +120,7 @@ import type {
   DenOrgPluginResolved,
   DenPluginCloudReadiness,
   DenPluginCloudReadinessConnection,
+  DenPluginMcpComponent,
   DenPluginCloudReadinessState,
   DenPluginConfigObject,
   DenPluginConfigObjectType,
@@ -1878,6 +1879,33 @@ function parsePluginCloudReadinessConnection(value: unknown): DenPluginCloudRead
   };
 }
 
+/**
+ * 解析单条 MCP 承载明细。
+ *
+ * TIPS: 单条非法只丢这一条——服务端可能逐步补齐字段，一条脏数据不应让整个插件
+ * 退回未知状态。
+ */
+function parsePluginMcpComponent(value: unknown): DenPluginMcpComponent | null {
+  if (!isRecord(value) || typeof value.configObjectId !== "string") return null;
+  if (value.delivery !== "cloud" && value.delivery !== "desktop") return null;
+  const command = Array.isArray(value.command)
+    ? value.command.filter((part): part is string => typeof part === "string")
+    : [];
+  const credentialMode = value.credentialMode === "shared" || value.credentialMode === "per_member"
+    ? value.credentialMode
+    : undefined;
+  return {
+    configObjectId: value.configObjectId,
+    serverName: typeof value.serverName === "string" ? value.serverName : "",
+    delivery: value.delivery,
+    ...(typeof value.url === "string" && value.url.trim() ? { url: value.url.trim() } : {}),
+    ...(command.length > 0 ? { command } : {}),
+    ...(value.connectionId === null || typeof value.connectionId === "string" ? { connectionId: value.connectionId } : {}),
+    ...(credentialMode ? { credentialMode } : {}),
+    ...(typeof value.connectedForMe === "boolean" ? { connectedForMe: value.connectedForMe } : {}),
+  };
+}
+
 function parsePluginCloudReadiness(value: unknown): DenPluginCloudReadiness | null {
   if (!isRecord(value) || typeof value.hasInstructional !== "boolean" || !Array.isArray(value.connections)) return null;
   const state = parsePluginCloudReadinessState(value.state);
@@ -1889,6 +1917,12 @@ function parsePluginCloudReadiness(value: unknown): DenPluginCloudReadiness | nu
       const connection = parsePluginCloudReadinessConnection(entry);
       return connection ? [connection] : [];
     }),
+    components: Array.isArray(value.components)
+      ? value.components.flatMap((entry) => {
+        const component = parsePluginMcpComponent(entry);
+        return component ? [component] : [];
+      })
+      : [],
   };
 }
 

@@ -1,8 +1,10 @@
 import type {
   DenExternalMcpConnection,
   DenOrgPlugin,
+  DenOrgPluginResolved,
   DenOrgSummary,
   DenPluginCloudReadiness,
+  DenPluginMcpComponent,
 } from "@/app/lib/den";
 import { t } from "@/i18n";
 import { connectionNeedsReconnect } from "@/react-app/domains/connections/native-provider-connections";
@@ -12,6 +14,87 @@ export type ConnectOrgRole = DenOrgSummary["role"] | null | undefined;
 
 const instructionalTypes = new Set(["agent", "command", "context", "custom", "skill"]);
 const desktopInstallTypes = new Set(["hook", "tool"]);
+
+/** 插件的投递构成，按最弱环节聚合。 */
+export type PluginDeliveryComposition = {
+  kind: "cloud" | "desktop" | "mixed";
+  cloudCount: number;
+  desktopCount: number;
+  total: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * 从 MCP 配置对象的 payload 推断承载明细。
+ *
+ * TIPS: 后端两种下发键名都要认——控制台写入的 `mcp` 与历史数据的 `mcpServers`。
+ * 判据只看实际字段：有 url 即云端可承载，只有启动命令则必须由桌面端拉起子进程；
+ * `type` 字段由录入方填写，可能与实际字段不符，不作为判据。
+ *
+ * @param configObjectId 配置对象 ID
+ * @param payload 规范化 payload
+ */
+function inferComponentsFromPayload(configObjectId: string, payload: unknown): DenPluginMcpComponent[] {
+  if (!isRecord(payload)) return [];
+  const servers = isRecord(payload.mcp)
+    ? payload.mcp
+    : isRecord(payload.mcpServers) ? payload.mcpServers : null;
+  const entries: Array<[string, unknown]> = servers
+    ? Object.entries(servers).sort(([left], [right]) => left.localeCompare(right))
+    : [["", payload]];
+  return entries.flatMap<DenPluginMcpComponent>(([serverName, config]) => {
+    if (!isRecord(config)) return [];
+    const url = typeof config.url === "string" ? config.url.trim() : "";
+    const command = Array.isArray(config.command)
+      ? config.command.filter((part): part is string => typeof part === "string")
+      : [];
+    if (url) return [{ configObjectId, serverName, delivery: "cloud", url }];
+    if (command.length > 0) return [{ configObjectId, serverName, delivery: "desktop", command }];
+    return [];
+  });
+}
+
+/**
+ * 解析插件的 MCP 承载明细。
+ *
+ * 服务端下发 `cloudReadiness.components` 时以它为准（它还带连接绑定与授权状态）；
+ * 旧服务端不下发时回落到已解析的配置对象 payload 自行推断，展示结果保持一致。
+ *
+ * @param plugin 插件（可能带 cloudReadiness）
+ * @param resolved 已解析的插件内容，缺 components 时用于推断
+ */
+export function resolvePluginMcpComponents(
+  plugin: Pick<DenOrgPlugin, "cloudReadiness">,
+  resolved?: DenOrgPluginResolved | null,
+): DenPluginMcpComponent[] {
+  const provided = plugin.cloudReadiness?.components ?? [];
+  if (provided.length > 0) return provided;
+  return (resolved?.memberships ?? []).flatMap((membership) => {
+    const object = membership.configObject;
+    if (!object || object.objectType !== "mcp" || object.status !== "active") return [];
+    return inferComponentsFromPayload(object.id, object.latestVersion?.normalizedPayloadJson);
+  });
+}
+
+/**
+ * 聚合插件的投递构成。只要含一个 desktop 组件，插件就不是纯云端可用的。
+ *
+ * @param components MCP 承载明细
+ * @returns 无 MCP 组件时返回 null
+ */
+export function aggregatePluginDelivery(components: DenPluginMcpComponent[]): PluginDeliveryComposition | null {
+  if (components.length === 0) return null;
+  const cloudCount = components.filter((component) => component.delivery === "cloud").length;
+  const desktopCount = components.length - cloudCount;
+  return {
+    kind: desktopCount === 0 ? "cloud" : cloudCount === 0 ? "desktop" : "mixed",
+    cloudCount,
+    desktopCount,
+    total: components.length,
+  };
+}
 
 export function isConnectAdminRole(role: ConnectOrgRole) {
   return role === "owner" || role === "admin";

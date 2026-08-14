@@ -6,6 +6,7 @@ import type {
   DenOrgPluginResolved,
   DenPluginCloudReadinessConnection,
   DenPluginConfigObject,
+  DenPluginMcpComponent,
 } from "@/app/lib/den";
 import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard, SlashCommandOption } from "@/app/types";
 import { isOrgMcpConnectionReady } from "@/react-app/domains/connections/native-provider-connections";
@@ -137,6 +138,21 @@ function matchingConnection(
   ) ?? (spec.url ? connections.find((connection) => connection.url === spec.url) : undefined);
 }
 
+/**
+ * 由组件自身推导云端 MCP 的状态。
+ *
+ * TIPS: 绝不能拿插件级 state 当组件状态用——混合插件的 state 是 `desktop_only`（由 stdio
+ * 组件决定），它对同一插件里的远程组件没有任何含义，照搬会把一个只是"组织没建连接"的
+ * 远程能力显示成运行异常。
+ *
+ * @param component 服务端下发的组件明细
+ */
+function cloudComponentStatus(component: DenPluginMcpComponent): McpStatus {
+  if (component.connectedForMe) return { status: "connected" };
+  if (component.connectionId) return { status: "needs_auth" };
+  return { status: "not_configured" };
+}
+
 function remoteMcpStatus(
   plugin: DenOrgPlugin,
   connection: DenPluginCloudReadinessConnection | undefined,
@@ -201,12 +217,22 @@ function toMcpEntries(
   object: DenPluginConfigObject,
 ): Array<{ entry: McpServerEntry; status: McpStatus }> {
   const specs = remoteMcpSpecs(object);
+  // TIPS: 服务端下发 cloudReadiness.components 时以它为准——它对承载方式的判定与本地
+  // 推断同源，但还带连接绑定信息；没有下发时才用 payload 推断（remoteMcpSpecs）。
+  const serverComponents = new Map(
+    (plugin.cloudReadiness?.components ?? [])
+      .filter((component) => component.configObjectId === object.id)
+      .map((component) => [component.serverName, component] as const),
+  );
   return specs.map((spec) => {
     const id = `jugglework-connect:${plugin.id}:${object.id}:${spec.name}`;
     const displayName = specs.length === 1 ? object.title : `${object.title} · ${spec.name}`;
-    // TIPS: stdio 型 MCP 由桌面端本地进程承载，云端就绪度对它没有意义，
-    // 先标成「未安装」，装到工作区后由 mergeConnectLocalMcpServers 并入本地条目。
-    const localOnly = !spec.url && (spec.command?.length ?? 0) > 0;
+    // stdio 型 MCP 由桌面端本地进程承载，云端就绪度对它没有意义：先标成「未安装」，
+    // 装到工作区后由 mergeConnectLocalMcpServers 并入本地条目。
+    const declared = serverComponents.get(spec.name);
+    const localOnly = declared
+      ? declared.delivery === "desktop"
+      : !spec.url && (spec.command?.length ?? 0) > 0;
     return {
       entry: {
         id,
@@ -220,9 +246,12 @@ function toMcpEntries(
         pluginName: plugin.name,
         connectCapabilityName: marketplaceCapabilityName("mcp", object.id),
       },
+      // 有组件明细就按组件自身判定；没有（旧服务端）才回落到插件级就绪度。
       status: localOnly
         ? { status: "not_installed" } satisfies McpStatus
-        : remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
+        : declared
+          ? cloudComponentStatus(declared)
+          : remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
     };
   });
 }

@@ -224,6 +224,8 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
       return t("mcp.friendly_status_paused");
     case "not_installed":
       return t("mcp.friendly_status_not_installed");
+    case "not_configured":
+      return t("mcp.friendly_status_not_configured");
     case "disconnected":
       return t("mcp.friendly_status_offline");
     case "failed":
@@ -232,12 +234,13 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
   }
 }
 
-type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "not_installed" | "disconnected";
+type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "not_installed" | "not_configured" | "disconnected";
 
 function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStatusMap): McpServerStatus {
   const configured = statuses[name];
   if (configured?.status === "connected") return "connected";
   if (configured?.status === "not_installed") return "not_installed";
+  if (configured?.status === "not_configured") return "not_configured";
   if (configured?.status === "needs_auth") return "needs_auth";
   if (configured?.status === "needs_client_registration") return "needs_client_registration";
   if (configured?.status === "failed") return "failed";
@@ -268,6 +271,7 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
     case "needs_client_registration":
       return "bg-amber-3 text-amber-11";
     case "not_installed":
+    case "not_configured":
       return "bg-amber-3 text-amber-11";
     case "disabled":
     case "disconnected":

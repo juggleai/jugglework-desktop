@@ -399,6 +399,181 @@ describe("assigned JuggleWork Connect capability inventory", () => {
     });
   });
 
+  test("keeps a cloud component's status independent of the plugin-level desktop_only state", async () => {
+    const marketplace = {
+      id: "marketplace_1",
+      name: "插件集合",
+      description: null,
+      status: "active" as const,
+      pluginCount: 1,
+      updatedAt: null,
+    };
+    const makeMcp = (id: string, title: string, payload: Record<string, unknown>) => ({
+      id: `membership_${id}`,
+      pluginId: "plugin_1",
+      configObjectId: id,
+      configObject: {
+        id,
+        objectType: "mcp" as const,
+        title,
+        description: null,
+        currentFileName: "component.json",
+        currentFileExtension: "json",
+        currentRelativePath: `.opencode/mcps/${id}/component.json`,
+        status: "active" as const,
+        updatedAt: null,
+        latestVersion: {
+          id: `version_${id}`,
+          rawSourceText: "",
+          normalizedPayloadJson: payload,
+          sourceRevisionRef: null,
+          createdAt: null,
+        },
+      },
+    });
+
+    const inventory = await listAssignedConnectCapabilities({
+      organizationId: "org_1",
+      client: {
+        listMcpConnections: async () => [],
+        listOrgMarketplaces: async () => [marketplace],
+        getOrgMarketplaceResolved: async () => ({
+          marketplace,
+          plugins: [
+            {
+              id: "plugin_1",
+              name: "vision-plugin",
+              description: null,
+              status: "active",
+              memberCount: 2,
+              updatedAt: null,
+              componentCounts: { mcp: 2 },
+              // 混合插件：插件级 state 由 stdio 组件决定，与远程组件无关。
+              cloudReadiness: {
+                state: "desktop_only",
+                hasInstructional: false,
+                connections: [],
+                components: [
+                  { configObjectId: "config_vision", serverName: "vision", delivery: "desktop", command: ["npx", "-y", "jugglework-vision-mcp"] },
+                  { configObjectId: "config_gmail", serverName: "gmail", delivery: "cloud", url: "https://gmail.run.tools" },
+                ],
+              },
+            },
+          ],
+        }),
+        getOrgPluginResolved: async (_organizationId, plugin) => ({
+          plugin,
+          memberships: [
+            makeMcp("config_vision", "图片识别", { mcp: { vision: { type: "local", command: ["npx", "-y", "jugglework-vision-mcp"] } } }),
+            makeMcp("config_gmail", "Gmail", { mcp: { gmail: { type: "remote", url: "https://gmail.run.tools" } } }),
+          ],
+        }),
+      },
+    });
+
+    const byName = Object.fromEntries(inventory.mcpServers.map((entry) => [entry.name, entry]));
+    // 远程组件没绑定组织连接 → 需管理员配置，而不是运行异常。
+    expect(inventory.mcpStatuses[byName["Gmail"]?.id ?? ""]).toEqual({ status: "not_configured" });
+    // stdio 组件仍按本地安装与否判定。
+    expect(inventory.mcpStatuses[byName["图片识别"]?.id ?? ""]).toEqual({ status: "not_installed" });
+  });
+
+  test("marks a bound cloud component by its own authorization state", async () => {
+    const marketplace = {
+      id: "marketplace_1",
+      name: "插件集合",
+      description: null,
+      status: "active" as const,
+      pluginCount: 1,
+      updatedAt: null,
+    };
+    const inventory = await listAssignedConnectCapabilities({
+      organizationId: "org_1",
+      client: {
+        listMcpConnections: async () => [],
+        listOrgMarketplaces: async () => [marketplace],
+        getOrgMarketplaceResolved: async () => ({
+          marketplace,
+          plugins: [
+            {
+              id: "plugin_1",
+              name: "cloud-plugin",
+              description: null,
+              status: "active",
+              memberCount: 2,
+              updatedAt: null,
+              componentCounts: { mcp: 2 },
+              cloudReadiness: {
+                state: "needs_signin",
+                hasInstructional: false,
+                connections: [],
+                components: [
+                  { configObjectId: "config_a", serverName: "ready", delivery: "cloud", url: "https://a.example.test/mcp", connectionId: "conn_a", connectedForMe: true },
+                  { configObjectId: "config_b", serverName: "pending", delivery: "cloud", url: "https://b.example.test/mcp", connectionId: "conn_b", credentialMode: "per_member", connectedForMe: false },
+                ],
+              },
+            },
+          ],
+        }),
+        getOrgPluginResolved: async (_organizationId, plugin) => ({
+          plugin,
+          memberships: [
+            {
+              id: "membership_a",
+              pluginId: "plugin_1",
+              configObjectId: "config_a",
+              configObject: {
+                id: "config_a",
+                objectType: "mcp",
+                title: "Ready MCP",
+                description: null,
+                currentFileName: null,
+                currentFileExtension: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_a",
+                  rawSourceText: "",
+                  normalizedPayloadJson: { mcp: { ready: { url: "https://a.example.test/mcp" } } },
+                  sourceRevisionRef: null,
+                  createdAt: null,
+                },
+              },
+            },
+            {
+              id: "membership_b",
+              pluginId: "plugin_1",
+              configObjectId: "config_b",
+              configObject: {
+                id: "config_b",
+                objectType: "mcp",
+                title: "Pending MCP",
+                description: null,
+                currentFileName: null,
+                currentFileExtension: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_b",
+                  rawSourceText: "",
+                  normalizedPayloadJson: { mcp: { pending: { url: "https://b.example.test/mcp" } } },
+                  sourceRevisionRef: null,
+                  createdAt: null,
+                },
+              },
+            },
+          ],
+        }),
+      },
+    });
+
+    const byName = Object.fromEntries(inventory.mcpServers.map((entry) => [entry.name, entry]));
+    expect(inventory.mcpStatuses[byName["Ready MCP"]?.id ?? ""]).toEqual({ status: "connected" });
+    expect(inventory.mcpStatuses[byName["Pending MCP"]?.id ?? ""]).toEqual({ status: "needs_auth" });
+  });
+
   test("merges an installed stdio Connect capability into its local server instead of listing both", () => {
     const merged = mergeConnectLocalMcpServers({
       localServers: [
