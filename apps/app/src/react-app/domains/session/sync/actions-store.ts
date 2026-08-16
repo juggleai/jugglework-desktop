@@ -33,6 +33,7 @@ import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
+import { classifyProviderLimit } from "./provider-limit-classify";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -269,14 +270,28 @@ export function createSessionActionsStore(options: {
       (typeof error === "string" ? readString(error) : null);
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
+    const limit = classifyProviderLimit({
+      status,
+      code,
+      text: [raw, response].filter(Boolean).join("\n"),
+    });
     const heading = (() => {
       if (status === 401 || status === 403) return t("app.error_auth_failed");
+      // Hard account limits (quota/plan/spending) are terminal even when the
+      // provider reports them as 429 (for example Anthropic
+      // usage_limit_reached), so they take precedence over the retryable
+      // rate-limit heading.
+      if (limit === "usage_limit") return t("app.error_usage_limit");
       if (status === 429) return t("app.error_rate_limit");
+      if (limit === "context_overflow") return t("app.error_context_overflow");
       if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
 
     const lines = [heading];
+    if (limit) {
+      lines.push(limit === "usage_limit" ? t("app.error_usage_limit_hint") : t("app.error_context_overflow_hint"));
+    }
     if (raw && !generic && raw !== heading) lines.push(raw);
     if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
     if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);

@@ -5,6 +5,11 @@ import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
 import type { JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
 import { safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
+import { t } from "../../../../i18n";
+import {
+  classifyProviderLimit,
+  type ProviderLimitKind,
+} from "./provider-limit-classify";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
@@ -67,9 +72,35 @@ function withSessionErrorHints(text: string) {
   return withOpenAiTokenRefreshHint(withAttachmentRecoveryHint(text));
 }
 
+/**
+ * Terminal provider limits get a localized heading plus an actionable hint
+ * (switch model / check quota, or recover context overflow), keeping the raw
+ * provider text as a diagnostic line below.
+ */
+function limitHeadingAndHint(kind: ProviderLimitKind): [string, string] {
+  return kind === "usage_limit"
+    ? [t("app.error_usage_limit"), t("app.error_usage_limit_hint")]
+    : [t("app.error_context_overflow"), t("app.error_context_overflow_hint")];
+}
+
+function describeLimitedError(kind: ProviderLimitKind, detail: string | null, fallback: string): string {
+  const [heading, hint] = limitHeadingAndHint(kind);
+  const lines = [heading, hint];
+  if (detail && detail.trim() && detail !== heading) lines.push(detail);
+  return withSessionErrorHints(lines.join("\n"));
+}
+
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
-  if (error instanceof Error) return withSessionErrorHints(error.message || fallback);
-  if (typeof error === "string") return withSessionErrorHints(error.trim() || fallback);
+  if (error instanceof Error) {
+    const limit = classifyProviderLimit({ text: error.message });
+    if (limit) return describeLimitedError(limit, error.message, fallback);
+    return withSessionErrorHints(error.message || fallback);
+  }
+  if (typeof error === "string") {
+    const limit = classifyProviderLimit({ text: error });
+    if (limit) return describeLimitedError(limit, error, fallback);
+    return withSessionErrorHints(error.trim() || fallback);
+  }
   if (!error || typeof error !== "object") return fallback;
 
   const data = recordValue(error, "data");
@@ -84,7 +115,19 @@ export function describeOpencodeSessionError(error: unknown, fallback = "Session
   const retries = firstNumberValue(records, ["retries", "retryCount"]);
   const responseBody = firstStringValue(records, ["responseBody", "body", "response"]);
 
-  const lines = [message ?? defaultErrorMessage(name, fallback)];
+  const lines = (() => {
+    const limit = classifyProviderLimit({
+      status,
+      code,
+      name,
+      text: [message, responseBody].filter(Boolean).join("\n"),
+    });
+    if (!limit) return [message ?? defaultErrorMessage(name, fallback)];
+    const [heading, hint] = limitHeadingAndHint(limit);
+    const limited = [heading, hint];
+    if (message && message !== heading) limited.push(message);
+    return limited;
+  })();
   if (status && !lines[0]?.includes(String(status))) lines.push(`Status: ${status}`);
   if (provider && !lines[0]?.includes(provider)) lines.push(`Provider: ${provider}`);
   if (code) lines.push(`Code: ${code}`);
