@@ -35,6 +35,14 @@ export type McpDirectoryInfo = {
   url?: string;
   type?: "remote" | "local";
   command?: string[];
+  /** 本地 MCP 的环境变量，写入 opencode `McpLocalConfig.environment`。 */
+  environment?: Record<string, string>;
+  /** 本地 MCP 的工作目录，写入 opencode `McpLocalConfig.cwd`。相对路径按工作区根解析。 */
+  cwd?: string;
+  /** 本地 MCP 的请求超时（毫秒），写入 opencode `McpLocalConfig.timeout`。缺省时引擎按 5000 处理。 */
+  timeout?: number;
+  /** 远程 MCP 的请求头，写入 opencode `McpRemoteConfig.headers`。 */
+  headers?: Record<string, string>;
   oauth: boolean;
   oauthConfig?: {
     clientId?: string;

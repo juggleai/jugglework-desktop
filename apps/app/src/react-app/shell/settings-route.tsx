@@ -2311,6 +2311,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             connectDirectory: (entry) => { void connectionsStore.connectMcp(entry); },
             authorizeMcp: (entry) => { void connectionsStore.authorizeMcp(entry); },
             removeMcp: (name) => { void connectionsStore.removeMcp(name); },
+            setMcpEnabled: (name, enabled) => { void connectionsStore.setMcpEnabled(name, enabled); },
             connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });

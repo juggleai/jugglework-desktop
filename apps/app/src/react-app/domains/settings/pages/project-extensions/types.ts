@@ -1,6 +1,7 @@
 import type * as React from "react";
 
 import type { McpDirectoryInfo } from "@/app/constants";
+import type { McpServerConfig } from "@/app/types";
 import type { SkillItem } from "../mcp-view";
 
 /**
@@ -16,6 +17,12 @@ import type { SkillItem } from "../mcp-view";
  * @param url 服务地址，图标缺省时用于取 favicon，并在详情中展示
  * @param command 本地命令型 MCP 的启动命令
  * @param preview 是否为预览版扩展
+ * @param errorDetail 启动/连接失败时引擎报告的原文，缺参数一类的失败原因即在其中
+ * @param disabled 条目仍在配置里但被显式停用
+ * @param disconnectKind 断开按钮的语义：自定义条目停用，目录条目移除（可从目录一键重加）
+ * @param onRemove 从配置里彻底删除该条目，仅在详情里以破坏性操作暴露
+ * @param serverName 已装 MCP 在配置里的 server 名，编辑时据此原地覆盖而非新建
+ * @param serverConfig 已装 MCP 的原始配置，编辑弹窗据此回填
  * @param entry 对应的目录项（含 extensionManifest），详情弹窗据此展示能力/资源/安装说明
  * @param onConnect 未连接时触发连接
  * @param onDisconnect 已连接时触发断开（可选）
@@ -32,6 +39,12 @@ export type ConnectorRow = {
   url?: string;
   command?: string[];
   preview?: boolean;
+  errorDetail?: string;
+  disabled?: boolean;
+  disconnectKind?: "disable" | "remove";
+  onRemove?: () => void;
+  serverName?: string;
+  serverConfig?: McpServerConfig;
   entry?: McpDirectoryInfo;
   onConnect?: () => void;
   onDisconnect?: () => void;

@@ -330,6 +330,7 @@ export type McpServerConfig = {
   enabled?: boolean;
   headers?: Record<string, string>;
   environment?: Record<string, string>;
+  cwd?: string;
   oauth?: Record<string, string> | false;
   timeout?: number;
 };

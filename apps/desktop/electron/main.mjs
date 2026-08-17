@@ -1997,6 +1997,49 @@ async function skillhubInstall(params = {}) {
   };
 }
 
+const NPM_REGISTRY_BASE = (process.env.NPM_REGISTRY_URL || "https://registry.npmjs.org").replace(/\/+$/, "");
+const NPM_PACKAGE_NAME_PATTERN = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+
+const NPM_README_MAX_CHARS = 200_000;
+
+/**
+ * 取 npm 包的 README 原文，供渲染端提取环境变量键建议。
+ * @param {{ packageName?: string }} params
+ * @returns {Promise<import("@jugglework/types/desktop-ipc").NpmPackageReadme>}
+ *
+ * TIPS: 只负责取原文、不做提取——提取规则连同其单测都留在渲染端 `mcp-env-hints.ts`，
+ * 避免主进程再抄一份正则造成两处漂移。
+ * TIPS: 建议是加速器不是前置条件——包名非法、网络失败、包不存在一律返回 found:false 的空结果，
+ * 绝不抛错中断添加流程。
+ */
+async function npmPackageReadme(params = {}) {
+  const packageName = String(params?.packageName ?? "").trim();
+  const empty = { packageName, found: false, readme: "", homepage: "" };
+  if (!packageName || !NPM_PACKAGE_NAME_PATTERN.test(packageName)) return empty;
+
+  const homepage = `https://www.npmjs.com/package/${packageName}`;
+  try {
+    const url = `${NPM_REGISTRY_BASE}/${packageName.replace("/", "%2f")}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let body;
+    try {
+      const response = await fetch(url, {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) return { ...empty, homepage };
+      body = await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+    const readme = typeof body?.readme === "string" ? body.readme.slice(0, NPM_README_MAX_CHARS) : "";
+    return { packageName, found: Boolean(readme), readme, homepage };
+  } catch {
+    return { ...empty, homepage };
+  }
+}
+
 async function findSkillFile(projectDir, name) {
   const safeName = validateSkillName(name);
   for (const root of await collectSkillRoots(projectDir)) {
@@ -2468,6 +2511,9 @@ const desktopCommandHandlers = {
   },
   "skillhubInstall": async (event, ...args) => {
       return skillhubInstall(args[0] ?? {});
+  },
+  "npmPackageReadme": async (event, ...args) => {
+      return npmPackageReadme(args[0] ?? {});
   },
   "getGitBranch": async (event, ...args) => {
       return getGitBranch(String(args[0] ?? "").trim());

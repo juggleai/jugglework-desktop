@@ -334,6 +334,20 @@ export type SkillHubInstallResult = {
   message?: string;
 };
 
+/**
+ * npm 包 README 的查询结果，供渲染端提取环境变量键建议。
+ * @param packageName 实际查询的包名
+ * @param found 是否成功取到该包的 README
+ * @param readme README 原文，超长时截断
+ * @param homepage 包的 npm 页面地址，供 UI 提供「查看说明文档」直达入口
+ */
+export type NpmPackageReadme = {
+  packageName: string;
+  found: boolean;
+  readme: string;
+  homepage: string;
+};
+
 export type LocalSkillContent = {
   path: string;
   content: string;
@@ -673,6 +687,12 @@ export type DesktopCommandMap = {
   skillhubInstall: {
     args: [params: { projectDir: string; namespace: string; slug: string; version?: string }];
     result: SkillHubInstallResult;
+  };
+
+  /** 取 npm 包 README 原文，渲染端据此提取自定义 MCP 的环境变量 key 建议 */
+  npmPackageReadme: {
+    args: [params: { packageName: string }];
+    result: NpmPackageReadme;
   };
   readProjectInstructions: {
     args: [projectDir: string];

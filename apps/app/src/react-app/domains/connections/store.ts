@@ -37,6 +37,7 @@ import type {
 import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../../app/utils";
 
 import type { JuggleWorkServerStore } from "./jugglework-server-store";
+import { sanitizeKeyValueMap } from "./mcp-kv-entries";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
@@ -370,21 +371,30 @@ export function createConnectionsStore(options: {
     return entry.command;
   };
 
+  /**
+   * 解析本地 MCP 的环境变量：内置条目的运行时发现结果与用户在表单里填写的键值对合并。
+   * @param entry 目录项或用户自定义条目
+   *
+   * TIPS: 用户输入优先级更高——内置发现只是兜底，用户显式填写的值不应被它覆盖。
+   * 空键与空值在此处过滤，避免把空字符串条目写进 opencode.json。
+   */
   const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
-    if (entry.serverName !== "jugglework-ui") return undefined;
-    try {
-      const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
-      if (environment && typeof environment === "object" && !Array.isArray(environment)) {
-        return Object.fromEntries(
-          Object.entries(environment).filter((entry): entry is [string, string] =>
-            typeof entry[0] === "string" && typeof entry[1] === "string"
-          ),
-        );
+    const builtIn: Record<string, string> = {};
+    if (entry.serverName === "jugglework-ui") {
+      try {
+        const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
+        if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+          for (const [key, value] of Object.entries(environment)) {
+            if (typeof key === "string" && typeof value === "string") builtIn[key] = value;
+          }
+        }
+      } catch {
+        // Discovery fallback in jugglework-ui-mcp still handles normal launches.
       }
-    } catch {
-      // Discovery fallback in jugglework-ui-mcp still handles normal launches.
     }
-    return undefined;
+
+    const merged = { ...builtIn, ...sanitizeKeyValueMap(entry.environment) };
+    return Object.keys(merged).length > 0 ? merged : undefined;
   };
 
   /**
@@ -715,18 +725,17 @@ export function createConnectionsStore(options: {
           throw new Error("Missing MCP URL. Is the JuggleWork desktop app running?");
         }
         mcpEntryConfig["url"] = resolvedUrl;
-        if (resolvedHeaders) {
-          mcpEntryConfig["headers"] = resolvedHeaders;
+        // TIPS: 内置桥接头与用户填写的请求头合并，用户输入优先级更高。
+        const mergedHeaders = { ...(resolvedHeaders ?? {}), ...sanitizeKeyValueMap(entry.headers) };
+        if (Object.keys(mergedHeaders).length > 0) {
+          mcpEntryConfig["headers"] = mergedHeaders;
           // Header-authed entries must not trigger OAuth auto-detection;
           // otherwise opencode reports "needs_auth" despite valid headers.
           mcpEntryConfig["oauth"] = false;
-        }
-        if (!resolvedHeaders) {
-          if (entry.oauthConfig) {
-            mcpEntryConfig["oauth"] = entry.oauthConfig;
-          } else if (entry.oauth) {
-            mcpEntryConfig["oauth"] = {};
-          }
+        } else if (entry.oauthConfig) {
+          mcpEntryConfig["oauth"] = entry.oauthConfig;
+        } else if (entry.oauth) {
+          mcpEntryConfig["oauth"] = {};
         }
       }
 
@@ -738,6 +747,14 @@ export function createConnectionsStore(options: {
         const environment = await resolveLocalMcpEnvironment(entry);
         if (environment) {
           mcpEntryConfig["environment"] = environment;
+        }
+        const cwd = entry.cwd?.trim();
+        if (cwd) {
+          mcpEntryConfig["cwd"] = cwd;
+        }
+        // TIPS: 引擎默认 5000ms，npx/uvx 首次拉包常常撑爆它，表现为「配好了却连不上，重试几次又好」。
+        if (typeof entry.timeout === "number" && Number.isFinite(entry.timeout) && entry.timeout > 0) {
+          mcpEntryConfig["timeout"] = Math.round(entry.timeout);
         }
       }
 
@@ -798,20 +815,29 @@ export function createConnectionsStore(options: {
         if (!activeClient || !resolvedProjectDir) {
           throw new Error(t("mcp.connect_server_first"));
         }
+        // TIPS: 热添加必须与写入配置文件的 mcpEntryConfig 取自同一份数据，否则两条路径会漂移——
+        // environment / cwd / 用户请求头此前只写进文件、没进热添加，导致自定义参数在本次会话内不生效。
+        const addHeaders = mcpEntryConfig["headers"] as Record<string, string> | undefined;
+        const addEnvironment = mcpEntryConfig["environment"] as Record<string, string> | undefined;
+        const addCwd = mcpEntryConfig["cwd"] as string | undefined;
+        const addTimeout = mcpEntryConfig["timeout"] as number | undefined;
         const mcpAddConfig =
           entryType === "remote"
             ? {
                 type: "remote" as const,
                 url: resolvedUrl ?? entry.url!,
                 enabled: true,
-                ...(resolvedHeaders ? { headers: resolvedHeaders, oauth: false as const } : {}),
-                ...(!resolvedHeaders && entry.oauthConfig ? { oauth: entry.oauthConfig } : {}),
-                ...(!resolvedHeaders && !entry.oauthConfig && entry.oauth ? { oauth: {} } : {}),
+                ...(addHeaders ? { headers: addHeaders, oauth: false as const } : {}),
+                ...(!addHeaders && entry.oauthConfig ? { oauth: entry.oauthConfig } : {}),
+                ...(!addHeaders && !entry.oauthConfig && entry.oauth ? { oauth: {} } : {}),
               }
             : {
                 type: "local" as const,
                 command: (mcpEntryConfig["command"] as string[]) ?? entry.command!,
                 enabled: true,
+                ...(addEnvironment ? { environment: addEnvironment } : {}),
+                ...(addCwd ? { cwd: addCwd } : {}),
+                ...(addTimeout ? { timeout: addTimeout } : {}),
               };
 
         const status = unwrap(
