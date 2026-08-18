@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
@@ -497,12 +497,22 @@ function upsertMessage(messages: UIMessage[], next: UIMessage) {
  * promptAsync), that user message flashed as an assistant-styled block
  * until the real role arrived a tick later.
  *
- * Infer the stub role from the conversation instead. Chat sessions
- * alternate, so the new message is almost always the opposite role of the
- * most recent known message. If the transcript is empty the first message
- * is always the user's.
+ * Assistant-only part kinds provide a definitive role. For ambiguous text or
+ * file parts, infer from the conversation until message.updated supplies the
+ * authoritative role. If the transcript is empty the first ambiguous message
+ * is the user's.
  */
-function inferStubRole(messages: UIMessage[]): UIMessage["role"] {
+function inferStubRole(
+  messages: UIMessage[],
+  part?: UIMessage["parts"][number],
+): UIMessage["role"] {
+  // Reasoning, tool calls, and step boundaries can only belong to assistant
+  // output. Multi-step tool runs legitimately create consecutive assistant
+  // messages, so the generic user/assistant alternation heuristic is wrong
+  // for these parts.
+  if (part && (part.type === "reasoning" || isToolUIPart(part) || part.type === "step-start")) {
+    return "assistant";
+  }
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage) return "user";
   if (lastMessage.role === "user") return "assistant";
@@ -917,7 +927,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // stub's role matches what we'd write anyway, and any subsequent
       // message.updated will overwrite both.
       const existing = current.find((m) => m.id === part.messageID);
-      const role = existing?.role ?? inferStubRole(current);
+      const role = existing?.role ?? inferStubRole(current, seededPart);
       const withMessage = upsertMessage(current, { id: part.messageID, role, parts: [] });
       const seededPartId = getPartMetadataId(seededPart) ?? part.id;
       let next = upsertPart(withMessage, part.messageID, seededPartId, seededPart);
@@ -1040,22 +1050,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
       (current = []) => {
         let next = current;
         const nextById = new Map(next.map((message) => [message.id, message]));
-        // Track which message shells we've ensured exist this flush so we
-        // don't call upsertMessage for the same message on every delta.
-        const ensuredMessageIds = new Set<string>();
         for (const item of items) {
-          if (!ensuredMessageIds.has(item.messageId)) {
-            // Preserve the existing role if the message is already in
-            // state; otherwise infer it from the alternation pattern
-            // so the brief "stub before message.updated" window doesn't
-            // mislabel the message's bubble style.
-            const existing = nextById.get(item.messageId);
-            const role = existing?.role ?? inferStubRole(next);
-            const ensuredMessage = { id: item.messageId, role, parts: existing?.parts ?? [] };
-            next = upsertMessage(next, ensuredMessage);
-            nextById.set(item.messageId, ensuredMessage);
-            ensuredMessageIds.add(item.messageId);
-          }
           // Resolve the part kind from the transcript instead of trusting
           // the inbound delta event (opencode emits `field: "text"` for
           // both text and reasoning parts). If the part hasn't been
@@ -1075,6 +1070,10 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
           const ownerPart = ownerPartsById.get(item.partId);
 
           if (!ownerPart) {
+            // A delta can beat both message.updated and message.part.updated.
+            // Buffer it without creating a role-guessed message shell. The
+            // authoritative message event or typed part event will create the
+            // message later, avoiding false user rows between assistant steps.
             const existing = entry.pendingDeltas.get(item.partId) ?? {
               messageId: item.messageId,
               reasoning: item.reasoning,

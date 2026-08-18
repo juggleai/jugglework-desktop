@@ -620,6 +620,8 @@ const UserMessage = React.memo(
     )
     const hasContent = inlineParts.length > 0
 
+    if (!hasContent) return null
+
     return (
       <Message
         className="mx-auto flex w-full max-w-5xl flex-col items-end gap-2 px-3 md:px-8"
@@ -932,7 +934,10 @@ function MessageGroup({
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
-  const showProcessDisclosure = processItems.length > 0
+  // The process is already visible while a task is running. Once a final
+  // summary exists, repeating the same tool history as another collapsed row
+  // adds noise. Keep it only while live or as the sole completion fallback.
+  const showProcessDisclosure = processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)
   let userMessageIndex = items[0]?.index ?? -1
   while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
     userMessageIndex -= 1

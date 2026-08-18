@@ -262,14 +262,29 @@ export function isMessageGroup(item: MessageListItem): item is MessageGroup {
   return "messages" in item
 }
 
+function asAssistantPresentationMessage(message: UIMessage): UIMessage | null {
+  if (message.role === "assistant") return message
+
+  const hasUserContent = message.parts.some(
+    (part) => (part.type === "text" && part.text.trim().length > 0) || part.type === "file",
+  )
+  if (hasUserContent) return null
+
+  const hasAssistantProcess = message.parts.some(
+    (part) => isReasoningUIPart(part) || isToolUIPart(part) || part.type === "step-start",
+  )
+  return hasAssistantProcess ? { ...message, role: "assistant" } : null
+}
+
 export function groupMessages(messages: UIMessage[], status: ThreadStatus): MessageListItem[] {
   const items: MessageListItem[] = []
   let index = 0
 
   while (index < messages.length) {
     const message = messages[index]
+    const assistantMessage = asAssistantPresentationMessage(message)
 
-    if (message.role !== "assistant") {
+    if (!assistantMessage) {
       items.push({ index, message })
       index++
       continue
@@ -277,8 +292,10 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
     const assistantMessages: UIMessageWithIndex[] = []
 
-    while (index < messages.length && messages[index].role === "assistant") {
-      assistantMessages.push({ message: messages[index], index });
+    while (index < messages.length) {
+      const nextAssistantMessage = asAssistantPresentationMessage(messages[index])
+      if (!nextAssistantMessage) break
+      assistantMessages.push({ message: nextAssistantMessage, index });
       index++
     }
 

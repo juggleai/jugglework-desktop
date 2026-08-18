@@ -258,6 +258,55 @@ describe("session transcript sync", () => {
     ]);
   });
 
+  test("does not create a false user row when a consecutive assistant delta arrives first", async () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
+      uiMessage("msg-user", "user", "hello"),
+      uiMessage("msg-assistant-1", "assistant", "first step"),
+    ]);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-a",
+          messageID: "msg-assistant-2",
+          partID: "part-reasoning",
+          delta: "thinking",
+        },
+      } as any);
+      await Promise.resolve();
+
+      let transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.map((entry) => entry.id)).toEqual(["msg-user", "msg-assistant-1"]);
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-reasoning",
+            type: "reasoning",
+            text: "",
+            sessionID: "session-a",
+            messageID: "msg-assistant-2",
+          },
+        },
+      } as any);
+
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.[2]).toMatchObject({
+        id: "msg-assistant-2",
+        role: "assistant",
+        parts: [{ type: "reasoning", text: "thinking" }],
+      });
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
   test("keeps live-only messages when an idle snapshot is stale", () => {
     getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
       uiMessage("msg-user", "user", "hello"),

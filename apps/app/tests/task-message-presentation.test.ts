@@ -6,6 +6,8 @@ import {
   formatTaskDuration,
   getAssistantRenderGroups,
   getTaskTiming,
+  groupMessages,
+  isMessageGroup,
   mergeAssistantProcessItems,
   splitAssistantTaskMessages,
 } from "../src/components/chat/utils"
@@ -95,6 +97,32 @@ describe("task message presentation", () => {
     expect(split.processItems.flatMap((item) => item.message.parts).some((part) => part.type === "dynamic-tool")).toBe(true)
     expect(split.summaryItems).toHaveLength(1)
     expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Final summary" }])
+  })
+
+  test("folds a role-misclassified process message into the surrounding assistant run", () => {
+    const tool: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "read",
+      toolCallId: "call-1",
+      state: "output-available",
+      input: { filePath: "/tmp/report.md" },
+      output: "contents",
+    }
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-1", "assistant", 1_700_000_001_000, [{ type: "reasoning", text: "Inspecting", state: "done" }]),
+      message("misclassified-process", "user", 1_700_000_002_000, [tool]),
+      message("assistant-final", "assistant", 1_700_000_003_000, [{ type: "text", text: "Done" }]),
+    ], "ready")
+
+    expect(grouped).toHaveLength(2)
+    expect(isMessageGroup(grouped[1]!)).toBe(true)
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected assistant message group")
+    expect(grouped[1].messages.map((item) => item.message.role)).toEqual([
+      "assistant",
+      "assistant",
+      "assistant",
+    ])
   })
 
   test("keeps the real summary outside process when completion is incomplete", () => {
