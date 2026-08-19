@@ -368,6 +368,15 @@ export type SettingsSurfaceProps = {
   initialPath?: string;
   /** Keep parsing the retained settings route while this surface is hidden behind another app module. */
   routePath?: string;
+  /**
+   * Whether this surface currently owns the browser route. Defaults to true.
+   *
+   * TIPS: 设置面板是常驻挂载的，被会话页盖住时也在渲染。它的两处规范化重定向走的是全局
+   * 路由（`<Navigate replace>`），隐藏时若照样执行，就会在启动阶段把整个 app 的 URL 抢到
+   * `/settings/preferences` —— 表现为冷启动首屏是设置页而不是本地工作区。隐藏态下必须
+   * 只解析路由、不改路由。
+   */
+  active?: boolean;
   workspaceId?: string;
   onClose?: () => void;
 };
@@ -2115,14 +2124,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   };
 
-  if (route.redirectPath && !props.embedded) {
+  // 只有真正持有路由的设置面板才能改 URL：嵌入式面板自己管路径，隐藏的常驻面板不能抢路由。
+  const ownsBrowserRoute = !props.embedded && props.active !== false;
+
+  if (route.redirectPath && ownsBrowserRoute) {
     const target = selectedWorkspaceId
       ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
       : `/settings/${route.redirectPath}`;
     return <Navigate to={target} replace state={location.state} />;
   }
 
-  if (!props.embedded && !routeWorkspaceId && selectedWorkspaceId) {
+  if (ownsBrowserRoute && !routeWorkspaceId && selectedWorkspaceId) {
     return <Navigate to={workspaceSettingsRoute(selectedWorkspaceId, settingsPathForRoute(route))} replace state={location.state} />;
   }
 

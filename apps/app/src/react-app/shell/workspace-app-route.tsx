@@ -177,6 +177,7 @@ function WorkspaceAppRouteContent() {
         data-testid="workspace-settings-surface"
       >
         <SettingsRoute
+          active={settingsVisible}
           workspaceId={(settingsVisible ? appPath.workspaceId : retainedSettings.workspaceId) ?? undefined}
           routePath={settingsVisible ? location.pathname : retainedSettings.routePath}
         />
