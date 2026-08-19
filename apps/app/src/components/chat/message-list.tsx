@@ -13,7 +13,6 @@ import {
   Split,
   Undo2,
 } from "lucide-react"
-import { PaperGrainGradient } from "@jugglework/ui/react"
 import {
   DynamicToolUIPart,
   isFileUIPart,
@@ -88,13 +87,9 @@ import {
 } from "@/lib/build-in-tools"
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 import type { ThreadStatus } from "@/lib/messages"
-import {
-  collectToolParts,
-  getActiveToolLabel,
-  getToolActivityLabel,
-  isToolPartInFlight,
-} from "@/lib/tool-activity"
+import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
+import { getLiveActivityKind, liveActivityLabel } from "@/lib/live-activity"
 import {
   CAPABILITY_INSTRUCTION_RE,
   composerCapabilityTagClassName,
@@ -794,23 +789,15 @@ const MessageComponent = React.memo(
 
 MessageComponent.displayName = "MessageComponent"
 
+// TIPS: 容器与消息正文/「耗时」行保持同一套 max-w-5xl + px-3/md:px-8，
+// 左边缘才能和上下文对齐；此前用的是 max-w-3xl + px-2/md:px-10，会偏右十几像素。
 const LoadingMessage = React.memo(({ label }: { label?: string }) => (
-  <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+  <Message className="mx-auto -mt-1 flex w-full max-w-5xl flex-col items-start gap-0 px-3 md:px-8">
     <div className="group flex w-full flex-col gap-0">
-      <div className="flex items-center gap-1.5 px-1 py-1 text-sm text-muted-foreground">
-        <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
-          <PaperGrainGradient
-            speed={12}
-            softness={0.1}
-            intensity={1}
-            noise={0.05}
-            shape="sphere"
-            colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
-            colorBack="#ffffff00"
-            style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
-          />
-        </div>
-        <span>{label ?? "Thinking…"}</span>
+      <div className="flex items-center py-0 text-sm" role="status" aria-live="polite">
+        <span className="live-activity-text font-medium tracking-[-0.01em]">
+          {`${label ?? liveActivityLabel("responding")}...`}
+        </span>
       </div>
     </div>
   </Message>
@@ -1081,8 +1068,10 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
+  // TIPS: 底部提示展示的是当前真实动作（执行命令 / 写文件 / 工具调用…），
+  // 而不是一个恒定的「Thinking…」；推不出具体动作时落到「生成回复中」。
   const liveActionLabel = isStreaming
-    ? getActiveToolLabel(collectToolParts(messages))
+    ? liveActivityLabel(getLiveActivityKind(messages))
     : null
 
   return (

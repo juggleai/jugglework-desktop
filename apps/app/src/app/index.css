@@ -508,6 +508,41 @@ select:disabled {
   }
 }
 
+/* 助手「当前在做什么」的实时提示：文字底色在 #898989 与 #9e9e9e 之间循环扫过。
+   TIPS: 只动 background-position，不触发布局与重排，长时间运行也不掉帧。 */
+@keyframes live-activity-shimmer {
+  0% {
+    background-position: 200% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.live-activity-text {
+  background-image: linear-gradient(
+    100deg,
+    #898989 0%,
+    #898989 38%,
+    #fafafa 50%,
+    #898989 62%,
+    #898989 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: live-activity-shimmer 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-activity-text {
+    animation: none;
+    background-image: none;
+    color: #898989;
+  }
+}
+
 .dark,
 [data-theme="dark"] {
   --background: var(--slate-1);

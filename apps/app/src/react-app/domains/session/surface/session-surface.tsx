@@ -45,7 +45,6 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
-import { PaperGrainGradient } from "@jugglework/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
@@ -82,6 +81,7 @@ import {
   useComposerStateStore,
   type ComposerCapabilityPart,
 } from "./composer-state-store";
+import { liveActivityLabel } from "@/lib/live-activity";
 import {
   COMPOSER_TOKEN_SPLIT_RE,
   composerCapabilityToken,
@@ -309,23 +309,12 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
   });
 }
 
-function AssistantWaitingCard({ label = t("session.assistant_thinking") }: { label?: string }) {
+/** 与消息列表底部的实时提示保持同一形态：流光文字，无图标。 */
+function AssistantWaitingCard({ label = liveActivityLabel("responding") }: { label?: string }) {
   return (
-    <div className="flex justify-start" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
-        <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
-          <PaperGrainGradient
-            speed={12}
-            softness={0.1}
-            intensity={1}
-            noise={0.05}
-            shape="sphere"
-            colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
-            colorBack="#ffffff00"
-            style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
-          />
-        </div>
-        <span>{label}</span>
+    <div className="-mt-1 flex justify-start" role="status" aria-live="polite">
+      <div className="inline-flex items-center py-0 text-[12px]">
+        <span className="live-activity-text font-medium tracking-[-0.01em]">{`${label}...`}</span>
       </div>
     </div>
   );
