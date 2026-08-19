@@ -696,7 +696,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
   });
 
-  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
+  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi, noteWorkspaceActivationCompleted } = useEngineReload({
     client,
     workspaceId: selectedWorkspaceId,
     workspace: selectedWorkspace,
@@ -959,6 +959,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     !activatingWorkspaceId &&
     workspaceActivationErrorId !== selectedWorkspaceId &&
     !startupWorkspaceActivationFailed &&
+    // A *pending* reload no longer blocks task preparation: it is a queued
+    // config refresh, not an in-flight engine dispose. The reload itself
+    // still refuses to run while sessions are active, and the send path
+    // re-checks its own preconditions at execution time.
     !reloadCoordinator.reloadBusy &&
     !reloadCoordinator.reloadError,
   );
@@ -1106,6 +1110,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ));
     try {
       await activation;
+      if (workspaceActivationGenerationRef.current === generation) {
+        // The server reloaded the engine inline; absorb its config echo and
+        // drop any stale pending reload from the previously active workspace.
+        noteWorkspaceActivationCompleted(workspaceId, endpoint);
+      }
       return workspaceActivationGenerationRef.current === generation;
     } catch {
       if (workspaceActivationGenerationRef.current === generation) {
@@ -1118,7 +1127,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         setActivatingWorkspaceId(null);
       }
     }
-  }, [endpointForWorkspace, setRouteError, workspaces]);
+  }, [endpointForWorkspace, noteWorkspaceActivationCompleted, setRouteError, workspaces]);
 
   /**
    * 打开会话，并保证跨工作区导航先完成运行时激活

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { engineInfo, engineRestart } from "@/app/lib/desktop";
 import type { EngineInfo } from "@/app/lib/desktop-types";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
-import { JuggleWorkServerError, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import { JuggleWorkServerError, type JuggleWorkReloadEvent, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { t } from "@/i18n";
 import { useReloadCoordinator } from "./reload-coordinator";
@@ -21,6 +21,32 @@ const reloadAfterOrgOnboardingKey = "jugglework.reloadAfterOrgOnboarding";
 
 function taskCreateUnavailableToastId(workspaceId: string) {
   return `opencode-unavailable:${workspaceId}`;
+}
+
+/**
+ * After a workspace activation the server rewrites the shared runtime config
+ * (and, in watched deployments, the file watcher echoes that write back as a
+ * config reload event). The activation call already reloaded the engine
+ * server-side — switch reloads stay (#870) — so that echo is redundant:
+ * consuming it keeps the deferred poll → debounce → auto-reload path from
+ * re-running an engine reload on every workspace switch.
+ */
+export const ACTIVATION_CONFIG_ECHO_GRACE_MS = 2500;
+
+/** True when a polled reload event is made redundant by our own recent
+ * activation. Only config-reason events are suppressed: the activation's
+ * inline engine reload already applied the current on-disk state, so both
+ * the activation's own config echo and any still-unconsumed config event
+ * from before the activation need no further reload. Skill/agent/command
+ * mutations observed in the window still reload normally. */
+export function isActivationConfigEcho(
+  event: Pick<JuggleWorkReloadEvent, "reason" | "timestamp">,
+  activationCompletedAt: number | null | undefined,
+): boolean {
+  if (!activationCompletedAt) return false;
+  if (event.reason !== "config") return false;
+  const timestamp = typeof event.timestamp === "number" ? event.timestamp : 0;
+  return timestamp > 0 && timestamp <= activationCompletedAt + ACTIVATION_CONFIG_ECHO_GRACE_MS;
 }
 
 export type UseEngineReloadInput = {
@@ -49,6 +75,42 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
+  const activationConfigEchoByWorkspaceRef = useRef<Record<string, number>>({});
+
+  /**
+   * Called right after a successful workspace activation. The server already
+   * reloaded the engine inline (switch reloads stay, #870) and rewrote the
+   * shared runtime config, so:
+   *  1. any pending reload state for the previous workspace is stale and
+   *     must not fire on the newly activated one, and
+   *  2. config-reason reload events arriving within the echo grace window
+   *     are consumed instead of marking another reload required.
+   * Skill/agent/command mutations in the window still reload normally.
+   */
+  const noteWorkspaceActivationCompleted = useCallback((activatedWorkspaceId: string, endpoint: ResolvedWorkspaceEndpoint) => {
+    const activationCompletedAt = Date.now();
+    activationConfigEchoByWorkspaceRef.current[activatedWorkspaceId] = activationCompletedAt;
+    reloadCoordinator.clearReloadRequired();
+    // Absorb the config echo immediately: the server may have recorded the
+    // runtime-config write just before responding (its own 750 ms event
+    // debounce can also delay the record past this point, so per-event grace
+    // is checked again on every poll).
+    const cursor = reloadEventCursorByWorkspaceRef.current[activatedWorkspaceId];
+    if (typeof cursor !== "number") return;
+    void endpoint.client
+      .listReloadEvents(endpoint.workspaceId, { since: cursor })
+      .then((response) => {
+        for (const event of response.items ?? []) {
+          if (isActivationConfigEcho(event, activationCompletedAt)) {
+            reloadEventCursorByWorkspaceRef.current[activatedWorkspaceId] = Math.max(
+              cursor,
+              Number(event.seq) || 0,
+            );
+          }
+        }
+      })
+      .catch(() => undefined);
+  }, [reloadCoordinator]);
 
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     if (!client || !workspaceId) {
@@ -139,10 +201,11 @@ export function useEngineReload(input: UseEngineReloadInput) {
         // new filesystem/server-side mutations, including skills created by an
         // agent while the session page is open.
         if (currentCursor === undefined || currentCursor === null) return;
+        const activationEchoAt = activationConfigEchoByWorkspaceRef.current[workspaceId];
         for (const event of response.items ?? []) {
+          if (isActivationConfigEcho(event, activationEchoAt)) continue;
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
-        }
-      } catch {
+        }      } catch {
         // Reload-event polling is best-effort; normal route health checks still
         // surface connection failures.
       }
@@ -174,5 +237,5 @@ export function useEngineReload(input: UseEngineReloadInput) {
     };
   }, []);
 
-  return { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi };
+  return { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi, noteWorkspaceActivationCompleted };
 }
