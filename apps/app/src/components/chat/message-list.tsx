@@ -948,10 +948,11 @@ function MessageGroup({
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
-  // The process is already visible while a task is running. Once a final
-  // summary exists, repeating the same tool history as another collapsed row
-  // adds noise. Keep it only while live or as the sole completion fallback.
-  const showProcessDisclosure = processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)
+  // 只要有过程内容就保留折叠器：运行中默认展开，结束后收起但仍可展开。
+  // TIPS: 此前的条件是 `processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)`，
+  // 任务一结束并产出结论，整个折叠器（连同「耗时」后面的箭头）就消失，
+  // 于是流式期间折起来的过程再也展不开。
+  const showProcessDisclosure = processItems.length > 0
   let userMessageIndex = items[0]?.index ?? -1
   while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
     userMessageIndex -= 1
