@@ -282,6 +282,12 @@ export async function testRemoteWorkspaceConnection(
     if (classifyUnreachableError(error)) {
       return fail(workerUnreachableMessage(target, describeUnknownError(error)), checkedAt, "worker_unreachable");
     }
+    // The edge answers 401 when the endpoint exists but the presented token is
+    // wrong (the health request carries the same bearer as every other call).
+    // That is a stale-token problem, not a redeployed worker.
+    if (isServerErrorStatus(error, [401, 403])) {
+      return fail(rejectedTokenMessage(target), checkedAt, "token_rejected");
+    }
     return fail(
       remoteSupportMessage(`Cannot reach ${target.endpointLabel}. Health check failed: ${describeUnknownError(error)}`),
       checkedAt,

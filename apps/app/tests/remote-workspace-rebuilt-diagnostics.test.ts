@@ -72,6 +72,17 @@ describe("remote workspace rebuilt diagnostics", () => {
     expect(result.state.reason).toBe("token_rejected");
   });
 
+  test("health 401 from the edge classifies as token_rejected, not unreachable", async () => {
+    const result = await testRemoteWorkspaceConnection(remoteWorkspaceFixture(), {
+      createClient: () => clientMock({
+        health: () => Promise.reject(statusError(401, "The sandbox route credential is invalid.")),
+      }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.state.reason).toBe("token_rejected");
+    expect(result.state.message).not.toContain("redeployed");
+  });
+
   test("missing workspace keeps its own reason", async () => {
     const result = await testRemoteWorkspaceConnection(remoteWorkspaceFixture(), {
       createClient: () => clientMock({
