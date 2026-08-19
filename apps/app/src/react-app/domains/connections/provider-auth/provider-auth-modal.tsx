@@ -78,6 +78,18 @@ const EMPTY_CUSTOM_FORM: CustomProviderForm = {
   outputLimit: "",
 };
 
+const customProviderFormFromInput = (input: CustomProviderInput): CustomProviderForm => ({
+  name: input.name,
+  providerId: input.providerId,
+  baseUrl: input.baseUrl,
+  apiKey: "",
+  models: input.models
+    .map((model) => model.name === model.id ? model.id : `${model.id} = ${model.name}`)
+    .join("\n"),
+  contextLimit: input.contextLimit ? String(input.contextLimit) : "",
+  outputLimit: input.outputLimit ? String(input.outputLimit) : "",
+});
+
 /**
  * Words that should surface the custom-provider card while filtering. The
  * localized title and description are folded in so the card is findable by
@@ -125,6 +137,8 @@ export type ProviderAuthModalProps = {
    * "Custom provider" entry.
    */
   onConnectCustomProvider?: (input: CustomProviderConnectInput) => Promise<string | void>;
+  /** 正在查看或编辑的本地模型组；为空时保持新增流程。 */
+  customProviderDraft?: CustomProviderInput | null;
   onSubmitOAuth: (
     providerId: string,
     methodIndex: number,
@@ -155,6 +169,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
   const [customForm, setCustomForm] = useState(EMPTY_CUSTOM_FORM);
   const [customIdEdited, setCustomIdEdited] = useState(false);
+  const [customProviderEditing, setCustomProviderEditing] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const providerPollRef = useRef<number | null>(null);
@@ -257,9 +272,20 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     () => parseCustomProviderModels(customForm.models),
     [customForm.models],
   );
+  const hasCustomProviderDraft = Boolean(props.customProviderDraft);
+  const isViewingCustomProvider = hasCustomProviderDraft && !customProviderEditing;
+  const isEditingCustomProvider = hasCustomProviderDraft && customProviderEditing;
   const customProviderId = customIdEdited
     ? customForm.providerId
     : normalizeCustomProviderId(customForm.name);
+  const customProviderIdHint = hasCustomProviderDraft
+    ? t("providers.custom_id_edit_hint")
+    : normalizeCustomProviderId(customProviderId) !== customProviderId.trim() &&
+        customProviderId.trim()
+      ? t("providers.custom_id_normalized_hint", {
+          id: normalizeCustomProviderId(customProviderId),
+        })
+      : t("providers.custom_id_hint");
 
   const showCustomEntry = useMemo(() => {
     if (!customEntryEnabled) return false;
@@ -320,6 +346,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setOauthBrowserOpened(false);
     setCustomForm(EMPTY_CUSTOM_FORM);
     setCustomIdEdited(false);
+    setCustomProviderEditing(false);
   };
 
   const stopProviderPolling = () => {
@@ -350,6 +377,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       resetState();
     }
   }, [props.open]);
+
+  useEffect(() => {
+    if (!props.open || !props.customProviderDraft) return;
+    setCustomForm(customProviderFormFromInput(props.customProviderDraft));
+    setCustomIdEdited(true);
+    setCustomProviderEditing(false);
+    setLocalError(null);
+    setView("custom");
+  }, [props.customProviderDraft, props.open]);
 
   useEffect(() => {
     if (!props.open || resolvedView !== "list") return;
@@ -645,7 +681,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onConnectCustomProvider({ ...input, apiKey: customForm.apiKey });
-      toast.success(t("providers.custom_connected_toast", { name: input.name }), {
+      const successKey = isEditingCustomProvider
+        ? "providers.custom_updated_toast"
+        : "providers.custom_connected_toast";
+      toast.success(t(successKey, { name: input.name }), {
         description: t("providers.custom_connected_models", { count: input.models.length }),
       });
       props.onClose();
@@ -681,6 +720,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
+    if (resolvedView === "custom" && hasCustomProviderDraft) {
+      handleClose();
+      return;
+    }
+
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
@@ -714,7 +758,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const submittingLabel = () => {
     if (!props.submitting) return null;
     if (resolvedView === "api") return t("providers.status_saving_api_key");
-    if (resolvedView === "custom") return t("providers.custom_submitting_status");
+    if (resolvedView === "custom") {
+      return t(isEditingCustomProvider
+        ? "providers.custom_edit_submitting_status"
+        : "providers.custom_submitting_status");
+    }
     if (resolvedView === "cloud") return t("providers.status_connecting_org_provider");
     if (resolvedView === "oauth-code") return t("providers.status_verifying_code");
     if (resolvedView === "oauth-auto") return t("providers.status_waiting_oauth");
@@ -1012,14 +1060,22 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-medium text-gray-12">
-                        {t("providers.custom_title")}
+                        {t(hasCustomProviderDraft
+                          ? isEditingCustomProvider
+                            ? "providers.custom_edit_title"
+                            : "providers.custom_details_title"
+                          : "providers.custom_title")}
                       </div>
                       <div className="text-xs text-gray-10 mt-1">
-                        {t("providers.custom_subtitle")}
+                        {t(hasCustomProviderDraft
+                          ? isEditingCustomProvider
+                            ? "providers.custom_edit_subtitle"
+                            : "providers.custom_details_subtitle"
+                          : "providers.custom_subtitle")}
                       </div>
                     </div>
                     <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      {t("common.back")}
+                      {t(hasCustomProviderDraft ? "common.close" : "common.back")}
                     </Button>
                   </div>
 
@@ -1034,20 +1090,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     }}
                     autoComplete="off"
                     spellCheck={false}
-                    disabled={actionDisabled}
+                    disabled={actionDisabled || isViewingCustomProvider}
                   />
 
                   <TextInput
                     label={t("providers.custom_id_label")}
                     placeholder="my-gateway"
-                    hint={
-                      normalizeCustomProviderId(customProviderId) !== customProviderId.trim() &&
-                      customProviderId.trim()
-                        ? t("providers.custom_id_normalized_hint", {
-                            id: normalizeCustomProviderId(customProviderId),
-                          })
-                        : t("providers.custom_id_hint")
-                    }
+                    hint={customProviderIdHint}
                     value={customProviderId}
                     onChange={(event) => {
                       const providerId = event.currentTarget.value;
@@ -1058,7 +1107,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     autoComplete="off"
                     autoCapitalize="off"
                     spellCheck={false}
-                    disabled={actionDisabled}
+                    disabled={actionDisabled || hasCustomProviderDraft}
                   />
 
                   <TextInput
@@ -1074,24 +1123,27 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     autoComplete="off"
                     autoCapitalize="off"
                     spellCheck={false}
-                    disabled={actionDisabled}
+                    disabled={actionDisabled || isViewingCustomProvider}
                   />
 
-                  <TextInput
-                    label={t("providers.api_key_label")}
-                    type="password"
-                    placeholder="sk-..."
-                    value={customForm.apiKey}
-                    onChange={(event) => {
-                      const apiKey = event.currentTarget.value;
-                      setCustomForm((current) => ({ ...current, apiKey }));
-                      if (localError) setLocalError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    disabled={actionDisabled}
-                  />
+                  {!isViewingCustomProvider ? (
+                    <TextInput
+                      label={t("providers.api_key_label")}
+                      type="password"
+                      placeholder="sk-..."
+                      hint={isEditingCustomProvider ? t("providers.custom_api_key_keep_hint") : undefined}
+                      value={customForm.apiKey}
+                      onChange={(event) => {
+                        const apiKey = event.currentTarget.value;
+                        setCustomForm((current) => ({ ...current, apiKey }));
+                        if (localError) setLocalError(null);
+                      }}
+                      autoComplete="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      disabled={actionDisabled}
+                    />
+                  ) : null}
 
                   <label className="block">
                     <div className="mb-1 text-xs font-medium text-dls-secondary">
@@ -1109,7 +1161,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       autoComplete="off"
                       autoCapitalize="off"
                       spellCheck={false}
-                      disabled={actionDisabled}
+                      disabled={actionDisabled || isViewingCustomProvider}
                       className="w-full resize-y rounded-lg bg-dls-surface px-3 py-2 font-mono text-xs text-dls-text placeholder:text-dls-secondary border border-dls-border shadow-sm focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
                     />
                     <div className="mt-1 text-xs text-dls-secondary">
@@ -1131,7 +1183,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       }}
                       autoComplete="off"
                       spellCheck={false}
-                      disabled={actionDisabled}
+                      disabled={actionDisabled || isViewingCustomProvider}
                     />
                     <TextInput
                       label={t("providers.custom_output_limit_label")}
@@ -1145,7 +1197,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       }}
                       autoComplete="off"
                       spellCheck={false}
-                      disabled={actionDisabled}
+                      disabled={actionDisabled || isViewingCustomProvider}
                     />
                   </div>
                   <div className="text-[11px] text-gray-9">
@@ -1156,24 +1208,39 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div className="text-[11px] text-gray-9">
                       {t("providers.custom_storage_note")}
                     </div>
-                    <Button
-                      onClick={() => void handleCustomSubmit()}
-                      disabled={
-                        actionDisabled ||
-                        !customProviderId.trim() ||
-                        !customForm.baseUrl.trim() ||
-                        customModels.length === 0
-                      }
-                    >
-                      {props.submitting ? (
-                        <>
-                          <Loader2 className="size-4 animate-spin" />
-                          {t("providers.custom_submitting")}
-                        </>
-                      ) : (
-                        t("providers.custom_submit")
-                      )}
-                    </Button>
+                    {isViewingCustomProvider ? (
+                      <Button
+                        onClick={() => {
+                          setCustomProviderEditing(true);
+                          setLocalError(null);
+                        }}
+                      >
+                        {t("common.edit")}
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => void handleCustomSubmit()}
+                        disabled={
+                          actionDisabled ||
+                          !customProviderId.trim() ||
+                          !customForm.baseUrl.trim() ||
+                          customModels.length === 0
+                        }
+                      >
+                        {props.submitting ? (
+                          <>
+                            <Loader2 className="size-4 animate-spin" />
+                            {t(isEditingCustomProvider
+                              ? "providers.custom_edit_submitting"
+                              : "providers.custom_submitting")}
+                          </>
+                        ) : (
+                          t(isEditingCustomProvider
+                            ? "providers.custom_edit_submit"
+                            : "providers.custom_submit")
+                        )}
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : null}

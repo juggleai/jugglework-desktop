@@ -63,6 +63,10 @@ import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import {
+  customProviderInputFromProvider,
+  type CustomProviderInput,
+} from "@/react-app/domains/connections/provider-auth/custom-provider-config";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
@@ -440,6 +444,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
   const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
+  const providerDisplayCacheRef = useRef(new Map<string, ProviderListItem>());
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
@@ -460,6 +465,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // in-flight provider so the row can show progress instead of looking inert.
   const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
+  const [editingLocalProvider, setEditingLocalProvider] = useState<CustomProviderInput | null>(null);
   const [reconnectingProviderId, setReconnectingProviderId] = useState<string | null>(null);
   const [providerDisconnectError, setProviderDisconnectError] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
@@ -729,6 +735,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
+  useEffect(() => {
+    for (const provider of providers) {
+      providerDisplayCacheRef.current.set(provider.id.trim().toLowerCase(), provider);
+    }
+  }, [providers]);
+
   const juggleworkServerStatusForMcp = juggleworkServerSnapshot.juggleworkServerStatus;
   useEffect(() => {
     if (juggleworkServerStatusForMcp !== "connected") return;
@@ -816,6 +828,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
 
+    setEditingLocalProvider(null);
     void providerAuthStore.openProviderAuthModal();
   }, [checkDesktopRestriction, providerAuthStore, restrictionNotice]);
 
@@ -1680,26 +1693,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const disabledProviderIdSet = new Set(
     disabledProviders.map((id) => id.trim().toLowerCase()).filter(Boolean),
   );
-  const connectedProviders = providers.flatMap((provider) =>
-    providerConnectedIdSet.has(provider.id) &&
-    provider.id.trim().toLowerCase() !== "jugglework" &&
-    !disabledProviderIdSet.has(provider.id.trim().toLowerCase())
-      ? [{
-          id: provider.id,
-          name: provider.name ?? provider.id,
-          source: provider.source,
-        }]
-      : [],
-  );
-  // Providers a Disconnect parked in `disabled_providers`. They are dropped
-  // from the engine's provider list, so the id is all we have to show — and it
-  // is the only way back for a provider declared in the user's OpenCode config.
-  // Ones the org itself blocks stay hidden; reconnecting them would be undone
-  // by the next desktop-restriction sync. TIPS: everything in this list got
-  // there because the user disconnected a provider they had configured, so
-  // judge it as `source: "config"` — that applies the `allowZenModel` and
-  // `allowCustomProviders` policies without running it past the cloud catalog,
-  // which can never list a locally configured provider.
+  // Providers a Disconnect parked in `disabled_providers` are dropped from
+  // the engine list. Keep their last known metadata so the same row can remain
+  // visible while only its connection state and actions change.
+  // TIPS：首次加载时可能只有 provider id，此时仍合并进主列表，避免断开项
+  // 被移动到独立区域；下一次连接后会用引擎返回的完整信息刷新缓存。
   const reconnectableDisabledProviderIds = disabledProviders
     .map((id) => id.trim())
     .filter(
@@ -1712,6 +1710,43 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           providerSource: "config",
         }),
     );
+  const retainedDisconnectedProviderIds = Array.from(new Set([
+    ...reconnectableDisabledProviderIds,
+    ...(reconnectingProviderId ? [reconnectingProviderId] : []),
+  ]));
+  const providerRows = new Map<string, {
+    id: string;
+    name: string;
+    source?: "env" | "api" | "config" | "custom";
+    connected: boolean;
+  }>();
+  for (const provider of providers) {
+    const normalizedId = provider.id.trim().toLowerCase();
+    if (!normalizedId || normalizedId === "jugglework") continue;
+    const isConnected =
+      providerConnectedIdSet.has(provider.id) && !disabledProviderIdSet.has(normalizedId);
+    if (!isConnected && !disabledProviderIdSet.has(normalizedId)) continue;
+    providerRows.set(normalizedId, {
+      id: provider.id,
+      name: provider.name ?? provider.id,
+      source: provider.source,
+      connected: isConnected,
+    });
+  }
+  for (const providerId of retainedDisconnectedProviderIds) {
+    const normalizedId = providerId.toLowerCase();
+    if (providerRows.has(normalizedId)) continue;
+    const cached = providerDisplayCacheRef.current.get(normalizedId);
+    providerRows.set(normalizedId, {
+      id: cached?.id ?? providerId,
+      name: cached?.name ?? providerId,
+      source: cached?.source ?? "config",
+      connected: false,
+    });
+  }
+  const connectedProviders = Array.from(providerRows.values()).toSorted((left, right) =>
+    left.name.localeCompare(right.name),
+  );
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "jugglework-cloud",
@@ -2183,6 +2218,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectError={providerDisconnectError}
             onOpenProviderAuth={handleOpenProviderAuth}
+            onEditLocalProvider={async (providerId) => {
+              if (checkDesktopRestriction({ restriction: "allowCustomProviders" })) {
+                restrictionNotice.show({
+                  title: "Editing custom providers is disabled",
+                  message: "Your organization administrator has disabled custom providers.",
+                });
+                return;
+              }
+              const provider = providers.find((item) => item.id === providerId) ??
+                providerDisplayCacheRef.current.get(providerId.trim().toLowerCase());
+              const draft = provider ? customProviderInputFromProvider(provider) : null;
+              if (!draft) {
+                setProviderDisconnectError(t("providers.custom_edit_unsupported"));
+                return;
+              }
+              setProviderDisconnectError(null);
+              setEditingLocalProvider(draft);
+              providerAuthStore.openCustomProviderModal();
+            }}
             onDisconnectProvider={async (providerId) => {
               if (disconnectingProviderId) return;
               setDisconnectingProviderId(providerId);
@@ -2213,6 +2267,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 if (typeof message === "string" && message.trim()) {
                   setConfigActionStatus(message);
                 }
+                providerDisplayCacheRef.current.delete(providerId.trim().toLowerCase());
                 return true;
               } catch (error) {
                 setProviderDisconnectError(
@@ -2231,7 +2286,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             canDeleteProvider={(provider) =>
               provider.source === "config" || provider.source === "custom"
             }
-            disabledProviderIds={reconnectableDisabledProviderIds}
             reconnectingProviderId={reconnectingProviderId}
             onReconnectProvider={async (providerId) => {
               if (reconnectingProviderId) return;
@@ -2697,10 +2751,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSelect={providerAuthStore.startProviderAuth}
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onConnectCustomProvider={providerAuthStore.connectCustomProvider}
+        customProviderDraft={editingLocalProvider}
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        onClose={() => providerAuthStore.closeProviderAuthModal()}
+        onClose={() => {
+          setEditingLocalProvider(null);
+          providerAuthStore.closeProviderAuthModal();
+        }}
       />
       <CreateWorkspaceModal
         open={createWorkspaceOpen}

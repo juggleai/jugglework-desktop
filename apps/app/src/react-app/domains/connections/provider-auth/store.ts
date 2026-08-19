@@ -498,7 +498,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     importedCloudProvidersWorkspaceKey = currentWorkspaceKey();
   };
 
-  const readProjectConfigFile = async () => {
+  const readProviderConfigFile = async (scope: "project" | "global") => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
@@ -506,7 +506,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await resolveJuggleWorkConfigTarget("read");
 
     if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
-      return await juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, "project");
+      return await juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, scope);
     }
 
     if (hasJuggleWorkTarget) {
@@ -514,13 +514,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      return await readOpencodeConfig("project", root);
+      return await readOpencodeConfig(scope, root);
     }
 
     return null;
   };
 
-  const writeProjectConfigFile = async (content: string) => {
+  const writeProviderConfigFile = async (
+    scope: "project" | "global",
+    content: string,
+  ) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
@@ -530,7 +533,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       const result = await juggleworkClient.writeOpencodeConfigFile(
         juggleworkWorkspaceId,
-        "project",
+        scope,
         content,
       ) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
@@ -544,7 +547,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await writeOpencodeConfig("project", root, content) as { ok: boolean; stderr?: string; stdout?: string };
+      const result = await writeOpencodeConfig(scope, root, content) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
@@ -553,6 +556,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     return false;
   };
+
+  const readProjectConfigFile = () => readProviderConfigFile("project");
+  const writeProjectConfigFile = (content: string) =>
+    writeProviderConfigFile("project", content);
+  const readGlobalConfigFile = () => readProviderConfigFile("global");
+  const writeGlobalConfigFile = (content: string) =>
+    writeProviderConfigFile("global", content);
 
   /**
    * Upsert/delete cloud-managed provider entries in the workspace's runtime
@@ -1485,31 +1495,37 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   /**
-   * Write a user-declared provider block. The workspace `opencode.jsonc` is the
-   * owner whenever we can reach it — the user wrote this provider themselves,
-   * so it should stay hand-editable and travel with the workspace. Only when
-   * there is no config file to edit (a workspace served without the config API)
-   * does it fall back to the runtime config the JuggleWork server merges in.
+   * 将用户本地添加的模型组写入全局 OpenCode 配置，使所有工作区共享。
+   *
+   * TIPS：旧版本把自定义模型组写进项目配置。全局写入成功后必须清理
+   * 当前项目中的同名配置，否则项目级配置会继续覆盖刚保存的全局值。
    */
   const writeCustomProviderConfig = async (
     providerId: string,
     config: ReturnType<typeof buildCustomProviderConfig>,
   ) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (configFile) {
-      const raw = configFile.content?.trim()
-        ? configFile.content
-        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
-      const next = formatConfigWithCustomProvider(raw, providerId, config);
-      if (!configsAreSemanticallyEqual(raw, next)) {
-        await writeProjectConfigFile(next);
-      }
-      return;
+    const globalConfigFile = (await readGlobalConfigFile()) as { content?: string } | null;
+    if (!globalConfigFile) {
+      throw new Error(t("providers.global_config_unavailable"));
     }
 
-    await patchRuntimeProviders({
-      [providerId]: config as unknown as Record<string, unknown>,
-    });
+    const globalRaw = globalConfigFile.content?.trim()
+      ? globalConfigFile.content
+      : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+    const nextGlobal = formatConfigWithCustomProvider(globalRaw, providerId, config);
+    if (!configsAreSemanticallyEqual(globalRaw, nextGlobal)) {
+      await writeGlobalConfigFile(nextGlobal);
+    }
+
+    const projectConfigFile = (await readProjectConfigFile()) as { content?: string } | null;
+    if (!projectConfigFile?.content?.trim()) return;
+    const nextProject = formatConfigWithoutCustomProvider(
+      projectConfigFile.content,
+      providerId,
+    );
+    if (!configsAreSemanticallyEqual(projectConfigFile.content, nextProject)) {
+      await writeProjectConfigFile(nextProject);
+    }
   };
 
   /**
@@ -1571,30 +1587,39 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  const removeCustomProviderConfig = async (providerId: string) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (configFile) {
+  const removeCustomProviderConfigFrom = async (
+    scope: "project" | "global",
+    providerId: string,
+  ) => {
+    const configFile = (await readProviderConfigFile(scope)) as { content?: string } | null;
+    if (configFile?.content?.trim()) {
       const raw = configFile.content?.trim()
         ? configFile.content
         : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
       const next = formatConfigWithoutCustomProvider(raw, providerId);
       if (!configsAreSemanticallyEqual(raw, next)) {
-        await writeProjectConfigFile(next);
+        await writeProviderConfigFile(scope, next);
       }
-      return;
     }
-
-    // Custom providers fall back to the runtime provider map when a workspace
-    // has no editable project config. Mirror that ownership during deletion.
-    await patchRuntimeProviders({ [providerId]: null });
   };
 
-  const assertWorkspaceOwnsProviderConfig = async (providerId: string) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (!configFile) return;
-    const parsed = parse(configFile.content ?? "") as Record<string, unknown> | undefined;
-    const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
-    if (!Object.prototype.hasOwnProperty.call(configuredProviders, providerId)) {
+  const removeCustomProviderConfig = async (providerId: string) => {
+    await removeCustomProviderConfigFrom("global", providerId);
+    // 同时清理旧版本遗留在当前项目中的同名模型组。
+    await removeCustomProviderConfigFrom("project", providerId);
+  };
+
+  const assertLocalConfigOwnsProvider = async (providerId: string) => {
+    const configFiles = await Promise.all([
+      readGlobalConfigFile(),
+      readProjectConfigFile(),
+    ]) as Array<{ content?: string } | null>;
+    const isConfiguredLocally = configFiles.some((configFile) => {
+      const parsed = parse(configFile?.content ?? "") as Record<string, unknown> | undefined;
+      const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
+      return Object.prototype.hasOwnProperty.call(configuredProviders, providerId);
+    });
+    if (!isConfiguredLocally) {
       throw new Error(t("providers.delete_not_workspace_owned"));
     }
   };
@@ -1618,7 +1643,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
-      await assertWorkspaceOwnsProviderConfig(resolved);
+      await assertLocalConfigOwnsProvider(resolved);
       try {
         await removeProviderAuthCredentials(resolved);
       } catch (error) {
@@ -2255,6 +2280,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  /**
+   * 直接打开本地模型组详情，不依赖提供商认证方式加载。
+   *
+   * TIPS：详情数据已经由当前 provider 列表提供。若继续复用新增连接前的
+   * 认证加载，认证接口异常会导致点击本地模型组后没有任何可见反馈。
+   */
+  function openCustomProviderModal() {
+    mutateState((current) => ({
+      ...current,
+      providerAuthModalOpen: true,
+      providerAuthBusy: false,
+      providerAuthError: null,
+      providerAuthPreferredProviderId: null,
+      providerAuthReturnFocusTarget: "none",
+    }));
+  }
+
   function closeProviderAuthModal(optionsArg?: { restorePromptFocus?: boolean }) {
     const shouldFocusPrompt =
       optionsArg?.restorePromptFocus ?? state.providerAuthReturnFocusTarget === "composer";
@@ -2431,6 +2473,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     deleteProvider,
     ensureProjectProviderDisabledState,
     openProviderAuthModal,
+    openCustomProviderModal,
     closeProviderAuthModal,
   };
 }

@@ -28,6 +28,7 @@ type ConnectedProvider = {
   id: string;
   name: string;
   source?: "env" | "api" | "config" | "custom";
+  connected?: boolean;
 };
 
 export type AiSettingsViewProps = {
@@ -40,6 +41,8 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   onDeleteProvider: (providerId: string) => boolean | Promise<boolean>;
+  /** 点击本地模型组并打开编辑表单。 */
+  onEditLocalProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
   canDeleteProvider: (provider: ConnectedProvider) => boolean;
   deletingProviderId: string | null;
@@ -47,7 +50,6 @@ export type AiSettingsViewProps = {
    * Provider IDs parked in `disabled_providers`. They stay declared in the
    * user's OpenCode config, so Disconnect must be undoable from here.
    */
-  disabledProviderIds?: string[];
   reconnectingProviderId?: string | null;
   onReconnectProvider?: (providerId: string) => void | Promise<void>;
   /** Set of local provider IDs that were imported from cloud. */
@@ -93,140 +95,150 @@ export function AiSettingsView(props: AiSettingsViewProps) {
 
         {props.connectedProviders.length > 0 ? (
           <div className="space-y-2">
-            {props.connectedProviders.map((provider) => (
-              <LayoutSectionItem
-                key={provider.id}
-                className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <ProviderIcon providerId={provider.id} size={20} className="text-dls-text" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
-                      {props.cloudProviderIds?.has(provider.id) ? (
-                        <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
-                          {t("settings.provider_source_cloud")}
+            {props.connectedProviders.map((provider) => {
+              const isCloudProvider = props.cloudProviderIds?.has(provider.id) === true;
+              const isLocalProvider = provider.source === "config" && !isCloudProvider;
+              const isConnected = provider.connected !== false;
+              return (
+                <LayoutSectionItem
+                  key={provider.id}
+                  className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
+                >
+                  <button
+                    type="button"
+                    className={`flex min-w-0 items-center gap-3 rounded-lg text-left ${
+                      isLocalProvider ? "cursor-pointer hover:opacity-80" : "cursor-default"
+                    }`}
+                    onClick={() => {
+                      if (isLocalProvider) void props.onEditLocalProvider(provider.id);
+                    }}
+                    disabled={!isLocalProvider}
+                  >
+                    <ProviderIcon
+                      providerId={provider.id}
+                      size={20}
+                      className={isConnected ? "text-dls-text" : "text-muted-foreground"}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
+                        {isCloudProvider ? (
+                          <span className="shrink-0 rounded-full border border-blue-6 bg-blue-2 px-2 py-0.5 text-[10px] font-medium text-blue-11">
+                            {t("settings.provider_source_cloud")}
+                          </span>
+                        ) : null}
+                        {isLocalProvider ? (
+                          <span className="shrink-0 rounded-full border border-gray-6 bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                            {t("settings.provider_source_local")}
+                          </span>
+                        ) : null}
+                        <span
+                          className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                            isConnected
+                              ? "border-green-6 bg-green-2 text-green-11"
+                              : "border-gray-6 bg-gray-3 text-gray-11"
+                          }`}
+                        >
+                          {t(isConnected
+                            ? "settings.provider_status_connected"
+                            : "settings.provider_status_disconnected")}
                         </span>
-                      ) : null}
-                      {provider.source === "env" ? (
-                        <span className="shrink-0 rounded-full border border-amber-6 bg-amber-2 px-2 py-0.5 text-[10px] font-medium text-amber-11">
-                          {providerSourceLabel("env")}
-                        </span>
+                        {provider.source === "env" ? (
+                          <span className="shrink-0 rounded-full border border-amber-6 bg-amber-2 px-2 py-0.5 text-[10px] font-medium text-amber-11">
+                            {providerSourceLabel("env")}
+                          </span>
+                        ) : null}
+                      </div>
+                      {!provider.id.startsWith("lpr_") ? (
+                        <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
                       ) : null}
                     </div>
-                    {!provider.id.startsWith("lpr_") ? (
-                      <div className="truncate font-mono text-xs text-muted-foreground">{provider.id}</div>
-                    ) : null}
-                  </div>
-                </div>
-                {props.cloudProviderIds?.has(provider.id) ? (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      const cloudProviderId = props.cloudProviderImportIds?.[provider.id];
-                      if (cloudProviderId) void props.onRemoveCloudProvider?.(provider.id, cloudProviderId);
-                    }}
-                    disabled={
-                      props.busy ||
-                      props.providerAuthBusy ||
-                      props.disconnectingProviderId !== null ||
-                      !props.cloudProviderImportIds?.[provider.id]
-                    }
-                  >
-                    {props.disconnectingProviderId === provider.id
-                      ? t("settings.disconnecting")
-                      : t("settings.disconnect")}
-                  </Button>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-2">
+                  </button>
+                  {isCloudProvider ? (
                     <Button
                       variant="outline"
-                      onClick={() => void props.onDisconnectProvider(provider.id)}
+                      onClick={() => {
+                        const cloudProviderId = props.cloudProviderImportIds?.[provider.id];
+                        if (cloudProviderId) void props.onRemoveCloudProvider?.(provider.id, cloudProviderId);
+                      }}
                       disabled={
                         props.busy ||
                         props.providerAuthBusy ||
                         props.disconnectingProviderId !== null ||
-                        props.deletingProviderId !== null ||
-                        !props.canDisconnectProvider(provider)
+                        !props.cloudProviderImportIds?.[provider.id]
                       }
                     >
                       {props.disconnectingProviderId === provider.id
                         ? t("settings.disconnecting")
-                        : props.canDisconnectProvider(provider)
-                          ? t("settings.disconnect")
-                          : t("settings.managed_by_env")}
+                        : t("settings.disconnect")}
                     </Button>
-                    {props.canDeleteProvider(provider) ? (
-                      <Button
-                        variant="destructive"
-                        onClick={() => setDeleteCandidate(provider)}
-                        disabled={
-                          props.busy ||
-                          props.providerAuthBusy ||
-                          props.disconnectingProviderId !== null ||
-                          props.deletingProviderId !== null
-                        }
-                      >
-                        {props.deletingProviderId === provider.id
-                          ? t("providers.deleting")
-                          : t("providers.delete_permanently")}
-                      </Button>
-                    ) : null}
-                  </div>
-                )}
-              </LayoutSectionItem>
-            ))}
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {isLocalProvider ? (
+                        <Button
+                          variant="outline"
+                          onClick={() => void props.onEditLocalProvider(provider.id)}
+                          disabled={props.busy || props.providerAuthBusy}
+                        >
+                          {t("settings.provider_view_details")}
+                        </Button>
+                      ) : null}
+                      {isConnected ? (
+                        <Button
+                          variant="outline"
+                          onClick={() => void props.onDisconnectProvider(provider.id)}
+                          disabled={
+                            props.busy ||
+                            props.providerAuthBusy ||
+                            props.disconnectingProviderId !== null ||
+                            props.deletingProviderId !== null ||
+                            !props.canDisconnectProvider(provider)
+                          }
+                        >
+                          {props.disconnectingProviderId === provider.id
+                            ? t("settings.disconnecting")
+                            : props.canDisconnectProvider(provider)
+                              ? t("settings.disconnect")
+                              : t("settings.managed_by_env")}
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          onClick={() => void props.onReconnectProvider?.(provider.id)}
+                          disabled={
+                            props.busy ||
+                            props.providerAuthBusy ||
+                            Boolean(props.reconnectingProviderId) ||
+                            props.deletingProviderId !== null
+                          }
+                        >
+                          {props.reconnectingProviderId === provider.id
+                            ? t("settings.reconnecting_provider")
+                            : t("settings.reconnect_provider")}
+                        </Button>
+                      )}
+                      {props.canDeleteProvider(provider) ? (
+                        <Button
+                          variant="destructive"
+                          onClick={() => setDeleteCandidate(provider)}
+                          disabled={
+                            props.busy ||
+                            props.providerAuthBusy ||
+                            props.disconnectingProviderId !== null ||
+                            props.deletingProviderId !== null
+                          }
+                        >
+                          {props.deletingProviderId === provider.id
+                            ? t("providers.deleting")
+                            : t("providers.delete_permanently")}
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                </LayoutSectionItem>
+              );
+            })}
           </div>
-        ) : null}
-
-        {props.disabledProviderIds && props.disabledProviderIds.length > 0 ? (
-          <LayoutSectionItem className="gap-2 rounded-2xl border border-dashed border-dls-border px-4 py-3">
-            <div>
-              <div className="text-sm font-medium text-dls-text">
-                {t("settings.disabled_providers_title")}
-              </div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {t("settings.disabled_providers_desc")}
-              </div>
-            </div>
-            <div className="space-y-2">
-              {props.disabledProviderIds.map((providerId) => (
-                <div key={providerId} className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <ProviderIcon providerId={providerId} size={20} className="text-muted-foreground" />
-                    <span className="truncate font-mono text-xs text-muted-foreground">{providerId}</span>
-                  </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => void props.onReconnectProvider?.(providerId)}
-                    disabled={
-                      props.busy ||
-                      props.providerAuthBusy ||
-                      Boolean(props.reconnectingProviderId)
-                    }
-                  >
-                    {props.reconnectingProviderId === providerId
-                      ? t("settings.reconnecting_provider")
-                      : t("settings.reconnect_provider")}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => setDeleteCandidate({ id: providerId, name: providerId, source: "config" })}
-                    disabled={
-                      props.busy ||
-                      props.providerAuthBusy ||
-                      props.disconnectingProviderId !== null ||
-                      props.deletingProviderId !== null
-                    }
-                  >
-                    {props.deletingProviderId === providerId
-                      ? t("providers.deleting")
-                      : t("providers.delete_permanently")}
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </LayoutSectionItem>
         ) : null}
 
         {props.providerConnectError ? (

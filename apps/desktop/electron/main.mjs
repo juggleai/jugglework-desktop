@@ -1268,6 +1268,8 @@ function configHomePath() {
 }
 
 function globalOpencodeRoot() {
+  const configuredRoot = process.env.OPENCODE_CONFIG_DIR?.trim();
+  if (configuredRoot) return configuredRoot;
   return path.join(configHomePath(), "opencode");
 }
 

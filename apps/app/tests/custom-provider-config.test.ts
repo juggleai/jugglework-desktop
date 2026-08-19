@@ -4,6 +4,7 @@ import en from "../src/i18n/locales/en";
 import zh from "../src/i18n/locales/zh";
 import {
   buildCustomProviderConfig,
+  customProviderInputFromProvider,
   formatConfigWithCustomProvider,
   formatConfigWithoutCustomProvider,
   normalizeCustomProviderId,
@@ -59,6 +60,53 @@ describe("normalizeCustomProviderInput", () => {
     expect(input.name).toBe("my-relay");
     expect(input.baseUrl).toBe("https://api.example.com/v1");
     expect(input.models).toEqual([{ id: "gpt-4o", name: "gpt-4o" }]);
+  });
+});
+
+describe("customProviderInputFromProvider", () => {
+  test("builds an editable draft from an OpenAI-compatible local model group", () => {
+    expect(customProviderInputFromProvider({
+      id: "my-relay",
+      name: "My Relay",
+      options: { baseURL: "https://api.example.com/v1" },
+      models: {
+        "gpt-4o": {
+          id: "gpt-4o",
+          name: "GPT-4o",
+          api: { npm: "@ai-sdk/openai-compatible" },
+          limit: { context: 200000, output: 32000 },
+        },
+      },
+    })).toEqual({
+      providerId: "my-relay",
+      name: "My Relay",
+      baseUrl: "https://api.example.com/v1",
+      models: [{ id: "gpt-4o", name: "GPT-4o" }],
+      contextLimit: 200000,
+      outputLimit: 32000,
+    });
+  });
+
+  test("rejects model groups the shared form cannot edit without data loss", () => {
+    expect(customProviderInputFromProvider({
+      id: "mixed-limits",
+      name: "Mixed limits",
+      options: { baseURL: "https://api.example.com/v1" },
+      models: {
+        first: {
+          id: "first",
+          name: "First",
+          api: { npm: "@ai-sdk/openai-compatible" },
+          limit: { context: 1000, output: 100 },
+        },
+        second: {
+          id: "second",
+          name: "Second",
+          api: { npm: "@ai-sdk/openai-compatible" },
+          limit: { context: 2000, output: 100 },
+        },
+      },
+    })).toBe(null);
   });
 });
 
