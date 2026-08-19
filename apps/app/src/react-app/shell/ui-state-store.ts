@@ -325,4 +325,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 
 syncApplicationMenuVisible(useUiStateStore.getState().applicationMenuVisible);
 
-useUiStateStore.subscribe((state) => persistUiState(state));
+useUiStateStore.subscribe((state, previousState) => {
+  // TIPS: 拖动侧栏时宽度会按动画帧更新，只在松手退出 resizing 后持久化最终值，
+  // 避免高频 localStorage 写入阻塞主线程。
+  if (state.workspaceLeftSidebarResizing) return;
+
+  const persistedStateUnchanged =
+    state.applicationMenuVisible === previousState.applicationMenuVisible &&
+    state.workspaceLeftSidebarWidth === previousState.workspaceLeftSidebarWidth &&
+    state.workspaceRightSidebarExpanded === previousState.workspaceRightSidebarExpanded &&
+    state.workspaceRightSidebarExpandedWidth === previousState.workspaceRightSidebarExpandedWidth;
+  if (!previousState.workspaceLeftSidebarResizing && persistedStateUnchanged) return;
+
+  persistUiState(state);
+});

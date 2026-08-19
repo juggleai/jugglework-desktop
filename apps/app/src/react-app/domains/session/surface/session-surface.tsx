@@ -1836,7 +1836,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onScroll={sessionScroll.handleScroll}
           // Extra top padding while the find bar is open so it never covers
           // the first message (short transcripts cannot scroll it clear).
-          className={`session-scrollbar absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
+          className={`subtle-scrollbar absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
         >
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
@@ -1926,7 +1926,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         />
       </div>
 
-      <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2">
+      <div ref={composerShellRef} className="shrink-0 px-0 pb-2">
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"
@@ -1999,7 +1999,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         mcpStatuses={toolMcpStatuses}
         listImportedPlugins={listImportedPlugins}
         importedPlugins={toolImportedPlugins}
-        onOpenSettingsSection={props.onOpenSettingsSection}
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
@@ -2013,7 +2012,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0)}
           topAccessory={
             props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0 ? (
               <div>

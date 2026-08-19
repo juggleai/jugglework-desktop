@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
@@ -46,8 +46,7 @@ type PastedTextChip = {
   lines: number;
 };
 
-type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
-type ToolMenuSection = "agents" | "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
+type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
@@ -99,7 +98,6 @@ type ComposerProps = {
   mcpStatuses?: McpStatusMap;
   listImportedPlugins?: () => Promise<CloudImportedPlugin[]>;
   importedPlugins?: CloudImportedPlugin[];
-  onOpenSettingsSection?: (section: ToolMenuSettingsSection) => void;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: ComposerMentionKind, value: string) => void;
@@ -119,7 +117,6 @@ type ComposerProps = {
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
-  compactTopSpacing?: boolean;
   topAccessory?: ReactNode;
 };
 
@@ -472,9 +469,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [mentionOpenNext, mentionQuery]);
 
   useEffect(() => {
-    if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
+    if (!agentMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
+  }, [agentMenuOpen, props.listAgents]);
 
   useEffect(() => {
     if (!showAgentPicker) setAgentMenuOpen(false);
@@ -977,13 +974,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     insertCapabilityTag(selection.kind, entry.name, selection.prompt);
   };
 
-  const openToolMenuSettings = () => {
-    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills" || toolMenuSection === "mcps"
-      ? toolMenuSection
-      : "plugins";
-    props.onOpenSettingsSection?.(section);
-  };
-
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
     if (activeMenu === "slash") {
@@ -1322,7 +1312,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
+      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1335,7 +1325,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="max-w-[800px] mx-auto">
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)] ring-1 ring-black/[0.035] transition-[border-color,box-shadow,ring-color] dark:ring-white/[0.055] ${panelRoundedClass}`}
+          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[0_10px_30px_rgba(15,23,42,0.1)] transition-[border-color,box-shadow] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)] ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1555,10 +1545,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                   </button>
                   {toolMenuOpen ? (
                     <div className="absolute bottom-full left-0 z-40 mb-3 w-[min(calc(100vw-2.5rem),34rem)] overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
-                        <div className="border-r border-dls-border bg-gray-2/30 p-2">
+                      <div className="grid h-48 grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
+                        <div className="subtle-scrollbar overflow-y-auto border-r border-dls-border bg-gray-2/30 p-2">
                           {([
-                            ["agents", t("composer.agents_label")],
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
@@ -1587,56 +1576,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           ))}
                         </div>
-                        <div className="h-60 min-w-0 overflow-x-hidden overflow-y-auto p-2">
-                          <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
-                              onClick={() => {
-                                setToolMenuOpen(false);
-                                openToolMenuSettings();
-                              }}
-                            >
-                              <Settings size={12} />
-                              {t("composer.configure")}
-                            </button>
-                          </div>
-                          {toolMenuSection === "agents" ? (
-                            <div className="grid min-w-0 gap-1">
-                              <button
-                                type="button"
-                                className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                onClick={() => applyAgentSelection(null)}
-                              >
-                                <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                <div className="min-w-0 flex-1 truncate text-xs font-semibold" title={t("composer.default_agent")}>
-                                  {t("composer.default_agent")}
-                                </div>
-                                {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                              </button>
-                              {nonDefaultAgents.map((agent) => {
-                                const active = props.selectedAgent === agent.name;
-                                const displayName = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
-                                return (
-                                  <button
-                                    key={agent.name}
-                                    type="button"
-                                    className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                    onClick={() => applyAgentSelection(agent.name)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold" title={displayName}>{displayName}</div>
-                                      {agent.description ? (
-                                        <div className="truncate text-xs text-gray-10" title={agent.description}>{agent.description}</div>
-                                      ) : null}
-                                    </div>
-                                    {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
+                        <div className="subtle-scrollbar m-2 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto">
                           {toolMenuSection === "commands" ? (
                             toolCommandItems.length > 0 ? (
                               <div className="grid min-w-0 gap-1">

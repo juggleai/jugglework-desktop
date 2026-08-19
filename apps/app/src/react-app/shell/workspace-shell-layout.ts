@@ -79,13 +79,29 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       setLeftSidebarResizing(true);
       const initialX = event.clientX;
       const initialWidth = leftSidebarWidth;
+      let pendingWidth = initialWidth;
+      let animationFrame: number | null = null;
+
+      // TIPS: pointermove 频率可能远高于屏幕刷新率，将状态更新合并到动画帧，
+      // 避免会话壳在一次绘制前重复渲染多次。
+      const flushPendingWidth = () => {
+        animationFrame = null;
+        setLeftSidebarWidth(pendingWidth);
+      };
 
       const handleMove = (moveEvent: PointerEvent) => {
         const delta = moveEvent.clientX - initialX;
-        setLeftSidebarWidth(clampNumber(initialWidth + delta, minLeftWidth, maxLeftWidth));
+        pendingWidth = clampNumber(initialWidth + delta, minLeftWidth, maxLeftWidth);
+        if (animationFrame !== null) return;
+        animationFrame = window.requestAnimationFrame(flushPendingWidth);
       };
 
       const handleStop = () => {
+        if (animationFrame !== null) {
+          window.cancelAnimationFrame(animationFrame);
+          animationFrame = null;
+        }
+        setLeftSidebarWidth(pendingWidth);
         stopLeftSidebarResize();
       };
 
@@ -93,6 +109,10 @@ export function useWorkspaceShellLayout(options: WorkspaceShellLayoutOptions) {
       window.addEventListener("pointerup", handleStop);
       window.addEventListener("pointercancel", handleStop);
       dragCleanupRef.current = () => {
+        if (animationFrame !== null) {
+          window.cancelAnimationFrame(animationFrame);
+          animationFrame = null;
+        }
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleStop);
         window.removeEventListener("pointercancel", handleStop);

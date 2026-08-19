@@ -1162,8 +1162,7 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
                 <span className="min-w-0 truncate text-[13px] font-normal text-sidebar-foreground">
                   {t("session_management.archived_label")}
                 </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{entries.length}</span>
-                <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
               </button>
             }
           />
