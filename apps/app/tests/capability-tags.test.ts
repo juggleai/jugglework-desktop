@@ -10,10 +10,11 @@ import {
   parseCapabilityInstruction,
   parseComposerCapabilityToken,
   replaceComposerCapabilityTokens,
+  resolveMcpCapabilitySelection,
   type ComposerCapabilityKind,
 } from "../src/react-app/domains/session/surface/composer/capability-tags";
 
-const KINDS: ComposerCapabilityKind[] = ["skill", "cloud-skill", "extension", "mcp"];
+const KINDS: ComposerCapabilityKind[] = ["skill", "cloud-skill", "extension", "mcp", "cloud-mcp"];
 
 describe("草稿 token", () => {
   test("每种能力的 token 都能被分词并解析回来", () => {
@@ -30,6 +31,14 @@ describe("草稿 token", () => {
       kind: "cloud-skill",
       name: "wechat",
     });
+  });
+
+  test("cloud-mcp 与本地 mcp 使用不同 token", () => {
+    expect(parseComposerCapabilityToken("[cloud-mcp GitHub MCP]")).toEqual({
+      kind: "cloud-mcp",
+      name: "GitHub MCP",
+    });
+    expect(parseComposerCapabilityToken("[mcp pgsql]")).toEqual({ kind: "mcp", name: "pgsql" });
   });
 
   test("非 token 片段返回 null", () => {
@@ -65,12 +74,52 @@ describe("能力指令", () => {
       .toBe("Use [mcp vision] for this request (call its vision_* tools directly).");
   });
 
+  test("Cloud MCP 兜底指令只经网关搜索和执行，不虚构本地工具", () => {
+    const prompt = fallbackCapabilityPrompt("cloud-mcp", "GitHub MCP");
+    expect(prompt).toContain("[cloud-mcp GitHub MCP]");
+    expect(prompt).toContain("jugglework-cloud_search_capabilities");
+    expect(prompt).toContain("jugglework-cloud_execute_capability");
+    expect(prompt).toContain("exact capability name returned by that search");
+    expect(prompt).not.toContain("GitHub MCP_*");
+  });
+
+  test("MCP 选择按 Connect 远程承载分流", () => {
+    const cloud = resolveMcpCapabilitySelection({
+      name: "GitHub MCP",
+      origin: "jugglework-connect",
+      config: { type: "remote" },
+      connectCapabilityName: "mcp:mcpconn_123",
+    });
+    expect(cloud.kind).toBe("cloud-mcp");
+    expect(cloud.prompt).toContain("capability hint mcp:mcpconn_123");
+    expect(cloud.prompt).toContain("exact capability name returned by that search");
+    expect(cloud.prompt).not.toContain("GitHub MCP_*");
+
+    const local = resolveMcpCapabilitySelection({
+      name: "pgsql",
+      origin: "local",
+      config: { type: "remote" },
+    });
+    expect(local).toEqual({
+      kind: "mcp",
+      prompt: "Use [mcp pgsql] for this request (call its pgsql_* tools directly).",
+    });
+
+    const connectStdio = resolveMcpCapabilitySelection({
+      name: "vision",
+      origin: "jugglework-connect",
+      config: { type: "local" },
+    });
+    expect(connectStdio.kind).toBe("mcp");
+  });
+
   test("整句指令能被分词切出并解析回原始种类与名称", () => {
     const cases: Array<[ComposerCapabilityKind, string, string | undefined]> = [
       ["skill", "customize-opencode", undefined],
       ["cloud-skill", "wechat-article-writer", "find it with jugglework-cloud_search_capabilities in the Public marketplace, then call jugglework-cloud_execute_capability with the exact capability name wechat"],
       ["extension", "Computer Use", undefined],
       ["mcp", "vision", capabilityDefaultDetail("mcp", "vision")],
+      ["cloud-mcp", "GitHub MCP", capabilityDefaultDetail("cloud-mcp", "GitHub MCP")],
     ];
     for (const [kind, name, detail] of cases) {
       const sentence = buildCapabilityInstruction(kind, name, detail);

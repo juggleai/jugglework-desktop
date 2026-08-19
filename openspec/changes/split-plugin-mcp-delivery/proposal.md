@@ -11,6 +11,8 @@
 - **插件详情按组件展开**：逐行列出每个 MCP 的承载位置与就绪状态，操作入口跟着行走（云端待授权 → 去授权；桌面端未安装 → 安装到工作区），取代整插件一个按钮。
 - **导入按 transport 分流**：`installPlugin` 只把 `desktop` 组件写进工作区 opencode 配置，`cloud` 组件继续走云端网关；卸载与安装记录不再假设每个 MCP 组件都有本地文件。
 - **消费服务端新增的 `cloudReadiness.components`**：有该字段时以它为准；缺失时回退到已解析的配置对象 payload 自行推断，保证旧服务端下行为不退化。
+- **会话调用按承载方式分流**：选择 Cloud 托管 MCP 时生成 `search_capabilities → execute_capability` 指令并使用独立 `cloud-mcp` token；只有引擎已注册的本地 MCP 才提示直接调用 `<server>_*` 工具。
+- **会话能力列表保持紧凑**：弹层沿用现有默认宽度且不产生横向滚动；Agent、指令、技能、MCP、Extensions 与插件文件的标题和描述均限制在右侧内容列内，超长文本单行省略并保留完整悬浮提示。
 - **BREAKING**: 无。`cloudReadiness.components` 为新增可选字段；已导入插件的本地文件记录格式不变，仅新安装的 `cloud` 组件不再落地本地配置。
 
 ## Capabilities
@@ -31,6 +33,7 @@
   - `apps/app/src/react-app/domains/settings/connect-cloud-readiness.ts`：新增组件级投递与就绪度的解析与聚合函数。
   - `apps/app/src/app/lib/den.ts` / `den-types.ts`：`DenPluginCloudReadiness` 增加可选 `components`，解析器对未知字段保持宽容。
   - `apps/app/src/react-app/domains/session/surface/connect-capability-inventory.ts`：`remoteMcpSpecs` 已识别 `mcp` / `mcpServers` 双格式，改为优先采用服务端下发的 components。
+  - `apps/app/src/react-app/domains/session/surface/composer/capability-tags.ts` / `composer.tsx`：区分本地与 Cloud MCP token、调用指令及列表描述布局。
   - `apps/server/src/cloud-plugins.ts`：`pluginMcpConfigsFromPayload` 与导入/卸载链路按 transport 分流。
 - 受影响服务端契约：依赖 jugglework-server 新增 `cloudReadiness.components`（见该仓库 `openspec/changes/add-plugin-mcp-delivery-readiness`）；缺失时桌面端自行推断。
 - i18n：新增「需在桌面端安装」「部分需在桌面端安装」及组成明细文案。

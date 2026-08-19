@@ -179,6 +179,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
         origin: "jugglework-connect",
         marketplaceName: "Team tools",
         pluginName: "Support kit",
+        connectCapabilityName: "mcp:connection_1",
         config: {
           type: "remote",
           url: "https://support.example.test/mcp",
@@ -194,7 +195,7 @@ describe("assigned JuggleWork Connect capability inventory", () => {
       client: {
         listMcpConnections: async () => [
           {
-            id: "github",
+            id: "mcpconn_github",
             name: "GitHub",
             url: "https://api.githubcopilot.com/mcp/",
             authType: "oauth",
@@ -216,16 +217,17 @@ describe("assigned JuggleWork Connect capability inventory", () => {
 
     expect(inventory.mcpServers).toEqual([
       {
-        id: "jugglework-connect:connection:github",
+        id: "jugglework-connect:connection:mcpconn_github",
         name: "GitHub",
         config: {
           type: "remote",
           url: "https://api.githubcopilot.com/mcp/",
         },
         origin: "jugglework-connect",
+        connectCapabilityName: "mcp:mcpconn_github",
       },
     ]);
-    expect(inventory.mcpStatuses["jugglework-connect:connection:github"]).toEqual({ status: "connected" });
+    expect(inventory.mcpStatuses["jugglework-connect:connection:mcpconn_github"]).toEqual({ status: "connected" });
   });
 
   test("only uses marketplaces visible to the member and ignores inactive objects", async () => {

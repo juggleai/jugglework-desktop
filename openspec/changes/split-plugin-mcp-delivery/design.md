@@ -50,12 +50,19 @@ transport，还要看来源：调用方通过 `cloudGatewayHosted` 显式声明�
 **D5：文案与配色沿用既有状态色板。**
 「在云端运行」= 就绪绿；「部分需在桌面端安装」/「需在桌面端安装」= 中性/提示色；未就绪（需登录、需管理员配置、未安装）= 琥珀；真实故障保留红色。避免为新概念引入新色。
 
+**D6：会话能力 token 显式区分 `mcp` 与 `cloud-mcp`。**
+`origin === "jugglework-connect" && config.type === "remote"` 的条目由 Cloud 网关承载，选择后必须先通过 `jugglework-cloud_search_capabilities` 搜索所需工具，再用搜索结果返回的完整名称调用 `jugglework-cloud_execute_capability`。其他已连接 MCP 沿用直接调用 `<server>_*` 工具的路径。Cloud 条目使用独立 `cloud-mcp` token，使草稿恢复或登记 prompt 丢失时仍能选择正确兜底，不把能力前缀误当成可执行工具名。
+
+**D7：所有会话能力条目服从右侧内容列宽。**
+弹层沿用现有默认宽度，右侧内容列显式禁止横向溢出。Agent、指令、技能、MCP、Extensions 与插件文件的行容器、正文列和标题行统一允许收缩；标题、描述、市场归属、URL 或命令以内容列可用宽度为边界保持单行并显示省略号，不允许长文本撑开弹层或产生横向滚动。完整值通过 `title` 保留，鼠标悬浮仍可查看。
+
 ## Risks / Trade-offs
 
 - **旧服务端上的推断精度有限** → `cloud` 组件在缺 `components` 时无法区分「需登录」与「需管理员配置」，统一显示为待补齐；服务端升级后自动细化。
 - **组件命名与本地 server 名不一致导致误判"未安装"** → 已有 `mergeConnectLocalMcpServers` 的双重匹配（server 名 + 启动命令逐项比对）兜底；仍改名且改命令的极端情况按未安装处理，属保守方向。
 - **已安装插件的历史记录含 cloud 组件文件** → 分流只作用于新安装；卸载仍按已有 `files` 记录清理，不遗留。必要时在下一次"同步到工作区"时自然收敛。
 - **混合插件的可用性表达仍是概括** → 用户要看具体哪一个组件缺什么，必须进详情；接受这一层跳转，换取列表可读性。
+- **Cloud MCP 的 capability 前缀不是最终工具名** → 前缀仅作为搜索提示，执行阶段必须采用 `search_capabilities` 返回的完整名称，避免调用不存在的伪工具。
 
 ## Migration Plan
 

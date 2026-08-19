@@ -18,8 +18,8 @@ import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
   buildCapabilityInstruction,
-  capabilityDefaultDetail,
   composerCapabilityToken,
+  resolveMcpCapabilitySelection,
   type ComposerCapabilityKind,
 } from "./capability-tags";
 import {
@@ -973,11 +973,8 @@ export function ReactSessionComposer(props: ComposerProps) {
    */
   const applyMcpSelection = (entry: McpServerEntry, status: McpServerStatus) => {
     if (status !== "connected") return;
-    insertCapabilityTag(
-      "mcp",
-      entry.name,
-      buildCapabilityInstruction("mcp", entry.name, capabilityDefaultDetail("mcp", entry.name)),
-    );
+    const selection = resolveMcpCapabilitySelection(entry);
+    insertCapabilityTag(selection.kind, entry.name, selection.prompt);
   };
 
   const openToolMenuSettings = () => {
@@ -1590,7 +1587,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           ))}
                         </div>
-                        <div className="h-60 overflow-y-auto p-2">
+                        <div className="h-60 min-w-0 overflow-x-hidden overflow-y-auto p-2">
                           <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
                             <button
                               type="button"
@@ -1605,29 +1602,34 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           </div>
                           {toolMenuSection === "agents" ? (
-                            <div className="grid gap-1">
+                            <div className="grid min-w-0 gap-1">
                               <button
                                 type="button"
-                                className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
+                                className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
                                 onClick={() => applyAgentSelection(null)}
                               >
                                 <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
+                                <div className="min-w-0 flex-1 truncate text-xs font-semibold" title={t("composer.default_agent")}>
+                                  {t("composer.default_agent")}
+                                </div>
                                 {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
                               </button>
                               {nonDefaultAgents.map((agent) => {
                                 const active = props.selectedAgent === agent.name;
+                                const displayName = agent.name.charAt(0).toUpperCase() + agent.name.slice(1);
                                 return (
                                   <button
                                     key={agent.name}
                                     type="button"
-                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
+                                    className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
                                     onClick={() => applyAgentSelection(agent.name)}
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
-                                      {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
+                                      <div className="truncate text-xs font-semibold" title={displayName}>{displayName}</div>
+                                      {agent.description ? (
+                                        <div className="truncate text-xs text-gray-10" title={agent.description}>{agent.description}</div>
+                                      ) : null}
                                     </div>
                                     {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
                                   </button>
@@ -1637,27 +1639,34 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "commands" ? (
                             toolCommandItems.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {toolCommandItems.map((command) => (
                                   <button
                                     key={command.id}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyCommandSelection(command)}
                                   >
                                     <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={`/${command.name}`}>
+                                          /{command.name}
+                                        </div>
                                         {command.origin === "jugglework-connect" ? (
                                           <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
                                             {t("composer.source_cloud")}
                                           </span>
                                         ) : null}
                                       </div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                      {command.description ? (
+                                        <div className="truncate text-xs text-gray-10" title={command.description}>{command.description}</div>
+                                      ) : null}
                                       {command.origin === "jugglework-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
+                                        <div
+                                          className="truncate text-[10px] text-gray-9"
+                                          title={[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
+                                        >
                                           {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
                                         </div>
                                       ) : null}
@@ -1673,7 +1682,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "skills" ? (
                             skillMenuItems.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {skillMenuItems.map((skill) => (
                                   <button
                                     key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
@@ -1683,8 +1692,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div
+                                          className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11"
+                                          title={`/${skillMenuSlashCommandName(skill)}`}
+                                        >
                                           /{skillMenuSlashCommandName(skill)}
                                         </div>
                                         {isLocalCapability(skill.origin) ? (
@@ -1693,9 +1705,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                                           </span>
                                         ) : null}
                                       </div>
-                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
+                                      {skill.description ? (
+                                        <div className="truncate text-xs text-gray-10" title={skill.description}>{skill.description}</div>
+                                      ) : null}
                                       {skill.origin === "jugglework-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
+                                        <div
+                                          className="truncate text-[10px] text-gray-9"
+                                          title={[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
+                                        >
                                           {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
                                         </div>
                                       ) : null}
@@ -1711,10 +1728,17 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "mcps" ? (
                             activeMcpItems.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {activeMcpItems.map(({ entry, status, detail }) => {
                                   // 只有已就绪（connected）的 MCP 可以被选中插入；其余保持只读展示。
                                   const selectable = status === "connected";
+                                  const description = entry.origin === "jugglework-connect"
+                                    ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                      || entry.config.url
+                                      || "Remote MCP"
+                                    : entry.config.type === "remote"
+                                      ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+                                      : entry.config.command?.join(" ") ?? "Local MCP";
                                   return (
                                   <button
                                     key={entry.id ?? entry.name}
@@ -1722,15 +1746,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                                     disabled={!selectable}
                                     aria-disabled={!selectable}
                                     title={selectable ? undefined : mcpStatusTooltip(status, detail)}
-                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
+                                    className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
                                       selectable ? "hover:bg-gray-2/70" : "cursor-default opacity-60"
                                     }`}
                                     onClick={() => applyMcpSelection(entry, status)}
                                   >
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">{entry.name}</div>
                                         <div className="flex shrink-0 items-center gap-1">
                                           {isLocalCapability(entry.origin) ? (
                                             <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
@@ -1745,14 +1769,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                                           </span>
                                         </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "jugglework-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
+                                      <div
+                                        className="w-full truncate text-xs text-gray-10"
+                                        title={description}
+                                      >
+                                        {description}
                                       </div>
                                     </div>
                                   </button>
@@ -1767,25 +1788,27 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "extensions" ? (
                             composerExtensions.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {composerExtensions.map((entry) => (
                                   <button
                                     key={entry.id ?? entry.serverName ?? entry.name}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyExtensionSelection(entry)}
                                   >
                                     <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
                                       {extensionIcon(entry, 16)}
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={entry.name}>
+                                          {entry.name}
+                                        </div>
                                         {entry.defaultEnabled ? (
                                           <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
                                         ) : null}
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.description}</div>
+                                      <div className="truncate text-xs text-gray-10" title={entry.description}>{entry.description}</div>
                                     </div>
                                   </button>
                                 ))}
@@ -1796,18 +1819,20 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {activePlugin ? (
                             activePlugin.files.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {activePlugin.files.map((file) => (
                                   <button
                                     key={`${file.configObjectId}:${file.path}`}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyPluginFileSelection(file)}
                                   >
                                     <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{file.title}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={file.title}>
+                                          {file.title}
+                                        </div>
                                         <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
                                           {formatPluginObjectType(file.objectType)}
                                         </span>

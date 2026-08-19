@@ -7,12 +7,12 @@
  */
 
 /** 能力标签的种类：本地技能、云端（未安装）技能、扩展、MCP 服务。 */
-export type ComposerCapabilityKind = "skill" | "cloud-skill" | "extension" | "mcp";
+export type ComposerCapabilityKind = "skill" | "cloud-skill" | "extension" | "mcp" | "cloud-mcp";
 
-const CAPABILITY_KINDS: ComposerCapabilityKind[] = ["skill", "cloud-skill", "extension", "mcp"];
+const CAPABILITY_KINDS: ComposerCapabilityKind[] = ["skill", "cloud-skill", "extension", "mcp", "cloud-mcp"];
 
-const CAPABILITY_TOKEN_RE = /^\[(cloud-skill|skill|extension|mcp) (.+)\]$/;
-const CAPABILITY_TOKEN_GLOBAL_RE = /\[(cloud-skill|skill|extension|mcp) ([^\]]+)\]/g;
+const CAPABILITY_TOKEN_RE = /^\[(cloud-skill|cloud-mcp|skill|extension|mcp) (.+)\]$/;
+const CAPABILITY_TOKEN_GLOBAL_RE = /\[(cloud-skill|cloud-mcp|skill|extension|mcp) ([^\]]+)\]/g;
 
 /**
  * 草稿分词正则：附件、折叠粘贴、能力标签、@mention。
@@ -21,7 +21,7 @@ const CAPABILITY_TOKEN_GLOBAL_RE = /\[(cloud-skill|skill|extension|mcp) ([^\]]+)
  * 否则两边对同一段草稿的理解会漂移。
  */
 export const COMPOSER_TOKEN_SPLIT_RE =
-  /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[(?:cloud-skill|skill|extension|mcp) [^\]]+\]|@[^\s@]+)/;
+  /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[(?:cloud-skill|cloud-mcp|skill|extension|mcp) [^\]]+\]|@[^\s@]+)/;
 
 /**
  * 构造能力标签 token
@@ -85,6 +85,8 @@ export function composerCapabilityTagTitlePrefix(kind: ComposerCapabilityKind) {
   switch (kind) {
     case "cloud-skill":
       return "Skill (cloud)";
+    case "cloud-mcp":
+      return "MCP (cloud)";
     case "extension":
       return "Extension";
     case "mcp":
@@ -131,9 +133,9 @@ export function buildCapabilityInstruction(
  * 因此 buildCapabilityInstruction 的 detail 里不能出现右括号。
  */
 export const CAPABILITY_INSTRUCTION_RE = new RegExp(
-  "((?:Load |Use )\\[(?:cloud-skill|skill|extension|mcp) [^\\]]+\\]"
+  "((?:Load |Use )\\[(?:cloud-skill|cloud-mcp|skill|extension|mcp) [^\\]]+\\]"
   + "(?: and follow its instructions| for this request)(?: \\([^)]*\\))?\\."
-  + "|\\[(?:cloud-skill|skill|extension|mcp) [^\\]]+\\])",
+  + "|\\[(?:cloud-skill|cloud-mcp|skill|extension|mcp) [^\\]]+\\])",
 );
 
 /**
@@ -143,7 +145,7 @@ export const CAPABILITY_INSTRUCTION_RE = new RegExp(
  */
 export function parseCapabilityInstruction(segment: string) {
   const match = segment.match(
-    /^(?:(?:Load|Use) )?\[(cloud-skill|skill|extension|mcp) ([^\]]+)\](?:(?: and follow its instructions| for this request)(?: \([^)]*\))?\.)?$/,
+    /^(?:(?:Load|Use) )?\[(cloud-skill|cloud-mcp|skill|extension|mcp) ([^\]]+)\](?:(?: and follow its instructions| for this request)(?: \([^)]*\))?\.)?$/,
   );
   if (!match) return null;
   return { kind: match[1] as ComposerCapabilityKind, name: match[2]!.trim() };
@@ -170,5 +172,42 @@ export function fallbackCapabilityPrompt(kind: ComposerCapabilityKind, name: str
 export function capabilityDefaultDetail(kind: ComposerCapabilityKind, name: string) {
   // MCP 的工具在模型侧注册为 `<服务名>_<工具名>`，点名这个前缀才能真正把它用起来。
   if (kind === "mcp") return `call its ${name}_* tools directly`;
+  // Cloud MCP 不会注册 `<服务名>_*` 工具；兜底也必须经统一网关发现并执行精确能力名。
+  if (kind === "cloud-mcp") {
+    return `find the needed tool with jugglework-cloud_search_capabilities using the connection name ${name}, `
+      + "then call jugglework-cloud_execute_capability with the exact capability name returned by that search";
+  }
   return undefined;
+}
+
+/**
+ * 生成 MCP 选择后登记到草稿的能力种类与完整指令。
+ *
+ * TIPS: Connect 下发的 stdio MCP 同样带 `origin: jugglework-connect`，因此不能只看来源；
+ * 只有 Connect 的 remote 条目才由 Cloud 网关承载。能力提示只参与搜索，不能直接执行。
+ * @param entry MCP 条目的调用路由信息
+ * @returns 可插入草稿的能力种类与完整指令
+ */
+export function resolveMcpCapabilitySelection(entry: {
+  name: string;
+  origin?: "local" | "jugglework-connect";
+  config: { type: "remote" | "local" };
+  connectCapabilityName?: string;
+}): { kind: "mcp" | "cloud-mcp"; prompt: string } {
+  if (entry.origin !== "jugglework-connect" || entry.config.type !== "remote") {
+    return {
+      kind: "mcp",
+      prompt: buildCapabilityInstruction("mcp", entry.name, capabilityDefaultDetail("mcp", entry.name)),
+    };
+  }
+
+  const capabilityHint = entry.connectCapabilityName
+    ? ` and capability hint ${entry.connectCapabilityName}`
+    : "";
+  const detail = `find the needed tool with jugglework-cloud_search_capabilities using the connection name ${entry.name}${capabilityHint}, `
+    + "then call jugglework-cloud_execute_capability with the exact capability name returned by that search";
+  return {
+    kind: "cloud-mcp",
+    prompt: buildCapabilityInstruction("cloud-mcp", entry.name, detail),
+  };
 }

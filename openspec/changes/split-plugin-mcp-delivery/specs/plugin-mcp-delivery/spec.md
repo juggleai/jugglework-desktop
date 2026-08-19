@@ -44,6 +44,8 @@
 ### Requirement: 会话 MCP 列表沿用组件粒度状态
 会话输入栏的 MCP 列表 SHALL 按 server 粒度展示云端能力，并沿用组件投递方式对应的状态口径：`desktop` 组件未安装时标为「未安装」、已安装时并入本地条目并沿用其真实运行状态；`cloud` 组件按云端就绪度标注。同一个 MCP MUST NOT 同时以能力目录条目与本地配置条目重复出现。
 
+用户选择 MCP 后，系统 SHALL 按承载方式生成模型可执行的调用指令：`origin` 为 `jugglework-connect` 且配置类型为 `remote` 的 Cloud MCP MUST 使用 `jugglework-cloud_search_capabilities` 搜索，再以搜索结果返回的完整能力名调用 `jugglework-cloud_execute_capability`；本地已注册 MCP SHALL 直接调用 `<server>_*` 工具。Cloud MCP MUST 使用与本地 MCP 不同的草稿 token，使登记 prompt 丢失后的兜底仍保持 Cloud 调用路径。
+
 #### Scenario: 桌面端组件未安装
 - **WHEN** 插件的 `desktop` 组件未写入本工作区配置
 - **THEN** 列表以「未安装」标注该条目，且不呈现为运行故障
@@ -51,6 +53,29 @@
 #### Scenario: 桌面端组件已安装
 - **WHEN** 插件的 `desktop` 组件已写入本工作区配置
 - **THEN** 列表只保留本地条目，并带上市场与插件归属
+
+#### Scenario: 选择 Cloud 托管 MCP
+- **WHEN** 用户选择一个已连接、`origin` 为 `jugglework-connect` 且配置类型为 `remote` 的 MCP
+- **THEN** 草稿插入 `cloud-mcp` token，模型指令要求先搜索能力再执行搜索结果中的完整名称，且不声称存在 `<显示名>_*` 工具
+
+#### Scenario: 选择本地已注册 MCP
+- **WHEN** 用户选择一个由当前引擎直接注册的已连接 MCP
+- **THEN** 草稿插入 `mcp` token，模型指令提示直接调用该 server 的工具前缀
+
+#### Scenario: Cloud MCP 登记 prompt 丢失
+- **WHEN** 含 `cloud-mcp` token 的草稿恢复时找不到选择时登记的完整 prompt
+- **THEN** 兜底指令仍要求通过 JuggleWork Cloud 搜索和执行，不退化为本地工具调用
+
+### Requirement: 会话能力条目不撑开列表
+会话输入区域展开的能力列表 SHALL 沿用现有弹层默认宽度并禁止横向滚动。Agent、指令、技能、MCP、Extensions 与插件文件的标题和描述 SHALL 限制在右侧内容列的可用宽度内；超出宽度时 MUST 单行显示省略号，且 SHOULD 通过悬浮提示提供完整文本。
+
+#### Scenario: MCP 描述为超长 URL
+- **WHEN** MCP 条目的描述超过内容列宽度
+- **THEN** 弹层宽度保持不变且不出现横向滚动条，描述单行截断并显示省略号，悬浮时可查看完整值
+
+#### Scenario: 非技能能力包含超长文本
+- **WHEN** Agent、指令、Extensions 或插件文件的标题、描述或来源超过内容列宽度
+- **THEN** 对应文本在同一默认列宽内单行显示省略号，不撑开弹层且不产生横向滚动条
 
 ### Requirement: 安装按投递方式分流落盘
 安装**由 JuggleWork Connect 网关承载的组织云端插件**时，桌面端 SHALL 只把 `desktop` 组件写入工作区 opencode 配置；`cloud` 组件 MUST NOT 落地为本地 MCP 配置，继续经云端网关调用。安装记录 SHALL 只为实际落盘的组件生成文件条目，卸载与更新链路 MUST 容忍某个 MCP 组件没有对应本地文件。

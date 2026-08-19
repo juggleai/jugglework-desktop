@@ -230,9 +230,11 @@ function toMcpEntries(
     // stdio 型 MCP 由桌面端本地进程承载，云端就绪度对它没有意义：先标成「未安装」，
     // 装到工作区后由 mergeConnectLocalMcpServers 并入本地条目。
     const declared = serverComponents.get(spec.name);
+    const connection = matchingConnection(plugin, object, spec);
     const localOnly = declared
       ? declared.delivery === "desktop"
       : !spec.url && (spec.command?.length ?? 0) > 0;
+    const connectionId = declared?.connectionId ?? connection?.id;
     return {
       entry: {
         id,
@@ -244,14 +246,16 @@ function toMcpEntries(
         ...(localOnly ? { localServerName: spec.name } : {}),
         marketplaceName: marketplace.name,
         pluginName: plugin.name,
-        connectCapabilityName: marketplaceCapabilityName("mcp", object.id),
+        connectCapabilityName: connectionId
+          ? marketplaceCapabilityName("mcp", connectionId)
+          : marketplaceCapabilityName("mcp", object.id),
       },
       // 有组件明细就按组件自身判定；没有（旧服务端）才回落到插件级就绪度。
       status: localOnly
         ? { status: "not_installed" } satisfies McpStatus
         : declared
           ? cloudComponentStatus(declared)
-          : remoteMcpStatus(plugin, matchingConnection(plugin, object, spec)),
+          : remoteMcpStatus(plugin, connection),
     };
   });
 }
@@ -325,6 +329,7 @@ function toOrgMcpEntry(connection: DenExternalMcpConnection): { entry: McpServer
       name: connection.name,
       config: { type: "remote", url: connection.url },
       origin: "jugglework-connect",
+      connectCapabilityName: marketplaceCapabilityName("mcp", connection.id),
     },
     status,
   };

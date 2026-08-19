@@ -20,6 +20,11 @@
 - [x] 3.1 `connect-capability-inventory.ts` 的 `toMcpEntries` 改为消费 1.3 的判定结果，`remoteMcpSpecs` 仅作为回退推断路径
 - [x] 3.2 校验 `mergeConnectLocalMcpServers` 与新判定的一致性：`desktop` 未安装 → `not_installed`，已安装 → 并入本地条目
 - [x] 3.3 补测：同一插件内 `cloud` + `desktop` 组件同时存在时，两条状态互不污染
+- [x] 3.4 能力标签新增 `cloud-mcp` token 与 Cloud 搜索/执行安全兜底，保持草稿解析、回填和消息折叠一致
+- [x] 3.5 Connect 远程 MCP 条目补齐连接名称与 capability 搜索提示，明确提示不是最终可执行工具名
+- [x] 3.6 `applyMcpSelection` 按 `origin + config.type` 分流本地/Cloud 指令，并让 MCP 描述在默认列宽内单行省略且不产生横向滚动
+- [x] 3.7 补测本地 MCP、市场 Cloud MCP、独立 org connection、Cloud fallback 与 token 往返
+- [x] 3.8 统一 Agent、指令、MCP、Extensions 与插件文件行的收缩链路，所有超长标题和描述在默认列宽内显示省略号
 
 ## 4. 安装分流
 
@@ -34,3 +39,4 @@
 - [x] 5.2 `apps/app` 与 `apps/server` 相关测试通过
 - [x] 5.3 用本地组织 `org_jugglework` 的「插件1」实测：服务端已返回 `desktop_only` + 一条 desktop 明细，桌面端据此展示
 - [x] 5.4 混合插件实测：`vision-plugin`（vision=stdio + gmail=remote）在渲染进程里跑通判定链路，聚合为 mixed(1 云端/1 需本地)、投递表述为 `mixed_partial_desktop`
+- [x] 5.5 App 类型检查、相关单测、OpenSpec 严格校验与生产构建通过
