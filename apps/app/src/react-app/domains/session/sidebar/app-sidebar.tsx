@@ -1148,18 +1148,22 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
     <SidebarGroup data-global-archived-sessions className="pb-1 pt-1">
       <SidebarGroupContent>
         <Collapsible open={open} onOpenChange={setExpanded} className="group/archived">
+          {/* TIPS: 与 WorkspaceHeader 同规格（h-10 / rounded-xl / px-2.5 / gap-1.5 / size-5 图标槽），
+              让「已归档」读起来是又一个可展开的分组，而不是一条另类的小标题。 */}
           <CollapsibleTrigger
             render={
               <button
                 type="button"
-                className="group/separator flex w-full cursor-pointer items-center gap-1.5 px-3 pb-1 pt-2.5 rounded transition-colors hover:bg-sidebar-accent/50"
+                className="group/separator relative flex h-10 w-full cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
               >
-                <Archive className="size-3 shrink-0 text-muted-foreground" />
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="relative flex size-5 shrink-0 items-center justify-center text-sidebar-foreground">
+                  <Archive className="size-4" strokeWidth={1.8} />
+                </span>
+                <span className="min-w-0 truncate text-[13px] font-normal text-sidebar-foreground">
                   {t("session_management.archived_label")}
                 </span>
-                <span className="text-[10px] tabular-nums text-muted-foreground/70">{entries.length}</span>
-                <ChevronRight className="ml-auto size-3.5 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{entries.length}</span>
+                <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
               </button>
             }
           />
@@ -1206,6 +1210,7 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
       forcedExpandedSessionIds={forcedExpandedSessionIds}
       isPinned={pinnedIds.has(session.id)}
       workspaceName={workspaceLabel(group.workspace)}
+      showWorkspaceIcon={false}
     />
   );
 }
@@ -1273,7 +1278,8 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "relative h-10 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
+        // TIPS: gap-1.5 + size-5 图标槽，让工作区名称贴近文件夹图标；名称起点与会话行标题对齐。
+        "relative h-10 gap-1.5 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
         "group-hover/workspace-header:bg-sidebar-accent/25",
       )}
       onClick={(event) => {
@@ -1282,7 +1288,7 @@ function WorkspaceHeader({
       }}
       aria-expanded={isExpanded}
     >
-      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-sidebar-foreground">
+      <span className="relative flex size-5 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-sidebar-foreground">
         {isExpanded ? (
           <FolderOpen className={cn("size-4.5", isLoading && "animate-pulse")} strokeWidth={1.8} />
         ) : (
@@ -1477,7 +1483,8 @@ function WorkspaceSidebarGroup({
             </div>
 
             <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden pt-0.5 transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-              <SidebarMenuSub className="ml-3 mt-0 gap-0.5 border-l-0 pb-1 pl-1 pt-0">
+              {/* TIPS: 不加左缩进，会话行的选中底色才能与工作区行左右对齐等宽（两者都是 x=80..315）。 */}
+              <SidebarMenuSub className="mt-0 gap-0.5 border-l-0 pb-1 pt-0">
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
@@ -2149,6 +2156,12 @@ type SessionMenuItemProps = {
   groupDraggable?: boolean;
   layoutDependency?: string;
   workspaceName?: string;
+  /**
+   * 是否在标题前显示工作区色点。默认跟随 workspaceName。
+   * TIPS: 「已归档」要求与工作区内的会话行长得完全一致，所以关掉色点；
+   * workspaceName 仍然保留，悬浮提示与无障碍标签照样能读出所属工作区。
+   */
+  showWorkspaceIcon?: boolean;
 };
 
 function SessionMenuItem({
@@ -2162,6 +2175,7 @@ function SessionMenuItem({
   groupDraggable = false,
   layoutDependency,
   workspaceName,
+  showWorkspaceIcon = Boolean(workspaceName),
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const unreadIds = useUnreadSessionIds();
@@ -2222,7 +2236,7 @@ function SessionMenuItem({
   const leading = (
     <>
       <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
-      {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
+      {showWorkspaceIcon ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
     </>
   );
 
