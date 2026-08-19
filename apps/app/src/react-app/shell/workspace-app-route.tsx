@@ -163,10 +163,16 @@ function WorkspaceAppRouteContent() {
         />
       </div>
 
+      {/*
+        TIPS: 隐藏态必须用 display:none，不能用 visibility:hidden。
+        设置页（尤其是「扩展」这类长页面）一旦滚动过，其滚动容器会被提升为独立合成层；
+        visibility:hidden 只是让它不可见，布局盒与合成层仍然保留，并且它是绝对定位、盖在
+        会话面板之上的。切回本地工作区时旧图层来不及失效，就会在工作区页面上残留「扩展」
+        页的内容。display:none 直接把它移出布局与合成，切换一帧到位。
+        组件本身仍然挂载（React 状态、路由解析、请求都不丢），只是不参与排版。
+      */}
       <div
-        className={settingsVisible
-          ? "visible absolute inset-0 z-10 bg-background"
-          : "invisible pointer-events-none absolute inset-0 z-0 bg-background"}
+        className={settingsVisible ? "absolute inset-0 z-10 bg-background" : "hidden"}
         aria-hidden={!settingsVisible || undefined}
         data-testid="workspace-settings-surface"
       >
