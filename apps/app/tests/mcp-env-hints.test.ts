@@ -134,6 +134,13 @@ describe("packageNameFromCommand", () => {
     expect(packageNameFromCommand(["npx", "-y"])).toBe("");
   });
 
+  test("解释器与脚本文件名不误判为包名", () => {
+    // `node server.mjs` 没有可查的 npm 包，返回 "node" 会去查一个不相干的包。
+    expect(packageNameFromCommand(["node", "server.mjs"])).toBe("");
+    expect(packageNameFromCommand(["python3", "main.py"])).toBe("");
+    expect(packageNameFromCommand(["bash", "start.sh"])).toBe("");
+  });
+
   test("绝对路径命令不误判为包名", () => {
     expect(packageNameFromCommand(["/usr/local/bin/my-server", "--flag"])).toBe("");
   });

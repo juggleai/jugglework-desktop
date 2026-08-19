@@ -38,7 +38,11 @@ const NOISE_KEYS = new Set([
 ]);
 
 /** 命令前导中需要跳过的运行器与其选项。 */
-const RUNNER_TOKENS = new Set(["npx", "bunx", "uvx", "pnpm", "npm", "yarn", "bun", "dlx", "exec", "run"]);
+const RUNNER_TOKENS = new Set([
+  "npx", "bunx", "uvx", "pnpm", "npm", "yarn", "bun", "dlx", "exec", "run",
+  // 解释器：`node server.mjs` 这类命令没有可查的 npm 包，跳过后由脚本名的扩展名兜住。
+  "node", "python", "python3", "deno", "ruby", "sh", "bash", "zsh",
+]);
 
 /**
  * 从 README 全文中提取 JSON 代码块内 `env` 对象的键。
@@ -128,7 +132,11 @@ const PASSTHROUGH_VERBS = new Set(["run", "exec", "start", "launch", "serve"]);
  * @param token 命令中的单个 token
  * @returns 规范化的包名；不像包名时返回空字符串
  */
+/** 脚本文件名不是包名——`server.mjs` 去 npm 查只会落空或查到不相干的包。 */
+const SCRIPT_EXTENSIONS = /\.(mjs|cjs|js|ts|mts|cts|py|sh|rb)$/i;
+
 function normalizePackageToken(token: string): string {
+  if (SCRIPT_EXTENSIONS.test(token)) return "";
   // 剥离版本后缀：foo@1.2.3 / @scope/foo@latest
   const scoped = token.startsWith("@");
   const atIndex = token.indexOf("@", scoped ? 1 : 0);

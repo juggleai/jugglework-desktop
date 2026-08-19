@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { needsRedaction, redactOpencodeConfigText } from "./workspace-archive-redaction.mjs";
 import path from "node:path";
 import zlib from "node:zlib";
 
@@ -251,8 +252,18 @@ export async function exportWorkspaceConfig({ workspace, outputPath }) {
 
   const files = [];
   const included = [];
+  // TIPS: MCP 凭据住在 opencode.json 里——文件名完全合法，靠 isSecretName 挡不住。
+  // 按结构剥离后再入包，并把剥离项写进 manifest，接收方才知道哪些值需要重填。
+  const redacted = [];
   for (const entry of entries) {
-    files.push({ name: entry.rel, data: await readFile(entry.absolute) });
+    if (needsRedaction(entry.rel)) {
+      const raw = await readFile(entry.absolute, "utf8");
+      const result = redactOpencodeConfigText(raw);
+      files.push({ name: entry.rel, data: result.text });
+      redacted.push(...result.removed.map((item) => `${entry.rel}#${item}`));
+    } else {
+      files.push({ name: entry.rel, data: await readFile(entry.absolute) });
+    }
     included.push(entry.rel);
   }
   files.push({
@@ -263,6 +274,7 @@ export async function exportWorkspaceConfig({ workspace, outputPath }) {
       workspace: { id: workspace.id, name: workspace.name, path: workspace.path },
       included,
       excluded,
+      redacted,
     }, null, 2)}\n`,
   });
   await writeZip(outputPath, files);
