@@ -1160,7 +1160,7 @@ export function SessionPage(props: SessionPageProps) {
             className="min-h-0 flex-1"
           >
             <ResizablePanel minSize="360px" className="min-w-0">
-              <main className="flex h-full min-w-0 flex-col overflow-hidden border-r border-border">
+              <main className="flex h-full min-w-0 flex-col overflow-hidden">
           <header className="z-10 flex h-10 shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar session-header">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
