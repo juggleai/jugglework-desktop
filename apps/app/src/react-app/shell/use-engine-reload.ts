@@ -33,6 +33,31 @@ function taskCreateUnavailableToastId(workspaceId: string) {
  */
 export const ACTIVATION_CONFIG_ECHO_GRACE_MS = 2500;
 
+/**
+ * Hard deadline for the best-effort refreshes that follow an engine reload
+ * (provider list + route state). Neither react-query refetches nor the
+ * OpenCode SDK carry a request timeout, so a single stalled active query
+ * would otherwise leave `reloadBusy` true forever — which wedges the session
+ * MCP maintenance loop in "checking" and the status bar in "Checking".
+ */
+export const ENGINE_RELOAD_REFRESH_DEADLINE_MS = 20_000;
+
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
 /** True when a polled reload event is made redundant by our own recent
  * activation. Only config-reason events are suppressed: the activation's
  * inline engine reload already applied the current on-disk state, so both
@@ -135,10 +160,10 @@ export function useEngineReload(input: UseEngineReloadInput) {
       restartedEngine = true;
     }
     if (restartedEngine) {
-      await refreshRouteState();
-      await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     } else {
-      await refreshProviderListQueries(getReactQueryClient());
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     setEngineReloadVersion((v) => v + 1);
     try {
@@ -147,7 +172,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
       // ignore browser event dispatch failures
     }
     if (!restartedEngine) {
-      await refreshRouteState();
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     toast.dismiss(taskCreateUnavailableToastId(workspaceId));
     toast.dismiss();

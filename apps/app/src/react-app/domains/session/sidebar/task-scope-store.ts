@@ -12,11 +12,21 @@ export type TaskScope = "local" | "remote";
 type TaskScopeStore = {
   scope: TaskScope;
   setScope: (scope: TaskScope) => void;
+  /** Last workspace visited per scope, so switching the rail scope returns
+   * the user to where they were instead of the first workspace in the list. */
+  lastWorkspaceByScope: Record<TaskScope, string | null>;
+  rememberWorkspace: (scope: TaskScope, workspaceId: string) => void;
 };
 
 export const useTaskScopeStore = create<TaskScopeStore>((set) => ({
   scope: "local",
   setScope: (scope) => set((current) => (current.scope === scope ? current : { scope })),
+  lastWorkspaceByScope: { local: null, remote: null },
+  rememberWorkspace: (scope, workspaceId) => set((current) => {
+    const id = workspaceId.trim();
+    if (!id || current.lastWorkspaceByScope[scope] === id) return current;
+    return { lastWorkspaceByScope: { ...current.lastWorkspaceByScope, [scope]: id } };
+  }),
 }));
 
 export function useTaskScope(): TaskScope {

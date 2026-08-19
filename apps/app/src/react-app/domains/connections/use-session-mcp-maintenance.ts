@@ -37,6 +37,49 @@ import {
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
+/**
+ * Watchdog margin: with valid inputs a maintenance run converges (ready /
+ * skipped / failed) well inside SESSION_MCP_MAINTENANCE_TIMEOUT_MS. If the
+ * status is still non-terminal past that plus this margin, something wedged
+ * the loop (e.g. a hung engine reload keeping engineReloadBusy true) and the
+ * status bar would otherwise show a perpetual, dishonest "Checking".
+ */
+export const SESSION_MCP_MAINTENANCE_STALL_MARGIN_MS = 30 * 1000;
+
+/**
+ * Pure watchdog decision: given how long the maintenance status has been
+ * non-terminal (idle/checking/retrying) and whether the run inputs are
+ * valid, produce the honest terminal state or null (keep waiting).
+ */
+export function resolveStalledMaintenanceState(input: {
+  status: SessionCloudMcpMaintenanceState["status"];
+  nonTerminalSince: number | null;
+  now: number;
+  inputsValid: boolean;
+}): { status: "failed"; issue: CloudMcpMaintenanceIssue } | null {
+  const { status, nonTerminalSince, now, inputsValid } = input;
+  if (status === "ready" || status === "skipped" || status === "failed") return null;
+  if (nonTerminalSince === null) return null;
+  if (now - nonTerminalSince <= SESSION_MCP_MAINTENANCE_TIMEOUT_MS + SESSION_MCP_MAINTENANCE_STALL_MARGIN_MS) {
+    return null;
+  }
+  return {
+    status: "failed",
+    issue: {
+      code: inputsValid
+        ? "cloud_mcp_maintenance_stalled"
+        : "cloud_mcp_maintenance_missing_runtime",
+      stage: "engine_delivery",
+      retryable: true,
+      recommendedAction: inputsValid
+        ? "Retry, then open Settings → Connect if the problem continues."
+        : "Reopen the workspace, then open Settings → Connect if the problem continues.",
+      message: inputsValid
+        ? "JuggleWork Connect checks stalled while the workspace engine was busy."
+        : "JuggleWork Connect checks could not run because the workspace runtime is unavailable.",
+    },
+  };
+}
 export const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 export const CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS = [1_000, 3_000];
 export const SESSION_MCP_RESUME_SEND_WAIT_TIMEOUT_MS = 5_000;
@@ -334,6 +377,7 @@ export function useSessionMcpMaintenance(input: {
   );
   const [settingsVersion, setSettingsVersion] = useState(0);
   const engineReloadEpochRef = useRef(0);
+  const nonTerminalSinceRef = useRef<number | null>(null);
   const previousEngineReloadBusyRef = useRef(Boolean(input.engineReloadBusy));
   if (input.engineReloadBusy && !previousEngineReloadBusyRef.current) {
     engineReloadEpochRef.current += 1;
@@ -355,7 +399,19 @@ export function useSessionMcpMaintenance(input: {
   useEffect(() => {
     if (input.engineReloadBusy) {
       setCloudMcpState(input.cloudSignedIn
-        ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
+        ? {
+            ...IDLE_CLOUD_MCP_MAINTENANCE_STATE,
+            status: "checking",
+            // Honest description while the reload owns the engine: this is a
+            // wait state, not an active check.
+            issue: {
+              code: "cloud_mcp_waiting_engine_reload",
+              stage: "engine_delivery",
+              retryable: true,
+              recommendedAction: "Waiting for the engine reload to finish.",
+              message: "Waiting for the engine reload to finish.",
+            },
+          }
         : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
       return;
     }
@@ -515,6 +571,46 @@ export function useSessionMcpMaintenance(input: {
     settingsVersion,
     input.workspaceId,
   ]);
+
+  // Track when the state last entered a non-terminal status (idle/checking/
+  // retrying). Terminal statuses clear it; the watchdog below uses the
+  // timestamp to distinguish "actively checking" from "wedged checking".
+  useEffect(() => {
+    const status = cloudMcpState.status;
+    if (status === "ready" || status === "skipped" || status === "failed") {
+      nonTerminalSinceRef.current = null;
+      return;
+    }
+    if (nonTerminalSinceRef.current === null) nonTerminalSinceRef.current = Date.now();
+  }, [cloudMcpState.status]);
+
+  // Watchdog: a signed-in workspace whose maintenance never converges must
+  // surface an honest failure instead of a perpetual "Checking" badge. Covers
+  // wedged engine reloads (engineReloadBusy stuck true stalls the loop) and
+  // missing runtimes (idle forever because inputs are invalid).
+  useEffect(() => {
+    if (!input.cloudSignedIn) return;
+    const inputsValid = Boolean(
+      input.client && input.opencodeClient && input.workspaceId?.trim() && input.directory.trim(),
+    );
+    const timer = window.setInterval(() => {
+      const stalled = resolveStalledMaintenanceState({
+        status: cloudMcpState.status,
+        nonTerminalSince: nonTerminalSinceRef.current,
+        now: Date.now(),
+        inputsValid,
+      });
+      if (!stalled) return;
+      nonTerminalSinceRef.current = Date.now();
+      setCloudMcpState((current) => ({
+        ...stalled,
+        issue: current.issue ?? stalled.issue,
+        attempt: current.attempt,
+        maxAttempts: current.maxAttempts,
+      }));
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [input.cloudSignedIn, input.client, input.opencodeClient, input.workspaceId, input.directory, cloudMcpState.status]);
 
   return { ...cloudMcpState, waitForResumeMaintenance };
 }
