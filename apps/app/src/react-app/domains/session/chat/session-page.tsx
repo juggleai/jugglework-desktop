@@ -21,6 +21,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../../../app/types";
 import type { OpenCreateWorkspace, ShareWorkspaceModalProps } from "../../workspace/types";
+import { isRemoteWorkerUnreachableState } from "../../workspace/remote-workspace-diagnostics";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -905,10 +906,19 @@ export function SessionPage(props: SessionPageProps) {
     selectedWorkspaceGroupError ||
     "";
   const showSelectedWorkspaceError = Boolean(selectedWorkspaceErrorMessage);
-  const selectedWorkspaceErrorTitle =
-    props.selectedWorkspaceDisplay.workspaceType === "remote"
-      ? "Remote workspace unavailable"
-      : "OpenCode unavailable";
+  // Redeployed cloud workers get a new URL; when the saved endpoint cannot be
+  // reached at all, present the "update connection" prompt instead of a
+  // generic remote-unavailable card.
+  const selectedWorkspaceRebuilt =
+    props.selectedWorkspaceDisplay.workspaceType === "remote" &&
+    isRemoteWorkerUnreachableState(
+      props.sidebar.workspaceConnectionStateById[props.selectedWorkspaceId],
+    );
+  const selectedWorkspaceErrorTitle = props.selectedWorkspaceDisplay.workspaceType === "remote"
+    ? selectedWorkspaceRebuilt
+      ? t("workspace_list.remote_worker_rebuilt_title")
+      : "Remote workspace unavailable"
+    : "OpenCode unavailable";
 
   const reactSessionBaseUrl = props.opencodeBaseUrl?.trim() ?? "";
   const reactSessionToken =
@@ -1476,9 +1486,19 @@ export function SessionPage(props: SessionPageProps) {
                       <div className="mx-auto max-w-lg rounded-2xl border border-red-7/35 bg-red-1/40 p-5 text-left shadow-[var(--dls-card-shadow)]">
                         <div className="text-sm font-medium text-red-11">{selectedWorkspaceErrorTitle}</div>
                         <p className="mt-2 whitespace-pre-wrap wrap-anywhere text-sm leading-6 text-red-11/90">
-                          {selectedWorkspaceErrorMessage}
+                          {selectedWorkspaceRebuilt
+                            ? t("workspace_list.remote_worker_rebuilt_hint")
+                            : selectedWorkspaceErrorMessage}
                         </p>
                         <div className="mt-4 flex flex-wrap gap-2">
+                          {selectedWorkspaceRebuilt ? (
+                            <Button
+                              size="sm"
+                              onClick={() => props.sidebar.onEditWorkspaceConnection(props.selectedWorkspaceId)}
+                            >
+                              {t("workspace_list.update_connection")}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"

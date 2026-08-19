@@ -483,6 +483,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,
     workspaceConnectionOverrides,
+    setWorkspaceConnectionOverrides,
     routeError,
     setRouteError,
     legacySelectedWorkspaceId,
@@ -2450,7 +2451,32 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           // Without this, the permissions from opencode.jsonc are never
           // applied on the workspace the user is already on at launch. See
           // issue #870.
-          if (workspaceId && !await activateWorkspaceForNavigation(workspaceId)) return false;
+          if (workspaceId && !await activateWorkspaceForNavigation(workspaceId)) {
+            if (workspace?.workspaceType === "remote") {
+              // A remote workspace whose worker was redeployed has a dead URL:
+              // activation fails fast while session-list retries keep running.
+              // Navigating anyway lands the user on the broken workspace so
+              // the "workspace redeployed — update connection" card is visible
+              // instead of silently staying on the previous local workspace.
+              setErrorsByWorkspaceId((current) => ({
+                ...current,
+                [workspaceId]: current[workspaceId]?.trim() || t("workspace_list.remote_worker_rebuilt_hint"),
+              }));
+              setWorkspaceConnectionOverrides((current) => ({
+                ...current,
+                [workspaceId]: current[workspaceId]?.status === "error"
+                  ? current[workspaceId]
+                  : {
+                      status: "error",
+                      message: t("workspace_list.remote_worker_rebuilt_hint"),
+                      checkedAt: Date.now(),
+                      reason: "worker_unreachable",
+                    },
+              }));
+              navigateToWorkspaceSession(workspaceId);
+            }
+            return false;
+          }
           if (workspaceNavigationGenerationRef.current !== navigationGeneration) return false;
           // If we remember what the user last opened here and that session
           // still exists in our local list, navigate. Otherwise stay put.

@@ -1118,6 +1118,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,
     workspaceConnectionOverrides,
+    setWorkspaceConnectionOverrides,
     routeError,
     setRouteError,
     legacySelectedWorkspaceId,

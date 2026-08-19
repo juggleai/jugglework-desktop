@@ -212,10 +212,24 @@ export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type WorkspaceConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
+/**
+ * Why a remote connection check failed. `worker_unreachable` means the worker
+ * endpoint could not be reached at all (gateway 404 "sandbox route is
+ * unavailable", DNS failure, refused connection). Redeployed cloud workers get
+ * a new URL, so this is presented as "the workspace may have been redeployed —
+ * update the connection".
+ */
+export type WorkspaceConnectionFailureReason =
+  | "worker_unreachable"
+  | "token_rejected"
+  | "workspace_missing"
+  | "unknown";
+
 export type WorkspaceConnectionState = {
   status: WorkspaceConnectionStatus;
   message?: string | null;
   checkedAt?: number | null;
+  reason?: WorkspaceConnectionFailureReason | null;
 };
 
 export type ResetJuggleWorkMode = "onboarding" | "all";

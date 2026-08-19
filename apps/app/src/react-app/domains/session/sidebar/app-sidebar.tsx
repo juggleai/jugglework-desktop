@@ -25,6 +25,7 @@ import { LayoutGroup, LazyMotion, Reorder, domMax, m, useDragControls } from "mo
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { JuggleWorkDenHelpLink } from "../../workspace/jugglework-den-help-link";
+import { isRemoteWorkerUnreachableState } from "../../workspace/remote-workspace-diagnostics";
 import type { OpenCreateWorkspace } from "../../workspace/types";
 import type {
   WorkspaceConnectionState,
@@ -581,6 +582,7 @@ function RemoteConnectionIssueCard(props: {
   tone: "error" | "offline";
   canRecover: boolean;
   busy: boolean;
+  rebuilt: boolean;
   onRecover: () => void;
   onTest: () => void;
   onEdit: () => void;
@@ -606,10 +608,14 @@ function RemoteConnectionIssueCard(props: {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-medium text-dls-text">
-              {t("workspace_list.remote_worker_unavailable")}
+              {props.rebuilt
+                ? t("workspace_list.remote_worker_rebuilt_title")
+                : t("workspace_list.remote_worker_unavailable")}
             </div>
             <div className="mt-1 text-[11px] leading-5 text-gray-10">
-              {t("workspace_list.remote_worker_unavailable_hint")}
+              {props.rebuilt
+                ? t("workspace_list.remote_worker_rebuilt_hint")
+                : t("workspace_list.remote_worker_unavailable_hint")}
             </div>
             <div
               className={cn(
@@ -622,6 +628,18 @@ function RemoteConnectionIssueCard(props: {
             </div>
             <JuggleWorkDenHelpLink />
             <div className="mt-2 flex flex-wrap gap-1.5">
+              {props.rebuilt ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1.5 rounded-lg px-2.5 text-[11px]"
+                  onClick={props.onEdit}
+                  disabled={props.busy}
+                >
+                  <Settings size={12} />
+                  {t("workspace_list.update_connection")}
+                </Button>
+              ) : null}
               {props.canRecover ? (
                 <Button
                   type="button"
@@ -1466,6 +1484,7 @@ function WorkspaceSidebarGroup({
                     tone={taskLoadError.tone}
                     canRecover={canRecover}
                     busy={isConnectionActionBusy}
+                    rebuilt={isRemoteWorkerUnreachableState(connectionState)}
                     onRecover={() => {
                       void Promise.resolve(ctx.onRecoverWorkspace(workspace.id));
                     }}
