@@ -95,6 +95,13 @@ import {
   isToolPartInFlight,
 } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
+import {
+  CAPABILITY_INSTRUCTION_RE,
+  composerCapabilityTagClassName,
+  composerCapabilityTagTitlePrefix,
+  parseCapabilityInstruction,
+  type ComposerCapabilityKind,
+} from "@/react-app/domains/session/surface/composer/capability-tags"
 import { currentLocale, t } from "@/i18n"
 import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
 
@@ -553,11 +560,12 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
-const USER_SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/
-
-function UserSkillChip(props: { name: string }) {
+function UserSkillChip(props: { kind: ComposerCapabilityKind; name: string }) {
   return (
-    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
+    <span
+      className={`mx-0.5 align-middle ${composerCapabilityTagClassName(props.kind)}`}
+      title={`${composerCapabilityTagTitlePrefix(props.kind)}: ${props.name}`}
+    >
       {props.name}
     </span>
   )
@@ -598,14 +606,20 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+/**
+ * 把用户消息里的能力指令整句折叠成一枚 tag
+ *
+ * TIPS: 展示与提交是同一套语法（capability-tags）。此前这里只认 `[skill x]`，
+ * 云端技能/扩展/MCP 因此在会话记录里裸露成一整句文本。
+ */
 function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
+  if (!CAPABILITY_INSTRUCTION_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
   let offset = 0
-  return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
+  return text.split(CAPABILITY_INSTRUCTION_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
-    const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
-    if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
+    const capability = segment ? parseCapabilityInstruction(segment) : null
+    if (capability) return <UserSkillChip key={key} kind={capability.kind} name={capability.name} />
     return <React.Fragment key={key}>{renderPlainTextWithSearchHighlights(segment, highlightQuery, key)}</React.Fragment>
   })
 }

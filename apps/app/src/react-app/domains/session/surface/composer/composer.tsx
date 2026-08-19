@@ -17,6 +17,12 @@ import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
+  buildCapabilityInstruction,
+  capabilityDefaultDetail,
+  composerCapabilityToken,
+  type ComposerCapabilityKind,
+} from "./capability-tags";
+import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
   skillMenuSlashCommandName,
@@ -97,6 +103,11 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: ComposerMentionKind, value: string) => void;
+  /**
+   * 登记一枚能力标签送给模型时要展开成的完整文案。
+   * TIPS: 草稿里只存紧凑 token，真正的指令在 buildDraft 里按登记内容还原。
+   */
+  onRegisterCapability?: (capability: { kind: ComposerCapabilityKind; name: string; prompt: string }) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
   onPasteText: (text: string) => void;
@@ -873,40 +884,59 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
+  /**
+   * 把一项能力作为 tag 插入草稿，并登记它送给模型时要展开成什么
+   *
+   * TIPS: 草稿里只留紧凑 token，展开文案交给 session-surface 的 buildDraft。
+   * 过去云端能力是直接把整段指令散文写进输入框，用户看到的是一堆半截文本。
+   * @param kind 能力种类
+   * @param name 能力名称，即 tag 内显示的文本
+   * @param prompt 送给模型的完整表述
+   * @param options replaceSkillDraft 表示替换整段草稿（斜杠命令补全路径）
+   */
+  const insertCapabilityTag = (
+    kind: ComposerCapabilityKind,
+    name: string,
+    prompt: string,
+    options?: { replaceSkillDraft?: boolean },
+  ) => {
+    props.onRegisterCapability?.({ kind, name, prompt });
+    const token = composerCapabilityToken(kind, name);
+    if (options?.replaceSkillDraft) {
+      props.onDraftChange(`${token} `);
+    } else {
+      const editor = editorRef.current;
+      if (editor) {
+        editor.insertSkillAtSelection(name, kind);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}${token} `);
+      }
+    }
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
   const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
     const skill = typeof input === "string"
       ? { name: input, path: "", origin: "local" as const }
       : input;
     if (skill.origin === "jugglework-connect") {
-      const prompt = t("composer.connect_skill_prompt", {
-        name: skill.name,
-        marketplace: skill.marketplaceName ?? "assigned",
-        capability: skill.connectCapabilityName ?? skill.name,
-      });
-      if (options?.replaceSkillDraft) {
-        props.onDraftChange(prompt);
-      } else {
-        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
-        props.onDraftChange(`${props.draft}${separator}${prompt}`);
-      }
-      setSlashOpen(false);
-      setToolMenuOpen(false);
+      // 未安装的技能要先经 Cloud MCP 取回内容，细节放进括号，整句仍可折叠成 tag。
+      insertCapabilityTag(
+        "cloud-skill",
+        skill.name,
+        buildCapabilityInstruction(
+          "cloud-skill",
+          skill.name,
+          `find it with jugglework-cloud_search_capabilities in the ${skill.marketplaceName ?? "assigned"} marketplace, `
+          + `then call jugglework-cloud_execute_capability with the exact capability name ${skill.connectCapabilityName ?? skill.name}`,
+        ),
+        options,
+      );
       return;
     }
-    const name = skill.name;
-    if (options?.replaceSkillDraft) {
-      props.onDraftChange(`[skill ${name}] `);
-    } else {
-      const editor = editorRef.current;
-      if (editor) {
-        editor.insertSkillAtSelection(name);
-      } else {
-        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
-        props.onDraftChange(`${props.draft}${separator}[skill ${name}] `);
-      }
-    }
-    setSlashOpen(false);
-    setToolMenuOpen(false);
+    insertCapabilityTag("skill", skill.name, buildCapabilityInstruction("skill", skill.name), options);
   };
 
   const applyPluginFileSelection = (file: CloudImportedPluginFile) => {
@@ -931,8 +961,23 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const applyExtensionSelection = (entry: McpDirectoryInfo) => {
-    props.onDraftChange(entry.composerPrompt ?? `Use ${entry.name} to `);
-    setToolMenuOpen(false);
+    // TIPS: 目录里的 composerPrompt（如 "Use Computer Use to "）是给草稿起手用的半截文案，
+    // 不能直接当指令发送，这里统一改用能力指令模板。
+    insertCapabilityTag("extension", entry.name, buildCapabilityInstruction("extension", entry.name));
+  };
+
+  /**
+   * 选择一个 MCP 服务
+   * @param entry MCP 服务条目
+   * @param status 归一化后的连接状态，仅 connected 可选
+   */
+  const applyMcpSelection = (entry: McpServerEntry, status: McpServerStatus) => {
+    if (status !== "connected") return;
+    insertCapabilityTag(
+      "mcp",
+      entry.name,
+      buildCapabilityInstruction("mcp", entry.name, capabilityDefaultDetail("mcp", entry.name)),
+    );
   };
 
   const openToolMenuSettings = () => {
@@ -1667,9 +1712,21 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {toolMenuSection === "mcps" ? (
                             activeMcpItems.length > 0 ? (
                               <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status, detail }) => (
-                                  // MCP 仅作只读展示：显示已连接的服务与状态，不可点击、不注入。
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                                {activeMcpItems.map(({ entry, status, detail }) => {
+                                  // 只有已就绪（connected）的 MCP 可以被选中插入；其余保持只读展示。
+                                  const selectable = status === "connected";
+                                  return (
+                                  <button
+                                    key={entry.id ?? entry.name}
+                                    type="button"
+                                    disabled={!selectable}
+                                    aria-disabled={!selectable}
+                                    title={selectable ? undefined : mcpStatusTooltip(status, detail)}
+                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
+                                      selectable ? "hover:bg-gray-2/70" : "cursor-default opacity-60"
+                                    }`}
+                                    onClick={() => applyMcpSelection(entry, status)}
+                                  >
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between gap-3">
@@ -1698,8 +1755,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                                             : entry.config.command?.join(" ") ?? "Local MCP"}
                                       </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  </button>
+                                  );
+                                })}
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">

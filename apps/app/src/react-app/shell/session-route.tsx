@@ -181,6 +181,12 @@ import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
+import {
+  COMPOSER_TOKEN_SPLIT_RE,
+  buildCapabilityInstruction,
+  fallbackCapabilityPrompt,
+  parseComposerCapabilityToken,
+} from "@/react-app/domains/session/surface/composer/capability-tags";
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
@@ -342,7 +348,7 @@ async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/)) {
+    for (const segment of draft.text.split(COMPOSER_TOKEN_SPLIT_RE)) {
       if (!segment) continue;
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch?.[1]) {
@@ -359,9 +365,18 @@ async function draftToParts(
         if (pasted) parts.push({ type: "text", text: pasted });
         continue;
       }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        parts.push({ type: "text", text: `Load [skill ${skillMatch[1]}] and follow its instructions.` });
+      const capability = parseComposerCapabilityToken(segment);
+      if (capability) {
+        if (capability.kind === "skill") {
+          parts.push({ type: "text", text: buildCapabilityInstruction("skill", capability.name) });
+        } else {
+          // 云端技能/扩展/MCP：发送插入时登记的完整指令，而不是裸 token。
+          const registered = draft.parts.find(
+            (part): part is Extract<ComposerPart, { type: "capability" }> =>
+              part.type === "capability" && part.kind === capability.kind && part.name === capability.name,
+          );
+          parts.push({ type: "text", text: registered?.prompt ?? fallbackCapabilityPrompt(capability.kind, capability.name) });
+        }
         continue;
       }
       if (segment.startsWith("@")) {
@@ -411,7 +426,11 @@ async function draftToParts(
         continue;
       }
       if (part.type === "skill") {
-        parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
+        parts.push({ type: "text", text: buildCapabilityInstruction("skill", part.name) });
+        continue;
+      }
+      if (part.type === "capability") {
+        parts.push({ type: "text", text: part.prompt });
         continue;
       }
       if (part.type === "app") {

@@ -99,6 +99,8 @@ export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
+  /** 通过输入框「工具」菜单插入的能力标签：云端技能、扩展、MCP 服务。 */
+  | { type: "capability"; kind: "cloud-skill" | "extension" | "mcp"; name: string; prompt: string }
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }

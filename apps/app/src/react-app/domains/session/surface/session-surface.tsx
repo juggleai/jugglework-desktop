@@ -73,13 +73,22 @@ import {
 import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
+  getComposerCapabilities,
   getComposerDraft,
   getComposerHistory,
   getComposerMentions,
   getComposerPasteParts,
   getComposerQueuedDrafts,
   useComposerStateStore,
+  type ComposerCapabilityPart,
 } from "./composer-state-store";
+import {
+  COMPOSER_TOKEN_SPLIT_RE,
+  composerCapabilityToken,
+  fallbackCapabilityPrompt,
+  parseComposerCapabilityToken,
+  replaceComposerCapabilityTokens,
+} from "./composer/capability-tags";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import type {
@@ -486,10 +495,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
+  const capabilities = useComposerStateStore((state) => getComposerCapabilities(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
+  const setComposerCapabilities = useComposerStateStore((state) => state.setCapabilities);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
   const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
@@ -812,7 +823,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const capabilityByToken = new Map(
+      capabilities.map((item) => [composerCapabilityToken(item.kind, item.name), item]),
+    );
+    const parts: ComposerPart[] = text.split(COMPOSER_TOKEN_SPLIT_RE).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
@@ -826,9 +840,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
           return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines }];
         }
       }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
+      const capability = parseComposerCapabilityToken(segment);
+      if (capability) {
+        // 本地技能沿用原有的 skill part；云端技能/扩展/MCP 走 capability part，
+        // 并带上登记的完整文案，队列草稿回填时才不会丢失。
+        if (capability.kind === "skill") {
+          return [{ type: "skill", name: capability.name } satisfies ComposerDraft["parts"][number]];
+        }
+        return [{
+          type: "capability",
+          kind: capability.kind,
+          name: capability.name,
+          prompt: capabilityByToken.get(segment)?.prompt
+            ?? fallbackCapabilityPrompt(capability.kind, capability.name),
+        } satisfies ComposerDraft["parts"][number]];
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
@@ -846,7 +871,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
-    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+    // 能力标签在这里展开成模型真正看到的文本：本地技能是一句自然语言，
+    // 云端技能/扩展/MCP 用插入时登记的完整指令（登记丢失时退回通用表述）。
+    resolved = replaceComposerCapabilityTokens(resolved, (kind, name) => (
+      capabilityByToken.get(composerCapabilityToken(kind, name))?.prompt
+        ?? fallbackCapabilityPrompt(kind, name)
+    ));
     for (const value of Object.keys(mentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
@@ -859,7 +889,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolvedText: resolved,
       command: slashCommand ?? undefined,
     };
-  }, [mentions, pasteParts]);
+  }, [capabilities, mentions, pasteParts]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -1186,6 +1216,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     setComposerAttachments(props.sessionId, attachments.filter((item) => item.id !== id));
     setComposerDraft(props.sessionId, draft.replaceAll(`[attachment ${id}]`, ""));
+  };
+
+  /**
+   * 登记一枚能力标签的展开文案
+   * TIPS: 同一能力重复插入只保留一份登记；名称+种类构成唯一键。
+   */
+  const handleRegisterCapability = (capability: ComposerCapabilityPart) => {
+    const exists = capabilities.some(
+      (item) => item.kind === capability.kind && item.name === capability.name && item.prompt === capability.prompt,
+    );
+    if (exists) return;
+    const next = capabilities.filter(
+      (item) => !(item.kind === capability.kind && item.name === capability.name),
+    );
+    setComposerCapabilities(props.sessionId, [...next, capability]);
   };
 
   const handleInsertMention = (kind: ComposerMentionKind, value: string) => {
@@ -1969,6 +2014,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
+        onRegisterCapability={handleRegisterCapability}
         inputHistory={inputHistory}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
