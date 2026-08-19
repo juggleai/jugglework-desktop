@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, FileText, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, FolderCog, Folders, GitBranch, Globe, Mic2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -66,6 +66,8 @@ import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTa
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
+import { FilesPanel } from "../files/files-panel";
+import { useFilesPanelStore } from "../files/files-panel-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
@@ -346,6 +348,9 @@ function controlStringArg(args: unknown, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/** 会话正在执行的状态集合，用于在回合结束后刷新【文件】面板的变更列表 */
+const ACTIVE_SESSION_STATUSES = new Set(["thinking", "responding", "compacting"]);
+
 export function SessionPage(props: SessionPageProps) {
   const { config: shellConfig } = useShellConfig();
   const platform = usePlatform();
@@ -380,10 +385,22 @@ export function SessionPage(props: SessionPageProps) {
   const artifactTargetCount = artifactFileTargets.length;
   const hasArtifactTargets = artifactTargetCount > 0;
   const activeSidePanel = voiceSidePanelOpen ? "voice" : sessionSidePanel;
-  const sidePanelOpen = activeSidePanel !== null;
   const panelRailActive = activeSidePanel === "panel";
+  const filesRailActive = activeSidePanel === "files";
   const extensionsRailActive = activeSidePanel === "extensions";
   const voiceRailActive = activeSidePanel === "voice";
+  const isLocalWorkspace = props.selectedWorkspaceDisplay.workspaceType !== "remote";
+  const openFileInPanel = useFilesPanelStore((state) => state.openFile);
+  const setFilesPanelFullscreen = useFilesPanelStore((state) => state.setFullscreen);
+  const filesPanelFullscreen = useFilesPanelStore((state) => (
+    props.selectedSessionId ? state.sessions[props.selectedSessionId]?.fullscreen ?? false : false
+  ));
+  const filesPanelExpanded = filesRailActive && filesPanelFullscreen && Boolean(props.selectedSessionId);
+  const selectedSessionBusy = props.selectedSessionId
+    ? ACTIVE_SESSION_STATUSES.has(props.sidebar.sessionStatusById[props.selectedSessionId] ?? "")
+    : false;
+  // 全屏时面板改为覆盖层渲染，右侧分栏不再占位
+  const sidePanelOpen = activeSidePanel !== null && !filesPanelExpanded;
   const voiceExtension = useMemo(
     () => JUGGLEWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "jugglework-voice") ?? null,
     [],
@@ -562,6 +579,20 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
+    const sessionId = sourceSessionId ?? props.selectedSessionId;
+
+    // TIPS: 本地工作区的文件一律在【文件】面板里以文件标签打开（产物列表入口已并入该面板）；
+    // 远程工作区仍走下载/系统打开的旧路径。
+    if (target.kind === "file" && sessionId && props.selectedWorkspaceDisplay.workspaceType !== "remote") {
+      openFileInPanel(sessionId, {
+        path: target.value,
+        name: target.name || target.value.split("/").pop() || target.value,
+      });
+      preserveSidePanelOnPanelOpenRef.current = true;
+      setCurrentSidePanel("files");
+      return;
+    }
+
     if (!isCollectibleArtifactTarget(target)) {
       if (isOpenableFileTarget(target)) {
         if (props.selectedWorkspaceDisplay.workspaceType === "remote") {
@@ -573,7 +604,6 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const sessionId = sourceSessionId ?? props.selectedSessionId;
     if (!sessionId) return;
     if (options?.auto && activePanelTab?.id === target.id) return;
     openTab(sessionId, {
@@ -584,7 +614,7 @@ export function SessionPage(props: SessionPageProps) {
     });
     preserveSidePanelOnPanelOpenRef.current = true;
     setCurrentSidePanel("panel");
-  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, downloadOpenTarget, openFileInPanel, openTab, props.selectedSessionId, props.selectedWorkspaceDisplay.workspaceType, props.selectedWorkspaceRoot, setCurrentSidePanel]);
   const closeRightPane = useCallback(() => {
     setCurrentSidePanel(null);
   }, [setCurrentSidePanel]);
@@ -643,42 +673,29 @@ export function SessionPage(props: SessionPageProps) {
     },
   }), []);
   useControlAction(setBrowserProxyControlAction);
-  const openArtifactRailPane = useCallback(() => {
-    if (!hasArtifactTargets || !props.selectedSessionId) return;
-    const activeTab = sessionPanelState.tabs.find((tab) => tab.id === sessionPanelState.activeTabId);
-    const artifactTargetIds = new Set(artifactFileTargets.map((target) => target.id));
-    const currentArtifactTab = activeTab?.type === "artifact" && artifactTargetIds.has(activeTab.id) ? activeTab : null;
-    const artifactTab = sessionPanelState.tabs.find((tab) => (
-      tab.type === "artifact" && artifactTargetIds.has(tab.id)
-    ));
-    const firstArtifact = artifactFileTargets[0];
-    const tabToSelect = currentArtifactTab?.id ?? artifactTab?.id ?? firstArtifact?.id ?? null;
+  const openFilesRailPane = useCallback(() => {
+    toggleCurrentSidePanel("files");
+  }, [toggleCurrentSidePanel]);
+  // TIPS: 全屏是覆盖层，没有系统级 Esc 行为可用；输入控件内的 Esc 留给编辑器自己处理。
+  useEffect(() => {
+    if (!filesPanelExpanded || !props.selectedSessionId) return;
 
-    for (const target of artifactFileTargets) {
-      if (sessionPanelState.tabs.some((tab) => tab.id === target.id)) continue;
-      openTab(props.selectedSessionId, {
-        id: target.id,
-        type: "artifact",
-        label: target.name,
-        preview: target.preview,
-      });
-    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
 
-    if (tabToSelect) {
-      selectTab(props.selectedSessionId, tabToSelect);
-    }
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
 
-    if (panelRailActive && activeTab?.type === "artifact") {
-      toggleCurrentSidePanel("panel");
-      return;
-    }
-    if (!panelRailActive) {
-      preserveSidePanelOnPanelOpenRef.current = true;
-    }
-    if (!panelRailActive) {
-      toggleCurrentSidePanel("panel");
-    }
-  }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, toggleCurrentSidePanel]);
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+
+      event.preventDefault();
+      setFilesPanelFullscreen(props.selectedSessionId!, false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [filesPanelExpanded, props.selectedSessionId, setFilesPanelFullscreen]);
   const openExtensionsRailPane = useCallback(() => {
     toggleCurrentSidePanel("extensions");
   }, [toggleCurrentSidePanel]);
@@ -1657,6 +1674,16 @@ export function SessionPage(props: SessionPageProps) {
                       sessionId={props.selectedSessionId}
                       onClose={closeRightPane}
                     />
+                  ) : activeSidePanel === "files" && props.selectedSessionId ? (
+                    <FilesPanel
+                      sessionId={props.selectedSessionId}
+                      client={props.juggleworkServerClient}
+                      workspaceId={props.runtimeWorkspaceId}
+                      workspaceRoot={props.selectedWorkspaceRoot}
+                      opencodeBaseUrl={reactSessionBaseUrl}
+                      opencodeToken={reactSessionToken}
+                      busy={selectedSessionBusy}
+                    />
                   ) : activeSidePanel === "panel" && props.selectedSessionId ? (
                     <SidePanel
                       sessionId={props.selectedSessionId}
@@ -1704,26 +1731,22 @@ export function SessionPage(props: SessionPageProps) {
                 <Mic2 size={17} />
               </Button>
             ) : null}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                panelRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-              )}
-              onClick={openArtifactRailPane}
-              title={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-label={hasArtifactTargets ? `Artifacts (${artifactTargetCount})` : "No artifacts yet"}
-              aria-pressed={panelRailActive}
-              disabled={!hasArtifactTargets}
-            >
-              <FileText size={17} />
-              {artifactTargetCount > 0 ? (
-                <span className="absolute right-0 top-0 flex min-w-3.5 translate-x-1 -translate-y-1 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3 text-primary-foreground">
-                  {artifactTargetCount > 9 ? "9+" : artifactTargetCount}
-                </span>
-              ) : null}
-            </Button>
+            {isLocalWorkspace && props.selectedSessionId ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn(
+                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
+                  filesRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                )}
+                onClick={openFilesRailPane}
+                title={t("session_files.entry")}
+                aria-label={t("session_files.entry")}
+                aria-pressed={filesRailActive}
+              >
+                <Folders size={17} />
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1736,11 +1759,33 @@ export function SessionPage(props: SessionPageProps) {
               aria-label="Extensions"
               aria-pressed={extensionsRailActive}
             >
-              <Settings2 size={17} />
+              <FolderCog size={17} />
             </Button>
           </aside>
           </div>
         </SidebarInset>
+        {filesPanelExpanded && props.selectedSessionId ? (
+          // TIPS: 全屏是覆盖层而不是真窗口全屏 —— 左侧应用导航栏（72px）与右侧入口图标栏
+          // （44px）保持可见，其余（工作区标题、会话列表、会话页头）全部盖住。
+          // macOS 顶部是 hiddenInset 系统标题栏：面板头部本身就是拖拽区，
+          // 头部里的按钮单独标 titlebar-no-drag，这样顶上不用留空白也点得动。
+          <div
+            className="absolute bottom-0 right-11 top-0 z-40 flex flex-col overflow-hidden border-l border-border bg-background mac:titlebar-no-drag"
+            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH}px` }}
+          >
+            <div className="flex min-h-0 flex-1 flex-col">
+            <FilesPanel
+              sessionId={props.selectedSessionId}
+              client={props.juggleworkServerClient}
+              workspaceId={props.runtimeWorkspaceId}
+              workspaceRoot={props.selectedWorkspaceRoot}
+              opencodeBaseUrl={reactSessionBaseUrl}
+              opencodeToken={reactSessionToken}
+              busy={selectedSessionBusy}
+            />
+            </div>
+          </div>
+        ) : null}
       </SidebarProvider>
 
       {props.providerAuthModal ? <ProviderAuthModal {...props.providerAuthModal} /> : null}

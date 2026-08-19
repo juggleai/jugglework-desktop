@@ -1,4 +1,6 @@
-.session-header{
+/* 会话页头与会话右侧面板（文件、扩展）的头部统一高度，避免两边对不齐 */
+.session-header,
+.session-panel-header{
   height: 56px;
   min-height: 56px;
 }

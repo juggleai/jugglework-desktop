@@ -87,7 +87,7 @@ export function SettingsShell(props: SettingsShellProps) {
   if (props.compact) {
     return (
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-        <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
+        <header className="session-panel-header flex shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
           <div className="flex min-w-0 items-center gap-2 mac:titlebar-no-drag">
             {props.compactTitle ? (
               <h1 className="truncate text-[15px] font-semibold text-dls-text">{props.compactTitle}</h1>
@@ -110,18 +110,6 @@ export function SettingsShell(props: SettingsShellProps) {
                 ) : null}
               </>
             )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
-            <Button
-              variant="ghost"
-              type="button"
-              className="flex size-8 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-              onClick={props.onClose}
-              title={t("dashboard.close_settings")}
-              aria-label={t("dashboard.close_settings")}
-            >
-              <X size={17} />
-            </Button>
           </div>
         </header>
 
