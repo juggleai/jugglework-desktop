@@ -1121,16 +1121,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       !activatingWorkspaceId &&
       workspaceActivationErrorId !== workspaceId
     );
-    if (workspaceAlreadyReady) {
-      navigateToWorkspaceSession(workspaceId, sessionId);
-      focusPromptSoon();
-      return;
-    }
-    void activateWorkspaceForNavigation(workspaceId).then((latest) => {
-      if (!latest) return;
-      navigateToWorkspaceSession(workspaceId, sessionId);
-      focusPromptSoon();
-    });
+    // TIPS: 跨工作区切换先导航、再后台激活。
+    // activate 需要 reload 目标工作区的 OpenCode 引擎（实测约 1.7s），过去要 await 它才切 URL，
+    // 点完侧栏整个界面会僵住一秒多没有任何反馈。
+    // 读会话走的是目标工作区自己的 OpenCode 连接，不依赖「它是当前激活工作区」，所以导航可以先行；
+    // 真正需要引擎就绪的是发起任务，那一步已由 canAcceptTask / showPreparingStatus 拦住。
+    navigateToWorkspaceSession(workspaceId, sessionId);
+    focusPromptSoon();
+    if (workspaceAlreadyReady) return;
+    void activateWorkspaceForNavigation(workspaceId);
   }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
 
   const surfaceProps = useMemo(() => {
