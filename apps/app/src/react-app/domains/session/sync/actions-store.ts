@@ -34,6 +34,7 @@ import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
 import { classifyProviderLimit } from "./provider-limit-classify";
+import { resolveRedoHistoryStep } from "./history-position";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -727,41 +728,28 @@ export function createSessionActionsStore(options: {
     const revertMessageID = options.selectedSession()?.revert?.messageID ?? null;
     if (!revertMessageID) return;
 
-    const users = options.messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
+    const step = resolveRedoHistoryStep(
+      options.messages(),
+      revertMessageID,
+      options.messageIdFromInfo,
+    );
+    if (!step) return;
 
-    const next = users.find((message) => {
-      const id = options.messageIdFromInfo(message);
-      return Boolean(id) && id > revertMessageID;
-    });
-
-    if (!next) {
+    if (!step.next) {
       const session = await unrevertSession(c, sessionID);
       options.upsertLocalSession(session);
       options.setPrompt("");
       return;
     }
 
-    const messageID = options.messageIdFromInfo(next);
+    const messageID = options.messageIdFromInfo(step.next);
     if (!messageID) return;
 
     const nextSession = await revertSession(c, sessionID, messageID);
     options.upsertLocalSession(nextSession);
 
-    let prior: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = options.messageIdFromInfo(candidate);
-      if (id && id < messageID) {
-        prior = candidate;
-        break;
-      }
-    }
-
-    if (prior) {
-      options.restorePromptFromUserMessage(prior);
+    if (step.prior) {
+      options.restorePromptFromUserMessage(step.prior);
       return;
     }
 

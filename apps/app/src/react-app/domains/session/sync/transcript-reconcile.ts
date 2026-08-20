@@ -38,9 +38,9 @@ export function reconcileTranscriptMessages(input: ReconcileTranscriptInput): UI
  * history mutation, so it is the one place the rendered transcript is allowed
  * to move backwards.
  *
- * OpenCode treats `session.revert.messageID` as the FIRST reverted message
- * (every message with `id >= revert.messageID` is reverted), so the cursor
- * message itself must be hidden too.
+ * OpenCode treats `session.revert.messageID` as the FIRST reverted message.
+ * The cursor is located by exact ID in the time-ordered transcript, so the
+ * cursor message itself and every later array item must be hidden.
  */
 export function applyRevertCursor(messages: UIMessage[], revertMessageId: string | null | undefined): UIMessage[] {
   if (!revertMessageId || messages.length === 0) return messages;

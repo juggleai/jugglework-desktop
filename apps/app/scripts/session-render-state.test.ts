@@ -166,6 +166,25 @@ describe("reconcileTranscriptMessages", () => {
       "msg_streaming",
     ]);
   });
+
+  it("orders rollover ids by creation time instead of lexicographic id", () => {
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [
+        uiMessage("msg_00d100", "user", "new prompt", 3),
+      ],
+      snapshotMessages: [
+        uiMessage("msg_fff100", "user", "old prompt", 1),
+        uiMessage("msg_fff200", "assistant", "old answer", 2),
+      ],
+      reason: "snapshot",
+    });
+
+    expect(merged.map((message) => message.id)).toEqual([
+      "msg_fff100",
+      "msg_fff200",
+      "msg_00d100",
+    ]);
+  });
 });
 
 describe("deriveRenderedSessionMessages", () => {

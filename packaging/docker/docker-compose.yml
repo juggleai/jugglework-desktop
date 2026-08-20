@@ -6,7 +6,7 @@ services:
       args:
         # Keep these in sync with apps/server/package.json and constants.json.
         JUGGLEWORK_SERVER_VERSION: 1.1.30
-        OPENCODE_VERSION: 1.18.7
+        OPENCODE_VERSION: 1.18.15
     ports:
       - "8787:8787"
     environment:
