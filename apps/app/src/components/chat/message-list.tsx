@@ -102,6 +102,16 @@ import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroup
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
+/**
+ * 消息操作条（时间 + 复制/分支/回退图标）的显隐样式。
+ *
+ * TIPS: 操作条常驻会让每条消息多出一段视觉噪音，这里默认完全透明且不接收指针事件，
+ * 仅在悬停所在消息（group/message-actions）或键盘聚焦到条内按钮时浮现；
+ * 元素始终占位，避免悬停时产生布局抖动。
+ */
+const MESSAGE_ACTIONS_REVEAL_CLASS =
+  "pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+
 function TaskDuration({ messages, userMessageIndex, isStreaming }: {
   messages: UIMessage[]
   userMessageIndex: number
@@ -453,7 +463,7 @@ function CopyMessageButton({ messages }: CopyMessageButtonProps) {
     <MessageAction tooltip={copied ? t("session.message_copied") : t("session.message_copy")}>
       <Button
         variant="ghost"
-        size="icon"
+        size="icon-xs"
         aria-label={t("session.message_copy")}
         onClick={() => void onCopy()}
       >
@@ -643,7 +653,7 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className="group/message-actions group flex w-full flex-col items-end gap-1 !select-text"
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
@@ -674,18 +684,14 @@ const UserMessage = React.memo(
                   </MessageContent>
                 ) : null}
                 {!isStreaming && (
-                  <MessageActions
-                    className={cn(
-                      "flex items-center gap-0 opacity-60 transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100"
-                    )}
-                  >
+                  <MessageActions className={cn("flex items-center gap-0", MESSAGE_ACTIONS_REVEAL_CLASS)}>
                     <MessageTimestamp message={message} className="mr-1.5" />
                     <CopyMessageButton messages={[message]} />
                     {messageText ? (
                       <MessageAction tooltip={t("session.edit_message_label")}>
                         <Button
                           variant="ghost"
-                          size="icon"
+                          size="icon-xs"
                           aria-label={t("session.edit_message_label")}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
@@ -696,7 +702,7 @@ const UserMessage = React.memo(
                     <MessageAction tooltip={t("session.branch_new_chat")}>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon-xs"
                         aria-label={t("session.branch_new_chat")}
                         onClick={() => onForkAtMessage(message.id)}
                       >
@@ -706,7 +712,7 @@ const UserMessage = React.memo(
                     <MessageAction tooltip={t("session.revert_label")}>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon-xs"
                         aria-label={t("session.revert_label")}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
@@ -969,7 +975,7 @@ function MessageGroup({
   }
 
   return (
-    <div className="group/message-group mt-5 flex flex-col gap-0">
+    <div className="group/message-actions group/message-group mt-5 flex flex-col gap-0">
       {showProcessDisclosure ? (
         <Collapsible open={processOpen} onOpenChange={setProcessOpen} className="mx-auto w-full max-w-5xl px-3 md:px-8">
           <CollapsibleTrigger
@@ -1021,7 +1027,12 @@ function MessageGroup({
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
       {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-2 px-3 pt-1 text-muted-foreground opacity-60 transition-opacity duration-200 group-hover/message-group:opacity-100 focus-within:opacity-100 md:px-8">
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-5xl flex-wrap items-center gap-1.5 px-3 text-muted-foreground md:px-8",
+            MESSAGE_ACTIONS_REVEAL_CLASS,
+          )}
+        >
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
@@ -1029,7 +1040,7 @@ function MessageGroup({
                 <MessageAction tooltip={t("session.branch_new_chat")}>
                   <Button
                     variant="ghost"
-                    size="icon"
+                    size="icon-xs"
                     aria-label={t("session.branch_new_chat")}
                     onClick={() => onForkAtMessage(lastRealItem.message.id)}
                   >
@@ -1039,7 +1050,7 @@ function MessageGroup({
                 <MessageAction tooltip={t("session.revert_label")}>
                   <Button
                     variant="ghost"
-                    size="icon"
+                    size="icon-xs"
                     aria-label={t("session.revert_label")}
                     onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
                   >
