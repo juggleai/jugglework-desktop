@@ -229,6 +229,7 @@ export type JuggleWorkRuntimeConfigMigrationResult = {
 export type JuggleWorkRuntimeDisabledProvidersResult = {
   ok: true;
   disabledProviders: string[];
+  changed?: boolean;
 };
 
 export type JuggleWorkLegacyConfigSweepState = {

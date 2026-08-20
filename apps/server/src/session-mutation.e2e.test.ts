@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +42,7 @@ function startMockOpencode() {
   const commands: Array<{ sessionId: string; body: unknown }> = [];
   const shells: Array<{ sessionId: string; body: unknown }> = [];
   const statusRequests: string[] = [];
+  const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -62,6 +63,7 @@ function startMockOpencode() {
         return Response.json(Object.fromEntries(statuses));
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
+        disposes.push({ directory: url.searchParams.get("directory") });
         return Response.json({ disposed: true });
       }
 
@@ -139,6 +141,7 @@ function startMockOpencode() {
     commands,
     shells,
     statusRequests,
+    disposes,
     statuses,
     heldPrompts,
     heldMessageIds,
@@ -154,8 +157,11 @@ function startMockOpencode() {
 
 async function startHarness(enginePort: number) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-second-"));
   roots.push(root);
+  roots.push(secondRoot);
   await mkdir(join(root, ".opencode"), { recursive: true });
+  await mkdir(join(secondRoot, ".opencode"), { recursive: true });
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -164,15 +170,25 @@ async function startHarness(enginePort: number) {
     configPath: join(root, "server.json"),
     approval: { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
-    workspaces: [{
-      id: "ws_1",
-      name: "Workspace",
-      path: root,
-      preset: "starter",
-      workspaceType: "local",
-      baseUrl: `http://127.0.0.1:${enginePort}`,
-    }],
-    authorizedRoots: [root],
+    workspaces: [
+      {
+        id: "ws_1",
+        name: "Workspace",
+        path: root,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: `http://127.0.0.1:${enginePort}`,
+      },
+      {
+        id: "ws_2",
+        name: "Second Workspace",
+        path: secondRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: `http://127.0.0.1:${enginePort}`,
+      },
+    ],
+    authorizedRoots: [root, secondRoot],
     readOnly: false,
     startedAt: Date.now(),
     tokenSource: "cli",
@@ -815,6 +831,83 @@ describe("authoritative session mutation APIs", () => {
       headers: harness.collaboratorHeaders,
     });
     expect(reloaded.status).toBe(200);
+  });
+
+  test("workspace navigation preserves an authoritative active run without aborting or disposing", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_navigation")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_navigation",
+        prompt: { parts: [{ type: "text", text: "Keep running" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+
+    for (const workspaceId of ["ws_2", "ws_1"]) {
+      const activated = await fetch(`${harness.base}/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: harness.hostHeaders,
+      });
+      expect(activated.status).toBe(200);
+    }
+
+    expect(engine.disposes).toEqual([]);
+    expect(engine.aborts).toEqual([]);
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, {
+      headers: harness.collaboratorHeaders,
+    });
+    expect(active.status).toBe(200);
+    await expect(active.json()).resolves.toMatchObject({
+      items: [{ runId: run.runId, sessionId: "ses_navigation" }],
+    });
+  });
+
+  test("internal workspace repair defers reload and preserves an authoritative active run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_repair")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_repair",
+        prompt: { parts: [{ type: "text", text: "Keep running during repair" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+
+    const commandsDir = join(harness.root, ".opencode", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(
+      join(commandsDir, "legacy.md"),
+      "---\nname: legacy\nmodel:\n---\nRun the legacy command.\n",
+      "utf8",
+    );
+    const config = await fetch(`${harness.base}/workspace/ws_1/config`, {
+      headers: harness.collaboratorHeaders,
+    });
+    expect(config.status).toBe(200);
+
+    expect(engine.disposes).toEqual([]);
+    expect(engine.aborts).toEqual([]);
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, {
+      headers: harness.collaboratorHeaders,
+    });
+    await expect(active.json()).resolves.toMatchObject({
+      items: [{ runId: run.runId, sessionId: "ses_repair" }],
+    });
+    const events = await fetch(`${harness.base}/workspace/ws_1/events`, {
+      headers: harness.collaboratorHeaders,
+    });
+    await expect(events.json()).resolves.toMatchObject({
+      items: [{ reason: "commands" }],
+    });
   });
 
   test("semantic mutation and active-state APIs require collaborator scope", async () => {

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { engineInfo, engineRestart } from "@/app/lib/desktop";
 import type { EngineInfo } from "@/app/lib/desktop-types";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
-import { JuggleWorkServerError, type JuggleWorkReloadEvent, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import { JuggleWorkServerError, type JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { t } from "@/i18n";
 import { useReloadCoordinator } from "./reload-coordinator";
@@ -24,29 +24,28 @@ function taskCreateUnavailableToastId(workspaceId: string) {
 }
 
 /**
- * After a workspace activation the server rewrites the shared runtime config
- * (and, in watched deployments, the file watcher echoes that write back as a
- * config reload event). The activation call already reloaded the engine
- * server-side — switch reloads stay (#870) — so that echo is redundant:
- * consuming it keeps the deferred poll → debounce → auto-reload path from
- * re-running an engine reload on every workspace switch.
+ * Hard deadline for the best-effort refreshes that follow an engine reload
+ * (provider list + route state). Neither react-query refetches nor the
+ * OpenCode SDK carry a request timeout, so a single stalled active query
+ * would otherwise leave `reloadBusy` true forever — which wedges the session
+ * MCP maintenance loop in "checking" and the status bar in "Checking".
  */
-export const ACTIVATION_CONFIG_ECHO_GRACE_MS = 2500;
+export const ENGINE_RELOAD_REFRESH_DEADLINE_MS = 20_000;
 
-/** True when a polled reload event is made redundant by our own recent
- * activation. Only config-reason events are suppressed: the activation's
- * inline engine reload already applied the current on-disk state, so both
- * the activation's own config echo and any still-unconsumed config event
- * from before the activation need no further reload. Skill/agent/command
- * mutations observed in the window still reload normally. */
-export function isActivationConfigEcho(
-  event: Pick<JuggleWorkReloadEvent, "reason" | "timestamp">,
-  activationCompletedAt: number | null | undefined,
-): boolean {
-  if (!activationCompletedAt) return false;
-  if (event.reason !== "config") return false;
-  const timestamp = typeof event.timestamp === "number" ? event.timestamp : 0;
-  return timestamp > 0 && timestamp <= activationCompletedAt + ACTIVATION_CONFIG_ECHO_GRACE_MS;
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
 }
 
 export type UseEngineReloadInput = {
@@ -75,43 +74,6 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
-  const activationConfigEchoByWorkspaceRef = useRef<Record<string, number>>({});
-
-  /**
-   * Called right after a successful workspace activation. The server already
-   * reloaded the engine inline (switch reloads stay, #870) and rewrote the
-   * shared runtime config, so:
-   *  1. any pending reload state for the previous workspace is stale and
-   *     must not fire on the newly activated one, and
-   *  2. config-reason reload events arriving within the echo grace window
-   *     are consumed instead of marking another reload required.
-   * Skill/agent/command mutations in the window still reload normally.
-   */
-  const noteWorkspaceActivationCompleted = useCallback((activatedWorkspaceId: string, endpoint: ResolvedWorkspaceEndpoint) => {
-    const activationCompletedAt = Date.now();
-    activationConfigEchoByWorkspaceRef.current[activatedWorkspaceId] = activationCompletedAt;
-    reloadCoordinator.clearReloadRequired();
-    // Absorb the config echo immediately: the server may have recorded the
-    // runtime-config write just before responding (its own 750 ms event
-    // debounce can also delay the record past this point, so per-event grace
-    // is checked again on every poll).
-    const cursor = reloadEventCursorByWorkspaceRef.current[activatedWorkspaceId];
-    if (typeof cursor !== "number") return;
-    void endpoint.client
-      .listReloadEvents(endpoint.workspaceId, { since: cursor })
-      .then((response) => {
-        for (const event of response.items ?? []) {
-          if (isActivationConfigEcho(event, activationCompletedAt)) {
-            reloadEventCursorByWorkspaceRef.current[activatedWorkspaceId] = Math.max(
-              cursor,
-              Number(event.seq) || 0,
-            );
-          }
-        }
-      })
-      .catch(() => undefined);
-  }, [reloadCoordinator]);
-
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     if (!client || !workspaceId) {
       onError(t("app.error_connect_first"));
@@ -135,10 +97,10 @@ export function useEngineReload(input: UseEngineReloadInput) {
       restartedEngine = true;
     }
     if (restartedEngine) {
-      await refreshRouteState();
-      await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     } else {
-      await refreshProviderListQueries(getReactQueryClient());
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     setEngineReloadVersion((v) => v + 1);
     try {
@@ -147,7 +109,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
       // ignore browser event dispatch failures
     }
     if (!restartedEngine) {
-      await refreshRouteState();
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     toast.dismiss(taskCreateUnavailableToastId(workspaceId));
     toast.dismiss();
@@ -201,9 +163,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
         // new filesystem/server-side mutations, including skills created by an
         // agent while the session page is open.
         if (currentCursor === undefined || currentCursor === null) return;
-        const activationEchoAt = activationConfigEchoByWorkspaceRef.current[workspaceId];
         for (const event of response.items ?? []) {
-          if (isActivationConfigEcho(event, activationEchoAt)) continue;
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
         }      } catch {
         // Reload-event polling is best-effort; normal route health checks still
@@ -237,5 +197,5 @@ export function useEngineReload(input: UseEngineReloadInput) {
     };
   }, []);
 
-  return { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi, noteWorkspaceActivationCompleted };
+  return { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi };
 }

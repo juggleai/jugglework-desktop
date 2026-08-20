@@ -125,7 +125,7 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
-import { setTaskScope, useTaskScope, workspaceTaskScope } from "./task-scope-store";
+import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
@@ -739,6 +739,8 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 
 export function AppSidebar(props: AppSidebarProps) {
   const taskScope = useTaskScope();
+  const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
+  const rememberWorkspace = useTaskScopeStore((state) => state.rememberWorkspace);
   const [sessionQuery, setSessionQuery] = React.useState("");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
@@ -849,6 +851,7 @@ export function AppSidebar(props: AppSidebarProps) {
       const scope = workspaceTaskScope(selected);
       syncedTaskScopeRef.current = scope;
       setTaskScope(scope);
+      rememberWorkspace(scope, workspaceId);
       return;
     }
 
@@ -856,13 +859,23 @@ export function AppSidebar(props: AppSidebarProps) {
     syncedTaskScopeRef.current = taskScope;
     if (selected && workspaceTaskScope(selected) === taskScope) return;
 
-    const firstInScope = props.workspaceSessionGroups.find(
+    // Returning to a scope should reopen the workspace the user last visited
+    // there, not the first one the list happens to contain. Restoring the id
+    // is enough: the route layer follows up by navigating to the remembered
+    // session of that workspace. Falls back to the first in-scope workspace
+    // when the previous one was deleted or has not been seen this run.
+    const groupsInScope = props.workspaceSessionGroups.filter(
       (group) => workspaceTaskScope(group.workspace) === taskScope,
-    )?.workspace;
-    if (!firstInScope) return;
-    syncedWorkspaceIdRef.current = firstInScope.id;
-    void props.onSelectWorkspace(firstInScope.id);
-  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope]);
+    );
+    const rememberedId = lastWorkspaceByScope[taskScope];
+    const restored = rememberedId
+      ? groupsInScope.find((group) => group.workspace.id === rememberedId)?.workspace
+      : undefined;
+    const target = restored ?? groupsInScope[0]?.workspace;
+    if (!target) return;
+    syncedWorkspaceIdRef.current = target.id;
+    void props.onSelectWorkspace(target.id);
+  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
 
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;

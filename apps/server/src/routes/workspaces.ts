@@ -2,7 +2,7 @@ import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
-import { inheritWorkspaceOpencodeConnection, resolveWorkspaceOpencodeConnection } from "../opencode-connection.js";
+import { inheritWorkspaceOpencodeConnection } from "../opencode-connection.js";
 import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { ensureDir, exists, shortId } from "../utils.js";
@@ -24,9 +24,8 @@ interface RegisterWorkspaceRoutesOptions {
   readOptionalJsonBody: ReadJsonBody;
   parseOptionalBoolean: ParseOptionalBoolean;
   ensureWritable: (config: ServerConfig) => void;
-  resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
+  resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
-  reloadOpencodeEngine: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -244,9 +243,8 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     readOptionalJsonBody,
     parseOptionalBoolean,
     ensureWritable,
-    resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
-    reloadOpencodeEngine,
   } = options;
 
   const resolveWorkspaceForRegistry = async (id: string): Promise<WorkspaceInfo> => {
@@ -261,7 +259,10 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     if (workspace.workspaceType === "remote") {
       return { ...workspace, path: workspace.path?.trim() ?? "" };
     }
-    return resolveWorkspace(config, id);
+    // Registry mutations and navigation must not bootstrap files: bootstrap
+    // may require an engine reload, while merely selecting a workspace must
+    // never disturb its active runs.
+    return resolveWorkspaceWithoutBootstrap(config, id);
   };
 
   addRoute(routes, "POST", "/workspaces/local", "host", async (ctx) => {
@@ -457,7 +458,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     const body = queryPersist === undefined ? await readOptionalJsonBody(ctx.request) : {};
     const persist = queryPersist ?? (body.persist === true);
     if (persist) ensureWritable(config);
-    const wasActive = config.workspaces[0]?.id === workspace.id;
     config.workspaces = [
       workspace,
       ...config.workspaces.filter((entry) => entry.id !== workspace.id),
@@ -473,10 +473,9 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    // Re-activating the already-active workspace must not dispose its engine instance; switch reloads stay (#870).
-    if (!wasActive && workspace.workspaceType === "local" && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim()) {
-      await reloadOpencodeEngine(config, workspace);
-    }
+    // Activation is navigation/registry state only. Engine reload is an
+    // explicit, separately gated operation because disposing a directory also
+    // aborts every active OpenCode run in that workspace.
     return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace), persisted });
   });
 

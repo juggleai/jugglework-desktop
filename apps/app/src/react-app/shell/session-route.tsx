@@ -696,7 +696,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
   });
 
-  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi, noteWorkspaceActivationCompleted } = useEngineReload({
+  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     workspaceId: selectedWorkspaceId,
     workspace: selectedWorkspace,
@@ -1103,18 +1103,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setActivatingWorkspaceId(workspaceId);
     setWorkspaceActivationErrorId(null);
     setRouteError(null);
-    // TIPS: managed OpenCode 由多个工作区共享，activation 会触发 dispose；
-    // 必须串行，避免快速点击 A/B 后两个 reload 交错或旧请求反向覆盖新导航。
+    // 串行更新服务端 active-workspace 注册，避免快速点击 A/B 后旧请求
+    // 反向覆盖新导航。Activation 不得触发 engine dispose。
     const activation = serializeWorkspaceActivation(() => (
       endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true })
     ));
     try {
       await activation;
-      if (workspaceActivationGenerationRef.current === generation) {
-        // The server reloaded the engine inline; absorb its config echo and
-        // drop any stale pending reload from the previously active workspace.
-        noteWorkspaceActivationCompleted(workspaceId, endpoint);
-      }
       return workspaceActivationGenerationRef.current === generation;
     } catch {
       if (workspaceActivationGenerationRef.current === generation) {
@@ -1127,7 +1122,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         setActivatingWorkspaceId(null);
       }
     }
-  }, [endpointForWorkspace, noteWorkspaceActivationCompleted, setRouteError, workspaces]);
+  }, [endpointForWorkspace, setRouteError, workspaces]);
 
   /**
    * 打开会话，并保证跨工作区导航先完成运行时激活
@@ -1149,11 +1144,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       !activatingWorkspaceId &&
       workspaceActivationErrorId !== workspaceId
     );
-    // TIPS: 跨工作区切换先导航、再后台激活。
-    // activate 需要 reload 目标工作区的 OpenCode 引擎（实测约 1.7s），过去要 await 它才切 URL，
-    // 点完侧栏整个界面会僵住一秒多没有任何反馈。
-    // 读会话走的是目标工作区自己的 OpenCode 连接，不依赖「它是当前激活工作区」，所以导航可以先行；
-    // 真正需要引擎就绪的是发起任务，那一步已由 canAcceptTask / showPreparingStatus 拦住。
+    // 跨工作区切换先导航、再后台同步服务端 active-workspace 注册。
+    // 读会话走目标工作区自己的 OpenCode 连接，不依赖它先成为 active。
     navigateToWorkspaceSession(workspaceId, sessionId);
     focusPromptSoon();
     if (workspaceAlreadyReady) return;
@@ -2473,11 +2465,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             void workspaceSetSelected(workspaceId).catch(() => undefined);
             void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
           }
-          // Tell the JuggleWork server this workspace is now active so it can
-          // emit a config reload event that the OpenCode engine picks up.
-          // Without this, the permissions from opencode.jsonc are never
-          // applied on the workspace the user is already on at launch. See
-          // issue #870.
+          // Keep the server registry aligned with navigation. This operation
+          // is non-destructive; configuration changes are applied separately
+          // through the active-run-gated engine reload path.
           if (workspaceId && !await activateWorkspaceForNavigation(workspaceId)) {
             if (workspace?.workspaceType === "remote") {
               // A remote workspace whose worker was redeployed has a dead URL:
