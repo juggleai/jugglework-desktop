@@ -10,6 +10,18 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/ctx\.onCreateTaskInWorkspace\(workspace\.id\)/);
   });
 
+  test("swaps collapsed-workspace loading and hover actions in the same trailing slot", () => {
+    // 点击行会留下 DOM 焦点，focus-within 曾导致加号/三个点在鼠标移走后常驻 —— 必须只用 :focus-visible。
+    expect(source).not.toMatch(/group-focus-within\/workspace-header/);
+    // 悬停 / 菜单打开 / 键盘聚焦时：loading 淡出，操作图标淡入并恢复指针事件。
+    expect(source).toMatch(/group-hover\/workspace-header:opacity-0/);
+    expect(source).toMatch(/group-has-data-popup-open\/workspace-header:opacity-0/);
+    expect(source).toMatch(/group-has-\[:focus-visible\]\/workspace-header:opacity-100/);
+    expect(source).toMatch(/opacity-0 pointer-events-none transition-opacity[\s\S]+group-hover\/workspace-header:pointer-events-auto/);
+    // loading 与操作图标同锚点叠放（绝对定位），切换时行内布局零抖动。
+    expect(source).toMatch(/absolute right-2 top-1\/2 -translate-y-1\/2/);
+  });
+
   test("keeps New Session out of the overflow menu and restores Share below Edit name", () => {
     const menu = source.slice(source.indexOf("function WorkspaceActionsMenu"), source.indexOf("function RemoteConnectionIssueCard"));
     expect(menu).not.toMatch(/onCreateTaskInWorkspace|cmd_new_session_title/);

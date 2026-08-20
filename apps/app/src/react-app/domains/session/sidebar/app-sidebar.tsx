@@ -1443,10 +1443,17 @@ function WorkspaceSidebarGroup({
                 showActivity={showWorkspaceActivity}
                 onToggleExpanded={() => ctx.toggleWorkspaceExpanded(workspace.id)}
               />
-              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              {/* TIPS: 行尾同一锚点上「运行中 loading」与「加号/更多」互斥呈现：
+                  折叠且有任务运行时默认只显示 loading；悬停、键盘聚焦（:focus-visible）
+                  或菜单打开（data-popup-open）时淡入操作图标并淡出 loading，鼠标移开即恢复。
+                  显隐用 :has(:focus-visible) 而非 focus-within —— 点击行会留下 DOM 焦点，
+                  focus-within 会让图标在鼠标移走后常驻；:focus-visible 只在键盘聚焦时命中。
+                  loading 绝对定位在同一锚点，切换时行内布局零抖动；图标隐藏时不接收指针事件，
+                  避免挡住右侧空白处的点击。 */}
+              <div className="absolute right-2 top-1/2 -translate-y-1/2">
                 {showWorkspaceActivity ? (
                   <span
-                    className="flex size-6 items-center justify-center"
+                    className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/workspace-header:opacity-0 group-has-data-popup-open/workspace-header:opacity-0 group-has-[:focus-visible]/workspace-header:opacity-0"
                     role="status"
                     title={t("workspace_list.session_streaming")}
                     aria-label={t("workspace_list.session_streaming")}
@@ -1456,7 +1463,7 @@ function WorkspaceSidebarGroup({
                 ) : null}
                 <div
                   data-workspace-actions
-                  className="flex items-center gap-1 opacity-0 transition-opacity group-hover/workspace-header:opacity-100 group-focus-within/workspace-header:opacity-100"
+                  className="flex items-center gap-0.5 opacity-0 pointer-events-none transition-opacity duration-150 group-hover/workspace-header:opacity-100 group-hover/workspace-header:pointer-events-auto group-has-data-popup-open/workspace-header:opacity-100 group-has-data-popup-open/workspace-header:pointer-events-auto group-has-[:focus-visible]/workspace-header:opacity-100 group-has-[:focus-visible]/workspace-header:pointer-events-auto"
                 >
                   <Button
                     variant="ghost"
