@@ -97,6 +97,42 @@ describe("session activity reconciliation", () => {
     expect(useSessionActivityStore.getState().getFinishReason(workspaceId, sessionId)).toBeNull();
   });
 
+  test("a stale busy workspace snapshot cannot revive a run the live stream already ended", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    // 中断（aborted）走的就是这条路径：实时事件宣告结束，但没有 incomplete 诊断兜底。
+    store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+
+    // 侧栏列表仍留着运行期间取到的 busy，且列表每次变更都会重新 seed 一遍。
+    store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "busy" } }]);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("idle");
+
+    // 真正的新任务仍然由实时事件重新点亮。
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+  });
+
+  test("a failed session stays failed across stale busy workspace snapshots", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setError(workspaceId, sessionId, "boom");
+
+    store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "busy" } }]);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("error");
+  });
+
+  test("an on-demand session snapshot still outranks the live end marker", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setRunStatus(workspaceId, sessionId, { type: "idle" });
+
+    store.seedSessionRun(workspaceId, sessionId, { type: "busy" }, false);
+
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+  });
+
   test("treats finish_reason stop with an incomplete diagnostic as terminal across stale busy snapshots", () => {
     const store = useSessionActivityStore.getState();
     store.setRunStatus(workspaceId, sessionId, { type: "busy" });

@@ -16,6 +16,14 @@ type SessionActivityRecord = {
   errorActive: boolean;
   errorMessage: string | null;
   completionBlocked: boolean;
+  /**
+   * 实时事件流已经宣告本次运行结束（idle / 中断 / 报错），在下一次实时 running 之前有效。
+   *
+   * TIPS: 侧栏会话列表是按工作区整体拉取的快照，运行期间取到的 busy 会一直留在列表里，
+   * 而列表对象每次变更都会重新 seed 一遍。没有这个标记时，被打断（aborted）或报错的会话
+   * 会被这份陈旧 busy 快照复活，工作区折叠后行尾的 loading 就再也不消失。
+   */
+  liveRunEnded: boolean;
   finishReason: string | null;
   compacting: boolean;
   waitingPermissionIds: string[];
@@ -64,6 +72,7 @@ const createRecord = (): SessionActivityRecord => ({
   errorActive: false,
   errorMessage: null,
   completionBlocked: false,
+  liveRunEnded: false,
   finishReason: null,
   compacting: false,
   waitingPermissionIds: [],
@@ -189,10 +198,12 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           ...updateRecord(nextState, id, sessionId, (record) => {
             const normalized = normalizeRunStatus(status);
             const snapshotRunActive = normalized === "running" || normalized === "retry";
-            // TIPS: 工作区会话列表可能在 session.idle 之后短暂重放旧 busy 快照。已经写入
-            // completion diagnostic 的终态不能被这类列表快照复活；真正的新任务会先通过实时
-            // setRunStatus(running) 清除 completionBlocked，再由快照继续维护。
-            const runActive = snapshotRunActive && !record.completionBlocked;
+            // TIPS: 工作区会话列表可能在 session.idle 之后重放旧 busy 快照（列表是整体拉取的，
+            // 运行期间取到的 busy 会一直留到下次拉取，且列表每次变更都重新 seed 一遍）。
+            // 实时事件流已宣告结束（liveRunEnded）或已写入 completion diagnostic 的终态，
+            // 都不能被这类列表快照复活；真正的新任务会先通过实时 setRunStatus(running)
+            // 清除这两个标记，再由快照继续维护。
+            const runActive = snapshotRunActive && !record.completionBlocked && !record.liveRunEnded;
             const starting = runActive && !record.runActive;
             return {
               ...record,
@@ -228,6 +239,9 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        // TIPS: 单会话快照是打开会话时按需拉取的权威状态，可以推翻实时结束标记；
+        // 工作区列表那份陈旧快照不行（见 seedWorkspaceSessions）。
+        liveRunEnded: runActive ? false : record.liveRunEnded,
         assistantOutput: runActive && assistantOutput,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
@@ -254,6 +268,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        // 实时状态是唯一权威：running 解除封印，idle 立刻封印住后续的陈旧 busy 快照。
+        liveRunEnded: !runActive,
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
@@ -367,6 +383,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       errorActive: true,
       errorMessage: message ? message : "Session failed",
       runActive: false,
+      liveRunEnded: true,
       assistantOutput: false,
       compacting: false,
       lastMeaningfulProgressAt: null,

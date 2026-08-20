@@ -832,14 +832,21 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
-    useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
-    if (info.role === "assistant") useSessionActivityStore.getState().markProgress(workspaceId, info.sessionID);
+    const messageActivityStore = useSessionActivityStore.getState();
+    messageActivityStore.markMessageRole(workspaceId, info.sessionID, info.id, info.role);
+    if (info.role === "assistant") {
+      // TIPS: 带 error 的助手消息就是这次运行的终点。中断（MessageAbortedError）只写在消息上，
+      // 引擎不一定再发 session.error，session.idle 也可能因为 SSE 重连而丢；不在这里收口，
+      // 侧栏（尤其工作区折叠后行尾的 loading）会一直转。
+      if (info.error) messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
+      else messageActivityStore.markProgress(workspaceId, info.sessionID);
+    }
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
     const completed = info.time?.completed;
