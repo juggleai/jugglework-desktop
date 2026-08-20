@@ -35,8 +35,13 @@ function auth(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promise<void> }) {
+function startMockOpencode(input?: {
+  invalidList?: boolean;
+  holdCommand?: Promise<void>;
+  config?: Record<string, unknown>;
+}) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
+  let config = input?.config ?? {};
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -48,8 +53,15 @@ function startMockOpencode(input?: { invalidList?: boolean; holdCommand?: Promis
         directory: request.headers.get("x-opencode-directory"),
         method: request.method,
       };
-      if (request.method === "POST") record.body = await request.json();
+      if (request.method === "POST" || request.method === "PATCH") record.body = await request.json();
       requests.push(record);
+
+      if (url.pathname === "/config") {
+        if (request.method === "PATCH" && typeof record.body === "object" && record.body !== null) {
+          config = record.body as Record<string, unknown>;
+        }
+        return Response.json(config);
+      }
 
       if (url.pathname === "/session") {
         if (request.method === "POST") {
@@ -388,6 +400,55 @@ describe("workspace session read APIs", () => {
     expect(response.status).toBe(200);
     const proxyRequest = mock.requests.find((request) => request.pathname === "/session");
     expect(proxyRequest?.directory).toBe(encodeURIComponent(workspaceRoot));
+  });
+
+  test("does not forward a semantically unchanged config patch to OpenCode", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const currentConfig = {
+      model: "demo/model",
+      disabled_providers: ["opencode"],
+      provider: { demo: { name: "Demo" } },
+    };
+    const mock = startMockOpencode({ config: currentConfig });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/opencode/config`, {
+      method: "PATCH",
+      headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: { demo: { name: "Demo" } },
+        disabled_providers: ["opencode"],
+        model: "demo/model",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(currentConfig);
+    expect(mock.requests.filter((request) => request.pathname === "/config" && request.method === "GET")).toHaveLength(1);
+    expect(mock.requests.filter((request) => request.pathname === "/config" && request.method === "PATCH")).toHaveLength(0);
+  });
+
+  test("still forwards a changed config patch to OpenCode", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode({ config: { disabled_providers: [] } });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/opencode/config`, {
+      method: "PATCH",
+      headers: { ...auth(jugglework.token), "Content-Type": "application/json" },
+      body: JSON.stringify({ disabled_providers: ["opencode"] }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ disabled_providers: ["opencode"] });
+    expect(mock.requests.filter((request) => request.pathname === "/config" && request.method === "GET")).toHaveLength(1);
+    expect(mock.requests.filter((request) => request.pathname === "/config" && request.method === "PATCH")).toHaveLength(1);
   });
 
   test("returns 404 when the upstream session is missing", async () => {

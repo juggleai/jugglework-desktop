@@ -669,7 +669,7 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
   };
 }
 
-const reloadBaselineRefreshers = new WeakMap<
+const internalReloadDispatchers = new WeakMap<
   ServerConfig,
   (workspaceId: string, reasons?: ReloadReason[]) => Promise<void>
 >();
@@ -842,9 +842,15 @@ export async function startServer(config: ServerConfig, options: {
   const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
-  const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
-    watcherHandle.refreshWorkspace(workspaceId, reasons);
-  reloadBaselineRefreshers.set(config, refreshWorkspaceReloadBaseline);
+  const dispatchInternalReloadRequired = async (workspaceId: string, reasons: ReloadReason[] = []) => {
+    // Internal repairs write the same files watched below. Advance the
+    // fingerprint first so fs.watch does not emit a duplicate, then expose one
+    // deferred reload request. Never dispose inline: active tasks own the
+    // current engine until the explicit, run-gated reload path is safe.
+    await watcherHandle.refreshWorkspace(workspaceId, reasons);
+    for (const reason of reasons) reloadEvents.record(workspaceId, reason);
+  };
+  internalReloadDispatchers.set(config, dispatchInternalReloadRequired);
   const restartReloadWatchers = () => {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
@@ -1067,7 +1073,7 @@ export async function startServer(config: ServerConfig, options: {
   } catch (error) {
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
-    reloadBaselineRefreshers.delete(config);
+    internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
     void automationScheduler.dispose();
     automationExecutor.dispose();
@@ -1114,7 +1120,7 @@ export async function startServer(config: ServerConfig, options: {
     stop: async () => {
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
-      reloadBaselineRefreshers.delete(config);
+      internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
       automationExecutor.dispose();
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
@@ -1148,6 +1154,61 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
 
 function buildOpencodeDirectoryHeader(directory: string) {
   return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (!isRecord(value)) return JSON.stringify(value);
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    .join(",")}}`;
+}
+
+async function skipNoopOpencodeConfigPatch(input: {
+  method: string;
+  proxyPath: string;
+  targetUrl: string;
+  headers: Headers;
+  body: ArrayBuffer | undefined;
+}): Promise<Response | null> {
+  if (input.method !== "PATCH" || normalizeOpencodeProxyPath(input.proxyPath) !== "/config" || !input.body) {
+    return null;
+  }
+
+  let requested: unknown;
+  try {
+    requested = JSON.parse(new TextDecoder().decode(input.body));
+  } catch {
+    return null;
+  }
+
+  const getHeaders = new Headers(input.headers);
+  getHeaders.delete("content-length");
+  getHeaders.delete("content-type");
+  let currentResponse: Response;
+  try {
+    currentResponse = await loopbackFetch(input.targetUrl, {
+      method: "GET",
+      headers: getHeaders,
+    });
+  } catch {
+    return null;
+  }
+  if (!currentResponse.ok) return null;
+
+  let current: unknown;
+  try {
+    current = JSON.parse(await currentResponse.text());
+  } catch {
+    return null;
+  }
+  if (stableJson(current) !== stableJson(requested)) return null;
+
+  // Config.update returns the effective Config. Returning the matching GET
+  // payload preserves that contract without forwarding a mtime-only write to
+  // OpenCode, whose watcher would otherwise dispose active tool executions.
+  return jsonResponse(current);
 }
 
 function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = fetch): typeof fetch {
@@ -1301,6 +1362,14 @@ async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  const noopConfigResponse = await skipNoopOpencodeConfigPatch({
+    method,
+    proxyPath,
+    targetUrl,
+    headers,
+    body,
+  });
+  if (noopConfigResponse) return noopConfigResponse;
   const executionStart = parseSessionExecutionStartProxyRequest(method, proxyPath);
   let executionRun: ReturnType<SessionMutationCoordinator["reserveStart"]> | null = null;
   if (executionStart && workspace) {
@@ -1760,10 +1829,8 @@ function createRoutes(
     readOptionalJsonBody,
     parseOptionalBoolean,
     ensureWritable,
-    resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });
 
   registerSessionRoutes({
@@ -2277,6 +2344,7 @@ function createRoutes(
     return jsonResponse({
       ok: true,
       disabledProviders: runtimeDisabledProviderList(result.config),
+      changed: result.changed,
     });
   });
 
@@ -3149,17 +3217,10 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
       bootstrapReloadReasons.add("commands");
     }
     if (bootstrapReloadReasons.size > 0) {
-      await reloadBaselineRefreshers.get(config)?.(workspace.id, Array.from(bootstrapReloadReasons));
-      reloadOpencodeEngineAfterInternalBootstrap(config, { ...workspace, path: resolvedWorkspace });
+      await internalReloadDispatchers.get(config)?.(workspace.id, Array.from(bootstrapReloadReasons));
     }
   }
   return workspace;
-}
-
-function reloadOpencodeEngineAfterInternalBootstrap(config: ServerConfig, workspace: WorkspaceInfo): void {
-  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-  if (!connection.baseUrl?.trim()) return;
-  void reloadOpencodeEngine(config, workspace).catch(() => undefined);
 }
 
 async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {

@@ -541,11 +541,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       setRetryingWorkspaceIds([]);
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
-      // Mark the chosen workspace as active on the server so that the
-      // OpenCode engine bound to it re-reads opencode.jsonc and applies
-      // permissions. TIPS: activation may dispose/rebuild the workspace
-      // engine, so route readiness must not be released until it completes;
-      // otherwise the first prompt can race /instance/dispose and abort.
+      // Keep the server registry's active workspace aligned with navigation.
+      // Activation is intentionally non-destructive; configuration changes use
+      // the explicit engine-reload path, which is gated while tasks are active.
       if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
