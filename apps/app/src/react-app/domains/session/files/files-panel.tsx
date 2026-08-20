@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { Folders, Maximize2, Menu, Minimize2, Plus } from "lucide-react";
+import { Folders, Maximize2, Menu, Minimize2 } from "lucide-react";
 
 import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { createClient } from "@/app/lib/opencode";
@@ -157,16 +157,6 @@ export function FilesPanel({
             onClose={closeFile}
           />
         </div>
-        {session.fullscreen ? null : (
-          <TreePopover
-            label={t("session_files.open_more")}
-            trigger={<Plus className="size-3.5" />}
-            workspaceRoot={workspaceRoot}
-            align="end"
-          >
-            {(close) => treeNode(close)}
-          </TreePopover>
-        )}
         <Button
           variant="ghost"
           size="icon-sm"

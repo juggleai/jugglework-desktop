@@ -2744,7 +2744,6 @@ export default {
   "session_files.collapse_tree": "Hide file tree",
   "session_files.expand_tree": "Show file tree",
   "session_files.browse_tree": "Browse workspace files",
-  "session_files.open_more": "Open another file",
   "session_files.open_file": "Open file",
   "session_files.diff_collapsed": "This diff has {lines} lines and is collapsed for performance.",
   "session_files.diff_show_anyway": "Show it anyway",

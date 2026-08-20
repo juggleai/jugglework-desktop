@@ -2747,7 +2747,6 @@ export default {
   "session_files.collapse_tree": "收起文件树",
   "session_files.expand_tree": "展开文件树",
   "session_files.browse_tree": "浏览工作区文件",
-  "session_files.open_more": "再打开一个文件",
   "session_files.open_file": "打开文件",
   "session_files.diff_collapsed": "该差异共 {lines} 行，已折叠以保证性能。",
   "session_files.diff_show_anyway": "仍要展示",
