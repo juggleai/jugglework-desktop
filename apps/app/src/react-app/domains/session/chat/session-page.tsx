@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, FolderCog, Folders, GitBranch, Globe, Mic2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -1759,7 +1759,7 @@ export function SessionPage(props: SessionPageProps) {
               aria-label="Extensions"
               aria-pressed={extensionsRailActive}
             >
-              <FolderCog size={17} />
+              <Settings2 size={17} />
             </Button>
           </aside>
           </div>
