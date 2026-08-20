@@ -13,6 +13,7 @@ import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
+import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
@@ -1360,23 +1361,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                     title={attachment.name}
                   >
                     {isImageAttachment(attachment) && attachment.previewUrl ? (
-                      <>
-                        <img
-                          src={attachment.previewUrl}
-                          alt={attachment.name}
-                          decoding="async"
-                          className="h-14 w-14 rounded-xl border border-border/70 object-cover"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75"
-                          aria-label={`Remove ${attachment.name}`}
-                          title="Remove"
-                          onClick={() => props.onRemoveAttachment(attachment.id)}
-                        >
-                          <X size={12} />
-                        </button>
-                      </>
+                      // TIPS: 图片附件复用会话页的 ImageAttachmentBadge：点击缩略图
+                      // 打开灯箱预览（与消息区行为一致），移除按钮由组件内置。
+                      // thumbnailClassName 维持输入栏原有 14×14 规格（组件默认 10×10）。
+                      <ImageAttachmentBadge
+                        src={attachment.previewUrl}
+                        alt={attachment.name}
+                        thumbnailClassName="h-14 w-14"
+                        onRemove={() => props.onRemoveAttachment(attachment.id)}
+                      />
                     ) : (
                       <div className="relative flex w-[220px] max-w-[220px] items-center gap-2 rounded-xl border border-border/70 bg-muted/40 py-1.5 pl-2.5 pr-7">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
