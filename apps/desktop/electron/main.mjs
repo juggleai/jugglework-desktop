@@ -38,7 +38,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
-import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
+import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
@@ -55,7 +55,7 @@ import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs"
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
-import { createRemoteControlBackgroundIndicator } from "./remote-control-background-indicator.mjs";
+import { createAppTrayIndicator } from "./app-tray.mjs";
 import { applyLaunchAtLogin as applyLaunchAtLoginSetting, shouldStartHidden } from "./launch-at-login.mjs";
 import { createRemoteControlPendingPolicySynchronizer } from "./remote-control-pending-policy.mjs";
 import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings, stopAllRemoteControl } from "./remote-control-settings-lifecycle.mjs";
@@ -1066,10 +1066,23 @@ const sessionMutationCoordinator = createSessionMutationCoordinator({
   onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
 });
 let startMainWindowHidden = false;
-let remoteControlBackgroundModeRequested = false;
-const remoteControlBackgroundIndicator = createRemoteControlBackgroundIndicator({
+// TIPS: macOS 状态栏图标的推荐尺寸是 16pt，直接复用大尺寸应用图标会被系统
+// 拉伸导致模糊；Windows/Linux 托盘由系统自行缩放，保持原图即可。
+function trayIndicatorIconImage() {
+  const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+  if (!image || process.platform !== "darwin") return image;
+  try {
+    const resized = image.resize({ width: 16, height: 16 });
+    return resized.isEmpty() ? image : resized;
+  } catch {
+    return image;
+  }
+}
+// 常驻托盘：macOS 状态栏 / Windows 系统托盘图标，是"关闭仅隐藏"模式下
+// 用户找回窗口的唯一可见入口，也是真正的退出入口（Quit 菜单项）。
+const appTrayIndicator = createAppTrayIndicator({
   createTray: () => {
-    const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+    const image = trayIndicatorIconImage();
     if (!image || image.isEmpty()) throw new Error("Tray icon unavailable.");
     return new Tray(image);
   },
@@ -1079,8 +1092,8 @@ const remoteControlBackgroundIndicator = createRemoteControlBackgroundIndicator(
     await createMainWindow();
     await focusMainWindowFromNotification();
   },
-  stopAll: () => executeRemoteControlStopAll(),
-  logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+  quitApp: () => app.quit(),
+  logger: { warn: (message) => console.warn(`[desktop-tray] ${message}`) },
 });
 
 function stoppedRemoteControlAgentStatus() {
@@ -2931,10 +2944,12 @@ async function createMainWindow() {
     }
   });
 
-  installMacCloseToHide({
+  // 关闭窗口只隐藏到托盘（跨平台）；仅当托盘图标真实存在时才允许隐藏，
+  // 否则放行原生关闭行为，避免出现无可见入口的后台进程。
+  installCloseToHide({
     window: mainWindow,
     canQuit: () => runtimeDisposedForQuit,
-    canHide: () => !remoteControlBackgroundModeRequested || remoteControlBackgroundIndicator.active(),
+    canHide: () => appTrayIndicator.active(),
   });
 
   mainWindow.on("closed", () => {
@@ -3090,7 +3105,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     remoteControlPowerMonitorController.stop();
-    remoteControlBackgroundIndicator.stop();
+    appTrayIndicator.stop();
     remoteControlSleepController.stop();
     showShutdownScreen();
     void Promise.all([
@@ -3175,7 +3190,10 @@ if (!app.requestSingleInstanceLock()) {
     let wasOpenedAsHidden = false;
     try { wasOpenedAsHidden = app.getLoginItemSettings().wasOpenedAsHidden === true; } catch {}
     startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings, wasOpenedAsHidden });
-    if (!updateRemoteControlBackgroundIndicator(remoteSettings)) startMainWindowHidden = false;
+    updateRemoteControlBackgroundIndicator(remoteSettings);
+    // TIPS: fail-closed —— 托盘创建失败时禁止隐藏启动，否则会得到一个
+    // 没有任何可见入口的后台进程。
+    if (!appTrayIndicator.start()) startMainWindowHidden = false;
     const win = await createMainWindow();
     if (process.platform === "linux") {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
@@ -3207,7 +3225,7 @@ if (!app.requestSingleInstanceLock()) {
         if (windowAllClosedAction({
           platform: process.platform,
           settings,
-          backgroundIndicatorActive: remoteControlBackgroundIndicator.active(),
+          backgroundIndicatorActive: appTrayIndicator.active(),
         }) === "quit") app.quit();
       }).catch(() => {
         app.quit();
@@ -3237,8 +3255,12 @@ function applyLaunchAtLogin(settings) {
 }
 
 function updateRemoteControlBackgroundIndicator(settings) {
-  remoteControlBackgroundModeRequested = settings.enabled === true && settings.backgroundMode === true;
-  return remoteControlBackgroundIndicator.update(settings);
+  const backgroundRequested = settings.enabled === true && settings.backgroundMode === true;
+  appTrayIndicator.updateRemoteControl({
+    backgroundRequested,
+    stopAll: () => executeRemoteControlStopAll(),
+  });
+  return appTrayIndicator.active();
 }
 
 function applyRemoteControlLocalEffects(settings) {

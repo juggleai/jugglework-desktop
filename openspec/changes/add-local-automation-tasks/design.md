@@ -185,4 +185,4 @@ Rollback disables new UI and scheduler startup while retaining local tables and 
 
 - Whether a later release should expose the fixed ten-minute catch-up window and executor concurrency as user settings.
 - Whether server-mirrored prompts should be optionally disabled for privacy-sensitive deployments; V1 synchronizes the full durable definition as requested.
-- Whether Windows/Linux should adopt a tray/hide-on-close behavior. The initial contract remains simpler: tasks run only while the client runtime has not exited, matching the persistent warning.
+- Windows/Linux tray/hide-on-close behavior: resolved — the desktop now ships an always-on tray (macOS status bar / Windows system tray) with close-to-hide on all platforms while the tray is active; see `apps/desktop/electron/app-tray.mjs`.
