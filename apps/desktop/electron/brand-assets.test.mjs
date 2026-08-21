@@ -34,22 +34,22 @@ function icoSizes(relativePath) {
   });
 }
 
-test("JuggleWork marks: transparent web logo, white-background package icons", () => {
-  // The web/UI mark is the transparent variant (safe on dark surfaces and
-  // composites to the white mark on white plates). Desktop app icons and the
-  // installer logo intentionally use the opaque white-background mark.
+test("JuggleWork marks are generated from the canonical root artwork", () => {
+  // The root artwork keeps its original resolution. Web/UI assets preserve
+  // its transparent background, while desktop and installer icons add white.
+  const source = "jugglework-logo.png";
   const web = "apps/app/public/jugglework-logo.png";
   const desktop = "apps/desktop/resources/icons/icon.png";
   const installer = "apps/installer/assets/jugglework-logo.png";
-  const whiteSource = "jugglework-logo.png";
-  const transparentSource = "jugglework-logo-transparent.png";
 
-  for (const target of [web, desktop, installer, whiteSource, transparentSource]) {
+  const [sourceWidth, sourceHeight] = pngSize(source);
+  assert.equal(sourceWidth, sourceHeight);
+  assert.ok(sourceWidth >= 1024);
+  for (const target of [web, desktop, installer]) {
     assert.deepEqual(pngSize(target), [1024, 1024]);
   }
-  assert.equal(sha256(web), sha256(transparentSource));
-  assert.equal(sha256(desktop), sha256(whiteSource));
-  assert.equal(sha256(installer), sha256(whiteSource));
+  assert.notEqual(sha256(web), sha256(desktop));
+  assert.equal(sha256(installer), sha256(desktop));
 });
 
 test("web, macOS, Windows, and Linux assets have the required formats and sizes", () => {
