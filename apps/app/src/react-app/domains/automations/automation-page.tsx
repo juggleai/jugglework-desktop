@@ -307,8 +307,8 @@ function AutomationDashboard(props: {
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <header className="z-30 shrink-0 border-b border-dls-border bg-background/95 mac:titlebar-drag">
-        <div className="mx-auto flex h-14 w-full max-w-[1500px] items-center gap-3 px-6 lg:px-10">
+      <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
+        <div className="mx-auto flex h-[var(--app-topbar-height)] w-full max-w-[1500px] items-center gap-3 px-6 lg:px-10">
           <div className="mac:titlebar-no-drag">
             <SegmentedTabs history={props.history} />
           </div>
@@ -1087,8 +1087,8 @@ function AutomationEditor(props: {
   if (loading) return <div className="flex h-full items-center justify-center text-dls-secondary">正在加载…</div>;
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden" aria-busy={saving}>
-      <header className="z-30 shrink-0 border-b border-dls-border bg-background/95 mac:titlebar-drag">
-        <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-6 lg:px-10">
+      <header className="z-30 shrink-0 border-b border-dls-border bg-background mac:titlebar-drag">
+        <div className="mx-auto flex h-[var(--app-topbar-height)] w-full max-w-6xl items-center gap-3 px-6 lg:px-10">
           <div className="min-w-0 mac:titlebar-no-drag">
             <AutomationBreadcrumb
               onBack={props.onCancel}

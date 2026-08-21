@@ -12,8 +12,9 @@
   --jw-im-navigation-height: var(--primary-navigation-height, 82px);
   --jw-im-panel-gutter: var(--primary-panel-gutter, clamp(16px, 1.9vw, 36px));
   /* 内容区背景跟随宿主应用的 --background：消息页、通讯录页与工作区会话页同色。
-     自定义属性会穿过 shadow 边界从宿主继承，所以这里直接引用应用令牌即可。 */
-  --ui-chat-bg: var(--background, #fcfcfd);
+     自定义属性会穿过 shadow 边界从宿主继承，所以这里直接引用应用令牌即可。
+     统一引用 --app-page-bg（宿主唯一来源：亮色 #ffffff / 暗色 slate-1）。 */
+  --ui-chat-bg: var(--app-page-bg, #ffffff);
   /* 列表行紧凑化：统一 44px 行高，头像比上游小一档，省下的宽度留给标题 */
   --newui-conversation-avatar-size: 34px;
   --newui-conversation-row-height: 44px;
@@ -282,9 +283,12 @@
 .jw-im-root .jw-im-contact-main-header {
   box-sizing: border-box;
   width: 100%;
-  height: 56px;
-  min-height: 56px;
-  flex: 0 0 56px;
+  /* TIPS 通讯录页（组织内联系人/群组）内容顶栏统一高度 --app-topbar-height（50px）。
+     必须同时覆盖 height/min-height/flex-basis 三者：父容器是 column flex，
+     flex-basis 优先于 height，漏改任何一个都会被顶回旧值。 */
+  height: var(--app-topbar-height, 50px);
+  min-height: var(--app-topbar-height, 50px);
+  flex: 0 0 var(--app-topbar-height, 50px);
   padding: 0 16px;
 }
 .jw-im-pane-header .jg-convers-tools {
@@ -439,14 +443,16 @@
 .jw-im-chat-surface .jw-im-message-scroll {
   background: var(--ui-chat-bg);
 }
-/* 发送区与消息区同底色：上游把输入区画成 --ui-panel，比消息区深一档，
-   在会话页里看着像另外贴了一块面板。 */
+/* 发送区 footer 与消息区同底色（亮色硬编码 #ffffff；卡片是浮层见下方）。
+   footer padding 由下方规则归零，右/底间距只由卡片 margin 控制 */
 .jw-im-chat-surface .jw-im-composer,
 .jw-im-chat-surface .jw-im-composer.tyn-chat-form,
-.jw-im-chat-surface .jw-im-composer-row,
-.jw-im-chat-surface .jw-im-composer-row.tyn-chat-form-enter,
-.jw-im-chat-surface .jw-im-composer .tyn-composer-shell,
-.jw-im-chat-surface .jw-im-composer .tyn-composer-toolbar {
+.jw-im-chat-surface .jw-im-composer .tyn-composer-shell {
+  background: #ffffff;
+}
+:host([data-theme="dark"]) .jw-im-chat-surface .jw-im-composer,
+:host([data-theme="dark"]) .jw-im-chat-surface .jw-im-composer.tyn-chat-form,
+:host([data-theme="dark"]) .jw-im-chat-surface .jw-im-composer .tyn-composer-shell {
   background: var(--ui-chat-bg);
 }
 .jw-im-chat-header { justify-content: flex-start; }
@@ -909,7 +915,10 @@
 .jg-pinned-box .jg-pinned-item.wr-close:hover { background: var(--ui-hover); }
 
 /* Composer */
-.jw-im-composer { height: 180px; min-height: 180px; }
+/* footer 自身不加间距（基底 jugglechat.css 有 padding:0 18px 16px 会与卡片 margin 叠加），
+   右/底间距统一由 .jw-im-composer-row 的 margin 控制 */
+/* footer 不加间距：卡片 margin 16px 四边留白，两者叠加会变成 32px */
+.jw-im-composer { height: 180px; min-height: 180px; padding: 0; }
 .jw-im-composer .tyn-composer-shell,
 .jw-im-composer .tyn-chat-form-enter { height: 100%; }
 .jw-im-mentions { z-index: 1060; overflow: hidden; }
@@ -933,20 +942,75 @@
   font-size: 13px;
   text-align: center;
 }
-.jw-im-composer-row { padding: 0; border: 0; border-radius: 0; box-shadow: none; }
+/* TIPS 消息页输入卡样式：
+   - 无边框、纯白底 #ffffff（硬编码，排除 token 解析问题）+ 阴影浮层
+   - 右/底 16px 外边距（footer padding 已归零，margin 是唯一间距来源）
+   - 布局：编辑器在上、操作行沉底；无发送按钮，回车发送
+   - 选择器用 .jw-im-composer 前缀抬到 (0,2,0)，压过基底与上游同属性规则 */
+.jw-im-composer .jw-im-composer-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin: 0 16px 16px;
+  padding: 0;
+  border: none;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  box-sizing: border-box;
+}
+:host([data-theme="dark"]) .jw-im-root .jw-im-composer-row {
+  background: var(--ui-surface);
+}
+.jw-im-composer .jw-im-composer-row.tyn-chat-form-enter {
+  flex-direction: column;
+}
+/* 编辑区 padding：上 12、左右 16，下间距留给操作行 */
+.jw-im-composer .tyn-chat-form-inner {
+  min-height: 56px;
+  padding: 12px 16px 0;
+}
+.jw-im-composer .tyn-chat-form-input { font-size: 14px; line-height: 22px; }
+/* 操作行：底 8、左右与编辑区对齐 16px */
+.jw-im-composer .tyn-composer-toolbar {
+  height: auto;
+  min-height: 40px;
+  padding: 6px 16px 8px;
+  border-top: 0;
+}
+/* 图标命中区 */
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon {
+  width: 32px;
+  height: 32px;
+}
 .jw-im-composer .tyn-composer-toolbar button { cursor: pointer; }
+/* TIPS 输入区工具栏图标颜色对齐设计稿：中性深灰 #4c4c4c（设计稿实测值，非蓝非黑），
+   尺寸在 components.tsx 中统一为 17px；暗色回退主题次级文字色 */
 .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon,
 .jw-im-composer .tyn-composer-toolbar .wr-smile,
-.jw-im-composer .tyn-composer-toolbar .wr-huixing {
-  color: var(--ui-text-secondary);
+.jw-im-composer .tyn-composer-toolbar .wr-huixing,
+.jw-im-composer .tyn-composer-toolbar .wr-send {
+  color: #4c4c4c;
   background: transparent;
 }
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-smile,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-huixing,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-send {
+  color: var(--ui-text-secondary);
+}
 .jw-im-composer .tyn-composer-toolbar .wr-smile::before,
-.jw-im-composer .tyn-composer-toolbar .wr-huixing::before {
-  color: var(--ui-text-secondary) !important;
+.jw-im-composer .tyn-composer-toolbar .wr-huixing::before,
+.jw-im-composer .tyn-composer-toolbar .wr-send::before {
+  color: #4c4c4c !important;
+  /* 对齐工作区输入栏图标规格 16px；上游 .tyn-toolbar-icon::before 是 24px，可见图标是
+     iconfont 字形而非 lucide SVG（SVG 被 display:none），必须在这里压字号 */
+  font-size: 16px;
 }
 :host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-smile::before,
-:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-huixing::before {
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-huixing::before,
+:host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .wr-send::before {
   filter: brightness(0) invert(1);
   opacity: .72;
 }
@@ -963,8 +1027,17 @@
 :host([data-theme="dark"]) .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon[aria-expanded="true"]::before {
   opacity: 1;
 }
+/* 附件按钮显示 lucide Paperclip SVG（回形针），隐藏 iconfont 字形；表情按钮保持 iconfont */
+/* 表情/附件统一用 lucide SVG（同为 16px、currentColor），iconfont 字形全部隐藏，
+   彻底避免字形与 SVG 的视觉尺寸差异 */
+.jw-im-composer .tyn-composer-toolbar .wr-smile::before,
+.jw-im-composer .tyn-composer-toolbar .jw-im-attach-trigger::before { display: none; }
 .jw-im-composer .tyn-composer-toolbar .wr-smile > svg,
-.jw-im-composer .tyn-composer-toolbar .wr-huixing > svg { display: none; }
+.jw-im-composer .tyn-composer-toolbar .jw-im-attach-trigger > svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
 .jw-im-emoji-picker {
   border: 1px solid var(--ui-border);
   color: var(--ui-text);
@@ -1015,7 +1088,9 @@
 .jw-im-composer-message-panels {
   flex: none;
   overflow: hidden;
-  background: var(--ui-panel);
+  /* 与下方输入卡片（.jw-im-composer-row）左右外边距一致，视觉上连成一张卡 */
+  margin: 0 12px;
+  background: transparent;
 }
 .jw-im-root .jw-im-composer-message-panel {
   display: flex;
@@ -1041,6 +1116,16 @@
   opacity: 1;
   transform: translate3d(0, 0, 0);
   pointer-events: auto;
+  /* 引用/回复条与下方输入卡拼成一张完整卡片：上圆角 + 同底色同描边，底边留给输入卡 */
+  background: #fafafa;
+  border: 1px solid #dcdcdc;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+}
+:host([data-theme="dark"]) .jw-im-root .jw-im-composer-message-panel.active {
+  background: var(--ui-surface);
+  border-color: var(--ui-border-strong);
+  border-bottom: 0;
 }
 .jw-im-root .jw-im-composer-message-panel .flex-grow-1,
 .jw-im-root .jw-im-composer-message-panel .tyn-form-wrapper-content { min-width: 0; }
@@ -1476,12 +1561,28 @@
   background: var(--sidebar, var(--ui-panel));
 }
 .jw-im-contacts-layout .jw-im-list-pane,
+/* 通讯录页内容顶栏 */
 .jw-im-contacts-layout .jw-im-contact-main-header {
   border-color: var(--ui-border) !important;
 }
 .jw-im-contacts-layout .jw-im-contact-main-header {
   color: var(--ui-text);
   background: var(--ui-chat-bg);
+}
+/* TIPS 消息页会话顶栏（含无会话时的空态顶栏）与 通讯录页内容顶栏 统一：
+   高度 --app-topbar-height（50px）+ 背景 --app-page-bg（#ffffff）。
+   - 通讯录头的完整规则（含 flex-basis）在文件前部 .jw-im-root .jw-im-contact-main-header 处
+   - 此处只需压过上游 app.css 的 .tyn-chat-head(60px)——上游同特异性先加载，bridge 稳赢
+   - 空态顶栏原本透出上游 --ui-surface，这里用 --app-page-bg 一并统一 */
+.jw-im-root .jw-im-chat-header {
+  height: var(--app-topbar-height, 50px);
+  min-height: var(--app-topbar-height, 50px);
+  flex: 0 0 var(--app-topbar-height, 50px);
+  background: var(--app-page-bg, #ffffff);
+}
+/* 拖拽 dropzone 顶部让位高度同步统一 token（上游默认 60px，见 newui-conversation.css） */
+.jw-im-root .jg-chat-root {
+  --chat-head-height: var(--app-topbar-height, 50px);
 }
 .jw-im-chat-surface .jw-im-chat-header {
   background: var(--ui-chat-bg);
@@ -1676,6 +1777,18 @@
 
 .jw-im-connection-banner { border-color: #ffccc7; color: #cf1322; background: #fff2f0; }
 .jw-im-call-panel { border-radius: 16px; background: linear-gradient(160deg, #535861, #292d32); }
+
+/* TIPS 发送消息气泡背景统一 token --app-msg-sent-bg（亮 #f3f3f4 / 暗随宿主 slate-3），
+   与工作区会话内容里发送的消息同色。选择器与上游 custom.css 的
+   .tyn-root .outgoing .tyn-reply-* 同特异性 (0,3,0)，本 bridge 加载最末，稳赢。
+   上游同规则带 1px #e1e1e3 描边，工作区会话气泡无描边，这里一并清除保持一致。 */
+.jw-im-root .outgoing .tyn-reply-text,
+.jw-im-root .outgoing .tyn-reply-file,
+.jw-im-root .outgoing .tyn-chain-content,
+.jw-im-root .outgoing .tyn-reply-call-text {
+  background: var(--app-msg-sent-bg, #f3f3f4);
+  border: none;
+}
 
 @media (max-width: 760px) {
   .jw-im-root { --primary-panel-width: min(100%, var(--jugglework-left-sidebar-width, 340px)); }

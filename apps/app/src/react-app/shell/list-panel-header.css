@@ -3,7 +3,8 @@
   --jw-list-header-text: #1c2024;
   --jw-list-header-secondary: #60646c;
   --jw-list-header-icon: rgba(28, 32, 36, .5);
-  --jw-list-header-surface: #fcfcfd;
+  /* 统一引用宿主列表背景 token --app-list-bg（#fcfcfc）；当前无消费点，仅保持语义一致 */
+  --jw-list-header-surface: var(--app-list-bg, #fcfcfd);
   --jw-list-header-hover: #f2f2f4;
   --jw-list-header-focus: #b8bec7;
   box-sizing: border-box;

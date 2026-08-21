@@ -1364,8 +1364,8 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
       <div className="jg-chat-root">
       <header className="jw-im-chat-header tyn-chat-head">
         {!sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /> : null}
-        <div className="tyn-media-group"><ChatAvatar className="tyn-size-md jg-size-md tyn-conver-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" />
-        <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div><div className="tyn-media-row"><span className="meta">{conversation.conversationType === 2 ? "群聊" : `@${name}`}</span></div></div></div>
+        {/* 顶栏仅显示会话名称（设计要求：不显示头像与 @id） */}
+        <div className="jw-im-chat-title tyn-media-col tyn-conver-header-title"><div className="tyn-media-row"><h2 className="name">{name}</h2></div></div>
         <ul className="jw-im-chat-actions tyn-list-inline gap gap-1 ms-auto jg-conversation-header-tools">
           <li ref={actionsMenuRef}><button type="button" className="tool btn btn-icon btn-light wr wr-more-dot" onClick={(event) => { event.stopPropagation(); setActionsOpen((current) => !current); }} title={t("chat.conversation_settings")} aria-expanded={actionsOpen}><MoreHorizontal aria-hidden="true" /></button>
             {actionsOpen ? <ConversationActions conversation={conversation} onClose={() => setActionsOpen(false)} onManageGroup={conversation.conversationType === 2 ? openGroupManager : undefined} /> : null}
@@ -1395,16 +1395,20 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
       {selectionMode ? <footer className="jw-im-selection-bar"><button onClick={() => setSelectedMessageIds([])}><X size={16} />取消</button><span>已选择 {selectedMessageIds.length} 条消息</span><button className="is-primary" onClick={() => setForwarding(messages.filter((message) => selectedMessageIds.includes(selectKey(message))))}><Forward size={16} />转发</button></footer> : <footer className="jw-im-composer tyn-chat-form" style={{ "--composer-height": "180px" } as React.CSSProperties}>
         <div className="tyn-composer-shell"><div className="tyn-composer-resize-handle" />
         {mentionOpen ? <MentionPicker members={filteredMentionMembers} activeIndex={mentionActiveIndex} loading={mentionLoading} onSelect={selectMention} /> : null}
+        {/* TIPS 输入卡布局对齐工作区会话输入栏：编辑器在上、操作行沉底。
+            左：表情/附件（灰色图标）；无发送按钮，回车发送（与工作区一致）。 */}
         <div className="jw-im-composer-row tyn-chat-form-enter tyn-conversation-input">
+          <div className="tyn-chat-form-inner"><div className="tyn-composer-editor"><textarea ref={inputRef} className="tyn-chat-form-input" value={text} onChange={handleComposerChange} placeholder={editingMessage ? t("chat.edit_message") : t("chat.message_placeholder", { name })} onKeyDown={handleComposerKeyDown} /></div></div>
           <div className="tyn-composer-toolbar"><div className="tyn-composer-left tyn-composer-toolbar-left">
           <input ref={fileRef} className="sr-only" type="file" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendFile(file); event.target.value = ""; }} />
           <div className="tyn-toolbar-icon-wrap tyn-toolbar-emoji-wrap">
-            <button className="btn btn-icon btn-light btn-md wr wr-smile tyn-toolbar-icon" title="表情" aria-expanded={emojiOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setEmojiOpen((current) => !current)}><SmilePlus size={20} /></button>
+            <button className="btn btn-icon btn-light btn-md wr wr-smile tyn-toolbar-icon" title="表情" aria-expanded={emojiOpen} onMouseDown={(event) => event.preventDefault()} onClick={() => setEmojiOpen((current) => !current)}><SmilePlus size={16} /></button>
             {emojiOpen ? <EmojiPicker onClose={() => setEmojiOpen(false)} onSelect={insertEmoji} /> : null}
           </div>
-          <button className="btn btn-icon btn-light btn-md wr wr-huixing tyn-toolbar-icon" onClick={() => fileRef.current?.click()} disabled={sending} title="发送文件"><Paperclip size={19} /></button>
-          </div></div>
-          <div className="tyn-chat-form-inner"><div className="tyn-composer-editor"><textarea ref={inputRef} className="tyn-chat-form-input" value={text} onChange={handleComposerChange} placeholder={editingMessage ? t("chat.edit_message") : t("chat.message_placeholder", { name })} onKeyDown={handleComposerKeyDown} /></div></div>
+          {/* 附件按钮：回形针图标用 lucide Paperclip SVG（iconfont 字形被 bridge 隐藏） */}
+          <button className="btn btn-icon btn-light btn-md wr wr-huixing tyn-toolbar-icon jw-im-attach-trigger" onClick={() => fileRef.current?.click()} disabled={sending} title="发送文件"><Paperclip size={16} /></button>
+          </div>
+          </div>
         </div>
         </div>
       </footer>}

@@ -657,8 +657,9 @@ const UserMessage = React.memo(
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
+                  /* 发送消息气泡背景统一 token --app-msg-sent-bg（定义于 app/index.css，消息页同源） */
                   <MessageContent
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    className="bg-[var(--app-msg-sent-bg)] text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
                     style={{ userSelect: "text" }}
                   >
                     {inlineParts.map((part, index) => {

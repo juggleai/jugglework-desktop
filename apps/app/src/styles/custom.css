@@ -1,6 +1,12 @@
-/* 会话页头与会话右侧面板（文件、扩展）的头部统一高度，避免两边对不齐 */
+/* 页面顶栏统一样式（引用唯一来源 token，均定义于 app/index.css :root）：
+   - 高度 --app-topbar-height（50px）
+   - 背景 --app-page-bg（#ffffff 纯白，暗色随主题映射）
+   会话页头、右侧面板（文件、扩展、设置）头部统一引用，避免两边对不齐。
+   TIPS 此处为非 layer CSS，优先级高于元素上的 mac:bg-background/80 等半透明工具类，
+   即顶栏在 mac 上也保持纯白，不做毛玻璃透底。 */
 .session-header,
 .session-panel-header{
-  height: 56px;
-  min-height: 56px;
+  height: var(--app-topbar-height, 50px);
+  min-height: var(--app-topbar-height, 50px);
+  background: var(--app-page-bg, #ffffff);
 }

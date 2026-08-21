@@ -1177,7 +1177,8 @@ export function SessionPage(props: SessionPageProps) {
           >
             <ResizablePanel minSize="360px" className="min-w-0">
               <main className="flex h-full min-w-0 flex-col overflow-hidden">
-          <header className="z-10 flex h-10 shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar session-header">
+          {/* 顶栏高度统一由 .session-header -> --app-topbar-height 控制（见 styles/custom.css） */}
+          <header className="z-10 flex shrink-0 items-center justify-between border-b border-border px-4 md:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar session-header">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
               {shellConfig.sidebar && !sidebarOpen ? <SidebarTrigger className="hidden mac:flex titlebar-no-drag" /> : null}
