@@ -35,8 +35,8 @@ function icoSizes(relativePath) {
 }
 
 test("JuggleWork marks are generated from the canonical root artwork", () => {
-  // The root artwork keeps its original resolution. Web/UI assets preserve
-  // its transparent background, while desktop and installer icons add white.
+  // The root artwork keeps its original resolution. Production web, desktop,
+  // and installer marks share the same 1024px rendition of that artwork.
   const source = "jugglework-logo.png";
   const web = "apps/app/public/jugglework-logo.png";
   const desktop = "apps/desktop/resources/icons/icon.png";
@@ -48,7 +48,7 @@ test("JuggleWork marks are generated from the canonical root artwork", () => {
   for (const target of [web, desktop, installer]) {
     assert.deepEqual(pngSize(target), [1024, 1024]);
   }
-  assert.notEqual(sha256(web), sha256(desktop));
+  assert.equal(sha256(web), sha256(desktop));
   assert.equal(sha256(installer), sha256(desktop));
 });
 
