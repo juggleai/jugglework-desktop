@@ -41,6 +41,7 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { effectiveSessionRunning, isSessionBusyError } from "./session-run-recovery";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
@@ -480,6 +481,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionActivityStatus = useSessionActivityStore(
     (state) => state.statusesByWorkspaceId[props.workspaceId]?.[props.sessionId] ?? "idle",
   );
+  const sessionActivityRunActive = useSessionActivityStore(
+    (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.runActive ?? false,
+  );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
@@ -549,6 +553,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
+  const activeRunsQuery = useQuery({
+    queryKey: ["session-active-runs", props.workspaceId],
+    queryFn: () => props.client.listActiveSessionRuns(props.workspaceId),
+    staleTime: 250,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
+  });
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
@@ -647,9 +658,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
     cachedRendered: rendered,
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
+  const coordinatorRun = activeRunsQuery.data?.items.find((run) => run.sessionId === props.sessionId) ?? null;
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
-  const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const chatStreaming = effectiveSessionRunning({
+    sending,
+    liveStatus: liveStatus.type,
+    activityRunActive: sessionActivityRunActive,
+    coordinatorActive: coordinatorRun !== null,
+  });
+
+  useEffect(() => {
+    void activeRunsQuery.refetch();
+  }, [activeRunsQuery.refetch, liveStatus.type, props.sessionId]);
+
+  useEffect(() => {
+    if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
+    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
+  }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -925,9 +951,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // submission and the route accepted or sent it.
       appendComposerHistory(sessionId, nextDraft.text);
       useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+      void activeRunsQuery.refetch();
       if (isCurrentSurface()) setAwaitingAssistantBaseline(renderedMessages.length);
       return result;
     } catch (nextError) {
+      if (isSessionBusyError(nextError)) {
+        const refreshed = await activeRunsQuery.refetch();
+        const active = refreshed.data?.items.some((run) => run.sessionId === sessionId) ?? false;
+        if (active) {
+          useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+          if (isCurrentSurface()) {
+            setError(null);
+            setAwaitingAssistantBaseline(null);
+            toast.info("This session is already running. You can stop it or queue this message.");
+          }
+          return { outcome: "cancelled", reason: "context_changed" } as const;
+        }
+      }
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
       // TIPS: SessionSurface is reused when switching tabs. A late rejection
@@ -941,7 +981,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length]);
+  }, [activeRunsQuery.refetch, appendComposerHistory, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1057,9 +1097,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: t("session.stop_failed") });
       return;
     }
+    void activeRunsQuery.refetch();
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
+  }, [activeRunsQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -1332,13 +1373,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: props.taskSubmissionDisabled || props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    disabled: chatStreaming || props.taskSubmissionDisabled || props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable, props.taskSubmissionDisabled]);
+  }), [attachments.length, chatStreaming, draft, handleSend, model.transitionState, props.modelUnavailable, props.taskSubmissionDisabled]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<JuggleWorkControlAction>(() => ({
@@ -1956,6 +1997,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
               Open Connect
             </button>
           </div>
+        ) : null}
+        {error && renderedMessages.length > 0 ? (
+          <SessionErrorCard
+            error={error}
+            onDismiss={handleDismissError}
+            onChangeModel={props.onChangeModel}
+            onOpenModelPicker={props.onModelClick}
+          />
         ) : null}
         <ReactSessionComposer
           draft={draft}

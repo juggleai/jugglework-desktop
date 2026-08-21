@@ -1356,6 +1356,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               ...(envSystemContext ? { system: envSystemContext } : {}),
             });
             if (result.error) {
+              if (result.error instanceof Error) throw result.error;
               throw new Error(serializeSDKError(result.error));
             }
           },

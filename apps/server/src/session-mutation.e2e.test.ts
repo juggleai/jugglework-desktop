@@ -798,6 +798,66 @@ describe("authoritative session mutation APIs", () => {
     await expect(active.json()).resolves.toMatchObject({ items: [{ runId: second.runId }] });
   });
 
+  test("a new start self-heals an accepted run whose active event was missed", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const firstResponse = await fetch(`${runPath(harness.base, "ses_self_heal")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_first",
+        prompt: { parts: [{ type: "text", text: "First" }] },
+      }),
+    });
+    expect(firstResponse.status).toBe(202);
+    const first = (await firstResponse.json() as { run: { runId: string } }).run;
+
+    const idle = await fetch(`${runPath(harness.base, "ses_self_heal")}/${first.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "idle" }),
+    });
+    await expect(idle.json()).resolves.toMatchObject({ cleared: false, run: { observedActive: false } });
+
+    const secondResponse = await fetch(`${runPath(harness.base, "ses_self_heal")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_second",
+        prompt: { parts: [{ type: "text", text: "Second" }] },
+      }),
+    });
+    expect(secondResponse.status).toBe(202);
+    await expect(secondResponse.json()).resolves.toMatchObject({
+      run: { generation: 2, startCommandCorrelationId: "cmd_second" },
+    });
+    expect(engine.prompts.map((item) => item.sessionId)).toEqual(["ses_self_heal", "ses_self_heal"]);
+    expect(engine.statusRequests.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("active-run reads eventually reconcile an accepted run against authoritative idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_list_reconcile")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_list_reconcile",
+        prompt: { parts: [{ type: "text", text: "Fast completion" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+
+    const first = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(first.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
+    await new Promise((resolve) => setTimeout(resolve, 510));
+    const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(second.json()).resolves.toEqual({ items: [] });
+  });
+
   test("engine reload is blocked until the authoritative active run clears", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

@@ -1385,11 +1385,11 @@ async function proxyOpencodeRequest(input: {
         origin: "local-renderer",
         startCommandCorrelationId: null,
       });
-      input.sessionMutations.acceptStart({
-        workspaceId: workspace.id,
-        sessionId: executionStart.sessionId,
-        runId: executionRun.runId,
-      });
+      // Keep proxied command/shell reservations in `starting` until their
+      // upstream request settles. OpenCode can transiently report idle while
+      // that request is still in flight; an accepted/unobserved run would look
+      // indistinguishable from a stale fast-completion reservation and could
+      // otherwise be reconciled away by a competing start.
     } catch (error) {
       if (error instanceof SessionMutationError) {
         throw new ApiError(409, error.code, "The session already has an active run", {

@@ -56,6 +56,39 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   let stopped = false;
   let projector = createProjector();
 
+  /** @param {number} attempt */
+  function retryDelay(attempt) {
+    return [100, 500, 2_000][attempt] ?? 2_000;
+  }
+
+  /** @param {number} ms */
+  function wait(ms) {
+    return new Promise((resolve) => timers.setTimeout(() => resolve(), ms));
+  }
+
+  /** @param {unknown} error */
+  function retryableObservationError(error) {
+    if (!isRecord(error)) return true;
+    const status = Number(error.status);
+    return !Number.isFinite(status) || status >= 500;
+  }
+
+  /** @param {string} workspaceId @param {string | null} sessionId */
+  async function hydrateWorkspaceRuns(workspaceId, sessionId = null) {
+    const response = await listActiveRuns({ workspaceId });
+    if (!isRecord(response) || !Array.isArray(response.items)) return null;
+    const activeSessionIds = new Set();
+    for (const run of response.items) {
+      if (isRecord(run) && identifier(run.sessionId)) activeSessionIds.add(run.sessionId);
+      try { coordinator.recordServerRun(run); } catch {}
+    }
+    if (sessionId && !activeSessionIds.has(sessionId)) {
+      const staleRunId = coordinator.getActiveRunId({ workspaceId, sessionId });
+      if (staleRunId) coordinator.clearTerminalRun({ workspaceId, sessionId, runId: staleRunId });
+    }
+    return response;
+  }
+
   function createProjector() {
     return createRemoteSessionProjector({
       randomUUID,
@@ -97,12 +130,8 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     const generation = lifetime;
     subscriptions.set(workspaceId, { identity, controller });
     const current = () => !stopped && generation === lifetime && subscriptions.get(workspaceId)?.identity === identity;
-    void listActiveRuns({ workspaceId }).then((response) => {
-      if (!current() || !isRecord(response) || !Array.isArray(response.items)) return;
-      for (const run of response.items) {
-        if (!current()) return;
-        try { coordinator.recordServerRun(run); } catch {}
-      }
+    void hydrateWorkspaceRuns(workspaceId).then(() => {
+      if (!current()) return;
     }).catch(() => undefined);
     void sseClient.subscribe({
       workspaceId,
@@ -122,16 +151,25 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
         // status rather than treating the queued item itself as active.
         if (sessionId && status && !runId) {
           try {
-            const response = await listActiveRuns({ workspaceId });
+            const response = await hydrateWorkspaceRuns(workspaceId, sessionId);
             if (!current() || !isRecord(response) || !Array.isArray(response.items)) return;
-            for (const run of response.items) coordinator.recordServerRun(run);
             runId = coordinator.getActiveRunId({ workspaceId, sessionId });
           } catch {}
         }
         projector.accept(workspaceId, raw);
         if (!current() || !sessionId || !status || !runId) return;
         try {
-          const response = await observeRun({ workspaceId, sessionId, runId, status });
+          let response;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+              response = await observeRun({ workspaceId, sessionId, runId, status });
+              break;
+            } catch (error) {
+              if (!current() || coordinator.getActiveRunId({ workspaceId, sessionId }) !== runId ||
+                  attempt === 3 || !retryableObservationError(error)) throw error;
+              await wait(retryDelay(attempt));
+            }
+          }
           if (!current() || !isRecord(response)) return;
           if (response.cleared === true && response.run === null) {
             if (response.terminalStatus === "completed" || response.terminalStatus === "failed" || response.terminalStatus === "aborted") {
@@ -150,10 +188,18 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           } else if (response.cleared === false && isRecord(response.run)) {
             coordinator.recordServerRun(response.run);
           }
-        } catch {}
+        } catch (error) {
+          if (isRecord(error) && error.serverCode === "run_mismatch" && current()) {
+            try { await hydrateWorkspaceRuns(workspaceId, sessionId); } catch {}
+          }
+          // Keep the exact mirrored run. A later event/reconnect or server-side
+          // authoritative status reconciliation can complete it safely.
+        }
       },
       onReconnectGap: async (reason) => {
-        if (current()) projector.reconnectGap(workspaceId, reason);
+        if (!current()) return;
+        projector.reconnectGap(workspaceId, reason);
+        try { await hydrateWorkspaceRuns(workspaceId); } catch {}
       },
     }).catch(() => {
       if (!current()) return;

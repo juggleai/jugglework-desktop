@@ -128,6 +128,34 @@ describe("session pending operation reconciliation pump", () => {
     store.close();
   });
 
+  test("authoritative idle releases an ordinary stale run before admitting queued work", async () => {
+    const { store } = await storeFixture();
+    const queued = store.create({ workspaceId: "ws", sessionId: "ses", mode: "enqueue", prompt: "next", commandCorrelationId: "cmd-next" });
+    const mutations = createSessionMutationCoordinator({ randomUUID: (() => {
+      let id = 0;
+      return () => `run-${++id}`;
+    })() });
+    const stale = mutations.reserveStart({ workspaceId: "ws", sessionId: "ses", origin: "local-renderer", startCommandCorrelationId: "cmd-old" });
+    mutations.acceptStart({ workspaceId: "ws", sessionId: "ses", runId: stale.runId });
+    const admitted: string[] = [];
+    const pump = createSessionPendingOperationPump({
+      store,
+      sessionMutations: mutations,
+      intervalMs: 60_000,
+      idleConfirmMs: 0,
+      getSessionStatus: async () => "idle",
+      admit: async (operation) => { admitted.push(operation.id); },
+    });
+
+    await pump.wake();
+    await pump.wake();
+    await waitUntil(() => store.get(queued.id)?.state === "admitted");
+    expect(admitted).toEqual([queued.id]);
+    expect(mutations.getActive("ws", "ses")).toMatchObject({ startCommandCorrelationId: "cmd-next" });
+    await pump.close();
+    store.close();
+  });
+
   test("close stops and awaits lifecycle reconciliation", async () => {
     const { store } = await storeFixture();
     store.create({ workspaceId: "ws", sessionId: "ses", mode: "enqueue", prompt: "queued", commandCorrelationId: "cmd" });

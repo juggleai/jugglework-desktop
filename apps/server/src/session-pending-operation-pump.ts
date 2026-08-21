@@ -108,15 +108,17 @@ export function createSessionPendingOperationPump(options: {
 
       const active = options.sessionMutations.getActive(workspaceId, sessionId);
       if (active) {
-        const observation = options.sessionMutations.observe({ workspaceId, sessionId, runId: active.runId, status: "idle" });
-        if (!observation.cleared) {
-          const admitted = options.store.list(workspaceId, sessionId)
-            .find((operation) => operation.state === "admitted" && operation.admittedId === active.runId);
-          // Admission acknowledgement can race ahead of OpenCode's busy status.
-          // Two authoritative idle observations separated by a grace interval
-          // close the fast-completion case without treating the first idle as terminal.
-          if (!admitted || !options.store.confirmIdle(admitted.id, idleConfirmMs)) return;
-          options.sessionMutations.observe({ workspaceId, sessionId, runId: active.runId, status: "completed" });
+        const reconciliation = options.sessionMutations.reconcileAuthoritativeIdle({
+          workspaceId,
+          sessionId,
+          runId: active.runId,
+          minimumIntervalMs: idleConfirmMs,
+        });
+        if (!reconciliation.cleared) return;
+        for (const operation of options.store.list(workspaceId, sessionId)) {
+          if (operation.state === "admitted" && operation.admittedId === active.runId) {
+            options.store.markCompleted(operation.id);
+          }
         }
       }
 

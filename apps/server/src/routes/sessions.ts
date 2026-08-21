@@ -19,7 +19,10 @@ import {
 } from "../session-groups.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
 import { SessionPendingOperationError, type SessionPendingOperationStore } from "../session-pending-operations.js";
-import type { SessionPendingOperationPump } from "../session-pending-operation-pump.js";
+import {
+  SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+  type SessionPendingOperationPump,
+} from "../session-pending-operation-pump.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -185,6 +188,76 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     sessionPendingOperationPump,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
+
+  type NormalizedEngineSessionStatus = "idle" | "running" | "waiting" | "retrying";
+
+  function normalizeEngineSessionStatus(status: z.infer<typeof opencodeTargetSessionStatusSchema>["type"]): NormalizedEngineSessionStatus {
+    if (status === "idle") return "idle";
+    if (status === "waiting") return "waiting";
+    if (status === "retry" || status === "retrying") return "retrying";
+    return "running";
+  }
+
+  async function readEngineSessionStatus(
+    workspace: WorkspaceInfo,
+    sessionId: string,
+  ): Promise<NormalizedEngineSessionStatus> {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
+    if (!isRecord(statuses)) {
+      throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+    }
+    const targetStatus = Object.prototype.hasOwnProperty.call(statuses, sessionId)
+      ? statuses[sessionId]
+      : undefined;
+    if (targetStatus === undefined) return "idle";
+    const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
+    if (!parsedStatus.success) {
+      throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+    }
+    return normalizeEngineSessionStatus(parsedStatus.data.type);
+  }
+
+  function finalizeClearedRun(workspaceId: string, sessionId: string, runId: string): void {
+    for (const admitted of sessionPendingOperations.list(workspaceId, sessionId)) {
+      if (admitted.state === "admitted" && admitted.admittedId === runId) {
+        sessionPendingOperations.markCompleted(admitted.id);
+      }
+    }
+    void sessionPendingOperationPump.wake();
+  }
+
+  async function reconcileWorkspaceActiveRuns(workspace: WorkspaceInfo): Promise<void> {
+    for (const active of sessionMutations.listActive(workspace.id)) {
+      let engineStatus: NormalizedEngineSessionStatus;
+      try {
+        engineStatus = await readEngineSessionStatus(workspace, active.sessionId);
+      } catch {
+        // Fail closed when authoritative engine state is unavailable.
+        continue;
+      }
+      try {
+        if (engineStatus === "idle") {
+          const reconciliation = sessionMutations.reconcileAuthoritativeIdle({
+            workspaceId: workspace.id,
+            sessionId: active.sessionId,
+            runId: active.runId,
+            minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+          });
+          if (reconciliation.cleared) finalizeClearedRun(workspace.id, active.sessionId, active.runId);
+        } else {
+          sessionMutations.observe({
+            workspaceId: workspace.id,
+            sessionId: active.sessionId,
+            runId: active.runId,
+            status: engineStatus,
+          });
+        }
+      } catch (error) {
+        if (!(error instanceof SessionMutationError && error.code === "run_mismatch")) throw error;
+      }
+    }
+  }
 
   function remapSessionReadError(error: unknown): never {
     if (error instanceof ApiError && error.code === "opencode_request_failed") {
@@ -541,20 +614,61 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     let run;
     try {
-      const opencode = createWorkspaceOpencodeClient(config, workspace);
-      const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
-      if (!isRecord(statuses)) {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
-      }
-      const targetStatus = Object.prototype.hasOwnProperty.call(statuses, input.sessionId)
-        ? statuses[input.sessionId]
-        : undefined;
-      if (targetStatus !== undefined) {
-        const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
-        if (!parsedStatus.success) {
-          throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      let engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
+      let active = sessionMutations.getActive(workspace.id, input.sessionId);
+
+      if (engineStatus === "idle" && active) {
+        const staleRunId = active.runId;
+        let reconciliation = sessionMutations.reconcileAuthoritativeIdle({
+          workspaceId: workspace.id,
+          sessionId: input.sessionId,
+          runId: staleRunId,
+          minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+        });
+        if (!reconciliation.cleared && reconciliation.retryAfterMs !== null) {
+          if (reconciliation.retryAfterMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, reconciliation.retryAfterMs!));
+          }
+          engineStatus = await readEngineSessionStatus(workspace, input.sessionId);
+          if (engineStatus === "idle") {
+            try {
+              reconciliation = sessionMutations.reconcileAuthoritativeIdle({
+                workspaceId: workspace.id,
+                sessionId: input.sessionId,
+                runId: staleRunId,
+                minimumIntervalMs: SESSION_PENDING_OPERATION_IDLE_CONFIRM_MS,
+              });
+            } catch (error) {
+              // An active-run poll or another start contender may have already
+              // reconciled this exact stale run while this request waited for
+              // the second authoritative sample. Continue only when no
+              // replacement was installed; reserveStart remains the atomic
+              // winner fence below.
+              if (!(error instanceof SessionMutationError && error.code === "run_mismatch" &&
+                sessionMutations.getActive(workspace.id, input.sessionId) === null)) throw error;
+            }
+          } else {
+            sessionMutations.observe({
+              workspaceId: workspace.id,
+              sessionId: input.sessionId,
+              runId: staleRunId,
+              status: engineStatus,
+            });
+          }
         }
-        if (parsedStatus.data.type !== "idle") {
+        if (reconciliation.cleared) finalizeClearedRun(workspace.id, input.sessionId, staleRunId);
+        active = sessionMutations.getActive(workspace.id, input.sessionId);
+      }
+
+      if (engineStatus !== "idle") {
+        if (active) {
+          sessionMutations.observe({
+            workspaceId: workspace.id,
+            sessionId: input.sessionId,
+            runId: active.runId,
+            status: engineStatus,
+          });
+        }
           if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
             const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
               isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
@@ -581,7 +695,6 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             "session_busy",
             sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null,
           );
-        }
       }
 
       // Every contender reads authoritative engine state first. This synchronous
@@ -658,12 +771,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     try {
       const observation = sessionMutations.observe({ workspaceId: workspace.id, ...input });
       if (observation.cleared) {
-        for (const admitted of sessionPendingOperations.list(workspace.id, input.sessionId)) {
-          if (admitted.state === "admitted" && admitted.admittedId === input.runId) {
-            sessionPendingOperations.markCompleted(admitted.id);
-          }
-        }
-        void sessionPendingOperationPump.wake();
+        finalizeClearedRun(workspace.id, input.sessionId, input.runId);
       }
       return jsonResponse(observation);
     } catch (error) {
@@ -758,6 +866,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   addRoute(routes, "GET", "/workspace/:id/session-runs", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    await reconcileWorkspaceActiveRuns(workspace);
     return jsonResponse({ items: sessionMutations.listActive(workspace.id) });
   });
 

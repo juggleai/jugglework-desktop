@@ -95,7 +95,7 @@ describe("remote session event bridge", () => {
   });
 
   it("hydrates a queued run only after authoritative admission produces a status event", async () => {
-    const admitted = { runId: "run_admitted", origin: "remote-control" };
+    const admitted = { workspaceId: "ws_1", sessionId: "ses_1", runId: "run_admitted", origin: "remote-control" };
     let listCalls = 0;
     const h = harness({
       listActiveRuns: async () => {
@@ -172,6 +172,40 @@ describe("remote session event bridge", () => {
     await terminal;
     assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
     assert.equal(h.getRunId(), "run_2");
+  });
+
+  it("retries a transient terminal observation while the exact run remains active", async () => {
+    let attempts = 0;
+    const h = harness({
+      observeRun: async () => {
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error("temporary"), { status: 503 });
+        return { cleared: true, run: null, terminalStatus: "completed" };
+      },
+    });
+    h.bridge.bind(h.binding);
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    assert.equal(attempts, 2);
+    assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
+  });
+
+  it("rehydrates the mirror after a run mismatch", async () => {
+    const replacement = { runId: "run_2", sessionId: "ses_1", origin: "local-renderer" };
+    let lists = 0;
+    const h = harness({
+      listActiveRuns: async () => {
+        lists += 1;
+        return lists === 1 ? { items: [] } : { items: [replacement] };
+      },
+      observeRun: async () => {
+        throw { serverCode: "run_mismatch" };
+      },
+    });
+    h.bridge.bind(h.binding);
+    await Promise.resolve();
+    await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    assert.equal(h.getRunId(), "run_2");
+    assert.deepEqual(h.mirroredRuns, [replacement]);
   });
 
   it("synchronously aborts and fences stale callbacks on clear, then remains reusable", async () => {
