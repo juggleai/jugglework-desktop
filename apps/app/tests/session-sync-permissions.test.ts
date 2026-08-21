@@ -10,6 +10,7 @@ import {
   __disposeWorkspaceSessionSyncForTest,
   __hasWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
+  captureTodoSnapshotRevision,
   ensureWorkspaceSessionSync,
   permissionKey,
   questionKey,
@@ -18,6 +19,7 @@ import {
   seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
+  todoKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 
 function permission(id: string, sessionID: string): PermissionRequest {
@@ -334,6 +336,31 @@ describe("session transcript sync", () => {
 
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
     expect(transcript?.[1]?.parts[0]).toMatchObject({ text: "finished answer" });
+  });
+
+  test("keeps live todos when an older snapshot arrives later", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    try {
+      const snapshotTodoRevision = captureTodoSnapshotRevision();
+      __applySessionSyncEventForTest(syncInput, {
+        type: "todo.updated",
+        properties: {
+          sessionID: "session-a",
+          todos: [{ id: "todo-live", content: "still working", status: "in_progress", priority: "high" }],
+        },
+      } as any);
+
+      seedSessionState("workspace-a", snapshotWithMessages([]), { snapshotTodoRevision });
+
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toMatchObject([
+        { id: "todo-live", status: "in_progress" },
+      ]);
+    } finally {
+      release();
+      cleanup();
+    }
   });
 
   test("continues accepting stream deltas for a recently unselected session", async () => {

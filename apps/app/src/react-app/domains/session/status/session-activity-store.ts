@@ -9,9 +9,10 @@ export const SESSION_STALLED_AFTER_MS = 5 * 60_000;
 
 type SessionMessageRole = "assistant" | "system" | "user";
 
-type SessionActivityRecord = {
+export type SessionActivityRecord = {
   status: SessionActivityStatus;
   runActive: boolean;
+  runGeneration: number;
   assistantOutput: boolean;
   errorActive: boolean;
   errorMessage: string | null;
@@ -68,6 +69,7 @@ type SessionActivityStore = {
 const createRecord = (): SessionActivityRecord => ({
   status: "idle",
   runActive: false,
+  runGeneration: 0,
   assistantOutput: false,
   errorActive: false,
   errorMessage: null,
@@ -239,6 +241,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        runGeneration: starting ? record.runGeneration + 1 : record.runGeneration,
         // TIPS: 单会话快照是打开会话时按需拉取的权威状态，可以推翻实时结束标记；
         // 工作区列表那份陈旧快照不行（见 seedWorkspaceSessions）。
         liveRunEnded: runActive ? false : record.liveRunEnded,

@@ -42,6 +42,12 @@ import type {
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
 import { effectiveSessionRunning, isSessionBusyError } from "./session-run-recovery";
+import {
+  classifyTaskProgress,
+  shouldAcknowledgeTerminalProgress,
+  shouldShowTaskProgress,
+  shouldSynthesizeBusyAfterAcceptance,
+} from "./task-progress-state";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
@@ -65,11 +71,13 @@ import { shouldDrainQueuedTask } from "./queued-draft-policy";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  captureTodoSnapshotRevision,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
 } from "@/react-app/domains/session/sync/session-sync";
+import { useSessionTodos } from "@/react-app/domains/session/sync/use-session-todos";
 import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
@@ -199,7 +207,6 @@ export type SessionSurfaceProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
-  todos?: TodoItem[];
   activePermission?: PendingPermission | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
@@ -470,6 +477,12 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const local = useLocal();
+  const todos = useSessionTodos(props.workspaceId, props.sessionId);
+  const taskProgressKind = classifyTaskProgress(todos);
+  const [terminalProgressAcknowledgement, setTerminalProgressAcknowledgement] = useState(false);
+  const taskProgressWasActiveRef = useRef(false);
+  const taskProgressPreviousKindRef = useRef(taskProgressKind);
+  const taskProgressRunEndedAtRef = useRef(0);
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
   const findOpen = useSessionFindStore((state) => state.open);
@@ -560,13 +573,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     refetchOnWindowFocus: true,
     refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
   });
+  const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    queryFn: async () => {
+      const todoRevision = captureTodoSnapshotRevision();
+      const snapshot = (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item;
+      snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
+      return snapshot;
+    },
     staleTime: 500,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const currentSnapshotTodoRevision = currentSnapshot
+    ? snapshotTodoRevisionBySnapshotRef.current.get(currentSnapshot)
+    : undefined;
   const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
   const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
 
@@ -581,12 +603,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
+    setTerminalProgressAcknowledgement(false);
+    taskProgressWasActiveRef.current = false;
+    taskProgressPreviousKindRef.current = "empty";
+    taskProgressRunEndedAtRef.current = 0;
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
-  }, [props.sessionId]);
+  }, [props.sessionId, props.workspaceId]);
 
   // Publish a composer inspector slice so external drivers can read draft
   // state, attachments, mentions, and sending status from the running app.
@@ -641,16 +667,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [currentSnapshot, props.sessionId, props.workspaceId]);
+    seedSessionState(props.workspaceId, currentSnapshot, {
+      snapshotTodoRevision: currentSnapshotTodoRevision,
+      skipTodos: currentSnapshotTodoRevision === undefined,
+    });
+  }, [currentSnapshot, currentSnapshotTodoRevision, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
     const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [props.sessionId, currentSnapshot, props.workspaceId]);
+    seedSessionState(props.workspaceId, currentSnapshot, {
+      snapshotTodoRevision: currentSnapshotTodoRevision,
+      skipTodos: currentSnapshotTodoRevision === undefined,
+    });
+  }, [props.sessionId, currentSnapshot, currentSnapshotTodoRevision, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -667,6 +699,34 @@ export function SessionSurface(props: SessionSurfaceProps) {
     activityRunActive: sessionActivityRunActive,
     coordinatorActive: coordinatorRun !== null,
   });
+  const showTaskProgress = shouldShowTaskProgress({
+    kind: taskProgressKind,
+    runActive: chatStreaming,
+    terminalAcknowledgement: terminalProgressAcknowledgement,
+  });
+
+  useEffect(() => {
+    const wasActive = taskProgressWasActiveRef.current;
+    const previousKind = taskProgressPreviousKindRef.current;
+    taskProgressWasActiveRef.current = chatStreaming;
+    taskProgressPreviousKindRef.current = taskProgressKind;
+    if (wasActive && !chatStreaming) taskProgressRunEndedAtRef.current = Date.now();
+    if (chatStreaming || taskProgressKind !== "terminal") {
+      setTerminalProgressAcknowledgement(false);
+      return;
+    }
+    const acknowledge = shouldAcknowledgeTerminalProgress({
+      runJustEnded: wasActive && !chatStreaming,
+      terminalJustArrivedAfterRunEnd:
+        previousKind !== "terminal" &&
+        Date.now() - taskProgressRunEndedAtRef.current <= 2_000,
+      kind: taskProgressKind,
+    });
+    if (!acknowledge) return;
+    setTerminalProgressAcknowledgement(true);
+    const timer = window.setTimeout(() => setTerminalProgressAcknowledgement(false), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [chatStreaming, taskProgressKind]);
 
   useEffect(() => {
     void activeRunsQuery.refetch();
@@ -943,6 +1003,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return { outcome: "cancelled", reason: "context_changed" } as const;
     }
     inFlightSendIdentitiesRef.current.add(surfaceIdentity);
+    const runGenerationBeforeSend = useSessionActivityStore.getState()
+      .recordsByWorkspaceId[workspaceId]?.[sessionId]?.runGeneration ?? 0;
     if (isCurrentSurface()) setError(null);
     try {
       const result = await props.onSendDraft(nextDraft, sessionId);
@@ -950,9 +1012,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
       appendComposerHistory(sessionId, nextDraft.text);
-      useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+      const activityStore = useSessionActivityStore.getState();
+      const activityAfterSend = activityStore.recordsByWorkspaceId[workspaceId]?.[sessionId];
+      const synthesizeBusy = shouldSynthesizeBusyAfterAcceptance({
+        runGenerationBeforeSend,
+        activityAfterSend,
+      });
+      if (synthesizeBusy) {
+        activityStore.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      }
       void activeRunsQuery.refetch();
-      if (isCurrentSurface()) setAwaitingAssistantBaseline(renderedMessages.length);
+      if (isCurrentSurface() && (synthesizeBusy || activityAfterSend?.runActive)) {
+        setAwaitingAssistantBaseline(renderedMessages.length);
+      }
       return result;
     } catch (nextError) {
       if (isSessionBusyError(nextError)) {
@@ -2062,7 +2134,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
           topAccessory={
-            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0 ? (
+            props.activeQuestion || showTaskProgress || props.activePermission || queuedDrafts.length > 0 ? (
               <div>
                 {queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
@@ -2082,8 +2154,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       }
                     }}
                   />
-                ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
-                  <TodoPanel todos={props.todos ?? []} />
+                ) : showTaskProgress ? (
+                  <TodoPanel todos={todos} />
                 ) : null}
                 {props.activePermission ? (
                   <PermissionApprovalPanel

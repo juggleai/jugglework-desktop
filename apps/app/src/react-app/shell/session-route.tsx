@@ -170,6 +170,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
@@ -689,6 +690,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       }),
     [selectedWorkspaceId, sessionsByWorkspaceId],
   );
+  const splitRuntimeSessionId = useWorkbenchStore((state) =>
+    state.workspaceId === selectedWorkspaceId ? state.splitSessionId : null,
+  );
+  const trackedSelectedWorkspaceSessionIds = useMemo(
+    () => Array.from(new Set([
+      ...activeSelectedWorkspaceSessionIds,
+      ...(splitRuntimeSessionId ? [splitRuntimeSessionId] : []),
+    ])),
+    [activeSelectedWorkspaceSessionIds, splitRuntimeSessionId],
+  );
 
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => juggleworkServerSettings.remoteAccessEnabled === true,
@@ -984,7 +995,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     activeQuestion,
     questionReplyBusy,
     respondQuestion,
-    todos,
   } = useSessionInteractions({
     client: opencodeClient,
     workspaceId: selectedWorkspaceId,
@@ -2359,7 +2369,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
-        activeSessionIds={activeSelectedWorkspaceSessionIds}
+        activeSessionIds={trackedSelectedWorkspaceSessionIds}
         opencodeBaseUrl={opencodeBaseUrl}
         juggleworkToken={selectedWorkspaceServerToken}
         onSessionCreated={handleRuntimeSessionCreated}
@@ -2622,7 +2632,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onUndo: () => {},
         onRedo: () => {},
       }}
-      todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
       shareWorkspaceModal={
         shareWorkspaceState.shareWorkspaceOpen

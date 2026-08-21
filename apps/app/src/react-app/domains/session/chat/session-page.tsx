@@ -16,7 +16,6 @@ import type {
   PendingPermission,
   PendingQuestion,
   ProviderListItem,
-  TodoItem,
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
 } from "../../../../app/types";
@@ -240,7 +239,6 @@ export type SessionPageProps = {
   sidebar: SessionPageSidebarProps;
   surface?: SessionPageSurfaceProps | null;
   history?: SessionPageHistoryControls | null;
-  todos: TodoItem[];
   sessionLoadingById: (sessionId: string | null) => boolean;
   shareWorkspaceModal?: ShareWorkspaceModalProps | null;
   providerAuthModal?: ProviderAuthModalProps | null;
@@ -1437,7 +1435,6 @@ export function SessionPage(props: SessionPageProps) {
                         isControlTarget={focusedWorkbenchPane === "primary"}
                         opencodeBaseUrl={reactSessionBaseUrl}
                         juggleworkToken={reactSessionToken}
-                        todos={props.todos}
                         activePermission={props.activePermission}
                         permissionReplyBusy={props.permissionReplyBusy}
                         respondPermission={props.respondPermission}
@@ -1466,7 +1463,6 @@ export function SessionPage(props: SessionPageProps) {
                           isControlTarget={focusedWorkbenchPane === "secondary"}
                           opencodeBaseUrl={reactSessionBaseUrl}
                           juggleworkToken={reactSessionToken}
-                          todos={[]}
                           onOpenTarget={openTarget}
                         />
                       </div>

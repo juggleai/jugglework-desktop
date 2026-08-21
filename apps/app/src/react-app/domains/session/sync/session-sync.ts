@@ -64,6 +64,8 @@ const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
+const liveTodoRevision = new Map<string, number>();
+let todoRevision = 0;
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -77,6 +79,10 @@ export const permissionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-permissions", workspaceId, sessionId] as const;
 export const questionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-questions", workspaceId, sessionId] as const;
+const todoRevisionKey = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+export function captureTodoSnapshotRevision(): number {
+  return todoRevision;
+}
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.juggleworkToken}`;
@@ -100,6 +106,15 @@ function shouldRetrySyncSubscribe(error: unknown) {
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
+}
+
+function isTrackedByAnotherSync(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  for (const candidate of syncs.values()) {
+    if (candidate === entry) continue;
+    if (candidate.input.workspaceId !== input.workspaceId) continue;
+    if (isTrackedSession(candidate, sessionId)) return true;
+  }
+  return false;
 }
 
 function getSessionUpdatedInfo(event: OpencodeEvent) {
@@ -207,6 +222,11 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   );
   const queryClient = getReactQueryClient();
   queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+  if (!isTrackedByAnotherSync(input, entry, sessionId)) {
+    queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+    liveTodoRevision.delete(todoRevisionKey(input.workspaceId, sessionId));
+  }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }
@@ -779,6 +799,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; todos?: Todo[] };
     if (!props.sessionID || !props.todos) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
+    liveTodoRevision.set(todoRevisionKey(workspaceId, props.sessionID), ++todoRevision);
     queryClient.setQueryData(todoKey(workspaceId, props.sessionID), props.todos);
     return;
   }
@@ -1284,7 +1305,11 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }
 }
 
-export function seedSessionState(workspaceId: string, snapshot: JuggleWorkSessionSnapshot) {
+export function seedSessionState(
+  workspaceId: string,
+  snapshot: JuggleWorkSessionSnapshot,
+  options?: { snapshotTodoRevision?: number; skipTodos?: boolean },
+) {
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
   const incomingSnapshotMessages = snapshotToUIMessages(snapshot);
@@ -1321,7 +1346,11 @@ export function seedSessionState(workspaceId: string, snapshot: JuggleWorkSessio
   ));
 
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
-  queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  const snapshotTodoRevision = options?.snapshotTodoRevision ?? todoRevision;
+  const latestLiveTodoRevision = liveTodoRevision.get(todoRevisionKey(workspaceId, snapshot.session.id)) ?? 0;
+  if (!options?.skipTodos && latestLiveTodoRevision <= snapshotTodoRevision) {
+    queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  }
 }
 
 /**
