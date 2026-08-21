@@ -828,6 +828,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     snapshot: sessionProviderAuthSnapshot,
     cloudProviderSyncReady,
     cloudProviderList,
+    refreshCloudProviderReadiness,
   } = useSessionProviderAuth({
     opencodeClient,
     opencodeBaseUrl,
@@ -839,14 +840,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    cloudSessionVersion: denSessionVersion,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
     setDisabledProviderIds,
   });
   const handleModelPickerOpen = useCallback(() => {
-    void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
-  }, [sessionProviderAuthStore]);
+    void refreshCloudProviderReadiness("model_picker_open");
+  }, [refreshCloudProviderReadiness]);
   const modelPicker = useModelPicker({
     client: opencodeClient,
     baseUrl: opencodeBaseUrl,
@@ -899,6 +901,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
   ]);
   const selectedModelUnavailable = isModelUnavailable(activeModel);
+  const selectedManagedModelPreparing = Boolean(
+    activeModel &&
+    isCloudManagedProviderKey(activeModel.providerID) &&
+    !cloudProviderSyncReady,
+  );
   const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
     ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
@@ -949,7 +956,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const hasUsableModel = Boolean(activeModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
-    opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
+    opencodeClient &&
+    selectedWorkspaceId &&
+    !loading &&
+    !selectedWorkspaceError,
   );
   const startupWorkspaceActivationFailed = Boolean(
     selectedWorkspaceId && routeError?.startsWith(`[workspace_activation:${selectedWorkspaceId}]`),
@@ -1192,12 +1202,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
-      taskSubmissionDisabled: !canAcceptTask,
+      taskSubmissionDisabled: !canAcceptTask || selectedModelUnavailable || selectedManagedModelPreparing,
       selectedModel: activeModel ?? { providerID: "", modelID: "" },
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
-          void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+          void refreshCloudProviderReadiness("model_picker_open");
         }
       },
       onModelChange: (model: ModelRef) => {
@@ -1213,6 +1223,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           selectedModel: model ?? { providerID: "", modelID: "" },
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
           modelUnavailable: isModelUnavailable(model),
+          taskSubmissionDisabled: Boolean(
+            !canAcceptTask ||
+            isModelUnavailable(model) ||
+            (model && isCloudManagedProviderKey(model.providerID) && !cloudProviderSyncReady),
+          ),
           modelVariant: behavior.modelVariantValue,
           modelVariantLabel: behavior.modelVariantLabel,
           modelBehaviorOptions: behavior.modelBehaviorOptions,
@@ -1222,7 +1237,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             setModelPickerSessionId(open ? paneSessionId : null);
             modelPicker.setCompactOpen(open);
             if (open) {
-              void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+              void refreshCloudProviderReadiness("model_picker_open");
             }
           },
           onModelClick: () => {
@@ -1260,6 +1275,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const isCompactCommand = isCompactSessionCommand(draft.command);
         if (isCompactCommand && !targetModel) {
           throw new Error("Choose a model before compacting this session.");
+        }
+        if (
+          targetModel &&
+          isCloudManagedProviderKey(targetModel.providerID) &&
+          !cloudProviderSyncReady
+        ) {
+          throw new Error(t("app.error_managed_model_preparing"));
         }
         if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
 
@@ -1450,6 +1472,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     describeModel,
     isModelUnavailable,
     modelPicker.compactOpen,
+    refreshCloudProviderReadiness,
     handleOpenSettings,
     hasUsableModel,
     handleApplyEnvironmentChanges,
@@ -1471,6 +1494,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedAgent,
     selectedSessionId,
     selectedModelUnavailable,
+    selectedManagedModelPreparing,
+    cloudProviderSyncReady,
     selectedWorkspace,
     selectedWorkspaceId,
     selectedWorkspaceRoot,

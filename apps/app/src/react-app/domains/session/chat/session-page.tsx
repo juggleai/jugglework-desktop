@@ -183,6 +183,7 @@ export type SessionModelSurfaceProps = Pick<
   | "selectedModel"
   | "modelLabel"
   | "modelUnavailable"
+  | "taskSubmissionDisabled"
   | "modelVariant"
   | "modelVariantLabel"
   | "modelBehaviorOptions"

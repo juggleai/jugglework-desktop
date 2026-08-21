@@ -11,35 +11,14 @@ import {
   type ProviderLimitKind,
 } from "./provider-limit-classify";
 import {
+  classifyProviderError,
+  extractProviderErrorSignals,
+} from "./provider-error-classify";
+import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
-
-function recordValue(value: unknown, key: string) {
-  if (!value || typeof value !== "object") return undefined;
-  return (value as Record<string, unknown>)[key];
-}
-
-function firstStringValue(records: unknown[], keys: string[]) {
-  for (const record of records) {
-    for (const key of keys) {
-      const value = recordValue(record, key);
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-  }
-  return null;
-}
-
-function firstNumberValue(records: unknown[], keys: string[]) {
-  for (const record of records) {
-    for (const key of keys) {
-      const value = recordValue(record, key);
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-    }
-  }
-  return null;
-}
 
 function defaultErrorMessage(name: string | null, fallback: string) {
   if (name === "ProviderAuthError") return "Provider authentication failed";
@@ -91,6 +70,20 @@ function describeLimitedError(kind: ProviderLimitKind, detail: string | null, fa
 }
 
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
+  const providerError = classifyProviderError(error);
+  const signals = extractProviderErrorSignals(error);
+  if (providerError === "ip_not_authorized") {
+    const lines = [t("app.error_ip_authorization"), t("app.error_ip_authorization_hint")];
+    if (signals.message && !lines.includes(signals.message)) lines.push(signals.message);
+    if (signals.status) lines.push(`Status: ${signals.status}`);
+    if (signals.provider) lines.push(`Provider: ${signals.provider}`);
+    if (signals.code) lines.push(`Code: ${signals.code}`);
+    if (signals.responseBody && signals.responseBody !== signals.message) {
+      lines.push(`Response: ${signals.responseBody}`);
+    }
+    return lines.join("\n");
+  }
+
   if (error instanceof Error) {
     const limit = classifyProviderLimit({ text: error.message });
     if (limit) return describeLimitedError(limit, error.message, fallback);
@@ -103,17 +96,13 @@ export function describeOpencodeSessionError(error: unknown, fallback = "Session
   }
   if (!error || typeof error !== "object") return fallback;
 
-  const data = recordValue(error, "data");
-  const cause = recordValue(error, "cause");
-  const causeData = recordValue(cause, "data");
-  const records = [error, data, cause, causeData].filter(Boolean);
-  const name = firstStringValue(records, ["name", "type"]);
-  const message = firstStringValue(records, ["message", "detail", "reason", "error"]);
-  const status = firstNumberValue(records, ["statusCode", "status"]);
-  const provider = firstStringValue(records, ["providerID", "providerId", "provider"]);
-  const code = firstStringValue(records, ["code", "errorCode"]);
-  const retries = firstNumberValue(records, ["retries", "retryCount"]);
-  const responseBody = firstStringValue(records, ["responseBody", "body", "response"]);
+  const name = signals.type;
+  const message = signals.message;
+  const status = signals.status;
+  const provider = signals.provider;
+  const code = signals.code;
+  const retries = signals.retries;
+  const responseBody = signals.responseBody;
 
   const lines = (() => {
     const limit = classifyProviderLimit({

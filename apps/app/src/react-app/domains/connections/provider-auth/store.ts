@@ -2023,7 +2023,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   async function performCloudProviderSync(reason: CloudProviderSyncReason) {
     if (!hasCloudProviderSyncPrerequisites()) {
-      return;
+      return false;
     }
 
     // Imports, baseline reads, and persistence all go through the JuggleWork
@@ -2032,7 +2032,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // and re-import every org provider — engine dispose churn on settings open.
     const target = await resolveJuggleWorkConfigTarget("write");
     if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
-      return;
+      return false;
     }
 
     let importedProviders: Record<string, CloudImportedProvider>;
@@ -2040,7 +2040,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       importedProviders = await refreshImportedCloudProviders({ strict: true });
     } catch (error) {
       logCloudProviderSyncError(reason, error);
-      return;
+      return false;
     }
 
     // Settle workspace ownership before reconciling. A sign-out or account
@@ -2167,11 +2167,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (failures.length > 0) {
       throw new Error(failures.join("\n"));
     }
+    return true;
   }
 
+  let latestCloudProviderSyncSucceeded = false;
   const cloudProviderSyncQueue = createLatestSyncQueue<CloudProviderSyncReason>(
     async (reason) => {
-      await performCloudProviderSync(reason).catch((error) => {
+      latestCloudProviderSyncSucceeded = false;
+      await performCloudProviderSync(reason).then((succeeded) => {
+        latestCloudProviderSyncSucceeded = succeeded;
+      }).catch((error) => {
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
           setStateField("providerAuthError", message);
@@ -2182,6 +2187,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   function runCloudProviderSync(reason: CloudProviderSyncReason) {
     return cloudProviderSyncQueue.run(reason);
+  }
+
+  async function runCloudProviderSyncForReadiness(reason: CloudProviderSyncReason) {
+    await cloudProviderSyncQueue.run(reason);
+    return latestCloudProviderSyncSucceeded;
   }
 
   async function disconnectProvider(providerId: string) {
@@ -2462,6 +2472,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshCloudOrgProviders,
     refreshImportedCloudProviders,
     runCloudProviderSync,
+    runCloudProviderSyncForReadiness,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,

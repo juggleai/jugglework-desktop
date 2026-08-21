@@ -5,6 +5,10 @@ import {
   classifyProviderLimit,
 } from "../src/react-app/domains/session/sync/provider-limit-classify";
 import {
+  classifyProviderError,
+  extractProviderErrorSignals,
+} from "../src/react-app/domains/session/sync/provider-error-classify";
+import {
   describeOpencodeSessionError,
 } from "../src/react-app/domains/session/sync/usechat-adapter";
 
@@ -100,5 +104,81 @@ describe("describeOpencodeSessionError limit formatting", () => {
   test("plain throttle messages pass through unchanged", () => {
     const text = describeOpencodeSessionError("Rate limit reached for requests");
     expect(text).toBe("Rate limit reached for requests");
+  });
+});
+
+describe("IP authorization provider errors", () => {
+  beforeEach(() => setLocale("en"));
+  afterEach(() => setLocale("en"));
+
+  const ipAuthorizationError = {
+    name: "APIError",
+    data: {
+      statusCode: 401,
+      providerID: "lpr_managed",
+      responseBody: JSON.stringify({
+        error: {
+          message: "Your IP is not authorized to make this request.",
+          type: "authentication_error",
+          code: "invalid_api_key",
+        },
+      }),
+    },
+  };
+
+  test("classifies the exact nested provider response", () => {
+    expect(classifyProviderError(ipAuthorizationError)).toBe("ip_not_authorized");
+    expect(extractProviderErrorSignals(ipAuthorizationError)).toMatchObject({
+      status: 401,
+      type: "authentication_error",
+      code: "invalid_api_key",
+      provider: "lpr_managed",
+    });
+  });
+
+  test("classifies a direct HTTP payload with a nested error object", () => {
+    expect(classifyProviderError({
+      name: "APIError",
+      status: 401,
+      error: {
+        message: "Your IP is not authorized to make this request.",
+        type: "authentication_error",
+        code: "invalid_api_key",
+      },
+    })).toBe("ip_not_authorized");
+  });
+
+  test("does not classify an ordinary invalid API key", () => {
+    expect(classifyProviderError({
+      statusCode: 401,
+      type: "authentication_error",
+      code: "invalid_api_key",
+      message: "Incorrect API key provided",
+    })).toBe(null);
+  });
+
+  test("requires the structured authentication signature", () => {
+    expect(classifyProviderError({
+      statusCode: 401,
+      code: "another_code",
+      message: "Your IP is not authorized to make this request",
+    })).toBe(null);
+  });
+
+  test("renders actionable guidance while preserving diagnostics", () => {
+    const text = describeOpencodeSessionError(ipAuthorizationError);
+    expect(text).toContain("network address");
+    expect(text).toContain("temporary provider routing or IP allowlist delay");
+    expect(text).toContain("usually do not need to replace your API key");
+    expect(text).toContain("Status: 401");
+    expect(text).toContain("Provider: lpr_managed");
+    expect(text).toContain("Code: invalid_api_key");
+  });
+
+  test("renders localized guidance", () => {
+    setLocale("zh");
+    const text = describeOpencodeSessionError(ipAuthorizationError);
+    expect(text).toContain("尚未授权当前工作节点的网络地址");
+    expect(text).toContain("通常无需更换你的 API Key");
   });
 });

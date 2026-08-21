@@ -34,6 +34,7 @@ import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
 import { classifyProviderLimit } from "./provider-limit-classify";
+import { classifyProviderError, extractProviderErrorSignals } from "./provider-error-classify";
 import { resolveRedoHistoryStep } from "./history-position";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
@@ -261,10 +262,11 @@ export function createSessionActionsStore(options: {
       return null;
     };
 
-    const status = firstNumber(["statusCode", "status"]);
-    const provider = firstString(["providerID", "providerId", "provider"]);
-    const code = firstString(["code", "errorCode"]);
-    const response = firstString(["responseBody", "body", "response"]);
+    const signals = extractProviderErrorSignals(error);
+    const status = signals.status ?? firstNumber(["statusCode", "status"]);
+    const provider = signals.provider ?? firstString(["providerID", "providerId", "provider"]);
+    const code = signals.code ?? firstString(["code", "errorCode"]);
+    const response = signals.responseBody ?? firstString(["responseBody", "body", "response"]);
     const raw =
       (error instanceof Error ? readString(error.message) : null) ||
       firstString(["message", "detail", "reason", "error"]) ||
@@ -277,6 +279,7 @@ export function createSessionActionsStore(options: {
       text: [raw, response].filter(Boolean).join("\n"),
     });
     const heading = (() => {
+      if (classifyProviderError(error) === "ip_not_authorized") return t("app.error_ip_authorization");
       if (status === 401 || status === 403) return t("app.error_auth_failed");
       // Hard account limits (quota/plan/spending) are terminal even when the
       // provider reports them as 429 (for example Anthropic
@@ -290,6 +293,9 @@ export function createSessionActionsStore(options: {
     })();
 
     const lines = [heading];
+    if (classifyProviderError(error) === "ip_not_authorized") {
+      lines.push(t("app.error_ip_authorization_hint"));
+    }
     if (limit) {
       lines.push(limit === "usage_limit" ? t("app.error_usage_limit_hint") : t("app.error_context_overflow_hint"));
     }
