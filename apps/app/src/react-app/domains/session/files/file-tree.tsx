@@ -32,7 +32,7 @@ type FileTreeProps = {
  */
 export function FileTree({ client, sessionId, workspaceRoot, activePath, expandedDirs, onOpenFile }: FileTreeProps) {
   return (
-    <div className="min-h-0 flex-1 overflow-auto py-1">
+    <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto py-1">
       <DirChildren
         client={client}
         sessionId={sessionId}

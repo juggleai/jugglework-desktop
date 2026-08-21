@@ -13,7 +13,7 @@ import { FileTabs } from "./file-tabs";
 import { FileTree } from "./file-tree";
 import { FileViewer } from "./file-viewer";
 import { useFilesPanelSession, useFilesPanelStore } from "./files-panel-store";
-import { useSessionChanges, type SessionChange } from "./use-session-changes";
+import { useRefreshWorkspaceChanges, useWorkspaceChanges, type WorkspaceChange } from "./use-workspace-changes";
 
 type FilesPanelProps = {
   sessionId: string;
@@ -27,10 +27,11 @@ type FilesPanelProps = {
 };
 
 /**
- * 会话右侧【文件】面板：工作区目录树 + 已打开文件 + 会话变更 diff
+ * 会话右侧【文件】面板：工作区目录树 + 已打开文件 + 工作区变更 diff
  *
- * 标签栏、目录树开关与全屏开关共用顶部一行；会话产生改动时，「变更」会作为
- * 标签栏里的第一个标签出现，和打开的文件标签并列。
+ * 标签栏、目录树开关与全屏开关共用顶部一行；工作区只要存在未提交改动，「变更」
+ * 就会作为标签栏里的第一个标签出现，和打开的文件标签并列——无论改动是 agent 改的
+ * 还是你在外部编辑器改的。
  *
  * @param sessionId 会话 id
  * @param client JuggleWork 服务端客户端，用于文件读写
@@ -64,9 +65,11 @@ export function FilesPanel({
     [opencodeBaseUrl, opencodeToken, workspaceRoot],
   );
 
-  const changesQuery = useSessionChanges(opencodeClient, sessionId, workspaceRoot, busy);
-  const changes = changesQuery.data ?? [];
+  const changesQuery = useWorkspaceChanges(opencodeClient, workspaceId, workspaceRoot, busy);
+  const refreshChanges = useRefreshWorkspaceChanges(workspaceRoot);
+  const changes = changesQuery.data?.changes ?? [];
   const hasChanges = changes.length > 0;
+  const vcsAvailable = changesQuery.data?.vcsAvailable !== false;
 
   const expandedDirs = React.useMemo(() => new Set(session.expandedDirs), [session.expandedDirs]);
   const dirtyPaths = React.useMemo(() => new Set(Object.keys(session.drafts)), [session.drafts]);
@@ -77,7 +80,7 @@ export function FilesPanel({
     ? !session.treeCollapsed
     : session.tabs.length === 0 && !showingChanges;
 
-  // TIPS: 改动被清空（例如会话回滚）时「变更」标签会消失，内容区必须退回文件，
+  // TIPS: 改动被清空（例如提交或回滚）时「变更」标签会消失，内容区必须退回文件，
   // 否则会停在一个已经不存在的标签上。
   React.useEffect(() => {
     if (session.activeKey === "changes" && !hasChanges && !changesQuery.isLoading) {
@@ -93,7 +96,7 @@ export function FilesPanel({
     closeFileTab(sessionId, path);
   };
 
-  const openChangeFile = (change: SessionChange) => {
+  const openChangeFile = (change: WorkspaceChange) => {
     openFile(sessionId, { path: change.path, name: change.path.split("/").pop() ?? change.path });
   };
 
@@ -189,10 +192,13 @@ export function FilesPanel({
               <ChangesView
                 changes={changes}
                 loading={changesQuery.isLoading}
+                refreshing={changesQuery.isFetching}
                 error={changesQuery.isError ? (changesQuery.error instanceof Error ? changesQuery.error.message : t("session_files.load_failed")) : null}
+                vcsAvailable={vcsAvailable}
                 selectedPath={session.selectedChangePath}
                 onSelect={(path) => selectChange(sessionId, path)}
                 onOpenFile={openChangeFile}
+                onRefresh={refreshChanges}
               />
             ) : activeTab && client && workspaceId ? (
               <FileViewer

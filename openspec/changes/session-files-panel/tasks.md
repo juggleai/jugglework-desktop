@@ -2,7 +2,7 @@
 
 - [x] 1.1 新增 `domains/session/files/files-panel-store.ts`：按会话保存文件标签、激活标签、目录展开集合、未保存草稿与全屏开关，持久化 key `jugglework:files-panel:v1`（草稿不写入持久化）
 - [x] 1.2 新增 `domains/session/files/use-workspace-tree.ts`：用引擎 `client.file.list({ path, directory })` 按目录懒加载，react-query 缓存，单层超过 500 条截断并返回截断标记
-- [x] 1.3 新增 `domains/session/files/use-session-changes.ts`：汇总会话内各条用户消息的 `summary.diffs`（`session.diff` 不传 messageID 恒返回空数组），会话状态转 idle 时失效重取，导出变更文件数供 tab 置灰判定
+- [x] 1.3 新增 `domains/session/files/use-workspace-changes.ts`：用引擎 `client.vcs.diff({ directory, mode: "git" })` 取 git 工作区未提交改动，过滤增删均为 0 的文件；空列表或请求失败时用 `client.vcs.get()` 的 `branch` 判定 git 是否可用；重取由 `session-sync` 转发的引擎事件（250ms 合并）、会话转空闲、窗口聚焦与手动刷新触发，不轮询
 - [x] 1.4 新增 `domains/session/files/file-content.ts`：`/files/raw` + `/files/stat` 读、`/files/raw` 写的封装，含文本/二进制嗅探、413/409 错误归一化
 - [x] 1.5 新增 `domains/session/files/parse-unified-diff.ts` 与单测：把 `SnapshotFileDiff.patch` 解析为 hunk/行结构（新增/删除/上下文/行号）
 
@@ -28,3 +28,12 @@
 - [x] 4.2 为新增对外组件与 hook 补中文接口文档注释，关键逻辑（懒加载、冲突处理、全屏重挂载恢复）加 TIPS 注释
 - [x] 4.3 运行 `pnpm typecheck`、`pnpm test`、`pnpm build`（仓库无 lint 脚本），确认无新增失败
 - [x] 4.4 启动应用验证：目录树懒加载、多文件打开与编辑保存（含 409 冲突拒绝写入）、变更 tab 置灰与 diff 渲染、全屏进出与状态记忆
+
+## 5. 变更视图改用 git 工作区口径
+
+- [x] 5.1 `domains/session/sync/session-sync.ts` 增加 `subscribeWorkspaceFileChanges(workspaceId, listener)`，在既有事件流中转发 `session.diff` / `file.edited` / `file.watcher.updated`（文件面板不在 `GlobalSDKProvider` 作用域内，无法复用 kernel 的事件总线）
+- [x] 5.2 `changes-view.tsx`：diff 行底色固定为增 `#e6f4e7` / 删 `#fce6e2` 并同步固定深色文字与行号；列表增删计数改用绿/红文字色（`#1a7f37` / `#cf222e`，暗色主题用亮版），为 0 的一侧不显示
+- [x] 5.3 `changes-view.tsx`：列表上方增加文件数与刷新按钮；git 不可用时给出说明文案而非加载失败
+- [x] 5.4 目录树、变更列表与 diff 正文改用与会话正文一致的 `subtle-scrollbar`
+- [x] 5.5 `i18n/locales/zh.ts` 与 `en.ts` 更新 `session_files.no_changes`（改为工作区口径），新增 `session_files.changed_files`、`session_files.refresh_changes`、`session_files.no_vcs`
+- [x] 5.6 运行 `pnpm typecheck`；在 dev 实例上验证变更列表来源、配色计算值、刷新按钮与非 git 目录的接口行为

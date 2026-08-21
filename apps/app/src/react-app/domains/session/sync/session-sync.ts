@@ -627,9 +627,50 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
   return ordered;
 }
 
+/** 意味着工作区文件已落盘改动的引擎事件，「变更」面板据此重取，无需轮询 */
+const FILE_CHANGE_EVENT_TYPES = new Set(["session.diff", "file.edited", "file.watcher.updated"]);
+
+const fileChangeListeners = new Map<string, Set<() => void>>();
+
+/**
+ * 订阅某个工作区的文件改动事件
+ *
+ * TIPS: 引擎事件流由本模块统一维护，「文件」面板不在 kernel 的 GlobalSDKProvider
+ * 作用域内，拿不到那条总线，只能从这里转发。
+ *
+ * @param workspaceId 工作区 id
+ * @param listener 改动回调
+ * @returns 取消订阅的函数
+ */
+export function subscribeWorkspaceFileChanges(workspaceId: string, listener: () => void) {
+  let bucket = fileChangeListeners.get(workspaceId);
+
+  if (!bucket) {
+    bucket = new Set();
+    fileChangeListeners.set(workspaceId, bucket);
+  }
+
+  bucket.add(listener);
+
+  return () => {
+    const current = fileChangeListeners.get(workspaceId);
+
+    if (!current) return;
+
+    current.delete(listener);
+
+    if (current.size === 0) fileChangeListeners.delete(workspaceId);
+  };
+}
+
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
   const input = entry.input;
+
+  if (FILE_CHANGE_EVENT_TYPES.has(event.type)) {
+    for (const listener of fileChangeListeners.get(workspaceId) ?? []) listener();
+    return;
+  }
 
   if (event.type === "session.created") {
     const session = getSessionCreatedInfo(event);

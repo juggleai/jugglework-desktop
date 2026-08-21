@@ -2,13 +2,13 @@
 
 会话右侧图标栏当前有 4 个入口：Browser / Voice / Artifacts / Extensions（`domains/session/chat/session-page.tsx:1673-1740`），右侧面板由 `SIDE_PANEL_ITEMS = ["panel","extensions","voice"]`（`shell/ui-state-store.ts:17`）切换。其中 `panel` 承载 `SidePanel`，内部用 `panel-tab-store` 管理 `browser` / `artifact` 两类标签，`artifact` 标签由聊天文本推断出的产物（`artifacts/open-target.ts`）驱动，`ArtifactPanel` 负责预览与保存。
 
-本变更把 Artifacts 入口替换为【文件】面板：目录树 + 多文件标签 + 会话变更 diff + 全屏。相关既有能力可复用：`artifacts/preview.tsx`（markdown/图片/PDF/HTML/纯文本预览）、`artifacts/artifact-text-editor.tsx`（CodeMirror 编辑器）、JuggleWork Server 文件读写路由、引擎 SDK 的 `file.list` 与 `session.diff`。
+本变更把 Artifacts 入口替换为【文件】面板：目录树 + 多文件标签 + 工作区变更 diff + 全屏。相关既有能力可复用：`artifacts/preview.tsx`（markdown/图片/PDF/HTML/纯文本预览）、`artifacts/artifact-text-editor.tsx`（CodeMirror 编辑器）、JuggleWork Server 文件读写路由、引擎 SDK 的 `file.list` 与 `vcs.diff`。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 本地工作区会话内可浏览完整目录树、打开任意文件查看与编辑、审阅本会话累计改动。
+- 本地工作区会话内可浏览完整目录树、打开任意文件查看与编辑、审阅工作区未提交改动。
 - 面板状态（打开的文件、展开的目录、草稿、全屏）在收起/展开、全屏切换、会话切换之间稳定。
 - 不新增第三方依赖，不改动主进程 IPC 与服务端路由。
 
@@ -47,19 +47,29 @@
 
 全屏覆盖层渲染在 `SidebarProvider`（已是 `relative`）内：右侧留出 44px 入口图标栏，左侧留出 72px 应用导航栏，其余（工作区标题、会话列表、会话页头）全部盖住。顶部不留空白：面板头部自己就贴着窗口顶端，全屏时整行设为 `titlebar-drag`（`titleBarStyle: hiddenInset` 下这条就是系统标题栏区域，可拖窗口），行内的 tab 与全屏按钮各自标 `titlebar-no-drag`，因此既不用留空白条，按钮也点得动。
 
-顶部只有一行工具栏，高度 56px，与会话页头（`.session-header`，`styles/custom.css`）齐平：左侧目录树入口、中间标签栏（`min-w-0 flex-1 overflow-hidden`，内部横向滚动，因此标签再多也不会顶到两侧按钮）、右侧全屏开关。会话变更不再是分区 tab，而是标签栏里的第一个标签（带变更文件数、不可关闭），和打开的文件标签并列，由 `activeKey` 决定内容区显示 diff 还是文件。
+顶部只有一行工具栏，高度 56px，与会话页头（`.session-header`，`styles/custom.css`）齐平：左侧目录树入口、中间标签栏（`min-w-0 flex-1 overflow-hidden`，内部横向滚动，因此标签再多也不会顶到两侧按钮）、右侧全屏开关。工作区变更不再是分区 tab，而是标签栏里的第一个标签（带变更文件数、不可关闭），和打开的文件标签并列，由 `activeKey` 决定内容区显示 diff 还是文件。
 
 全屏与分栏用的是同一个组件，只按 `fullscreen` 切换排布：全屏宽度足够，目录树常驻左栏（256px）并可用工具栏左侧的按钮折叠（`treeCollapsed` 按会话记忆）；分栏最窄只有 320px，塞不下两栏，因此还没打开任何内容时目录树占满面板，打开之后目录树收进标签栏左侧的悬浮菜单（☰）与右侧加号里。
 
 悬浮菜单用受控的 Popover 自己接管 open：base-ui 这版没有 `openOnHover`。关闭走 220ms 延时，指针从按钮移到弹层的路上不会被收掉；展开目录不关闭弹层，只有真正打开文件才关闭（`children` 以回调形式拿到 close）。
 
-### 变更视图从消息列表汇总，前端自解析 unified patch
+### 变更视图取 git 工作区 diff，前端自解析 unified patch
 
-引擎的 `GET /session/:id/diff` 在不传 `messageID` 时**恒定返回空数组**（实现里第一行就是 `if (!messageID) return []`），它只用于查单条用户消息的改动。会话累计改动的真实来源是消息列表：每条用户消息的 `info.summary.diffs` 是那一轮（step-start 快照 → step-finish 快照）产生的 `SnapshotFileDiff[]`（`file`、`patch`、`additions`、`deletions`、`status`），与 git 仓库状态无关，非 git 目录同样可用。
+会话消息里的 `info.summary.diffs` 只是"每一轮 agent 改了什么"的回放：它按 step-start / step-finish 两次快照算出来，用户在编辑器、终端或另一个会话里的改动永远不在里面，用它做「变更」列表会漏掉工作区的真实状态。引擎的 `GET /session/:id/diff` 在不传 `messageID` 时恒定返回空数组，也不是可用来源。
 
-因此 `useSessionChanges` 调 `client.session.messages({ sessionID })`，按文件合并各轮改动：增删行数相加，状态按「首轮 added / 末轮 deleted / 否则 modified」判定，patch 按轮次顺序拼接——各轮 patch 的行号分属不同快照，强行合并成一份会得到错误的行号。
+因此 `useWorkspaceChanges` 改用 `client.vcs.diff({ directory, mode: "git" })`（`GET /vcs/diff`），返回 `VcsFileDiff[]`（`file`、`patch`、`additions`、`deletions`、`status`），口径是 git 工作区相对 HEAD 的未提交改动，未跟踪文件计为新增，改动来源与作者无关。增删均为 0 的条目在前端过滤掉。
 
-`patch` 是标准 unified diff，前端用一个约 60 行的解析函数拆成 hunk/行，渲染增删行底色即可，不引入 diff 库。刷新时机：面板可见且选中「变更」tab 时按 `sessionId` 查询，会话状态从 busy 转 idle 时使查询失效重取；tab 上的数字与置灰态由同一份查询驱动（`enabled` 始终为真但 `staleTime` 较长，保证 tab 置灰判定在面板未打开时也正确）。
+git 可用性用 `GET /vcs` 判定：非 git 目录返回 `{branch: null}`（不报错），未安装 git 同理。空列表既可能是"干净仓库"也可能是"没有 git"，因此只在列表为空或 diff 请求失败时才补查一次 `/vcs`——有改动的常见路径仍然只有一个请求；diff 失败且 `/vcs` 显示 git 可用时，错误照常抛出，不把真实故障吞成"没有 git"。
+
+`patch` 是标准 unified diff，前端用一个约 60 行的解析函数拆成 hunk/行，渲染增删行底色即可，不引入 diff 库。
+
+### 变更列表的刷新不用轮询
+
+轮询整份工作区 diff 代价高且大部分时候是空转，因此重取只由四类信号驱动：引擎推送的 `session.diff` / `file.edited` / `file.watcher.updated`（250ms 合并窗口）、会话从 busy 转 idle、窗口重新获得焦点、以及列表上方的手动刷新按钮。
+
+事件来源不是 kernel 的 `GlobalSDKProvider`——那对 provider（连同 `GlobalSyncProvider`）在当前代码里根本没有被挂载，`useGlobalSDK()` 必然抛错。真正在跑的事件流是 `domains/session/sync/session-sync.ts` 里按工作区维护的那条 SSE 订阅，因此由它导出 `subscribeWorkspaceFileChanges(workspaceId, listener)` 转发文件改动事件，不额外建连接。
+
+窗口聚焦这一条是必需的兜底：实测桌面端引擎不推 `file.watcher.updated`（连续 25s 内在工作区内新建、修改文件都只收到心跳），外部编辑器里的改动只能靠切回窗口或手动刷新才会反映。
 
 ### 入口替换与产物路径收敛
 
@@ -71,7 +81,7 @@
 
 - [超大目录（如 `node_modules` 根层数千条目）渲染卡顿] → 单层超过 500 条时截断展示并提示「仅显示前 500 项」，配合虚拟滚动前的最小成本方案。
 - [全屏切换重挂载导致滚动位置丢失] → 只保证标签、草稿、展开状态不丢；滚动位置丢失可接受，必要时后续再存。
-- [`session.diff` 依赖引擎快照，会话极长时 patch 体积大] → 列表与 diff 分开渲染，只有选中文件才渲染其 patch；单文件 patch 超过 2000 行时折叠并提供「仍要展示」。
+- [`/vcs/diff` 一次返回整个工作区的 patch，改动很多时响应体大] → 列表与 diff 分开渲染，只有选中文件才渲染其 patch；单文件 patch 超过 2000 行时折叠并提供「仍要展示」。若后续遇到超大工作区，可改为 `/vcs/status` 出列表、选中时再取该文件 patch。
 - [编辑器仅有 markdown/纯文本两档高亮，代码文件观感弱于 IDE] → 本次接受，语法高亮扩展作为后续独立变更。
 - [写入任意扩展名文件绕过了 `/files/content` 的白名单] → `/files/raw` 已有路径穿越校验、5MB 上限、审批与审计记录，安全边界不变；白名单本身面向的是「内联文本产物」，不是安全控制。
 

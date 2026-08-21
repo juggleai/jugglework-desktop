@@ -1,36 +1,42 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { FilePlus2, FileMinus2, FilePen, Loader2 } from "lucide-react";
+import { FilePlus2, FileMinus2, FilePen, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
 import { countDiffLines, parseUnifiedDiff } from "./parse-unified-diff";
-import type { SessionChange } from "./use-session-changes";
+import type { WorkspaceChange } from "./use-workspace-changes";
 
 /** 单文件 diff 超过该行数时先折叠，避免一次渲染上万个节点 */
 const COLLAPSE_DIFF_LINES = 2000;
 
 type ChangesViewProps = {
-  changes: SessionChange[];
+  changes: WorkspaceChange[];
   loading: boolean;
+  refreshing: boolean;
+  vcsAvailable: boolean;
   error: string | null;
   selectedPath: string | null;
   onSelect: (path: string) => void;
-  onOpenFile: (change: SessionChange) => void;
+  onOpenFile: (change: WorkspaceChange) => void;
+  onRefresh: () => void;
 };
 
 /**
- * 会话变更视图：左侧变更文件列表，下方展示选中文件的逐行 diff
+ * 工作区变更视图：上方变更文件列表，下方展示选中文件的逐行 diff
  *
- * @param changes 会话累计改动
- * @param loading 是否加载中
+ * @param changes 工作区未提交的改动
+ * @param loading 是否首次加载中
+ * @param refreshing 是否正在后台重取
+ * @param vcsAvailable 工作区是否有可用的 git
  * @param error 加载失败信息
  * @param selectedPath 当前选中的变更文件
  * @param onSelect 选中变更文件
  * @param onOpenFile 在文件标签中打开该文件
+ * @param onRefresh 手动重取工作区改动
  */
-export function ChangesView({ changes, loading, error, selectedPath, onSelect, onOpenFile }: ChangesViewProps) {
+export function ChangesView({ changes, loading, refreshing, vcsAvailable, error, selectedPath, onSelect, onOpenFile, onRefresh }: ChangesViewProps) {
   const selected = changes.find((change) => change.path === selectedPath) ?? changes[0] ?? null;
 
   if (loading) {
@@ -45,13 +51,29 @@ export function ChangesView({ changes, loading, error, selectedPath, onSelect, o
     return <div className="p-4 text-sm text-muted-foreground">{error}</div>;
   }
 
+  // 没装 git 或不是 git 仓库时说清楚原因，不要让用户以为是加载失败
+  if (!vcsAvailable) {
+    return <div className="p-4 text-sm text-muted-foreground">{t("session_files.no_vcs")}</div>;
+  }
+
   if (changes.length === 0) {
-    return <div className="p-4 text-sm text-muted-foreground">{t("session_files.no_changes")}</div>;
+    return (
+      <div className="flex flex-col items-start gap-2 p-4">
+        <span className="text-sm text-muted-foreground">{t("session_files.no_changes")}</span>
+        <RefreshChangesButton refreshing={refreshing} onRefresh={onRefresh} />
+      </div>
+    );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="max-h-48 shrink-0 overflow-auto border-b border-border/60 py-1">
+      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          {t("session_files.changed_files", { count: changes.length })}
+        </span>
+        <RefreshChangesButton refreshing={refreshing} onRefresh={onRefresh} />
+      </div>
+      <div className="subtle-scrollbar max-h-48 shrink-0 overflow-auto border-b border-border/60 py-1">
         {changes.map((change) => (
           <button
             key={change.path}
@@ -64,8 +86,14 @@ export function ChangesView({ changes, loading, error, selectedPath, onSelect, o
           >
             <ChangeStatusIcon status={change.status} />
             <span className="min-w-0 flex-1 truncate" title={change.path}>{change.path}</span>
-            <span className="shrink-0 text-[11px] text-emerald-600 dark:text-emerald-400">+{change.additions}</span>
-            <span className="shrink-0 text-[11px] text-red-600 dark:text-red-400">-{change.deletions}</span>
+            {/* 增/删计数用深色版文字色（增 #1a7f37 / 删 #cf222e），为 0 时不占位；
+                暗色主题下换成同色系的亮版，否则深字压在深底上读不出来 */}
+            {change.additions > 0 ? (
+              <span className="shrink-0 text-[11px] text-[#1a7f37] dark:text-[#3fb950]">+{change.additions}</span>
+            ) : null}
+            {change.deletions > 0 ? (
+              <span className="shrink-0 text-[11px] text-[#cf222e] dark:text-[#f85149]">-{change.deletions}</span>
+            ) : null}
           </button>
         ))}
       </div>
@@ -74,14 +102,38 @@ export function ChangesView({ changes, loading, error, selectedPath, onSelect, o
   );
 }
 
-function ChangeStatusIcon({ status }: { status: SessionChange["status"] }) {
+/**
+ * 「变更」面板上的刷新按钮
+ *
+ * TIPS: 引擎在桌面端不推文件监听事件，外部编辑器/终端里的改动只能靠窗口重新聚焦
+ * 或这颗按钮来重取，所以它必须常驻可见。
+ *
+ * @param refreshing 是否正在后台重取
+ * @param onRefresh 重取回调
+ */
+function RefreshChangesButton({ refreshing, onRefresh }: { refreshing: boolean; onRefresh: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="shrink-0"
+      aria-label={t("session_files.refresh_changes")}
+      title={t("session_files.refresh_changes")}
+      onClick={onRefresh}
+    >
+      <RefreshCw className={cn("size-3", refreshing && "animate-spin")} />
+    </Button>
+  );
+}
+
+function ChangeStatusIcon({ status }: { status: WorkspaceChange["status"] }) {
   if (status === "added") return <FilePlus2 className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />;
   if (status === "deleted") return <FileMinus2 className="size-3.5 shrink-0 text-red-600 dark:text-red-400" />;
 
   return <FilePen className="size-3.5 shrink-0 text-muted-foreground" />;
 }
 
-function DiffBody({ change, onOpenFile }: { change: SessionChange; onOpenFile: (change: SessionChange) => void }) {
+function DiffBody({ change, onOpenFile }: { change: WorkspaceChange; onOpenFile: (change: WorkspaceChange) => void }) {
   const hunks = React.useMemo(() => parseUnifiedDiff(change.patch), [change.patch]);
   const total = React.useMemo(() => countDiffLines(hunks), [hunks]);
   const [expanded, setExpanded] = React.useState(false);
@@ -102,7 +154,7 @@ function DiffBody({ change, onOpenFile }: { change: SessionChange; onOpenFile: (
           </Button>
         ) : null}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto">
         {hunks.length === 0 ? (
           <div className="p-4 text-sm text-muted-foreground">{t("session_files.no_text_diff")}</div>
         ) : collapsed ? (
@@ -126,16 +178,17 @@ function DiffBody({ change, onOpenFile }: { change: SessionChange; onOpenFile: (
                     <tr
                       key={`${hunkIndex}-${lineIndex}`}
                       className={cn(
-                        // 新增/删除行的底色按设计稿固定取值，浅色深色一致
-                        line.kind === "add" && "bg-[#e6f4e7]",
-                        line.kind === "del" && "bg-[#fce6e2]",
+                        // TIPS: 新增/删除行的底色按设计稿固定取值（增 #e6f4e7 / 删 #fce6e2），浅色深色一致；
+                        // 底色恒为浅色，行内文字与行号也必须一起固定成深色，否则暗色主题下浅底配浅字读不出来。
+                        line.kind === "add" && "bg-[#e6f4e7] text-[#1f2328] [&_.diff-muted]:text-[#1f2328]/55",
+                        line.kind === "del" && "bg-[#fce6e2] text-[#1f2328] [&_.diff-muted]:text-[#1f2328]/55",
                         line.kind === "meta" && "text-muted-foreground",
                       )}
                     >
-                      <td className="w-10 select-none px-2 text-right align-top text-muted-foreground">{line.oldLine ?? ""}</td>
-                      <td className="w-10 select-none px-2 text-right align-top text-muted-foreground">{line.newLine ?? ""}</td>
+                      <td className="diff-muted w-10 select-none px-2 text-right align-top text-muted-foreground">{line.oldLine ?? ""}</td>
+                      <td className="diff-muted w-10 select-none px-2 text-right align-top text-muted-foreground">{line.newLine ?? ""}</td>
                       <td className="px-2 align-top whitespace-pre-wrap break-all">
-                        <span className="select-none text-muted-foreground">
+                        <span className="diff-muted select-none text-muted-foreground">
                           {line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}
                         </span>
                         {line.content}
