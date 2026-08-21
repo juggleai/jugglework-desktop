@@ -11,9 +11,17 @@
   --jw-im-panel-width: var(--primary-panel-width);
   --jw-im-navigation-height: var(--primary-navigation-height, 82px);
   --jw-im-panel-gutter: var(--primary-panel-gutter, clamp(16px, 1.9vw, 36px));
-  --ui-chat-bg: #fafafa;
-  --newui-conversation-avatar-size: 38px;
-  --newui-conversation-row-height: 60px;
+  /* 内容区背景跟随宿主应用的 --background：消息页、通讯录页与工作区会话页同色。
+     自定义属性会穿过 shadow 边界从宿主继承，所以这里直接引用应用令牌即可。 */
+  --ui-chat-bg: var(--background, #fcfcfd);
+  /* 列表行紧凑化：统一 44px 行高，头像比上游小一档，省下的宽度留给标题 */
+  --newui-conversation-avatar-size: 34px;
+  --newui-conversation-row-height: 44px;
+  --newui-conversation-item-padding-y: 4px;
+  --newui-conversation-item-padding-x: 12px;
+  --newui-conversation-item-gap: 10px;
+  --newui-conversation-title-line-height: 18px;
+  --newui-conversation-preview-line-height: 16px;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -42,7 +50,7 @@
   --ui-link: #91b9dc;
   --ui-shadow-sm: 0 1px 3px rgba(0, 0, 0, .3);
   --ui-shadow-md: 0 12px 32px rgba(0, 0, 0, .42);
-  --ui-chat-bg: #1b1c1f;
+  --ui-chat-bg: var(--background, #1b1c1f);
   --newui-conversation-tag-bg: #34373d;
   --newui-conversation-tag-color: #c2c6cd;
   --bs-primary-rgb: 230, 232, 235;
@@ -338,14 +346,64 @@
   font-weight: 500;
 }
 .jw-im-conversation-row .jw-im-unread { position: static; inset: auto; }
-.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active),
+/* 置顶行的底色同样只画在内缩的 card 上，避免顶到面板边缘 */
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active) { background: transparent; }
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active) .newui-conversation-card {
   background: var(--ui-soft);
 }
-.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover,
+.jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover { background: transparent; }
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover .newui-conversation-card {
   background: var(--ui-hover);
 }
+.jw-im-conversation-row .newui-conversation-main { gap: 10px; }
+/* 时间最长只有 "14:30" / "8-21"，上游 76px 的固定右栏是纯浪费。右栏改为按内容收缩、
+   行右内边距收到 10px：时间贴到距面板右边 10px 处，标题一直延伸到距时间 10px 为止，
+   两处省下的宽度全部归标题。 */
+.jw-im-conversation-row .newui-conversation-card { padding-right: 10px; }
+.jw-im-conversation-row .newui-conversation-side {
+  width: auto;
+  min-width: 0;
+  flex: none;
+  gap: 2px;
+}
+/* 44px 行高由右栏决定：时间行 + 徽标行 + 间距必须收进 44 - 上下内边距，
+   否则右栏会把行撑高，min-height 就形同虚设。 */
+.jw-im-conversation-row .newui-conversation-side-top,
+.jw-im-conversation-row .newui-conversation-side-bottom { min-height: 16px; }
+.jw-im-conversation-row .newui-conversation-time { line-height: 16px; }
+.jw-im-conversation-row .newui-conversation-side-badge {
+  min-width: 16px;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.jw-im-conversation-row .newui-conversation-avatar > .inner { font-size: 13px; }
+
+/* 列表栏与工作区会话列表同底色（--sidebar），上游的 --ui-panel 比它深一档 */
+.jw-im-root .jw-im-list-pane,
+.jw-im-root .jw-im-list-pane > .jw-list-panel-header,
+.jw-im-root .jw-im-list-pane .tyn-aside,
+.jw-im-root .jw-im-list-pane .tyn-aside-body { background: var(--sidebar, #f9f9fb); }
+/* TIPS: 选中/悬浮的灰底与本地工作区会话列表对齐——左右各留 8px、11px 圆角、
+   浅色 black/4.5%、暗色 white/8%（见 domains/session/sidebar/app-sidebar.tsx 的
+   rowButtonClass）。上游把底色画在整行上并顶到面板边缘，这里改画在 card 上并内缩。 */
+/* 内缩只由行的 margin 决定：上游给行留了 12px 的左右外边距，再叠一层就变成 20px，
+   和工作区会话列表的 8px 对不上。行间距对齐侧栏的 gap-px。 */
+.jw-im-list-pane .jw-im-conversation-row.tyn-aside-item {
+  width: calc(100% - 16px);
+  margin: 0 8px 1px;
+  padding: 0;
+}
+.jw-im-conversation-row .newui-conversation-card { border-radius: 11px; }
+.jw-im-list-pane .newui-conversation-item,
+.jw-im-list-pane .newui-conversation-item:hover,
+.jw-im-list-pane .newui-conversation-item.active { background: transparent; }
+.jw-im-list-pane .newui-conversation-item:hover .newui-conversation-card { background: rgba(0, 0, 0, 0.025); }
+.jw-im-list-pane .newui-conversation-item.active .newui-conversation-card,
+.jw-im-list-pane .newui-conversation-item.active:hover .newui-conversation-card { background: rgba(0, 0, 0, 0.045); }
+:host([data-theme="dark"]) .jw-im-list-pane .newui-conversation-item:hover .newui-conversation-card { background: rgba(255, 255, 255, 0.045); }
+:host([data-theme="dark"]) .jw-im-list-pane .newui-conversation-item.active .newui-conversation-card,
+:host([data-theme="dark"]) .jw-im-list-pane .newui-conversation-item.active:hover .newui-conversation-card { background: rgba(255, 255, 255, 0.08); }
 
 /* Empty conversation surface */
 .jw-im-empty-surface {
@@ -368,7 +426,7 @@
 }
 
 /* Active conversation */
-.jw-im-chat-surface {
+.jw-im-root .jw-im-chat-surface {
   min-width: 0;
   color: var(--ui-text);
   background: var(--ui-chat-bg);
@@ -379,6 +437,16 @@
 }
 .jw-im-chat-surface .tyn-chat-body,
 .jw-im-chat-surface .jw-im-message-scroll {
+  background: var(--ui-chat-bg);
+}
+/* 发送区与消息区同底色：上游把输入区画成 --ui-panel，比消息区深一档，
+   在会话页里看着像另外贴了一块面板。 */
+.jw-im-chat-surface .jw-im-composer,
+.jw-im-chat-surface .jw-im-composer.tyn-chat-form,
+.jw-im-chat-surface .jw-im-composer-row,
+.jw-im-chat-surface .jw-im-composer-row.tyn-chat-form-enter,
+.jw-im-chat-surface .jw-im-composer .tyn-composer-shell,
+.jw-im-chat-surface .jw-im-composer .tyn-composer-toolbar {
   background: var(--ui-chat-bg);
 }
 .jw-im-chat-header { justify-content: flex-start; }
@@ -1012,13 +1080,13 @@
 }
 
 /* React-only pages and floating surfaces use the same final neutral tokens. */
-.jw-im-contacts-layout,
+.jw-im-contacts-layout { color: var(--ui-text); background: var(--ui-chat-bg); }
 .jw-im-favorites-surface,
 .jw-im-settings-surface { color: var(--ui-text); background: var(--ui-surface); }
 .jw-im-contacts-layout .jw-im-contact-main,
 .jw-im-contacts-layout .contact-content,
 .jw-im-contacts-layout .tyn-contact-body,
-.jw-im-contacts-layout .tyn-chat-body { color: var(--ui-text); background: var(--ui-surface); }
+.jw-im-contacts-layout .tyn-chat-body { color: var(--ui-text); background: var(--ui-chat-bg); }
 .jw-im-contact-tabs { background: var(--ui-soft); }
 .jw-im-contact-tabs button.is-active { color: var(--ui-text); background: var(--ui-surface); box-shadow: var(--ui-shadow-sm); }
 .jw-im-contact-detail { background: var(--ui-surface); }
@@ -1401,7 +1469,7 @@
 .jw-im-contacts-layout .tyn-contact-body,
 .jw-im-contacts-layout .tyn-contact-wrapper {
   color: var(--ui-text);
-  background: var(--ui-surface);
+  background: var(--ui-chat-bg);
 }
 .jw-im-contacts-layout .jw-im-list-pane,
 .jw-im-contacts-layout .tyn-aside-body {
@@ -1413,10 +1481,10 @@
 }
 .jw-im-contacts-layout .jw-im-contact-main-header {
   color: var(--ui-text);
-  background: #fafafc;
+  background: var(--ui-chat-bg);
 }
 .jw-im-chat-surface .jw-im-chat-header {
-  background: #fafafc;
+  background: var(--ui-chat-bg);
 }
 .jw-im-contacts-layout .jg-conversation-tool,
 .jw-im-contacts-layout .tyn-aside-contact-item,
@@ -1433,17 +1501,43 @@
   min-width: var(--newui-conversation-avatar-size);
   border-radius: 50%;
 }
+.jw-im-contacts-layout .jg-group-item {
+  height: 44px;
+  padding: 4px 12px;
+}
+.jw-im-contacts-layout .jg-group-item .tyn-avatar { margin-right: 10px; }
+.jw-im-contacts-layout .jg-group-item::after { left: 12px; right: 12px; }
 .jw-im-contacts-layout .jg-group-item .tyn-avatar > .inner {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
 }
 .jw-im-contacts-layout .tyn-aside-contact-item::after,
 .jw-im-contacts-layout .jg-group-item::after { background: var(--ui-border); }
+/* 分类行与会话行同高（44px），选中底色的左右内缩、圆角、灰度都对齐本地工作区会话列表 */
+.jw-im-contacts-layout .tyn-aside-contact-item {
+  height: 44px;
+  min-height: 44px;
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  padding: 0 12px;
+  border-radius: 11px;
+}
+.jw-im-contacts-layout .jg-group-item {
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  border-radius: 11px;
+}
 .jw-im-contacts-layout .tyn-aside-contact-item:hover,
-.jw-im-contacts-layout .jg-group-item:hover { background: var(--ui-hover); }
+.jw-im-contacts-layout .jg-group-item:hover { background: rgba(0, 0, 0, 0.025); }
 .jw-im-contacts-layout .tyn-aside-contact-item.active {
   color: var(--ui-text) !important;
-  background: var(--ui-active) !important;
+  background: rgba(0, 0, 0, 0.045) !important;
+  border-radius: 11px !important;
+}
+:host([data-theme="dark"]) .jw-im-contacts-layout .tyn-aside-contact-item:hover,
+:host([data-theme="dark"]) .jw-im-contacts-layout .jg-group-item:hover { background: rgba(255, 255, 255, 0.045); }
+:host([data-theme="dark"]) .jw-im-contacts-layout .tyn-aside-contact-item.active {
+  background: rgba(255, 255, 255, 0.08) !important;
 }
 .jw-im-contacts-layout .jg-tab-icon,
 .jw-im-contacts-layout .jg-arrow,

@@ -425,6 +425,9 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
         activeConversation: syncActiveConversation(get().activeConversation, conversations),
         loadingConversations: false,
       });
+      // TIPS: 会话列表与聊天页顶部的显示名要靠通讯录兜底（引擎给的 conversationTitle
+      // 常为空，单聊尤其如此），所以通讯录不能等用户切到「通讯录」页才加载。
+      if (!get().contacts.length && !get().loadingContacts) void get().loadContacts();
       await get().refreshTotalUnreadCount();
     } catch (error) {
       set({ loadingConversations: false, error: errorMessage(error) });

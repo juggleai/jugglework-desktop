@@ -106,9 +106,57 @@ function toError(error: unknown) {
   return String(error || "操作失败");
 }
 
-function conversationName(conversation: ChatConversation | null) {
+/**
+ * 会话在通讯录里的显示名索引，key 为 `会话类型:会话 id`
+ *
+ * TIPS: 单聊会话的 conversationId 就是对方的 IM 用户 id，群聊则是群 id，正好与
+ * 通讯录里 contacts / groups 的 user_id 对齐。
+ */
+type ChatNameDirectory = Map<string, string>;
+
+/**
+ * 从 store 的通讯录构建显示名索引
+ *
+ * TIPS: 会话列表里必须能拿到这份索引，所以通讯录在连接成功后就会加载，
+ * 不再等用户切到「通讯录」页（见 store.ts 的 loadConversations）。
+ */
+function useChatNameDirectory(): ChatNameDirectory {
+  const contacts = useJuggleChatStore((state) => state.contacts);
+  const groups = useJuggleChatStore((state) => state.groups);
+
+  return useMemo(() => {
+    const directory: ChatNameDirectory = new Map();
+
+    for (const contact of contacts) {
+      const name = contact.friend_display_name || contact.nickname;
+      if (contact.user_id && name) directory.set(`1:${contact.user_id}`, name);
+    }
+
+    for (const group of groups) {
+      const name = group.friend_display_name || group.nickname;
+      if (group.user_id && name) directory.set(`2:${group.user_id}`, name);
+    }
+
+    return directory;
+  }, [contacts, groups]);
+}
+
+/**
+ * 会话显示名
+ *
+ * TIPS: 引擎给的 conversationTitle 可能为空（尤其是单聊），此时先查通讯录拿真实
+ * 姓名，只有查不到才退回 id——否则列表和聊天页顶部会直接把用户 id 摆给用户看。
+ *
+ * @param conversation 会话
+ * @param directory 通讯录显示名索引，缺省时直接退回 id
+ */
+function conversationName(conversation: ChatConversation | null, directory?: ChatNameDirectory) {
   if (!conversation) return "";
-  return conversation.conversationAlias || conversation.conversationTitle || conversation.conversationId;
+
+  return conversation.conversationAlias
+    || conversation.conversationTitle
+    || directory?.get(`${conversation.conversationType}:${conversation.conversationId}`)
+    || conversation.conversationId;
 }
 
 function initials(name: string) {
@@ -227,7 +275,11 @@ export function ConversationList({ sidebarOpen = true, onToggleSidebar }: { side
   const [query, setQuery] = useState("");
   const [groupOpen, setGroupOpen] = useState(false);
   const searchInputRef = useListSearchShortcut();
-  const filtered = useMemo(() => conversations.filter((item) => conversationName(item).toLowerCase().includes(query.trim().toLowerCase())), [conversations, query]);
+  const nameDirectory = useChatNameDirectory();
+  const filtered = useMemo(
+    () => conversations.filter((item) => conversationName(item, nameDirectory).toLowerCase().includes(query.trim().toLowerCase())),
+    [conversations, nameDirectory, query],
+  );
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
   const previousRowPositions = useRef(new Map<string, number>());
   const previousOrder = useRef<string | null>(null);
@@ -293,7 +345,7 @@ export function ConversationList({ sidebarOpen = true, onToggleSidebar }: { side
         {loading && !conversations.length ? <div className="newui-conversation-skeleton">{Array.from({ length: 6 }, (_, index) => <div className="newui-skeleton-row newui-conversation-card" key={index}><span className="newui-skeleton-avatar" /><span className="newui-conversation-content"><span className="newui-skeleton-line newui-skeleton-line-title" style={{ width: `${52 + index * 4}%` }} /><span className="newui-skeleton-line newui-skeleton-line-preview" style={{ width: `${66 + index * 3}%` }} /></span><span className="newui-conversation-side"><span className="newui-skeleton-line newui-skeleton-line-time" /></span></div>)}</div> : null}
         {!loading && !filtered.length ? <div className="newui-empty-state"><div className="newui-empty-state-icon"><MessageCircle /></div><div className="newui-empty-state-title">{t("chat.no_conversations")}</div><div className="newui-empty-state-sub">{t("chat.create_group_hint")}</div></div> : null}
         {filtered.map((conversation) => {
-          const name = conversationName(conversation);
+          const name = conversationName(conversation, nameDirectory);
           const key = `${conversation.conversationType}:${conversation.conversationId}`;
           return (
             <button ref={(node) => { if (node) rowRefs.current.set(key, node); else rowRefs.current.delete(key); }} key={key} className={cx("jw-im-conversation-row tyn-aside-item newui-conversation-item", Boolean(conversation.isTop) && "is-pinned", isSame(active, conversation) && "is-active active")} onClick={() => void select(conversation)}>
@@ -972,6 +1024,7 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
   const pinnedMessage = useJuggleChatStore((state) => state.pinnedMessage);
   const pinMessage = useJuggleChatStore((state) => state.pinMessage);
   const editMessage = useJuggleChatStore((state) => state.editMessage);
+  const nameDirectory = useChatNameDirectory();
   const [text, setText] = useState("");
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -1132,7 +1185,7 @@ export function ConversationSurface({ sidebarOpen = true, onToggleSidebar }: { s
   }, [conversation?.conversationId, conversation?.conversationType, finished, loading, messages.length]);
 
   if (!conversation) return <main className="jw-im-empty-surface tyn-main tyn-chat-content aside-collapsed">{!sidebarOpen ? <header className="jw-im-chat-header jw-im-empty-header tyn-chat-head"><ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /></header> : null}<div className="tyn-chat-body tyn-chat-none-box"><div className="tyn-chat-none-bg"><div className="blank-main-box"><div className="blank-main-icon" /><div className="blank-main-title fontcolor-title">{t("chat.welcome_title")}</div><div className="blank-main-content fontcolor-second">{t("chat.welcome_description")}</div></div></div></div></main>;
-  const name = conversationName(conversation);
+  const name = conversationName(conversation, nameDirectory);
   const selectionMode = selectedMessageIds.length > 0;
   const selectKey = (message: ChatMessage) => message.tid || message.messageId || "";
   const toggleSelected = (message: ChatMessage) => {
@@ -1409,7 +1462,8 @@ function ForwardModal({ messages, conversations, onClose }: { messages: ChatMess
   const [mode, setMode] = useState<"single" | "merge">("single");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const filtered = conversations.filter((conversation) => conversationName(conversation).toLowerCase().includes(query.trim().toLowerCase()));
+  const nameDirectory = useChatNameDirectory();
+  const filtered = conversations.filter((conversation) => conversationName(conversation, nameDirectory).toLowerCase().includes(query.trim().toLowerCase()));
   const submit = async () => {
     const targets = conversations.filter((conversation) => selected.includes(`${conversation.conversationType}:${conversation.conversationId}`));
     if (!targets.length) return setError(t("chat.select_conversation_required"));
@@ -1430,7 +1484,7 @@ function ForwardModal({ messages, conversations, onClose }: { messages: ChatMess
   return <div className="jw-im-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>{t("chat.forward_messages")}</h3><button aria-label={t("common.close")} onClick={onClose}><X size={18} /></button></header>
     {messages.length > 1 ? <div className="jw-im-contact-tabs"><button className={mode === "single" ? "is-active" : ""} onClick={() => setMode("single")}>{t("chat.forward_individually")}</button><button className={mode === "merge" ? "is-active" : ""} disabled={messages.length > 20} title={messages.length > 20 ? t("chat.merge_forward_limit") : undefined} onClick={() => setMode("merge")}>{t("chat.forward_merged")}</button></div> : null}
     <label className="jw-im-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("chat.search_conversations")} /></label>
-    <div className="jw-im-member-picker">{filtered.map((conversation) => { const key = `${conversation.conversationType}:${conversation.conversationId}`; const checked = selected.includes(key); const label = conversationName(conversation); return <button key={key} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((item) => item !== key) : [...selected, key])}><ChatAvatar name={label} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; })}</div>
+    <div className="jw-im-member-picker">{filtered.map((conversation) => { const key = `${conversation.conversationType}:${conversation.conversationId}`; const checked = selected.includes(key); const label = conversationName(conversation, nameDirectory); return <button key={key} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((item) => item !== key) : [...selected, key])}><ChatAvatar name={label} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; })}</div>
     {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
     <button className="jw-im-primary-button" disabled={busy || !selected.length} onClick={() => void submit()}>{busy ? <LoaderCircle className="is-spinning" size={17} /> : <Forward size={17} />}{t("chat.forward_to_conversations", { count: selected.length || 0 })}</button>
   </section></div>;
@@ -1498,8 +1552,9 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
   const currentUser = useJuggleChatStore((state) => state.user);
   const reloadContacts = useJuggleChatStore((state) => state.loadContacts);
   const reloadConversations = useJuggleChatStore((state) => state.loadConversations);
+  const nameDirectory = useChatNameDirectory();
   const [group, setGroup] = useState<ChatGroupInfo | null>(null);
-  const [name, setName] = useState(conversationName(conversation));
+  const [name, setName] = useState(conversationName(conversation, nameDirectory));
   const [picker, setPicker] = useState<"invite" | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1521,7 +1576,7 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
       const initialMembers = members.length ? members : extractGroupMembers((data as Record<string, unknown>).members);
       const next: ChatGroupInfo = {
         id: conversation.conversationId,
-        nickname: String(data.group_name ?? conversationName(conversation)),
+        nickname: String(data.group_name ?? conversationName(conversation, nameDirectory)),
         avatar: data.group_portrait ? String(data.group_portrait) : undefined,
         members: initialMembers,
         member_count: Number(data.member_count) || initialMembers.length,

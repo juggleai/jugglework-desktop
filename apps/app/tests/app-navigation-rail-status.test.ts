@@ -19,6 +19,14 @@ describe("local workspace rail status", () => {
   });
 });
 
+describe("chat unread reminder", () => {
+  test("uses a small red dot instead of the unread count", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const chat = source.slice(source.indexOf('label={t("navigation.chat")}'), source.indexOf("<MessageSquare />"));
+    expect(chat).toMatch(/badgeVariant="dot"/);
+  });
+});
+
 describe("settings notification reminder", () => {
   test("uses a small red dot without rendering the unread count", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");

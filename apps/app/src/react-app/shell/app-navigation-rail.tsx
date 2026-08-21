@@ -276,6 +276,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           onClick={() => openChatView("conversations")}
           testId="app-rail-chat"
           badge={totalUnreadCount}
+          badgeVariant="dot"
         >
           <MessageSquare />
         </RailButton>
