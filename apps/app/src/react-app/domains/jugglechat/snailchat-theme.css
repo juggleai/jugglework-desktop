@@ -15,6 +15,19 @@
      自定义属性会穿过 shadow 边界从宿主继承，所以这里直接引用应用令牌即可。
      统一引用 --app-page-bg（宿主唯一来源：亮色 #ffffff / 暗色 slate-1）。 */
   --ui-chat-bg: var(--app-page-bg, #ffffff);
+  /* 文字色同样收口到宿主语义 token：消息页/通讯录的列表标题、次级文案与工作区其余页面同色。
+     TIPS: 上游 custom.css 把这三个 token 写死在 `.tyn-root` 上（#292b2f / #6f737a / #9a9da3），
+     比宿主的 slate-12 / slate-11 / slate-10 浅一档，列表标题因此看起来与其他页面不一致；
+     `.jw-im-root` 与 `.tyn-root` 是同一个元素、特异性相同，靠本文件在 shadow root 内最后加载压过。
+     暗色由宿主的 slate 阶梯自动切换，所以下方暗色块不再重复定义这三个 token。 */
+  --ui-text: var(--foreground, #1c2024);
+  --ui-text-secondary: var(--muted-foreground, #60646c);
+  --ui-text-muted: var(--slate-10, #80838d);
+  /* 会话列表的次级档（预览 / 时间 / 免打扰图标）用同一个更浅的灰，对齐参考设计的 #90959e。
+     TIPS: 这一档比正文次级 --ui-text-secondary（slate-11 / #60646c）更浅，是列表专用的“安静灰”，
+     参考设计里预览、时间、静音铃铛是完全同色的，所以三处都只读这一个 token。
+     宿主阶梯里亮色最接近的是 slate-9（#8b8d98）；暗色 slate-9 太暗，改用 slate-10（见暗色块）。 */
+  --newui-conversation-subtitle-color: var(--slate-9, #8b8d98);
   /* 头像基准尺寸：通讯录等紧凑列表沿用 34px，会话列表在下方单独放大到 40px。
      TIPS: 这里必须保持小档，通讯录行只有 44px 高，放大会把行撑破。 */
   --newui-conversation-avatar-size: 34px;
@@ -44,9 +57,10 @@
   --ui-active: #36383e;
   --ui-border: #36383d;
   --ui-border-strong: #45484f;
-  --ui-text: #f1f2f4;
-  --ui-text-secondary: #b0b4bc;
-  --ui-text-muted: #858a94;
+  /* 文字色（--ui-text / --ui-text-secondary / --ui-text-muted）不在这里定义：
+     已在 .jw-im-root 统一引用宿主 slate 阶梯，宿主暗色会自动改写这些值。 */
+  /* 会话列表次级档：暗色下 slate-9(#696e77) 在 slate-1 底上过暗，退到 slate-10 */
+  --newui-conversation-subtitle-color: var(--slate-10, #777b84);
   --ui-control: #e6e8eb;
   --ui-control-hover: #ffffff;
   --ui-link: #91b9dc;
@@ -235,21 +249,25 @@
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
+/* 加号按钮与包裹层都撑满 .jw-list-panel-add-slot 的内容区（槽位 32px - 1px 描边 = 30px），
+   悬浮底色才不会盖住槽位描边；圆角比槽位小 1px 贴着描边内侧收边。
+   TIPS: 悬浮色统一由 list-panel-header.css 的 --jw-list-header-hover 提供，
+   与工作区、通讯录的加号是同一套，不要在这里另写一份。 */
 .jw-im-list-add {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
   border: 1px solid transparent;
-  border-radius: 10.08px;
+  border-radius: 9px;
 }
 .jw-im-list-add > svg { width: 16px; height: 16px; }
 .jw-im-list-add:hover { color: var(--ui-text); }
-.jw-im-list-add:hover { background: var(--ui-hover); }
 .jw-im-list-add-wrap {
   position: relative;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
   -webkit-app-region: no-drag;
 }
 .jw-im-list-add-wrap.is-open { z-index: 1600; }
@@ -416,10 +434,9 @@
 .jw-im-conversation-row .newui-conversation-side-mute {
   width: 14px;
   height: 14px;
-  color: var(--ui-text-muted);
+  color: var(--newui-conversation-subtitle-color);
   opacity: 1;
 }
-.jw-im-conversation-row:hover .newui-conversation-side-mute { color: var(--ui-text-secondary); }
 
 /* ---- 列表头像：外观由 .tyn-root .jw-im-avatar > .inner 统一提供，这里只定尺寸与字号 ---- */
 .jw-im-list-scroll .newui-conversation-item,
@@ -991,9 +1008,20 @@
 /* footer 自身不加间距（基底 jugglechat.css 有 padding:0 18px 16px 会与卡片 margin 叠加），
    右/底间距统一由 .jw-im-composer-row 的 margin 控制 */
 /* footer 不加间距：卡片 margin 16px 四边留白，两者叠加会变成 32px */
-.jw-im-composer { height: 180px; min-height: 180px; padding: 0; }
-.jw-im-composer .tyn-composer-shell,
-.jw-im-composer .tyn-chat-form-enter { height: 100%; }
+/* 卡片净高 142px（参考设计实测）+ 底部 16px 外边距 = footer 158px。
+   TIPS: 改这里必须同步 components.tsx 里 --composer-height 的内联值，
+   上游 .tyn-composer-shell 用它做 min-height，两者不一致会把 footer 撑破。 */
+.jw-im-composer { height: 158px; min-height: 158px; padding: 0; }
+/* shell 改成纵向 flex，输入卡作为唯一的流内子项被拉伸。
+   TIPS: 之前 shell 与输入卡都是 width/height: 100%，输入卡又带 16px 的右/底 margin，
+   等于在 100% 之外再加外边距，右边和底边各溢出 16px 直接贴到面板边缘；
+   改成 flex 后卡片宽高由 shell 减去 margin 得出，右/底间距才真正生效。
+   @提及浮层与拖拽手柄都是 position: absolute，不进入这条 flex 流。 */
+.jw-im-composer .tyn-composer-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 .jw-im-mentions { z-index: 1060; overflow: hidden; }
 .jw-im-mentions .jg-mentions-warp {
   margin: 0;
@@ -1015,8 +1043,10 @@
   font-size: 13px;
   text-align: center;
 }
-/* TIPS 消息页输入卡样式：
-   - 无边框、纯白底 #ffffff（硬编码，排除 token 解析问题）+ 阴影浮层
+/* TIPS 消息页输入卡样式（对齐参考设计）：
+   - 1px 描边 + 8px 小圆角 + 无投影的实心框（参考稿实测描边 #dedede、圆角 7px，
+     这里取语义色 --ui-border 与 8px，暗色自动跟随）
+   - 白底：本页页面底色也是白色，卡片靠描边与页面区分，不再用投影浮起
    - 右/底 16px 外边距（footer padding 已归零，margin 是唯一间距来源）
    - 布局：编辑器在上、操作行沉底；无发送按钮，回车发送
    - 选择器用 .jw-im-composer 前缀抬到 (0,2,0)，压过基底与上游同属性规则 */
@@ -1024,13 +1054,17 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  width: 100%;
+  /* 宽高交给 shell 的 flex 拉伸，这里必须显式写 auto —— 上游 .tyn-conversation-input
+     同样挂在本元素上并写了 width: 100%，不覆盖就会重新把右侧 margin 顶出面板 */
+  width: auto;
+  flex: 1;
+  min-height: 0;
   margin: 0 16px 16px;
   padding: 0;
-  border: none;
-  border-radius: 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
   box-sizing: border-box;
 }
 :host([data-theme="dark"]) .jw-im-root .jw-im-composer-row {
@@ -1039,24 +1073,36 @@
 .jw-im-composer .jw-im-composer-row.tyn-chat-form-enter {
   flex-direction: column;
 }
-/* 编辑区 padding：上 12、左右 16，下间距留给操作行 */
+/* 编辑区 padding：上 12、左右 14（与操作行首个图标左对齐），下间距留给操作行 */
 .jw-im-composer .tyn-chat-form-inner {
   min-height: 56px;
-  padding: 12px 16px 0;
+  padding: 12px 14px 0;
 }
-.jw-im-composer .tyn-chat-form-input { font-size: 14px; line-height: 22px; }
-/* 操作行：底 8、左右与编辑区对齐 16px */
+.jw-im-composer .tyn-chat-form-input { font-size: 14px; line-height: 26px; }
+/* 操作行沉底，无分隔线。
+   TIPS: 参考设计的图标是「字形 17px、字形左边距 14px、字形中心间距 36px、字形底边距 13px」，
+   这里换算成 32px 命中区来实现：内边距 6px + (32-17)/2 = 13.5px 的字形边距，
+   命中区 32px + 间距 4px = 36px 的中心距，三个数字都会自动落到参考值上。 */
 .jw-im-composer .tyn-composer-toolbar {
   height: auto;
-  min-height: 40px;
-  padding: 6px 16px 8px;
+  min-height: 38px;
+  padding: 0 6px 6px;
   border-top: 0;
 }
 /* 图标命中区 */
 .jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon {
   width: 32px;
   height: 32px;
+  border-radius: 8px;
 }
+/* 上游把表情按钮外层的 .tyn-toolbar-icon-wrap 固定成 24px，比 32px 的命中区还小，
+   会让表情与其后所有图标的间距算错，这里放大到与命中区同宽 */
+.jw-im-composer .tyn-composer-toolbar .tyn-toolbar-icon-wrap {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+.jw-im-composer .tyn-composer-toolbar .tyn-composer-toolbar-left { gap: 4px; }
 .jw-im-composer .tyn-composer-toolbar button { cursor: pointer; }
 /* TIPS 输入区工具栏图标颜色对齐设计稿：中性深灰 #4c4c4c（设计稿实测值，非蓝非黑），
    尺寸在 components.tsx 中统一为 17px；暗色回退主题次级文字色 */
@@ -1108,29 +1154,64 @@
 .jw-im-composer .tyn-composer-toolbar .wr-smile > svg,
 .jw-im-composer .tyn-composer-toolbar .jw-im-attach-trigger > svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
 }
+/* 表情面板：上游是 480x391 的固定尺寸、9 列 40px 网格、字形 30px，对 43 个表情来说
+   过大且下半屏留白。这里收成 360px 宽、按内容自适应高度的小面板。
+   TIPS: 字形 22px / 格子 40px 取自参考设计（实测字形 22.5px、格子 44px），
+   输入框内的表情放大倍率也对齐这个 22px（见 app/index.css 的 "JW Emoji" @font-face）。 */
 .jw-im-emoji-picker {
+  width: 360px;
+  min-width: 0;
+  max-width: min(360px, calc(100vw - 24px));
+  height: auto;
+  max-height: 360px;
+  bottom: calc(100% + 10px);
   border: 1px solid var(--ui-border);
+  border-radius: 12px;
   color: var(--ui-text);
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-md);
 }
+/* 上游把高度写在 .tyn-emoji-pn.show-aside 上（0,2,0），要用同特异性的选择器才压得住 */
+.jw-im-emoji-picker.show-aside { height: auto; }
+.jw-im-emoji-picker .tyn-emoji-header { padding: 12px 14px 0; }
 .jw-im-emoji-picker .tyn-emoji-title { color: var(--ui-text-secondary); }
+.jw-im-emoji-picker .tyn-emoni-box { padding: 8px 14px 10px; }
+/* 8 列等分，格子间只留 2px —— 参考设计里格子之间是紧挨着的，靠格子内的留白分隔 */
+.jw-im-emoji-picker .emojis__grid {
+  grid-template-columns: repeat(8, 1fr);
+  grid-auto-rows: 40px;
+  column-gap: 2px;
+  row-gap: 2px;
+  justify-content: stretch;
+}
 .jw-im-emoji-picker .tyn-emoji-tools {
+  min-height: 44px;
+  padding: 6px 14px;
   border-color: var(--ui-border);
   background: var(--ui-surface);
+}
+.jw-im-emoji-picker .tyn-emojis-btn { width: 32px; height: 32px; }
+.jw-im-emoji-picker .tyn-emoji-icon {
+  width: 22px;
+  height: 22px;
+  font-size: 22px;
+  line-height: 22px;
 }
 .jw-im-emoji-picker .tyn-emojis-btn:hover,
 .jw-im-emoji-picker .tyn-emoji-tool.active .tyn-emojis-btn { background: var(--ui-hover); }
 .jw-im-emoji-picker .emoji-item {
+  width: 100%;
+  height: 40px;
   padding: 0;
   border: 0;
+  border-radius: 8px;
   color: inherit;
   background: transparent;
-  font-size: 30px;
-  line-height: 32px;
+  font-size: 22px;
+  line-height: 1;
   cursor: pointer;
 }
 .jw-im-emoji-picker .emoji-item:hover { background: var(--ui-hover); }
@@ -1154,15 +1235,20 @@
   outline: 0;
   color: var(--ui-text);
   background: transparent;
+  /* 表情放大到 22px（14 × 1.6），与表情面板里的字形同大；"JW Emoji Large" 只覆盖 emoji
+     码位，中英文仍走后面的正文字体。字体在 app/index.css 声明（shadow root 内的
+     @font-face 会被 Chromium 忽略）。
+     TIPS: 行高必须 >= 放大后的表情行盒（约 26px），否则多行时上下行会互相压住。 */
+  font-family: "JW Emoji Large", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   font-size: 14px;
-  line-height: 22px;
+  line-height: 26px;
 }
 .jw-im-composer .tyn-chat-form-inner textarea::placeholder { color: var(--ui-text-muted); }
 .jw-im-composer-message-panels {
   flex: none;
   overflow: hidden;
   /* 与下方输入卡片（.jw-im-composer-row）左右外边距一致，视觉上连成一张卡 */
-  margin: 0 12px;
+  margin: 0 16px;
   background: transparent;
 }
 .jw-im-root .jw-im-composer-message-panel {
@@ -1190,10 +1276,15 @@
   transform: translate3d(0, 0, 0);
   pointer-events: auto;
   /* 引用/回复条与下方输入卡拼成一张完整卡片：上圆角 + 同底色同描边，底边留给输入卡 */
-  background: #fafafa;
-  border: 1px solid #dcdcdc;
+  background: #ffffff;
+  border: 1px solid var(--ui-border);
   border-bottom: 0;
-  border-radius: 14px 14px 0 0;
+  border-radius: 8px 8px 0 0;
+}
+/* 拼接时输入卡自己的上圆角要抹平，否则两段描边在接缝处会各自收一个圆角 */
+.jw-im-root:has(.jw-im-composer-message-panel.active) .jw-im-composer .jw-im-composer-row {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 :host([data-theme="dark"]) .jw-im-root .jw-im-composer-message-panel.active {
   background: var(--ui-surface);
@@ -1664,9 +1755,11 @@
 .jw-im-contacts-layout .tyn-aside-contact-item,
 .jw-im-contacts-layout .tyn-aside-contact-item .name,
 .jw-im-contacts-layout .jg-contact-name { color: var(--ui-text) !important; }
+/* 通讯录的次级文案（字母索引、拼音、在线状态）与会话列表次级档同色，
+   两个列表加起来只有「标题 --ui-text」和「次级 --newui-conversation-subtitle-color」两档。 */
 .jw-im-contacts-layout .jg-group-letter,
 .jw-im-contacts-layout .jg-contact-pinyin,
-.jw-im-contacts-layout .jg-contact-status { color: var(--ui-text-secondary); }
+.jw-im-contacts-layout .jg-contact-status { color: var(--newui-conversation-subtitle-color); }
 .jw-im-contacts-layout .jg-group-item .tyn-avatar,
 .jw-im-contacts-layout .jg-group-item .tyn-avatar > img,
 .jw-im-contacts-layout .jg-group-item .tyn-avatar > .inner {
@@ -1681,14 +1774,14 @@
   padding: 8px 12px;
 }
 .jw-im-contacts-layout .jg-group-item .tyn-avatar { margin-right: 12px; }
-.jw-im-contacts-layout .jg-group-item::after { left: 12px; right: 12px; }
+/* 联系人 / 群组行之间不画分割线：行本身已有圆角悬浮底色，与会话列表一致靠留白分组 */
+.jw-im-contacts-layout .jg-group-item::after { display: none; }
 .jw-im-contacts-layout .jg-contact-name {
   font-size: 15px;
   font-weight: 500;
   line-height: 20px;
 }
-.jw-im-contacts-layout .tyn-aside-contact-item::after,
-.jw-im-contacts-layout .jg-group-item::after { background: var(--ui-border); }
+.jw-im-contacts-layout .tyn-aside-contact-item::after { background: var(--ui-border); }
 /* 分类列表与右侧联系人列表都与顶栏留 8px 呼吸位，和会话列表一致 */
 .jw-im-contacts-layout .jw-im-contact-categories { padding-top: 8px; }
 .jw-im-contacts-layout .tyn-contact-wrapper { padding-top: 8px; }

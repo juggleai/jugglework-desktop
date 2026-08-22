@@ -13,6 +13,19 @@
 
 @import "@fontsource-variable/ibm-plex-sans";
 
+/* TIPS 放大版系统表情字体：textarea 无法给单个字符设样式，这里用 @font-face 的
+   size-adjust + unicode-range，只把 emoji 码位交给系统表情字体并放大到 1.6 倍
+   （消息页输入框正文 14px → 表情 22px，与表情面板里的字形同大），其余文字不受影响。
+   注意：@font-face 必须声明在文档级样式表 —— Chromium 会忽略 shadow root 内的 @font-face，
+   而消息页（jugglechat）整体跑在 shadow DOM 里，只能在这里声明、在 shadow 内按名引用。
+   字体缺字时浏览器会自动回退到下一档字体并按原字号渲染，不会影响中英文排版。 */
+@font-face {
+  font-family: "JW Emoji Large";
+  src: local("Apple Color Emoji"), local("Segoe UI Emoji"), local("Noto Color Emoji");
+  size-adjust: 160%;
+  unicode-range: U+200D, U+20E3, U+FE0F, U+2600-26FF, U+2700-27BF, U+2B00-2BFF, U+1F000-1FAFF;
+}
+
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 @custom-variant electron {
   html.jugglework-electron & {

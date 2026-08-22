@@ -3,7 +3,8 @@
   --jw-list-header-text: #1c2024;
   --jw-list-header-secondary: #60646c;
   --jw-list-header-icon: rgba(28, 32, 36, .5);
-  /* 统一引用宿主列表背景 token --app-list-bg（#fcfcfc）；当前无消费点，仅保持语义一致 */
+  /* 面板自身的底色（搜索框填充用），与 --jw-list-header-hover 是两回事：
+     TIPS: 悬浮态一律用 --jw-list-header-hover，用 surface 等于把按钮涂成和背景同色，看不出悬浮 */
   --jw-list-header-surface: var(--app-list-bg, #fcfcfd);
   --jw-list-header-hover: #f2f2f4;
   --jw-list-header-focus: #b8bec7;
@@ -100,7 +101,18 @@
 .jw-list-panel-add-slot > button:hover,
 .jw-list-panel-add-slot > div > button:hover {
   color: var(--jw-list-header-text);
-  background: var(--jw-list-header-surface);
+  background: var(--jw-list-header-hover);
+}
+
+/* 加号按钮撑满外层带描边的槽位（槽位 32px 含 1px 描边，内容区 30px）。
+   TIPS: 原来按钮硬写 32px，比内容区大 2px，悬浮底色会盖住并溢出槽位描边一圈；
+   圆角比槽位小 1px，才能贴着描边内侧收边。 */
+.jw-list-panel-add-slot > button,
+.jw-list-panel-add-slot > div > button {
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
+  border-radius: 9px;
 }
 
 .jw-list-panel-icon-button > svg,
