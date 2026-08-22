@@ -10,6 +10,7 @@ import { ListPanelHeader } from "@/react-app/shell/list-panel-header";
 import {
   ArrowDown,
   AtSign,
+  BellOff,
   Check,
   ChevronLeft,
   CircleAlert,
@@ -168,18 +169,30 @@ function avatarColorIndex(value: string) {
   return value.length > 0 ? value.charCodeAt(0) % 6 : 0;
 }
 
-export function ChatAvatar(props: { name: string; userId?: string; src?: string; size?: "sm" | "md" | "lg"; className?: string }) {
+/**
+ * 会话 / 联系人头像
+ * @param name 展示名称，用于生成文字兜底与配色
+ * @param userId 会话或用户 ID，作为配色哈希的输入
+ * @param src 头像图片地址，加载失败时自动回退到文字/图标兜底
+ * @param size 尺寸档位：sm / md / lg
+ * @param kind 头像类型：user 个人（文字兜底）/ group 群组（群成员图标兜底）
+ * @param className 附加类名
+ */
+export function ChatAvatar(props: { name: string; userId?: string; src?: string; size?: "sm" | "md" | "lg"; kind?: "user" | "group"; className?: string }) {
   const [failed, setFailed] = useState(false);
   const colorClass = `jg-peer-color-${avatarColorIndex(props.userId || props.name)}`;
   const hasPortrait = Boolean(props.src && !failed);
+  const isGroup = props.kind === "group";
   useEffect(() => setFailed(false), [props.src]);
   return (
     <Avatar
-      className={cx("jw-im-avatar tyn-avatar", `is-${props.size ?? "md"}`, props.className)}
+      className={cx("jw-im-avatar tyn-avatar", `is-${props.size ?? "md"}`, isGroup ? "is-group" : "is-user", props.className)}
       aria-hidden="true"
     >
       {hasPortrait ? <AvatarImage src={props.src} alt="" onError={() => setFailed(true)} /> : null}
-      <AvatarFallback className={cx("inner", colorClass)}>{initials(props.name)}</AvatarFallback>
+      <AvatarFallback className={cx("inner", colorClass)}>
+        {isGroup ? <Users className="jw-im-avatar-glyph" /> : initials(props.name)}
+      </AvatarFallback>
     </Avatar>
   );
 }
@@ -347,11 +360,17 @@ export function ConversationList({ sidebarOpen = true, onToggleSidebar }: { side
         {filtered.map((conversation) => {
           const name = conversationName(conversation, nameDirectory);
           const key = `${conversation.conversationType}:${conversation.conversationId}`;
+          const unread = conversation.unreadCount ?? 0;
+          const muted = Number(conversation.undisturbType) > 0;
+          const isGroup = conversation.conversationType === 2;
           return (
             <button ref={(node) => { if (node) rowRefs.current.set(key, node); else rowRefs.current.delete(key); }} key={key} className={cx("jw-im-conversation-row tyn-aside-item newui-conversation-item", Boolean(conversation.isTop) && "is-pinned", isSame(active, conversation) && "is-active active")} onClick={() => void select(conversation)}>
               <span className="newui-conversation-card">
                 <span className="newui-conversation-main">
-                  <span className="newui-conversation-avatar-wrap"><ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} /></span>
+                  <span className="newui-conversation-avatar-wrap">
+                    <ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={name} userId={conversation.conversationId} src={conversation.conversationPortrait} kind={isGroup ? "group" : "user"} />
+                    {unread > 0 ? <span className={cx("newui-conversation-avatar-badge", muted && "is-muted")}>{unread > 99 ? "99+" : unread}</span> : null}
+                  </span>
                   <span className="jw-im-row-body newui-conversation-content">
                     <span className="jw-im-row-title newui-conversation-title-row"><strong className="newui-conversation-title"><span className="newui-conversation-title-text">{name}</span></strong></span>
                     <span className="newui-conversation-subtitle-row"><span className="jw-im-row-preview newui-conversation-preview">{messagePreview(conversation.latestMessage)}</span></span>
@@ -359,7 +378,7 @@ export function ConversationList({ sidebarOpen = true, onToggleSidebar }: { side
                 </span>
                 <span className="newui-conversation-side">
                   <span className="newui-conversation-side-top"><time className="newui-conversation-time">{formatConversationTime(conversation.latestMessage?.sentTime)}</time></span>
-                  <span className="newui-conversation-side-bottom">{(conversation.unreadCount ?? 0) > 0 ? <span className="jw-im-unread newui-conversation-side-badge">{Math.min(conversation.unreadCount ?? 0, 99)}</span> : <span className="newui-conversation-side-placeholder" />}</span>
+                  <span className="newui-conversation-side-bottom">{muted ? <BellOff className="newui-conversation-side-mute" aria-label={t("chat.muted")} /> : <span className="newui-conversation-side-placeholder" />}</span>
                 </span>
               </span>
             </button>
@@ -1488,7 +1507,7 @@ function ForwardModal({ messages, conversations, onClose }: { messages: ChatMess
   return <div className="jw-im-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal" onMouseDown={(event) => event.stopPropagation()}><header><h3>{t("chat.forward_messages")}</h3><button aria-label={t("common.close")} onClick={onClose}><X size={18} /></button></header>
     {messages.length > 1 ? <div className="jw-im-contact-tabs"><button className={mode === "single" ? "is-active" : ""} onClick={() => setMode("single")}>{t("chat.forward_individually")}</button><button className={mode === "merge" ? "is-active" : ""} disabled={messages.length > 20} title={messages.length > 20 ? t("chat.merge_forward_limit") : undefined} onClick={() => setMode("merge")}>{t("chat.forward_merged")}</button></div> : null}
     <label className="jw-im-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("chat.search_conversations")} /></label>
-    <div className="jw-im-member-picker">{filtered.map((conversation) => { const key = `${conversation.conversationType}:${conversation.conversationId}`; const checked = selected.includes(key); const label = conversationName(conversation, nameDirectory); return <button key={key} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((item) => item !== key) : [...selected, key])}><ChatAvatar name={label} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; })}</div>
+    <div className="jw-im-member-picker">{filtered.map((conversation) => { const key = `${conversation.conversationType}:${conversation.conversationId}`; const checked = selected.includes(key); const label = conversationName(conversation, nameDirectory); return <button key={key} className={checked ? "is-selected" : ""} onClick={() => setSelected(checked ? selected.filter((item) => item !== key) : [...selected, key])}><ChatAvatar name={label} userId={conversation.conversationId} src={conversation.conversationPortrait} size="sm" kind={conversation.conversationType === 2 ? "group" : "user"} /><span>{label}</span><span className="jw-im-check">{checked ? <Check size={14} /> : null}</span></button>; })}</div>
     {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
     <button className="jw-im-primary-button" disabled={busy || !selected.length} onClick={() => void submit()}>{busy ? <LoaderCircle className="is-spinning" size={17} /> : <Forward size={17} />}{t("chat.forward_to_conversations", { count: selected.length || 0 })}</button>
   </section></div>;
@@ -1624,7 +1643,7 @@ function GroupManagementModal({ conversation, onClose }: { conversation: ChatCon
   ));
 
   return <div className="jw-im-modal-backdrop jw-im-group-modal-backdrop" onMouseDown={onClose}><section className="jw-im-modal jw-im-group-modal" role="dialog" aria-modal="true" aria-labelledby="jw-im-group-management-title" onMouseDown={(event) => event.stopPropagation()}><header><h3 id="jw-im-group-management-title">{t("chat.group_management")}</h3><button type="button" onClick={onClose}><X size={18} /></button></header>
-    <div className="jw-im-group-summary"><ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={group.nickname} userId={group.id} src={group.avatar} /><div><strong>{group.nickname}</strong><span>{t("chat.member_count", { count: group.member_count })} · {isOwner ? t("chat.role_owner") : group.my_role === 2 ? t("chat.role_admin") : t("chat.role_member")}</span></div></div>
+    <div className="jw-im-group-summary"><ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={group.nickname} userId={group.id} src={group.avatar} kind="group" /><div><strong>{group.nickname}</strong><span>{t("chat.member_count", { count: group.member_count })} · {isOwner ? t("chat.role_owner") : group.my_role === 2 ? t("chat.role_admin") : t("chat.role_member")}</span></div></div>
     {error ? <div className="jw-im-form-error"><CircleAlert size={16} />{error}</div> : null}
     <section className="jw-im-group-section"><h4>{t("chat.group_settings")}</h4><label className="jw-im-field"><span>{t("chat.group_name")}</span><span className="jw-im-inline-field"><input value={name} disabled={!isOwner} onChange={(event) => setName(event.target.value)} /><button disabled={!isOwner || busy || !name.trim()} onClick={() => void run(() => updateGroup(group.id, { group_name: name.trim() }), t("chat.update_group_name"))}>{t("common.save")}</button></span></label>{!isNormalGroup ? <p>{t("chat.team_group_readonly")}</p> : null}</section>
     <section className="jw-im-group-section"><div className="jw-im-group-section-title"><h4>{t("chat.group_members_count", { count: group.members.length })}</h4>{canInvite ? <button onClick={() => { setPicker("invite"); setSelected([]); }}><UserPlus size={14} />{t("chat.invite_members")}</button> : null}</div><div className="jw-im-group-members">{group.members.map((member) => { const id = groupMemberId(member); const identityId = String(member.identity_user_id || ""); const self = id === currentUser?.id; return <div key={id}><ChatAvatar className="tyn-s-avatar newui-conversation-avatar" name={groupMemberName(member)} userId={id} src={String(member.avatar || member.portrait || "") || undefined} /><span><strong>{groupMemberName(member)}</strong><small>{self ? t("common.me") : id}</small></span>{isOwner && !self && identityId ? <button className="jw-im-member-remove" title={t("chat.remove_member")} disabled={busy} onClick={() => { if (window.confirm(t("chat.remove_member_confirm", { name: groupMemberName(member) }))) void run(() => removeGroupMembers(group.id, [identityId]), t("chat.remove_member")); }}><UserMinus size={14} /></button> : null}</div>; })}</div></section>
@@ -1720,7 +1739,7 @@ export function ContactsSurface({ sidebarOpen = true, onToggleSidebar }: { sideb
       <main className="jw-im-contact-main tyn-main tyn-chat-content aside-collapsed">
         <header className={cx("jw-im-pane-header jg-conversations-header jw-im-contact-main-header", !selected && "jw-im-empty-header")}>{!sidebarOpen ? <ChatSidebarTrigger onToggle={onToggleSidebar} expanded={false} /> : null}<ul className="jg-convers-tools"><li className="jg-conversation-tool">{currentCategory.name}</li></ul></header>
         <div className="tyn-chat-body tyn-contact-body">
-          <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>
+          <div className="tyn-contact-wrapper">{loading ? <div className="newui-empty-state"><LoaderCircle className="is-spinning" /></div> : grouped.map(([letter, items]) => <section className="jg-contact-group" key={letter}><div className="jg-group-letter">{letter}</div><ul className="jg-group-list">{items.map((contact) => { const name = contact.friend_display_name || contact.nickname || contact.user_id; return <li className="jg-group-item" key={contact.user_id} onClick={() => setSelected(contact)}><ChatAvatar className="tyn-size-md jg-size-md" name={name} userId={contact.user_id} src={contact.avatar} kind={contact.conversationType === 2 ? "group" : "user"} /><div className="jg-contact-info"><div className="jg-contact-name">{name}</div></div></li>; })}</ul></section>)}</div>
         </div>
       </main>
       {selected ? <ContactDetail contact={selected} onClose={() => setSelected(null)} onConversation={() => open(selected).then(() => setSelected(null))} /> : null}
@@ -1772,10 +1791,7 @@ function ContactDetail({ contact, onClose, onConversation }: { contact: ChatCont
     <div className="jw-im-contact-card-backdrop" onMouseDown={onClose}>
       <section className="jw-im-contact-profile-card" role="dialog" aria-modal="true" aria-label={isGroup ? t("chat.group_details") : t("chat.contact_details")} onMouseDown={(event) => event.stopPropagation()}>
         <button className="jw-im-contact-card-close" onClick={onClose} title={t("common.close")} aria-label={t("common.close")}><X size={17} /></button>
-        <Avatar className="jw-im-contact-profile-avatar" size="lg">
-          {contact.avatar ? <AvatarImage src={contact.avatar} alt={name} /> : null}
-          <AvatarFallback className={cx("jw-im-contact-profile-avatar-fallback", `jg-peer-color-${avatarColorIndex(contact.user_id)}`)}>{initials(name)}</AvatarFallback>
-        </Avatar>
+        <ChatAvatar className="jw-im-contact-profile-avatar" name={name} userId={contact.user_id} src={contact.avatar} size="lg" kind={isGroup ? "group" : "user"} />
         <h2>{name}</h2>
         {isGroup ? (
           <button

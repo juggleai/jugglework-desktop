@@ -15,14 +15,15 @@
      自定义属性会穿过 shadow 边界从宿主继承，所以这里直接引用应用令牌即可。
      统一引用 --app-page-bg（宿主唯一来源：亮色 #ffffff / 暗色 slate-1）。 */
   --ui-chat-bg: var(--app-page-bg, #ffffff);
-  /* 列表行紧凑化：统一 44px 行高，头像比上游小一档，省下的宽度留给标题 */
+  /* 头像基准尺寸：通讯录等紧凑列表沿用 34px，会话列表在下方单独放大到 40px。
+     TIPS: 这里必须保持小档，通讯录行只有 44px 高，放大会把行撑破。 */
   --newui-conversation-avatar-size: 34px;
-  --newui-conversation-row-height: 44px;
-  --newui-conversation-item-padding-y: 4px;
+  --newui-conversation-row-height: 58px;
+  --newui-conversation-item-padding-y: 8px;
   --newui-conversation-item-padding-x: 12px;
   --newui-conversation-item-gap: 10px;
-  --newui-conversation-title-line-height: 18px;
-  --newui-conversation-preview-line-height: 16px;
+  --newui-conversation-title-line-height: 20px;
+  --newui-conversation-preview-line-height: 17px;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -126,6 +127,24 @@
   font-family: ui-rounded, "SF Pro Rounded", "PingFang SC", "Microsoft YaHei", sans-serif;
   line-height: 1;
   -webkit-font-smoothing: antialiased;
+}
+/* ---- ChatAvatar 的统一外观：描边式空心圆 ----
+   会话列表、通讯录、联系人/群组详情、群管理共用同一套观感，样式只在这里维护一次；
+   群组与个人的差别只在中心图形（群成员图标 vs 姓名首字），配色仍取 jg-peer-color-* 的哈希色。
+   TIPS: custom.css 的 `.tyn-root .tyn-avatar > .inner`（实心色块 + 白字）特异性是 (0,3,0)，
+   这里必须同样写成 (0,3,0) 并靠 snailchat-theme.css 的靠后加载顺序压过它。 */
+.tyn-root .jw-im-avatar > .inner {
+  background-color: var(--ui-surface);
+  background-image: none;
+  color: var(--color-user-avatar, var(--ui-text-secondary));
+  box-shadow: inset 0 0 0 1.5px currentColor;
+  font-weight: 600;
+}
+/* 图标按头像尺寸等比缩放，小到 @提及行、大到详情页 78px 都不会失衡 */
+.jw-im-avatar .jw-im-avatar-glyph {
+  width: 50%;
+  height: 50%;
+  stroke-width: 1.8;
 }
 .tyn-avatar > .inner { font-weight: 500; }
 .tyn-s-avatar .inner { font-size: 1.4rem; }
@@ -331,7 +350,9 @@
 .jw-im-list-pane .tyn-aside-body { width: 100%; min-width: 0; min-height: 0; }
 .jw-im-list-pane .jg-conversation-body { flex: 1 1 auto; height: auto; }
 .jw-im-list-pane .jg-conver-list { flex: 1 1 auto; }
-.jw-im-list-scroll { margin: 0; padding: 0 0 50px; }
+/* 列表与顶部搜索区之间留 8px 呼吸位，避免第一行贴着搜索框；
+   底部 50px 是给悬浮操作条预留的落脚空间。 */
+.jw-im-list-scroll { margin: 0; padding: 8px 0 50px; }
 .jw-im-list-scroll.tyn-aside-list { list-style: none; }
 .jw-im-conversation-row {
   display: block;
@@ -359,7 +380,23 @@
 .jw-im-list-pane .newui-conversation-item.is-pinned:not(.active):hover .newui-conversation-card {
   background: var(--ui-hover);
 }
-.jw-im-conversation-row .newui-conversation-main { gap: 10px; }
+.jw-im-conversation-row .newui-conversation-main { gap: 12px; }
+/* 标题 15px / 预览 12px / 时间 12px 的三级字号层次。
+   TIPS: jugglechat.css 的 `.jw-im-row-title strong` 特异性是 (0,1,1) 且字号 13.5px，
+   这里必须用 (0,2,1) 的行级选择器才能稳定压过它。 */
+.jw-im-conversation-row .jw-im-row-title strong {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--newui-conversation-title-color);
+}
+.jw-im-conversation-row .jw-im-row-preview {
+  font-size: 12px;
+  color: var(--newui-conversation-subtitle-color);
+}
+/* 上游把标题行与预览行贴死（gap: 0），15px/12px 的字号差撑不开层次，这里留 4px。
+   TIPS: 20 + 4 + 17 = 41px，必须 <= 行内容高度 42px（58 - 上下内边距 16），否则撑破行高。 */
+.jw-im-conversation-row .newui-conversation-content { gap: 4px; }
+.jw-im-conversation-row .newui-conversation-time { font-size: 12px; }
 /* 时间最长只有 "14:30" / "8-21"，上游 76px 的固定右栏是纯浪费。右栏改为按内容收缩、
    行右内边距收到 10px：时间贴到距面板右边 10px 处，标题一直延伸到距时间 10px 为止，
    两处省下的宽度全部归标题。 */
@@ -370,18 +407,54 @@
   flex: none;
   gap: 2px;
 }
-/* 44px 行高由右栏决定：时间行 + 徽标行 + 间距必须收进 44 - 上下内边距，
-   否则右栏会把行撑高，min-height 就形同虚设。 */
-.jw-im-conversation-row .newui-conversation-side-top,
+/* 58px 行高由左右两栏共同决定：右栏 18+16+2=36px、左栏头像 40px，都要收进
+   58 - 上下内边距(16px) = 42px，否则会把行撑高，min-height 就形同虚设。 */
+.jw-im-conversation-row .newui-conversation-side-top { min-height: 18px; }
 .jw-im-conversation-row .newui-conversation-side-bottom { min-height: 16px; }
-.jw-im-conversation-row .newui-conversation-time { line-height: 16px; }
-.jw-im-conversation-row .newui-conversation-side-badge {
-  min-width: 16px;
-  height: 16px;
-  font-size: 11px;
-  line-height: 16px;
+.jw-im-conversation-row .newui-conversation-time { line-height: 18px; }
+/* 免打扰：右栏下半格用铃铛静音图标替代原来的未读徽标（未读数已移到头像左上角） */
+.jw-im-conversation-row .newui-conversation-side-mute {
+  width: 14px;
+  height: 14px;
+  color: var(--ui-text-muted);
+  opacity: 1;
 }
-.jw-im-conversation-row .newui-conversation-avatar > .inner { font-size: 13px; }
+.jw-im-conversation-row:hover .newui-conversation-side-mute { color: var(--ui-text-secondary); }
+
+/* ---- 列表头像：外观由 .tyn-root .jw-im-avatar > .inner 统一提供，这里只定尺寸与字号 ---- */
+.jw-im-list-scroll .newui-conversation-item,
+.jw-im-contacts-layout .jg-group-item { --newui-conversation-avatar-size: 40px; }
+/* 34~40px 档位的首字字号。newui-conversation-avatar 同时用在会话列表、群管理概要、
+   群成员与邀请列表，写一条即可覆盖，不必逐处再挑选择器。 */
+.tyn-root .jw-im-avatar.newui-conversation-avatar > .inner,
+.tyn-root .jw-im-contacts-layout .jg-group-item .tyn-avatar > .inner { font-size: 13px; }
+/* 联系人 / 群组详情的 78px 大头像：描边加粗到 2px，并压回正圆（is-lg 默认是 22px 圆角） */
+.jw-im-avatar.jw-im-contact-profile-avatar { border-radius: 50%; }
+.tyn-root .jw-im-contact-profile-avatar > .inner { box-shadow: inset 0 0 0 2px currentColor; }
+/* 未读数：贴在头像左上角，免打扰会话降为中性灰，避免静音会话仍抢注意力 */
+.jw-im-conversation-row .newui-conversation-avatar-wrap { overflow: visible; }
+.jw-im-conversation-row .newui-conversation-avatar-badge {
+  position: absolute;
+  top: -3px;
+  left: -6px;
+  z-index: 2;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--newui-conversation-unread-bg, #168de2);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.jw-im-conversation-row .newui-conversation-avatar-badge.is-muted {
+  background: var(--ui-text-muted, #9a9da3);
+}
 
 /* 列表栏与工作区会话列表同底色（--sidebar），上游的 --ui-panel 比它深一档 */
 .jw-im-root .jw-im-list-pane,
@@ -1602,22 +1675,29 @@
   min-width: var(--newui-conversation-avatar-size);
   border-radius: 50%;
 }
+/* 群组 / 联系人行与会话行同一套节奏：58px 行高、40px 头像、15px 名字 */
 .jw-im-contacts-layout .jg-group-item {
-  height: 44px;
-  padding: 4px 12px;
+  height: 58px;
+  padding: 8px 12px;
 }
-.jw-im-contacts-layout .jg-group-item .tyn-avatar { margin-right: 10px; }
+.jw-im-contacts-layout .jg-group-item .tyn-avatar { margin-right: 12px; }
 .jw-im-contacts-layout .jg-group-item::after { left: 12px; right: 12px; }
-.jw-im-contacts-layout .jg-group-item .tyn-avatar > .inner {
-  font-size: 13px;
+.jw-im-contacts-layout .jg-contact-name {
+  font-size: 15px;
   font-weight: 500;
+  line-height: 20px;
 }
 .jw-im-contacts-layout .tyn-aside-contact-item::after,
 .jw-im-contacts-layout .jg-group-item::after { background: var(--ui-border); }
-/* 分类行与会话行同高（44px），选中底色的左右内缩、圆角、灰度都对齐本地工作区会话列表 */
+/* 分类列表与右侧联系人列表都与顶栏留 8px 呼吸位，和会话列表一致 */
+.jw-im-contacts-layout .jw-im-contact-categories { padding-top: 8px; }
+.jw-im-contacts-layout .tyn-contact-wrapper { padding-top: 8px; }
+/* 分类行是单行内容，取 48px —— 比会话行（58px，双行）矮一档但同样宽松；
+   选中底色的左右内缩、圆角、灰度都对齐本地工作区会话列表 */
+.jw-im-contacts-layout .tyn-aside-contact-item .name { font-size: 15px; }
 .jw-im-contacts-layout .tyn-aside-contact-item {
-  height: 44px;
-  min-height: 44px;
+  height: 48px;
+  min-height: 48px;
   width: calc(100% - 16px);
   margin: 0 8px;
   padding: 0 12px;

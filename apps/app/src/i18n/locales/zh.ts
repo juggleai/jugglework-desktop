@@ -870,6 +870,7 @@ export default {
   "chat.enable_mute": "消息免打扰",
   "chat.message_placeholder": "发送消息给 {name}",
   "chat.message_recalled": "消息已撤回",
+  "chat.muted": "已开启免打扰",
   "chat.message_menu_cancel_translation": "取消翻译",
   "chat.message_menu_close": "关闭消息菜单",
   "chat.message_menu_copy": "复制",

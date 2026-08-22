@@ -867,6 +867,7 @@ export default {
   "chat.enable_mute": "Mute notifications",
   "chat.message_placeholder": "Message {name}",
   "chat.message_recalled": "Message recalled",
+  "chat.muted": "Notifications muted",
   "chat.message_menu_cancel_translation": "Hide translation",
   "chat.message_menu_close": "Close message menu",
   "chat.message_menu_copy": "Copy",
