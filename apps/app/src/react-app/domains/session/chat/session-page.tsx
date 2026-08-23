@@ -180,6 +180,7 @@ export type SessionPageSidebarProps = {
 export type SessionModelSurfaceProps = Pick<
   SessionSurfaceProps,
   | "selectedModel"
+  | "contextWindowTokens"
   | "modelLabel"
   | "modelUnavailable"
   | "taskSubmissionDisabled"

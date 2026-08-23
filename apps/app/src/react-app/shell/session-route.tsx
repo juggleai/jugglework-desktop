@@ -22,6 +22,7 @@ import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
+import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -1214,6 +1215,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       modelUnavailable: selectedModelUnavailable,
       taskSubmissionDisabled: !canAcceptTask || selectedModelUnavailable || selectedManagedModelPreparing,
       selectedModel: activeModel ?? { providerID: "", modelID: "" },
+      contextWindowTokens: resolveModelContextLimit(
+        activeModel,
+        providers,
+        sessionProviderAuthSnapshot.cloudOrgProviders,
+      ),
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
@@ -1231,6 +1237,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const behavior = describeModel(model, variant);
         return {
           selectedModel: model ?? { providerID: "", modelID: "" },
+          contextWindowTokens: resolveModelContextLimit(
+            model,
+            providers,
+            sessionProviderAuthSnapshot.cloudOrgProviders,
+          ),
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
           modelUnavailable: isModelUnavailable(model),
           taskSubmissionDisabled: Boolean(
@@ -1501,6 +1512,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     opencodeBaseUrl,
     opencodeClient,
     providerConnectedIds,
+    providers,
+    sessionProviderAuthSnapshot.cloudOrgProviders,
     selectedAgent,
     selectedSessionId,
     selectedModelUnavailable,

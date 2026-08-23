@@ -6,6 +6,7 @@ import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
+import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
 import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
@@ -32,6 +33,7 @@ import {
 } from "./slash-command";
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
+import { ContextUsage } from "./context-usage";
 
 type MentionItem = {
   id: string;
@@ -75,6 +77,10 @@ type ComposerProps = {
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
+  /** 当前会话的原始消息，用于读取引擎返回的真实 token 计量。 */
+  contextUsageMessages: JuggleWorkSessionMessage[];
+  /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
+  contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
@@ -1855,15 +1861,23 @@ export function ReactSessionComposer(props: ComposerProps) {
                   ) : null}
                 </div>
 
-                <ModelSelect
-                  open={props.modelPickerOpen}
-                  value={props.selectedModel}
-                  onOpenChange={props.onModelPickerOpenChange}
-                  onChange={(model) => {
-                    if (!props.steering) props.onModelChange(model);
-                  }}
-                  disabled={props.steering}
-                />
+                <div className="flex items-center gap-0">
+                  <ModelSelect
+                    open={props.modelPickerOpen}
+                    value={props.selectedModel}
+                    onOpenChange={props.onModelPickerOpenChange}
+                    onChange={(model) => {
+                      if (!props.steering) props.onModelChange(model);
+                    }}
+                    disabled={props.steering}
+                  />
+
+                  <ContextUsage
+                    messages={props.contextUsageMessages}
+                    model={props.selectedModel}
+                    contextLimit={props.contextWindowTokens}
+                  />
+                </div>
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
                 ) : null}

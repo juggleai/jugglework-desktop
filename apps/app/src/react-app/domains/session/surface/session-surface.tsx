@@ -185,6 +185,8 @@ export type SessionSurfaceProps = {
   modelUnavailable?: boolean;
   taskSubmissionDisabled?: boolean;
   selectedModel: ModelRef;
+  /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
+  contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
@@ -2096,6 +2098,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
+        contextUsageMessages={snapshot?.messages ?? []}
+        contextWindowTokens={props.contextWindowTokens}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
         onModelChange={props.onModelChange}
         attachments={attachments}
