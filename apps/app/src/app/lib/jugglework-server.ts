@@ -1952,16 +1952,24 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         method: "POST",
         body: payload,
       }),
-    deleteSkill: (workspaceId: string, name: string) =>
-      requestJson<{ path: string }>(
+    /**
+     * 删除技能
+     * @param workspaceId 工作区 ID
+     * @param name 技能名
+     * @param options.scope 作用域，`global` 删除全局技能目录下的技能，缺省为工作区
+     */
+    deleteSkill: (workspaceId: string, name: string, options?: { scope?: "project" | "global" }) => {
+      const query = options?.scope === "global" ? "?scope=global" : "";
+      return requestJson<{ path: string }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}`,
+        `/workspace/${workspaceId}/skills/${encodeURIComponent(name)}${query}`,
         {
           token,
           hostToken,
           method: "DELETE",
         },
-      ),
+      );
+    },
     listMcp: (workspaceId: string) =>
       requestJson<{ items: JuggleWorkMcpItem[]; engineSync?: JuggleWorkMcpEngineSync | null }>(
         baseUrl,

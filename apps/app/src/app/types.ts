@@ -198,6 +198,7 @@ export const SETTINGS_TAB_VALUES = [
   "cloud-marketplaces",
   "cloud-providers",
   "skills",
+  "connectors",
   "memory",
   "extensions",
   "environment",

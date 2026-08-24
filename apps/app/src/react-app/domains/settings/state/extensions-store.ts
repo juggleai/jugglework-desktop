@@ -1420,12 +1420,16 @@ export function createExtensionsStore(options: {
         setStateField("skillsStatus", null);
         const response = await juggleworkClient.listSkills(juggleworkWorkspaceId, { includeGlobal: isLocalWorkspace });
         if (refreshSkillsAborted) return;
+        // TIPS: `scope` 必须透传。设置页的全局技能与会话面板的工作区技能共用这
+        // 一次拉取，靠 scope 分流；漏掉它会让全局技能被当成工作区技能，卸载时
+        // 命中服务端的 project-only 校验而静默失败。
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
               name: entry.name,
               description: entry.description,
               path: entry.path,
               trigger: entry.trigger,
+              scope: entry.scope,
             }))
           : [];
         mutateState((current) => ({

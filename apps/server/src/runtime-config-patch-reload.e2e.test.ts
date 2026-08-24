@@ -151,4 +151,39 @@ describe("workspace config patch reload events", () => {
       else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
     }
   });
+
+  // 自动压缩已改为全局配置项：客户端必须能清除工作区运行时层的遗留值，否则
+  // 工作区级旧值会在配置合并中静默压过全局设置。
+  test("explicit null compaction clears the runtime layer without touching other keys", async () => {
+    const root = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(root, "runtime.sqlite");
+    try {
+      const { base, token } = await startJuggleWorkServer(root);
+      await patchConfig(base, token, {
+        opencode: { default_agent: "build", compaction: { auto: false, reserved: 30_000 } },
+      });
+
+      const config = {
+        host: "127.0.0.1", port: 0, token, hostToken: "owt_host_token",
+        approval: { mode: "auto" as const, timeoutMs: 1000 }, corsOrigins: ["*"],
+        workspaces: [{ id: "ws_1", name: "Workspace", path: root, preset: "starter", workspaceType: "local" as const }],
+        authorizedRoots: [root], readOnly: false, startedAt: Date.now(),
+        tokenSource: "cli" as const, hostTokenSource: "cli" as const,
+        logFormat: "pretty" as const, logRequests: false,
+      };
+      expect((await readRuntimeOpencodeConfig(config, "ws_1")).compaction).toEqual({
+        auto: false,
+        reserved: 30_000,
+      });
+
+      await patchConfig(base, token, { opencode: { compaction: null } });
+      const cleared = await readRuntimeOpencodeConfig(config, "ws_1");
+      expect(cleared.compaction).toBeUndefined();
+      expect(cleared.default_agent).toBe("build");
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
 });

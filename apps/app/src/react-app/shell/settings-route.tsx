@@ -96,6 +96,23 @@ import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pa
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
 import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
+import {
+  readGlobalAutoCompaction,
+  writeGlobalAutoCompaction,
+} from "@/react-app/domains/settings/state/global-compaction-preference";
+import type { GlobalConfigTarget } from "@/react-app/domains/settings/state/global-opencode-config";
+import {
+  readGlobalMcpEntries,
+  removeGlobalMcp,
+  setGlobalMcpEnabled,
+  upsertGlobalMcp,
+  type GlobalMcpEntry,
+} from "@/react-app/domains/settings/state/global-mcp-config";
+import { GlobalSkillsView } from "@/react-app/domains/settings/pages/global-skills-view";
+import {
+  GlobalConnectorsView,
+  type GlobalConnectorItem,
+} from "@/react-app/domains/settings/pages/global-connectors-view";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
@@ -164,7 +181,7 @@ import {
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import type { ModelRef } from "@/app/types";
+import type { McpServerConfig, ModelRef } from "@/app/types";
 import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
@@ -287,14 +304,15 @@ export function parseSettingsPath(pathname: string): {
     case "updates":
     case "recovery":
     case "debug":
+    // 全局技能与全局连接器，与工作区级的 `extensions` 是两个不同的页面。
+    case "skills":
+    case "connectors":
       return { tab: head, redirectPath: null };
     case "cloud-account":
     case "connect":
     case "cloud-providers":
     case "memory":
       return { tab: head, redirectPath: null };
-    case "skills":
-      return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "all" };
     case "cloud-marketplaces":
       return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
     case "den":
@@ -484,6 +502,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
+  const [globalMcpEntries, setGlobalMcpEntries] = useState<GlobalMcpEntry[]>([]);
+  const [pendingGlobalConnector, setPendingGlobalConnector] = useState<string | null>(null);
+  const [deletingGlobalSkill, setDeletingGlobalSkill] = useState<string | null>(null);
+  const [globalExtensionsError, setGlobalExtensionsError] = useState<string | null>(null);
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
@@ -1550,39 +1572,47 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [refreshRouteState]);
 
-  // Load auto-compaction state from OpenCode config on workspace change.
-  useEffect(() => {
-    if (!juggleworkClient || !selectedWorkspaceId) return;
+  // TIPS: 全局 OpenCode 配置的读写目标，自动压缩与全局连接器共用。这里仍依赖
+  // workspaceId，只是因为服务端按工作区暴露配置文件读写入口，与作用域无关；
+  // 切换工作区不会改变取值。
+  const globalConfigTarget = useCallback((): GlobalConfigTarget | null => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    if (!workspaceId) return null;
+    return {
+      juggleworkClient,
+      workspaceId,
+      workspaceRoot: selectedWorkspaceRoot,
+      isLocalWorkspace: (selectedWorkspace?.workspaceType ?? "local") === "local",
+    };
+  }, [juggleworkClient, selectedWorkspace?.workspaceType, selectedWorkspaceId, selectedWorkspaceRoot]);
+
+  useEffect(() => {
+    const target = globalConfigTarget();
+    if (!target) return;
     let cancelled = false;
     (async () => {
       try {
-        const config = await juggleworkClient.getConfig(workspaceId);
+        const auto = await readGlobalAutoCompaction(target);
         if (cancelled) return;
-        const compaction = config.opencode?.compaction;
-        const auto = compaction && typeof compaction === "object" && "auto" in compaction
-          ? (compaction as { auto?: boolean }).auto
-          : undefined;
-        setAutoCompactContext(auto !== false);
-        setAutoCompactContextLoaded(true);
+        setAutoCompactContext(auto);
       } catch {
+        // 读取失败时保留默认的开启状态。
+      } finally {
         if (!cancelled) setAutoCompactContextLoaded(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [juggleworkClient, selectedWorkspaceId]);
+  }, [globalConfigTarget]);
 
   const toggleAutoCompactContext = useCallback(async () => {
     if (autoCompactContextBusy) return;
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!juggleworkClient || !workspaceId) return;
+    const target = globalConfigTarget();
+    if (!target) return;
     const next = !autoCompactContext;
     setAutoCompactContext(next);
     setAutoCompactContextBusy(true);
     try {
-      await juggleworkClient.patchConfig(workspaceId, {
-        opencode: { compaction: { auto: next } },
-      });
+      await writeGlobalAutoCompaction(target, next);
       reloadCoordinator.markReloadRequired("config", {
         type: "config",
         name: "opencode.json",
@@ -1593,7 +1623,110 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setAutoCompactContextBusy(false);
     }
-  }, [autoCompactContext, autoCompactContextBusy, juggleworkClient, reloadCoordinator, selectedWorkspaceId]);
+  }, [autoCompactContext, autoCompactContextBusy, globalConfigTarget, reloadCoordinator]);
+
+  // ---- 全局技能与全局连接器 ----
+
+  const globalSkills = useMemo(
+    () => extensionsSnapshot.skills.filter((skill) => skill.scope === "global"),
+    [extensionsSnapshot.skills],
+  );
+
+  const refreshGlobalConnectors = useCallback(async () => {
+    const target = globalConfigTarget();
+    if (!target) return;
+    try {
+      setGlobalMcpEntries(await readGlobalMcpEntries(target));
+      setGlobalExtensionsError(null);
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.load_failed"));
+    }
+  }, [globalConfigTarget]);
+
+  // 只在打开对应页面时读取，避免会话右侧面板和其他设置页付出无谓的配置文件读取。
+  const connectorsTabActive = route.tab === "connectors";
+  useEffect(() => {
+    if (!connectorsTabActive) return;
+    void refreshGlobalConnectors();
+  }, [connectorsTabActive, refreshGlobalConnectors]);
+
+  const skillsTabActive = route.tab === "skills";
+  useEffect(() => {
+    if (!skillsTabActive) return;
+    void extensionsStore.refreshSkills({ force: true });
+  }, [extensionsStore, skillsTabActive]);
+
+  // TIPS: 条目与连接状态来自全局配置文件，写入也回到同一个文件。运行时层的
+  // MCP 接口只作用于工作区，不能用来承载全局连接器。
+  const globalConnectors = useMemo<GlobalConnectorItem[]>(
+    () => globalMcpEntries.map((entry) => ({
+      name: entry.name,
+      config: entry.config,
+      status: connectionsSnapshot.mcpStatuses[entry.name],
+    })),
+    [connectionsSnapshot.mcpStatuses, globalMcpEntries],
+  );
+
+  const runGlobalConnectorWrite = useCallback(async (
+    name: string,
+    write: (target: GlobalConfigTarget) => Promise<void>,
+  ) => {
+    const target = globalConfigTarget();
+    if (!target) return;
+    setPendingGlobalConnector(name);
+    setGlobalExtensionsError(null);
+    try {
+      await write(target);
+      reloadCoordinator.markReloadRequired("config", {
+        type: "config",
+        name: "opencode.json",
+        action: "updated",
+      });
+      await refreshGlobalConnectors();
+      void connectionsStore.refreshMcpServers();
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
+      throw error;
+    } finally {
+      setPendingGlobalConnector(null);
+    }
+  }, [connectionsStore, globalConfigTarget, refreshGlobalConnectors, reloadCoordinator]);
+
+  const addGlobalConnector = useCallback(
+    (name: string, config: McpServerConfig) =>
+      runGlobalConnectorWrite(name, (target) => upsertGlobalMcp(target, name, config)),
+    [runGlobalConnectorWrite],
+  );
+
+  const toggleGlobalConnector = useCallback(
+    (name: string, enabled: boolean) =>
+      runGlobalConnectorWrite(name, (target) => setGlobalMcpEnabled(target, name, enabled)),
+    [runGlobalConnectorWrite],
+  );
+
+  const removeGlobalConnector = useCallback(
+    (name: string) => runGlobalConnectorWrite(name, (target) => removeGlobalMcp(target, name)),
+    [runGlobalConnectorWrite],
+  );
+
+  const deleteGlobalSkill = useCallback(async (name: string) => {
+    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    if (!juggleworkClient || !workspaceId) {
+      // 不能静默返回：用户点了删除却毫无反馈，会以为是应用卡住了。
+      setGlobalExtensionsError(t("skills.uninstall_failed"));
+      return;
+    }
+    setDeletingGlobalSkill(name);
+    setGlobalExtensionsError(null);
+    try {
+      await juggleworkClient.deleteSkill(workspaceId, name, { scope: "global" });
+      await extensionsStore.refreshSkills({ force: true });
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("skills.uninstall_failed"));
+    } finally {
+      setDeletingGlobalSkill(null);
+    }
+  }, [extensionsStore, juggleworkClient, selectedWorkspaceId]);
 
   useEffect(() => {
     juggleworkServerStore.start();
@@ -1744,9 +1877,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       connected: false,
     });
   }
-  const connectedProviders = Array.from(providerRows.values()).toSorted((left, right) =>
-    left.name.localeCompare(right.name),
-  );
+  // TIPS: 排序键必须与连接状态无关。断开后的条目会从引擎列表消失、退回本地缓存
+  // 渲染，缓存未命中时名称退化为 provider ID；若按名称排序，条目会在断开瞬间跳到
+  // 列表另一处，用户在同一屏幕位置连续点击就会命中另一个模型组。
+  const connectedProviders = Array.from(providerRows.entries())
+    .toSorted(([leftId], [rightId]) => leftId.localeCompare(rightId))
+    .map(([, row]) => row);
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "jugglework-cloud",
@@ -2310,32 +2446,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               imported: providerAuthSnapshot.importedCloudProviders ?? {},
               liveProviders: providerAuthSnapshot.cloudOrgProviders,
             }))}
-            cloudProviderImportIds={Object.fromEntries(
-              Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((provider) => [
-                provider.providerId,
-                provider.cloudProviderId,
-              ]),
-            )}
-            onRemoveCloudProvider={async (providerId, cloudProviderId) => {
-              if (disconnectingProviderId) return;
-              setDisconnectingProviderId(providerId);
-              setProviderDisconnectError(null);
-              setConfigActionStatus(null);
-              try {
-                const message = await providerAuthStore.removeCloudProvider(cloudProviderId);
-                if (typeof message === "string" && message.trim()) {
-                  setConfigActionStatus(message);
-                }
-              } catch (error) {
-                setProviderDisconnectError(
-                  error instanceof Error && error.message.trim()
-                    ? error.message
-                    : t("providers.disconnect_failed"),
-                );
-              } finally {
-                setDisconnectingProviderId(null);
-              }
-            }}
           />
         );
       case "preferences":
@@ -2363,6 +2473,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "shell":
         return <ShellCustomizationView />;
+      case "skills":
+        return (
+          <GlobalSkillsView
+            busy={busy}
+            skills={globalSkills}
+            status={extensionsSnapshot.skillsStatus}
+            error={globalExtensionsError}
+            deletingSkillName={deletingGlobalSkill}
+            onDeleteSkill={deleteGlobalSkill}
+            onRefresh={() => { void extensionsStore.refreshSkills({ force: true }); }}
+            projectDir={selectedWorkspaceRoot}
+          />
+        );
+      case "connectors":
+        return (
+          <GlobalConnectorsView
+            busy={busy}
+            connectors={globalConnectors}
+            error={globalExtensionsError}
+            pendingConnectorName={pendingGlobalConnector}
+            onAddConnector={addGlobalConnector}
+            onToggleEnabled={toggleGlobalConnector}
+            onRemoveConnector={removeGlobalConnector}
+            onRefresh={() => { void refreshGlobalConnectors(); }}
+          />
+        );
       case "extensions": {
         // TIPS: 仅会话右侧 rail（embedded）改为分组卡片面板；独立设置页维持既有 ExtensionsView。
         if (props.embedded) {
@@ -2381,10 +2517,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });
-          // TIPS: 技能弹窗的数据源 = listLocalSkills 的完整结果（本工作区 + 全局，带 scope）。
+          // TIPS: 技能弹窗的数据源 = 完整技能列表（本工作区 + 全局，带 scope）按工作区过滤。
           // 不能用 extensionItems.installedSkills：那份列表会把「属于某个云端市场包」的技能
           // 剔除（旧扩展页把它们折叠进插件卡片），导致刚安装到工作区的市场技能不显示。
-          const projectSkills = extensionsSnapshot.skills;
+          // 全局技能已拆到设置页的「技能」，这里只保留工作区技能。
+          const projectSkills = extensionsSnapshot.skills.filter((skill) => skill.scope !== "global");
           return (
             <ProjectExtensionsPanel
               projectDir={selectedWorkspaceRoot}

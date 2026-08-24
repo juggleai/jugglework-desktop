@@ -23,6 +23,7 @@ import {
   workspaceJuggleWorkWrite,
 } from "../../../../app/lib/desktop";
 import { JuggleWorkServerError } from "../../../../app/lib/jugglework-server";
+import type { JuggleWorkServerClient } from "../../../../app/lib/jugglework-server";
 import type {
   Client,
   ProviderListItem,
@@ -36,6 +37,11 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ensureProviderListQuery } from "../../../infra/provider-list-query";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
+import {
+  applyDisabledProviderEntry,
+  normalizeDisabledProviders,
+  sameDisabledProviderList,
+} from "./disabled-providers";
 
 /**
  * The slice of the jugglework-server store this store actually consumes.
@@ -645,17 +651,29 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return true;
   };
 
-  const normalizeDisabledProviders = (value: unknown) =>
-    Array.isArray(value)
-      ? [
-          ...new Set(
-            value
-              .filter((entry): entry is string => typeof entry === "string")
-              .map((entry) => entry.trim())
-              .filter(Boolean),
-          ),
-        ]
-      : [];
+  /**
+   * 读取当前工作区运行时层自己的停用列表。
+   *
+   * TIPS: 引擎 `config.get()` 返回的是合并后的有效配置，包含用户全局配置和项目
+   * 配置声明的停用项。运行时层的写接口是整表替换，若以合并结果为基准回写，会把
+   * 其他来源的停用项固化进这个工作区——用户之后从全局配置移除该项也不再生效。
+   * 因此写入前必须单独读一次运行时层。
+   */
+  const readRuntimeDisabledProviders = async (
+    juggleworkClient: JuggleWorkServerClient | null | undefined,
+    workspaceId: string | null | undefined,
+  ): Promise<string[] | null> => {
+    const resolvedWorkspaceId = workspaceId?.trim();
+    if (!juggleworkClient || !resolvedWorkspaceId) return null;
+    try {
+      const status = await juggleworkClient.getRuntimeConfigStatus(resolvedWorkspaceId);
+      const runtime = status?.runtime;
+      if (!runtime || typeof runtime !== "object") return null;
+      return normalizeDisabledProviders((runtime as Record<string, unknown>).disabled_providers);
+    } catch {
+      return null;
+    }
+  };
 
   const formatConfigWithProviderDisabledState = (
     raw: string,
@@ -668,9 +686,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
     const parsed = parse(updated) as Record<string, unknown> | undefined;
     const currentDisabled = normalizeDisabledProviders(parsed?.disabled_providers);
-    const nextDisabled = disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+    const nextDisabled = applyDisabledProviderEntry(currentDisabled, resolvedProviderId, disabled);
 
     const disabledEdits = modify(
       updated,
@@ -691,17 +707,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.provider_id_required"));
     }
 
+    // 合并后的有效停用列表，驱动列表条目的连接状态展示。
     const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
-    const nextDisabled = disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
-
-    if (
-      nextDisabled.length === currentDisabled.length &&
-      nextDisabled.every((entry, index) => entry === currentDisabled[index])
-    ) {
-      return false;
-    }
+    const nextDisabled = applyDisabledProviderEntry(currentDisabled, resolvedProviderId, disabled);
 
     // Prefer runtime OPENCODE_CONFIG injection (server SQLite) so OpenCode Zen
     // and other built-in/env-backed providers can be disabled without editing
@@ -716,22 +724,41 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
 
     if (canUseManagedRuntime || c) {
+      const runtimeDisabled = await readRuntimeDisabledProviders(
+        juggleworkSnapshot.juggleworkServerClient,
+        workspaceId,
+      );
+      const writeBase = runtimeDisabled ?? currentDisabled;
+      const nextWrite = applyDisabledProviderEntry(writeBase, resolvedProviderId, disabled);
+      if (
+        sameDisabledProviderList(writeBase, nextWrite) &&
+        sameDisabledProviderList(currentDisabled, nextDisabled)
+      ) {
+        return false;
+      }
+
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
         juggleworkClient: juggleworkSnapshot.juggleworkServerClient,
         workspaceId,
         workspaceType,
-        disabledProviders: nextDisabled,
+        disabledProviders: nextWrite,
         removeFallbackKeyWhenEmpty: true,
         markReloadRequired: () => options.markOpencodeConfigReloadRequired(),
       });
-      options.setDisabledProviders(result.disabledProviders);
+      // 运行时层只是有效配置的一层，界面状态用合并后的结果，避免其他来源声明的
+      // 停用项在刷新前从列表里短暂消失。
+      options.setDisabledProviders(nextDisabled);
       if (!result.managedRuntime && result.changed) {
         options.markOpencodeConfigReloadRequired();
       }
       refreshSnapshot();
       emitChange();
       return true;
+    }
+
+    if (sameDisabledProviderList(currentDisabled, nextDisabled)) {
+      return false;
     }
 
     const updatedConfig = await updateProjectConfigFile(

@@ -15,7 +15,7 @@ import {
   setMcpEnabled,
 } from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
-import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
+import { deleteSkill, globalSkillDirs, listSkills, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -2522,6 +2522,11 @@ function createRoutes(
           ...(isRecord(currentRuntime.compaction) ? currentRuntime.compaction : {}),
           ...compaction,
         };
+      } else if (compaction === null) {
+        // TIPS: 显式 null 表示清除运行时层的 compaction，与 `provider` 字段的
+        // "null 删除" 约定一致。自动压缩已改为全局配置项，客户端需要能移除
+        // 工作区运行时层的遗留值，否则工作区级旧值会静默压过全局设置。
+        logicalUpdates.compaction = undefined;
       }
 
       const permissionUpdate = ensurePlainObject(permission);
@@ -2744,13 +2749,16 @@ function createRoutes(
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
+    const skillScope = normalizeOpencodeScope(ctx.url.searchParams.get("scope"));
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.delete",
-      summary: `Delete skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name)],
+      summary: `Delete ${skillScope} skill ${name}`,
+      paths: skillScope === "global"
+        ? globalSkillDirs().map((dir) => join(dir, name))
+        : [join(workspace.path, ".opencode", "skills", name)],
     });
-    const result = await deleteSkill(workspace.path, name);
+    const result = await deleteSkill(workspace.path, name, skillScope);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

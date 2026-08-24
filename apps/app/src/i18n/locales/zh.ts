@@ -1,7 +1,7 @@
 /**
  * 中文（简体）翻译
  * 产品名称保留英文：OpenCode、OpenPackage、JuggleWork
- * Skills：标题用"Skills（技能）"，正文用"skills"
+ * Skills：标题用"技能"，正文用"skills"
  * MCP：协议名称保留英文，不翻译为"应用"
  * 翻译的术语：命令(Commands)、插件(Plugins)、会话(Sessions)、应用(Apps)
  */
@@ -520,7 +520,7 @@ export default {
   "dashboard.remote_server_details_title": "远程服务器详情",
   "dashboard.sandbox_checking_docker": "正在检查Docker...",
   "dashboard.sandbox_get_ready_title": "沙箱需要Docker",
-  "dashboard.skills": "Skills（技能）",
+  "dashboard.skills": "技能",
   "connect.verifying_title": "正在检查连接链接…",
   "connect.verifying_body": "正在核对组织与服务器，尚未做任何更改。",
   "connect.confirm_title": "为{org}设置{appName}？",
@@ -1687,6 +1687,11 @@ export default {
   "settings.provider_view_details": "查看详情",
   "settings.providers_desc": "使用自己的凭证或组织托管凭证连接模型服务。",
   "settings.providers_title": "模型组",
+  "settings.providers_group_local": "本地模型组",
+  "settings.providers_group_local_desc": "使用你自己的凭证，在本机配置和管理。",
+  "settings.providers_group_org": "组织托管模型组",
+  "settings.providers_group_org_desc": "由组织统一下发，无法在本地断开或删除。",
+  "settings.provider_org_managed_hint": "由组织管理",
   "settings.provider_source_cloud": "组织托管",
   "settings.quit_hint": "JuggleWork在清理后立即退出，以便下次启动时从此模式的全新本地状态开始。",
   "settings.recent_events": "最近的事件",
@@ -1878,7 +1883,21 @@ export default {
   "settings.tab_extensions": "扩展",
   "settings.tab_general": "设置",
   "settings.tab_recovery": "恢复",
-  "settings.tab_skills": "Skills（技能）",
+  "mcp.load_failed": "加载 MCP 服务器失败。",
+  "mcp.add_failed": "添加连接器失败。",
+  "mcp.disabled_label": "已停用",
+  "settings.tab_connectors": "连接器",
+  "settings.tab_description_connectors": "管理在所有工作区中生效的全局 MCP 连接器。",
+  "global_skills.description": "在所有工作区中生效的全局技能，来自本机的全局技能目录。",
+  "global_skills.uninstall_warning": "将从全局技能目录中永久删除「{name}」，所有工作区都将不再可用。",
+  "global_connectors.description": "在所有工作区中生效的 MCP 连接器，读写当前运行环境的全局 OpenCode 配置。",
+  "global_connectors.add": "添加连接器",
+  "global_connectors.add_hint": "新增的连接器写入全局配置，在所有工作区中生效。",
+  "global_connectors.field_name": "名称",
+  "global_connectors.field_url": "服务地址",
+  "global_connectors.field_command": "启动命令",
+  "global_connectors.remove_warning": "将从全局配置中移除「{name}」，所有工作区都将不再可用。",
+  "settings.tab_skills": "技能",
   "memory.tab_label": "记忆",
   "memory.tab_description": "查看并删除智能体记住的内容",
   "memory.description": "你让智能体记住的事实，按用户保存并在会话之间保持。",
@@ -2036,7 +2055,7 @@ export default {
   "skills.skill_creator_already_installed": "Skill creator已经安装过了。",
   "skills.skill_creator_installed": "Skill creator已安装。",
   "skills.skill_load_failed": "加载skill失败。",
-  "skills.title": "Skills（技能）",
+  "skills.title": "技能",
   "skills.uninstall": "卸载",
   "skills.uninstall_failed": "卸载skill失败。",
   "skills.uninstall_title": "卸载skill？",
@@ -2511,6 +2530,10 @@ export default {
   "settings.adv_migrating": "正在迁移…",
   "settings.adv_not_set": "未设置",
   "mcp.view_details": "查看详情",
+  "mcp.enabled_label": "已启用",
+  "mcp.status_connected": "已连接",
+  "mcp.status_failed": "连接失败",
+  "mcp.status_needs_auth": "待授权",
   "mcp.no_servers_configured": "尚未配置任何 MCP 服务器。",
   "mcp.waiting_for_browser": "正在等待浏览器…",
   "ext_card.connected": "已连接",

@@ -209,11 +209,12 @@ export function SettingsShell(props: SettingsShellProps) {
 
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
   const { memoryEnabled } = useFeatureFlagsPreferences();
+  // 分组为空时整组不渲染，与侧栏保持一致。
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
     { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
     { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode) },
     { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
-  ];
+  ].filter((section) => section.tabs.length > 0);
   const ActiveIcon = getSettingsTabIcon(props.activeTab);
 
   return (

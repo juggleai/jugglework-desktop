@@ -116,7 +116,27 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return items;
 }
 
-export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
+/**
+ * 全局技能目录集合
+ * @param input.homeDir 主目录覆盖，仅供测试注入；缺省取当前用户主目录
+ *
+ * 列出与删除必须共用同一份目录清单，否则会出现"列得出来但删不掉"。
+ */
+export function globalSkillDirs(input?: { homeDir?: string }): string[] {
+  const home = input?.homeDir ?? homedir();
+  return [
+    join(home, ".config", "opencode", "skills"),
+    join(home, ".claude", "skills"),
+    join(home, ".agents", "skills"),
+    join(home, ".agent", "skills"),
+  ];
+}
+
+export async function listSkills(
+  workspaceRoot: string,
+  includeGlobal: boolean,
+  options?: { homeDir?: string },
+): Promise<SkillItem[]> {
   const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
   for (const root of roots) {
@@ -127,14 +147,9 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalJuggleWork = join(homedir(), ".config", "opencode", "skills");
-    const globalClaude = join(homedir(), ".claude", "skills");
-    const globalAgents = join(homedir(), ".agents", "skills");
-    const globalAgentLegacy = join(homedir(), ".agent", "skills");
-    items.push(...(await listSkillsInDir(globalJuggleWork, "global")));
-    items.push(...(await listSkillsInDir(globalClaude, "global")));
-    items.push(...(await listSkillsInDir(globalAgents, "global")));
-    items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
+    for (const dir of globalSkillDirs(options)) {
+      items.push(...(await listSkillsInDir(dir, "global")));
+    }
   }
 
   const seen = new Set<string>();
@@ -201,9 +216,37 @@ export async function upsertSkill(
   return { path: skillPath, action: existed ? "updated" : "added" };
 }
 
-export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
+/**
+ * 删除技能
+ * @param workspaceRoot 工作区根目录
+ * @param name 技能名
+ * @param scope 作用域：project 只在工作区技能目录内解析，global 只在全局技能目录内解析
+ * @param options.homeDir 主目录覆盖，仅供测试注入
+ *
+ * TIPS: 两个作用域严格互不越界——以 project 请求删除一个只存在于全局的技能必须
+ * 报未找到，反之亦然。否则设置页的全局技能页会误删工作区文件。
+ */
+export async function deleteSkill(
+  workspaceRoot: string,
+  name: string,
+  scope: "project" | "global" = "project",
+  options?: { homeDir?: string },
+): Promise<{ path: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
+
+  if (scope === "global") {
+    for (const dir of globalSkillDirs(options)) {
+      const items = await listSkillsInDir(dir, "global");
+      const item = items.find((skill) => skill.name === trimmed);
+      if (!item) continue;
+      const skillDir = dirname(item.path);
+      await rm(skillDir, { recursive: true, force: true });
+      return { path: skillDir };
+    }
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
+  }
+
   const baseDir = projectSkillsDir(workspaceRoot);
   const flatDir = join(baseDir, trimmed);
   if (await exists(join(flatDir, "SKILL.md"))) {
