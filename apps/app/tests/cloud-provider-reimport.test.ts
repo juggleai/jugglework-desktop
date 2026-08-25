@@ -8,6 +8,10 @@ import type {
 } from "../src/app/lib/den";
 import type { CloudImportedProvider } from "../src/app/cloud/import-state";
 import {
+  readWorkspaceCloudImports,
+  withWorkspaceCloudImports,
+} from "../src/app/cloud/import-state";
+import {
   buildRuntimeProviderPatch,
   CLOUD_PROVIDER_METADATA_VERSION,
   getCloudManagedProviderId,
@@ -134,6 +138,31 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(isCloudProviderOutOfSync(updated, importedFrom(updated))).toBe(false);
   });
 
+  test("persists the native managed source through workspace import state", () => {
+    const provider = {
+      ...makeProvider(
+        [makeModel("deepseek-v4-flash", "DeepSeek V4 Flash")],
+        "2026-08-25T01:02:03.000Z",
+      ),
+      id: "lpr_3f8d77482bd4da3bdc4ae54f79d749c28ee5bde7",
+      source: "juggle_router" as const,
+      providerId: "JuggleRouter",
+      name: "JuggleRouter",
+    };
+    const imported = importedFrom(provider);
+    const persisted = JSON.parse(JSON.stringify(withWorkspaceCloudImports({}, {
+      providers: { [provider.id]: imported },
+      marketplaces: {},
+      plugins: {},
+    })));
+    const restored = readWorkspaceCloudImports(persisted).providers[provider.id];
+
+    expect(restored?.source).toBe("juggle_router");
+    expect(restored?.providerId).toBe(provider.id);
+    expect(restored?.sourceProviderId).toBe("JuggleRouter");
+    expect(isCloudProviderOutOfSync(provider, restored!)).toBe(false);
+  });
+
   test("a baseline written before catalog backfill is rewritten once", () => {
     const provider = makeProvider([makeModel("model-x")], "2024-02-01T00:00:00.000Z");
 
@@ -159,5 +188,22 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
     expect(persistSource).toContain('setStateField("importedCloudProviders", nextProviders);');
     expect(source).not.toContain("refreshDesktop" + "CloudSync");
     expect(source).not.toContain("getResource" + "Snapshot");
+  });
+
+  test("absence cleanup funnels through full cloud removal before re-enable import", () => {
+    const source = readFileSync(providerAuthStoreSourcePath, "utf8");
+    const removeStart = source.indexOf("async function removeCloudProviderInternal");
+    const removeEnd = source.indexOf("async function removeCloudProvider(", removeStart);
+    const removeSource = source.slice(removeStart, removeEnd);
+
+    expect(removeSource).toContain("await removeGatewayMirror(");
+    expect(removeSource).toContain("cloudProviderId,");
+    expect(removeSource).toContain("await removeProviderAuthCredentials(imported.providerId);");
+    expect(removeSource).toContain("await patchRuntimeProviders({ [imported.providerId]: null });");
+    expect(removeSource).toContain("await removeCloudProviderDisabledState([");
+    expect(removeSource).toContain("delete nextImportedProviders[cloudProviderId];");
+    expect(source).toContain("if (!liveProvider) {");
+    expect(source).toContain("await removeCloudProviderInternal(importedProvider.cloudProviderId, { silent: true });");
+    expect(source).toContain("await connectCloudProviderInternal(liveProvider.id, { silent: true });");
   });
 });

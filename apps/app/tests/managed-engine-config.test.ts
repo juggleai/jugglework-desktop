@@ -3,7 +3,10 @@ import { describe, expect, test } from "bun:test";
 import type { JuggleWorkServerClient } from "../src/app/lib/jugglework-server";
 import type { Client } from "../src/app/types";
 import {
+  readRuntimeDisabledProviders,
+  removeManagedRuntimeDisabledProviders,
   updateManagedDisabledProviders,
+  withoutDisabledProviders,
 } from "../src/react-app/domains/connections/managed-engine-config";
 
 function opencodeClient(input: {
@@ -127,5 +130,103 @@ describe("managed engine config writes", () => {
 
     expect(result.changed).toBe(true);
     expect(reloads).toBe(1);
+  });
+
+  test("reads only the runtime layer and removes current and previous cloud ids", async () => {
+    const writes: string[][] = [];
+    let reloads = 0;
+    const juggleworkClient = {
+      getRuntimeConfigStatus: async () => ({
+        runtime: {
+          disabled_providers: ["runtime-only", "lpr_current", "LPR_PREVIOUS"],
+        },
+        effective: {
+          disabled_providers: [
+            "global-only",
+            "project-only",
+            "runtime-only",
+            "lpr_current",
+            "LPR_PREVIOUS",
+          ],
+        },
+      }),
+      setRuntimeDisabledProviders: async (_workspaceId: string, disabledProviders: string[]) => {
+        writes.push(disabledProviders);
+        return { disabledProviders, changed: true };
+      },
+    } as unknown as JuggleWorkServerClient;
+
+    expect(await readRuntimeDisabledProviders(juggleworkClient, "ws_1")).toEqual([
+      "runtime-only",
+      "lpr_current",
+      "LPR_PREVIOUS",
+    ]);
+    const result = await removeManagedRuntimeDisabledProviders({
+      juggleworkClient,
+      workspaceId: "ws_1",
+      providerIds: ["lpr_current", "lpr_previous"],
+      markReloadRequired: () => reloads += 1,
+    });
+
+    expect(result).toEqual({
+      managedRuntime: true,
+      disabledProviders: ["runtime-only"],
+      changed: true,
+    });
+    expect(writes).toEqual([["runtime-only"]]);
+    expect(reloads).toBe(1);
+  });
+
+  test("cloud disabled cleanup is idempotent and does not reload on a no-op", async () => {
+    let writes = 0;
+    let reloads = 0;
+    const juggleworkClient = {
+      getRuntimeConfigStatus: async () => ({
+        runtime: { disabled_providers: ["runtime-only"] },
+      }),
+      setRuntimeDisabledProviders: async () => {
+        writes += 1;
+        return { disabledProviders: ["runtime-only"], changed: false };
+      },
+    } as unknown as JuggleWorkServerClient;
+
+    const result = await removeManagedRuntimeDisabledProviders({
+      juggleworkClient,
+      workspaceId: "ws_1",
+      providerIds: ["lpr_current", "lpr_previous"],
+      markReloadRequired: () => reloads += 1,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(writes).toBe(0);
+    expect(reloads).toBe(0);
+  });
+
+  test("effective merged entries are never accepted as a runtime cleanup base", async () => {
+    let writes = 0;
+    const juggleworkClient = {
+      getRuntimeConfigStatus: async () => ({
+        runtime: null,
+        effective: { disabled_providers: ["global-only", "lpr_current"] },
+      }),
+      setRuntimeDisabledProviders: async () => {
+        writes += 1;
+        return { disabledProviders: [] };
+      },
+    } as unknown as JuggleWorkServerClient;
+
+    await expect(removeManagedRuntimeDisabledProviders({
+      juggleworkClient,
+      workspaceId: "ws_1",
+      providerIds: ["lpr_current"],
+    })).rejects.toThrow("Could not read managed runtime disabled providers.");
+    expect(writes).toBe(0);
+  });
+
+  test("removes provider ids case-insensitively without mutating unrelated entries", () => {
+    expect(withoutDisabledProviders(
+      ["global-looking-but-runtime", "LPR_CURRENT", "lpr_previous"],
+      ["lpr_current", "LPR_PREVIOUS"],
+    )).toEqual(["global-looking-but-runtime"]);
   });
 });

@@ -74,17 +74,20 @@ import {
 } from "../../../../app/cloud/import-state";
 import {
   buildRuntimeProviderPatch,
-  CLOUD_PROVIDER_METADATA_VERSION,
-  formatConfigWithoutCloudProvider,
+  buildCloudImportedProvider,
+  filterImportableCloudOrgProviders,
+  formatConfigWithoutCloudProviders,
   getCloudManagedProviderId,
-  gatewayMirrorEnvName,
   getCloudProviderEnv,
-  getProviderModelIds,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
   missingCloudProviderReloadKey,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
+import {
+  removeGatewayMirror,
+  writeGatewayMirror,
+} from "./gateway-mirror";
 import {
   buildCustomProviderConfig,
   formatConfigWithCustomProvider,
@@ -95,7 +98,12 @@ import {
 } from "./custom-provider-config";
 import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
-import { updateManagedDisabledProviders } from "../managed-engine-config";
+import {
+  readRuntimeDisabledProviders,
+  removeManagedRuntimeDisabledProviders,
+  updateManagedDisabledProviders,
+  withoutDisabledProviders,
+} from "../managed-engine-config";
 import {
   DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
   isDesktopProviderBlocked,
@@ -596,13 +604,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const ids = [...new Set(providerIds.flatMap((id) => (id?.trim() ? [id.trim()] : [])))];
     if (ids.length === 0) return;
     try {
-      await updateProjectConfigFile((raw) => {
-        let next = raw;
-        for (const id of ids) {
-          next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
-        }
-        return next;
-      });
+      await updateProjectConfigFile((raw) => formatConfigWithoutCloudProviders(raw, ids));
     } catch {
       // Legacy cleanup only — the runtime entry already owns the provider.
     }
@@ -649,30 +651,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       removeFallbackKeyWhenEmpty: true,
     });
     return true;
-  };
-
-  /**
-   * 读取当前工作区运行时层自己的停用列表。
-   *
-   * TIPS: 引擎 `config.get()` 返回的是合并后的有效配置，包含用户全局配置和项目
-   * 配置声明的停用项。运行时层的写接口是整表替换，若以合并结果为基准回写，会把
-   * 其他来源的停用项固化进这个工作区——用户之后从全局配置移除该项也不再生效。
-   * 因此写入前必须单独读一次运行时层。
-   */
-  const readRuntimeDisabledProviders = async (
-    juggleworkClient: JuggleWorkServerClient | null | undefined,
-    workspaceId: string | null | undefined,
-  ): Promise<string[] | null> => {
-    const resolvedWorkspaceId = workspaceId?.trim();
-    if (!juggleworkClient || !resolvedWorkspaceId) return null;
-    try {
-      const status = await juggleworkClient.getRuntimeConfigStatus(resolvedWorkspaceId);
-      const runtime = status?.runtime;
-      if (!runtime || typeof runtime !== "object") return null;
-      return normalizeDisabledProviders((runtime as Record<string, unknown>).disabled_providers);
-    } catch {
-      return null;
-    }
   };
 
   const formatConfigWithProviderDisabledState = (
@@ -791,6 +769,25 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   };
 
+  const removeCloudProviderDisabledState = async (
+    providerIds: readonly string[],
+  ) => {
+    const target = await resolveJuggleWorkConfigTarget("write");
+    if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
+      throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
+    }
+
+    const result = await removeManagedRuntimeDisabledProviders({
+      juggleworkClient: target.juggleworkClient,
+      workspaceId: target.juggleworkWorkspaceId,
+      providerIds,
+    });
+    options.setDisabledProviders(
+      withoutDisabledProviders(options.disabledProviders(), providerIds),
+    );
+    return result;
+  };
+
   // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
   // both the runtime config and opencode.jsonc, regardless of
   // importedCloudProviders state. Returns the list of provider IDs that were
@@ -832,13 +829,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           ? Object.keys(providerSection as Record<string, unknown>).filter((key) => /^lpr_/i.test(key))
           : [];
       if (fileOrphans.length > 0) {
-        await updateProjectConfigFile((raw) => {
-          let next = raw;
-          for (const id of fileOrphans) {
-            next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
-          }
-          return next;
-        });
+        await updateProjectConfigFile((raw) =>
+          formatConfigWithoutCloudProviders(raw, fileOrphans)
+        );
         for (const id of fileOrphans) orphanIds.add(id);
       }
     }
@@ -937,9 +930,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const request = client
       .listOrgLlmProviders(orgId)
       .then((providers) => {
-        const supportedProviders = providers.filter((provider) =>
-          provider.source !== "jugglework" && provider.providerId.trim().toLowerCase() !== "jugglework"
-        );
+        const supportedProviders = filterImportableCloudOrgProviders(providers);
         // An organization switch can finish while this request is in flight.
         // Never let the previous organization's providers overwrite the new
         // organization's state.
@@ -1035,48 +1026,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
     throw new Error(describeProviderError(maybe.error, t("providers.request_failed")));
-  };
-
-  /**
-   * Write an imported provider's gateway token to the user env store so stdio
-   * MCP servers can read it. Best effort: a workspace without a reachable
-   * JuggleWork server still imports the provider fine, MCPs bound to it just
-   * report a missing credential until the next import.
-   *
-   * @param cloudProviderId Organization LLM provider record id.
-   * @param token The gateway token issued for this member.
-   */
-  const writeGatewayMirror = async (cloudProviderId: string, token: string) => {
-    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
-    if (!juggleworkClient) return;
-    try {
-      await juggleworkClient.upsertUserEnv([
-        { key: gatewayMirrorEnvName(cloudProviderId), value: token },
-      ]);
-    } catch (error) {
-      console.warn(`[cloud-provider] could not store the MCP gateway credential: ${String(error)}`);
-    }
-  };
-
-  /**
-   * Drop a provider's mirrored gateway token. Runs on removal and on re-import
-   * under a new provider id, so a revoked or replaced credential does not linger
-   * in the env store.
-   *
-   * @param cloudProviderId Organization LLM provider record id.
-   */
-  const removeGatewayMirror = async (cloudProviderId: string) => {
-    const juggleworkClient = options.juggleworkServer.getSnapshot().juggleworkServerClient;
-    if (!juggleworkClient) return;
-    try {
-      await juggleworkClient.deleteUserEnv(gatewayMirrorEnvName(cloudProviderId));
-    } catch (error) {
-      // A 404 just means it was never written (older import, or no server then).
-      const message = String(error).toLowerCase();
-      if (!/not found|404/.test(message)) {
-        console.warn(`[cloud-provider] could not clear the MCP gateway credential: ${String(error)}`);
-      }
-    }
   };
 
   const removeProviderAuthCredentials = async (providerId: string) => {
@@ -1760,11 +1709,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         });
         // Mirror the token where stdio MCP servers can reach it. auth.json is
         // OpenCode's own store and is not visible to a spawned MCP process; see
-        // gatewayMirrorEnvName for why the server's variable name cannot be used.
-        await writeGatewayMirror(cloudProviderId, primaryApiKey);
+        // `gatewayMirrorEnvName` for why the server's variable name cannot be used.
+        await writeGatewayMirror(
+          options.juggleworkServer.getSnapshot().juggleworkServerClient,
+          cloudProviderId,
+          primaryApiKey,
+        );
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
-        await removeGatewayMirror(existingImported.cloudProviderId);
+        // The mirror is keyed by the stable cloud row id, not the local runtime
+        // provider id. The write above replaced its value, so deleting it here
+        // would remove the freshly issued token during legacy-id migration.
         try {
           await removeProviderAuthCredentials(existingImported.providerId);
         } catch (error) {
@@ -1789,31 +1744,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         ),
       );
       await stripLegacyCloudProviderBlocks([localProviderId, existingImported?.providerId]);
+      await removeCloudProviderDisabledState([
+        localProviderId,
+        existingImported?.providerId ?? "",
+      ]);
+      options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
-        [provider.id]: {
-          cloudProviderId: provider.id,
-          providerId: localProviderId,
-          // Track the provider id as shipped by the server at import time
-          // so we can detect local/remote drift later (see dev #1510 "key
-          // cloud providers by cloud id"). On first import both match.
-          sourceProviderId: provider.providerId,
-          name: provider.name,
-          source: provider.source,
-          updatedAt: provider.updatedAt ?? null,
-          modelIds: getProviderModelIds(provider),
-          importedAt: Date.now(),
-          metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
-        },
+        [provider.id]: buildCloudImportedProvider(provider),
       };
       await persistImportedCloudProviders(nextImportedProviders);
 
-      const nextDisabledProviders = options
-        .disabledProviders()
-        .filter((id) => id !== localProviderId && id !== existingImported?.providerId);
-      options.setDisabledProviders(nextDisabledProviders);
-      options.markOpencodeConfigReloadRequired();
       await refreshProviders({ dispose: true });
       refreshSnapshot();
       emitChange();
@@ -1846,7 +1788,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     try {
       // Revoking the provider must take its mirrored token with it, otherwise a
       // live gateway credential outlives the provider it belongs to.
-      await removeGatewayMirror(cloudProviderId);
+      await removeGatewayMirror(
+        options.juggleworkServer.getSnapshot().juggleworkServerClient,
+        cloudProviderId,
+      );
       try {
         await removeProviderAuthCredentials(imported.providerId);
       } catch (error) {
@@ -1860,15 +1805,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // left by pre-runtime builds. Both are idempotent.
       await patchRuntimeProviders({ [imported.providerId]: null });
       await stripLegacyCloudProviderBlocks([imported.providerId]);
+      await removeCloudProviderDisabledState([
+        imported.providerId,
+        imported.cloudProviderId,
+      ]);
+      options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = { ...state.importedCloudProviders };
       delete nextImportedProviders[cloudProviderId];
       await persistImportedCloudProviders(nextImportedProviders);
 
-      options.setDisabledProviders(
-        options.disabledProviders().filter((id) => id !== imported.providerId),
-      );
-      options.markOpencodeConfigReloadRequired();
       refreshSnapshot();
       emitChange();
       return `${t("providers.disconnected_prefix")} ${imported.name}`;

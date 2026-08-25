@@ -1,4 +1,4 @@
-import { applyEdits, modify } from "jsonc-parser";
+import { applyEdits, modify, parse } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
 
 import type {
@@ -96,6 +96,29 @@ export const getCloudManagedProviderId = (
   provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source">,
 ) => provider.id.trim();
 
+export const buildCloudImportedProvider = (
+  provider: DenOrgLlmProvider,
+  importedAt = Date.now(),
+): CloudImportedProvider => ({
+  cloudProviderId: provider.id,
+  providerId: getCloudManagedProviderId(provider),
+  sourceProviderId: provider.providerId,
+  name: provider.name,
+  source: provider.source,
+  updatedAt: provider.updatedAt ?? null,
+  modelIds: getProviderModelIds(provider),
+  importedAt,
+  metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
+});
+
+export const filterImportableCloudOrgProviders = (
+  providers: readonly DenOrgLlmProvider[],
+) => providers.filter((provider) =>
+  provider.enabled !== false &&
+  provider.source !== "jugglework" &&
+  provider.providerId.trim().toLowerCase() !== "jugglework"
+);
+
 /**
  * Cloud badges must reflect providers published by the active organization,
  * not merely workspace import records left by an earlier organization.
@@ -147,9 +170,12 @@ export const getProviderModelIds = (
  * (`gatewayMirrorEnvName`) so stdio MCP servers can read it — providers
  * imported by an older build have no such variable and would otherwise leave
  * every gateway-backed MCP reporting a missing credential until the member
- * re-imported by hand.
+ * re-imported by hand. 5: source-provider catalog lookup is case-insensitive,
+ * so Den's canonical `JuggleRouter` identity resolves the `jugglerouter`
+ * catalog entry. 6: gateway mirror failures are no longer best-effort, so
+ * existing baselines are reconciled once under the strict mirror contract.
  */
-export const CLOUD_PROVIDER_METADATA_VERSION = 4;
+export const CLOUD_PROVIDER_METADATA_VERSION = 6;
 
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
@@ -228,7 +254,12 @@ export const buildCloudProviderConfig = (
   // The block is keyed by the cloud row id (`lpr_*`), which the engine cannot
   // match against the catalog — so resolve the catalog by the provider's
   // source id here and let it fill whatever Den did not publish.
-  const catalogModels = catalog?.[provider.providerId] ?? null;
+  const sourceProviderId = provider.providerId.trim().toLowerCase();
+  const catalogModels = catalog?.[provider.providerId] ??
+    Object.entries(catalog ?? {}).find(
+      ([providerId]) => providerId.trim().toLowerCase() === sourceProviderId,
+    )?.[1] ??
+    null;
 
   const models = Object.fromEntries(
     provider.models.map((model) => {
@@ -307,21 +338,27 @@ export const buildRuntimeProviderPatch = (
   return patch;
 };
 
-export const formatConfigWithoutCloudProvider = (
+export const formatConfigWithoutCloudProviders = (
   raw: string,
-  providerId: string,
-  disabledProviders: string[],
+  providerIds: readonly string[],
 ) => {
+  const ids = [...new Set(providerIds.map((id) => id.trim()).filter(Boolean))];
   let updated = raw.trim()
     ? raw
     : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
-  updated = removeCloudProviderComment(updated, providerId);
-  const providerEdits = modify(updated, ["provider", providerId], undefined, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  });
-  updated = applyEdits(updated, providerEdits);
+  for (const providerId of ids) {
+    updated = removeCloudProviderComment(updated, providerId);
+    const providerEdits = modify(updated, ["provider", providerId], undefined, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+    });
+    updated = applyEdits(updated, providerEdits);
+  }
 
-  const nextDisabled = disabledProviders.filter((id) => id !== providerId);
+  const parsed = (parse(updated) ?? {}) as Record<string, unknown>;
+  const removed = new Set(ids.map((id) => id.toLowerCase()));
+  const nextDisabled = getStringList(parsed.disabled_providers).filter(
+    (id) => !removed.has(id.trim().toLowerCase()),
+  );
   const disabledEdits = modify(updated, ["disabled_providers"], nextDisabled, {
     formattingOptions: { insertSpaces: true, tabSize: 2 },
   });

@@ -288,11 +288,15 @@ export type DenOrgLlmProviderModel = {
 
 export type DenOrgLlmProvider = {
   id: string;
-  source: "models_dev" | "custom" | "jugglework";
+  source: "models_dev" | "custom" | "jugglework" | "juggle_router";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
+  managed?: boolean;
+  managedKind?: "juggle_router" | null;
+  accessScope?: "explicit" | "organization";
+  enabled?: boolean;
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
@@ -1423,7 +1427,8 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     typeof value.name !== "string" ||
     (value.source !== "models_dev" &&
       value.source !== "custom" &&
-      value.source !== "jugglework")
+      value.source !== "jugglework" &&
+      value.source !== "juggle_router")
   ) {
     return null;
   }
@@ -1435,6 +1440,14 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     name: value.name,
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
+    ...(typeof value.managed === "boolean" ? { managed: value.managed } : {}),
+    ...(value.managedKind === "juggle_router" || value.managedKind === null
+      ? { managedKind: value.managedKind }
+      : {}),
+    ...(value.accessScope === "explicit" || value.accessScope === "organization"
+      ? { accessScope: value.accessScope }
+      : {}),
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
