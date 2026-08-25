@@ -13,6 +13,7 @@ export function createRemoteControlSleepController({ powerSaveBlocker, logger = 
   }
 
   let authorized = false;
+  let preventSleepWhileWaiting = false;
   let activeRunCount = 0;
   let blockerId = null;
   let stopped = false;
@@ -25,7 +26,7 @@ export function createRemoteControlSleepController({ powerSaveBlocker, logger = 
   }
 
   function reconcile() {
-    if (stopped || !authorized || activeRunCount === 0) {
+    if (stopped || !authorized || (activeRunCount === 0 && !preventSleepWhileWaiting)) {
       release();
       return;
     }
@@ -50,15 +51,25 @@ export function createRemoteControlSleepController({ powerSaveBlocker, logger = 
     reconcile();
   }
 
+  /**
+   * 设置等待远程任务时的空闲休眠策略。
+   * @param {boolean} value 是否在等待期间阻止应用挂起
+   */
+  function setPreventSleepWhileWaiting(value) {
+    preventSleepWhileWaiting = value === true;
+    reconcile();
+  }
+
   function stop() {
     if (stopped) return;
     stopped = true;
     authorized = false;
+    preventSleepWhileWaiting = false;
     activeRunCount = 0;
     release();
   }
 
-  return Object.freeze({ setAuthorized, setActiveRunCount, stop });
+  return Object.freeze({ setAuthorized, setActiveRunCount, setPreventSleepWhileWaiting, stop });
 }
 
 /**
@@ -68,10 +79,11 @@ export function createRemoteControlSleepController({ powerSaveBlocker, logger = 
  * @param {{
  *   powerMonitor: { on(event: "suspend" | "resume", listener: () => void): unknown, removeListener(event: "suspend" | "resume", listener: () => void): unknown },
  *   getAgent: () => { suspend?: () => unknown, resume?: () => unknown } | null,
+ *   onResume?: () => unknown,
  *   logger?: { warn?: (message: string) => void },
  * }} options
  */
-export function createRemoteControlPowerMonitorController({ powerMonitor, getAgent, logger = {} }) {
+export function createRemoteControlPowerMonitorController({ powerMonitor, getAgent, onResume = () => {}, logger = {} }) {
   if (!powerMonitor || typeof powerMonitor.on !== "function" || typeof powerMonitor.removeListener !== "function" || typeof getAgent !== "function") {
     throw new TypeError("Remote-control power monitor dependencies are invalid.");
   }
@@ -87,20 +99,23 @@ export function createRemoteControlPowerMonitorController({ powerMonitor, getAge
     }
   }
   const onSuspend = () => invoke("suspend");
-  const onResume = () => invoke("resume");
+  const handleResume = () => {
+    invoke("resume");
+    try { Promise.resolve(onResume()).catch(() => {}); } catch {}
+  };
 
   function start() {
     if (started) return;
     started = true;
     powerMonitor.on("suspend", onSuspend);
-    powerMonitor.on("resume", onResume);
+    powerMonitor.on("resume", handleResume);
   }
 
   function stop() {
     if (!started) return;
     started = false;
     powerMonitor.removeListener("suspend", onSuspend);
-    powerMonitor.removeListener("resume", onResume);
+    powerMonitor.removeListener("resume", handleResume);
   }
 
   return Object.freeze({ start, stop });

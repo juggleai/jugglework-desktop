@@ -3,6 +3,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { DesktopRemoteControlAgentStatus } from "@jugglework/types/desktop-ipc";
+import { setLocale } from "../src/i18n";
 import { RemoteControlActivityIndicator } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
 
 function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): DesktopRemoteControlAgentStatus {
@@ -25,6 +26,7 @@ function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): Deskt
 
 describe("Desktop remote-control status presentation", () => {
   test("distinguishes connected transport from active remote control", () => {
+    setLocale("zh");
     const html = renderToStaticMarkup(
       <RemoteControlActivityIndicator status={status()} busy={false} onStopAll={() => {}} />,
     );
@@ -34,6 +36,7 @@ describe("Desktop remote-control status presentation", () => {
   });
 
   test("shows controller names and a direct Stop All action only for active control", () => {
+    setLocale("zh");
     const html = renderToStaticMarkup(
       <RemoteControlActivityIndicator
         status={status({ activeControlSessionCount: 3, controllerDisplayNames: ["Alice", "Bob"] })}

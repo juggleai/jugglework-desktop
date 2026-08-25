@@ -6,6 +6,7 @@ import type {
   DesktopRemoteControlSettings,
 } from "@jugglework/types/desktop-ipc";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -40,6 +41,7 @@ import {
 const disabledSettings: DesktopRemoteControlSettings = {
   schemaVersion: 1,
   enabled: false,
+  preventSleepWhileWaiting: false,
   backgroundMode: false,
   launchAtLogin: false,
   allowBusySessionSteer: false,
@@ -62,14 +64,14 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
 };
 
 function statusPresentation(status: DesktopRemoteControlAgentStatus) {
-  if (status.connected) return { label: "传输已连接", tone: "ready" as const };
+  if (status.connected) return { label: t("settings.remote_control.status_connected"), tone: "ready" as const };
   if (status.state === "connecting" || status.state === "awaiting_welcome" || status.state === "backoff") {
-    return { label: "连接中", tone: "warning" as const };
+    return { label: t("settings.remote_control.status_connecting"), tone: "warning" as const };
   }
   if (status.revoked || status.state === "revoked") return { label: "已撤销", tone: "error" as const };
-  if (status.enrolled) return { label: "已注册，当前离线", tone: "warning" as const };
+  if (status.enrolled) return { label: t("settings.remote_control.status_offline"), tone: "warning" as const };
   if (status.state === "error") return { label: "异常", tone: "error" as const };
-  return { label: "未注册", tone: "neutral" as const };
+  return { label: t("settings.remote_control.status_unenrolled"), tone: "neutral" as const };
 }
 
 type RemoteControlActivityIndicatorProps = {
@@ -92,7 +94,7 @@ export function RemoteControlActivityIndicator({
         role="status"
       >
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
-        <span className="font-medium text-green-700 dark:text-green-400">远程控制活跃中</span>
+        <span className="font-medium text-green-700 dark:text-green-400">{t("settings.remote_control.active")}</span>
         <span className="text-muted-foreground">
           {status.activeControlSessionCount} 个控制会话
           {controllers ? ` · 控制者：${controllers}` : ""}
@@ -104,7 +106,7 @@ export function RemoteControlActivityIndicator({
           disabled={busy}
           onClick={onStopAll}
         >
-          全部停止远程控制
+          {t("settings.remote_control.stop_all")}
         </Button>
       </div>
     );
@@ -117,7 +119,7 @@ export function RemoteControlActivityIndicator({
       role="status"
     >
       <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-      <span>传输已连接，当前没有活跃远程控制</span>
+      <span>{t("settings.remote_control.connected_idle")}</span>
     </div>
   );
 }
@@ -170,7 +172,7 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const setSetting = async (key: "backgroundMode" | "launchAtLogin" | "allowBusySessionSteer" | "allowBusySessionEnqueue", value: boolean) => {
+  const setSetting = async (key: "preventSleepWhileWaiting" | "backgroundMode" | "launchAtLogin" | "allowBusySessionSteer" | "allowBusySessionEnqueue", value: boolean) => {
     setBusy(true);
     setError(null);
     try {
@@ -258,7 +260,7 @@ export function DesktopRemoteControlSection() {
             <LayoutSectionItemHeaderActions>
               <Switch
                 checked={settings.enabled}
-                disabled={busy || !policyAllowsRemote}
+                disabled={busy || (!settings.enabled && !policyAllowsRemote)}
                 onCheckedChange={(checked) => void setEnabled(checked)}
                 aria-label="允许本机远程控制"
               />
@@ -309,6 +311,15 @@ export function DesktopRemoteControlSection() {
         />
 
         <div className="flex items-center gap-4 rounded-xl border border-dls-border p-3">
+          <label className="flex items-center gap-2 text-xs">
+            <Switch
+              checked={settings.preventSleepWhileWaiting}
+              disabled={busy || !settings.enabled}
+              onCheckedChange={(checked) => void setSetting("preventSleepWhileWaiting", checked)}
+              aria-label="等待远程任务时不休眠"
+            />
+            <span>等待远程任务时不休眠</span>
+          </label>
           <label className="flex items-center gap-2 text-xs">
             <Switch
               checked={settings.backgroundMode}

@@ -461,6 +461,8 @@ export type RunningAppsResult = {
 export type DesktopRemoteControlSettings = {
   schemaVersion: 1;
   enabled: boolean;
+  /** 等待远程任务时阻止应用和系统进入空闲休眠，但允许显示器关闭。 */
+  preventSleepWhileWaiting: boolean;
   backgroundMode: boolean;
   launchAtLogin: boolean;
   allowBusySessionSteer: boolean;

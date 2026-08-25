@@ -114,6 +114,7 @@ const {
 const pty = require(["node", "pty"].join("-"));
 const WebSocketClient = require("ws");
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
+const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
 const DESKTOP_PROTOCOL_SCHEME = "jugglework";
@@ -1047,6 +1048,10 @@ const remoteControlSleepController = createRemoteControlSleepController({
 const remoteControlPowerMonitorController = createRemoteControlPowerMonitorController({
   powerMonitor,
   getAgent: () => remoteControlAgent,
+  onResume: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(REMOTE_CONTROL_POLICY_RECOVERY_EVENT);
+  },
   logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
 });
 const remoteControlPendingPolicy = createRemoteControlPendingPolicySynchronizer({
@@ -1181,6 +1186,8 @@ function createMainRemoteControlAgent() {
     },
     onAuthorizationChanged: (authorized) => {
       remoteControlSleepController.setAuthorized(authorized);
+    },
+    onMutationAuthorizationChanged: (authorized) => {
       if (!authorized) sessionMutationCoordinator.clearRemoteRuns();
     },
     logger: {
@@ -2112,6 +2119,7 @@ function applyNativeTheme(mode) {
 
 async function executeRemoteControlStopAll() {
   remoteControlSleepController.setAuthorized(false);
+  remoteControlSleepController.setPreventSleepWhileWaiting(false);
   return stopAllRemoteControl({
     disableSettings: () => remoteControlSettingsStore.disable(),
     applyLocalEffects: applyRemoteControlLocalEffects,
@@ -2158,6 +2166,7 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
       const settings = await remoteControlSettingsStore.update(args[0] ?? {});
+      remoteControlSleepController.setPreventSleepWhileWaiting(settings.enabled && settings.preventSleepWhileWaiting);
       return reconcilePersistedRemoteControlSettings({
         settings,
         applyLaunchAtLogin,
@@ -3187,6 +3196,9 @@ if (!app.requestSingleInstanceLock()) {
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const remoteSettings = await remoteControlSettingsStore.read();
+    remoteControlSleepController.setPreventSleepWhileWaiting(
+      remoteSettings.enabled === true && remoteSettings.preventSleepWhileWaiting === true,
+    );
     let wasOpenedAsHidden = false;
     try { wasOpenedAsHidden = app.getLoginItemSettings().wasOpenedAsHidden === true; } catch {}
     startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings, wasOpenedAsHidden });
@@ -3264,6 +3276,9 @@ function updateRemoteControlBackgroundIndicator(settings) {
 }
 
 function applyRemoteControlLocalEffects(settings) {
+  remoteControlSleepController.setPreventSleepWhileWaiting(
+    settings.enabled === true && settings.preventSleepWhileWaiting === true,
+  );
   return applyPersistedRemoteControlLocalEffects({
     settings,
     applyLaunchAtLogin,

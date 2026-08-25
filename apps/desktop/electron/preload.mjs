@@ -5,6 +5,7 @@ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "jugglework:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "jugglework:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "jugglework:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "jugglework:native-menu:zoom";
+const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const JUGGLECHAT_SKILL_INVOKE_CHANNEL = "jugglework:jugglechat:skill-invoke";
 const JUGGLECHAT_SKILL_REPLY_CHANNEL = "jugglework:jugglechat:skill-reply";
 
@@ -275,6 +276,11 @@ ipcRenderer.on(NATIVE_MENU_CHECK_UPDATES_EVENT, () => {
 ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent(NATIVE_MENU_ZOOM_EVENT, { detail: action }));
+});
+
+ipcRenderer.on(REMOTE_CONTROL_POLICY_RECOVERY_EVENT, () => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(REMOTE_CONTROL_POLICY_RECOVERY_EVENT));
 });
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {

@@ -8,6 +8,7 @@ export const REMOTE_CONTROL_SETTINGS_VERSION = 1;
 export const disabledRemoteControlSettings = Object.freeze({
   schemaVersion: REMOTE_CONTROL_SETTINGS_VERSION,
   enabled: false,
+  preventSleepWhileWaiting: false,
   backgroundMode: false,
   launchAtLogin: false,
   allowBusySessionSteer: false,
@@ -23,11 +24,12 @@ export function normalizeRemoteControlSettings(value) {
     return { ...disabledRemoteControlSettings };
   }
   const keys = Object.keys(value);
-  if (keys.some((key) => !["schemaVersion", "enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key))) {
+  if (keys.some((key) => !["schemaVersion", "enabled", "preventSleepWhileWaiting", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key))) {
     return { ...disabledRemoteControlSettings };
   }
   if (
     typeof value.enabled !== "boolean" ||
+    !(value.preventSleepWhileWaiting === undefined || typeof value.preventSleepWhileWaiting === "boolean") ||
     typeof value.backgroundMode !== "boolean" ||
     typeof value.launchAtLogin !== "boolean" ||
     typeof value.allowBusySessionSteer !== "boolean" ||
@@ -38,6 +40,8 @@ export function normalizeRemoteControlSettings(value) {
   return {
     schemaVersion: REMOTE_CONTROL_SETTINGS_VERSION,
     enabled: value.enabled,
+    // TIPS: 旧版本没有该字段。已启用设备迁移到产品要求的默认值；未启用记录仍保持完全关闭。
+    preventSleepWhileWaiting: value.enabled && (value.preventSleepWhileWaiting ?? true),
     backgroundMode: value.enabled && value.backgroundMode,
     launchAtLogin: value.enabled && value.launchAtLogin,
     allowBusySessionSteer: value.enabled && value.allowBusySessionSteer,
@@ -134,15 +138,22 @@ export function createRemoteControlSettingsStore({ app, filePath, fileSystem = {
 
   async function update(input) {
     const record = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-    if (Object.keys(record).some((key) => !["enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key)) ||
+    if (Object.keys(record).some((key) => !["enabled", "preventSleepWhileWaiting", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"].includes(key)) ||
       Object.values(record).some((value) => typeof value !== "boolean")) {
       throw new TypeError("Remote-control settings update is invalid.");
     }
     return serialized(async () => {
       const previous = await load();
+      const nextEnabled = typeof record.enabled === "boolean" ? record.enabled : previous.enabled;
       return persist({
         schemaVersion: REMOTE_CONTROL_SETTINGS_VERSION,
-        enabled: typeof record.enabled === "boolean" ? record.enabled : previous.enabled,
+        enabled: nextEnabled,
+        preventSleepWhileWaiting:
+          typeof record.preventSleepWhileWaiting === "boolean"
+            ? record.preventSleepWhileWaiting
+            : nextEnabled && !previous.enabled
+              ? true
+              : previous.preventSleepWhileWaiting,
         backgroundMode:
           typeof record.backgroundMode === "boolean" ? record.backgroundMode : previous.backgroundMode,
         launchAtLogin:

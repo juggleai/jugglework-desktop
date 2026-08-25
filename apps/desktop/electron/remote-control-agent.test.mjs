@@ -139,6 +139,7 @@ class FakeSocket extends EventEmitter {
     /** @type {Array<Record<string, any>>} */
     this.sent = [];
     this.closeCalls = 0;
+    this.terminateCalls = 0;
     this.closed = false;
   }
 
@@ -149,6 +150,11 @@ class FakeSocket extends EventEmitter {
 
   close() {
     this.closeCalls += 1;
+    this.closed = true;
+  }
+
+  terminate() {
+    this.terminateCalls += 1;
     this.closed = true;
   }
 
@@ -242,7 +248,7 @@ function harness({
   onAuthorizationChanged = () => {},
 } = {}) {
   const clock = new FakeClock();
-  let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+  let settings = { schemaVersion: 1, enabled, preventSleepWhileWaiting: enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
   let credential = enrolled ? enrolledCredential() : null;
   let uuid = 10;
   let tokenCalls = 0;
@@ -448,6 +454,31 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(heartbeat.payload.localControlEnabled, true);
   });
 
+  it("terminates a silent welcomed socket and reconnects with fresh authentication", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    await fixture.clock.advance(21_000);
+    assert.equal(socket.terminateCalls, 1);
+    assert.equal(fixture.agent.status().lastErrorCode, "transport_stale");
+    const delay = fixture.clock.nextDelay();
+    assert.ok(delay >= 250 && delay <= 30_000);
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.tokenCalls, 2);
+  });
+
+  it("refreshes the liveness deadline on every inbound cloud frame", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await fixture.clock.advance(19_000);
+    socket.receive(envelope("cloud.ping", { nonce: "still-alive" }));
+    await fixture.clock.advance(19_000);
+    assert.equal(socket.terminateCalls, 0);
+  });
+
   it("normalizes and caps active runs in hello and heartbeat", async () => {
     const runs = Array.from({ length: 105 }, (_, index) => ({
       workspaceId: `ws_${index}`,
@@ -484,7 +515,7 @@ describe("remote-control agent context and lifecycle", () => {
     const socket = await connect(fixture);
     assert.equal(socket.closeCalls, 0);
     await fixture.clock.advance(6 * 60_000);
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.agent.status().localControlEnabled, false);
     assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
   });
@@ -529,15 +560,13 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.tokenCalls, 2);
   });
 
-  it("authorizes execution sleep only while session mutation policy is fresh and enabled", async () => {
+  it("authorizes remote waiting sleep prevention while the base remote policy is fresh", async () => {
     const authorizations = [];
     const fixture = harness({ onAuthorizationChanged: (authorized) => authorizations.push(authorized) });
     await fixture.agent.start();
     await fixture.agent.syncContext(signedInContext());
-    assert.deepEqual(authorizations, []);
-    await fixture.agent.syncContext(signedInContext({ featureGates: { ...readGates, sessionMutation: true } }));
     assert.deepEqual(authorizations, [true]);
-    await fixture.agent.syncContext(signedInContext());
+    await fixture.agent.syncContext(signedInContext({ policyFresh: false, validatedAt: null }));
     assert.deepEqual(authorizations, [true, false]);
   });
 
@@ -737,7 +766,7 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(frames(socket, "device.local_stop").length, 1);
     socket.unexpectedClose();
     await Promise.all([first, second]);
-    assert.equal(socket.closeCalls, 2);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 2);
     assert.equal(fixture.sockets.length, 1);
     assert.equal(fixture.clock.nextDelay(), null);
 
@@ -756,7 +785,7 @@ describe("remote-control agent context and lifecycle", () => {
     const fixture = harness();
     const socket = await connect(fixture);
     const first = fixture.agent.stop();
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.clock.nextDelay(), null);
     await first;
     await fixture.agent.stop();
@@ -1089,7 +1118,7 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
     socket.receive(envelope("session.unbound", { controlSessionId: CONTROL_ID, reason: "future_reason" }));
     await settle();
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
   });
 
   it("prepares flattened metadata before dispatch, sends accepted/running, journals terminal before send, and wraps result bodies", async () => {

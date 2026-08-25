@@ -5,6 +5,19 @@ import { describe, it } from "node:test";
 import { createRemoteControlPowerMonitorController, createRemoteControlSleepController } from "./remote-control-power.mjs";
 
 describe("remote-control execution sleep prevention", () => {
+  it("keeps an authorized waiting device awake until the user opts out", () => {
+    const starts = [];
+    const stops = [];
+    const controller = createRemoteControlSleepController({
+      powerSaveBlocker: { start: (type) => { starts.push(type); return 5; }, stop: (id) => stops.push(id) },
+    });
+    controller.setPreventSleepWhileWaiting(true);
+    controller.setAuthorized(true);
+    assert.deepEqual(starts, ["prevent-app-suspension"]);
+    controller.setPreventSleepWhileWaiting(false);
+    assert.deepEqual(stops, [5]);
+  });
+
   it("shares one blocker across authorized admitted runs and releases on the final run", () => {
     const starts = [];
     const stops = [];
@@ -46,13 +59,14 @@ describe("remote-control power monitor lifecycle", () => {
     const controller = createRemoteControlPowerMonitorController({
       powerMonitor: monitor,
       getAgent: () => ({ suspend: () => calls.push("suspend"), resume: () => calls.push("resume") }),
+      onResume: () => calls.push("recover"),
     });
     controller.start();
     controller.start();
     monitor.emit("suspend");
     monitor.emit("resume");
     await Promise.resolve();
-    assert.deepEqual(calls, ["suspend", "resume"]);
+    assert.deepEqual(calls, ["suspend", "resume", "recover"]);
     assert.equal(monitor.listenerCount("suspend"), 1);
     assert.equal(monitor.listenerCount("resume"), 1);
     controller.stop();

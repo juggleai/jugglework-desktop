@@ -119,7 +119,7 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {keyof typeof ERROR_MESSAGES} RemoteControlErrorCode */
 /** @typedef {{ schemaVersion: 1, enrollment: boolean, readOnlyControl: boolean, sessionMutation: boolean, interactions: boolean, backgroundLifecycle: boolean, eventCompaction: boolean, multiInstanceRouting: boolean, payloadEncryption: boolean, busySessionSteer: boolean, busySessionEnqueue: boolean, nativeMobile: boolean }} RemoteControlFeatureGates */
 /** @typedef {{ schemaVersion: 1, signedIn: boolean, controlPlaneBaseUrl: string | null, userId: string | null, organizationId: string | null, policyFresh: boolean, featureGates: RemoteControlFeatureGates, policyVersion: string | null, validatedAt: string | null }} RemoteControlAgentContext */
-/** @typedef {{ schemaVersion: number, enabled: boolean, backgroundMode: boolean, launchAtLogin: boolean, allowBusySessionSteer: boolean, allowBusySessionEnqueue: boolean }} RemoteControlSettings */
+/** @typedef {{ schemaVersion: number, enabled: boolean, preventSleepWhileWaiting: boolean, backgroundMode: boolean, launchAtLogin: boolean, allowBusySessionSteer: boolean, allowBusySessionEnqueue: boolean }} RemoteControlSettings */
 /** @typedef {{ schemaVersion: number, state: string, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, deviceId?: string }} RemoteControlCredentialView */
 /** @typedef {{ schemaVersion: number, operations: Array<{ operation: string, payloadVersions: number[] }>, features: string[] }} RemoteControlCapabilities */
 /** @typedef {{ status: string, occurredAt: string, result: unknown, error: unknown }} JournalLifecycle */
@@ -130,7 +130,7 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {{ read(): Promise<RemoteControlSettings> }} RemoteControlSettingsStore */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilities>, dispatch(request: unknown, options: { advertisedCapabilities: RemoteControlCapabilities, context: RemoteControlAgentContext, correlationId: string }): Promise<{ ok: boolean, value?: unknown, error?: unknown }> }} RemoteControlOperationRegistry */
 /** @typedef {{ prepare(command: unknown): Promise<JournalPrepareResult>, complete(commandId: unknown, lifecycle: unknown): Promise<unknown> }} RemoteControlCommandJournal */
-/** @typedef {{ on(event: string, listener: (...args: any[]) => void): unknown, send(data: string): unknown, close(...args: any[]): unknown, __remoteHeartbeatSeconds?: number }} RemoteControlSocket */
+/** @typedef {{ on(event: string, listener: (...args: any[]) => void): unknown, send(data: string): unknown, close(...args: any[]): unknown, terminate?: () => unknown, __remoteHeartbeatSeconds?: number, __remoteSilenceSeconds?: number }} RemoteControlSocket */
 /** @typedef {{ setTimeout(callback: (...args: any[]) => void, delay?: number): unknown, clearTimeout(handle: unknown): void }} RemoteControlTimers */
 /** @typedef {{ debug?: (message: string, metadata?: object) => void, info?: (message: string, metadata?: object) => void, warn?: (message: string, metadata?: object) => void, error?: (message: string, metadata?: object) => void }} RemoteControlLogger */
 /**
@@ -159,6 +159,7 @@ const ERROR_MESSAGES = Object.freeze({
  *   onControlRevoked?: (input: { source: "local" | "cloud", transition: number }) => void,
  *   onPolicyExpired?: () => void,
  *   onAuthorizationChanged?: (authorized: boolean) => void,
+ *   onMutationAuthorizationChanged?: (authorized: boolean) => void,
  * }} RemoteControlAgentOptions
  */
 
@@ -562,6 +563,7 @@ export function createRemoteControlAgent(options) {
     onControlRevoked = null,
     onPolicyExpired = null,
     onAuthorizationChanged = null,
+    onMutationAuthorizationChanged = null,
   } = options;
   if (!settingsStore || typeof settingsStore.read !== "function" || !credentialStore ||
     typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
@@ -580,7 +582,8 @@ export function createRemoteControlAgent(options) {
     !(onTransportReset === null || typeof onTransportReset === "function") ||
     !(onControlRevoked === null || typeof onControlRevoked === "function") ||
     !(onPolicyExpired === null || typeof onPolicyExpired === "function") ||
-    !(onAuthorizationChanged === null || typeof onAuthorizationChanged === "function")) {
+    !(onAuthorizationChanged === null || typeof onAuthorizationChanged === "function") ||
+    !(onMutationAuthorizationChanged === null || typeof onMutationAuthorizationChanged === "function")) {
     throw new TypeError("RemoteControlAgent dependencies are invalid.");
   }
 
@@ -592,7 +595,7 @@ export function createRemoteControlAgent(options) {
   /** @type {RemoteControlAgentContext | null} */
   let context = null;
   /** @type {RemoteControlSettings} */
-  let settings = { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+  let settings = { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
   /** @type {RemoteControlCredentialView | null} */
   let enrollment = null;
   /** @type {RemoteControlSocket | null} */
@@ -612,6 +615,8 @@ export function createRemoteControlAgent(options) {
   /** @type {unknown} */
   let heartbeatTimer = null;
   /** @type {unknown} */
+  let livenessTimer = null;
+  /** @type {unknown} */
   let tokenRefreshTimer = null;
   /** @type {unknown} */
   let tokenExpiryTimer = null;
@@ -629,6 +634,7 @@ export function createRemoteControlAgent(options) {
   let transportTransition = 0;
   let revocationTransition = 0;
   let authorizationActive = false;
+  let mutationAuthorizationActive = false;
   let resumePolicyFloor = null;
 
   function timestamp() {
@@ -653,12 +659,14 @@ export function createRemoteControlAgent(options) {
   function clearTimer(name) {
     const handle = name === "reconnect" ? reconnectTimer
       : name === "heartbeat" ? heartbeatTimer
+        : name === "liveness" ? livenessTimer
         : name === "token-expiry" ? tokenExpiryTimer
           : name === "policy-expiry" ? policyExpiryTimer
             : tokenRefreshTimer;
     if (handle !== null) timers.clearTimeout(handle);
     if (name === "reconnect") reconnectTimer = null;
     else if (name === "heartbeat") heartbeatTimer = null;
+    else if (name === "liveness") livenessTimer = null;
     else if (name === "token-expiry") tokenExpiryTimer = null;
     else if (name === "policy-expiry") policyExpiryTimer = null;
     else tokenRefreshTimer = null;
@@ -667,6 +675,7 @@ export function createRemoteControlAgent(options) {
   function clearTimers() {
     clearTimer("reconnect");
     clearTimer("heartbeat");
+    clearTimer("liveness");
     clearTimer("refresh");
     clearTimer("token-expiry");
     clearTimer("policy-expiry");
@@ -690,6 +699,27 @@ export function createRemoteControlAgent(options) {
     if (!target) return;
     intentionalSockets.add(target);
     try { target.close(1000, "remote control stopped"); } catch {}
+  }
+
+  /** @param {RemoteControlSocket} target */
+  function terminateSocket(target) {
+    try {
+      if (typeof target.terminate === "function") target.terminate();
+      else target.close();
+    } catch {}
+  }
+
+  /** @param {RemoteControlSocket} target @param {number} generation */
+  function scheduleLivenessWatchdog(target, generation) {
+    clearTimer("liveness");
+    const seconds = target.__remoteSilenceSeconds;
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) return;
+    // TIPS: 以服务端判 stale 的边界为准，并留一秒给系统定时器抖动。
+    livenessTimer = timers.setTimeout(() => {
+      livenessTimer = null;
+      if (target !== socket || generation !== lifecycleGeneration) return;
+      transportFailed(target, "transport_stale");
+    }, Math.min(seconds * 1_000 + 1_000, MAX_TIMER_DELAY));
   }
 
   function activeRuns() {
@@ -733,6 +763,24 @@ export function createRemoteControlAgent(options) {
     try { onAuthorizationChanged?.(next); } catch {}
   }
 
+  function clearAuthorizations() {
+    setAuthorizationActive(false);
+    setMutationAuthorizationActive(false);
+  }
+
+  function reconcileAuthorizations() {
+    setAuthorizationActive(remoteSleepAuthorized());
+    setMutationAuthorizationActive(mutationSleepAuthorized());
+  }
+
+  /** @param {boolean} value */
+  function setMutationAuthorizationActive(value) {
+    const next = value === true;
+    if (next === mutationAuthorizationActive) return;
+    mutationAuthorizationActive = next;
+    try { onMutationAuthorizationChanged?.(next); } catch {}
+  }
+
   /** Synchronously fences async completions, cancels timers, and closes transport. */
   function invalidateTransport() {
     notifyTransportReset();
@@ -751,13 +799,18 @@ export function createRemoteControlAgent(options) {
     return started && !suspended && !revoked && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
       context.policyFresh === true && context.featureGates.schemaVersion === 1 &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
+      (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
       context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
   }
 
-  function executionSleepAuthorized() {
+  function remoteSleepAuthorized() {
     const validatedAt = Date.parse(context?.validatedAt ?? "");
-    return contextAllowsConnection() && context?.featureGates.sessionMutation === true &&
+    return contextAllowsConnection() &&
       (resumePolicyFloor === null || validatedAt >= resumePolicyFloor);
+  }
+
+  function mutationSleepAuthorized() {
+    return remoteSleepAuthorized() && context?.featureGates.sessionMutation === true;
   }
 
   function schedulePolicyExpiry() {
@@ -769,7 +822,7 @@ export function createRemoteControlAgent(options) {
       policyExpiryTimer = null;
       if (generation !== lifecycleGeneration || contextAllowsConnection()) return;
       lastErrorCode = "policy_unavailable";
-      setAuthorizationActive(false);
+      clearAuthorizations();
       invalidateTransport();
       state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       try { onPolicyExpired?.(); } catch {}
@@ -938,10 +991,11 @@ export function createRemoteControlAgent(options) {
     notifyTransportReset();
     lastErrorCode = code;
     clearTimer("heartbeat");
+    clearTimer("liveness");
     clearTimer("refresh");
     socket = null;
     connectionGeneration = null;
-    try { target.close(); } catch {}
+    terminateSocket(target);
     if (pendingLocalStop?.target === target) finishLocalStop();
     scheduleReconnect(lifecycleGeneration);
     log("warn", code);
@@ -1080,10 +1134,12 @@ export function createRemoteControlAgent(options) {
       }
       connectionGeneration = payload.connectionGeneration;
       target.__remoteHeartbeatSeconds = payload.heartbeatSeconds;
+      target.__remoteSilenceSeconds = Math.min(payload.staleSeconds, payload.offlineSeconds);
       reconnectAttempt = 0;
       lastErrorCode = null;
       state = REMOTE_CONTROL_AGENT_STATUS.CONNECTED;
       scheduleHeartbeat(payload.heartbeatSeconds, target, generation);
+      scheduleLivenessWatchdog(target, generation);
       return;
     }
     if (envelope.type === "cloud.ping") {
@@ -1103,7 +1159,7 @@ export function createRemoteControlAgent(options) {
       const changed = !revoked;
       revoked = true;
       localDisabledLatch = true;
-      setAuthorizationActive(false);
+      clearAuthorizations();
       lastErrorCode = "device_revoked";
       activeControlSessions.clear();
       encryptedControlSessions.clear();
@@ -1142,7 +1198,7 @@ export function createRemoteControlAgent(options) {
           const changed = !revoked;
           revoked = true;
           localDisabledLatch = true;
-          setAuthorizationActive(false);
+          clearAuthorizations();
           activeControlSessions.clear();
           encryptedControlSessions.clear();
           invalidateTransport();
@@ -1376,6 +1432,9 @@ export function createRemoteControlAgent(options) {
       scheduleTokenRefresh(expiresAt, target, generation);
     })(); });
     target.on("message", (data) => {
+      if (target === socket && generation === lifecycleGeneration && target.__remoteSilenceSeconds) {
+        scheduleLivenessWatchdog(target, generation);
+      }
       const decoded = decodeMessage(data);
       if (decoded === null) transportFailed(target, "invalid_message");
       else void handleMessage(decoded, target, generation);
@@ -1483,22 +1542,25 @@ export function createRemoteControlAgent(options) {
     try { next = await settingsStore.read(); } catch { next = null; }
     if (generation !== lifecycleGeneration && !started) return status();
     const legacy = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin"]);
-    const current = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"]);
-    const valid = (legacy || current) && next.schemaVersion === 1 && typeof next.enabled === "boolean" &&
+    const prior = hasExactKeys(next, ["schemaVersion", "enabled", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"]);
+    const current = hasExactKeys(next, ["schemaVersion", "enabled", "preventSleepWhileWaiting", "backgroundMode", "launchAtLogin", "allowBusySessionSteer", "allowBusySessionEnqueue"]);
+    const valid = (legacy || prior || current) && next.schemaVersion === 1 && typeof next.enabled === "boolean" &&
       typeof next.backgroundMode === "boolean" && typeof next.launchAtLogin === "boolean" &&
-      (!current || (typeof next.allowBusySessionSteer === "boolean" && typeof next.allowBusySessionEnqueue === "boolean"));
+      (!current || typeof next.preventSleepWhileWaiting === "boolean") &&
+      (legacy || (typeof next.allowBusySessionSteer === "boolean" && typeof next.allowBusySessionEnqueue === "boolean"));
     settings = valid ? {
       ...next,
-      allowBusySessionSteer: current ? next.allowBusySessionSteer : false,
-      allowBusySessionEnqueue: current ? next.allowBusySessionEnqueue : false,
-    } : { schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+      preventSleepWhileWaiting: current ? next.preventSleepWhileWaiting : next.enabled,
+      allowBusySessionSteer: legacy ? false : next.allowBusySessionSteer,
+      allowBusySessionEnqueue: legacy ? false : next.allowBusySessionEnqueue,
+    } : { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
     if (!settings.enabled) localDisabledLatch = false;
     if (!settings.enabled) {
-      setAuthorizationActive(false);
+      clearAuthorizations();
       invalidateTransport();
     }
     await reconcile();
-    setAuthorizationActive(executionSleepAuthorized());
+    reconcileAuthorizations();
     return status();
   }
 
@@ -1517,7 +1579,7 @@ export function createRemoteControlAgent(options) {
     let next;
     try { next = normalizeRemoteControlAgentContext(input, { allowInsecureLoopback }); }
     catch (error) {
-      setAuthorizationActive(false);
+      clearAuthorizations();
       context = null;
       protocolBlocked = false;
       invalidateTransport();
@@ -1526,7 +1588,7 @@ export function createRemoteControlAgent(options) {
     }
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
-      setAuthorizationActive(false);
+      clearAuthorizations();
       invalidateTransport();
       encryptedControlSessions.clear();
       enrollment = null;
@@ -1536,12 +1598,12 @@ export function createRemoteControlAgent(options) {
     }
     context = next;
     if (!next.signedIn || !next.policyFresh || !next.featureGates.enrollment || !next.featureGates.readOnlyControl) {
-      setAuthorizationActive(false);
+      clearAuthorizations();
       invalidateTransport();
     }
     schedulePolicyExpiry();
     await reconcile();
-    setAuthorizationActive(executionSleepAuthorized());
+    reconcileAuthorizations();
     return status();
   }
 
@@ -1575,7 +1637,7 @@ export function createRemoteControlAgent(options) {
     if (pendingLocalStop) return pendingLocalStop.promise;
     const changed = !localDisabledLatch;
     localDisabledLatch = true;
-    setAuthorizationActive(false);
+    clearAuthorizations();
     activeControlSessions.clear();
     encryptedControlSessions.clear();
     notifyTransportReset();
@@ -1613,7 +1675,7 @@ export function createRemoteControlAgent(options) {
 
   /** Stops transport synchronously before deleting the platform-protected key. */
   async function deleteCredential() {
-    setAuthorizationActive(false);
+    clearAuthorizations();
     invalidateTransport();
     encryptedControlSessions.clear();
     enrollment = null;
@@ -1628,7 +1690,7 @@ export function createRemoteControlAgent(options) {
   async function stop() {
     if (!started && socket === null && reconnectTimer === null && heartbeatTimer === null && tokenRefreshTimer === null) return status();
     started = false;
-    setAuthorizationActive(false);
+    clearAuthorizations();
     activeControlSessions.clear();
     encryptedControlSessions.clear();
     invalidateTransport();
@@ -1641,7 +1703,7 @@ export function createRemoteControlAgent(options) {
     if (suspended) return status();
     suspended = true;
     resumePolicyFloor = timestamp().getTime();
-    setAuthorizationActive(false);
+    clearAuthorizations();
     if (context?.signedIn) context = Object.freeze({ ...context, policyFresh: false, validatedAt: null });
     lastErrorCode = "device_offline";
     invalidateTransport();
@@ -1655,7 +1717,7 @@ export function createRemoteControlAgent(options) {
     if (!suspended) return status();
     suspended = false;
     await reconcile();
-    setAuthorizationActive(executionSleepAuthorized());
+    reconcileAuthorizations();
     return status();
   }
 
