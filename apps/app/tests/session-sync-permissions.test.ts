@@ -11,6 +11,7 @@ import {
   __hasWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
   captureTodoSnapshotRevision,
+  clearSessionTodos,
   ensureWorkspaceSessionSync,
   permissionKey,
   questionKey,
@@ -361,6 +362,26 @@ describe("session transcript sync", () => {
       release();
       cleanup();
     }
+  });
+
+  test("clears previous progress for a new task and rejects an older snapshot", () => {
+    const queryClient = getReactQueryClient();
+    queryClient.setQueryData(todoKey("workspace-a", "session-a"), [
+      { id: "todo-old", content: "old task", status: "in_progress", priority: "high" },
+    ]);
+    const snapshotTodoRevision = captureTodoSnapshotRevision();
+
+    clearSessionTodos("workspace-a", "session-a");
+
+    expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+
+    const staleSnapshot = snapshotWithMessages([]);
+    staleSnapshot.todos = [
+      { id: "todo-old", content: "old task", status: "in_progress", priority: "high" },
+    ];
+    seedSessionState("workspace-a", staleSnapshot, { snapshotTodoRevision });
+
+    expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
   });
 
   test("continues accepting stream deltas for a recently unselected session", async () => {

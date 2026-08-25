@@ -72,6 +72,7 @@ import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/reac
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   captureTodoSnapshotRevision,
+  clearSessionTodos,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -1008,6 +1009,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const runGenerationBeforeSend = useSessionActivityStore.getState()
       .recordsByWorkspaceId[workspaceId]?.[sessionId]?.runGeneration ?? 0;
     if (isCurrentSurface()) setError(null);
+    // Progress belongs to the task that produced it. Hide stale progress as
+    // soon as the next task is submitted (including a drained queued task);
+    // fresh todo.updated events will populate the panel for the new run.
+    clearSessionTodos(workspaceId, sessionId);
     try {
       const result = await props.onSendDraft(nextDraft, sessionId);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;

@@ -24,6 +24,17 @@ The system SHALL resolve progress independently for every rendered session surfa
 - **WHEN** primary and secondary panes render different sessions with different todo state
 - **THEN** each pane displays only its own session's progress
 
+### Requirement: New task submission resets previous progress
+The system SHALL clear a session's displayed task progress when the user submits a new task in that session, before progress for the new run arrives.
+
+#### Scenario: Submit after incomplete work
+- **WHEN** a session still displays pending or in-progress items from an earlier task and the user submits a new task
+- **THEN** the earlier task progress is removed from above the composer immediately
+
+#### Scenario: Older snapshot returns after reset
+- **WHEN** a snapshot request containing the earlier task progress started before the new task was submitted and returns after the reset
+- **THEN** the older snapshot does not restore the cleared progress
+
 ### Requirement: Newer progress wins over stale reads
 The system SHALL NOT replace progress received from a newer live event with an older snapshot response.
 

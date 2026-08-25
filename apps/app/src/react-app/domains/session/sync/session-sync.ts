@@ -84,6 +84,16 @@ export function captureTodoSnapshotRevision(): number {
   return todoRevision;
 }
 
+/**
+ * Clear progress from the previous task before submitting another task in the
+ * same session. Recording a live revision prevents an older in-flight
+ * snapshot from restoring the cleared progress.
+ */
+export function clearSessionTodos(workspaceId: string, sessionId: string) {
+  liveTodoRevision.set(todoRevisionKey(workspaceId, sessionId), ++todoRevision);
+  getReactQueryClient().setQueryData(todoKey(workspaceId, sessionId), []);
+}
+
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.juggleworkToken}`;
 }
