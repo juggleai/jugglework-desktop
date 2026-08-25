@@ -262,7 +262,7 @@ async function completeDesktopOnboarding(ctx) {
       state.workspacePrepared = true;
     } else {
       const advanced = await ctx.eval(`(() => {
-        const labels = ["Continue with organization", "Continue to workspace", "Continue without JuggleWork Models", "Continue"];
+        const labels = ["Continue with organization", "Continue to workspace", "Continue"];
         const button = [...document.querySelectorAll('button')].find((candidate) => labels.includes((candidate.textContent ?? '').trim()) && !candidate.disabled);
         button?.click();
         return Boolean(button);

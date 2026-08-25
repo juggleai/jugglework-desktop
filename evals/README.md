@@ -227,7 +227,7 @@ Before reporting a flow as passed:
 - [`reload-events-flow.md`](./reload-events-flow.md) — reload-required toast
   suppression on boot/no-op writes and positive coverage for real runtime config
   changes.
-- [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the 7
+- [`onboarding-welcome-flows.md`](./onboarding-welcome-flows.md) — the
   onboarding/welcome flows covering first-run experience and folder
   explanation.
 - [`browser-extension-flows.md`](./browser-extension-flows.md) — browser

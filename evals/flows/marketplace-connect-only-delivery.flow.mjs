@@ -506,7 +506,7 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx) {
     if (routeReady) return;
     await ctx.eval(`(() => {
       const buttons = [...document.querySelectorAll('button')];
-      const modelSkip = buttons.find((candidate) => ['Skip and use the free model', 'Continue without JuggleWork Models'].includes((candidate.textContent ?? '').trim()));
+      const modelSkip = buttons.find((candidate) => (candidate.textContent ?? '').trim() === 'Skip and use the free model');
       if (modelSkip instanceof HTMLElement && !modelSkip.hasAttribute('disabled')) modelSkip.click();
       const surveySkip = buttons.find((candidate) => (candidate.textContent ?? '').trim() === 'Skip');
       if (surveySkip instanceof HTMLElement && !surveySkip.hasAttribute('disabled')) surveySkip.click();

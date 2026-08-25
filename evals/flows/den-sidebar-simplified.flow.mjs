@@ -20,7 +20,7 @@ const MEMBER_EMAIL = process.env.JUGGLEWORK_EVAL_MEMBER_EMAIL?.trim() || "jordan
 const MEMBER_PASSWORD = process.env.JUGGLEWORK_EVAL_MEMBER_PASSWORD?.trim() || "JuggleWorkDemo123!";
 
 const TOP_LEVEL = ["Dashboard", "Your Connections", "Extensions", "Models", "Members", "Analytics", "Settings"];
-const RETIRED_TOP_LEVEL = ["MCP Connections", "Integrations", "JuggleWork Models", "LLM Providers", "Desktop Policies", "API Keys", "SCIM", "SSO", "Billing", "Org Settings"];
+const RETIRED_TOP_LEVEL = ["MCP Connections", "Integrations", "LLM Providers", "Desktop Policies", "API Keys", "SCIM", "SSO", "Billing", "Org Settings"];
 const NAV_TEXT = "(document.querySelector('nav')?.innerText ?? '')";
 
 function sleep(ms) {
@@ -265,21 +265,20 @@ export default {
     {
       name: "Frame 4",
       run: async (ctx) => {
-        await ctx.prove("Models holds JuggleWork Models and LLM Providers side by side", {
+        await ctx.prove("Models opens the organization LLM provider inventory", {
           voiceover: vo[3],
           action: async () => {
             await clickNav(ctx, "Models");
           },
           assert: async () => {
-            await ctx.waitFor("location.pathname.includes('/inference')", { timeoutMs: 15_000, label: "models route" });
+            await ctx.waitFor("location.pathname.includes('/llm-providers')", { timeoutMs: 15_000, label: "models route" });
             const children = await navChildLabels(ctx);
-            ctx.assert(children.some((label) => label.startsWith("JuggleWork Models")), `Models children missing JuggleWork Models: ${JSON.stringify(children)}`);
             ctx.assert(children.some((label) => label.startsWith("LLM Providers")), `Models children missing LLM Providers: ${JSON.stringify(children)}`);
           },
           screenshot: {
             name: "models-group",
-            claim: "The Models group shows JuggleWork Models and LLM Providers as siblings.",
-            requireText: ["Models", "JuggleWork Models", "LLM Providers"],
+            claim: "The Models group opens the organization LLM provider inventory.",
+            requireText: ["Models", "LLM Providers"],
             rejectText: ["Something went wrong"],
           },
         });

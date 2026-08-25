@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, BookOpen, MessageCircleMore, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, MessageCircleMore } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -27,18 +27,6 @@ import {
   type JuggleWorkConnectStatus,
 } from "../../connections/jugglework-connect-status";
 import type { SessionCloudMcpMaintenanceState } from "../../connections/use-session-mcp-maintenance";
-import {
-  getJuggleWorkModelsActionUrl,
-  hasJuggleWorkModelsProvider,
-  hideJuggleWorkModelsPromo,
-  useJuggleWorkModelsPromoEligibility,
-  isJuggleWorkModelsPromoHidden,
-  markJuggleWorkModelsPromoShown,
-  JUGGLEWORK_MODELS_PROMO_SHOW_DELAY_MS,
-  JUGGLEWORK_MODELS_PROMO_VISIBLE_MS,
-  juggleWorkModelsPromoChangedEvent,
-  shouldShowJuggleWorkModelsPromo,
-} from "../../cloud/jugglework-models-promo";
 
 const DOCS_URL = "https://juggle.im/docs";
 const STATUS_BAR_BOOT_STARTED_AT = Date.now();
@@ -229,7 +217,6 @@ export type StatusBarProps = {
   developerMode: boolean;
   showConnectionStatus?: boolean;
   onSendFeedback: () => void;
-  providerConnectedIds: string[];
   mcpConnectedCount: number;
   loading?: boolean;
   initializing?: boolean;
@@ -245,12 +232,6 @@ export function StatusBar(props: StatusBarProps) {
   const { config: shellConfig } = useShellConfig();
   const docsButtonRef = useRef<HTMLButtonElement>(null);
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
-  const [juggleWorkModelsHintVisible, setJuggleWorkModelsHintVisible] = useState(false);
-  const juggleWorkModelsPromoEligible = useJuggleWorkModelsPromoEligibility();
-  const hasJuggleWorkModels = useMemo(
-    () => hasJuggleWorkModelsProvider(props.providerConnectedIds),
-    [props.providerConnectedIds],
-  );
   const [initializing, setInitializing] = useState(
     () => Date.now() - STATUS_BAR_BOOT_STARTED_AT < STATUS_BAR_INITIALIZING_MS,
   );
@@ -269,66 +250,6 @@ export function StatusBar(props: StatusBarProps) {
     const timeout = window.setTimeout(() => setInitializing(false), remaining);
     return () => window.clearTimeout(timeout);
   }, [initializing]);
-
-  useEffect(() => {
-    const handlePromoChanged = () => {
-      if (isJuggleWorkModelsPromoHidden()) {
-        setJuggleWorkModelsHintVisible(false);
-      }
-    };
-    window.addEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(juggleWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
-
-  useEffect(() => {
-    if (!juggleWorkModelsPromoEligible || !shellConfig.cloudSignin || hasJuggleWorkModels) {
-      setJuggleWorkModelsHintVisible(false);
-      return;
-    }
-    if (denAuth.status === "checking") return;
-
-    let showTimeout: number | null = null;
-    const maybeShow = () => {
-      if (showTimeout !== null || !shouldShowJuggleWorkModelsPromo()) return;
-      showTimeout = window.setTimeout(() => {
-        showTimeout = null;
-        if (!shouldShowJuggleWorkModelsPromo()) return;
-        markJuggleWorkModelsPromoShown();
-        setJuggleWorkModelsHintVisible(true);
-      }, JUGGLEWORK_MODELS_PROMO_SHOW_DELAY_MS);
-    };
-
-    maybeShow();
-    const interval = window.setInterval(maybeShow, 60_000);
-    return () => {
-      if (showTimeout !== null) {
-        window.clearTimeout(showTimeout);
-      }
-      window.clearInterval(interval);
-    };
-  }, [denAuth.status, hasJuggleWorkModels, juggleWorkModelsPromoEligible, shellConfig.cloudSignin]);
-
-  useEffect(() => {
-    if (!juggleWorkModelsHintVisible) return;
-    const timeout = window.setTimeout(
-      () => setJuggleWorkModelsHintVisible(false),
-      JUGGLEWORK_MODELS_PROMO_VISIBLE_MS,
-    );
-    return () => window.clearTimeout(timeout);
-  }, [juggleWorkModelsHintVisible]);
-
-  const openJuggleWorkModels = useCallback(() => {
-    setJuggleWorkModelsHintVisible(false);
-    if (!denAuth.isSignedIn) {
-      navigate("/settings/cloud-account");
-    }
-    platform.openLink(getJuggleWorkModelsActionUrl(denAuth.isSignedIn));
-  }, [denAuth.isSignedIn, navigate, platform]);
-
-  const hideJuggleWorkModels = useCallback(() => {
-    setJuggleWorkModelsHintVisible(false);
-    hideJuggleWorkModelsPromo();
-  }, []);
 
   const docsControlAction = useMemo<JuggleWorkControlAction>(() => ({
     id: "status.docs.open",
@@ -377,30 +298,6 @@ export function StatusBar(props: StatusBarProps) {
         </div>
 
         <div className="flex items-center gap-1">
-          {juggleWorkModelsHintVisible ? (
-            <div className="mr-1 flex h-6 items-center overflow-hidden rounded-full border border-blue-6/60 bg-blue-2/70 shadow-[0_0_18px_rgba(var(--dls-accent-rgb),0.16)] animate-in fade-in slide-in-from-bottom-1 zoom-in-95 duration-300">
-              <button
-                type="button"
-                className="flex min-w-0 items-center gap-1.5 px-2.5 text-xs font-medium text-blue-12 transition-colors hover:bg-blue-3/70"
-                onClick={openJuggleWorkModels}
-              >
-                <Sparkles className="size-3.5 text-blue-11" />
-                <span className="whitespace-nowrap">JuggleWork Models</span>
-                <span className="hidden whitespace-nowrap font-normal text-blue-11/75 lg:inline">
-                  hosted frontier models
-                </span>
-                <ArrowRight className="size-3.5 text-blue-11" />
-              </button>
-              <button
-                type="button"
-                className="flex size-6 shrink-0 items-center justify-center border-l border-blue-6/60 text-blue-11 transition-colors hover:bg-blue-3/70"
-                onClick={hideJuggleWorkModels}
-                aria-label="Hide JuggleWork Models hint"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          ) : null}
           {shellConfig.docsButton ? (
             <Button
               ref={docsButtonRef}

@@ -213,16 +213,6 @@ export default {
       run: async (ctx) => {
         await ctx.prove("CREATE-SESSIONS creates and starts every requested chat without navigating the origin", {
           action: async () => {
-            const promoOpen = await ctx.eval(
-              `document.body.innerText.includes("Continue without JuggleWork Models")`,
-            );
-            if (promoOpen) {
-              await ctx.clickText("Continue without JuggleWork Models");
-              await ctx.waitFor(
-                `!document.body.innerText.includes("Continue without JuggleWork Models")`,
-                { timeoutMs: 10_000, label: "JuggleWork Models promo dismissed" },
-              );
-            }
             await ctx.waitFor(
               "window.__juggleworkControl.listActions().some((entry) => entry.id === 'composer.set_text' && entry.disabled === false)",
               { timeoutMs: 30_000, label: "composer set-text action" },

@@ -1,6 +1,6 @@
 # Cloud organization roles - owner, admin, and member
 
-1. The console sidebar documents the workspace areas clearly: Extensions contains Marketplace, Sources, Plugins, and Connectors; Models contains JuggleWork Models and LLM Providers; Members and Analytics stand alone; Settings contains General, Diagnostics, Brand appearance, Desktop Policies, Stripe, API Keys, SSO, and SCIM.
+1. The console sidebar documents the workspace areas clearly: Extensions contains Marketplace, Sources, Plugins, and Connectors; Models contains LLM Providers; Members and Analytics stand alone; Settings contains General, Diagnostics, Brand appearance, Desktop Policies, Stripe, API Keys, SSO, and SCIM.
 
 2. Signed in as an admin, I can change a teammate's role and create or delete custom roles. Admin absorbed the old super-admin role, so there is no longer a tier between admin and owner.
 

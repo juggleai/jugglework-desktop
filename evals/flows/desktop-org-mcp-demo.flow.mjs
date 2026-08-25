@@ -147,11 +147,6 @@ async function ensureWorkspace(ctx) {
     })()`,
     { timeoutMs: 10_000, label: "workspace route or create action" },
   );
-  await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without JuggleWork Models');
-    btn?.click();
-    return true;
-  })()`, { awaitPromise: true });
 }
 
 async function currentWorkspaceId(ctx) {

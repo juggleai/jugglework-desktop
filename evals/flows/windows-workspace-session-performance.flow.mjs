@@ -144,16 +144,6 @@ async function waitForControl(ctx, timeoutMs = 90_000) {
   await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs, label: "JuggleWork control API" });
 }
 
-async function dismissJuggleWorkModelsPromo(ctx) {
-  const promoText = "Use JuggleWork Models without API keys";
-  if (!(await ctx.hasText(promoText))) return;
-  await ctx.clickText("Continue without JuggleWork Models");
-  await ctx.waitFor(`!document.body.innerText.includes(${quoted(promoText)})`, {
-    timeoutMs: 20_000,
-    label: "JuggleWork Models promo dismissed",
-  });
-}
-
 async function waitForWorkspaceRouteReady(ctx, workspaceId, sessionId = "") {
   const routeNeedle = sessionId ? `/workspace/${workspaceId}/session/${sessionId}` : `/workspace/${workspaceId}/session`;
   await ctx.waitFor(`(() => {
@@ -229,7 +219,6 @@ async function activateVisibleWorkspace(ctx, setup) {
   })()`, { awaitPromise: true });
   await waitForControl(ctx);
   await waitForWorkspaceRouteReady(ctx, workspaceId);
-  await dismissJuggleWorkModelsPromo(ctx);
   return Date.now() - startedAt;
 }
 
@@ -1039,7 +1028,6 @@ export default {
               timeoutMs: 30_000,
               label: "general settings baseline",
             });
-            await dismissJuggleWorkModelsPromo(ctx);
             state.runtime = await ctx.eval(`(async () => {
               const bridge = window.__JUGGLEWORK_ELECTRON__;
               const invoke = bridge?.invokeDesktop;
@@ -1072,7 +1060,7 @@ export default {
           screenshot: {
             name: "packaged-windows-baseline",
             requireText: ["Overview of all settings"],
-            rejectText: ["Something went wrong", "Use JuggleWork Models without API keys"],
+            rejectText: ["Something went wrong"],
             hashIncludes: "/settings/general",
           },
         });
@@ -1177,7 +1165,6 @@ export default {
             };
             ctx.output("windows UI/session responsiveness metrics", JSON.stringify(state.ui, null, 2));
             ctx.output("cdp performance metrics after setup", JSON.stringify(state.perfAfterSetup.raw, null, 2));
-            await dismissJuggleWorkModelsPromo(ctx);
           },
           assert: async () => {
             const params = readParams(ctx);
@@ -1199,7 +1186,7 @@ export default {
           screenshot: {
             name: "benchmark-sessions-navigable",
             requireText: ["Search sessions", finalSwitchTitle],
-            rejectText: ["Something went wrong", "Use JuggleWork Models without API keys"],
+            rejectText: ["Something went wrong"],
           },
         });
       },
@@ -1230,7 +1217,6 @@ export default {
             recordAssertion(ctx, Boolean(representative?.sessionId && representative.marker), "A successful representative conversation is available for the final screenshot.", representative);
             await ctx.control("session.open", { sessionId: representative.sessionId });
             await waitForWorkspaceRouteReady(ctx, state.setup.firstWorkspaceId, representative.sessionId);
-            await dismissJuggleWorkModelsPromo(ctx);
             await ctx.waitForText(representative.marker, { timeoutMs: 90_000 });
           },
           assert: async () => {
@@ -1245,7 +1231,7 @@ export default {
           screenshot: {
             name: "completed-assistant-marker",
             requireText: [state.conversations.representative.marker],
-            rejectText: ["Something went wrong", "Use JuggleWork Models without API keys"],
+            rejectText: ["Something went wrong"],
           },
         });
       },

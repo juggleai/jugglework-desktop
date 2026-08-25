@@ -392,7 +392,7 @@ export async function ensureLocalWorkspace(ctx, folderPath) {
 async function clickThroughWorkspaceOnboarding(ctx, folderPath) {
   const onboardingClick = await clickThroughLingeringOnboarding(ctx);
   if (onboardingClick.clickedContinueOrg || onboardingClick.clickedContinueWorkspace) return true;
-  for (const text of ["Skip and use the free model", "Continue without JuggleWork Models", "Skip"]) {
+  for (const text of ["Skip and use the free model", "Skip"]) {
     if (await clickExactIfVisible(ctx, text, "button, [role=button]")) return true;
   }
   const state = await workspaceSessionState(ctx);

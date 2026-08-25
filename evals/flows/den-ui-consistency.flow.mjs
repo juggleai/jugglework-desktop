@@ -389,7 +389,7 @@ export default {
           },
           screenshot: {
             name: "compact-member-dashboard",
-            requireText: ["Your workspace", "JuggleWork Models", "Marketplaces", "Plugins"],
+            requireText: ["Your workspace", "Marketplaces", "Plugins"],
             rejectText: ["Create plugin", "Something went wrong"],
             hashIncludes: "/dashboard",
           },
@@ -572,14 +572,13 @@ export default {
               stripeScreen: Boolean(document.querySelector('[data-testid="stripe-billing-screen"]')),
               refreshActions: [...document.querySelectorAll('button')].filter((entry) => entry.textContent?.trim() === 'Refresh').length,
               hasSeatCounts: ['Included users', 'Active users', 'Billable users'].every((label) => document.body.innerText.includes(label)),
-              hasModels: document.body.innerText.includes('JuggleWork Models'),
             }))()`);
             witness(ctx, actual.path === "/dashboard/billing" && actual.stripeScreen, "The Settings destination visibly presents Stripe", actual);
-            witness(ctx, actual.refreshActions === 1 && actual.hasSeatCounts && actual.hasModels, "Stripe has one refresh action and clear seat/model state", actual);
+            witness(ctx, actual.refreshActions === 1 && actual.hasSeatCounts, "Stripe has one refresh action and clear seat state", actual);
           },
           screenshot: {
             name: "stripe-billing-dashboard",
-            requireText: ["Stripe", "Included users", "Active users", "Billable users", "JuggleWork Models", "Refresh"],
+            requireText: ["Stripe", "Included users", "Active users", "Billable users", "Refresh"],
             rejectText: ["Billing response was incomplete", "Something went wrong"],
             hashIncludes: "/dashboard/billing",
           },

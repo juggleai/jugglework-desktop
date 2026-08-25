@@ -159,11 +159,6 @@ async function ensureWorkspace(ctx) {
     })()`);
     await sleep(1_000);
   }
-  await ctx.eval(`(() => {
-    const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without JuggleWork Models');
-    btn?.click();
-    return true;
-  })()`, { awaitPromise: true });
 }
 
 async function createFreshEvalWorkspace(ctx) {

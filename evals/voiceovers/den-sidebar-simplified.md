@@ -14,7 +14,7 @@ Marketplaces — with alpha Connections last.
 
 3. The rest of Extensions is the plugin pipeline, laid out in the order it actually flows: Sources, Plugins, Marketplaces, and then Connections last with an Alpha badge. Connections is still there — Google Workspace and Notion are ready to prove the page — but it is clearly untested and out of the default path.
 
-4. Models next: the managed JuggleWork Models plan and the company own provider keys, side by side — one place to answer what the org can run.
+4. Models next: the organization LLM provider inventory is one place to answer what the org can run.
 
 5. Everything set-once — billing, desktop policies, SSO, SCIM, API keys — now lives under Settings. Out of his daily path, still one click away.
 

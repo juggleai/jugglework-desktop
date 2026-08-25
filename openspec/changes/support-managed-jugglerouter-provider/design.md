@@ -9,12 +9,14 @@ The desktop parses organization provider list and connection payloads into a str
 - Preserve managed metadata for current/future UI use while remaining compatible with older server payloads.
 - Prevent JuggleRouter from inheriting legacy hosted-inference filtering or fixed provider identity.
 - Exercise realistic list, connect, model metadata, import, disable, and re-enable contracts in tests.
+- Remove the dormant hosted-model promotion product surface without weakening stale-provider cleanup or reserved identity handling.
 
 **Non-Goals:**
 - Add direct communication with the JuggleRouter upstream.
 - Add desktop controls for organization-level enable/disable or managed configuration.
 - Change server response identity to `models_dev` or `jugglework`.
 - Implement incremental resource-version/tombstone replay; full-state reconciliation remains authoritative.
+- Rename or remove Voice Mode's independent hosted Realtime broker and `JUGGLEWORK_*` environment wiring.
 
 ## Decisions
 
@@ -29,6 +31,14 @@ Alternative considered: alias JuggleRouter to `jugglework`. Rejected because the
 Extract a pure importable-provider filter that continues excluding source/provider ID `jugglework`, excludes explicit `enabled: false`, and retains `juggle_router`. The server normally omits disabled providers from member lists; the explicit check makes administrator or future richer payloads fail safe.
 
 Alternative considered: filter every managed source. Rejected because management controls mutation rights, not whether an enabled organization provider can be imported.
+
+### Retire presentation, retain compatibility guards
+
+Delete the always-disabled hosted JuggleWork Models promotion eligibility, status-bar promotion branch, startup hook/dialog, hosted inference type module and package exports/build entry, preview aliases, and promotional strings/evals/docs. Do not delete the `jugglework` Den source parser member, import exclusion, stale model-picker and automation hiding, custom-provider reserved-ID rejection, or cloud-managed provider classification. Those guards still prevent an old config or older Den payload from resurfacing a retired provider or being overwritten as a user-defined provider.
+
+The import baseline remains keyed by cloud row ID and the managed JuggleRouter path remains `juggle_router`; retirement does not alias or migrate either identity. Voice Mode uses a separate broker contract and reserved environment namespace, so its `JUGGLEWORK_*` behavior and server-side broker messages remain untouched.
+
+Delete eval flows whose only contract is hosted-model promotion, subscription, or `/inference` route visibility. Broader Den and desktop flows retain their current navigation, onboarding, billing, attachment, and connection assertions but drop stale promo dismissals and hosted-product copy. The paid hosted-model Voice funnel is not renamed because its sign-up, Stripe, and hosted UI prerequisites are retired; existing `voice-session-context` continues to cover Voice panel/session request behavior, while `apps/server/src/env-routes.e2e.test.ts` continues to cover managed broker authentication, fallback, and errors.
 
 ### Reuse opaque Cloud import identity and gateway projection
 
@@ -55,5 +65,5 @@ Disablement is represented by absence from an importable current-state provider 
 
 1. Release the desktop parser/import support while the server keeps canonical `source: "juggle_router"`.
 2. On sign-in or provider sync, enabled managed providers are discovered and imported automatically; no local user migration is required.
-3. Existing Cloud imports increment to metadata version 5 and reconcile once.
+3. Existing Cloud imports increment to metadata version 6 and reconcile once.
 4. Rollback to an older desktop hides JuggleRouter again but does not expose upstream credentials or mutate the server provider. Reinstalling the supporting build restores synchronization.

@@ -21,3 +21,13 @@
 - [x] 4.1 Run focused provider parser/import/reconciliation tests
 - [ ] 4.2 Run the application test suite and typecheck
 - [x] 4.3 Run the smallest meaningful desktop build check, strict OpenSpec validation, and diff checks
+
+## 5. Retire Legacy Hosted Promotion
+
+- [x] 5.1 Remove hosted-model promo eligibility, status-bar branch, startup hook/dialog, and promo preview aliases
+- [x] 5.2 Remove promo-only localization, tests, evals, and documentation
+- [x] 5.3 Retain and test legacy `jugglework` parser acceptance, import exclusion, reserved-ID hiding/protection, and native `juggle_router` behavior
+- [x] 5.4 Preserve independent Voice Mode broker and `JUGGLEWORK_*` environment behavior
+- [x] 5.5 Delete the unused `@jugglework/types/den/inference` module, root/subpath exports, build entry, and orphaned promo-only eval flows
+- [x] 5.6 Remove hosted inference assertions and stale promo dismissal logic from active eval contracts, including the single-org route proof and paid hosted Voice funnel
+- [x] 5.7 Retain generic `voice-session-context` eval coverage and managed Voice broker server tests without changing runtime `JUGGLEWORK_*` contracts

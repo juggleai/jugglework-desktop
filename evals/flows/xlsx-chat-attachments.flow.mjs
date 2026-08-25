@@ -256,19 +256,6 @@ async function attachXlsxFile(ctx) {
   );
 }
 
-async function dismissJuggleWorkModelsModal(ctx) {
-  const result = await ctx.eval(`(() => {
-    const dialog = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).find((item) => (item.textContent || "").includes("JuggleWork Models"));
-    if (!dialog) return { dismissed: false };
-    const button = Array.from(dialog.querySelectorAll("button")).find((item) => (item.textContent || "").trim().includes("Continue without JuggleWork Models") || item.getAttribute("aria-label") === "Close");
-    if (!button) return { dismissed: false };
-    button.click();
-    return { dismissed: true };
-  })()`);
-  if (!result?.dismissed) return;
-  await ctx.waitFor(`!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("JuggleWork Models"))`, { timeoutMs: 10_000, label: "JuggleWork Models modal dismissed" });
-}
-
 function sentXlsxCardExpr() {
   return `(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
@@ -522,7 +509,6 @@ export default {
             resetXlsxArtifact(ctx);
             await ctx.control("composer.send");
             await ctx.waitFor(sentXlsxCardExpr(), { timeoutMs: 45_000, label: "sent XLSX card with Download action" });
-            await dismissJuggleWorkModelsModal(ctx);
             await clickDownloadButtonAndVerifySha(ctx, {
               buttonLabel: `Download ${XLSX_FILENAME}`,
               filename: XLSX_FILENAME,
@@ -574,7 +560,6 @@ export default {
           voiceover: vo[3],
           action: async () => {
             await waitForFinalResponse(ctx);
-            await dismissJuggleWorkModelsModal(ctx);
             await ctx.control("session.scroll_bottom");
           },
           assert: async () => {
@@ -602,7 +587,6 @@ export default {
             const replayProof = await pollProof(ctx, (item) => item.replayResponse && item.replayOfficeHistoryOk && item.replay?.normalizedTextOnly, 90_000, "successful replay follow-up with normalized XLSX history");
             ctx.output("XLSX mock proof after replay", JSON.stringify(replayProof, null, 2));
             await ctx.waitFor(`document.body.innerText.includes("Replay succeeded after reopening the session")`, { timeoutMs: 60_000, label: "replay success assistant response" });
-            await dismissJuggleWorkModelsModal(ctx);
           },
           assert: async () => {
             await ctx.expectText(XLSX_FILENAME);

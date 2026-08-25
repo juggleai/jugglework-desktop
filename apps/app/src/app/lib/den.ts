@@ -108,7 +108,6 @@ const DEN_API_BASE_PATH = `${DEN_CONTROL_PLANE_PATH}/api`;
 /** The pre-`/jwork` layout: den-web proxied den-api at `<origin>/api/den`. */
 const LEGACY_DEN_API_BASE_PATH = "/api/den";
 export const DEN_DASHBOARD_PATH = `${DEN_CONTROL_PLANE_PATH}/console`;
-export const DEN_INFERENCE_PATH = `${DEN_CONTROL_PLANE_PATH}/console/dashboard/inference`;
 
 // Den wire types moved to den-types.ts (leaf module); re-exported here so
 // the many existing den.ts importers keep working.
@@ -593,24 +592,6 @@ export function denOriginComparisonKey(input: string | null | undefined): string
   } catch {
     return normalized;
   }
-}
-
-/**
- * True when the effective Den control plane is not the hosted JuggleWork Cloud
- * (work.juggle.im). Self-hosted deployments point the app at their own
- * control plane via VITE_DEN_BASE_URL or the desktop bootstrap config, so
- * hosted-only surfaces (e.g. JuggleWork Models upsells) should stay hidden.
- */
-export function isSelfHostedControlPlane(): boolean {
-  return (
-    denOriginComparisonKey(readDenSettings().baseUrl) !==
-    denOriginComparisonKey(HOSTED_DEFAULT_DEN_BASE_URL)
-  );
-}
-
-export function getDenInferenceUrl(baseUrl?: string | null): string {
-  const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
-  return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
 /**

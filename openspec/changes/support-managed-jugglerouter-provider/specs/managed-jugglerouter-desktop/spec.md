@@ -15,6 +15,21 @@ The desktop SHALL accept organization provider list and connection payloads whos
 - **WHEN** the provider source or provider identity is the reserved legacy value `jugglework`
 - **THEN** existing hosted-provider filtering remains unchanged and the row is not treated as managed JuggleRouter
 
+### Requirement: Legacy hosted promotion is retired without weakening compatibility
+The desktop SHALL NOT render or schedule JuggleWork Models promotional rows, status-bar hints, startup dialogs, subscription actions, or model preview aliases, and the shared types package SHALL NOT publish the retired hosted inference contract. It SHALL continue to parse legacy Den rows whose source is `jugglework`, exclude source or provider identity `jugglework` from organization imports, hide stale local `jugglework` models from selection, reserve that provider identity from custom configuration, and classify it as cloud-managed for safe stale cleanup.
+
+#### Scenario: Stale hosted provider survives an upgrade
+- **WHEN** an older Den response, import baseline, credential, or local provider block still uses the reserved `jugglework` identity
+- **THEN** the desktop accepts enough legacy shape to filter, hide, protect, or remove it without presenting a hosted-model promotion or allowing it to be redefined as a custom provider
+
+#### Scenario: Voice Mode uses its independent broker
+- **WHEN** Voice Mode resolves its server-side Realtime broker or reserved `JUGGLEWORK_*` environment wiring
+- **THEN** hosted-model promotion retirement does not alter that independent voice contract
+
+#### Scenario: Eval contracts describe current product behavior
+- **WHEN** desktop and Den eval flows are loaded
+- **THEN** no active flow or voiceover depends on hosted-model promotion, subscription, `/inference`, or retired dialog behavior, while generic Voice session and managed broker runtime coverage remain available
+
 ### Requirement: Managed JuggleRouter imports through the Cloud gateway
 The desktop SHALL connect and install an enabled JuggleRouter provider using the opaque `lpr_*` row ID as its local runtime provider key, the server-projected gateway URL and token as its connection material, and the canonical model IDs and metadata from the connection payload. It SHALL NOT require or infer an upstream JuggleRouter API key or direct upstream Base URL.
 

@@ -105,6 +105,36 @@ describe("managed JuggleRouter Den provider parser", () => {
     expect(providers[1]?.enabled).toBe(false);
   });
 
+  test("still parses a legacy hosted row so import filtering can reject it", async () => {
+    const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
+      llmProviders: [{
+        ...managedListProvider,
+        id: "lpr_legacy_hosted",
+        source: "jugglework",
+        providerId: "jugglework",
+        name: "Legacy hosted provider",
+        managed: false,
+        managedKind: null,
+        accessScope: "explicit",
+      }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    const providers = await createDenClient({
+      baseUrl: "https://cloud.example.test",
+      token: "session-token",
+    }).listOrgLlmProviders("org_test");
+
+    expect(providers[0]).toMatchObject({
+      id: "lpr_legacy_hosted",
+      source: "jugglework",
+      providerId: "jugglework",
+    });
+  });
+
   test("accepts the gateway connect shape without losing its opaque token or config", async () => {
     const gatewayToken = "jwgw_desktop_opaque_token";
     const fetchMock: typeof fetch = async () => new Response(JSON.stringify({

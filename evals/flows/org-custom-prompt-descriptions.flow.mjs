@@ -170,13 +170,6 @@ async function ensureDesktopSession(ctx) {
 
 async function dismissDesktopOverlays(ctx) {
   await ctx.eval(`(() => {
-    const continueButton = Array.from(document.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Continue without JuggleWork Models')
-    );
-    if (continueButton) {
-      continueButton.click();
-      return 'continued-without-models';
-    }
     const dialog = document.querySelector('[role="dialog"]');
     const closeButton = dialog?.querySelector('button[aria-label="Close"], button');
     if (closeButton) {
