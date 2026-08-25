@@ -2762,6 +2762,7 @@ export default {
   "session_files.changed_files": "{count} changed files",
   "session_files.refresh_changes": "Refresh changes",
   "session_files.no_text_diff": "No line-level diff is available for this file.",
+  "session_files.unchanged_lines_folded": "… {{count}} unchanged lines folded …",
   "session_files.collapse_tree": "Hide file tree",
   "session_files.expand_tree": "Show file tree",
   "session_files.browse_tree": "Browse workspace files",

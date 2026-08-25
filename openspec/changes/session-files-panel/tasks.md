@@ -37,3 +37,9 @@
 - [x] 5.4 目录树、变更列表与 diff 正文改用与会话正文一致的 `subtle-scrollbar`
 - [x] 5.5 `i18n/locales/zh.ts` 与 `en.ts` 更新 `session_files.no_changes`（改为工作区口径），新增 `session_files.changed_files`、`session_files.refresh_changes`、`session_files.no_vcs`
 - [x] 5.6 运行 `pnpm typecheck`；在 dev 实例上验证变更列表来源、配色计算值、刷新按钮与非 git 目录的接口行为
+
+## 6. 聚焦变更内容
+
+- [x] 6.1 `vcs.diff` 固定请求 3 行上下文，单文件 diff 仅展示变更块及其前后上下文
+- [x] 6.2 解析 hunk 起始行并在相隔较远的 hunk 之间展示未变化行折叠占位
+- [x] 6.3 补齐解析测试、类型检查并验证 OpenSpec

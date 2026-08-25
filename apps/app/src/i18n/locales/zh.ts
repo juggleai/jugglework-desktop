@@ -2765,6 +2765,7 @@ export default {
   "session_files.changed_files": "{count} 个文件有改动",
   "session_files.refresh_changes": "刷新变更",
   "session_files.no_text_diff": "该文件没有可展示的逐行差异。",
+  "session_files.unchanged_lines_folded": "… 已折叠 {{count}} 行未变化内容 …",
   "session_files.collapse_tree": "收起文件树",
   "session_files.expand_tree": "展开文件树",
   "session_files.browse_tree": "浏览工作区文件",

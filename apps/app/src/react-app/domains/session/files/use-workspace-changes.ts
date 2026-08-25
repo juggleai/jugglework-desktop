@@ -81,7 +81,9 @@ async function fetchWorkspaceChanges(
   let diffs;
 
   try {
-    diffs = unwrap(await client.vcs.diff({ directory: workspaceRoot || undefined, mode: "git" }));
+    // TIPS: 固定只取变更前后各 3 行。相邻变更距离较远时 Git 会拆成多个 hunk，
+    // 前端据此把中间未变化内容渲染为折叠占位，避免文件正文淹没真正的改动。
+    diffs = unwrap(await client.vcs.diff({ directory: workspaceRoot || undefined, mode: "git", context: 3 }));
   } catch (error) {
     if (await probeVcsAvailable(client, workspaceRoot)) throw error;
 

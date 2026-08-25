@@ -17,10 +17,14 @@ export type DiffLine = {
  * unified diff 中的一个 hunk
  *
  * @param header hunk 头（`@@ -1,4 +1,6 @@`），无头时为空串
+ * @param oldStart hunk 在变更前文件中的起始行
+ * @param newStart hunk 在变更后文件中的起始行
  * @param lines hunk 内的行
  */
 export type DiffHunk = {
   header: string;
+  oldStart: number;
+  newStart: number;
   lines: DiffLine[];
 };
 
@@ -46,7 +50,12 @@ export function parseUnifiedDiff(patch: string): DiffHunk[] {
     const header = HUNK_HEADER.exec(raw);
 
     if (header) {
-      current = { header: raw, lines: [] };
+      current = {
+        header: raw,
+        oldStart: Number(header[1]),
+        newStart: Number(header[3]),
+        lines: [],
+      };
       hunks.push(current);
       oldLine = Number(header[1]);
       newLine = Number(header[3]);
@@ -85,6 +94,29 @@ export function parseUnifiedDiff(patch: string): DiffHunk[] {
   }
 
   return hunks;
+}
+
+/**
+ * 计算两个 hunk 之间被省略的未变化行数。
+ *
+ * @param previous 前一个 hunk
+ * @param next 后一个 hunk
+ * @returns 中间未展示的连续未变化行数
+ */
+export function countFoldedContextLines(previous: DiffHunk, next: DiffHunk): number {
+  const previousOldEnd = previous.lines.reduce(
+    (line, item) => item.oldLine === null ? line : Math.max(line, item.oldLine),
+    previous.oldStart - 1,
+  );
+  const previousNewEnd = previous.lines.reduce(
+    (line, item) => item.newLine === null ? line : Math.max(line, item.newLine),
+    previous.newStart - 1,
+  );
+  const oldGap = next.oldStart - previousOldEnd - 1;
+  const newGap = next.newStart - previousNewEnd - 1;
+
+  // 标准 unified diff 的两侧间隔相等；异常 patch 下取较小值，避免夸大折叠行数。
+  return Math.max(0, Math.min(oldGap, newGap));
 }
 
 /**

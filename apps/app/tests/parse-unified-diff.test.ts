@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { countDiffLines, parseUnifiedDiff } from "../src/react-app/domains/session/files/parse-unified-diff";
+import { countDiffLines, countFoldedContextLines, parseUnifiedDiff } from "../src/react-app/domains/session/files/parse-unified-diff";
 
 const PATCH = [
   "diff --git a/src/app.ts b/src/app.ts",
@@ -54,5 +54,12 @@ describe("parseUnifiedDiff", () => {
 
   test("counts parsed lines", () => {
     expect(countDiffLines(parseUnifiedDiff(PATCH))).toBe(8);
+  });
+
+  test("counts unchanged lines folded between hunks", () => {
+    const hunks = parseUnifiedDiff(PATCH);
+    expect(hunks[0]).toMatchObject({ oldStart: 1, newStart: 1 });
+    expect(hunks[1]).toMatchObject({ oldStart: 20, newStart: 21 });
+    expect(countFoldedContextLines(hunks[0]!, hunks[1]!)).toBe(16);
   });
 });

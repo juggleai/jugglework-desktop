@@ -5,7 +5,7 @@ import { FilePlus2, FileMinus2, FilePen, Loader2, RefreshCw } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
-import { countDiffLines, parseUnifiedDiff } from "./parse-unified-diff";
+import { countDiffLines, countFoldedContextLines, parseUnifiedDiff } from "./parse-unified-diff";
 import type { WorkspaceChange } from "./use-workspace-changes";
 
 /** 单文件 diff 超过该行数时先折叠，避免一次渲染上万个节点 */
@@ -169,6 +169,9 @@ function DiffBody({ change, onOpenFile }: { change: WorkspaceChange; onOpenFile:
             <tbody>
               {hunks.map((hunk, hunkIndex) => (
                 <React.Fragment key={`${hunk.header}-${hunkIndex}`}>
+                  {hunkIndex > 0 ? (
+                    <FoldedContextRow lines={countFoldedContextLines(hunks[hunkIndex - 1]!, hunk)} />
+                  ) : null}
                   <tr className="bg-muted/60 text-muted-foreground">
                     <td className="w-10 select-none px-2 text-right" />
                     <td className="w-10 select-none px-2 text-right" />
@@ -202,5 +205,24 @@ function DiffBody({ change, onOpenFile }: { change: WorkspaceChange; onOpenFile:
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * 两个变更块之间未变化内容的折叠占位行。
+ *
+ * @param lines 被折叠的未变化行数
+ */
+function FoldedContextRow({ lines }: { lines: number }) {
+  if (lines <= 0) return null;
+
+  return (
+    <tr data-diff-folded-context className="border-y border-border/50 bg-muted/35 text-muted-foreground">
+      <td className="w-10 select-none px-2 text-right" />
+      <td className="w-10 select-none px-2 text-right" />
+      <td className="px-2 py-0.5 italic">
+        {t("session_files.unchanged_lines_folded", { count: lines })}
+      </td>
+    </tr>
   );
 }
