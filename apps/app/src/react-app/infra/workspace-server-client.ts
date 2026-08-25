@@ -16,6 +16,7 @@ export type WorkspaceServerClientResolver = (
 type NormalizedLocalServer = {
   baseUrl: string;
   token: string;
+  hostToken: string;
 };
 
 function trim(value: string | null | undefined): string {
@@ -26,6 +27,7 @@ function normalizeLocalServer(localServer: LocalServerHandle): NormalizedLocalSe
   return {
     baseUrl: trim(localServer.baseUrl),
     token: trim(localServer.token),
+    hostToken: trim(localServer.hostToken),
   };
 }
 
@@ -66,6 +68,7 @@ export function createWorkspaceServerClientCacheKey(
     trim(workspace.id),
     normalizedLocalServer.baseUrl,
     normalizedLocalServer.token,
+    normalizedLocalServer.hostToken,
   ]);
 }
 
@@ -101,15 +104,21 @@ export function useWorkspaceServerClient(
 ): ResolvedWorkspaceEndpoint | null {
   const localBaseUrl = trim(localServer.baseUrl);
   const localToken = trim(localServer.token);
+  const localHostToken = trim(localServer.hostToken);
   const workspaceKey = createWorkspaceServerClientCacheKey(workspace, {
     baseUrl: localBaseUrl,
     token: localToken,
+    hostToken: localHostToken,
   });
 
   // `workspaceKey` intentionally includes only fields that change endpoint
   // behavior; remote workspaces do not churn when the local server reconnects.
   return useMemo(
-    () => createWorkspaceServerClientResolver({ baseUrl: localBaseUrl, token: localToken })(workspace),
+    () => createWorkspaceServerClientResolver({
+      baseUrl: localBaseUrl,
+      token: localToken,
+      hostToken: localHostToken,
+    })(workspace),
     [workspaceKey],
   );
 }

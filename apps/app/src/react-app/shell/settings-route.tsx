@@ -449,6 +449,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [location.state, navigate, props.embedded, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [hostToken, setHostToken] = useState("");
   const [juggleworkClient, setJuggleWorkClient] = useState<JuggleWorkServerClient | null>(null);
   const [activeClient, setActiveClient] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
@@ -588,10 +589,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [emptyWorkspaceDisplay, selectedWorkspace],
   );
   const workspaceServerClientResolver = useMemo(
-    () => createWorkspaceServerClientResolver({ baseUrl, token }),
-    [baseUrl, token],
+    () => createWorkspaceServerClientResolver({ baseUrl, token, hostToken }),
+    [baseUrl, hostToken, token],
   );
-  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
+  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, {
+    baseUrl,
+    token,
+    hostToken,
+  });
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
@@ -1269,6 +1274,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setJuggleWorkClient(null);
         setBaseUrl("");
         setToken("");
+        setHostToken("");
         setWorkspaces(desktopWorkspaces);
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
@@ -1291,6 +1297,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       const routeWorkspaceServerClientResolver = createWorkspaceServerClientResolver({
         baseUrl: normalizedBaseUrl,
         token: resolvedToken,
+        hostToken: resolvedHostToken,
       });
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
@@ -1339,6 +1346,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setJuggleWorkClient(client);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
+      setHostToken(resolvedHostToken);
       setWorkspaces(nextWorkspaces);
       setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));

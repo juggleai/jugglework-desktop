@@ -29,6 +29,7 @@ describe("workspace server client primitive", () => {
     const resolver = createWorkspaceServerClientResolver({
       baseUrl: " http://127.0.0.1:4096 ",
       token: " local-token ",
+      hostToken: " local-host-token ",
     });
 
     const first = resolver(localWorkspace);
@@ -61,6 +62,26 @@ describe("workspace server client primitive", () => {
     expect(changed.client).not.toBe(first.client);
     expect(first.token).toBe("local-token-a");
     expect(changed.token).toBe("local-token-b");
+  });
+
+  test("changed local host tokens produce a distinct endpoint and client", () => {
+    const firstResolver = createWorkspaceServerClientResolver({
+      baseUrl: "http://127.0.0.1:4096",
+      token: "local-token",
+      hostToken: "local-host-token-a",
+    });
+    const changedResolver = createWorkspaceServerClientResolver({
+      baseUrl: "http://127.0.0.1:4096",
+      token: "local-token",
+      hostToken: "local-host-token-b",
+    });
+
+    const first = firstResolver(localWorkspace);
+    const changed = changedResolver(localWorkspace);
+    if (!first || !changed) throw new Error("Expected local workspace endpoints.");
+
+    expect(changed).not.toBe(first);
+    expect(changed.client).not.toBe(first.client);
   });
 
   test("keys remote workspace endpoints from the owning worker, not the local server", () => {
