@@ -132,7 +132,7 @@ import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../st
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import { SessionCircularProgress } from "./session-circular-progress";
 
-/** Fixed left lane from Paper — activity/chevron slot; never shifts the title. */
+/** 固定的左侧占位槽；loading 移到行尾后仍保留它，使会话标题与工作区标题对齐。 */
 const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
@@ -144,18 +144,22 @@ interface SessionLoadingIndicatorProps {
   isActiveWork: boolean;
 }
 
-/** Left-lane activity only — never used for unread / completion. */
+/** 会话行尾活动状态；悬浮或键盘操作时由快捷操作接管同一位置。 */
 function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicatorProps) {
-  if (!isActiveWork) {
-    return <span aria-hidden="true" className={LEFT_ACTIVITY_SLOT} />;
-  }
+  if (!isActiveWork) return null;
 
   const title = isSessionActivityStatus(status) && status !== "idle"
     ? getSessionActivityStatusLabel(status)
     : t("workspace_list.session_streaming");
 
   return (
-    <span className={LEFT_ACTIVITY_SLOT} role="status" title={title} aria-label={title}>
+    <span
+      data-session-loading-indicator
+      className="absolute right-2.5 top-1/2 z-10 flex size-5 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0"
+      role="status"
+      title={title}
+      aria-label={title}
+    >
       <SessionCircularProgress />
     </span>
   );
@@ -409,7 +413,7 @@ type SessionHoverQuickActionsProps = {
   relativeTime: string | null;
 };
 
-/** Pin → Archive → relative time — same trailing slot as status dots (Paper hover). */
+/** Pin → Archive → relative time — 与运行 loading 共用行尾位置，悬浮时优先显示。 */
 function SessionHoverQuickActions({
   className,
   sessionId,
@@ -424,7 +428,7 @@ function SessionHoverQuickActions({
     <div
       data-session-hover-actions
       className={cn(
-        "absolute right-2.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto",
+        "absolute right-2.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 opacity-0 pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto group-has-[:focus-visible]/menu-sub-item:opacity-100 group-has-[:focus-visible]/menu-sub-item:pointer-events-auto",
         className,
       )}
     >
@@ -1308,7 +1312,12 @@ function WorkspaceHeader({
         )}
       </span>
       <div
-        className={cn("min-w-0 flex-1", showActivity ? "pr-14" : "pr-7")}
+        // TIPS: 默认仅给 loading 留出小槽，尽可能展示名称；悬浮、菜单打开或键盘聚焦时
+        // 扩大尾部留白，让名称以省略号收缩并给「加号 + 更多」让位，与会话行行为一致。
+        className={cn(
+          "min-w-0 flex-1 transition-[padding] duration-150 group-hover/workspace-header:pr-10 group-has-data-popup-open/workspace-header:pr-10 group-has-[:focus-visible]/workspace-header:pr-10",
+          showActivity ? "pr-6" : "pr-0",
+        )}
       >
         <span className="block truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
@@ -1463,7 +1472,7 @@ function WorkspaceSidebarGroup({
                   focus-within 会让图标在鼠标移走后常驻；:focus-visible 只在键盘聚焦时命中。
                   loading 绝对定位在同一锚点，切换时行内布局零抖动；图标隐藏时不接收指针事件，
                   避免挡住右侧空白处的点击。 */}
-              <div className="absolute right-2 top-1/2 -translate-y-1/2">
+              <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 {showWorkspaceActivity ? (
                   <span
                     className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/workspace-header:opacity-0 group-has-data-popup-open/workspace-header:opacity-0 group-has-[:focus-visible]/workspace-header:opacity-0"
@@ -2243,8 +2252,6 @@ function SessionMenuItem({
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
-    // The left activity slot is the indent — dot-matrix sits in the chevron
-    // lane and the title starts in the group-label lane without shifting.
     "relative h-10 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
     isSelected
       ? "!bg-black/[0.045] hover:!bg-black/[0.055] group-hover/menu-sub-item:!bg-black/[0.055] dark:!bg-white/[0.08] dark:hover:!bg-white/[0.095] dark:group-hover/menu-sub-item:!bg-white/[0.095]"
@@ -2254,15 +2261,18 @@ function SessionMenuItem({
 
   const leading = (
     <>
-      <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
+      <span aria-hidden="true" className={LEFT_ACTIVITY_SLOT} />
       {showWorkspaceIcon ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
     </>
   );
 
   const trailing = (
     <>
+      {/* TIPS: 与工作区行保持一致，loading 和悬浮操作绝对定位到同一尾部锚点；
+          默认展示运行状态，悬浮、菜单打开或键盘聚焦时 loading 淡出、操作淡入，结束后自动恢复。 */}
+      <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
       <SessionOutcomeIndicator
-        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 pointer-events-none select-none"
+        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0 pointer-events-none select-none"
         status={sessionActivityStatus}
         isActiveWork={resolvedActiveWork}
         isUnread={isUnread}

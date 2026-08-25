@@ -321,4 +321,20 @@ describe("formatConfigWithoutCustomProvider", () => {
 
     expect(JSON.parse(updated)).toEqual({});
   });
+
+  test("treats a missing provider path as an idempotent no-op", () => {
+    expect(JSON.parse(formatConfigWithoutCustomProvider("{}\n", "huoshan1"))).toEqual({});
+    expect(JSON.parse(formatConfigWithoutCustomProvider('{"theme":"dark"}\n', "huoshan1"))).toEqual({ theme: "dark" });
+    expect(JSON.parse(formatConfigWithoutCustomProvider('{"provider":{"other":{"name":"Other"}}}\n', "huoshan1"))).toEqual({
+      provider: { other: { name: "Other" } },
+    });
+  });
+
+  test("removes a disabled entry even when the provider block is absent", () => {
+    const updated = formatConfigWithoutCustomProvider(
+      JSON.stringify({ disabled_providers: ["huoshan1", "other"] }),
+      "huoshan1",
+    );
+    expect(JSON.parse(updated)).toEqual({ disabled_providers: ["other"] });
+  });
 });

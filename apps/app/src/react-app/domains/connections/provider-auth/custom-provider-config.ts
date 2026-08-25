@@ -275,12 +275,23 @@ export const formatConfigWithoutCustomProvider = (raw: string, providerId: strin
     ? raw
     : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
 
-  updated = applyEdits(
-    updated,
-    modify(updated, ["provider", resolvedProviderId], undefined, {
-      formattingOptions: { insertSpaces: true, tabSize: 2 },
-    }),
-  );
+  const initial = parse(updated) as Record<string, unknown> | undefined;
+  const initialProviders = initial?.provider;
+  // TIPS: jsonc-parser 删除缺失路径时会抛出 “Can not delete in empty document”。
+  // 删除动作必须先确认目标字段存在，目标不存在应当是幂等 no-op。
+  if (
+    initialProviders &&
+    typeof initialProviders === "object" &&
+    !Array.isArray(initialProviders) &&
+    Object.prototype.hasOwnProperty.call(initialProviders, resolvedProviderId)
+  ) {
+    updated = applyEdits(
+      updated,
+      modify(updated, ["provider", resolvedProviderId], undefined, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }),
+    );
+  }
 
   const parsedAfterProvider = parse(updated) as Record<string, unknown> | undefined;
   const providers = parsedAfterProvider?.provider;
@@ -299,21 +310,26 @@ export const formatConfigWithoutCustomProvider = (raw: string, providerId: strin
   }
 
   const parsed = parse(updated) as Record<string, unknown> | undefined;
-  const disabledProviders = Array.isArray(parsed?.disabled_providers)
-    ? parsed.disabled_providers.filter(
+  const existingDisabledProviders = Array.isArray(parsed?.disabled_providers)
+    ? parsed.disabled_providers
+    : [];
+  const disabledProviders = existingDisabledProviders.length
+    ? existingDisabledProviders.filter(
         (entry): entry is string =>
           typeof entry === "string" && entry.trim() !== resolvedProviderId,
       )
     : [];
-  updated = applyEdits(
-    updated,
-    modify(
+  if (existingDisabledProviders.some((entry) => typeof entry === "string" && entry.trim() === resolvedProviderId)) {
+    updated = applyEdits(
       updated,
-      ["disabled_providers"],
-      disabledProviders.length ? disabledProviders : undefined,
-      { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-    ),
-  );
+      modify(
+        updated,
+        ["disabled_providers"],
+        disabledProviders.length ? disabledProviders : undefined,
+        { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+      ),
+    );
+  }
 
   return updated.endsWith("\n") ? updated : `${updated}\n`;
 };

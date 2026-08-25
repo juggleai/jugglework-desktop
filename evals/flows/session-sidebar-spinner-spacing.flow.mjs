@@ -27,19 +27,20 @@ const MEASURE_SESSION_ROW = `(() => {
     whiteSpace: style.whiteSpace,
     overflow: style.overflow,
     textOverflow: style.textOverflow,
-    titleLeft: Math.round(titleRect.left),
+    titleRight: Math.round(titleRect.right),
+    indicatorLeft: Math.round(indicatorRect.left),
     indicatorRight: Math.round(indicatorRect.right),
     rowRight: Math.round(rowRect.right),
     rowPaddingInlineEnd: rowStyle.paddingInlineEnd,
     rowClassName: row.className,
-    // Dot-matrix loader occupies the fixed left activity lane — title must start after it.
-    overlap: titleRect.left < indicatorRect.right - 1,
+    // 行尾 loader 与标题之间保留空间，并在悬浮时让位给操作按钮。
+    overlap: titleRect.right > indicatorRect.left + 1,
   };
 })()`;
 
 export default {
   id: "session-sidebar-spinner-spacing",
-  title: "Long active session titles truncate before the activity spinner",
+  title: "Long active session titles truncate before the trailing activity spinner",
   kind: "user-facing",
   steps: [
     {
@@ -104,7 +105,7 @@ export default {
           label: "truncated active session title",
         });
 
-        await ctx.prove("A long active session title truncates cleanly beside its left spinner", {
+        await ctx.prove("A long active session title truncates cleanly before its trailing spinner", {
           voiceover: vo[0],
           assert: async () => {
             const metrics = await ctx.eval(MEASURE_SESSION_ROW);
@@ -113,11 +114,11 @@ export default {
             ctx.assert(metrics.overflow === "hidden", `Expected hidden overflow, got ${metrics.overflow}.`);
             ctx.assert(metrics.textOverflow === "ellipsis", `Expected ellipsis, got ${metrics.textOverflow}.`);
             ctx.assert(metrics.titleScrollWidth > metrics.titleClientWidth, "The long title was not truncated.");
-            ctx.assert(!metrics.overlap, `Title and left spinner overlap: ${JSON.stringify(metrics)}.`);
-            ctx.assert(metrics.indicatorRight <= metrics.titleLeft, "Spinner should sit to the left of the title.");
+            ctx.assert(!metrics.overlap, `Title and trailing spinner overlap: ${JSON.stringify(metrics)}.`);
+            ctx.assert(metrics.indicatorLeft >= metrics.titleRight, "Spinner should sit to the right of the title.");
           },
           screenshot: {
-            name: "session-title-truncates-beside-left-spinner",
+            name: "session-title-truncates-before-trailing-spinner",
             requireText: ["JuggleWork diagnostics authorization"],
           },
         });

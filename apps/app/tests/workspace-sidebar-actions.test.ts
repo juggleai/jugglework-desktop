@@ -8,6 +8,10 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/data-workspace-actions[\s\S]+<Plus className="size-4"/);
     expect(source).toMatch(/opacity-0[\s\S]+group-hover\/workspace-header:opacity-100/);
     expect(source).toMatch(/ctx\.onCreateTaskInWorkspace\(workspace\.id\)/);
+    expect(source).toMatch(/group-hover\/workspace-header:pr-10/);
+    expect(source).toMatch(/group-has-data-popup-open\/workspace-header:pr-10/);
+    expect(source).toMatch(/showActivity \? "pr-6" : "pr-0"/);
+    expect(source).not.toMatch(/showActivity \? "pr-14" : "pr-7"/);
   });
 
   test("swaps collapsed-workspace loading and hover actions in the same trailing slot", () => {
@@ -19,7 +23,23 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/group-has-\[:focus-visible\]\/workspace-header:opacity-100/);
     expect(source).toMatch(/opacity-0 pointer-events-none transition-opacity[\s\S]+group-hover\/workspace-header:pointer-events-auto/);
     // loading 与操作图标同锚点叠放（绝对定位），切换时行内布局零抖动。
-    expect(source).toMatch(/absolute right-2 top-1\/2 -translate-y-1\/2/);
+    expect(source).toMatch(/absolute right-1 top-1\/2 -translate-y-1\/2/);
+  });
+
+  test("swaps active-session loading and hover actions in the same trailing slot", () => {
+    expect(source).not.toMatch(/group-focus-within\/menu-sub-item/);
+    expect(source).toMatch(/data-session-loading-indicator/);
+    expect(source).toMatch(/data-session-loading-indicator[\s\S]+absolute right-2\.5 top-1\/2/);
+    expect(source).toMatch(/data-session-loading-indicator[\s\S]+group-hover\/menu-sub-item:opacity-0/);
+    expect(source).toMatch(/data-session-loading-indicator[\s\S]+group-has-data-popup-open\/menu-sub-item:opacity-0/);
+    expect(source).toMatch(/data-session-hover-actions[\s\S]+group-hover\/menu-sub-item:opacity-100/);
+    expect(source).toMatch(/data-session-hover-actions[\s\S]+group-has-\[:focus-visible\]\/menu-sub-item:pointer-events-auto/);
+  });
+
+  test("keeps the empty left lane after moving session loading to the trailing slot", () => {
+    expect(source).toMatch(/const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center"/);
+    expect(source).toMatch(/const leading = \([\s\S]+aria-hidden="true" className=\{LEFT_ACTIVITY_SLOT\}/);
+    expect(source).not.toMatch(/className=\{LEFT_ACTIVITY_SLOT\} role="status"/);
   });
 
   test("keeps New Session out of the overflow menu and restores Share below Edit name", () => {
