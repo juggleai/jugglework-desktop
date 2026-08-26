@@ -77,12 +77,26 @@ git 可用性用 `GET /vcs` 判定：非 git 目录返回 `{branch: null}`（不
 - `openTarget` 中命中文件的分支不再创建 `artifact` 标签，改为在文件面板打开对应路径；URL 分支维持浏览器标签不变。
 - `panel-tab-store` 的 `artifact` 标签类型与 `SidePanel` 中的渲染分支保留：老版本持久化数据里可能仍有 artifact 标签，保留渲染路径可以让它们继续正常显示直到被关闭；新逻辑不再创建这类标签。
 
+### Markdown 预览
+
+- Markdown 文件默认复用 `MarkdownPreview` 的 Marked + DOMPurify 渲染链路，编辑入口再按需挂载 CodeMirror；保存成功返回预览，普通文本文件仍直接编辑。
+- GFM 表格外包一层横向滚动容器，避免窄分栏中的长表格撑破布局。
+- Mermaid 仅在检测到 `mermaid` 围栏时动态加载。渲染采用 `securityLevel: strict`，并串行调用全局 Mermaid 实例，避免多个预览的主题配置相互覆盖；单图失败降级为错误提示和源码。
+- 普通代码块复用聊天 Markdown 的原生按钮、复制与两秒成功反馈契约；`MarkdownPreview` 显式启用，其他 surface Markdown 消费方保持原行为。
+
+### 文件树右键菜单
+
+- 相对路径直接使用文件树统一的 `/` 分隔工作区路径；绝对路径通过桌面端 `path.join` IPC 生成，因此 Windows 复制 `\\` 分隔路径，macOS/Linux 复制 `/` 分隔路径。
+- 文件和目录统一调用 Electron `shell.showItemInFolder`：macOS/Windows 通常在 Finder/Explorer 中选中目标；Linux 优先使用 FileManager1/portal，桌面环境不支持选中时退化为打开包含目录。
+- 悬浮目录树的右键菜单通过 portal 渲染，菜单打开期间暂停原有 220ms 鼠标离开收起计时，避免菜单被树弹层卸载。
+
 ## Risks / Trade-offs
 
 - [超大目录（如 `node_modules` 根层数千条目）渲染卡顿] → 单层超过 500 条时截断展示并提示「仅显示前 500 项」，配合虚拟滚动前的最小成本方案。
 - [全屏切换重挂载导致滚动位置丢失] → 只保证标签、草稿、展开状态不丢；滚动位置丢失可接受，必要时后续再存。
 - [`/vcs/diff` 一次返回整个工作区的 patch，改动很多时响应体大] → 列表与 diff 分开渲染，只有选中文件才渲染其 patch；单文件 patch 超过 2000 行时折叠并提供「仍要展示」。若后续遇到超大工作区，可改为 `/vcs/status` 出列表、选中时再取该文件 patch。
 - [编辑器仅有 markdown/纯文本两档高亮，代码文件观感弱于 IDE] → 本次接受，语法高亮扩展作为后续独立变更。
+- [Mermaid 依赖体积较大] → 只在 Markdown 实际包含 Mermaid 围栏时动态导入，不进入初始渲染路径。
 - [写入任意扩展名文件绕过了 `/files/content` 的白名单] → `/files/raw` 已有路径穿越校验、5MB 上限、审批与审计记录，安全边界不变；白名单本身面向的是「内联文本产物」，不是安全控制。
 
 ## Migration Plan

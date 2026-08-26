@@ -100,7 +100,7 @@ export function FilesPanel({
     openFile(sessionId, { path: change.path, name: change.path.split("/").pop() ?? change.path });
   };
 
-  const treeNode = (onOpened?: () => void) => (
+  const treeNode = (onOpened?: () => void, onContextMenuOpenChange?: (open: boolean) => void) => (
     <FileTree
       client={opencodeClient}
       sessionId={sessionId}
@@ -111,6 +111,7 @@ export function FilesPanel({
         openFile(sessionId, entry);
         onOpened?.();
       }}
+      onContextMenuOpenChange={onContextMenuOpenChange}
     />
   );
 
@@ -142,7 +143,7 @@ export function FilesPanel({
             trigger={<Menu className="size-4" />}
             workspaceRoot={workspaceRoot}
           >
-            {(close) => treeNode(close)}
+            {(close, onContextMenuOpenChange) => treeNode(close, onContextMenuOpenChange)}
           </TreePopover>
         )}
         <div className="min-w-0 flex-1 overflow-hidden">
@@ -230,8 +231,8 @@ type TreePopoverProps = {
   workspaceRoot: string;
   /** 弹层相对触发按钮的对齐方式 */
   align?: "start" | "end";
-  /** 弹层内容；参数是收起弹层的回调，仅在真正打开文件时调用 */
-  children: (close: () => void) => React.ReactNode;
+  /** 弹层内容；参数分别为收起弹层、同步右键菜单开关的回调 */
+  children: (close: () => void, onContextMenuOpenChange: (open: boolean) => void) => React.ReactNode;
 };
 
 /**
@@ -244,11 +245,12 @@ type TreePopoverProps = {
  * @param trigger 触发按钮里的图标
  * @param workspaceRoot 工作区根目录绝对路径
  * @param align 弹层对齐方式
- * @param children 弹层内容（目录树），接收收起弹层的回调
+ * @param children 弹层内容（目录树），接收收起弹层与右键菜单开关回调
  */
 function TreePopover({ label, trigger, workspaceRoot, align = "start", children }: TreePopoverProps) {
   const [open, setOpen] = React.useState(false);
   const closeTimerRef = React.useRef<number | null>(null);
+  const contextMenuOpenRef = React.useRef(false);
 
   const cancelClose = () => {
     if (closeTimerRef.current !== null) {
@@ -259,7 +261,9 @@ function TreePopover({ label, trigger, workspaceRoot, align = "start", children 
 
   const scheduleClose = () => {
     cancelClose();
-    closeTimerRef.current = window.setTimeout(() => setOpen(false), 220);
+    closeTimerRef.current = window.setTimeout(() => {
+      if (!contextMenuOpenRef.current) setOpen(false);
+    }, 220);
   };
 
   React.useEffect(() => cancelClose, []);
@@ -298,6 +302,9 @@ function TreePopover({ label, trigger, workspaceRoot, align = "start", children 
           {children(() => {
             cancelClose();
             setOpen(false);
+          }, (nextOpen) => {
+            contextMenuOpenRef.current = nextOpen;
+            if (nextOpen) cancelClose();
           })}
         </div>
       </PopoverContent>

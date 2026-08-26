@@ -1,11 +1,15 @@
 /** @jsxImportSource react */
 import * as React from "react";
-import { ChevronRight, File as FileIcon, Folder, FolderOpen, Loader2, RotateCw } from "lucide-react";
+import { ChevronRight, Copy, File as FileIcon, Folder, FolderOpen, Loader2, Locate, RotateCw } from "lucide-react";
 
+import { desktopHostPlatform, joinDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import type { createClient } from "@/app/lib/opencode";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { t } from "../../../../i18n";
+import { revealLabelKey } from "./file-tree-actions";
 import { useFilesPanelStore } from "./files-panel-store";
 import { useWorkspaceDir, WORKSPACE_TREE_ROOT, type WorkspaceTreeEntry } from "./use-workspace-tree";
 
@@ -18,6 +22,7 @@ type FileTreeProps = {
   activePath: string | null;
   expandedDirs: Set<string>;
   onOpenFile: (entry: { path: string; name: string }) => void;
+  onContextMenuOpenChange?: (open: boolean) => void;
 };
 
 /**
@@ -30,7 +35,7 @@ type FileTreeProps = {
  * @param expandedDirs 已展开的目录集合
  * @param onOpenFile 点击文件的回调
  */
-export function FileTree({ client, sessionId, workspaceRoot, activePath, expandedDirs, onOpenFile }: FileTreeProps) {
+export function FileTree({ client, sessionId, workspaceRoot, activePath, expandedDirs, onOpenFile, onContextMenuOpenChange }: FileTreeProps) {
   return (
     <div className="subtle-scrollbar min-h-0 flex-1 overflow-auto py-1">
       <DirChildren
@@ -43,6 +48,7 @@ export function FileTree({ client, sessionId, workspaceRoot, activePath, expande
         activePath={activePath}
         expandedDirs={expandedDirs}
         onOpenFile={onOpenFile}
+        onContextMenuOpenChange={onContextMenuOpenChange}
       />
     </div>
   );
@@ -64,6 +70,7 @@ function DirChildren({
   activePath,
   expandedDirs,
   onOpenFile,
+  onContextMenuOpenChange,
 }: DirChildrenProps) {
   const { data, isLoading, isError, error, refetch } = useWorkspaceDir(client, workspaceRoot, path, expanded);
 
@@ -110,6 +117,7 @@ function DirChildren({
           activePath={activePath}
           expandedDirs={expandedDirs}
           onOpenFile={onOpenFile}
+          onContextMenuOpenChange={onContextMenuOpenChange}
         />
       ))}
       {data.truncated ? (
@@ -136,43 +144,74 @@ function TreeNode({
   activePath,
   expandedDirs,
   onOpenFile,
+  onContextMenuOpenChange,
 }: TreeNodeProps) {
   const toggleDir = useFilesPanelStore((state) => state.toggleDir);
   const expanded = expandedDirs.has(entry.path);
   const active = entry.type === "file" && entry.path === activePath;
+  const platform = desktopHostPlatform();
+
+  const absolutePath = React.useCallback(
+    () => joinDesktopPath(workspaceRoot, entry.path),
+    [entry.path, workspaceRoot],
+  );
+
+  const copyPath = async (absolute: boolean) => {
+    try {
+      await navigator.clipboard.writeText(absolute ? await absolutePath() : entry.path);
+      toast.success(t("session_files.path_copied"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : t("session_files.path_action_failed"));
+    }
+  };
+
+  const reveal = async () => {
+    try {
+      await revealDesktopItemInDir(await absolutePath());
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : t("session_files.path_action_failed"));
+    }
+  };
+
+  const row = (
+    <button
+      type="button"
+      className={cn(
+        "flex w-full items-center gap-1.5 py-1 pe-2 text-left text-[13px] text-foreground/90 hover:bg-muted",
+        active && "bg-muted/80 text-foreground",
+        entry.ignored && "text-muted-foreground/70",
+      )}
+      style={indentStyle(depth)}
+      onClick={() => {
+        if (entry.type === "directory") {
+          toggleDir(sessionId, entry.path);
+          return;
+        }
+        onOpenFile({ path: entry.path, name: entry.name });
+      }}
+    >
+      {entry.type === "directory" ? (
+        <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
+      ) : <span className="size-3.5 shrink-0" />}
+      {entry.type === "directory" ? (
+        expanded ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" /> : <Folder className="size-4 shrink-0 text-muted-foreground" />
+      ) : <FileIcon className="size-4 shrink-0 text-muted-foreground" />}
+      <span className="min-w-0 truncate">{entry.name}</span>
+    </button>
+  );
 
   return (
     <>
-      <button
-        type="button"
-        className={cn(
-          "flex w-full items-center gap-1.5 py-1 pe-2 text-left text-[13px] text-foreground/90 hover:bg-muted",
-          active && "bg-muted/80 text-foreground",
-          entry.ignored && "text-muted-foreground/70",
-        )}
-        style={indentStyle(depth)}
-        onClick={() => {
-          if (entry.type === "directory") {
-            toggleDir(sessionId, entry.path);
-
-            return;
-          }
-
-          onOpenFile({ path: entry.path, name: entry.name });
-        }}
-      >
-        {entry.type === "directory" ? (
-          <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-        ) : (
-          <span className="size-3.5 shrink-0" />
-        )}
-        {entry.type === "directory" ? (
-          expanded ? <FolderOpen className="size-4 shrink-0 text-muted-foreground" /> : <Folder className="size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <FileIcon className="size-4 shrink-0 text-muted-foreground" />
-        )}
-        <span className="min-w-0 truncate">{entry.name}</span>
-      </button>
+      <ContextMenu onOpenChange={onContextMenuOpenChange}>
+        <ContextMenuTrigger render={row} />
+        <ContextMenuContent className="w-56">
+          <ContextMenuItem onClick={() => void copyPath(false)}><Copy />{t("session_files.copy_relative_path")}</ContextMenuItem>
+          <ContextMenuItem onClick={() => void copyPath(true)}><Copy />{t("session_files.copy_absolute_path")}</ContextMenuItem>
+          {platform ? (
+            <><ContextMenuSeparator /><ContextMenuItem onClick={() => void reveal()}><Locate />{t(revealLabelKey(platform))}</ContextMenuItem></>
+          ) : null}
+        </ContextMenuContent>
+      </ContextMenu>
       {entry.type === "directory" ? (
         <DirChildren
           client={client}
@@ -184,6 +223,7 @@ function TreeNode({
           activePath={activePath}
           expandedDirs={expandedDirs}
           onOpenFile={onOpenFile}
+          onContextMenuOpenChange={onContextMenuOpenChange}
         />
       ) : null}
     </>

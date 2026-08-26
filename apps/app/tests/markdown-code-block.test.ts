@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "../src/components/markdown/markdown";
 import { renderHighlightedMarkdownHtml as renderPrimitiveHighlightedMarkdownHtml, renderMarkdownHtml as renderPrimitiveMarkdownHtml } from "../src/components/markdown/markdown-primitive";
 import { textHighlightParts } from "../src/components/markdown/text-highlights";
+import { hasMermaidCodeBlock } from "../src/react-app/domains/session/artifacts/mermaid-diagrams";
 
 const CODE = "const value = 1;\nconsole.log(value);";
 const MARKDOWN = `\`\`\`ts\n${CODE}\n\`\`\``;
@@ -40,7 +41,7 @@ describe("markdown code blocks", () => {
     expect(html).toContain("github-dark");
   });
 
-  test("renders surface code blocks without chat-only copy controls", async () => {
+  test("renders surface code blocks without copy controls unless explicitly enabled", async () => {
     const fallbackHtml = renderPrimitiveMarkdownHtml(MARKDOWN, "surface");
     expect(fallbackHtml).toContain("border-dls-border/70");
     expect(fallbackHtml).toContain("bg-gray-1/80");
@@ -52,6 +53,26 @@ describe("markdown code blocks", () => {
     expect(highlightedHtml).toContain("github-light");
     expect(highlightedHtml).not.toContain("github-dark");
     expect(highlightedHtml).not.toContain("data-jugglework-code-copy");
+  });
+
+  test("renders copyable surface code blocks with icon feedback markup", async () => {
+    const fallbackHtml = renderPrimitiveMarkdownHtml(MARKDOWN, "surface-copyable");
+    expect(fallbackHtml).toContain("data-jugglework-code-block");
+    expect(fallbackHtml).toContain("data-jugglework-code-copy");
+    expect(fallbackHtml).toContain("data-jugglework-code-copy-icon");
+    expect(fallbackHtml).toContain("data-jugglework-code-copy-check-icon");
+    expect(fallbackHtml).toContain('aria-label="Copy code block"');
+    expect(fallbackHtml).toContain("pt-11");
+
+    const highlightedHtml = await renderPrimitiveHighlightedMarkdownHtml(MARKDOWN, "surface-copyable");
+    expect(highlightedHtml).toContain("data-jugglework-shiki");
+    expect(highlightedHtml).toContain("data-jugglework-code-copy");
+  });
+
+  test("leaves Mermaid fences unwrapped for diagram rendering", () => {
+    const html = renderPrimitiveMarkdownHtml("```mermaid\nflowchart LR\nA --> B\n```", "surface-copyable");
+    expect(html).toContain('class="language-mermaid"');
+    expect(html).not.toContain("data-jugglework-code-copy");
   });
 });
 
@@ -78,6 +99,24 @@ describe("markdown safety and links", () => {
     expect(surfaceHtml).not.toContain("data-jugglework-link-href");
     expect(surfaceHtml).toContain('href="./docs/readme.md"');
     expect(surfaceHtml).toContain('href="https://juggle.im"');
+  });
+});
+
+describe("markdown rich blocks", () => {
+  test("wraps GFM tables in a horizontally scrollable surface", () => {
+    const html = renderPrimitiveMarkdownHtml("| Name | Value |\n| --- | ---: |\n| Alpha | 1 |", "surface");
+
+    expect(html).toContain("data-jugglework-markdown-table");
+    expect(html).toContain("overflow-x-auto");
+    expect(html).toContain("min-w-max");
+    expect(html).toContain('style="text-align: right"');
+  });
+
+  test("detects backtick and tilde Mermaid fences without matching other code", () => {
+    expect(hasMermaidCodeBlock("```mermaid\nflowchart LR\nA --> B\n```" )).toBe(true);
+    expect(hasMermaidCodeBlock("```Mermaid\nflowchart LR\nA --> B\n```" )).toBe(true);
+    expect(hasMermaidCodeBlock("~~~mermaid title\nsequenceDiagram\nA->>B: Hi\n~~~" )).toBe(true);
+    expect(hasMermaidCodeBlock("```typescript\nconst mermaid = true\n```" )).toBe(false);
   });
 });
 
