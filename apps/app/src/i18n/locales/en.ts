@@ -2423,7 +2423,7 @@ export default {
   "cloud_account.loading_orgs": "Loading organizations...",
   "cloud_account.loading_your_orgs": "Loading your organizations...",
   "cloud_account.select_org": "Select an organization",
-  "cloud_account.select_org_desc": "Choose the organization to use with this workspace. Sign out to switch later.",
+  "cloud_account.select_org_desc": "Choose the active organization for this workspace. You can switch at any time.",
   "cloud_account.search_orgs": "Search organizations",
   "cloud_account.search_orgs_placeholder": "Search organizations...",
   "cloud_account.no_orgs_match": "No organizations match your search.",

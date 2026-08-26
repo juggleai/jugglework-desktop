@@ -4,10 +4,7 @@ import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
 import type { DenOrgSummary } from "../../../../app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  SettingsNotice,
-  SettingsSectionHeaderDescription,
-} from "../settings-section";
+import { SettingsNotice } from "../settings-section";
 import { t } from "@/i18n";
 import { useCloudSession } from "./cloud-session-provider";
 import { useOrgListWindow } from "../../cloud/use-org-list-window";
@@ -29,7 +26,6 @@ export interface CloudAccountSectionProps {
 export function CloudAccountSection({
   activeOrgId,
   authBusy,
-  needsOrgSelection,
   orgs,
   orgsBusy,
   orgsError,
@@ -82,32 +78,20 @@ export function CloudAccountSection({
         </div>
       </div>
 
-      {/* Org picker (stepper-style) or connected org display */}
-      {needsOrgSelection ? (
-        <OrgPicker
-          orgs={orgs}
-          orgsBusy={orgsBusy}
-          disabled={controlsDisabled}
-          onSelect={onActiveOrgChange}
-          onRefresh={onRefreshOrgs}
-        />
-      ) : activeOrg ? (
-        <ConnectedOrg org={activeOrg} />
-      ) : orgsBusy ? (
-        <div className="flex items-center gap-2 text-sm text-dls-secondary">
-          <Loader2 size={14} className="animate-spin" />
-          {t("cloud_account.loading_orgs")}
-        </div>
-      ) : null}
+      {/* Keep every membership visible so the active organization can be changed in place. */}
+      <CloudOrganizationList
+        activeOrgId={activeOrg?.id ?? ""}
+        orgs={orgs}
+        orgsBusy={orgsBusy}
+        disabled={controlsDisabled || orgsBusy}
+        onSelect={onActiveOrgChange}
+        onRefresh={onRefreshOrgs}
+      />
 
       {orgsError ? <SettingsNotice tone="error">{orgsError}</SettingsNotice> : null}
     </section>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Connected org: read-only display                                   */
-/* ------------------------------------------------------------------ */
 
 // Owner and admin share every administrative capability, so an admin must not
 // be labelled as a plain member.
@@ -122,34 +106,19 @@ function orgRoleLabel(role: DenOrgSummary["role"]): string {
   }
 }
 
-function ConnectedOrg({ org }: { org: DenOrgSummary }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-green-3 text-green-11">
-        <Building2 size={16} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-dls-text">{org.name}</div>
-        <div className="text-xs text-dls-secondary">
-          {orgRoleLabel(org.role)} &middot; Connected
-        </div>
-      </div>
-      <Check size={16} className="shrink-0 text-green-11" />
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ */
 /*  Org picker: card-per-org selection                                 */
 /* ------------------------------------------------------------------ */
 
-function OrgPicker({
+export function CloudOrganizationList({
+  activeOrgId,
   orgs,
   orgsBusy,
   disabled,
   onSelect,
   onRefresh,
 }: {
+  activeOrgId: string;
   orgs: DenOrgSummary[];
   orgsBusy: boolean;
   disabled: boolean;
@@ -159,7 +128,7 @@ function OrgPicker({
   const { filtered, query, showMore, updateQuery, visible } = useOrgListWindow(orgs);
   const hasMore = visible.length < filtered.length;
 
-  if (orgsBusy) {
+  if (orgsBusy && orgs.length === 0) {
     return (
       <div className="flex flex-col items-center gap-3 py-6 text-sm text-dls-secondary">
         <Loader2 size={20} className="animate-spin" />
@@ -201,25 +170,47 @@ function OrgPicker({
         />
       ) : null}
       <div className="flex flex-col gap-2">
-        {visible.map((org) => (
-          <button
-            key={org.id}
-            type="button"
-            disabled={disabled}
-            className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-left transition-colors hover:border-dls-text/20 hover:bg-dls-hover disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => void onSelect(org.id)}
-          >
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-dls-hover text-dls-secondary">
-              <Building2 size={16} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-dls-text">{org.name}</div>
-              <div className="text-xs text-dls-secondary">
-                {orgRoleLabel(org.role)}
+        {visible.map((org) => {
+          const isActive = org.id === activeOrgId;
+          return (
+            <button
+              key={org.id}
+              type="button"
+              aria-current={isActive ? "true" : undefined}
+              disabled={disabled}
+              className={`flex items-center gap-3 rounded-xl border bg-dls-surface px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                isActive
+                  ? "border-green-7"
+                  : "border-dls-border hover:border-dls-text/20 hover:bg-dls-hover"
+              }`}
+              onClick={() => {
+                if (!isActive) void onSelect(org.id);
+              }}
+            >
+              <div
+                className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${
+                  isActive
+                    ? "bg-green-3 text-green-11"
+                    : "bg-dls-hover text-dls-secondary"
+                }`}
+              >
+                <Building2 size={16} />
               </div>
-            </div>
-          </button>
-        ))}
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-dls-text">{org.name}</div>
+                <div className="text-xs text-dls-secondary">
+                  {orgRoleLabel(org.role)}
+                </div>
+              </div>
+              {isActive ? (
+                <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-green-11">
+                  {t("dashboard.connected")}
+                  <Check size={16} />
+                </div>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
       {filtered.length === 0 && query.trim() ? (
         <div className="text-sm text-dls-secondary">

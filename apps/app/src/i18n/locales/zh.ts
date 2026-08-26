@@ -2426,7 +2426,7 @@ export default {
   "cloud_account.loading_orgs": "正在加载组织…",
   "cloud_account.loading_your_orgs": "正在加载你的组织…",
   "cloud_account.select_org": "选择一个组织",
-  "cloud_account.select_org_desc": "选择要用于此工作区的组织。之后可通过登出来切换。",
+  "cloud_account.select_org_desc": "选择此工作区当前使用的组织。你可以随时切换。",
   "cloud_account.search_orgs": "搜索组织",
   "cloud_account.search_orgs_placeholder": "搜索组织…",
   "cloud_account.no_orgs_match": "没有匹配搜索条件的组织。",
