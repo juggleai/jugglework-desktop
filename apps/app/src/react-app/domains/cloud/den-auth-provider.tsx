@@ -20,7 +20,10 @@ import {
   readDenSettings,
   resolveDenBaseUrls,
   setDenBootstrapConfig,
+  writeDenSettings,
   type DenBootstrapConfig,
+  type DenOrgSummary,
+  type DenTenantAccount,
   type DenUser,
 } from "../../../app/lib/den";
 import { reconcileDenAccountIdentity } from "./den-account-switch";
@@ -28,6 +31,7 @@ import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
+  dispatchDenSessionUpdated,
 } from "../../../app/lib/den-session-events";
 import {
   deepLinkBridgeEvent,
@@ -81,7 +85,15 @@ export type DenAuthStore = {
   user: DenUser | null;
   error: string | null;
   isSignedIn: boolean;
+  organizations: DenOrgSummary[];
+  activeOrganization: DenOrgSummary | null;
+  tenantAccount: DenTenantAccount | null;
+  accountBusy: boolean;
+  accountError: string | null;
   refresh: () => Promise<void>;
+  refreshAccount: () => Promise<void>;
+  switchOrganization: (organizationId: string) => Promise<void>;
+  signOut: () => Promise<void>;
 };
 
 const DenAuthContext = createContext<DenAuthStore | undefined>(undefined);
@@ -140,6 +152,11 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [status, setStatus] = useState<DenAuthStatus>("checking");
   const [user, setUser] = useState<DenUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<DenOrgSummary[]>([]);
+  const [activeOrganization, setActiveOrganization] = useState<DenOrgSummary | null>(null);
+  const [tenantAccount, setTenantAccount] = useState<DenTenantAccount | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
   const statusRef = useRef<DenAuthStatus>("checking");
@@ -153,6 +170,100 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     setStatus(nextStatus);
   }, []);
 
+  const clearAccountState = useCallback(() => {
+    setOrganizations([]);
+    setActiveOrganization(null);
+    setTenantAccount(null);
+    setAccountError(null);
+  }, []);
+
+  const refreshAccount = useCallback(async () => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    if (!token) {
+      clearAccountState();
+      return;
+    }
+
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      const response = await client.listOrgs();
+      const active =
+        response.orgs.find((org) => org.id === settings.activeOrgId?.trim()) ??
+        response.orgs.find((org) => org.slug === settings.activeOrgSlug?.trim()) ??
+        response.orgs.find((org) => org.id === response.activeOrgId) ??
+        response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
+        response.orgs[0] ??
+        null;
+      setOrganizations(response.orgs);
+      setActiveOrganization(active);
+      if (!active) {
+        setTenantAccount(null);
+        return;
+      }
+      writeDenSettings({
+        ...settings,
+        activeOrgId: active.id,
+        activeOrgSlug: active.slug,
+        activeOrgName: active.name,
+      }, { persistBootstrap: false });
+      // Older Den deployments may not expose tenant accounts yet. Keep the
+      // identity and organization menu usable while tier/balance degrades to
+      // the directory summary or an em dash.
+      setTenantAccount(await client.getTenantAccount(active.id).catch(() => null));
+    } catch (nextError) {
+      setAccountError(nextError instanceof Error ? nextError.message : t("den.error_load_orgs"));
+    } finally {
+      setAccountBusy(false);
+    }
+  }, [clearAccountState]);
+
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    const next = organizations.find((organization) => organization.id === organizationId);
+    if (!next || next.id === activeOrganization?.id) return;
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    if (!token) throw new Error(t("den.signed_out"));
+
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const client = createDenClient({ baseUrl: settings.baseUrl, token });
+      await client.setActiveOrganization({ organizationId: next.id });
+      writeDenSettings({
+        ...settings,
+        activeOrgId: next.id,
+        activeOrgSlug: next.slug,
+        activeOrgName: next.name,
+      }, { persistBootstrap: false });
+      setActiveOrganization(next);
+      setTenantAccount(await client.getTenantAccount(next.id).catch(() => null));
+      await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : t("den.error_load_orgs");
+      setAccountError(message);
+      throw nextError;
+    } finally {
+      setAccountBusy(false);
+    }
+  }, [activeOrganization?.id, organizations]);
+
+  const signOut = useCallback(async () => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    if (token) {
+      await createDenClient({ baseUrl: settings.baseUrl, token }).signOut();
+    }
+    clearDenSession();
+    clearAccountState();
+    setUser(null);
+    setError(null);
+    updateStatus("signed_out");
+    dispatchDenSessionUpdated({ status: "signed_out", baseUrl: settings.baseUrl });
+  }, [clearAccountState, updateStatus]);
+
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
     const settings = readDenSettings();
@@ -160,6 +271,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
     if (!token) {
       setUser(null);
+      clearAccountState();
       setError(null);
       lastSignalRetryAtRef.current = null;
       updateStatus("signed_out");
@@ -216,7 +328,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       );
       updateStatus(failureStatus);
     }
-  }, [updateStatus]);
+  }, [clearAccountState, updateStatus]);
 
   useEffect(() => {
     void refresh();
@@ -232,6 +344,14 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!user || !hasRetainedDenSession(status)) {
+      if (status === "signed_out") clearAccountState();
+      return;
+    }
+    void refreshAccount();
+  }, [clearAccountState, refreshAccount, status, user]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -379,9 +499,17 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       user,
       error,
       isSignedIn: hasRetainedDenSession(status),
+      organizations,
+      activeOrganization,
+      tenantAccount,
+      accountBusy,
+      accountError,
       refresh,
+      refreshAccount,
+      switchOrganization,
+      signOut,
     }),
-    [error, refresh, status, user],
+    [accountBusy, accountError, activeOrganization, error, organizations, refresh, refreshAccount, signOut, status, switchOrganization, tenantAccount, user],
   );
 
   return (

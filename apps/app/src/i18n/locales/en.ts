@@ -4,6 +4,22 @@
  */
 
 export default {
+  "account_menu.balance": "Points balance",
+  "account_menu.check_updates": "Check for updates",
+  "account_menu.help_feedback": "Help & feedback",
+  "account_menu.loading": "Loading…",
+  "account_menu.membership_unknown": "Member",
+  "account_menu.no_organization": "No organization",
+  "account_menu.open": "Open account menu",
+  "account_menu.signed_out": "Signed out",
+  "account_menu.switch_failed": "Couldn't switch organization",
+  "account_menu.switch_organization": "Switch organization",
+  "account_menu.tier_business": "Business",
+  "account_menu.tier_normal": "Normal",
+  "account_menu.tier_power": "Power",
+  "account_menu.tier_pro": "Pro",
+  "account_menu.tier_team": "Team",
+  "account_menu.upgrade": "Upgrade",
   "app.compact_command_desc": "Summarize this session to reduce context size.",
   "app.error_audit_load": "Failed to load audit log.",
   "app.error_auth_failed": "Authentication failed",

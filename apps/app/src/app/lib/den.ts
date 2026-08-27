@@ -186,6 +186,27 @@ export type DenOrgSummary = {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
+  kind?: "personal" | "organization";
+  tier?: DenTenantTier | null;
+  accountStatus?: string | null;
+};
+
+export type DenTenantTier = "normal" | "pro" | "power" | "team" | "business";
+
+export type DenTenantAccount = {
+  kind: "personal" | "organization";
+  tier: DenTenantTier;
+  status: string;
+  tierVersion: number;
+  points: {
+    available: number;
+    reserved: number;
+    version: number;
+  };
+  permissions: {
+    canViewLedger: boolean;
+    canManageBilling: boolean;
+  };
 };
 
 export type DenWorkerSummary = {
@@ -1270,9 +1291,54 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
         name: entry.name,
         slug: entry.slug,
         role: entry.role,
+        kind: entry.kind === "personal" || entry.kind === "organization" ? entry.kind : undefined,
+        tier: isDenTenantTier(entry.tier) ? entry.tier : null,
+        accountStatus: typeof entry.accountStatus === "string" ? entry.accountStatus : null,
       } satisfies DenOrgSummary,
     ];
   });
+}
+
+function isDenTenantTier(value: unknown): value is DenTenantTier {
+  return value === "normal" || value === "pro" || value === "power" || value === "team" || value === "business";
+}
+
+function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown): tier is DenTenantTier {
+  return kind === "personal"
+    ? tier === "normal" || tier === "pro" || tier === "power"
+    : tier === "team" || tier === "business";
+}
+
+function getTenantAccount(payload: unknown): DenTenantAccount | null {
+  if (!isRecord(payload) || !isRecord(payload.points) || !isRecord(payload.permissions)) return null;
+  if (
+    (payload.kind !== "personal" && payload.kind !== "organization") ||
+    !isDenTenantTierForKind(payload.kind, payload.tier) ||
+    typeof payload.status !== "string" ||
+    typeof payload.tierVersion !== "number" || !Number.isSafeInteger(payload.tierVersion) ||
+    typeof payload.points.available !== "number" || !Number.isSafeInteger(payload.points.available) ||
+    typeof payload.points.reserved !== "number" || !Number.isSafeInteger(payload.points.reserved) ||
+    typeof payload.points.version !== "number" || !Number.isSafeInteger(payload.points.version) ||
+    typeof payload.permissions.canViewLedger !== "boolean" ||
+    typeof payload.permissions.canManageBilling !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    kind: payload.kind,
+    tier: payload.tier,
+    status: payload.status,
+    tierVersion: payload.tierVersion,
+    points: {
+      available: payload.points.available,
+      reserved: payload.points.reserved,
+      version: payload.points.version,
+    },
+    permissions: {
+      canViewLedger: payload.permissions.canViewLedger,
+      canManageBilling: payload.permissions.canManageBilling,
+    },
+  };
 }
 
 function getWorkers(payload: unknown): DenWorkerSummary[] {
@@ -2351,6 +2417,19 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         activeOrgSlug,
         defaultOrgId: activeOrgId,
       };
+    },
+
+    async getTenantAccount(orgId?: string | null): Promise<DenTenantAccount> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/tenant-account", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      const account = getTenantAccount(payload);
+      if (!account) {
+        throw new DenApiError(500, "invalid_tenant_account_payload", "Tenant account response was invalid.");
+      }
+      return account;
     },
 
     async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
