@@ -9,6 +9,7 @@ Desktop remote control currently goes offline when macOS sleeps and does not imm
 - Keep remote control fail-closed across system sleep, but immediately request fresh organization policy after resume and reconnect once policy and network access recover.
 - Trigger the same bounded recovery path after the renderer reports network restoration.
 - Detect silent or half-open remote-control WebSockets from cloud-provided liveness thresholds and replace them with a newly authenticated connection.
+- Treat the cloud `device.disabled` suspension as retryable: keep device credentials and local settings, and reconnect with bounded exponential backoff until control access is restored from the Console.
 - Keep the local emergency disable and Stop All actions available even when cloud policy is unavailable.
 - Add deterministic lifecycle, settings, transport, route, and UI coverage for the P0-P1 behavior.
 

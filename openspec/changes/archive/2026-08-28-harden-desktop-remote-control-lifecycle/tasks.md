@@ -21,3 +21,9 @@
 - [x] 4.1 Add settings migration, waiting blocker, suspend/resume recovery, and half-open WebSocket unit tests.
 - [x] 4.2 Add renderer route, navigation, desktop-only, policy gating, recovery coalescing, and i18n coverage.
 - [x] 4.3 Run focused desktop, renderer, types, and OpenSpec validation and resolve all failures.
+
+## 5. Cloud Suspension Recovery
+
+- [x] 5.1 Add the `device.disabled` WSS envelope to the shared protocol schema and rebuild the electron runtime contract.
+- [x] 5.2 Treat cloud suspension as retryable in the agent: preserve enrollment, credentials, and settings, clear sessions and authorizations, and reconnect with bounded exponential backoff.
+- [x] 5.3 Add agent coverage for suspension, restore-after-retry, and malformed notices, and rerun the focused desktop suite.

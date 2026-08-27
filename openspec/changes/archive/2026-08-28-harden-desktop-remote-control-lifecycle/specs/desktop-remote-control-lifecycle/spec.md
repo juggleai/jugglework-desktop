@@ -70,6 +70,21 @@ After `connection.welcome`, the agent SHALL use the negotiated liveness threshol
 - **WHEN** a timer from an older socket generation fires after a newer socket is active
 - **THEN** generation and socket identity checks prevent the old timer from affecting the current connection
 
+### Requirement: Cloud suspension is retryable
+Receiving `device.disabled` SHALL close the current transport, clear in-flight control sessions and sleep authorizations, and schedule an authenticated reconnect with bounded exponential backoff. It SHALL NOT delete device credentials, disable local settings, or mark the device revoked, and a subsequent successful handshake SHALL restore the connected state without re-enrollment.
+
+#### Scenario: Device is disabled from the Console
+- **WHEN** the cloud sends `device.disabled` before closing the socket with a policy-violation close
+- **THEN** the agent keeps its enrollment, credentials, and settings, and retries token issuance and connection with bounded backoff while access stays disabled
+
+#### Scenario: Device is restored from the Console
+- **WHEN** control access is re-enabled while the agent is retrying
+- **THEN** the next retry completes the challenge/token handshake and the device returns online without re-enrollment
+
+#### Scenario: Malformed suspension notice
+- **WHEN** a `device.disabled` message does not match the enrolled device or schema
+- **THEN** the agent fails the transport with a stable invalid-notice code and the normal retry path stays armed without deleting credentials
+
 ### Requirement: Local shutdown remains available
 Cloud policy SHALL gate enabling and remote execution, but it MUST NOT prevent the local user from disabling remote control, stopping all control sessions, or deleting local device credentials.
 

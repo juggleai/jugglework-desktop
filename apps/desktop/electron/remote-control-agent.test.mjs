@@ -706,6 +706,45 @@ describe("remote-control agent context and lifecycle", () => {
     assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
   });
 
+  it("a cloud-disabled device keeps credentials and reconnects until access is restored", async () => {
+    const revocations = [];
+    const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
+    const socket = await connect(fixture);
+    socket.receive(envelope("device.disabled", { deviceId: DEVICE_ID, reason: "Remote control was disabled" }));
+    socket.unexpectedClose(1008, Buffer.from("device disabled"));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_disabled");
+    assert.equal(fixture.agent.status().enrolled, true);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.deepEqual(revocations, [], "suspension is not revocation");
+    const delay = fixture.clock.nextDelay();
+    assert.ok(delay >= 250 && delay <= 30_000, "a reconnect backoff is scheduled");
+
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2, "a fresh authenticated socket is created");
+    assert.equal(fixture.tokenCalls, 2, "the retry performs a new challenge/token handshake");
+    fixture.sockets[1].open();
+    await settle();
+    fixture.sockets[1].receive(welcome(77));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("a malformed disabled notice fails the transport without deleting credentials", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(envelope("device.disabled", { deviceId: "11111111-2222-4333-8444-555555555555", reason: "Not this device" }));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "invalid_disabled_notice");
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.notEqual(fixture.clock.nextDelay(), null, "the normal retry path stays armed");
+  });
+
   it("a permanently deleted device (404 token issue) disables remote control durably", async () => {
     const revocations = [];
     const fixture = harness({

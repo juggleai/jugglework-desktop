@@ -1173,6 +1173,23 @@ export function createRemoteControlAgent(options) {
       try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
       return;
     }
+    if (envelope.type === "device.disabled") {
+      if (!hasExactKeys(envelope.payload, ["deviceId", "reason"]) || envelope.payload.deviceId !== enrollment?.deviceId ||
+        !isDisplayText(envelope.payload.reason)) {
+        transportFailed(target, "invalid_disabled_notice");
+        return;
+      }
+      // Reversible cloud suspension: unlike device.revoked, keep the
+      // enrollment, credentials, and local settings, and retry with the
+      // bounded exponential backoff. Token issuance keeps failing while the
+      // device stays disabled, so the reconnect lands only after control
+      // access is restored from the Console; a permanent device deletion
+      // still stops the loop through the 404 token path.
+      encryptedControlSessions.clear();
+      clearAuthorizations();
+      transportFailed(target, "device_disabled");
+      return;
+    }
     if (envelope.type === "session.unbound") {
       if (!hasExactKeys(envelope.payload, ["controlSessionId", "reason"]) ||
           !UUID_PATTERN.test(envelope.payload.controlSessionId) ||
