@@ -33,6 +33,7 @@ import {
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
 import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
+import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -160,7 +161,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       workspaceServerClientResolverRef.current(workspace),
     [],
   );
-  const refreshInFlightRef = useRef(false);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const workspaceOrderIdsRef = useRef(workspaceOrderIds);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
@@ -425,13 +425,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     [endpointForWorkspace, mergeFetchedSessionsWithPending, updateWorkspaceSessionLoadState],
   );
 
-  const refreshRouteState = useCallback(async () => {
-    // Dedupe: if a refresh is already running, skip this call. Fast workspace
-    // switches used to fire 5-6 overlapping refreshRouteState() calls which
-    // each fetched workspaces + sessions for every workspace. That workload
-    // multiplied quickly on the event loop and caused the UI to freeze.
-    if (refreshInFlightRef.current) return;
-    refreshInFlightRef.current = true;
+  const performRefreshRouteState = useCallback(async () => {
     setLoading(true);
     setRouteError(null);
     let desktopList: WorkspaceList | null = null;
@@ -609,7 +603,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       }
     } finally {
       setLoading(false);
-      refreshInFlightRef.current = false;
       setRouteRefreshVersion((current) => current + 1);
       // Tell the boot overlay the first route data load has completed so
       // the overlay dismisses after BOTH the desktop boot and the workspace
@@ -619,6 +612,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       }
     }
   }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
+  const refreshRouteStateQueue = useMemo(
+    () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
+    [],
+  );
+  const refreshRouteState = useCallback(
+    () => refreshRouteStateQueue.run(performRefreshRouteState),
+    [performRefreshRouteState, refreshRouteStateQueue],
+  );
   const handleRuntimeSessionUpdated = useCallback((update: { sessionId: string; info: Record<string, unknown> }) => {
     if (!selectedWorkspaceId) return;
     setSessionsByWorkspaceId((current) => {
@@ -726,10 +727,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     const handleSettingsChange = () => {
       onServerSettingsChanged();
-      // Self-heal: if the previous refresh got stuck mid-flight (e.g. macOS
-      // backgrounded the webview and never let a fetch resolve), clear the
-      // guard so a re-entry after resume actually goes through.
-      refreshInFlightRef.current = false;
       void refreshRouteState();
     };
     window.addEventListener("jugglework-server-settings-changed", handleSettingsChange);
@@ -739,7 +736,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     const handleVisibility = () => {
       if (typeof document === "undefined") return;
       if (document.visibilityState !== "visible") return;
-      refreshInFlightRef.current = false;
       void refreshRouteState();
     };
     if (typeof document !== "undefined") {
@@ -1138,7 +1134,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
     setRetryingWorkspaceIds,
-    refreshInFlightRef,
     startupRetryTimerRef,
     selectedWorkspaceId,
     selectedWorkspace,

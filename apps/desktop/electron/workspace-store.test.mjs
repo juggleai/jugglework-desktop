@@ -712,3 +712,38 @@ test("clearDesktopBootstrapConfig removes bootstrap files without deleting works
     assert.equal(config.fromFile, false);
   });
 });
+
+test("createWorkspace preserves the explicit server workspace id and is idempotent", async () => {
+  await withIsolatedBootstrapStore(async ({ store, userDataPath, root }) => {
+    const folderPath = path.join(root, "project");
+    const workspaceId = "ws_server_owned";
+
+    const first = await store.createWorkspace({
+      folderPath,
+      name: "Project",
+      preset: "starter",
+      workspaceId,
+    });
+    const configPath = path.join(folderPath, ".opencode", "jugglework.json");
+    const customConfig = { version: 1, workspace: { name: "Customized" }, authorizedRoots: [folderPath] };
+    await writeFile(configPath, `${JSON.stringify(customConfig, null, 2)}\n`, "utf8");
+
+    const second = await store.createWorkspace({
+      folderPath,
+      name: "Project",
+      preset: "starter",
+      workspaceId,
+    });
+
+    assert.equal(first.selectedId, workspaceId);
+    assert.equal(second.selectedId, workspaceId);
+    assert.equal(second.activeId, workspaceId);
+    assert.equal(second.watchedId, workspaceId);
+    assert.equal(second.workspaces.length, 1);
+    assert.equal(second.workspaces[0].id, workspaceId);
+    assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), customConfig);
+
+    const persisted = JSON.parse(await readFile(path.join(userDataPath, "jugglework-workspaces.json"), "utf8"));
+    assert.equal(persisted.workspaces[0].id, workspaceId);
+  });
+});

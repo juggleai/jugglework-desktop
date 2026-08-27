@@ -1040,8 +1040,11 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
     const folderPath = await normalizeLocalWorkspacePath(rawFolderPath);
     await mkdir(folderPath, { recursive: true });
     const preset = String(input.preset ?? "starter");
+    const requestedWorkspaceId = String(input.workspaceId ?? "").trim();
     const workspace = normalizeWorkspaceEntry({
-      id: localWorkspaceId(folderPath),
+      // TIPS: 服务端工作区注册表是 ID 的权威来源。显式传入 ID 可避免
+      // Electron realpath 与服务端 path.resolve 对符号链接归一化不同。
+      id: requestedWorkspaceId || localWorkspaceId(folderPath),
       name: String(input.name ?? (path.basename(folderPath) || "Workspace")),
       displayName: String(input.name ?? (path.basename(folderPath) || "Workspace")),
       path: folderPath,
@@ -1049,7 +1052,10 @@ export function createWorkspaceStore({ app, defaultDenBaseUrl, defaultRequireSig
       workspaceType: "local",
     });
     await mkdir(path.join(folderPath, ".opencode"), { recursive: true });
-    await writeWorkspaceJuggleWorkConfig(folderPath, defaultWorkspaceJuggleWorkConfig(folderPath, preset));
+    const juggleworkConfigPath = path.join(folderPath, ".opencode", "jugglework.json");
+    if (!(await pathExists(juggleworkConfigPath))) {
+      await writeWorkspaceJuggleWorkConfig(folderPath, defaultWorkspaceJuggleWorkConfig(folderPath, preset));
+    }
 
     return mutateWorkspaceState((state) => {
       const key = workspacePathKey(workspace);

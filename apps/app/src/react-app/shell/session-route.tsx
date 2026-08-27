@@ -16,6 +16,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
@@ -511,7 +512,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
     setRetryingWorkspaceIds,
-    refreshInFlightRef,
     startupRetryTimerRef,
     selectedWorkspaceId,
     selectedWorkspace,
@@ -1741,7 +1741,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         if (startupRetryTimerRef.current === null) {
           startupRetryTimerRef.current = window.setTimeout(() => {
             startupRetryTimerRef.current = null;
-            refreshInFlightRef.current = false;
             void refreshRouteState();
           }, 1_000);
         }
@@ -2211,27 +2210,17 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      let list: WorkspaceList | null = null;
-      let createdOnServer = false;
-      if (client) {
-        list = await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .then((serverList) => {
-            createdOnServer = true;
-            return serverList;
-          })
-          .catch(() => null);
-      }
-      if (!list) {
+      if (!client) {
         throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
       }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      let targetWorkspaceId = createdId;
-      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
+      const created = await createLocalWorkspaceForRuntime(client, {
+        folderPath: folder,
+        name: workspaceName,
+        preset,
+      });
+      const list = created.list;
+      const targetWorkspaceId = created.workspaceId;
+      const targetWorkspace = created.workspace;
       // First workspace on a fresh install: the JuggleWork server was started
       // engine-less (it only spawns OpenCode at boot when a workspace already
       // exists), so sessions would hang forever. This boots the engine when
@@ -2260,7 +2249,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
         // Best-effort first task creation (mirrors the old welcome flow) — a
         // failure here must not surface as a failed workspace creation.
-        const session = createdOnServer && sessionBaseUrl && sessionToken
+        const session = sessionBaseUrl && sessionToken
           ? await createClient(
               `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,

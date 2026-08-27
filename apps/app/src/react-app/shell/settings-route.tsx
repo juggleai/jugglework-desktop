@@ -6,6 +6,7 @@ import { toast } from "@/components/ui/sonner";
 import { SUGGESTED_PLUGINS } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
 import {
   createJuggleWorkServerClient,
   isLoopbackJuggleWorkServerUrl,
@@ -132,6 +133,7 @@ import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import {
   juggleworkServerInfo,
@@ -455,7 +457,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
-  const refreshInFlightRef = useRef(false);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
@@ -1246,9 +1247,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [updateAutoDownload]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
-  const refreshRouteState = useMemo(() => async () => {
-    if (refreshInFlightRef.current) return;
-    refreshInFlightRef.current = true;
+  const performRefreshRouteState = useCallback(async () => {
     setLoading(true);
     let desktopList: WorkspaceList | null = null;
     let desktopWorkspaces = workspacesRef.current;
@@ -1393,13 +1392,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     } finally {
       setLoading(false);
-      refreshInFlightRef.current = false;
       // Settings can be the first route a user lands on (direct link, deep
       // link, or after reload). Let the boot overlay dismiss once we've
       // completed our first data load.
       markBootRouteReady();
     }
   }, [markBootRouteReady, navigationSessionId, navigationWorkspaceId, routeWorkspaceId]);
+  const refreshRouteStateQueue = useMemo(
+    () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
+    [],
+  );
+  const refreshRouteState = useCallback(
+    () => refreshRouteStateQueue.run(performRefreshRouteState),
+    [performRefreshRouteState, refreshRouteStateQueue],
+  );
 
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
@@ -2235,20 +2241,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      let list: WorkspaceList | null = null;
-      if (juggleworkClient) {
-        list = await juggleworkClient
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .catch(() => null);
-      }
-      if (!list) {
+      if (!juggleworkClient) {
         throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
       }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
+      await createLocalWorkspaceForRuntime(juggleworkClient, {
+        folderPath: folder,
+        name: workspaceName,
+        preset,
+      });
       setCreateWorkspaceOpen(false);
       await refreshRouteState();
     } catch (error) {

@@ -419,6 +419,7 @@ export type WorkspaceCreateInput = {
   folderPath: string;
   name?: string | null;
   preset?: string | null;
+  workspaceId?: string | null;
 };
 
 export type WorkspaceCreateRemoteInput = {

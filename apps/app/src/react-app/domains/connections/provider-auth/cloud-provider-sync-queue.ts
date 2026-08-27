@@ -1,6 +1,7 @@
-export type LatestSyncQueue<Reason> = {
-  run: (reason: Reason) => Promise<void>;
-};
+export {
+  createLatestSyncQueue,
+  type LatestSyncQueue,
+} from "@/react-app/kernel/latest-sync-queue";
 
 export type KeyedSingleflight<Key, Value> = {
   run: (key: Key, task: () => Promise<Value>) => Promise<Value>;
@@ -37,37 +38,4 @@ export function shouldAdoptWorkspaceSnapshot(input: {
     input.nextEntryCount > 0 ||
     input.currentEntryCount === 0
   );
-}
-
-/**
- * Coalesces overlapping sync requests while guaranteeing that every caller
- * waits for the latest queued pass. This matters during workspace switches:
- * the new workspace must not treat an older workspace's in-flight pass as its
- * own completed sync.
- */
-export function createLatestSyncQueue<Reason>(
-  task: (reason: Reason) => Promise<void>,
-): LatestSyncQueue<Reason> {
-  let inFlight: Promise<void> | null = null;
-  let queuedReason: Reason | null = null;
-
-  const run = (reason: Reason): Promise<void> => {
-    queuedReason = reason;
-    if (inFlight) return inFlight;
-
-    const request = (async () => {
-      while (queuedReason !== null) {
-        const currentReason = queuedReason;
-        queuedReason = null;
-        await task(currentReason);
-      }
-    })();
-
-    inFlight = request.finally(() => {
-      inFlight = null;
-    });
-    return inFlight;
-  };
-
-  return { run };
 }

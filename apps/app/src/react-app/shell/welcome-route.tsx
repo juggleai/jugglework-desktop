@@ -14,6 +14,7 @@ import {
 } from "../../app/lib/desktop";
 import { isDesktopRuntime } from "../../app/utils";
 import { createClient, unwrap } from "../../app/lib/opencode";
+import { createLocalWorkspaceForRuntime } from "../../app/lib/local-workspace-create";
 import { useLocal } from "../kernel/local-provider";
 import { usePlatform } from "../kernel/platform";
 import { WelcomePage } from "../domains/onboarding/welcome-page";
@@ -188,11 +189,12 @@ export function WelcomeRoute() {
               token: resolvedToken || undefined,
               hostToken: resolvedHostToken || undefined,
             });
-            list = await juggleworkClient.createLocalWorkspace({
+            const created = await createLocalWorkspaceForRuntime(juggleworkClient, {
               folderPath: folder,
               name: workspaceName,
               preset: "starter",
             });
+            list = created.list;
             sessionBaseUrl = normalizedBaseUrl;
             sessionToken = resolvedToken;
           }
@@ -202,17 +204,11 @@ export function WelcomeRoute() {
         if (!list) {
           throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
         }
-        const createdId =
-          resolveWorkspaceListSelectedId(list) ||
-          list.workspaces[list.workspaces.length - 1]?.id ||
-          "";
-        let targetWorkspaceId = createdId;
-        let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
+        const targetWorkspaceId = list.activeId || list.selectedId || list.workspaces[list.workspaces.length - 1]?.id || "";
+        const targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === targetWorkspaceId) ?? null;
         let targetSessionId: string | null = null;
-        if (createdId) {
-          await workspaceSetSelected(createdId).catch(() => undefined);
-          await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-          writeActiveWorkspaceId(createdId);
+        if (targetWorkspaceId) {
+          writeActiveWorkspaceId(targetWorkspaceId);
         }
         if (targetWorkspace) {
           await ensureDesktopLocalJuggleWorkConnection({
