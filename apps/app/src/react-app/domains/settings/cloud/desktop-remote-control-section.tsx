@@ -8,10 +8,8 @@ import type {
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
-import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import {
-  desktopRemoteControlCredentialDelete,
   desktopRemoteControlEnroll,
   desktopRemoteControlSettingsRead,
   desktopRemoteControlSettingsUpdate,
@@ -131,7 +129,6 @@ export function DesktopRemoteControlSection() {
   const [status, setStatus] = React.useState<DesktopRemoteControlAgentStatus>(stoppedStatus);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const desktopRuntime = isDesktopRuntime();
   const gates = desktopConfig.config.desktopRemoteFeatureGates;
   const policyAllowsRemote = gates?.schemaVersion === 1 && gates.enrollment === true && gates.readOnlyControl === true;
@@ -218,27 +215,11 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const deleteCredential = async () => {
-    setConfirmDelete(false);
-    setBusy(true);
-    setError(null);
-    try {
-      await desktopRemoteControlStopAll();
-      setStatus(await desktopRemoteControlCredentialDelete());
-      setSettings(await desktopRemoteControlSettingsRead());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法删除本机设备凭据。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!desktopRuntime) return null;
 
   return (
-    <>
-      <SettingsSection>
-        <SettingsSectionHeader>
+    <SettingsSection>
+      <SettingsSectionHeader>
           <SettingsSectionHeaderContent>
             <SettingsSectionHeaderTitle>
               Desktop 远程控制
@@ -249,9 +230,9 @@ export function DesktopRemoteControlSection() {
             </SettingsSectionHeaderDescription>
           </SettingsSectionHeaderContent>
           <RefreshButton busy={busy} onRefresh={refresh} disabled={busy}>刷新状态</RefreshButton>
-        </SettingsSectionHeader>
+      </SettingsSectionHeader>
 
-        <LayoutSectionItem>
+      <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>允许本机远程控制</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>
@@ -266,15 +247,15 @@ export function DesktopRemoteControlSection() {
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
-        </LayoutSectionItem>
+      </LayoutSectionItem>
 
-        {!policyAllowsRemote ? (
-          <SettingsNotice tone="error">当前 Cloud 策略未同时启用设备注册和只读远程控制。</SettingsNotice>
-        ) : null}
-        {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
-        {status.lastErrorCode ? (
-          <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
-        ) : null}
+      {!policyAllowsRemote ? (
+        <SettingsNotice tone="error">当前 Cloud 策略未同时启用设备注册和只读远程控制。</SettingsNotice>
+      ) : null}
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      {status.lastErrorCode ? (
+        <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
+      ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           {!status.enrolled ? (
@@ -288,11 +269,6 @@ export function DesktopRemoteControlSection() {
           {status.enrolled && !status.connected ? (
             <Button variant="outline" onClick={() => void setEnabled(true)} disabled={busy || !policyAllowsRemote}>
               重新连接
-            </Button>
-          ) : null}
-          {status.enrolled ? (
-            <Button variant="outline" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              删除本机设备凭据
             </Button>
           ) : null}
         </div>
@@ -362,18 +338,6 @@ export function DesktopRemoteControlSection() {
             </label>
           </div>
         </div>
-      </SettingsSection>
-
-      <ConfirmModal
-        open={confirmDelete}
-        variant="danger"
-        title="删除本机设备凭据？"
-        message="这会立即停止远程连接并删除系统安全存储中的设备私钥。Cloud 中的旧设备记录会保留为离线状态。"
-        confirmLabel="删除凭据"
-        cancelLabel="取消"
-        onConfirm={() => void deleteCredential()}
-        onCancel={() => setConfirmDelete(false)}
-      />
-    </>
+    </SettingsSection>
   );
 }

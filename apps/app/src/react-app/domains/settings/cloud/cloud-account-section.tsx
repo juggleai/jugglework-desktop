@@ -1,43 +1,23 @@
 /** @jsxImportSource react */
-import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
+import { Building2, Check, Loader2 } from "lucide-react";
 
 import type { DenOrgSummary } from "../../../../app/lib/den";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { SettingsNotice } from "../settings-section";
 import { t } from "@/i18n";
+import { useDenAuth } from "../../cloud/den-auth-provider";
 import { useCloudSession } from "./cloud-session-provider";
-import { useOrgListWindow } from "../../cloud/use-org-list-window";
 
 export interface CloudAccountSectionProps {
-  activeOrgId: string;
-  authBusy: boolean;
-  needsOrgSelection?: boolean;
-  orgs: DenOrgSummary[];
   orgsBusy: boolean;
   orgsError: string | null;
-  sessionBusy: boolean;
-  onActiveOrgChange: (orgId: string) => void | Promise<void>;
-  onOpenDashboard: () => void;
-  onRefreshOrgs: () => void | Promise<void>;
-  onSignOut: () => void | Promise<void>;
 }
 
 export function CloudAccountSection({
-  activeOrgId,
-  authBusy,
-  orgs,
   orgsBusy,
   orgsError,
-  sessionBusy,
-  onActiveOrgChange,
-  onOpenDashboard,
-  onRefreshOrgs,
-  onSignOut,
 }: CloudAccountSectionProps) {
   const { user } = useCloudSession();
-  const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null;
-  const controlsDisabled = authBusy || sessionBusy;
+  const { activeOrganization } = useDenAuth();
 
   return (
     <section className="flex flex-col gap-y-6">
@@ -56,37 +36,16 @@ export function CloudAccountSection({
             ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onOpenDashboard}
-            disabled={controlsDisabled}
-          >
-            {t("den.open_dashboard")}
-            <ArrowUpRight className="size-3.5" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void onSignOut()}
-            disabled={controlsDisabled}
-          >
-            <LogOut className="size-3.5" />
-            {authBusy ? t("den.signing_out") : t("den.sign_out")}
-          </Button>
-        </div>
       </div>
 
-      {/* Keep every membership visible so the active organization can be changed in place. */}
-      <CloudOrganizationList
-        activeOrgId={activeOrg?.id ?? ""}
-        orgs={orgs}
-        orgsBusy={orgsBusy}
-        disabled={controlsDisabled || orgsBusy}
-        onSelect={onActiveOrgChange}
-        onRefresh={onRefreshOrgs}
-      />
+      {activeOrganization ? (
+        <ConnectedOrganization org={activeOrganization} />
+      ) : orgsBusy ? (
+        <div className="flex items-center gap-2 text-sm text-dls-secondary">
+          <Loader2 size={14} className="animate-spin" />
+          {t("cloud_account.loading_orgs")}
+        </div>
+      ) : null}
 
       {orgsError ? <SettingsNotice tone="error">{orgsError}</SettingsNotice> : null}
     </section>
@@ -106,133 +65,24 @@ function orgRoleLabel(role: DenOrgSummary["role"]): string {
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Org picker: card-per-org selection                                 */
-/* ------------------------------------------------------------------ */
-
-export function CloudOrganizationList({
-  activeOrgId,
-  orgs,
-  orgsBusy,
-  disabled,
-  onSelect,
-  onRefresh,
+export function ConnectedOrganization({
+  org,
 }: {
-  activeOrgId: string;
-  orgs: DenOrgSummary[];
-  orgsBusy: boolean;
-  disabled: boolean;
-  onSelect: (orgId: string) => void | Promise<void>;
-  onRefresh: () => void | Promise<void>;
+  org: Pick<DenOrgSummary, "id" | "name" | "role" | "slug">;
 }) {
-  const { filtered, query, showMore, updateQuery, visible } = useOrgListWindow(orgs);
-  const hasMore = visible.length < filtered.length;
-
-  if (orgsBusy && orgs.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-6 text-sm text-dls-secondary">
-        <Loader2 size={20} className="animate-spin" />
-        {t("cloud_account.loading_your_orgs")}
-      </div>
-    );
-  }
-
-  if (orgs.length === 0) {
-    return (
-      <div className="rounded-xl border border-dls-border bg-dls-surface px-4 py-6 text-center text-sm text-dls-secondary">
-        No organizations found.{" "}
-        <button
-          type="button"
-          className="font-medium text-dls-text underline underline-offset-2"
-          onClick={() => void onRefresh()}
-        >
-          Refresh
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-3">
-      <div className="text-sm font-medium text-dls-text">
-        {t("cloud_account.select_org")}
+    <div className="flex items-center gap-3 rounded-xl border border-green-7 bg-dls-surface px-4 py-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-green-3 text-green-11">
+        <Building2 size={16} />
       </div>
-      <div className="text-xs text-dls-secondary">
-        {t("cloud_account.select_org_desc")}
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-dls-text">{org.name}</div>
+        <div className="text-xs text-dls-secondary">{orgRoleLabel(org.role)}</div>
       </div>
-      {orgs.length > 10 ? (
-        <Input
-          aria-label={t("cloud_account.search_orgs")}
-          placeholder={t("cloud_account.search_orgs_placeholder")}
-          value={query}
-          className="h-auto rounded-xl border-dls-border bg-dls-surface px-4 py-2.5 text-sm text-dls-text shadow-none placeholder:text-dls-secondary focus-visible:border-dls-text/30 focus-visible:ring-0 dark:bg-dls-surface"
-          onChange={(event) => updateQuery(event.target.value)}
-        />
-      ) : null}
-      <div className="flex flex-col gap-2">
-        {visible.map((org) => {
-          const isActive = org.id === activeOrgId;
-          return (
-            <button
-              key={org.id}
-              type="button"
-              aria-current={isActive ? "true" : undefined}
-              disabled={disabled}
-              className={`flex items-center gap-3 rounded-xl border bg-dls-surface px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                isActive
-                  ? "border-green-7"
-                  : "border-dls-border hover:border-dls-text/20 hover:bg-dls-hover"
-              }`}
-              onClick={() => {
-                if (!isActive) void onSelect(org.id);
-              }}
-            >
-              <div
-                className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${
-                  isActive
-                    ? "bg-green-3 text-green-11"
-                    : "bg-dls-hover text-dls-secondary"
-                }`}
-              >
-                <Building2 size={16} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-dls-text">{org.name}</div>
-                <div className="text-xs text-dls-secondary">
-                  {orgRoleLabel(org.role)}
-                </div>
-              </div>
-              {isActive ? (
-                <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-green-11">
-                  {t("dashboard.connected")}
-                  <Check size={16} />
-                </div>
-              ) : null}
-            </button>
-          );
-        })}
+      <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-green-11">
+        {t("dashboard.connected")}
+        <Check size={16} />
       </div>
-      {filtered.length === 0 && query.trim() ? (
-        <div className="text-sm text-dls-secondary">
-          {t("cloud_account.no_orgs_match")}
-        </div>
-      ) : null}
-      {hasMore ? (
-        <div className="flex flex-col items-start gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="rounded-xl border-dls-border text-dls-text hover:bg-dls-hover"
-            onClick={showMore}
-          >
-            {t("cloud_account.show_more")}
-          </Button>
-          <div className="text-xs text-dls-secondary">
-            Showing {visible.length} of {filtered.length} organizations
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlarmClock,
+  ArrowUpRight,
   Check,
   Cloud,
   Coins,
@@ -198,6 +199,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       : "—";
 
   const openUpgrade = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
+  const openManagementConsole = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
   const checkForUpdates = () => {
     useUpdateCheckRequestStore.getState().requestUpdateCheck();
     navigate("/settings/updates");
@@ -446,6 +448,10 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 ) : null}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuItem onClick={openManagementConsole} data-testid="account-menu-management-console">
+              <ArrowUpRight />
+              {t("account_menu.management_console")}
+            </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={() => void handleSignOut()} disabled={!user || accountBusy} data-testid="account-menu-sign-out">
               <LogOut />
               {t("den.sign_out")}

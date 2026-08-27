@@ -38,20 +38,16 @@ type CloudAccountSession = Pick<
   | "baseUrlDraft"
   | "baseUrlError"
   | "needsOrgSelection"
-  | "orgs"
   | "orgsBusy"
   | "orgsError"
   | "sessionBusy"
   | "signinFallbackUrl"
-  | "onActiveOrgChange"
   | "onApplyBaseUrl"
   | "onBaseUrlDraftChange"
   | "onClearAuthError"
   | "onOpenBrowserAuth"
   | "onOpenControlPlane"
-  | "onRefreshOrgs"
   | "onResetBaseUrl"
-  | "onSignOut"
   | "onSubmitManualAuth"
 >;
 
@@ -170,7 +166,7 @@ function DenSignedOutPanel({
 }
 
 export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
-  const { activeOrganization, isSignedIn } = useCloudSession();
+  const { isSignedIn } = useCloudSession();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -208,17 +204,8 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
               <SettingsNotice tone="error">{session.authError}</SettingsNotice>
             ) : null}
           <CloudAccountSection
-            activeOrgId={activeOrganization?.id ?? ""}
-            authBusy={session.authBusy}
-            needsOrgSelection={session.needsOrgSelection}
-            orgs={session.orgs}
             orgsBusy={session.orgsBusy}
             orgsError={session.orgsError}
-            sessionBusy={session.sessionBusy}
-            onActiveOrgChange={session.onActiveOrgChange}
-            onOpenDashboard={session.onOpenControlPlane}
-            onRefreshOrgs={session.onRefreshOrgs}
-            onSignOut={session.onSignOut}
           />
           </SettingsSection>
 

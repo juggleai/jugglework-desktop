@@ -8,6 +8,7 @@ export default {
   "account_menu.check_updates": "Check for updates",
   "account_menu.help_feedback": "Help & feedback",
   "account_menu.loading": "Loading…",
+  "account_menu.management_console": "Admin Console",
   "account_menu.membership_unknown": "Member",
   "account_menu.no_organization": "No organization",
   "account_menu.open": "Open account menu",

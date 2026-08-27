@@ -53,6 +53,10 @@ describe("account menu", () => {
     expect(source).toContain('data-testid="account-menu-check-updates"');
     expect(source).toContain('data-testid="account-menu-help-feedback"');
     expect(source).toContain('data-testid="account-menu-switch-organization"');
+    expect(source).toContain('data-testid="account-menu-management-console"');
+    expect(source.indexOf('data-testid="account-menu-management-console"')).toBeGreaterThan(
+      source.indexOf('data-testid="account-menu-switch-organization"'),
+    );
     expect(source).toContain('data-testid="account-menu-sign-out"');
     expect(source).toContain("<DropdownMenuSubContent");
     expect(source).toContain("organizationGroups.personal.map");

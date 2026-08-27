@@ -11,6 +11,7 @@ export default {
   "account_menu.check_updates": "检查更新",
   "account_menu.help_feedback": "帮助与反馈",
   "account_menu.loading": "加载中…",
+  "account_menu.management_console": "管理控制台",
   "account_menu.membership_unknown": "会员",
   "account_menu.no_organization": "暂无组织",
   "account_menu.open": "打开账户菜单",
