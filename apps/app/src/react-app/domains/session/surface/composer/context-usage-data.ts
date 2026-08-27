@@ -72,6 +72,10 @@ function contextTotal(tokens: ContextTokenBreakdown) {
   return tokens.input + tokens.cacheRead + tokens.cacheWrite + tokens.output;
 }
 
+function hasMeasuredTokens(tokens: ContextTokenBreakdown) {
+  return contextTotal(tokens) > 0 || tokens.reasoning > 0;
+}
+
 /**
  * 从引擎最终生效的模型配置中读取服务端下发的上下文窗口上限。
  * @param model 当前选择的模型；未选择模型时返回 0
@@ -130,9 +134,14 @@ export function deriveContextUsage(
     if (message.info.role !== "assistant") continue;
     sessionCost += Math.max(0, message.info.cost || 0);
     const steps = message.parts.filter((part) => part.type === "step-finish");
-    const samples = steps.length > 0 ? steps.map((part) => part.tokens) : [message.info.tokens];
+    const samples = steps.length > 0
+      ? steps.map((part) => ({ tokens: part.tokens, finishReason: part.reason }))
+      : [{ tokens: message.info.tokens, finishReason: message.info.finish }];
     for (const sample of samples) {
-      const normalized = normalizeTokens(sample);
+      const normalized = normalizeTokens(sample.tokens);
+      // TIPS: Provider 在工具循环异常退出时可能追加 reason=unknown 的零 token step。
+      // 它不是一次真实模型调用，既不能覆盖最近一次有效上下文，也不能计入会话调用次数。
+      if (sample.finishReason === "unknown" && !hasMeasuredTokens(normalized)) continue;
       session = addTokens(session, normalized);
       sessionCalls += 1;
       // TIPS: assistant.info 是整轮累计值；step-finish 才是最后一次真正送进模型的上下文。

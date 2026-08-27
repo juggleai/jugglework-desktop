@@ -102,15 +102,18 @@ export function analyzeRunCompletion(
   const anomalousEmptyTurn = terminalIsEmpty && priorAssistantHadMutation;
   const openTodos = todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress");
   const explicitFinishReason = options.finishReason?.trim() || null;
-  const abnormalFinish = Boolean(explicitFinishReason && explicitFinishReason !== "stop");
-  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || unverified || abnormalFinish;
-  if (!incomplete) return null;
-
   const metadata = opencodeMetadata(turn.terminalAssistant);
   const providerFinish = typeof metadata.finish === "string" && metadata.finish.trim()
     ? metadata.finish.trim()
     : "stop";
-  const finishReason = anomalousEmptyTurn ? "tool_loop_terminated" : explicitFinishReason ?? providerFinish;
+  const effectiveFinishReason = explicitFinishReason ?? providerFinish;
+  // TIPS: 部分 Provider/网关在工具调用后的下一轮推理失败时不会返回结构化 error，
+  // 只会留下 finish=unknown 的零 token 空消息。该状态必须作为异常终态，而不能静默当成 stop。
+  const abnormalFinish = effectiveFinishReason !== "stop";
+  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || unverified || abnormalFinish;
+  if (!incomplete) return null;
+
+  const finishReason = anomalousEmptyTurn ? "tool_loop_terminated" : effectiveFinishReason;
   const lines = ["Task incomplete.", `finish_reason: ${finishReason}`];
   if (openTodos.length > 0) {
     lines.push(`${openTodos.length} todo item${openTodos.length === 1 ? " remains" : "s remain"} pending or in progress.`);

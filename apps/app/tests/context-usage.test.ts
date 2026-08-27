@@ -177,6 +177,29 @@ describe("context usage", () => {
     expect(usage.sessionCalls).toBe(2);
   });
 
+  test("keeps the latest valid usage when an unknown zero-token step terminates the run", () => {
+    const valid = assistantMessage({
+      id: "assistant-valid",
+      steps: [{ input: 2_000, output: 100, cacheRead: 30_000 }],
+    });
+    const interrupted = assistantMessage({
+      id: "assistant-interrupted",
+      steps: [{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }],
+    });
+    interrupted.info.finish = "unknown";
+    const finish = interrupted.parts.find((part) => part.type === "step-finish");
+    if (finish?.type === "step-finish") finish.reason = "unknown";
+
+    const usage = deriveContextUsage([
+      valid,
+      interrupted,
+    ], { providerID: "openai", modelID: "gpt-5" }, 100_000);
+
+    expect(usage.currentUsed).toBe(32_100);
+    expect(usage.percentage).toBeCloseTo(32.1);
+    expect(usage.sessionCalls).toBe(1);
+  });
+
   test("formats compact token counts for the toolbar", () => {
     expect(formatTokenCount(503)).toBe("503");
     expect(formatTokenCount(50_300)).toBe("50.3K");
