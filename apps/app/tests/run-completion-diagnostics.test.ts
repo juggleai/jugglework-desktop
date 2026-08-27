@@ -64,6 +64,22 @@ describe("run completion diagnostics", () => {
     });
   });
 
+  test("treats an unknown provider finish as an abnormal terminal state", () => {
+    const result = analyzeRunCompletion([
+      textMessage("user-1", "user", "Continue the task"),
+      textMessage("assistant-empty", "assistant", "", "unknown"),
+    ], []);
+
+    expect(result).toMatchObject({
+      incomplete: true,
+      finishReason: "unknown",
+    });
+    expect(result?.message.parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("finish_reason: unknown"),
+    });
+  });
+
   test("does not warn when a file edit is followed by verification and all todos are complete", () => {
     const result = analyzeRunCompletion([
       textMessage("user-1", "user", "Implement it"),
