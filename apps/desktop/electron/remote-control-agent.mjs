@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
 import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
+import { RemoteControlCloudError } from "./remote-control-cloud-client.mjs";
 import {
   canonicalRemoteControlAAD,
   createSignedRemoteControlE2EEKeyAdvertisement,
@@ -127,7 +128,7 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {{ accessToken: string, expiresAt: string, webSocketUrl: string }} AgentToken */
 /** @typedef {{ enrollDevice(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, grant: string, displayName: string, platform: string }): Promise<RemoteControlCredentialView>, issueAgentToken(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string } }): Promise<AgentToken> }} RemoteControlCloudClient */
 /** @typedef {{ read(context: object): Promise<RemoteControlCredentialView | null>, prepareEnrollment(context: object): Promise<unknown>, completeEnrollment(context: object, binding: object): Promise<unknown>, getSigningCredential(context: object): Promise<unknown>, delete(): Promise<void> }} RemoteControlCredentialStore */
-/** @typedef {{ read(): Promise<RemoteControlSettings> }} RemoteControlSettingsStore */
+/** @typedef {{ read(): Promise<RemoteControlSettings>, disable(): Promise<RemoteControlSettings> }} RemoteControlSettingsStore */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilities>, dispatch(request: unknown, options: { advertisedCapabilities: RemoteControlCapabilities, context: RemoteControlAgentContext, correlationId: string }): Promise<{ ok: boolean, value?: unknown, error?: unknown }> }} RemoteControlOperationRegistry */
 /** @typedef {{ prepare(command: unknown): Promise<JournalPrepareResult>, complete(commandId: unknown, lifecycle: unknown): Promise<unknown> }} RemoteControlCommandJournal */
 /** @typedef {{ on(event: string, listener: (...args: any[]) => void): unknown, send(data: string): unknown, close(...args: any[]): unknown, terminate?: () => unknown, __remoteHeartbeatSeconds?: number, __remoteSilenceSeconds?: number }} RemoteControlSocket */
@@ -565,7 +566,7 @@ export function createRemoteControlAgent(options) {
     onAuthorizationChanged = null,
     onMutationAuthorizationChanged = null,
   } = options;
-  if (!settingsStore || typeof settingsStore.read !== "function" || !credentialStore ||
+  if (!settingsStore || typeof settingsStore.read !== "function" || typeof settingsStore.disable !== "function" || !credentialStore ||
     typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
     !(e2eeKeyStore === null || (typeof e2eeKeyStore.active === "function" && typeof e2eeKeyStore.advertisement === "function" && typeof e2eeKeyStore.privateKey === "function" && typeof e2eeKeyStore.revokeAll === "function")) ||
     !operationRegistry || typeof operationRegistry.advertise !== "function" || typeof operationRegistry.dispatch !== "function" ||
@@ -1167,6 +1168,7 @@ export function createRemoteControlAgent(options) {
       if (changed) notifyControlRevoked("cloud");
       enrollment = null;
       state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
+      try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
       try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
       try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
       return;
@@ -1205,6 +1207,7 @@ export function createRemoteControlAgent(options) {
           if (changed) notifyControlRevoked("cloud");
           enrollment = null;
           state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
+          try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
           try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
           try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
           return;
@@ -1478,8 +1481,28 @@ export function createRemoteControlAgent(options) {
         credentials: credentialStore,
         context: credentialContext(activeContext),
       });
-    } catch {
+    } catch (error) {
       if (generation === lifecycleGeneration && attempt === connectionAttempt) {
+        if (error instanceof RemoteControlCloudError && error.status === 404) {
+          // The server no longer knows this device: it was permanently deleted.
+          // Distinguishable from retryable 401s so the Desktop can durably turn
+          // remote control off instead of reconnecting forever.
+          const changed = !revoked;
+          revoked = true;
+          localDisabledLatch = true;
+          clearAuthorizations();
+          lastErrorCode = "device_deleted";
+          activeControlSessions.clear();
+          encryptedControlSessions.clear();
+          invalidateTransport();
+          if (changed) notifyControlRevoked("cloud");
+          enrollment = null;
+          state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
+          try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+          try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+          try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+          return;
+        }
         lastErrorCode = "token_unavailable";
         if (replace && socket !== null) scheduleRefreshRetry(generation);
         else scheduleReconnect(generation);

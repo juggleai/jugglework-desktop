@@ -8,6 +8,7 @@ import {
   createRemoteControlAgent,
   normalizeRemoteControlAgentContext,
 } from "./remote-control-agent.mjs";
+import { RemoteControlCloudError } from "./remote-control-cloud-client.mjs";
 import {
   canonicalRemoteControlAAD,
   decryptRemoteControlPayload,
@@ -227,7 +228,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -246,6 +247,7 @@ function harness({
   onControlRevoked = () => {},
   onPolicyExpired = () => {},
   onAuthorizationChanged = () => {},
+  issueTokenError = null,
 } = {}) {
   const clock = new FakeClock();
   let settings = { schemaVersion: 1, enabled, preventSleepWhileWaiting: enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
@@ -254,6 +256,7 @@ function harness({
   let tokenCalls = 0;
   let enrollmentCalls = 0;
   let deleteCalls = 0;
+  let disableSettingsCalls = 0;
   /** @type {FakeSocket[]} */
   const sockets = [];
   /** @type {Array<Record<string, any>>} */
@@ -297,6 +300,7 @@ function harness({
     },
     issueAgentToken: async () => {
       tokenCalls += 1;
+      if (issueTokenError) throw issueTokenError;
       return {
         accessToken: `short-lived-token-${tokenCalls}`,
         expiresAt: new Date(clock.time + tokenLifetime).toISOString(),
@@ -305,7 +309,14 @@ function harness({
     },
   });
   const agent = createRemoteControlAgent({
-    settingsStore: { read: async () => ({ ...settings }) },
+    settingsStore: {
+      read: async () => ({ ...settings }),
+      disable: async () => {
+        disableSettingsCalls += 1;
+        settings = { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+        return { ...settings };
+      },
+    },
     credentialStore,
     e2eeKeyStore,
     operationRegistry,
@@ -344,6 +355,7 @@ function harness({
     get tokenCalls() { return tokenCalls; },
     get enrollmentCalls() { return enrollmentCalls; },
     get deleteCalls() { return deleteCalls; },
+    get disableSettingsCalls() { return disableSettingsCalls; },
     setSettings(next) { settings = { ...next }; },
   };
 }
@@ -687,10 +699,44 @@ describe("remote-control agent context and lifecycle", () => {
     await settle();
     assert.equal(socket.closeCalls, 1);
     assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.disableSettingsCalls, 1);
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
     assert.equal(fixture.agent.status().enrolled, false);
     assert.equal(fixture.clock.nextDelay(), null);
     assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("a permanently deleted device (404 token issue) disables remote control durably", async () => {
+    const revocations = [];
+    const fixture = harness({
+      onControlRevoked: (input) => revocations.push(input),
+      issueTokenError: new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 404.", { status: 404 }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await settle();
+    assert.equal(fixture.sockets.length, 0, "no transport is created for a deleted device");
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
+    assert.equal(fixture.agent.status().enrolled, false);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_deleted");
+    assert.equal(fixture.clock.nextDelay(), null, "no reconnect is scheduled");
+    assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("a retryable token failure keeps reconnecting without disabling", async () => {
+    const fixture = harness({
+      issueTokenError: new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 401.", { status: 401 }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "token_unavailable");
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.notEqual(fixture.clock.nextDelay(), null, "a reconnect backoff is scheduled");
   });
 
   it("reports explicit local stop once without misclassifying it as disconnect", async () => {
