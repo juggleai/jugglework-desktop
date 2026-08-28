@@ -63,4 +63,39 @@ describe("account menu", () => {
     expect(source).toContain("organizationGroups.others.map");
     expect(source).toContain("<DropdownMenuSeparator />");
   });
+
+  test("opens the centered membership selector from the upgrade button", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain("setUpgradeOpen(true)");
+    expect(source).toContain("<MembershipUpgradeDialog");
+    expect(source).toContain("currentTier={tier}");
+  });
+
+  test("keeps the membership dialog content-sized without internal scrollbars", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
+    expect(source).toContain("max-w-[880px]");
+    expect(source).toContain("md:h-[600px]");
+    expect(source).not.toContain("overflow-y-auto");
+    expect(source).not.toContain("h-[min(");
+  });
+
+  test("uses a full-height order card for the payment summary", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
+    expect(source).toContain("relative flex size-40");
+    expect(source).toContain("flex h-full flex-col rounded-[18px]");
+    expect(source).toContain("支付完成后立即生效");
+    expect(source).toContain("支付宝扫码支付");
+  });
+
+  test("gives billing choices the same white surface as tier choices", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
+    expect(source).toContain("min-h-[68px] items-center justify-between gap-2 rounded-[14px] border bg-background");
+  });
+
+  test("disables plans below the current membership tier", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
+    expect(source).toContain("isMembershipTierSelectable(currentTier, plan.id)");
+    expect(source).toContain("disabled={!selectable}");
+    expect(source).toContain("不可降级");
+  });
 });

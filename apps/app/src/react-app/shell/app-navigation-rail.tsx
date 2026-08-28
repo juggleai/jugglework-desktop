@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlarmClock,
@@ -51,6 +51,7 @@ import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, organizationMenuGroups } from "./account-menu-model";
+import { MembershipUpgradeDialog } from "./membership-upgrade-dialog";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -172,6 +173,8 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     )
   ));
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   useEffect(() => {
     void bootstrapChat(user);
@@ -198,7 +201,11 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       ? t("account_menu.loading")
       : "—";
 
-  const openUpgrade = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
+  const openUpgrade = () => {
+    setAccountMenuOpen(false);
+    setUpgradeOpen(true);
+  };
+  const openBillingDashboard = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
   const openManagementConsole = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
   const checkForUpdates = () => {
     useUpdateCheckRequestStore.getState().requestUpdateCheck();
@@ -334,7 +341,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       </nav>
 
       <div className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag">
-        <DropdownMenu onOpenChange={(open) => { if (open) void refreshAccount(); }}>
+        <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
           <DropdownMenuTrigger
             render={(
               <button
@@ -386,7 +393,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               {t("navigation.settings")}
               {notificationUnreadCount > 0 ? <span className="ms-auto size-2 rounded-full bg-red-9" aria-hidden="true" /> : null}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={openUpgrade} data-testid="account-menu-balance">
+            <DropdownMenuItem onClick={openBillingDashboard} data-testid="account-menu-balance">
               <Coins />
               <span>{t("account_menu.balance")}</span>
               <span className="ms-auto tabular-nums text-xs text-muted-foreground">{balanceLabel}</span>
@@ -460,6 +467,11 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <MembershipUpgradeDialog
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        currentTier={tier}
+      />
     </aside>
   );
 }
