@@ -73,6 +73,16 @@ import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import {
+  applyMcpWorkspacePolicyToPrompt,
+  checkMcpWorkspaceToolPolicy,
+  compileWorkspaceMcpToolPrefixes,
+  findWorkspaceByDirectory,
+  listWorkspaceMcpServerNames,
+  migrateLegacyDisabledRuntimeMcps,
+  readMcpWorkspaceToolPolicy,
+  writeMcpWorkspaceToolPolicy,
+} from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
@@ -1277,10 +1287,18 @@ async function dispatchSessionPromptAsync(
   prompt: Record<string, unknown>,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
+  let effectivePrompt = prompt;
+  const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
+  if (policy.disabledServerNames.length) {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const result = await opencode.tool.ids();
+    const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
+    effectivePrompt = applyMcpWorkspacePolicyToPrompt(prompt, toolIds, policy.disabledServerNames);
+  }
   const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
-    body: JSON.stringify(prompt),
+    body: JSON.stringify(effectivePrompt),
   });
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
@@ -1364,9 +1382,31 @@ async function proxyOpencodeRequest(input: {
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
-  const body = method === "GET" || method === "HEAD"
+  let body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  if (workspace && body && method === "POST" && /\/session\/[^/]+\/(?:prompt_async|message)$/.test(proxyPath)) {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const policy = await readMcpWorkspaceToolPolicy(input.config, workspace.id);
+        if (policy.disabledServerNames.length) {
+          const opencode = createWorkspaceOpencodeClient(input.config, workspace);
+          const result = await opencode.tool.ids();
+          const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
+          body = new TextEncoder().encode(JSON.stringify(applyMcpWorkspacePolicyToPrompt(
+            parsed as Record<string, unknown>,
+            toolIds,
+            policy.disabledServerNames,
+          ))).buffer;
+          headers.set("Content-Type", "application/json");
+          headers.delete("content-length");
+        }
+      }
+    } catch {
+      // Let OpenCode return its normal invalid-body response.
+    }
+  }
   const noopConfigResponse = await skipNoopOpencodeConfigPatch({
     method,
     proxyPath,
@@ -2688,7 +2728,8 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal);
+    const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : undefined;
+    const items = await listSkills(workspace.path, includeGlobal, { scope });
     return jsonResponse({ items });
   });
 
@@ -2784,6 +2825,67 @@ function createRoutes(
       items,
       engineSync: engineMcpSyncStateInState(config, engineMcpServerState, workspace),
     });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/mcp-tool-policy", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listMcp(config, workspace.id, workspace.path);
+    const migration = await migrateLegacyDisabledRuntimeMcps(config, workspace.id, items);
+    if (migration.migratedServerNames.length) {
+      await syncRuntimeMcpToOpencodeEngine(
+        config,
+        workspace,
+        migration.migratedServerNames,
+        undefined,
+        engineMcpServerState,
+      );
+    }
+    return jsonResponse({
+      ...(await readMcpWorkspaceToolPolicy(config, workspace.id)),
+      toolPrefixes: await compileWorkspaceMcpToolPrefixes(config, workspace.id),
+    });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/mcp-tool-policy", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    if (!Array.isArray(body.disabledServerNames)) {
+      throw new ApiError(400, "invalid_payload", "disabledServerNames must be an array");
+    }
+    const policy = await writeMcpWorkspaceToolPolicy(config, workspace.id, body.disabledServerNames);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "mcp.workspace-policy.update",
+      target: workspace.id,
+      summary: "Updated workspace MCP tool policy",
+      timestamp: Date.now(),
+    });
+    return jsonResponse(policy);
+  });
+
+  addRoute(routes, "POST", "/internal/mcp-tool-policy/check", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const directory = typeof body.directory === "string" ? body.directory.trim() : "";
+    const toolId = typeof body.toolId === "string" ? body.toolId.trim() : "";
+    if (!directory) throw new ApiError(400, "invalid_payload", "directory is required");
+    const workspace = findWorkspaceByDirectory(config, directory);
+    if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found for directory");
+    const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
+    const serverNames = await listWorkspaceMcpServerNames(config, workspace.id);
+    if (body.operation === "inventory") {
+      return jsonResponse({ allowed: true, workspaceId: workspace.id, serverNames, revision: policy.revision });
+    }
+    if (!toolId) throw new ApiError(400, "invalid_payload", "toolId is required");
+    return jsonResponse(checkMcpWorkspaceToolPolicy({
+      toolId,
+      args: body.args,
+      serverNames,
+      disabledServerNames: policy.disabledServerNames,
+    }));
   });
 
   // Portable export of installed skills and MCP servers (including

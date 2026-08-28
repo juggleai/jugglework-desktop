@@ -8,7 +8,6 @@ import {
   openCloudMcpSession,
   type McpFetch,
 } from "./connect-cloud-mcp-rpc.js";
-import { writeConnectCloudMcp } from "./connect-state.js";
 import { externalFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
@@ -71,12 +70,12 @@ async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch
 }
 
 /**
- * Resolve the skill catalog from the first *working* jugglework-cloud config.
- * Candidates are tried in order: the server-scoped connect-state copy, then
- * each workspace runtime row (legacy scope). Stale rows — e.g. a revoked token
- * or a dead local Den URL left behind by an old session — are skipped instead
- * of shadowing a valid config, and the winning workspace copy is promoted to
- * server scope so Connect stays account-level.
+ * Resolve the skill catalog from the account-scoped jugglework-cloud config.
+ *
+ * TIPS: 目录只从 host 级（账号级）目录令牌读取。工作区 runtime 副本不再作为候选，
+ * 也不再被提升为 host 级——那份令牌带 workspaceKey，云端会按工作区策略过滤，
+ * 拿它当账号目录会让「在某个工作区关掉一条连接」意外影响所有工作区的技能列表。
+ * 配置不可用（吊销、端点失效）时返回空目录，由下一轮维护重铸目录令牌。
  */
 export async function readJuggleWorkConnectSkillCatalog(
   config: ServerConfig,
@@ -86,11 +85,6 @@ export async function readJuggleWorkConnectSkillCatalog(
     for (const candidate of await listCloudMcpCandidates(config)) {
       const skills = await readIndexCached(candidate.cloud, fetcher);
       if (skills === null) continue;
-      if (candidate.source === "workspace") {
-        await writeConnectCloudMcp(config, candidate.cloud).catch(() => {
-          // Catalog reads should still succeed even if promotion fails.
-        });
-      }
       return skills;
     }
     return [];

@@ -36,6 +36,10 @@ import {
 } from "@/app/lib/app-inspector";
 import { useControlAction, type JuggleWorkControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
+import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, isInternalCloudMcpTransport, selectComposerAvailableMcpEntries } from "@/react-app/domains/connections/workspace-mcp-inventory";
+import { resolveWorkspaceMcpKey } from "@/react-app/domains/connections/workspace-mcp-key";
+import { MCP_QUICK_CONNECT, getMcpServerName } from "@/app/constants";
+import { isMcpConnectorEntry } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import type {
   CloudMcpSubmissionGateState,
   CloudMcpSubmissionResult,
@@ -1569,11 +1573,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // TIPS：命令和技能仍复用缓存，只有对授权时效敏感的 MCP 菜单强制刷新。
     const connectPromise = loadConnectCapabilityInventory({ refresh: true });
     const response = await props.client.listMcp(props.workspaceId);
-    const localServers = (response.items ?? []).map((entry) => ({
+    const localServers = (response.items ?? []).filter((entry) => entry.name !== "jugglework-cloud").map((entry) => ({
       name: entry.name,
       config: entry.config as McpServerEntry["config"],
       source: entry.source,
-      origin: entry.name === "jugglework-cloud" ? "jugglework-connect" : "local",
+      origin: "local",
     } satisfies McpServerEntry));
 
     let localStatuses: McpStatusMap = {};
@@ -1593,8 +1597,52 @@ export function SessionSurface(props: SessionSurfaceProps) {
       connectServers: connect.mcpServers,
       localStatuses,
     });
-    const servers = merged.servers;
-    const statuses = { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses };
+    let disabledServerNames: string[] = [];
+    let cloudPolicy: import("@/app/lib/den").DenMcpWorkspaceConnectionPolicy[] = [];
+    try {
+      disabledServerNames = (await props.client.getMcpToolPolicy(props.workspaceId)).disabledServerNames;
+    } catch {
+      // 旧服务端或远程引擎不支持普通 MCP 软策略；保持列表可用。
+    }
+    try {
+      const settings = readDenSettings();
+      const token = settings.authToken?.trim() ?? "";
+      const organizationId = settings.activeOrgId?.trim() ?? "";
+      const workspaceKey = token && organizationId ? await resolveWorkspaceMcpKey(props.client, props.workspaceId) : null;
+      if (token && organizationId && workspaceKey) {
+        cloudPolicy = (await createDenClient({ baseUrl: settings.baseUrl, token })
+          .getMcpWorkspacePolicy(organizationId, workspaceKey)).items;
+      }
+    } catch {
+      // Cloud policy 暂时不可用时保留 org-level 状态；执行链路仍由服务端 fail closed。
+    }
+    // 与右侧连接器保持同一用户可管理集合：Connect Marketplace 插件内部 MCP
+    // 不在输入栏单独展开；独立 Cloud connection 保留，快速目录补齐未连接项。
+    const configuredNames = new Set(merged.servers.map((entry) => entry.name.trim().toLowerCase()));
+    const manageableCloud = merged.servers.filter(isComposerManageableMcpEntry);
+    const directoryServers: McpServerEntry[] = MCP_QUICK_CONNECT
+      .filter((entry) => isMcpConnectorEntry(entry) && getMcpServerName(entry) !== "jugglework-cloud")
+      .filter((entry) => !configuredNames.has(getMcpServerName(entry).toLowerCase()))
+      .map((entry) => ({
+        name: entry.name,
+        localServerName: getMcpServerName(entry),
+        config: entry.type === "local"
+          ? { type: "local", command: entry.command }
+          : { type: "remote", url: entry.url },
+        origin: "local",
+      }));
+    const combinedStatuses: McpStatusMap = { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses };
+    for (const entry of directoryServers) {
+      combinedStatuses[entry.name] = { status: "not_installed" };
+    }
+    const projected = applyWorkspaceMcpInventoryPolicy({
+      servers: [...manageableCloud, ...directoryServers].filter((entry) => !isInternalCloudMcpTransport(entry)),
+      statuses: combinedStatuses,
+      disabledServerNames,
+      cloudPolicy,
+    });
+    const servers = selectComposerAvailableMcpEntries(projected);
+    const statuses = projected.statuses;
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
@@ -1615,7 +1663,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         .then(async (attempted) => {
           if (!attempted) return;
           const healed = unwrap(await opencodeClient.mcp.status({ directory })) as McpStatusMap;
-          setToolMcpStatuses({ ...connect.mcpStatuses, ...healed });
+          setToolMcpStatuses({ ...connect.mcpStatuses, ...merged.statuses, ...healed });
         })
         .catch(() => {
           // Best-effort; the manual Sign in path is unaffected.

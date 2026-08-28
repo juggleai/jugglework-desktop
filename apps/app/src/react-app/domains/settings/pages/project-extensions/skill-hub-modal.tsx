@@ -32,14 +32,16 @@ function skillKey(skill: Pick<SkillHubSkill, "namespace" | "slug">): string {
 /**
  * 技能中心弹窗：从 SkillHub 检索技能，支持搜索、多选与批量安装。
  * @param open 是否打开
- * @param projectDir 项目根目录（安装落点）
+ * @param projectDir 项目根目录（工作区安装落点）
+ * @param scope 安装作用域，缺省为工作区
  * @param installedSlugs 已安装技能的 slug/name 小写集合，用于标记「已安装」
  * @param onClose 关闭回调
  * @param onInstalled 安装完成后刷新回调
  */
-export function SkillHubModal({ open, projectDir, installedSlugs, onClose, onInstalled }: {
+export function SkillHubModal({ open, projectDir, scope = "project", installedSlugs, onClose, onInstalled }: {
   open: boolean;
-  projectDir: string;
+  projectDir?: string;
+  scope?: "project" | "global";
   installedSlugs: Set<string>;
   onClose: () => void;
   onInstalled: () => void | Promise<void>;
@@ -139,6 +141,7 @@ export function SkillHubModal({ open, projectDir, installedSlugs, onClose, onIns
           projectDir,
           namespace: skill.namespace,
           slug: skill.slug,
+          scope,
         });
         if (!result?.ok) failures.push(`${skill.displayName}: ${result?.stderr ?? result?.message ?? "failed"}`);
       } catch (cause) {

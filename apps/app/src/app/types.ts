@@ -364,6 +364,8 @@ export type McpServerEntry = {
   pluginName?: string;
   /** Connect 能力搜索提示或连接前缀；执行时仍须采用搜索返回的完整名称。 */
   connectCapabilityName?: string;
+  /** 当前工作区是否允许选择和执行；false 时 transport 仍可能保持连接。 */
+  workspaceEnabled?: boolean;
 };
 
 export type McpStatus =

@@ -11,6 +11,7 @@ import {
 } from "../cloud-mcp-health.js";
 import { ApiError } from "../errors.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
+import { ensureWorkspaceKey } from "../workspace-key.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -107,6 +108,14 @@ export function registerCloudMcpRoutes(options: RegisterCloudMcpRoutesOptions): 
       refreshRegistrationFromLiveStatus,
     });
     return jsonResponse(health);
+  });
+
+  // 工作区键由服务端生成并持久化，客户端只读取——同一工作区在多个窗口/会话里
+  // 必须拿到同一个键，否则云端会把它们当成不同工作区，策略与令牌都会分叉。
+  addRoute(routes, "GET", "/workspace/:id/mcp/jugglework-cloud/workspace-key", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    assertExactWorkspace(ctx.params.id, workspace);
+    return jsonResponse({ workspaceId: workspace.id, workspaceKey: await ensureWorkspaceKey(config, workspace.id) });
   });
 
   addRoute(routes, "POST", "/workspace/:id/mcp/jugglework-cloud/engine-refresh", "client", async (ctx) => {

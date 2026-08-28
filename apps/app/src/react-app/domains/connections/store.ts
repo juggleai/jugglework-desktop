@@ -959,7 +959,7 @@ export function createConnectionsStore(options: {
     return "skipped";
   }
 
-  function authorizeMcp(entry: McpServerEntry) {
+  function authorizeMcp(entry: McpServerEntry, options?: { needsReload?: boolean }) {
     if (entry.config.type !== "remote" || entry.config.oauth === false) {
       setStateField("mcpStatus", t("mcp.login_unavailable"));
       return;
@@ -980,7 +980,7 @@ export function createConnectionsStore(options: {
           url: entry.config.url,
           oauth: true,
         },
-      mcpAuthNeedsReload: false,
+      mcpAuthNeedsReload: options?.needsReload === true,
       mcpAuthModalOpen: true,
     }));
   }

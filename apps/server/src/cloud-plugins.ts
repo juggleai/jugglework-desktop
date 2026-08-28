@@ -367,6 +367,13 @@ function mcpCommandFromConfig(config: Record<string, unknown>): string[] {
   return [command, ...readStringArray(config.args)];
 }
 
+/**
+ * 把插件载荷里的一个 MCP 服务配置规范化成工作区可用的形状。
+ *
+ * TIPS：这里是白名单——没有显式搬运的键会在投递时被丢掉，且丢得静默：管理员在控制台
+ * 明明填了超时/工作目录，成员机器上却没有。`timeout` / `cwd` / `transport` 与 OAuth
+ * 客户端都是控制台表单已经能编辑的字段，必须一并落地。
+ */
 function normalizePluginMcpConfig(input: unknown): Record<string, unknown> | null {
   if (!isRecord(input)) return null;
   const enabled = typeof input.enabled === "boolean"
@@ -374,13 +381,20 @@ function normalizePluginMcpConfig(input: unknown): Record<string, unknown> | nul
     : typeof input.disabled === "boolean"
       ? !input.disabled
       : true;
+  const timeout = typeof input.timeout === "number" && Number.isFinite(input.timeout) && input.timeout > 0
+    ? Math.round(input.timeout)
+    : null;
   const url = readString(input.url);
   if (url) {
     const config: Record<string, unknown> = { type: "remote", url, enabled };
+    const transport = readString(input.transport);
+    if (transport === "streamable-http" || transport === "sse") config.transport = transport;
     const headers = readStringRecord(input.headers);
     if (headers) config.headers = headers;
     if (isRecord(input.oauth)) config.oauth = input.oauth;
     if (input.oauth === true) config.oauth = {};
+    if (input.oauth === false) config.oauth = false;
+    if (timeout !== null) config.timeout = timeout;
     return config;
   }
 
@@ -389,6 +403,9 @@ function normalizePluginMcpConfig(input: unknown): Record<string, unknown> | nul
     const config: Record<string, unknown> = { type: "local", command, enabled };
     const environment = readStringRecord(input.environment) ?? readStringRecord(input.env);
     if (environment) config.environment = environment;
+    const cwd = readString(input.cwd);
+    if (cwd) config.cwd = cwd;
+    if (timeout !== null) config.timeout = timeout;
     return config;
   }
 
@@ -653,7 +670,9 @@ export async function installCloudPlugin(input: {
       // 全部由云端承载时没有任何东西要落盘，这是正常路径，不该报"装不了"。
       if (configs.length === 0 && cloudHostedCount === 0) warnings.push(mcpNoConfigWarning(object.title));
       for (const config of configs) {
-        await addMcp(input.serverConfig, input.workspaceId, config.name, config.config);
+        // 作者写的 enabled 只是首次投递的初始默认值；成员后来自己拨的开关必须
+        // 活过插件更新，否则每次版本更新都会把成员关掉的组件重新打开。
+        await addMcp(input.serverConfig, input.workspaceId, config.name, config.config, { preserveEnabled: true });
         files.push({
           configObjectId: object.id,
           versionId: version?.id ?? null,

@@ -679,18 +679,32 @@ export async function inspectMcpLayersFromRuntimeSnapshot(
   };
 }
 
+/**
+ * 写入一条工作区 MCP 条目。
+ *
+ * @param options.preserveEnabled 已存在同名条目时保留其 `enabled`。用于插件投递：
+ *   作者在控制台写的 `enabled` 只是**首次投递的初始默认值**，成员之后自己拨过的开关
+ *   必须活过插件更新——否则每次版本更新都会把成员关掉的组件重新打开。
+ */
 export async function addMcp(
   serverConfig: ServerConfig,
   workspaceId: string,
   name: string,
   config: Record<string, unknown>,
+  options?: { preserveEnabled?: boolean },
 ): Promise<{ action: "added" | "updated" }> {
   validateMcpName(name);
   validateMcpConfig(config);
   const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
   const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
+  const existing = mcpMap[name];
   const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
-  mcpMap[name] = config;
+  const memberEnabled = options?.preserveEnabled
+    && isRecord(existing)
+    && typeof existing.enabled === "boolean"
+    ? existing.enabled
+    : undefined;
+  mcpMap[name] = memberEnabled === undefined ? config : { ...config, enabled: memberEnabled };
   await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
   return { action: existed ? "updated" : "added" };
 }

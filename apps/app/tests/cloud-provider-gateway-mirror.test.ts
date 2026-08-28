@@ -41,11 +41,13 @@ describe("gateway credential mirror", () => {
     }
   });
 
-  test("matches the name the web console writes into MCP components", () => {
-    // webconsole/web/.../mcp-component-payload.ts gatewayCredentialEnvName must
+  test("matches the name the web console shows on the provider", () => {
+    // webconsole/web/.../llm-gateway-access.ts gatewayCredentialEnvName must
     // agree, or a distributed MCP reads a variable that is never written.
+    // (The helper used to live in mcp-component-payload.ts, next to the MCP
+    // form's provider binder; it moved with that binder onto the provider page.)
     const consoleSource = readFileSync(
-      new URL("../../../../jugglework-server/webconsole/web/app/(cloud)/dashboard/_components/mcp-component-payload.ts", import.meta.url),
+      new URL("../../../../jugglework-server/webconsole/web/app/(cloud)/dashboard/_components/llm-gateway-access.ts", import.meta.url),
       "utf8",
     );
     expect(consoleSource).toContain("MCP_GATEWAY_KEY_${suffix}");

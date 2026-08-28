@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import type { McpDirectoryInfo } from "@/app/constants";
@@ -54,6 +55,11 @@ function ConnectorIcon({ row }: { row: ConnectorRow }) {
 }
 
 function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail: (row: ConnectorRow) => void }) {
+  const scopeLabel = row.mcpSource === "config.global"
+    ? t("project_extensions.scope_global")
+    : row.mcpSource === "config.project" || row.mcpSource === "config.remote"
+      ? t("project_extensions.scope_workspace")
+      : null;
   return (
     <div
       role="button"
@@ -64,11 +70,18 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
         event.preventDefault();
         onOpenDetail(row);
       }}
-      className="flex cursor-pointer items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2.5 transition-colors hover:border-dls-border-hover hover:bg-dls-hover"
+      className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2.5 transition-colors hover:border-dls-border-hover hover:bg-dls-hover"
     >
       <ConnectorIcon row={row} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-dls-text">{row.name}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="truncate text-sm font-medium text-dls-text">{row.name}</p>
+          {scopeLabel ? (
+            <span className="shrink-0 rounded-full bg-dls-bg px-2 py-0.5 text-[10px] text-dls-secondary">
+              {scopeLabel}
+            </span>
+          ) : null}
+        </div>
         {/* TIPS: 失败原文优先于描述——服务器自述的缺参数原因才是用户此刻需要的信息。 */}
         {row.errorDetail ? (
           <p className="truncate text-xs text-red-11" title={row.errorDetail}>{row.errorDetail}</p>
@@ -77,19 +90,26 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
         ) : null}
       </div>
       {/* TIPS: 行本身可点开详情，行内按钮需阻止冒泡，否则点「连接」会同时弹出详情。 */}
-      <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
+      <div className="min-w-0 shrink-0" onClick={(event) => event.stopPropagation()}>
       {!row.connected && row.disabled ? (
         <span className="mr-2 inline-flex items-center rounded-full bg-dls-bg px-2 py-0.5 text-xs text-dls-secondary">
           {t("project_extensions.disabled_badge")}
         </span>
       ) : null}
       {row.connected ? (
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-3 px-2 py-0.5 text-xs text-green-11">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs",
+            row.workspaceScope && !row.workspaceScope.enabled
+              ? "bg-dls-bg text-dls-secondary"
+              : "bg-green-3 text-green-11",
+          )}>
             <CheckCircle2 className="size-3" />
-            {t("ext_card.connected")}
+            {row.workspaceScope && !row.workspaceScope.enabled
+              ? t("connect.workspace_disabled_here")
+              : t("ext_card.connected")}
           </span>
-          {row.onDisconnect ? (
+          {row.onDisconnect && !(row.workspaceScope && row.disconnectKind === "disable") ? (
             <Button
               variant="outline"
               size="sm"
@@ -102,6 +122,22 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
                 ? t("project_extensions.disable")
                 : t("project_extensions.disconnect")}
             </Button>
+          ) : null}
+          {row.onConnect ? (
+            <Button variant="outline" size="sm" onClick={row.onConnect} disabled={row.busy}>
+              {row.busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {t("mcp.reconnect")}
+            </Button>
+          ) : null}
+          {row.workspaceScope ? (
+            <div className="flex items-center gap-2">
+              {row.workspaceScope.saving ? <Loader2 className="size-3.5 animate-spin text-dls-secondary" /> : null}
+              <Switch
+                checked={row.workspaceScope.enabled}
+                onCheckedChange={row.workspaceScope.onChange}
+                aria-label={t("connect.workspace_toggle_label", { name: row.name })}
+              />
+            </div>
           ) : null}
         </div>
       ) : (
@@ -121,7 +157,7 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
 }
 
 /**
- * 连接器(MCP) 选择弹窗：按「已连接 / 未连接」两组展示汇总的连接器，
+ * 连接器(MCP) 管理弹窗：只展示已配置/已授权连接，并按「已连接 / 本工作区已关闭」分组，
  * 右上角「+ 添加」提供自定义 MCP 入口。
  * @param open 是否打开
  * @param connectors 聚合后的连接器列表
@@ -145,10 +181,13 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
   const [detailKey, setDetailKey] = useState<string | null>(null);
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
-  const { connected, unconnected } = useMemo(() => {
-    const connectedRows = connectors.filter((row) => row.connected);
-    const unconnectedRows = connectors.filter((row) => !row.connected);
-    return { connected: connectedRows, unconnected: unconnectedRows };
+  const { connected, workspaceDisabled } = useMemo(() => {
+    // TIPS: 右侧会话连接器只管理已经配置/授权的 MCP。目录未连接、待授权和
+    // 未安装项不在这里占位；工作区关闭项单独分组，便于批量检查和重新打开。
+    const configured = connectors.filter((row) => row.connected);
+    const disabledRows = configured.filter((row) => row.workspaceScope?.enabled === false);
+    const connectedRows = configured.filter((row) => row.workspaceScope?.enabled !== false);
+    return { connected: connectedRows, workspaceDisabled: disabledRows };
   }, [connectors]);
 
   // TIPS: 详情按 key 回查而非存快照，连接/断开后状态才会实时反映到已打开的详情里。
@@ -180,8 +219,11 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
 
   return (
     <>
-      <Dialog open={open && !addCustomOpen && !detailRow && !editingRow} onOpenChange={(next) => { if (!next) onClose(); }}>
-        <DialogContent className="max-w-[750px] sm:max-w-[750px]">
+      <Dialog open={open && !addCustomOpen && !detailRow && !editingRow} onOpenChange={(next) => {
+        if (next) return;
+        onClose();
+      }}>
+        <DialogContent className="flex h-[85vh] max-h-[85vh] min-h-0 max-w-[1000px] flex-col sm:max-w-[1000px]">
           <DialogHeader className="gap-2 space-y-0">
             <div className="flex items-center justify-between gap-4 pr-8">
               <DialogTitle>{t("project_extensions.group_connector")}</DialogTitle>
@@ -224,7 +266,7 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
               {error}
             </p>
           ) : null}
-          <div className="max-h-[60vh] space-y-4 overflow-y-auto">
+          <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto pt-2">
             <ConnectorGroup
               title={t("project_extensions.connected_group")}
               count={connected.length}
@@ -233,10 +275,10 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
               onOpenDetail={(row) => setDetailKey(row.key)}
             />
             <ConnectorGroup
-              title={t("project_extensions.unconnected_group")}
-              count={unconnected.length}
-              rows={unconnected}
-              emptyLabel={t("project_extensions.no_unconnected")}
+              title={t("project_extensions.workspace_disabled_group")}
+              count={workspaceDisabled.length}
+              rows={workspaceDisabled}
+              emptyLabel={t("project_extensions.no_workspace_disabled")}
               onOpenDetail={(row) => setDetailKey(row.key)}
             />
           </div>
@@ -266,7 +308,7 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
         <ConnectorDetailModal
           row={detailRow}
           configSlotForEntry={configSlotForEntry}
-          onEdit={detailRow.serverConfig ? () => {
+          onEdit={detailRow.serverConfig && detailRow.mcpSource !== "config.global" ? () => {
             setEditingKey(detailRow.key);
             setDetailKey(null);
           } : undefined}
@@ -290,7 +332,10 @@ function ConnectorDetailModal({ row, configSlotForEntry, onEdit, onClose }: {
 }) {
   const entry = row.entry;
   const hidden = entry ? isJuggleWorkExtensionHidden(entry) : false;
-  const configSlot = entry ? configSlotForEntry?.(entry) ?? null : null;
+  // 全局 MCP 在会话入口只读展示；扩展专属配置动作同样可能写工作区配置，不能透出。
+  const configSlot = entry && row.mcpSource !== "config.global"
+    ? configSlotForEntry?.(entry) ?? null
+    : null;
 
   return (
     <ExtensionDetailModal
@@ -352,7 +397,7 @@ function ConnectorGroup({ title, count, rows, emptyLabel, onOpenDetail }: {
           {emptyLabel}
         </p>
       ) : (
-        <div className="space-y-1.5">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-[repeat(2,minmax(0,1fr))]" data-connector-layout="two-column">
           {rows.map((row) => (
             <ConnectorItem key={row.key} row={row} onOpenDetail={onOpenDetail} />
           ))}

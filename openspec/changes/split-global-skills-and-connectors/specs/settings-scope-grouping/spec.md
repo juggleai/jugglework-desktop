@@ -21,7 +21,9 @@
 ## ADDED Requirements
 
 ### Requirement: 工作区扩展不进入设置导航
-工作区级技能、MCP 与组织市场包 MUST NOT 出现在设置导航中，SHALL 继续由会话右侧扩展面板承载。「扩展」的路由 MUST 保留，供该面板渲染使用。
+工作区级技能、MCP、组织连接策略与组织市场包 MUST NOT 出现在个人设置导航中，SHALL 继续由会话右侧扩展面板承载。「扩展」与 `connect` 的路由 MUST 保留，供该面板与兼容深链渲染使用。
+
+会话右侧连接器 SHALL 使用一套「已连接 / 未连接」MCP 列表，MUST NOT 创建独立的「组织连接」页签。已授权且可由工作区策略控制的 Cloud MCP SHALL 在已连接行上显示滑动开关。
 
 #### Scenario: 在设置页查找工作区扩展
 - **WHEN** 用户在设置导航中查找工作区技能或工作区 MCP

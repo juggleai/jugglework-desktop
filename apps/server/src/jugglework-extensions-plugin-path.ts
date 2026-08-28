@@ -35,3 +35,4 @@ export const juggleworkAnthropicToolSchemaPluginPath = () => juggleworkPluginPat
 export const juggleworkOfficeAttachmentsPluginPath = () => juggleworkPluginPath("jugglework-office-attachments");
 export const juggleworkSafeGrepPluginPath = () => juggleworkPluginPath("jugglework-safe-grep");
 export const juggleworkContextOverflowPluginPath = () => juggleworkPluginPath("jugglework-context-overflow");
+export const juggleworkMcpWorkspacePolicyPluginPath = () => juggleworkPluginPath("jugglework-mcp-workspace-policy");

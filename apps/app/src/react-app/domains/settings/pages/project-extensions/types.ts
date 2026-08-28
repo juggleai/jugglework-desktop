@@ -1,7 +1,5 @@
-import type * as React from "react";
-
 import type { McpDirectoryInfo } from "@/app/constants";
-import type { McpServerConfig } from "@/app/types";
+import type { McpServerConfig, McpServerSource } from "@/app/types";
 import type { SkillItem } from "../mcp-view";
 
 /**
@@ -12,6 +10,7 @@ import type { SkillItem } from "../mcp-view";
  * @param connected 是否已连接
  * @param busy 是否正在连接/断开中
  * @param source 来源类别
+ * @param mcpSource 已配置 MCP 的配置层，用于区分全局与当前工作区
  * @param iconSlug Simple Icons 品牌图标 slug
  * @param iconSrc 直接指定的图标地址，优先级高于 iconSlug
  * @param url 服务地址，图标缺省时用于取 favicon，并在详情中展示
@@ -26,6 +25,7 @@ import type { SkillItem } from "../mcp-view";
  * @param entry 对应的目录项（含 extensionManifest），详情弹窗据此展示能力/资源/安装说明
  * @param onConnect 未连接时触发连接
  * @param onDisconnect 已连接时触发断开（可选）
+ * @param workspaceScope 当前工作区策略开关；仅已授权的 Cloud MCP 连接提供
  */
 export type ConnectorRow = {
   key: string;
@@ -34,6 +34,7 @@ export type ConnectorRow = {
   connected: boolean;
   busy?: boolean;
   source: "org" | "directory" | "installed";
+  mcpSource?: McpServerSource;
   iconSlug?: string;
   iconSrc?: string;
   url?: string;
@@ -48,6 +49,12 @@ export type ConnectorRow = {
   entry?: McpDirectoryInfo;
   onConnect?: () => void;
   onDisconnect?: () => void;
+  workspaceScope?: {
+    connectionIds: string[];
+    enabled: boolean;
+    saving?: boolean;
+    onChange: (enabled: boolean) => void;
+  };
 };
 
 /** 分组卡片面板对外的数据与回调。 */

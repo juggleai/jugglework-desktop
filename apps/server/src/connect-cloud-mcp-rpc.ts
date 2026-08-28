@@ -1,5 +1,4 @@
 import { readConnectCloudMcp } from "./connect-state.js";
-import { readRuntimeMcpConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 export const JUGGLEWORK_CLOUD_MCP_NAME = "jugglework-cloud";
@@ -122,27 +121,17 @@ export async function openCloudMcpSession(
 }
 
 /**
- * 收集本机所有 jugglework-cloud 候选配置，去重后按作用域优先级排序。
+ * 收集账号级 jugglework-cloud 候选配置。
  *
- * TIPS：先用服务端（账号级）副本，再回落到工作区运行时副本 —— 后者是旧版本
- * 留下的遗留作用域，可能已经吊销，所以只能作为候选而不是唯一来源。
+ * TIPS：只读 host 级（connect-state）那一份。工作区 runtime 副本携带的是该工作区的
+ * 执行令牌，云端会按令牌里的 workspaceKey 过滤组织连接——拿它去读技能目录，会把
+ * 某一个工作区的过滤结果当成整个账号的目录。目录令牌不带 workspaceKey，只有它
+ * 能代表账号。host 级尚未写入时返回空列表，由下一轮维护铸造目录令牌补上。
  *
  * @param config 服务端配置
- * @returns 去重后的候选配置列表
+ * @returns 候选配置列表（当前最多一项）
  */
 export async function listCloudMcpCandidates(config: ServerConfig): Promise<CloudMcpCandidate[]> {
-  const candidates: CloudMcpCandidate[] = [];
   const serverCloud = await readConnectCloudMcp(config);
-  if (serverCloud) candidates.push({ cloud: serverCloud, source: "server" });
-  for (const workspace of config.workspaces) {
-    const cloud = await readRuntimeMcpConfig(config, workspace.id, JUGGLEWORK_CLOUD_MCP_NAME);
-    if (cloud) candidates.push({ cloud, source: "workspace" });
-  }
-  const seen = new Set<string>();
-  return candidates.filter((candidate) => {
-    const key = JSON.stringify(candidate.cloud);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return serverCloud ? [{ cloud: serverCloud, source: "server" }] : [];
 }

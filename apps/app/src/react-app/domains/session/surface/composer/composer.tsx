@@ -1669,8 +1669,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                             activeMcpItems.length > 0 ? (
                               <div className="grid min-w-0 gap-1">
                                 {activeMcpItems.map(({ entry, status, detail }) => {
-                                  // 只有已就绪（connected）的 MCP 可以被选中插入；其余保持只读展示。
-                                  const selectable = status === "connected";
+                                  // 输入栏 loader 已严格筛选为当前工作区可用且连接成功；这里保留
+                                  // 防御性检查，避免异步状态变化期间插入不可执行的 MCP。
+                                  const selectable = status === "connected" && entry.workspaceEnabled !== false;
                                   const description = entry.origin === "jugglework-connect"
                                     ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
                                       || entry.config.url
@@ -1684,7 +1685,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                                     type="button"
                                     disabled={!selectable}
                                     aria-disabled={!selectable}
-                                    title={selectable ? undefined : mcpStatusTooltip(status, detail)}
+                                    title={selectable ? undefined : entry.workspaceEnabled === false
+                                      ? t("connect.workspace_disabled_here")
+                                      : mcpStatusTooltip(status, detail)}
                                     className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
                                       selectable ? "hover:bg-gray-2/70" : "cursor-default opacity-60"
                                     }`}
@@ -1700,11 +1703,16 @@ export function ReactSessionComposer(props: ComposerProps) {
                                               {t("composer.source_local")}
                                             </span>
                                           ) : null}
+                                          {entry.source ? (
+                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
+                                              {entry.source === "config.global" ? t("project_extensions.scope_global") : t("project_extensions.scope_workspace")}
+                                            </span>
+                                          ) : null}
                                           <span
                                             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}
                                             title={mcpStatusTooltip(status, detail)}
                                           >
-                                            {formatMcpStatusLabel(status)}
+                                            {entry.workspaceEnabled === false ? t("connect.workspace_disabled_here") : formatMcpStatusLabel(status)}
                                           </span>
                                         </div>
                                       </div>

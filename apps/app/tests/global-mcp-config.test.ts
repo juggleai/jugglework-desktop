@@ -5,6 +5,8 @@ import {
   formatConfigWithMcpEnabled,
   formatConfigWithMcpEntry,
   formatConfigWithoutMcpEntry,
+  globalMcpConfigFromDirectory,
+  mergeGlobalMcpEntries,
   parseGlobalMcpEntries,
 } from "../src/react-app/domains/settings/state/global-mcp-config";
 
@@ -31,6 +33,57 @@ describe("parseGlobalMcpEntries", () => {
     expect(parseGlobalMcpEntries(null)).toEqual([]);
     expect(parseGlobalMcpEntries("")).toEqual([]);
     expect(parseGlobalMcpEntries('{"theme":"dark"}')).toEqual([]);
+  });
+});
+
+describe("mergeGlobalMcpEntries", () => {
+  test("补入引擎已识别但文件读取暂未返回的全局 MCP", () => {
+    const merged = mergeGlobalMcpEntries([], [
+      { name: "global-db", source: "config.global", config: { type: "remote", url: "https://global.test/mcp" } },
+      { name: "workspace-db", source: "config.remote", config: { type: "remote", url: "https://workspace.test/mcp" } },
+    ]);
+    expect(merged.map((entry) => entry.name)).toEqual(["global-db"]);
+  });
+
+  test("同名时保留可写配置文件中的值", () => {
+    const merged = mergeGlobalMcpEntries(
+      [{ name: "context7", config: { type: "remote", url: "https://configured.test/mcp" } }],
+      [{ name: "context7", source: "config.global", config: { type: "remote", url: "https://runtime.test/mcp" } }],
+    );
+    expect(merged[0]?.config.url).toBe("https://configured.test/mcp");
+  });
+});
+
+describe("globalMcpConfigFromDirectory", () => {
+  test("保留远程 OAuth 配置", () => {
+    expect(globalMcpConfigFromDirectory({
+      name: "Notion",
+      serverName: "notion",
+      description: "Notion",
+      type: "remote",
+      url: "https://mcp.notion.com/mcp",
+      oauth: true,
+    })).toEqual({
+      name: "notion",
+      config: { type: "remote", url: "https://mcp.notion.com/mcp", enabled: true, oauth: {} },
+    });
+  });
+
+  test("保留本地 MCP 完整命令而不是按空格重切", () => {
+    expect(globalMcpConfigFromDirectory({
+      name: "Local",
+      serverName: "local",
+      description: "Local",
+      type: "local",
+      command: ["node", "server.js", "--name", "My MCP"],
+      environment: { MODE: "test" },
+      oauth: false,
+    }).config).toEqual({
+      type: "local",
+      command: ["node", "server.js", "--name", "My MCP"],
+      environment: { MODE: "test" },
+      enabled: true,
+    });
   });
 });
 

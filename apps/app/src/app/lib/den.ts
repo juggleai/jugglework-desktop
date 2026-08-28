@@ -252,6 +252,28 @@ export type DenMcpToken = {
   organizationId: string;
   scopes: string[];
   resource: string;
+  /**
+   * 该令牌绑定的工作区键；空串表示账号级令牌（目录读取），不参与工作区策略。
+   * 旧版服务端不回这个字段，解析为空串。
+   */
+  workspaceKey: string;
+};
+
+/** 一条组织 MCP 连接在某个工作区的开关状态。 */
+export type DenMcpWorkspaceConnectionPolicy = {
+  connectionId: string;
+  name: string;
+  authType: string;
+  credentialMode: string;
+  connectedForMe: boolean;
+  enabled: boolean;
+  toolCount: number;
+};
+
+/** 一个工作区的组织连接开关视图。 */
+export type DenMcpWorkspacePolicy = {
+  workspaceKey: string;
+  items: DenMcpWorkspaceConnectionPolicy[];
 };
 
 /** 服务端声明的自动化稳定 envelope 与投影兼容能力。 */
@@ -1439,6 +1461,28 @@ function getMcpToken(payload: unknown): DenMcpToken | null {
       ? payload.scopes.filter((entry): entry is string => typeof entry === "string")
       : [],
     resource: payload.resource,
+    workspaceKey: typeof payload.workspaceKey === "string" ? payload.workspaceKey : "",
+  };
+}
+
+function getMcpWorkspacePolicy(payload: unknown): DenMcpWorkspacePolicy {
+  if (!isRecord(payload)) return { workspaceKey: "", items: [] };
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  return {
+    workspaceKey: typeof payload.workspaceKey === "string" ? payload.workspaceKey : "",
+    items: items.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.connectionId !== "string") return [];
+      return [{
+        connectionId: entry.connectionId,
+        name: typeof entry.name === "string" ? entry.name : entry.connectionId,
+        authType: typeof entry.authType === "string" ? entry.authType : "",
+        credentialMode: typeof entry.credentialMode === "string" ? entry.credentialMode : "",
+        connectedForMe: entry.connectedForMe === true,
+        // 服务端只存「关闭」，缺省即启用；缺字段时不能误报为关闭。
+        enabled: entry.enabled !== false,
+        toolCount: typeof entry.toolCount === "number" && Number.isFinite(entry.toolCount) ? entry.toolCount : 0,
+      }];
+    }),
   };
 }
 
@@ -2552,18 +2596,86 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       }
     },
 
-    async mintMcpToken(orgId: string): Promise<DenMcpToken> {
+    /**
+     * 铸造一枚组织级 MCP 访问令牌。
+     *
+     * TIPS：带 workspaceKey 的令牌是**执行令牌**，服务端按工作区策略过滤它能看到的
+     * 组织连接；不带的是账号级**目录令牌**，不受任何工作区开关影响。服务端按
+     * (会话, 组织, workspaceKey) 原地轮换，重复铸造不会堆积令牌行。
+     *
+     * @param orgId 组织 id
+     * @param options.workspaceKey 工作区键；省略或空串即账号级目录令牌
+     */
+    async mintMcpToken(orgId: string, options?: { workspaceKey?: string | null }): Promise<DenMcpToken> {
+      const workspaceKey = options?.workspaceKey?.trim() ?? "";
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
         token,
         organizationId: orgId,
-        body: { scopes: ["mcp:read", "mcp:write"] },
+        body: {
+          scopes: ["mcp:read", "mcp:write"],
+          ...(workspaceKey ? { workspaceKey } : {}),
+        },
       });
       const minted = getMcpToken(payload);
       if (!minted) {
         throw new DenApiError(500, "invalid_mcp_token_payload", "MCP token response was missing required values.");
       }
       return minted;
+    },
+
+    /**
+     * 读取一个工作区的组织连接开关视图。
+     *
+     * @param orgId 组织 id
+     * @param workspaceKey 工作区键
+     * @returns 成员当前可用的全部连接，每条带上它在该工作区的开关状态
+     */
+    async getMcpWorkspacePolicy(orgId: string, workspaceKey: string): Promise<DenMcpWorkspacePolicy> {
+      const query = `?workspaceKey=${encodeURIComponent(workspaceKey)}`;
+      return getMcpWorkspacePolicy(await requestJson<unknown>(baseUrls, `/v1/mcp-connections/workspace-policy${query}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      }));
+    },
+
+    /**
+     * 用提交的关闭集合整体替换工作区策略。
+     *
+     * TIPS：整体替换而非逐条 PATCH —— 面板上连续拨动多个开关时，逐条写入会因请求
+     * 乱序产生错误终态，而全量替换的最后一次提交总是正确的。
+     *
+     * @param orgId 组织 id
+     * @param workspaceKey 工作区键
+     * @param disabledConnectionIds 在该工作区关闭的连接 id 集合
+     */
+    async replaceMcpWorkspacePolicy(
+      orgId: string,
+      workspaceKey: string,
+      disabledConnectionIds: string[],
+    ): Promise<DenMcpWorkspacePolicy> {
+      return getMcpWorkspacePolicy(await requestJson<unknown>(baseUrls, "/v1/mcp-connections/workspace-policy", {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body: { workspaceKey, disabledConnectionIds },
+      }));
+    },
+
+    /** 清空一个工作区的策略，使其回到「全部启用」。 */
+    async clearMcpWorkspacePolicy(orgId: string, workspaceKey: string): Promise<void> {
+      const query = `?workspaceKey=${encodeURIComponent(workspaceKey)}`;
+      const result = await requestJsonRaw<unknown>(baseUrls, `/v1/mcp-connections/workspace-policy${query}`, {
+        method: "DELETE",
+        token,
+        organizationId: orgId,
+      });
+      if (!result.ok && result.status !== 404) {
+        const payload = result.json;
+        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
+        throw new DenApiError(result.status, code, getErrorMessage(payload, `Request failed with ${result.status}.`));
+      }
     },
 
     async getWorkerTokens(workerId: string, orgId: string): Promise<DenWorkerTokens> {
@@ -2777,6 +2889,8 @@ export type DenMcpTokenMintContext = {
   baseUrl: string;
   authToken: string | null;
   orgId: string | null;
+  /** 工作区键；省略即铸造账号级目录令牌。 */
+  workspaceKey?: string | null;
 };
 
 export async function mintCloudControlMcpToken(context?: DenMcpTokenMintContext): Promise<DenMcpToken | null> {
@@ -2790,5 +2904,5 @@ export async function mintCloudControlMcpToken(context?: DenMcpTokenMintContext)
     baseUrl: settings.baseUrl,
     token,
   });
-  return client.mintMcpToken(orgId);
+  return client.mintMcpToken(orgId, { workspaceKey: context?.workspaceKey ?? null });
 }

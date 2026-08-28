@@ -694,6 +694,23 @@ function normalizeCloudMcpConfig(input: unknown): Record<string, unknown> {
   return output;
 }
 
+/**
+ * 从 reconcile 请求体里取出账号级目录配置。
+ *
+ * TIPS：目录配置是可选的——桌面只在目录令牌缺失或临近过期时才铸造并附带它，
+ * 其余每一次 reconcile 都不带，host 级那份保持不变。形状非法时按「未提供」
+ * 处理而不是让整次 reconcile 失败：目录读取降级远好过工作区执行链路中断。
+ */
+function catalogConfigFromBody(body: Record<string, unknown>): Record<string, unknown> | null {
+  const raw = isRecord(body.catalog) ? body.catalog.config ?? body.catalog : body.catalogConfig;
+  if (!isRecord(raw)) return null;
+  try {
+    return canonicalizeCloudMcpConfig(normalizeCloudMcpConfig(raw));
+  } catch {
+    return null;
+  }
+}
+
 function strictCloudMcpDesiredConfigProblem(config: Record<string, unknown>, metadata: CloudMcpDesiredMetadata): CloudMcpValidationProblem | null {
   if (config.type !== "remote") {
     return {
@@ -2112,7 +2129,26 @@ export async function readJuggleWorkCloudMcpHealth(input: {
   };
 }
 
-async function persistDesiredConfig(config: ServerConfig, workspaceId: string, desiredConfig: Record<string, unknown>): Promise<void> {
+/**
+ * 落盘期望配置。
+ *
+ * TIPS：两份配置的作用域不同，不能互相顶替——工作区 runtime 副本携带该工作区的
+ * **执行令牌**（带 workspaceKey，受工作区策略过滤）；host 级 connect-state 只承载
+ * 账号级**目录令牌**（workspaceKey 为空），供技能目录读取。把工作区副本提升为
+ * host 级会让某个工作区的过滤结果变成整个账号的技能目录，所以这里只写调用方
+ * 明确给出的目录配置。
+ *
+ * @param config 服务端配置
+ * @param workspaceId 工作区 id
+ * @param desiredConfig 该工作区的 jugglework-cloud 期望配置
+ * @param catalogConfig 账号级目录配置；缺省时保留 host 级已有的那一份
+ */
+async function persistDesiredConfig(
+  config: ServerConfig,
+  workspaceId: string,
+  desiredConfig: Record<string, unknown>,
+  catalogConfig: Record<string, unknown> | null,
+): Promise<void> {
   await writeRuntimeOpencodeConfig(config, workspaceId, (current) => ({
     ...current,
     mcp: {
@@ -2120,10 +2156,10 @@ async function persistDesiredConfig(config: ServerConfig, workspaceId: string, d
       [JUGGLEWORK_CLOUD_MCP_NAME]: desiredConfig,
     },
   }));
-  // Connect is server/account-scoped: keep a host-level copy for catalog + skill injection.
+  if (!catalogConfig) return;
   // Dynamic import avoids a connect-state <-> cloud-mcp-health cycle.
   const { writeConnectCloudMcp } = await import("./connect-state.js");
-  await writeConnectCloudMcp(config, desiredConfig);
+  await writeConnectCloudMcp(config, catalogConfig);
 }
 
 function registrationFailure(failures: CloudMcpRuntimeRegistrationFailure[]): CloudMcpFailure {
@@ -2218,7 +2254,7 @@ export async function reconcileJuggleWorkCloudMcp(input: {
     return healthWithFailure(await readHealth(), validationFailure);
   }
   const desiredRevision = calculateCloudMcpDesiredRevision(desiredConfig, metadata);
-  await persistDesiredConfig(input.config, input.workspace.id, desiredConfig);
+  await persistDesiredConfig(input.config, input.workspace.id, desiredConfig, catalogConfigFromBody(input.body));
   cloudMcpDeliveryState.markDesired(input.workspace, input.directory, desiredRevision, metadata);
 
   if (!input.directory) {

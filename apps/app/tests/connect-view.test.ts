@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { JuggleWorkCloudMcpHealth } from "../src/app/lib/jugglework-server";
 import {
   readyCloudMcpToolIds,
+  buildConnectRows,
   resolveConnectViewState,
 } from "../src/react-app/domains/settings/pages/connect-view";
 import {
@@ -16,6 +17,14 @@ import {
 
 const connectViewSource = readFileSync(
   fileURLToPath(new URL("../src/react-app/domains/settings/pages/connect-view.tsx", import.meta.url)),
+  "utf8",
+);
+const settingsPageSource = readFileSync(
+  fileURLToPath(new URL("../src/react-app/domains/settings/shell/settings-page.tsx", import.meta.url)),
+  "utf8",
+);
+const settingsRouteSource = readFileSync(
+  fileURLToPath(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url)),
   "utf8",
 );
 
@@ -92,6 +101,22 @@ describe("Agent access card helpers", () => {
 });
 
 describe("Connect cloud-readiness row resolution", () => {
+  test("exposes the workspace-scoped Connect view from settings navigation", () => {
+    expect(settingsPageSource).toContain("return [];");
+    expect(settingsPageSource).toContain('    "connectors",');
+    expect(settingsRouteSource).toContain("marketplaceItems={extensionItems.cloudPluginItems}");
+    expect(settingsRouteSource).not.toContain("connectorContentSlot={(");
+    expect(settingsRouteSource).toContain("orgMcpItems: extensionItems.orgMcpConnectionItems");
+    expect(settingsRouteSource).toContain("workspaceScope:");
+  });
+
+  test("renders one responsive two-column list and workspace switches", () => {
+    expect(connectViewSource).toContain('md:grid-cols-[repeat(2,minmax(0,1fr))]');
+    expect(connectViewSource).toContain('className={props.embedded ? "max-w-none" : undefined}');
+    expect(connectViewSource).toContain("<Switch");
+    expect(connectViewSource).toContain("policy.setConnectionsEnabled(connectionIds, enabled)");
+  });
+
   test("maps plugin readiness states to Connect groups", () => {
     expect(resolveConnectRowGroup({ state: "needs_signin", hasInstructional: false, connections: [] }, "member")).toBe("needs_signin");
     expect(resolveConnectRowGroup({ state: "ready", hasInstructional: true, connections: [] }, "member")).toBe("ready");
@@ -102,6 +127,37 @@ describe("Connect cloud-readiness row resolution", () => {
     expect(resolveConnectRowGroup({ state: "needs_admin_setup", hasInstructional: false, connections: [] }, "member")).toBe("excluded");
     expect(resolveConnectRowGroup({ state: "desktop_only", hasInstructional: false, connections: [] }, "owner")).toBe("excluded");
     expect(resolveConnectRowGroup({ state: "not_synced", hasInstructional: false, connections: [] }, "admin")).toBe("excluded");
+  });
+
+  test("only lets visible plugin rows absorb their underlying connections", () => {
+    expect(connectViewSource).toContain("pluginRows.flatMap((row)");
+    expect(connectViewSource).not.toContain("marketplaceItems.flatMap((item) => item.plugin.cloudReadiness");
+  });
+
+  test("keeps a connection visible when its bound plugin is excluded", () => {
+    const rows = buildConnectRows({
+      role: "member",
+      connections: [{
+        id: "connection-1",
+        name: "Mail",
+        url: "https://mail.example.test/mcp",
+        credentialMode: "shared",
+      } as never],
+      items: [{
+        plugin: {
+          id: "plugin-1",
+          name: "Mail plugin",
+          componentCounts: {},
+          cloudReadiness: {
+            state: "needs_admin_setup",
+            hasInstructional: false,
+            connections: [{ id: "connection-1", name: "Mail", url: "https://mail.example.test/mcp" }],
+          },
+        },
+      } as never],
+    });
+
+    expect(rows.map((row) => [row.kind, row.id])).toEqual([["connection", "connection-1"]]);
   });
 
   test("falls back for old servers without cloudReadiness", () => {

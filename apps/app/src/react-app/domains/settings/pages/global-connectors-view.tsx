@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useState } from "react";
-import { Power, RefreshCw } from "lucide-react";
+import { Plus, Power, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 import { t } from "@/i18n";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import type { McpServerConfig, McpStatus } from "@/app/types";
+import type { McpDirectoryInfo } from "@/app/constants";
 import { SettingsNotice } from "../settings-section";
 import {
   LayoutSection,
@@ -51,12 +52,15 @@ function connectorStatusLabel(status: McpStatus | undefined) {
 export type GlobalConnectorsViewProps = {
   busy: boolean;
   connectors: GlobalConnectorItem[];
+  unconnected: McpDirectoryInfo[];
   status?: string | null;
   error?: string | null;
   /** 正在写入的连接器名，用于按条目隔离忙碌状态。 */
   pendingConnectorName?: string | null;
   onAddConnector: (name: string, config: McpServerConfig) => void | Promise<void>;
+  onConnectDirectory: (entry: McpDirectoryInfo) => void | Promise<void>;
   onToggleEnabled: (name: string, enabled: boolean) => void | Promise<void>;
+  onAuthorize: (connector: GlobalConnectorItem) => void;
   onRemoveConnector: (name: string) => void | Promise<void>;
   onRefresh: () => void;
 };
@@ -129,14 +133,21 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                   {t("common.refresh")}
                 </Button>
                 <Button disabled={props.busy} onClick={() => { resetDraft(); setAddOpen(true); }}>
+                  <Plus size={14} />
                   {t("global_connectors.add")}
                 </Button>
               </div>
             </div>
           </LayoutSectionHeader>
 
-          {props.connectors.length > 0 ? (
+          <div className="space-y-5">
             <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
+                {t("project_extensions.connected_group")}
+                <span className="text-dls-secondary">{props.connectors.length}</span>
+              </div>
+          {props.connectors.length > 0 ? (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {props.connectors.map((connector) => {
                 const enabled = connector.config.enabled !== false;
                 const rowPending = props.pendingConnectorName === connector.name;
@@ -171,6 +182,11 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {enabled && connector.status?.status === "needs_auth" ? (
+                        <Button variant="outline" disabled={props.busy || rowPending} onClick={() => props.onAuthorize(connector)}>
+                          {t("mcp.connect")}
+                        </Button>
+                      ) : null}
                       <Button
                         variant="outline"
                         disabled={props.busy || rowPending}
@@ -194,6 +210,37 @@ export function GlobalConnectorsView(props: GlobalConnectorsViewProps) {
           ) : (
             <SettingsNotice>{props.status ?? t("mcp.no_servers_configured")}</SettingsNotice>
           )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-dls-text">
+                {t("project_extensions.unconnected_group")}
+                <span className="text-dls-secondary">{props.unconnected.length}</span>
+              </div>
+              {props.unconnected.length ? (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {props.unconnected.map((entry) => (
+                    <LayoutSectionItem
+                      key={entry.serverName ?? entry.id ?? entry.name}
+                      className="flex-row items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-dls-text">{entry.name}</p>
+                        <p className="mt-1 line-clamp-2 text-xs text-dls-secondary">{entry.description}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        disabled={props.busy || props.pendingConnectorName === (entry.serverName ?? entry.name)}
+                        onClick={() => runWrite(props.onConnectDirectory(entry))}
+                      >
+                        {t("project_extensions.connect")}
+                      </Button>
+                    </LayoutSectionItem>
+                  ))}
+                </div>
+              ) : <SettingsNotice>{t("project_extensions.no_unconnected")}</SettingsNotice>}
+            </div>
+          </div>
 
           {props.error ? <SettingsNotice tone="error">{props.error}</SettingsNotice> : null}
         </LayoutSection>

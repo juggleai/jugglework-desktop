@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react";
-import { CheckSquare, Plus, Search, Trash2, Upload } from "lucide-react";
+import { CheckSquare, Search, Trash2 } from "lucide-react";
 
 import {
   Dialog,
@@ -8,12 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { cn } from "@/lib/utils";
@@ -22,6 +16,7 @@ import type { SkillItem } from "../mcp-view";
 import { SkillAvatar } from "./skill-avatar";
 import { SkillHubModal } from "./skill-hub-modal";
 import { SkillDetailModal } from "./skill-detail-modal";
+import { SkillAddMenu } from "./skill-add-menu";
 
 function SkillCard({ skill, onUninstall, onOpen }: {
   skill: SkillItem;
@@ -138,32 +133,7 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
                 {t("project_extensions.my_installed")}
                 <span className="text-dls-secondary tabular-nums">{skills.length}</span>
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button variant="outline" size="sm">
-                      <Plus className="size-4" />
-                      {t("project_extensions.add_skill")}
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem onClick={() => void onUpload()}>
-                    <Upload className="size-4" />
-                    <div>
-                      <p className="text-sm">{t("project_extensions.upload_skill")}</p>
-                      <p className="text-xs text-dls-secondary">{t("project_extensions.upload_skill_desc")}</p>
-                    </div>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setHubOpen(true)}>
-                    <Plus className="size-4" />
-                    <div>
-                      <p className="text-sm">{t("project_extensions.from_skill_hub")}</p>
-                      <p className="text-xs text-dls-secondary">{t("project_extensions.from_skill_hub_desc")}</p>
-                    </div>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <SkillAddMenu onUpload={onUpload} onOpenSkillHub={() => setHubOpen(true)} />
             </div>
           </DialogHeader>
 

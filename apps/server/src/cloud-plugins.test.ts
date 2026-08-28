@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installCloudPlugin, readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
+import { setMcpEnabled } from "./mcp.js";
 import { readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
@@ -307,6 +308,112 @@ describe("cloud plugin installs", () => {
       expect(agentContent).toContain("model: opencode/claude-haiku-4-5");
       expect(agentContent).toContain("read: true");
       expect(agentContent).toContain("webfetch: true");
+    });
+  });
+
+  test("delivers every MCP field the console can author", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      await installCloudPlugin({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        marketplaceId: "marketplace_1",
+        marketplace: { id: "marketplace_1", name: "Team Marketplace", updatedAt: "2026-06-01T00:00:00.000Z" },
+        // 本地插件：远程组件也落盘，用来验证 transport / oauth / timeout 的搬运。
+        cloudGatewayHosted: false,
+        resolved: {
+          plugin: { id: "plugin_fields", name: "Field Coverage", description: null, updatedAt: "2026-06-02T00:00:00.000Z" },
+          memberships: [{
+            configObjectId: "config_mcp_fields",
+            configObject: {
+              id: "config_mcp_fields",
+              objectType: "mcp",
+              title: "Field Coverage MCP",
+              description: null,
+              currentRelativePath: null,
+              status: "active",
+              updatedAt: "2026-06-02T00:00:00.000Z",
+              latestVersion: {
+                id: "version_fields",
+                rawSourceText: null,
+                normalizedPayloadJson: {
+                  mcp: {
+                    local_one: { type: "local", command: ["npx", "-y", "pkg"], cwd: "packages/api", timeout: 30000 },
+                    remote_one: {
+                      type: "remote",
+                      url: "https://mcp.example.com/mcp",
+                      transport: "sse",
+                      timeout: 20000,
+                      oauth: { clientId: "cid", scope: "read" },
+                    },
+                  },
+                },
+              },
+            },
+          }],
+        },
+      });
+
+      const runtime = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
+      // 控制台能填的字段必须都到达成员机器，否则「填了没生效」只会在别人机器上暴露。
+      expect(runtime.mcp?.["local_one"]).toMatchObject({ cwd: "packages/api", timeout: 30000 });
+      expect(runtime.mcp?.["remote_one"]).toMatchObject({
+        transport: "sse",
+        timeout: 20000,
+        oauth: { clientId: "cid", scope: "read" },
+      });
+    });
+  });
+
+  test("a member's MCP enable state survives plugin re-delivery", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      const deliver = (enabled: boolean, versionId: string) => installCloudPlugin({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        marketplaceId: "marketplace_1",
+        marketplace: { id: "marketplace_1", name: "Team Marketplace", updatedAt: "2026-06-01T00:00:00.000Z" },
+        cloudGatewayHosted: true,
+        resolved: {
+          plugin: {
+            id: "plugin_enabled_state",
+            name: "Vision Plugin",
+            description: null,
+            updatedAt: "2026-06-02T00:00:00.000Z",
+          },
+          memberships: [{
+            configObjectId: "config_mcp_vision",
+            configObject: {
+              id: "config_mcp_vision",
+              objectType: "mcp",
+              title: "Vision MCP",
+              description: null,
+              currentRelativePath: null,
+              status: "active",
+              updatedAt: "2026-06-02T00:00:00.000Z",
+              latestVersion: {
+                id: versionId,
+                rawSourceText: null,
+                normalizedPayloadJson: {
+                  mcp: { vision: { type: "local", command: ["npx", "-y", "vision-mcp"], enabled } },
+                },
+              },
+            },
+          }],
+        },
+      });
+
+      // 首次投递：作者写的 enabled 就是初始默认值。
+      await deliver(true, "version_1");
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.vision).toMatchObject({ enabled: true });
+
+      await setMcpEnabled(config, WORKSPACE_ID, "vision", false);
+      // 版本更新（作者那边仍写着 enabled: true）不得把成员关掉的组件重新打开。
+      await deliver(true, "version_2");
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.vision).toMatchObject({
+        enabled: false,
+        command: ["npx", "-y", "vision-mcp"],
+      });
     });
   });
 });

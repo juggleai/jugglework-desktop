@@ -190,12 +190,10 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 /**
- * 工作区分组：已清空。
+ * 个人设置不承载工作区配置。
  *
- * TIPS: 设置页只承载全局配置，工作区级的技能、MCP 与市场包由会话右侧扩展面板
- * 承载（它带 workspaceId，天然项目级）。该列表同时决定页头是否显示工作区切换器
- * （见 `SettingsShell`），返回空数组后切换器在设置页自然不再出现。往这里加任何
- * 一项之前，先确认它切换工作区后取值真的会变。
+ * TIPS: 该列表同时决定设置页是否展示工作区分组与工作区切换器。当前工作区的
+ * MCP、组织连接策略统一从会话右侧设置进入，不能在个人设置里再出现一份。
  */
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
   return [];
@@ -261,9 +259,7 @@ export function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
  * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
  * surfaces (sidebar + compact section menu) must use this so they can't drift.
  *
- * TIPS: `connect`（JuggleWork Connect 预览页）不在导航里，仍可通过 connect 深链
- * 直达（见 `app/lib/jugglework-links.ts`），路由与页面保持可用。它与全局分组的
- * 「连接器」(`connectors`，管理全局 MCP) 是两个不同的页面。
+ * TIPS: `connect` 保留深链与会话右侧复用能力，但不进入个人设置导航。
  */
 export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
   return memoryEnabled ? ["cloud-account", "memory"] : CLOUD_SETTINGS_TABS;

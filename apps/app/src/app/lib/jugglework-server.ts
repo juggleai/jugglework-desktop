@@ -625,6 +625,16 @@ export type JuggleWorkCloudMcpReconcilePayload = {
   trigger?: string;
   provider?: string;
   model?: string;
+  /**
+   * 账号级目录配置（不带 workspaceKey 的目录令牌）。只在目录令牌缺失或临近过期时
+   * 附带；省略时服务端保留 host 级已有的那一份，不会被工作区执行令牌顶替。
+   */
+  catalog?: { config: Record<string, unknown> };
+};
+
+export type JuggleWorkCloudMcpWorkspaceKey = {
+  workspaceId: string;
+  workspaceKey: string;
 };
 
 export type JuggleWorkWorkspaceExport = {
@@ -1929,11 +1939,13 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
         { token, hostToken, method: "DELETE" },
       ),
-    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
-      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean; scope?: "global" }) => {
+      const query = new URLSearchParams();
+      if (options?.includeGlobal) query.set("includeGlobal", "true");
+      if (options?.scope) query.set("scope", options.scope);
       return requestJson<{ items: JuggleWorkSkillItem[] }>(
         baseUrl,
-        `/workspace/${workspaceId}/skills${query}`,
+        `/workspace/${workspaceId}/skills${query.size ? `?${query}` : ""}`,
         { token, hostToken },
       );
     },
@@ -1996,6 +2008,18 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken, timeoutMs: options?.probe ? timeouts.cloudMcpProbeHealth : timeouts.cloudMcpHealth },
       );
     },
+    /**
+     * 读取该工作区稳定的 workspaceKey（由 JuggleWork 服务端生成并持久化）。
+     *
+     * TIPS：不在客户端派生——同一工作区在多个窗口里必须拿到同一个键，否则云端
+     * 会把它们当成不同工作区，策略与令牌都会分叉。
+     */
+    getCloudMcpWorkspaceKey: (workspaceId: string) =>
+      requestJson<JuggleWorkCloudMcpWorkspaceKey>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp/jugglework-cloud/workspace-key`,
+        { token, hostToken },
+      ),
     reconcileJuggleWorkCloudMcp: (workspaceId: string, payload: JuggleWorkCloudMcpReconcilePayload) =>
       requestJson<JuggleWorkCloudMcpHealth>(
         baseUrl,
@@ -2063,6 +2087,18 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
           method: "POST",
           body: { enabled },
         },
+      ),
+    getMcpToolPolicy: (workspaceId: string) =>
+      requestJson<{ workspaceId: string; disabledServerNames: string[]; revision: number; updatedAt: number | null; enforcementReady: boolean; toolPrefixes: string[] }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp-tool-policy`,
+        { token, hostToken },
+      ),
+    setMcpToolPolicy: (workspaceId: string, disabledServerNames: string[]) =>
+      requestJson<{ workspaceId: string; disabledServerNames: string[]; revision: number; updatedAt: number | null }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/mcp-tool-policy`,
+        { token, hostToken, method: "PUT", body: { disabledServerNames } },
       ),
 
     logoutMcpAuth: (workspaceId: string, name: string) =>

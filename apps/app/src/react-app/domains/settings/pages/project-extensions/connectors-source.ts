@@ -1,7 +1,6 @@
 import type { McpDirectoryInfo } from "@/app/constants";
 import { getMcpServerName } from "@/app/constants";
 import { extensionResource } from "@/app/extensions";
-import { getMcpIdentityKey } from "@/app/mcp";
 import type { McpServerEntry, McpStatusMap } from "@/app/types";
 import { canDisconnectOrgMcpConnection } from "@/react-app/domains/connections/native-provider-connections";
 import { isOrgMcpConnectionReady, type ExtensionItem } from "../../extension-items";
@@ -94,18 +93,23 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
     seen.add(key);
     rows.push(row);
   };
+  const canonicalIdentity = (value: string) => value.trim().toLowerCase();
 
   // TIPS: 已装 MCP 大多来自快速连接目录，按身份回查目录项即可复用其图标与描述，
   // 否则列表里只能显示默认占位头像。
   const directoryByIdentity = new Map(
-    mcpQuickConnect.map((entry) => [getMcpIdentityKey(entry), entry] as const),
+    mcpQuickConnect.map((entry) => [canonicalIdentity(getMcpServerName(entry)), entry] as const),
   );
 
   // 1) 已装 MCP 服务（优先级最高）。
   for (const server of input.mcpServers) {
-    const connected = isServerConnected(server, input.mcpStatuses);
-    const directory = directoryByIdentity.get(server.name);
+    const runtimeConnected = isServerConnected(server, input.mcpStatuses);
+    const directory = directoryByIdentity.get(canonicalIdentity(server.name));
     const disabled = server.config.enabled === false;
+    const failed = input.mcpStatuses[server.name]?.status === "failed";
+    // 已配置且已运行、启动失败或被主动关闭的 MCP 都留在「已连接」。开关表示
+    // 是否在本工作区生效，不应因为关闭或一次启动失败就把条目挪到「未连接」。
+    const connected = runtimeConnected || disabled || failed;
     const isCustom = !directory;
     push(
       {
@@ -114,6 +118,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         description: directory?.description,
         connected,
         source: "installed",
+        mcpSource: server.source,
         busy: input.mcpConnectingName === server.name,
         iconSlug: directory?.iconSlug,
         iconSrc: directory?.iconSrc,
@@ -128,27 +133,35 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         serverName: server.name,
         serverConfig: server.config,
         entry: directory,
-        onConnect: connected
+        // TIPS: config.global 必须用全局配置专用接口修改。会话面板这里只读展示，
+        // 不能误用工作区接口制造一个同名工作区覆盖。
+        onConnect: server.source === "config.global" || connected
           ? undefined
           : disabled
             ? () => input.setMcpEnabled(server.name, true)
             : () => input.authorizeMcp(server),
-        onDisconnect: connected
+        onDisconnect: server.source === "config.global" || server.source === "config.remote"
+          ? undefined
+          : connected
           ? isCustom
             ? () => input.setMcpEnabled(server.name, false)
             : () => input.removeMcp(server.name)
           : undefined,
-        onRemove: () => input.removeMcp(server.name),
+        onRemove: server.source === "config.global" ? undefined : () => input.removeMcp(server.name),
       },
       server.name,
     );
   }
 
-  // 2) 组织下发连接器。
+  // 2) 组织下发的 Cloud MCP。它们与本地 MCP 属于不同执行轨道，即使同名也必须
+  // 分别展示；工作区策略严格按 connectionId 写入，不能按展示名称去重。
   for (const item of input.orgMcpItems) {
     const connection = item.orgMcpConnection;
     if (!connection) continue;
     const connected = isOrgMcpConnectionReady(connection);
+    const policyConnected = connection.credentialMode === "shared"
+      ? connection.connected
+      : connection.connectedForMe;
     // TIPS: 只有成员凭证（per_member）连接才由成员自己断开；组织共享凭证由管理员维护，
     // 成员侧不出「断开」按钮，避免点击后无任何效果。
     const canDisconnect = canDisconnectOrgMcpConnection(connection);
@@ -157,21 +170,23 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         key: `org:${connection.id}`,
         name: item.name,
         description: item.description,
-        connected,
+        // 已完成账号授权就属于「已连接」。缺少可选能力或需要重连会继续显示状态/动作，
+        // 但不能因此把已授权 MCP 移到未连接分组并让工作区开关消失。
+        connected: policyConnected,
         source: "org",
         busy: input.orgMcpConnectingId === connection.id || input.orgMcpDisconnectingId === connection.id,
         url: connection.url,
         onConnect: connected ? undefined : () => input.connectOrg(connection.id),
         onDisconnect: connected && canDisconnect ? () => input.disconnectOrg(connection.id) : undefined,
       },
-      item.name,
+      `org:${connection.id}`,
     );
   }
 
   // 3) 快速连接目录中尚未安装的项。
   for (const entry of mcpQuickConnect) {
-    const identity = getMcpIdentityKey(entry);
-    const alreadyInstalled = input.mcpServers.some((server) => server.name === identity);
+    const identity = getMcpServerName(entry);
+    const alreadyInstalled = input.mcpServers.some((server) => canonicalIdentity(server.name) === canonicalIdentity(identity));
     if (alreadyInstalled) continue;
     push(
       {
