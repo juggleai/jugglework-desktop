@@ -8,6 +8,7 @@ minimumReleaseAgeExclude:
   - "postcss@8.5.23"
   - "socket.io-parser@4.2.7"
   - "undici@6.28.0"
+  - mermaid@11.17.2
 
 packages:
   - "apps/*"
