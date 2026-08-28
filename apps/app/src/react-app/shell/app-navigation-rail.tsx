@@ -3,29 +3,45 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlarmClock,
+  ArrowUpRight,
+  Check,
   Cloud,
+  Coins,
   ContactRound,
   FolderOpen,
   FolderPlus,
   Globe,
+  HelpCircle,
+  LogOut,
   MessageSquare,
   Plus,
+  RefreshCw,
   Search,
   Settings,
+  Sparkles,
 } from "lucide-react";
 
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
-import { t } from "@/i18n";
-import { useBrandLogoUrl } from "@/react-app/domains/cloud/brand-theme";
+import { currentLocale, t } from "@/i18n";
+import { buildDenDashboardUrl, readDenSettings } from "@/app/lib/den";
+import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
+import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { usePlatform } from "@/react-app/kernel/platform";
 import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
 import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/session-circular-progress";
@@ -34,6 +50,7 @@ import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { visibleLocalWorkspaceIndicator } from "./app-navigation-status";
+import { accountDisplayName, membershipTierLabel, organizationMenuGroups } from "./account-menu-model";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -132,8 +149,18 @@ function RailButton({
 export function AppNavigationRail(props: AppNavigationRailProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useDenAuth();
-  const brandLogoUrl = useBrandLogoUrl();
+  const platform = usePlatform();
+  const {
+    user,
+    organizations,
+    activeOrganization,
+    tenantAccount,
+    accountBusy,
+    accountError,
+    refreshAccount,
+    switchOrganization,
+    signOut,
+  } = useDenAuth();
   const taskScope = useTaskScope();
   const localWorkspaceIndicator = useLocalWorkspaceIndicator();
   const chatView = useJuggleChatStore((state) => state.view);
@@ -159,29 +186,45 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     useJuggleChatStore.getState().setView(view);
     if (!props.chatActive) props.onOpenChat();
   };
-  const identity = user?.name?.trim() || user?.email?.trim() || "JuggleWork";
+  const identity = accountDisplayName(user);
   const initial = identity.slice(0, 1).toLocaleUpperCase();
+  const tier = tenantAccount?.tier ?? activeOrganization?.tier ?? null;
+  const tierLabel = membershipTierLabel(tier);
+  const organizationLabel = activeOrganization?.name ?? readDenSettings().activeOrgName?.trim() ?? t("account_menu.no_organization");
+  const organizationGroups = organizationMenuGroups(organizations);
+  const balanceLabel = tenantAccount
+    ? new Intl.NumberFormat(currentLocale()).format(tenantAccount.points.available)
+    : accountBusy
+      ? t("account_menu.loading")
+      : "—";
+
+  const openUpgrade = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
+  const openManagementConsole = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
+  const checkForUpdates = () => {
+    useUpdateCheckRequestStore.getState().requestUpdateCheck();
+    navigate("/settings/updates");
+  };
+  const openHelpAndFeedback = () => platform.openLink(buildFeedbackUrl({ entrypoint: "account-menu" }));
+  const changeOrganization = async (organizationId: string) => {
+    try {
+      await switchOrganization(organizationId);
+    } catch (nextError) {
+      toast.error(nextError instanceof Error ? nextError.message : t("account_menu.switch_failed"));
+    }
+  };
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (nextError) {
+      toast.error(nextError instanceof Error ? nextError.message : t("den.error_signout_failed"));
+    }
+  };
 
   return (
     <aside
       aria-label={t("navigation.primary")}
       className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
     >
-      <button
-        type="button"
-        className="mb-7 flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dls-border bg-background text-sm font-semibold text-dls-text shadow-sm transition-colors hover:bg-dls-hover mac:titlebar-no-drag"
-        title={t("settings.tab_cloud_account")}
-        aria-label={t("settings.tab_cloud_account")}
-        onClick={props.onOpenAccount}
-        data-testid="app-rail-account"
-      >
-        {brandLogoUrl ? (
-          <img src={brandLogoUrl} alt="" className="size-full object-cover" />
-        ) : (
-          <span aria-hidden="true">{initial}</span>
-        )}
-      </button>
-
       <nav className="flex flex-col items-center gap-3" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
         {props.onOpenTaskSearch ? (
           <RailButton
@@ -290,18 +333,132 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         </RailButton>
       </nav>
 
-      <div className="mt-auto">
-        <RailButton
-          label={t("navigation.settings")}
-          active={props.settingsActive}
-          onClick={props.onOpenSettings}
-          testId="app-rail-settings"
-          badge={notificationUnreadCount}
-          badgeLabel={`${t("notifications.title")} (${notificationUnreadCount})`}
-          badgeVariant="dot"
-        >
-          <Settings />
-        </RailButton>
+      <div className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag">
+        <DropdownMenu onOpenChange={(open) => { if (open) void refreshAccount(); }}>
+          <DropdownMenuTrigger
+            render={(
+              <button
+                type="button"
+                aria-label={t("account_menu.open")}
+                title={identity}
+                data-testid="app-rail-account-menu"
+                className={cn(
+                  "relative flex size-11 items-center justify-center rounded-2xl border border-transparent transition-colors",
+                  "hover:border-dls-border hover:bg-background data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:shadow-sm",
+                  props.settingsActive && "border-dls-accent/30 bg-background",
+                )}
+              >
+                <Avatar size="lg" className="size-9 bg-background">
+                  {user?.avatar ? <AvatarImage src={user.avatar} alt={identity} /> : null}
+                  <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
+                  {notificationUnreadCount > 0 ? (
+                    <span className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
+                  ) : null}
+                </Avatar>
+              </button>
+            )}
+          />
+          <DropdownMenuContent
+            side="right"
+            align="end"
+            sideOffset={10}
+            className="w-[328px] rounded-[22px] bg-popover/95 p-2 shadow-[0_20px_64px_rgba(0,0,0,0.22)] ring-1 ring-foreground/10 backdrop-blur-2xl"
+            data-testid="account-menu"
+          >
+            <div className="flex items-center gap-3 px-3 py-2.5" role="presentation">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[14px] font-semibold leading-5 text-popover-foreground">{identity}</div>
+                <div className="mt-0.5 truncate text-[12px] leading-4 text-muted-foreground">{tierLabel} · {organizationLabel}</div>
+              </div>
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); openUpgrade(); }}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-dls-accent px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
+                data-testid="account-menu-upgrade"
+              >
+                <Sparkles className="size-3.5" />
+                {t("account_menu.upgrade")}
+              </button>
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={props.onOpenSettings} data-testid="account-menu-settings">
+              <Settings />
+              {t("navigation.settings")}
+              {notificationUnreadCount > 0 ? <span className="ms-auto size-2 rounded-full bg-red-9" aria-hidden="true" /> : null}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={openUpgrade} data-testid="account-menu-balance">
+              <Coins />
+              <span>{t("account_menu.balance")}</span>
+              <span className="ms-auto tabular-nums text-xs text-muted-foreground">{balanceLabel}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={checkForUpdates} data-testid="account-menu-check-updates">
+              <RefreshCw />
+              {t("account_menu.check_updates")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={openHelpAndFeedback} data-testid="account-menu-help-feedback">
+              <HelpCircle />
+              {t("account_menu.help_feedback")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger data-testid="account-menu-switch-organization">
+                <Globe />
+                {t("account_menu.switch_organization")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent side="right" align="end" sideOffset={8} className="w-[248px]">
+                {organizationGroups.personal.map((organization) => (
+                  <DropdownMenuItem
+                    key={organization.id}
+                    disabled={accountBusy}
+                    onClick={() => void changeOrganization(organization.id)}
+                    className="items-start py-2.5"
+                    data-testid={`account-menu-organization-${organization.id}`}
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/5 text-xs font-semibold">
+                      {organization.name.trim().slice(0, 1).toLocaleUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{organization.name}</span>
+                      <span className="block truncate text-[11px] font-normal text-muted-foreground">{membershipTierLabel(organization.tier)}</span>
+                    </span>
+                    {organization.id === activeOrganization?.id ? <Check className="mt-1 size-4 text-dls-accent" /> : null}
+                  </DropdownMenuItem>
+                ))}
+                {organizationGroups.personal.length > 0 && organizationGroups.others.length > 0 ? <DropdownMenuSeparator /> : null}
+                {organizationGroups.others.map((organization) => (
+                  <DropdownMenuItem
+                    key={organization.id}
+                    disabled={accountBusy}
+                    onClick={() => void changeOrganization(organization.id)}
+                    className="items-start py-2.5"
+                    data-testid={`account-menu-organization-${organization.id}`}
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/5 text-xs font-semibold">
+                      {organization.name.trim().slice(0, 1).toLocaleUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{organization.name}</span>
+                      <span className="block truncate text-[11px] font-normal text-muted-foreground">{membershipTierLabel(organization.tier)}</span>
+                    </span>
+                    {organization.id === activeOrganization?.id ? <Check className="mt-1 size-4 text-dls-accent" /> : null}
+                  </DropdownMenuItem>
+                ))}
+                {organizations.length === 0 ? (
+                  <DropdownMenuItem disabled>{accountBusy ? t("account_menu.loading") : t("account_menu.no_organization")}</DropdownMenuItem>
+                ) : null}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem onClick={openManagementConsole} data-testid="account-menu-management-console">
+              <ArrowUpRight />
+              {t("account_menu.management_console")}
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onClick={() => void handleSignOut()} disabled={!user || accountBusy} data-testid="account-menu-sign-out">
+              <LogOut />
+              {t("den.sign_out")}
+            </DropdownMenuItem>
+            {accountError ? <div className="px-3 pb-1 pt-2 text-[11px] leading-4 text-destructive">{accountError}</div> : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

@@ -7,6 +7,23 @@
  */
 
 export default {
+  "account_menu.balance": "积分余额",
+  "account_menu.check_updates": "检查更新",
+  "account_menu.help_feedback": "帮助与反馈",
+  "account_menu.loading": "加载中…",
+  "account_menu.management_console": "管理控制台",
+  "account_menu.membership_unknown": "会员",
+  "account_menu.no_organization": "暂无组织",
+  "account_menu.open": "打开账户菜单",
+  "account_menu.signed_out": "未登录",
+  "account_menu.switch_failed": "切换组织失败",
+  "account_menu.switch_organization": "切换组织",
+  "account_menu.tier_business": "Business",
+  "account_menu.tier_normal": "普通用户",
+  "account_menu.tier_power": "Power",
+  "account_menu.tier_pro": "Pro",
+  "account_menu.tier_team": "Team",
+  "account_menu.upgrade": "升级",
   "app.compact_command_desc": "压缩此会话以减少上下文大小。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_auth_failed": "认证失败",

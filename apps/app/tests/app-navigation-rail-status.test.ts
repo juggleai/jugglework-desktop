@@ -27,13 +27,40 @@ describe("chat unread reminder", () => {
   });
 });
 
-describe("settings notification reminder", () => {
-  test("uses a small red dot without rendering the unread count", () => {
+describe("account menu", () => {
+  test("moves the settings notification dot into the bottom account trigger and settings row", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
-    const settings = source.slice(source.indexOf('label={t("navigation.settings")}'), source.indexOf("<Settings />"));
-    expect(settings).toMatch(/badgeVariant="dot"/);
+    expect(source).not.toContain('testId="app-rail-settings"');
+    expect(source).toContain('data-testid="app-rail-account-menu"');
+    expect(source).toContain('data-testid="account-menu-settings"');
     expect(source).toMatch(/data-rail-unread-dot/);
     expect(source).toMatch(/right-0\.5 top-0\.5 size-2\.5[^\"]+bg-red-9/);
     expect(source).toMatch(/badgeVariant === "dot"[\s\S]+aria-hidden="true"/);
+  });
+
+  test("keeps only the avatar in the bottom-left trigger", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const trigger = source.slice(source.indexOf('data-testid="app-rail-account-menu"'), source.indexOf("</button>", source.indexOf('data-testid="app-rail-account-menu"')));
+    expect(trigger).toContain("<Avatar");
+    expect(trigger).not.toContain("{tierLabel} · {organizationLabel}");
+    expect(trigger).not.toContain("w-[220px]");
+  });
+
+  test("includes the requested account actions and organization submenu", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain('data-testid="account-menu-upgrade"');
+    expect(source).toContain('data-testid="account-menu-balance"');
+    expect(source).toContain('data-testid="account-menu-check-updates"');
+    expect(source).toContain('data-testid="account-menu-help-feedback"');
+    expect(source).toContain('data-testid="account-menu-switch-organization"');
+    expect(source).toContain('data-testid="account-menu-management-console"');
+    expect(source.indexOf('data-testid="account-menu-management-console"')).toBeGreaterThan(
+      source.indexOf('data-testid="account-menu-switch-organization"'),
+    );
+    expect(source).toContain('data-testid="account-menu-sign-out"');
+    expect(source).toContain("<DropdownMenuSubContent");
+    expect(source).toContain("organizationGroups.personal.map");
+    expect(source).toContain("organizationGroups.others.map");
+    expect(source).toContain("<DropdownMenuSeparator />");
   });
 });
