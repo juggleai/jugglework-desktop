@@ -1027,7 +1027,9 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
-      {lastTextMessage && !isStreaming && (
+      {/* 用分组级 isLiveGroup 而非列表级 isStreaming：流式期间历史任务块
+          仍要能 hover 出复制/分支/撤销/时间，只有正在输出的块隐藏操作栏。 */}
+      {lastTextMessage && !isLiveGroup && (
         <div
           className={cn(
             "mx-auto flex w-full max-w-5xl flex-wrap items-center gap-1.5 px-3 text-muted-foreground md:px-8",
