@@ -53,6 +53,7 @@
   },
   "packageManager": "pnpm@11.4.0",
   "dependencies": {
+    "mermaid": "^11.17.2",
     "ws": "^8.21.3"
   }
 }
