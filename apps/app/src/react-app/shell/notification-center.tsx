@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
+import { LayoutStack } from "@/react-app/domains/settings/settings-layout";
 import {
   useNotificationStore,
   type AppNotification,
@@ -86,7 +87,7 @@ export function NotificationCenterController() {
   return null;
 }
 
-/** Full notification center rendered as the first item in Global Settings. */
+/** 在全局设置中渲染完整的通知中心。 */
 export function NotificationCenterView() {
   const notifications = useNotificationStore((state) => state.notifications);
   const markAllRead = useNotificationStore((state) => state.markAllRead);
@@ -121,10 +122,9 @@ export function NotificationCenterView() {
   );
 
   return (
-    <section className="overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
-      <div className="flex min-h-12 items-center justify-between border-b border-dls-border px-4 py-2.5">
-        <p className="text-sm font-semibold">{t("notifications.title")}</p>
-        {notifications.length > 0 ? (
+    <LayoutStack className="gap-y-3">
+      {notifications.length > 0 ? (
+        <div className="flex justify-end">
           <Button
             variant="ghost"
             size="sm"
@@ -133,26 +133,28 @@ export function NotificationCenterView() {
           >
             {t("notifications.clear_all")}
           </Button>
-        ) : null}
-      </div>
-      {notifications.length === 0 ? (
-        <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
-          <Bell className="mb-2 size-6 text-muted-foreground/60" />
-          <p className="text-sm font-medium">{t("notifications.empty")}</p>
-          <p className="text-xs text-muted-foreground">{t("notifications.empty_hint")}</p>
         </div>
-      ) : (
-        <div className="max-h-[calc(100vh-12rem)] overflow-y-auto py-1">
-          {notifications.map((notification) => (
-            <NotificationRow
-              key={notification.id}
-              notification={notification}
-              onAction={runAction}
-            />
-          ))}
-        </div>
-      )}
-    </section>
+      ) : null}
+      <section className="w-full overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
+        {notifications.length === 0 ? (
+          <div className="flex flex-col items-center gap-1 px-6 py-16 text-center">
+            <Bell className="mb-2 size-6 text-muted-foreground/60" />
+            <p className="text-sm font-medium">{t("notifications.empty")}</p>
+            <p className="text-xs text-muted-foreground">{t("notifications.empty_hint")}</p>
+          </div>
+        ) : (
+          <div className="py-1">
+            {notifications.map((notification) => (
+              <NotificationRow
+                key={notification.id}
+                notification={notification}
+                onAction={runAction}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+    </LayoutStack>
   );
 }
 

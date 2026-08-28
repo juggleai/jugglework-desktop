@@ -33,6 +33,9 @@ import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
+import { classifyProviderLimit } from "./provider-limit-classify";
+import { classifyProviderError, extractProviderErrorSignals } from "./provider-error-classify";
+import { resolveRedoHistoryStep } from "./history-position";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -259,24 +262,43 @@ export function createSessionActionsStore(options: {
       return null;
     };
 
-    const status = firstNumber(["statusCode", "status"]);
-    const provider = firstString(["providerID", "providerId", "provider"]);
-    const code = firstString(["code", "errorCode"]);
-    const response = firstString(["responseBody", "body", "response"]);
+    const signals = extractProviderErrorSignals(error);
+    const status = signals.status ?? firstNumber(["statusCode", "status"]);
+    const provider = signals.provider ?? firstString(["providerID", "providerId", "provider"]);
+    const code = signals.code ?? firstString(["code", "errorCode"]);
+    const response = signals.responseBody ?? firstString(["responseBody", "body", "response"]);
     const raw =
       (error instanceof Error ? readString(error.message) : null) ||
       firstString(["message", "detail", "reason", "error"]) ||
       (typeof error === "string" ? readString(error) : null);
 
     const generic = raw && /^unknown\s+error$/i.test(raw);
+    const limit = classifyProviderLimit({
+      status,
+      code,
+      text: [raw, response].filter(Boolean).join("\n"),
+    });
     const heading = (() => {
+      if (classifyProviderError(error) === "ip_not_authorized") return t("app.error_ip_authorization");
       if (status === 401 || status === 403) return t("app.error_auth_failed");
+      // Hard account limits (quota/plan/spending) are terminal even when the
+      // provider reports them as 429 (for example Anthropic
+      // usage_limit_reached), so they take precedence over the retryable
+      // rate-limit heading.
+      if (limit === "usage_limit") return t("app.error_usage_limit");
       if (status === 429) return t("app.error_rate_limit");
+      if (limit === "context_overflow") return t("app.error_context_overflow");
       if (provider) return `Provider error (${provider})`;
       return fallback;
     })();
 
     const lines = [heading];
+    if (classifyProviderError(error) === "ip_not_authorized") {
+      lines.push(t("app.error_ip_authorization_hint"));
+    }
+    if (limit) {
+      lines.push(limit === "usage_limit" ? t("app.error_usage_limit_hint") : t("app.error_context_overflow_hint"));
+    }
     if (raw && !generic && raw !== heading) lines.push(raw);
     if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
     if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);
@@ -712,41 +734,28 @@ export function createSessionActionsStore(options: {
     const revertMessageID = options.selectedSession()?.revert?.messageID ?? null;
     if (!revertMessageID) return;
 
-    const users = options.messages().filter((message) => {
-      const role = (message.info as { role?: string }).role;
-      return role === "user";
-    });
+    const step = resolveRedoHistoryStep(
+      options.messages(),
+      revertMessageID,
+      options.messageIdFromInfo,
+    );
+    if (!step) return;
 
-    const next = users.find((message) => {
-      const id = options.messageIdFromInfo(message);
-      return Boolean(id) && id > revertMessageID;
-    });
-
-    if (!next) {
+    if (!step.next) {
       const session = await unrevertSession(c, sessionID);
       options.upsertLocalSession(session);
       options.setPrompt("");
       return;
     }
 
-    const messageID = options.messageIdFromInfo(next);
+    const messageID = options.messageIdFromInfo(step.next);
     if (!messageID) return;
 
     const nextSession = await revertSession(c, sessionID, messageID);
     options.upsertLocalSession(nextSession);
 
-    let prior: MessageWithParts | null = null;
-    for (let idx = users.length - 1; idx >= 0; idx -= 1) {
-      const candidate = users[idx];
-      const id = options.messageIdFromInfo(candidate);
-      if (id && id < messageID) {
-        prior = candidate;
-        break;
-      }
-    }
-
-    if (prior) {
-      options.restorePromptFromUserMessage(prior);
+    if (step.prior) {
+      options.restorePromptFromUserMessage(step.prior);
       return;
     }
 

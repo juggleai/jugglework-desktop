@@ -16,12 +16,14 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
+import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -170,6 +172,7 @@ import { useReactRenderWatchdog } from "./react-render-watchdog";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
 
 import { filterProviderList } from "@/app/utils/providers";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
@@ -180,6 +183,13 @@ import { useShellShortcuts } from "./use-shell-shortcuts";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
+import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
+import {
+  COMPOSER_TOKEN_SPLIT_RE,
+  buildCapabilityInstruction,
+  fallbackCapabilityPrompt,
+  parseComposerCapabilityToken,
+} from "@/react-app/domains/session/surface/composer/capability-tags";
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
@@ -341,7 +351,7 @@ async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/)) {
+    for (const segment of draft.text.split(COMPOSER_TOKEN_SPLIT_RE)) {
       if (!segment) continue;
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch?.[1]) {
@@ -358,9 +368,18 @@ async function draftToParts(
         if (pasted) parts.push({ type: "text", text: pasted });
         continue;
       }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        parts.push({ type: "text", text: `Load [skill ${skillMatch[1]}] and follow its instructions.` });
+      const capability = parseComposerCapabilityToken(segment);
+      if (capability) {
+        if (capability.kind === "skill") {
+          parts.push({ type: "text", text: buildCapabilityInstruction("skill", capability.name) });
+        } else {
+          // 云端技能/扩展/MCP：发送插入时登记的完整指令，而不是裸 token。
+          const registered = draft.parts.find(
+            (part): part is Extract<ComposerPart, { type: "capability" }> =>
+              part.type === "capability" && part.kind === capability.kind && part.name === capability.name,
+          );
+          parts.push({ type: "text", text: registered?.prompt ?? fallbackCapabilityPrompt(capability.kind, capability.name) });
+        }
         continue;
       }
       if (segment.startsWith("@")) {
@@ -410,7 +429,11 @@ async function draftToParts(
         continue;
       }
       if (part.type === "skill") {
-        parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
+        parts.push({ type: "text", text: buildCapabilityInstruction("skill", part.name) });
+        continue;
+      }
+      if (part.type === "capability") {
+        parts.push({ type: "text", text: part.prompt });
         continue;
       }
       if (part.type === "app") {
@@ -452,6 +475,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const restrictionNotice = useRestrictionNotice();
   const [juggleworkServerHostInfoState, setJuggleWorkServerHostInfoState] = useState<JuggleWorkServerInfo | null>(null);
   const [juggleworkServerSettingsVersion, setJuggleWorkServerSettingsVersion] = useState(0);
+  const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
+  const [workspaceActivationErrorId, setWorkspaceActivationErrorId] = useState<string | null>(null);
+  const workspaceActivationGenerationRef = useRef(0);
+  const workspaceNavigationGenerationRef = useRef(0);
+  const activeRouteContextRef = useRef("");
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("jugglework.developerMode") === "1";
@@ -477,13 +505,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,
     workspaceConnectionOverrides,
+    setWorkspaceConnectionOverrides,
     routeError,
     setRouteError,
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
     setRetryingWorkspaceIds,
-    refreshInFlightRef,
     startupRetryTimerRef,
     selectedWorkspaceId,
     selectedWorkspace,
@@ -511,6 +539,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     onServerSettingsChanged: () => setJuggleWorkServerSettingsVersion((value) => value + 1),
     onHostInfo: setJuggleWorkServerHostInfoState,
   });
+  activeRouteContextRef.current = `${selectedWorkspaceId ?? ""}:${selectedSessionId ?? ""}`;
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
@@ -573,9 +602,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     engineReloadBusy: reloadCoordinator.reloadBusy,
     providerModel: cloudMcpProviderModel,
   });
+  const waitForSessionMcpResumeMaintenance = sessionMcpMaintenance.waitForResumeMaintenance;
   const {
     state: cloudMcpSubmissionState,
     submit: submitWithCloudMcpReadiness,
+    reportFailure: reportCloudMcpSubmissionFailure,
   } = useCloudMcpSubmitReadiness({
     cloudAuthStatus: denAuth.status,
     client: selectedWorkspaceEndpoint?.client ?? null,
@@ -659,6 +690,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         return id ? [id] : [];
       }),
     [selectedWorkspaceId, sessionsByWorkspaceId],
+  );
+  const splitRuntimeSessionId = useWorkbenchStore((state) =>
+    state.workspaceId === selectedWorkspaceId ? state.splitSessionId : null,
+  );
+  const trackedSelectedWorkspaceSessionIds = useMemo(
+    () => Array.from(new Set([
+      ...activeSelectedWorkspaceSessionIds,
+      ...(splitRuntimeSessionId ? [splitRuntimeSessionId] : []),
+    ])),
+    [activeSelectedWorkspaceSessionIds, splitRuntimeSessionId],
   );
 
   const remoteAccessRestart = useRemoteAccessRestart({
@@ -799,6 +840,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     snapshot: sessionProviderAuthSnapshot,
     cloudProviderSyncReady,
     cloudProviderList,
+    refreshCloudProviderReadiness,
   } = useSessionProviderAuth({
     opencodeClient,
     opencodeBaseUrl,
@@ -810,14 +852,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    cloudSessionVersion: denSessionVersion,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
     setDisabledProviderIds,
   });
   const handleModelPickerOpen = useCallback(() => {
-    void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
-  }, [sessionProviderAuthStore]);
+    void refreshCloudProviderReadiness("model_picker_open");
+  }, [refreshCloudProviderReadiness]);
   const modelPicker = useModelPicker({
     client: opencodeClient,
     baseUrl: opencodeBaseUrl,
@@ -870,6 +913,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
   ]);
   const selectedModelUnavailable = isModelUnavailable(activeModel);
+  const selectedManagedModelPreparing = Boolean(
+    activeModel &&
+    isCloudManagedProviderKey(activeModel.providerID) &&
+    !cloudProviderSyncReady,
+  );
   const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
     ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
@@ -920,7 +968,25 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const hasUsableModel = Boolean(activeModel && !selectedModelUnavailable);
   const canCreateTask = Boolean(
-    opencodeClient && selectedWorkspaceId && !loading && !selectedWorkspaceError && !selectedModelUnavailable,
+    opencodeClient &&
+    selectedWorkspaceId &&
+    !loading &&
+    !selectedWorkspaceError,
+  );
+  const startupWorkspaceActivationFailed = Boolean(
+    selectedWorkspaceId && routeError?.startsWith(`[workspace_activation:${selectedWorkspaceId}]`),
+  );
+  const canAcceptTask = Boolean(
+    canCreateTask &&
+    !activatingWorkspaceId &&
+    workspaceActivationErrorId !== selectedWorkspaceId &&
+    !startupWorkspaceActivationFailed &&
+    // A *pending* reload no longer blocks task preparation: it is a queued
+    // config refresh, not an in-flight engine dispose. The reload itself
+    // still refuses to run while sessions are active, and the send path
+    // re-checks its own preconditions at execution time.
+    !reloadCoordinator.reloadBusy &&
+    !reloadCoordinator.reloadError,
   );
 
   const {
@@ -930,7 +996,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     activeQuestion,
     questionReplyBusy,
     respondQuestion,
-    todos,
   } = useSessionInteractions({
     client: opencodeClient,
     workspaceId: selectedWorkspaceId,
@@ -939,7 +1004,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   });
   const showPreparingStatus =
     effectiveLoading ||
-    (!canCreateTask && !routeError && !selectedWorkspaceError);
+    Boolean(activatingWorkspaceId) ||
+    (!canAcceptTask && !routeError && !selectedWorkspaceError);
 
   useEffect(() => {
     if (!opencodeClient) {
@@ -1045,6 +1111,68 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     navigate(target, { state: { workspaceId, sessionId, returnPath } });
   }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
 
+  /**
+   * 串行激活目标工作区，并只允许最后一次选择继续导航
+   * @param workspaceId 目标工作区 id
+   * @returns 当前激活是否仍是用户最后一次选择
+   */
+  const activateWorkspaceForNavigation = useCallback(async (workspaceId: string): Promise<boolean> => {
+    const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
+    const endpoint = endpointForWorkspace(workspace);
+    if (!endpoint) return false;
+    const generation = ++workspaceActivationGenerationRef.current;
+    setActivatingWorkspaceId(workspaceId);
+    setWorkspaceActivationErrorId(null);
+    setRouteError(null);
+    // 串行更新服务端 active-workspace 注册，避免快速点击 A/B 后旧请求
+    // 反向覆盖新导航。Activation 不得触发 engine dispose。
+    const activation = serializeWorkspaceActivation(() => (
+      endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true })
+    ));
+    try {
+      await activation;
+      return workspaceActivationGenerationRef.current === generation;
+    } catch {
+      if (workspaceActivationGenerationRef.current === generation) {
+        setWorkspaceActivationErrorId(workspaceId);
+        setRouteError(`[workspace_activation:${workspaceId}] Failed to prepare the workspace runtime.`);
+      }
+      return false;
+    } finally {
+      if (workspaceActivationGenerationRef.current === generation) {
+        setActivatingWorkspaceId(null);
+      }
+    }
+  }, [endpointForWorkspace, setRouteError, workspaces]);
+
+  /**
+   * 打开会话，并保证跨工作区导航先完成运行时激活
+   * @param workspaceId 会话所属工作区 id
+   * @param sessionId 目标会话 id
+   * @param options 已由调用方完成的运行时准备信息
+   */
+  const openSessionForNavigation = useCallback((
+    workspaceId: string,
+    sessionId: string,
+    options?: { workspaceReady?: boolean },
+  ) => {
+    workspaceNavigationGenerationRef.current += 1;
+    setLegacySelectedWorkspaceId(workspaceId);
+    writeActiveWorkspaceId(workspaceId || null);
+    writeLastSessionFor(workspaceId, sessionId);
+    const workspaceAlreadyReady = options?.workspaceReady === true || (
+      workspaceId === selectedWorkspaceId &&
+      !activatingWorkspaceId &&
+      workspaceActivationErrorId !== workspaceId
+    );
+    // 跨工作区切换先导航、再后台同步服务端 active-workspace 注册。
+    // 读会话走目标工作区自己的 OpenCode 连接，不依赖它先成为 active。
+    navigateToWorkspaceSession(workspaceId, sessionId);
+    focusPromptSoon();
+    if (workspaceAlreadyReady) return;
+    void activateWorkspaceForNavigation(workspaceId);
+  }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
+
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
       return null;
@@ -1085,11 +1213,17 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       },
       modelPickerOpen: modelPicker.compactOpen,
       modelUnavailable: selectedModelUnavailable,
+      taskSubmissionDisabled: !canAcceptTask || selectedModelUnavailable || selectedManagedModelPreparing,
       selectedModel: activeModel ?? { providerID: "", modelID: "" },
+      contextWindowTokens: resolveModelContextLimit(
+        activeModel,
+        providers,
+        sessionProviderAuthSnapshot.cloudOrgProviders,
+      ),
       onModelPickerOpenChange: (open: boolean) => {
         modelPicker.setCompactOpen(open);
         if (open) {
-          void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+          void refreshCloudProviderReadiness("model_picker_open");
         }
       },
       onModelChange: (model: ModelRef) => {
@@ -1103,8 +1237,18 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const behavior = describeModel(model, variant);
         return {
           selectedModel: model ?? { providerID: "", modelID: "" },
+          contextWindowTokens: resolveModelContextLimit(
+            model,
+            providers,
+            sessionProviderAuthSnapshot.cloudOrgProviders,
+          ),
           modelLabel: model ? resolveModelDisplayName(model.modelID) : t("session.default_model"),
           modelUnavailable: isModelUnavailable(model),
+          taskSubmissionDisabled: Boolean(
+            !canAcceptTask ||
+            isModelUnavailable(model) ||
+            (model && isCloudManagedProviderKey(model.providerID) && !cloudProviderSyncReady),
+          ),
           modelVariant: behavior.modelVariantValue,
           modelVariantLabel: behavior.modelVariantLabel,
           modelBehaviorOptions: behavior.modelBehaviorOptions,
@@ -1114,7 +1258,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             setModelPickerSessionId(open ? paneSessionId : null);
             modelPicker.setCompactOpen(open);
             if (open) {
-              void sessionProviderAuthStore.runCloudProviderSync("model_picker_open");
+              void refreshCloudProviderReadiness("model_picker_open");
             }
           },
           onModelClick: () => {
@@ -1137,6 +1281,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
+        if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
@@ -1152,7 +1297,40 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         if (isCompactCommand && !targetModel) {
           throw new Error("Choose a model before compacting this session.");
         }
+        if (
+          targetModel &&
+          isCloudManagedProviderKey(targetModel.providerID) &&
+          !cloudProviderSyncReady
+        ) {
+          throw new Error(t("app.error_managed_model_preparing"));
+        }
         if (isModelUnavailable(targetModel)) throw new Error("Selected model is unavailable. Choose another model before sending.");
+
+        // TIPS: 页面从后台或休眠恢复时，Connect maintenance 会重建可能失效的
+        // first-party transport。这里只等待已经在运行的恢复任务，不为普通消息额外探活。
+        const routeContext = activeRouteContextRef.current;
+        const resumeMaintenance = await waitForSessionMcpResumeMaintenance();
+        if (activeRouteContextRef.current !== routeContext) {
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
+        if (resumeMaintenance.outcome === "timed_out") {
+          return reportCloudMcpSubmissionFailure({
+              code: "cloud_mcp_resume_maintenance_timeout",
+              stage: "engine_delivery",
+              retryable: true,
+              message: "JuggleWork Connect is still restoring after the app resumed.",
+              recommendedAction: "Wait a moment, then retry the message.",
+          });
+        }
+        if (resumeMaintenance.outcome === "failed") {
+          return reportCloudMcpSubmissionFailure({
+              code: "cloud_mcp_resume_maintenance_failed",
+              stage: "engine_delivery",
+              retryable: true,
+              message: "JuggleWork Connect could not finish restoring after the app resumed.",
+              recommendedAction: "Retry the message, then open Settings → Connect if the problem continues.",
+          });
+        }
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -1221,6 +1399,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               ...(envSystemContext ? { system: envSystemContext } : {}),
             });
             if (result.error) {
+              if (result.error instanceof Error) throw result.error;
               throw new Error(serializeSDKError(result.error));
             }
           },
@@ -1307,12 +1486,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     };
   }, [
     activeModel,
+    canAcceptTask,
     applyModelSelection,
     applyModelVariantSelection,
     client,
     describeModel,
     isModelUnavailable,
     modelPicker.compactOpen,
+    refreshCloudProviderReadiness,
     handleOpenSettings,
     hasUsableModel,
     handleApplyEnvironmentChanges,
@@ -1331,13 +1512,18 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     opencodeBaseUrl,
     opencodeClient,
     providerConnectedIds,
+    providers,
+    sessionProviderAuthSnapshot.cloudOrgProviders,
     selectedAgent,
     selectedSessionId,
     selectedModelUnavailable,
+    selectedManagedModelPreparing,
+    cloudProviderSyncReady,
     selectedWorkspace,
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     sessionProviderAuthStore,
+    reportCloudMcpSubmissionFailure,
     sessionsByWorkspaceId,
     submitWithCloudMcpReadiness,
     token,
@@ -1481,6 +1667,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
 
   const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
+    const navigationGeneration = ++workspaceNavigationGenerationRef.current;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -1489,6 +1676,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ) {
       return null;
     }
+    const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
+      !activatingWorkspaceId &&
+      workspaceActivationErrorId !== workspaceId;
+    if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) {
+      return null;
+    }
+    if (workspaceNavigationGenerationRef.current !== navigationGeneration) return null;
     const endpoint = endpointForWorkspace(workspace);
     if (!endpoint || !endpoint.token) {
       return null;
@@ -1504,6 +1698,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       const session = unwrap(
         await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
       );
+      if (workspaceNavigationGenerationRef.current !== navigationGeneration) return session.id;
       if (workspaceId === selectedWorkspaceId) {
         void sessionProviderAuthStore.runCloudProviderSync("new_chat");
       }
@@ -1525,8 +1720,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         sessionsByWorkspaceIdRef.current = next;
         return next;
       });
-      navigateToWorkspaceSession(workspaceId, session.id);
-      focusPromptSoon();
+      openSessionForNavigation(workspaceId, session.id, { workspaceReady: true });
       void refreshRouteState();
       return session.id;
     } catch (error) {
@@ -1547,14 +1741,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         if (startupRetryTimerRef.current === null) {
           startupRetryTimerRef.current = window.setTimeout(() => {
             startupRetryTimerRef.current = null;
-            refreshInFlightRef.current = false;
             void refreshRouteState();
           }, 1_000);
         }
       }
       return null;
     }
-  }, [endpointForWorkspace, loading, navigateToWorkspaceSession, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaces]);
+  }, [activateWorkspaceForNavigation, activatingWorkspaceId, endpointForWorkspace, loading, openSessionForNavigation, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sessionProviderAuthStore, workspaceActivationErrorId, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -1593,7 +1786,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     terminalOpen,
     setTerminalOpen,
   } = useShellShortcuts({
-    canCreateTask,
+    canCreateTask: canAcceptTask,
     workspaceId: selectedWorkspaceId,
     onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
     onNextSessionTab: goToNextSessionTab,
@@ -1619,8 +1812,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     const owner = Object.entries(sessionsByWorkspaceId).find(([, sessions]) =>
       (sessions ?? []).some((session) => session?.id === sessionId),
     )?.[0];
-    navigateToWorkspaceSession(owner || selectedWorkspaceId, sessionId);
-  }, [navigateToWorkspaceSession, selectedWorkspaceId, sessionsByWorkspaceId]);
+    openSessionForNavigation(owner || selectedWorkspaceId, sessionId);
+  }, [openSessionForNavigation, selectedWorkspaceId, sessionsByWorkspaceId]);
 
   const navigateToSessionRootForControl = useCallback(() => {
     navigateToWorkspaceSession(selectedWorkspaceId);
@@ -1636,7 +1829,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
     selectedWorkspaceRoot,
     selectedSessionId,
-    canCreateTask,
+    canCreateTask: canAcceptTask,
     juggleworkClient: client,
     opencodeClient,
     navigateToSession: navigateToSessionForControl,
@@ -1868,7 +2061,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const buildCommandDiagnosticsBundle = useCallback(() => buildDiagnosticsBundleJson({
     anyActiveRuns: activeReloadBlockingSessions.length > 0,
     canReloadWorkspace: reloadCoordinator.canReloadWorkspaceEngine,
-    clientConnected: canCreateTask,
+    clientConnected: canAcceptTask,
     developerMode,
     hostInfo: juggleworkServerHostInfoState,
     juggleworkServerStatus: client ? "connected" : "disconnected",
@@ -1877,7 +2070,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   }), [
     activeReloadBlockingSessions.length,
     baseUrl,
-    canCreateTask,
+    canAcceptTask,
     client,
     developerMode,
     juggleworkServerHostInfoState,
@@ -2017,27 +2210,17 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      let list: WorkspaceList | null = null;
-      let createdOnServer = false;
-      if (client) {
-        list = await client
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .then((serverList) => {
-            createdOnServer = true;
-            return serverList;
-          })
-          .catch(() => null);
-      }
-      if (!list) {
+      if (!client) {
         throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
       }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      let targetWorkspaceId = createdId;
-      let targetWorkspace = list.workspaces.find((workspace: WorkspaceInfo) => workspace.id === createdId) ?? null;
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
+      const created = await createLocalWorkspaceForRuntime(client, {
+        folderPath: folder,
+        name: workspaceName,
+        preset,
+      });
+      const list = created.list;
+      const targetWorkspaceId = created.workspaceId;
+      const targetWorkspace = created.workspace;
       // First workspace on a fresh install: the JuggleWork server was started
       // engine-less (it only spawns OpenCode at boot when a workspace already
       // exists), so sessions would hang forever. This boots the engine when
@@ -2066,7 +2249,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         const workspacePath = targetWorkspace?.path?.trim() || folder;
         // Best-effort first task creation (mirrors the old welcome flow) — a
         // failure here must not surface as a failed workspace creation.
-        const session = createdOnServer && sessionBaseUrl && sessionToken
+        const session = sessionBaseUrl && sessionToken
           ? await createClient(
               `${(buildJuggleWorkWorkspaceBaseUrl(sessionBaseUrl, targetWorkspaceId) ?? sessionBaseUrl).replace(/\/+$/, "")}/opencode`,
               workspacePath || undefined,
@@ -2188,7 +2371,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
-        activeSessionIds={activeSelectedWorkspaceSessionIds}
+        activeSessionIds={trackedSelectedWorkspaceSessionIds}
         opencodeBaseUrl={opencodeBaseUrl}
         juggleworkToken={selectedWorkspaceServerToken}
         onSessionCreated={handleRuntimeSessionCreated}
@@ -2210,7 +2393,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       runtimeWorkspaceId={selectedWorkspaceEndpoint?.workspaceId || null}
       opencodeBaseUrl={opencodeBaseUrl}
       workspaces={workspaces}
-      clientConnected={canCreateTask}
+      clientConnected={canAcceptTask}
       juggleworkServerClient={selectedWorkspaceEndpoint?.client ?? client}
       environmentClient={client}
       juggleworkServerToken={selectedWorkspaceServerToken}
@@ -2295,11 +2478,16 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         sessionStatusById: sidebarSessionStatusById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
-        newTaskDisabled: !canCreateTask,
+        newTaskDisabled: !canAcceptTask,
         sidebarHydratedFromCache: Object.values(sessionsByWorkspaceId).some((list) => list.length > 0),
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
         onSelectWorkspace: async (workspaceId) => {
-          if (workspaceId === selectedWorkspaceId) return true;
+          if (
+            workspaceId === selectedWorkspaceId &&
+            workspaceActivationErrorId !== workspaceId &&
+            !startupWorkspaceActivationFailed
+          ) return true;
+          const navigationGeneration = ++workspaceNavigationGenerationRef.current;
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
           const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -2315,18 +2503,36 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             void workspaceSetSelected(workspaceId).catch(() => undefined);
             void workspaceSetRuntimeActive(workspaceId).catch(() => undefined);
           }
-          // Tell the JuggleWork server this workspace is now active so it can
-          // emit a config reload event that the OpenCode engine picks up.
-          // Without this, the permissions from opencode.jsonc are never
-          // applied on the workspace the user is already on at launch. See
-          // issue #870.
-          if (workspaceId) {
-            const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
-            const endpoint = endpointForWorkspace(workspace);
-            if (endpoint) {
-              void endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true }).catch(() => undefined);
+          // Keep the server registry aligned with navigation. This operation
+          // is non-destructive; configuration changes are applied separately
+          // through the active-run-gated engine reload path.
+          if (workspaceId && !await activateWorkspaceForNavigation(workspaceId)) {
+            if (workspace?.workspaceType === "remote") {
+              // A remote workspace whose worker was redeployed has a dead URL:
+              // activation fails fast while session-list retries keep running.
+              // Navigating anyway lands the user on the broken workspace so
+              // the "workspace redeployed — update connection" card is visible
+              // instead of silently staying on the previous local workspace.
+              setErrorsByWorkspaceId((current) => ({
+                ...current,
+                [workspaceId]: current[workspaceId]?.trim() || t("workspace_list.remote_worker_rebuilt_hint"),
+              }));
+              setWorkspaceConnectionOverrides((current) => ({
+                ...current,
+                [workspaceId]: current[workspaceId]?.status === "error"
+                  ? current[workspaceId]
+                  : {
+                      status: "error",
+                      message: t("workspace_list.remote_worker_rebuilt_hint"),
+                      checkedAt: Date.now(),
+                      reason: "worker_unreachable",
+                    },
+              }));
+              navigateToWorkspaceSession(workspaceId);
             }
+            return false;
           }
+          if (workspaceNavigationGenerationRef.current !== navigationGeneration) return false;
           // If we remember what the user last opened here and that session
           // still exists in our local list, navigate. Otherwise stay put.
           const remembered = readLastSessionFor(workspaceId);
@@ -2348,11 +2554,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           void loadWorkspaceSessionsInBackground([workspace]);
         },
         onOpenSession: (workspaceId, sessionId) => {
-          setLegacySelectedWorkspaceId(workspaceId);
-          writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, sessionId);
-          navigateToWorkspaceSession(workspaceId, sessionId);
-          focusPromptSoon();
+          openSessionForNavigation(workspaceId, sessionId);
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
@@ -2364,8 +2566,15 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         },
         onCreateTaskWithPrompt: (workspaceId, prompt) => {
           void (async () => {
+            const navigationGeneration = ++workspaceNavigationGenerationRef.current;
             const workspace = workspaces.find((item) => item.id === workspaceId);
             if (!workspace) return;
+            const workspaceAlreadyReady = workspaceId === selectedWorkspaceId &&
+              !activatingWorkspaceId &&
+              workspaceActivationErrorId !== workspaceId &&
+              !startupWorkspaceActivationFailed;
+            if (!workspaceAlreadyReady && !await activateWorkspaceForNavigation(workspaceId)) return;
+            if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
             const endpoint = endpointForWorkspace(workspace);
             if (!endpoint?.token) return;
             const workspaceClient = createClient(
@@ -2377,6 +2586,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               const session = unwrap(
                 await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
               );
+              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
               if (workspaceId === selectedWorkspaceId) {
                 void sessionProviderAuthStore.runCloudProviderSync("new_chat");
               }
@@ -2388,9 +2598,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                 ...current,
                 [workspaceId]: [session, ...(current[workspaceId] ?? [])],
               }));
-              navigateToWorkspaceSession(workspaceId, session.id);
-              focusPromptSoon();
+              openSessionForNavigation(workspaceId, session.id);
             } catch {
+              if (workspaceNavigationGenerationRef.current !== navigationGeneration) return;
               // Fall back to normal task creation without prompt
               void handleCreateTaskInWorkspace(workspaceId);
             }
@@ -2424,7 +2634,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         onUndo: () => {},
         onRedo: () => {},
       }}
-      todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
       shareWorkspaceModal={
         shareWorkspaceState.shareWorkspaceOpen
@@ -2549,7 +2758,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
         }
       }}
-      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+      onOpenSession={openSessionForNavigation}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/preferences")}
       onOpenModelPicker={() => {
         setModelPickerSessionId(null);
@@ -2588,7 +2797,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onClose={() => setSessionSearchOpen(false)}
       sessions={paletteSessionOptions}
       fetchMessages={sessionSearchFetcher}
-      onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+      onOpenSession={openSessionForNavigation}
     />
     <ModelPickerModal
       open={modelPicker.open}

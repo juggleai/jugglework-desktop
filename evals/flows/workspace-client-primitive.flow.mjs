@@ -27,25 +27,6 @@ async function waitForControl(ctx, label = "control API") {
 }
 
 async function maybeSkipOnboardingPrompts(ctx) {
-  const dismissedModels = await ctx.eval(`(() => {
-    const dialog = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'))
-      .find((item) => (item.textContent || "").includes("JuggleWork Models"));
-    if (!dialog) return false;
-    const button = Array.from(dialog.querySelectorAll("button"))
-      .find((item) => {
-        const label = (item.textContent || "").trim();
-        return label.includes("Continue without JuggleWork Models") || label === "Close" || item.getAttribute("aria-label") === "Close";
-      });
-    if (!button) return false;
-    button.click();
-    return true;
-  })()`);
-  if (dismissedModels) {
-    await ctx.waitFor(
-      `!Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]')).some((item) => (item.textContent || "").includes("JuggleWork Models"))`,
-      { timeoutMs: 10_000, label: "JuggleWork Models modal dismissed" },
-    );
-  }
   const choosingModel = await ctx.hasText("Skip and use the free model");
   if (choosingModel) {
     await ctx.clickText("Skip and use the free model", { selector: "button", timeoutMs: 10_000 });

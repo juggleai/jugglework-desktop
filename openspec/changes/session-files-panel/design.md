@@ -1,0 +1,108 @@
+## Context
+
+会话右侧图标栏当前有 4 个入口：Browser / Voice / Artifacts / Extensions（`domains/session/chat/session-page.tsx:1673-1740`），右侧面板由 `SIDE_PANEL_ITEMS = ["panel","extensions","voice"]`（`shell/ui-state-store.ts:17`）切换。其中 `panel` 承载 `SidePanel`，内部用 `panel-tab-store` 管理 `browser` / `artifact` 两类标签，`artifact` 标签由聊天文本推断出的产物（`artifacts/open-target.ts`）驱动，`ArtifactPanel` 负责预览与保存。
+
+本变更把 Artifacts 入口替换为【文件】面板：目录树 + 多文件标签 + 工作区变更 diff + 全屏。相关既有能力可复用：`artifacts/preview.tsx`（markdown/图片/PDF/HTML/纯文本预览）、`artifacts/artifact-text-editor.tsx`（CodeMirror 编辑器）、JuggleWork Server 文件读写路由、引擎 SDK 的 `file.list` 与 `vcs.diff`。
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- 本地工作区会话内可浏览完整目录树、打开任意文件查看与编辑、审阅工作区未提交改动。
+- 面板状态（打开的文件、展开的目录、草稿、全屏）在收起/展开、全屏切换、会话切换之间稳定。
+- 不新增第三方依赖，不改动主进程 IPC 与服务端路由。
+
+**Non-Goals:**
+
+- 远程工作区的目录树与变更视图。
+- 文件的新建/重命名/删除/拖拽移动等文件管理操作。
+- git 暂存、提交、撤销 hunk 等版本控制操作。
+- 语法高亮按语言细分（沿用现有编辑器的 markdown / 纯文本两档）。
+- 全局文件搜索（截图中的 Find tab 不在本次范围）。
+
+## Decisions
+
+### 目录树用引擎 `file.list` 懒加载，而不是服务端 catalog 快照
+
+引擎 SDK 提供 `client.file.list({ path, directory })`，返回单层 `FileNode { name, path, absolute, type, ignored }`，天然适配「展开时才请求」。
+
+替代方案 `GET /files/sessions/:id/catalog/snapshot`（`apps/server/src/routes/files.ts:713`）是一次性递归遍历整个工作区且不跳过 `.git`/`node_modules`，在大仓上会长时间阻塞并返回上万条目，与「全部显示 + 懒加载」的要求正好相反，故不采用。
+
+`FileNode.ignored` 不用于过滤（需求要求全部显示），仅用于把被忽略的条目以低对比度呈现。
+
+### 文件读写走 `/files/raw`，而不是 `/files/content`
+
+`GET/POST /workspace/:id/files/content` 有扩展名白名单 `isSupportedWorkspaceTextFilePath`（`apps/server/src/routes/files.ts:81`），`.py`、`.kt`、`.gradle`、`Dockerfile` 等常见文件会直接 400。目录树可以打开任意文件，因此：
+
+- 读：`client.downloadWorkspaceFile`（`GET /files/raw`，无白名单）取字节 + `client.statWorkspaceFile` 取 `updatedAt`/`size`。
+- 写：`client.writeWorkspaceBinaryFile`（`POST /files/raw`，带 `baseUpdatedAt`，冲突返回 409）。
+
+文本/二进制判定在前端做：先按扩展名走 `classifyOpenTarget` 决定预览形态（markdown/image/pdf/html/sheet/text），扩展名未知时嗅探字节内容（含 NUL 或不可解码 UTF-8 视为二进制），二进制走既有预览或「不可预览」空态。5MB 以上由服务端返回 413，前端转成明确提示。
+
+### 面板状态集中放 store，容忍全屏切换时的重挂载
+
+全屏时面板需要覆盖左侧边栏，而边栏在 `SidebarProvider` 内、聊天区在 `SidebarInset` 内（`session-page.tsx:1096-1160`），面板本体又在右侧 `ResizablePanel` 里。让同一个 React 节点在「分栏」和「覆盖层」两个位置之间移动必然重挂载（portal 换容器同样会重挂载）。
+
+因此不追求节点复用，改为把全部可变状态放进 `files-panel-store`（zustand + persist）：打开的文件标签、激活标签、目录展开集合、未保存草稿、全屏开关。组件重挂载后从 store 恢复，用户无感知；草稿保留也正好满足「脏标记 + 关闭前确认」的需求。目录树数据与文件内容由 react-query 缓存兜底，重挂载不会重新打网络。
+
+全屏覆盖层渲染在 `SidebarProvider`（已是 `relative`）内：右侧留出 44px 入口图标栏，左侧留出 72px 应用导航栏，其余（工作区标题、会话列表、会话页头）全部盖住。顶部不留空白：面板头部自己就贴着窗口顶端，全屏时整行设为 `titlebar-drag`（`titleBarStyle: hiddenInset` 下这条就是系统标题栏区域，可拖窗口），行内的 tab 与全屏按钮各自标 `titlebar-no-drag`，因此既不用留空白条，按钮也点得动。
+
+顶部只有一行工具栏，高度 56px，与会话页头（`.session-header`，`styles/custom.css`）齐平：左侧目录树入口、中间标签栏（`min-w-0 flex-1 overflow-hidden`，内部横向滚动，因此标签再多也不会顶到两侧按钮）、右侧全屏开关。工作区变更不再是分区 tab，而是标签栏里的第一个标签（带变更文件数、不可关闭），和打开的文件标签并列，由 `activeKey` 决定内容区显示 diff 还是文件。
+
+全屏与分栏用的是同一个组件，只按 `fullscreen` 切换排布：全屏宽度足够，目录树常驻左栏（256px）并可用工具栏左侧的按钮折叠（`treeCollapsed` 按会话记忆）；分栏最窄只有 320px，塞不下两栏，因此还没打开任何内容时目录树占满面板，打开之后目录树收进标签栏左侧的悬浮菜单（☰）与右侧加号里。
+
+悬浮菜单用受控的 Popover 自己接管 open：base-ui 这版没有 `openOnHover`。关闭走 220ms 延时，指针从按钮移到弹层的路上不会被收掉；展开目录不关闭弹层，只有真正打开文件才关闭（`children` 以回调形式拿到 close）。
+
+### 变更视图取 git 工作区 diff，前端自解析 unified patch
+
+会话消息里的 `info.summary.diffs` 只是"每一轮 agent 改了什么"的回放：它按 step-start / step-finish 两次快照算出来，用户在编辑器、终端或另一个会话里的改动永远不在里面，用它做「变更」列表会漏掉工作区的真实状态。引擎的 `GET /session/:id/diff` 在不传 `messageID` 时恒定返回空数组，也不是可用来源。
+
+因此 `useWorkspaceChanges` 改用 `client.vcs.diff({ directory, mode: "git" })`（`GET /vcs/diff`），返回 `VcsFileDiff[]`（`file`、`patch`、`additions`、`deletions`、`status`），口径是 git 工作区相对 HEAD 的未提交改动，未跟踪文件计为新增，改动来源与作者无关。增删均为 0 的条目在前端过滤掉。
+
+git 可用性用 `GET /vcs` 判定：非 git 目录返回 `{branch: null}`（不报错），未安装 git 同理。空列表既可能是"干净仓库"也可能是"没有 git"，因此只在列表为空或 diff 请求失败时才补查一次 `/vcs`——有改动的常见路径仍然只有一个请求；diff 失败且 `/vcs` 显示 git 可用时，错误照常抛出，不把真实故障吞成"没有 git"。
+
+`patch` 是标准 unified diff，前端用一个约 60 行的解析函数拆成 hunk/行，渲染增删行底色即可，不引入 diff 库。
+
+### 变更列表的刷新不用轮询
+
+轮询整份工作区 diff 代价高且大部分时候是空转，因此重取只由四类信号驱动：引擎推送的 `session.diff` / `file.edited` / `file.watcher.updated`（250ms 合并窗口）、会话从 busy 转 idle、窗口重新获得焦点、以及列表上方的手动刷新按钮。
+
+事件来源不是 kernel 的 `GlobalSDKProvider`——那对 provider（连同 `GlobalSyncProvider`）在当前代码里根本没有被挂载，`useGlobalSDK()` 必然抛错。真正在跑的事件流是 `domains/session/sync/session-sync.ts` 里按工作区维护的那条 SSE 订阅，因此由它导出 `subscribeWorkspaceFileChanges(workspaceId, listener)` 转发文件改动事件，不额外建连接。
+
+窗口聚焦这一条是必需的兜底：实测桌面端引擎不推 `file.watcher.updated`（连续 25s 内在工作区内新建、修改文件都只收到心跳），外部编辑器里的改动只能靠切回窗口或手动刷新才会反映。
+
+### 入口替换与产物路径收敛
+
+- `SIDE_PANEL_ITEMS` 增加 `"files"`；图标栏第三个按钮从 Artifacts 改为【文件】（`FolderTree` 图标），本地工作区恒可点击，远程工作区不渲染。
+- `openTarget` 中命中文件的分支不再创建 `artifact` 标签，改为在文件面板打开对应路径；URL 分支维持浏览器标签不变。
+- `panel-tab-store` 的 `artifact` 标签类型与 `SidePanel` 中的渲染分支保留：老版本持久化数据里可能仍有 artifact 标签，保留渲染路径可以让它们继续正常显示直到被关闭；新逻辑不再创建这类标签。
+
+### Markdown 预览
+
+- Markdown 文件默认复用 `MarkdownPreview` 的 Marked + DOMPurify 渲染链路，编辑入口再按需挂载 CodeMirror；保存成功返回预览，普通文本文件仍直接编辑。
+- GFM 表格外包一层横向滚动容器，避免窄分栏中的长表格撑破布局。
+- Mermaid 仅在检测到 `mermaid` 围栏时动态加载。渲染采用 `securityLevel: strict`，并串行调用全局 Mermaid 实例，避免多个预览的主题配置相互覆盖；单图失败降级为错误提示和源码。
+- 普通代码块复用聊天 Markdown 的原生按钮、复制与两秒成功反馈契约；`MarkdownPreview` 显式启用，其他 surface Markdown 消费方保持原行为。
+
+### 文件树右键菜单
+
+- 相对路径直接使用文件树统一的 `/` 分隔工作区路径；绝对路径通过桌面端 `path.join` IPC 生成，因此 Windows 复制 `\\` 分隔路径，macOS/Linux 复制 `/` 分隔路径。
+- 文件和目录统一调用 Electron `shell.showItemInFolder`：macOS/Windows 通常在 Finder/Explorer 中选中目标；Linux 优先使用 FileManager1/portal，桌面环境不支持选中时退化为打开包含目录。
+- 悬浮目录树的右键菜单通过 portal 渲染，菜单打开期间暂停原有 220ms 鼠标离开收起计时，避免菜单被树弹层卸载。
+
+## Risks / Trade-offs
+
+- [超大目录（如 `node_modules` 根层数千条目）渲染卡顿] → 单层超过 500 条时截断展示并提示「仅显示前 500 项」，配合虚拟滚动前的最小成本方案。
+- [全屏切换重挂载导致滚动位置丢失] → 只保证标签、草稿、展开状态不丢；滚动位置丢失可接受，必要时后续再存。
+- [`/vcs/diff` 一次返回整个工作区的 patch，改动很多时响应体大] → 列表与 diff 分开渲染，只有选中文件才渲染其 patch；单文件 patch 超过 2000 行时折叠并提供「仍要展示」。若后续遇到超大工作区，可改为 `/vcs/status` 出列表、选中时再取该文件 patch。
+- [编辑器仅有 markdown/纯文本两档高亮，代码文件观感弱于 IDE] → 本次接受，语法高亮扩展作为后续独立变更。
+- [Mermaid 依赖体积较大] → 只在 Markdown 实际包含 Mermaid 围栏时动态导入，不进入初始渲染路径。
+- [写入任意扩展名文件绕过了 `/files/content` 的白名单] → `/files/raw` 已有路径穿越校验、5MB 上限、审批与审计记录，安全边界不变；白名单本身面向的是「内联文本产物」，不是安全控制。
+
+## Migration Plan
+
+纯前端渲染层变更，随版本发布即可生效，无数据迁移。回滚方式为还原提交：`panel-tab-store` 结构未变，`files-panel-store` 的持久化 key 独立（`jugglework:files-panel:v1`），回滚后不会影响原有面板行为。
+
+## Open Questions
+
+无。

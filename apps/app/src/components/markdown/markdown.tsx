@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 
 import {
@@ -16,16 +16,15 @@ import {
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
-  setCodeCopyButtonState,
   syncMarkdownImagePreviews,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { useCodeBlockCopy } from "./use-code-block-copy";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
 const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\//i;
-const CODE_COPY_RESET_DELAY_MS = 2000;
 
 function localPathFromHref(href: string) {
   const trimmed = href.trim();
@@ -100,7 +99,7 @@ function MarkdownBlockInner({
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
+  useCodeBlockCopy(rootRef);
   const { openTargets, onOpenTarget } = useOpenTargets();
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
@@ -108,38 +107,6 @@ function MarkdownBlockInner({
     return renderMarkdownHtml(text);
   }, [text]);
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
-
-  const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
-    } catch {
-      return;
-    }
-
-    const previousTimer = codeCopyResetTimers.current.get(button);
-    if (previousTimer !== undefined) {
-      window.clearTimeout(previousTimer);
-    }
-
-    setCodeCopyButtonState(button, true);
-
-    const resetTimer = window.setTimeout(() => {
-      setCodeCopyButtonState(button, false);
-      codeCopyResetTimers.current.delete(button);
-    }, CODE_COPY_RESET_DELAY_MS);
-    codeCopyResetTimers.current.set(button, resetTimer);
-  }, []);
-
-  useEffect(() => {
-    const timers = codeCopyResetTimers.current;
-
-    return () => {
-      for (const timer of timers.values()) {
-        window.clearTimeout(timer);
-      }
-      timers.clear();
-    };
-  }, []);
 
   useEffect(() => {
     if (streaming || !hasFencedCodeBlock(text)) {
@@ -200,17 +167,6 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
 
-      const copyButton = event.target.closest("[data-jugglework-code-copy]");
-      if (copyButton instanceof HTMLButtonElement) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const codeBlock = copyButton.closest("[data-jugglework-code-block]");
-        const code = codeBlock?.querySelector("code");
-        void handleCodeBlockCopy(copyButton, code?.textContent ?? "");
-        return;
-      }
-
       const chevron = event.target.closest("[data-jugglework-link-chevron]");
       if (chevron instanceof HTMLElement) {
         event.preventDefault();
@@ -263,7 +219,7 @@ function MarkdownBlockInner({
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
     };
-  }, [handleCodeBlockCopy, html, onOpenTarget, openTargets]);
+  }, [html, onOpenTarget, openTargets]);
 
   if (!html) {
     return null;

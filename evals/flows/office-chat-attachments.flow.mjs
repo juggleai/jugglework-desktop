@@ -229,29 +229,6 @@ async function assertOfficeMockSelected(ctx) {
   record(ctx, selected.includes("Office attachment mock"), "Visible selected model is Office attachment mock", selected);
 }
 
-async function dismissJuggleWorkModelsModal(ctx) {
-  const result = await ctx.eval(`(() => {
-    const roots = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'));
-    const dialog = roots.find((item) => (item.textContent || "").includes("JuggleWork Models"));
-    if (!dialog) return { dismissed: false };
-    const buttons = Array.from(dialog.querySelectorAll("button"));
-    const continueButton = buttons.find((button) => (button.textContent || "").trim().includes("Continue without JuggleWork Models"));
-    const closeButton = buttons.find((button) => {
-      const label = button.getAttribute("aria-label") || "";
-      return label === "Close" || (button.textContent || "").trim() === "Close";
-    });
-    const button = continueButton || closeButton;
-    if (!button) return { dismissed: false, reason: "JuggleWork Models modal had no dismiss button" };
-    button.click();
-    return { dismissed: true };
-  })()`);
-  if (!result || !result.dismissed) return;
-  await ctx.waitFor(`(() => {
-    const roots = Array.from(document.querySelectorAll('[role="dialog"], [data-slot="dialog-content"], [data-radix-dialog-content]'));
-    return !roots.some((item) => (item.textContent || "").includes("JuggleWork Models"));
-  })()`, { timeoutMs: 10_000, label: "JuggleWork Models modal dismissed" });
-}
-
 async function createFreshSession(ctx) {
   await ctx.waitFor(
     `window.__juggleworkControl.listActions().some((item) => item.id === "session.create_task" && !item.disabled)`,
@@ -603,7 +580,6 @@ function workspaceArtifactsHaveExpectedHashes(hashes) {
 }
 
 async function clickArtifact(ctx, filename) {
-  await dismissJuggleWorkModelsModal(ctx);
   await ctx.waitFor(`(() => {
     const buttons = Array.from(document.querySelectorAll("button"));
     const tabsOpen = buttons.some((item) => {
@@ -840,7 +816,6 @@ export default {
               JSON.stringify(afterHashes),
             );
             await waitForFinalResponse(ctx);
-            await dismissJuggleWorkModelsModal(ctx);
             const messages = await sessionMessages(ctx);
             const sessionText = JSON.stringify(messages);
             record(ctx, sessionText.includes(DOCX_SENTINEL) && sessionText.includes(PPTX_SENTINEL), "Session read API contains both extracted sentinel facts");
@@ -857,7 +832,6 @@ export default {
               expectedSha: OFFICE_FIXTURES.docx.sha256,
               assertion: `Sent attachment card Download for ${DOCX_FILENAME} saves the exact expected sha256`,
             });
-            await dismissJuggleWorkModelsModal(ctx);
             await ctx.control("session.scroll_bottom");
             await waitForVisibleFinalResponse(ctx);
           },
@@ -937,7 +911,6 @@ export default {
               timeoutMs: 30_000,
               label: "reopened Office session route",
             });
-            await dismissJuggleWorkModelsModal(ctx);
             const restoredCards = await ctx.waitFor(sentAttachmentCardsExpr(), { timeoutMs: 45_000, label: "restored Office sent cards" });
             record(ctx, restoredCards.docx && restoredCards.pptx, "Reload restored both sent Office cards with badges and Download actions");
             record(ctx, restoredCards.downloadButtons >= 2, "Reloaded Office sent cards keep DOCX/PPTX Download actions", JSON.stringify({ downloadButtons: restoredCards.downloadButtons }));
@@ -949,7 +922,6 @@ export default {
               timeoutMs: 60_000,
               label: "replay success assistant response",
             });
-            await dismissJuggleWorkModelsModal(ctx);
           },
           assert: async () => {
             await ctx.expectText(DOCX_FILENAME);

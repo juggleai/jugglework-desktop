@@ -398,11 +398,6 @@ async function completeDesktopCloudOnboardingIfNeeded(ctx) {
     await ctx.clickText("Use this folder", { timeoutMs: 10_000 });
     await ctx.waitFor("window.location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace open after folder selection" });
   }
-  await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')].find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without JuggleWork Models');
-    button?.click();
-    return true;
-  })()`);
 }
 
 async function navigateToSettingsTab(ctx, tab) {

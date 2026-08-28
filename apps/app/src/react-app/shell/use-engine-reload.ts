@@ -23,6 +23,31 @@ function taskCreateUnavailableToastId(workspaceId: string) {
   return `opencode-unavailable:${workspaceId}`;
 }
 
+/**
+ * Hard deadline for the best-effort refreshes that follow an engine reload
+ * (provider list + route state). Neither react-query refetches nor the
+ * OpenCode SDK carry a request timeout, so a single stalled active query
+ * would otherwise leave `reloadBusy` true forever — which wedges the session
+ * MCP maintenance loop in "checking" and the status bar in "Checking".
+ */
+export const ENGINE_RELOAD_REFRESH_DEADLINE_MS = 20_000;
+
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
 export type UseEngineReloadInput = {
   client: JuggleWorkServerClient | null;
   workspaceId: string;
@@ -49,7 +74,6 @@ export function useEngineReload(input: UseEngineReloadInput) {
   const [engineReloadVersion, setEngineReloadVersion] = useState(0);
   const [routeEngineInfo, setRouteEngineInfo] = useState<EngineInfo | null>(null);
   const reloadEventCursorByWorkspaceRef = useRef<Record<string, number | null>>({});
-
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     if (!client || !workspaceId) {
       onError(t("app.error_connect_first"));
@@ -73,10 +97,10 @@ export function useEngineReload(input: UseEngineReloadInput) {
       restartedEngine = true;
     }
     if (restartedEngine) {
-      await refreshRouteState();
-      await refreshProviderListQueries(getReactQueryClient()).catch(() => undefined);
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     } else {
-      await refreshProviderListQueries(getReactQueryClient());
+      await withDeadline(refreshProviderListQueries(getReactQueryClient()), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     setEngineReloadVersion((v) => v + 1);
     try {
@@ -85,7 +109,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
       // ignore browser event dispatch failures
     }
     if (!restartedEngine) {
-      await refreshRouteState();
+      await withDeadline(refreshRouteState(), ENGINE_RELOAD_REFRESH_DEADLINE_MS);
     }
     toast.dismiss(taskCreateUnavailableToastId(workspaceId));
     toast.dismiss();
@@ -141,8 +165,7 @@ export function useEngineReload(input: UseEngineReloadInput) {
         if (currentCursor === undefined || currentCursor === null) return;
         for (const event of response.items ?? []) {
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
-        }
-      } catch {
+        }      } catch {
         // Reload-event polling is best-effort; normal route health checks still
         // surface connection failures.
       }

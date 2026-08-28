@@ -91,7 +91,7 @@ export const juggleworkContextSnapshotSchema = z.object({
   sidePanel: z.object({
     open: z.boolean(),
     ownerSessionId: z.string().nullable(),
-    kind: z.enum(["panel", "extensions", "voice"]).nullable(),
+    kind: z.enum(["panel", "files", "extensions", "voice"]).nullable(),
     tabs: z.array(juggleworkPanelTabSchema),
     activeTabId: z.string().nullable(),
   }),

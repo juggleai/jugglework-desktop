@@ -91,10 +91,37 @@ export type DenPluginCloudReadinessConnection = {
   connectedForMe?: boolean;
 };
 
+/** MCP server 的承载方式：cloud 走远程端点，desktop 需装到工作区由本地进程运行。 */
+export type DenPluginMcpDelivery = "cloud" | "desktop";
+
+/**
+ * 插件里单个 MCP server 的承载明细。
+ * @param configObjectId 所属配置对象
+ * @param serverName MCP server 名，扁平 payload 下可能为空串
+ * @param delivery 承载方式
+ * @param url 远程端点（delivery 为 cloud）
+ * @param command 启动命令（delivery 为 desktop）
+ * @param connectionId 已绑定的组织外部连接
+ * @param credentialMode 凭据模式
+ * @param connectedForMe 当前成员是否已授权
+ */
+export type DenPluginMcpComponent = {
+  configObjectId: string;
+  serverName: string;
+  delivery: DenPluginMcpDelivery;
+  url?: string;
+  command?: string[];
+  connectionId?: string | null;
+  credentialMode?: "shared" | "per_member";
+  connectedForMe?: boolean;
+};
+
 export type DenPluginCloudReadiness = {
   state: DenPluginCloudReadinessState;
   hasInstructional: boolean;
   connections: DenPluginCloudReadinessConnection[];
+  /** 逐个 MCP server 的承载明细；旧服务端不下发该字段，读取方按缺失处理。 */
+  components?: DenPluginMcpComponent[];
 };
 
 export type DenOrgPlugin = {

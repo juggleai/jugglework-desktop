@@ -85,6 +85,7 @@ export type SessionErrorTurn = {
 };
 
 export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";
+export const SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX = "session-run-diagnostic:";
 
 export type StepGroupMode = "exploration" | "standalone";
 
@@ -98,6 +99,8 @@ export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
+  /** 通过输入框「工具」菜单插入的能力标签：云端技能、扩展、本地或 Cloud MCP 服务。 */
+  | { type: "capability"; kind: "cloud-skill" | "extension" | "mcp" | "cloud-mcp"; name: string; prompt: string }
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }
@@ -195,6 +198,7 @@ export const SETTINGS_TAB_VALUES = [
   "cloud-marketplaces",
   "cloud-providers",
   "skills",
+  "connectors",
   "memory",
   "extensions",
   "environment",
@@ -211,10 +215,24 @@ export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type WorkspaceConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
+/**
+ * Why a remote connection check failed. `worker_unreachable` means the worker
+ * endpoint could not be reached at all (gateway 404 "sandbox route is
+ * unavailable", DNS failure, refused connection). Redeployed cloud workers get
+ * a new URL, so this is presented as "the workspace may have been redeployed —
+ * update the connection".
+ */
+export type WorkspaceConnectionFailureReason =
+  | "worker_unreachable"
+  | "token_rejected"
+  | "workspace_missing"
+  | "unknown";
+
 export type WorkspaceConnectionState = {
   status: WorkspaceConnectionStatus;
   message?: string | null;
   checkedAt?: number | null;
+  reason?: WorkspaceConnectionFailureReason | null;
 };
 
 export type ResetJuggleWorkMode = "onboarding" | "all";
@@ -329,6 +347,7 @@ export type McpServerConfig = {
   enabled?: boolean;
   headers?: Record<string, string>;
   environment?: Record<string, string>;
+  cwd?: string;
   oauth?: Record<string, string> | false;
   timeout?: number;
 };
@@ -339,14 +358,21 @@ export type McpServerEntry = {
   config: McpServerConfig;
   source?: McpServerSource;
   origin?: CapabilityOrigin;
+  /** stdio 型云端能力落到本地配置时使用的 server 名，用于判断本工作区是否已安装。 */
+  localServerName?: string;
   marketplaceName?: string;
   pluginName?: string;
+  /** Connect 能力搜索提示或连接前缀；执行时仍须采用搜索返回的完整名称。 */
   connectCapabilityName?: string;
 };
 
 export type McpStatus =
   | { status: "connected" }
   | { status: "disabled" }
+  /** stdio 型能力尚未安装到本工作区，装上前不可用。 */
+  | { status: "not_installed" }
+  /** 云端能力所需的组织连接尚未建立，需管理员配置后才能调用。 */
+  | { status: "not_configured" }
   | { status: "failed"; error: string }
   | { status: "needs_auth" }
   | { status: "needs_client_registration"; error: string };

@@ -54,6 +54,8 @@ describe("cloud plugin installs", () => {
         workspaceRoot: root,
         marketplaceId: "marketplace_1",
         marketplace: { id: "marketplace_1", name: "Team Marketplace", updatedAt: "2026-06-01T00:00:00.000Z" },
+        // 组织云端插件：远程 MCP 由 Connect 网关承载，不落本地配置。
+        cloudGatewayHosted: true,
         resolved: {
           plugin: {
             id: "plugin_1",
@@ -96,6 +98,23 @@ describe("cloud plugin installs", () => {
                 },
               },
             },
+            {
+              configObjectId: "config_mcp_2",
+              configObject: {
+                id: "config_mcp_2",
+                objectType: "mcp",
+                title: "Vision MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: "2026-06-02T00:00:00.000Z",
+                latestVersion: {
+                  id: "version_mcp_2",
+                  rawSourceText: JSON.stringify({ mcp: { vision: { type: "local", command: ["npx", "-y", "vision-mcp"] } } }),
+                  normalizedPayloadJson: { mcp: { vision: { type: "local", command: ["npx", "-y", "vision-mcp"] } } },
+                },
+              },
+            },
           ],
         },
       });
@@ -103,7 +122,9 @@ describe("cloud plugin installs", () => {
 
       expect(imported.pluginId).toBe("plugin_1");
       expect(result.warnings).toEqual([]);
+      // 远程 MCP 由云端网关承载，不写本地配置，因此只有 stdio 组件与 skill 落盘。
       expect(imported.files.map((file) => file.objectType).sort()).toEqual(["mcp", "skill"]);
+      expect(imported.files.filter((file) => file.objectType === "mcp").map((file) => file.title)).toEqual(["Vision MCP"]);
 
       const installed = await readInstalledCloudPlugins(config, WORKSPACE_ID);
       expect(installed.plugins.plugin_1?.name).toBe("Creative Brief Plugin");
@@ -111,14 +132,18 @@ describe("cloud plugin installs", () => {
 
       const skillPath = join(root, ".opencode", "skills", "creative-brief-plugin", "brief-builder", "SKILL.md");
       expect(await readFile(skillPath, "utf8")).toContain("OWP_BRIEF_TEST_TOKEN");
-      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.brief).toMatchObject({
-        type: "remote",
-        url: "https://example.com/mcp",
+      const runtimeConfig = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
+      // 远程组件不落地：组织统一的凭据不该被复制成每台机器各自持有的本地配置。
+      expect(runtimeConfig.mcp?.brief).toBeUndefined();
+      expect(runtimeConfig.mcp?.vision).toMatchObject({
+        type: "local",
+        command: ["npx", "-y", "vision-mcp"],
       });
 
       await removeCloudPlugin({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, pluginId: "plugin_1" });
       expect((await readInstalledCloudPlugins(config, WORKSPACE_ID)).plugins.plugin_1).toBeUndefined();
-      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.brief).toBeUndefined();
+      // 卸载时缺少远程组件的本地文件不应导致失败或残留。
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.vision).toBeUndefined();
       await expectMissing(skillPath);
     });
   });

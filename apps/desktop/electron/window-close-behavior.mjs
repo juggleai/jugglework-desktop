@@ -1,11 +1,15 @@
 /**
- * On macOS, keep the desktop runtime and renderer alive when the user clicks
- * the red traffic-light button. Explicit application quits still pass through
- * so the normal before-quit teardown can stop managed services.
+ * Keep the desktop runtime and renderer alive on every platform when the user
+ * closes the window: the close is intercepted and the window is hidden to the
+ * tray instead. Explicit application quits still pass through so the normal
+ * before-quit teardown can stop managed services.
+ *
+ * TIPS: fail-closed — hiding is allowed only while a visible tray indicator
+ * exists (`canHide`). Without a tray the close falls through to native
+ * behavior (window destroyed → app quits), never leaving the user with a
+ * running process that has no visible entry point.
  */
-export function installMacCloseToHide({ window, platform = process.platform, canQuit, canHide = () => true }) {
-  if (platform !== "darwin") return () => {};
-
+export function installCloseToHide({ window, canQuit, canHide }) {
   const onClose = (event) => {
     if (canQuit() || !canHide()) return;
     event.preventDefault();

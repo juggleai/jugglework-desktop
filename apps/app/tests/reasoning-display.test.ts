@@ -36,6 +36,12 @@ describe("reasoning display", () => {
     );
   });
 
+  test("normalizes missing streamed command fields to an empty label", () => {
+    expect(redactSensitiveCommand(undefined)).toBe("");
+    expect(redactSensitiveCommand(null)).toBe("");
+    expect(redactSensitiveCommand(42)).toBe("");
+  });
+
   test("hides the entire multiline command inside a fenced block", () => {
     const reasoning = [
       "Calling the IM bridge:",

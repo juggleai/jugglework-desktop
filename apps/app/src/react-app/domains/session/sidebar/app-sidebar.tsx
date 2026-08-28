@@ -15,6 +15,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  Share2,
   Folder,
   FolderOpen,
   Tag,
@@ -24,6 +25,7 @@ import { LayoutGroup, LazyMotion, Reorder, domMax, m, useDragControls } from "mo
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { JuggleWorkDenHelpLink } from "../../workspace/jugglework-den-help-link";
+import { isRemoteWorkerUnreachableState } from "../../workspace/remote-workspace-diagnostics";
 import type { OpenCreateWorkspace } from "../../workspace/types";
 import type {
   WorkspaceConnectionState,
@@ -123,14 +125,14 @@ import {
   type SessionGroupDefinition,
 } from "./session-management-store";
 import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
-import { setTaskScope, useTaskScope, workspaceTaskScope } from "./task-scope-store";
+import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
 import { SessionDotMatrixLoader } from "./session-dot-matrix-loader";
 import { SessionCircularProgress } from "./session-circular-progress";
 
-/** Fixed left lane from Paper — activity/chevron slot; never shifts the title. */
+/** 固定的左侧占位槽；loading 移到行尾后仍保留它，使会话标题与工作区标题对齐。 */
 const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center";
 
 /** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
@@ -142,18 +144,22 @@ interface SessionLoadingIndicatorProps {
   isActiveWork: boolean;
 }
 
-/** Left-lane activity only — never used for unread / completion. */
+/** 会话行尾活动状态；悬浮或键盘操作时由快捷操作接管同一位置。 */
 function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicatorProps) {
-  if (!isActiveWork) {
-    return <span aria-hidden="true" className={LEFT_ACTIVITY_SLOT} />;
-  }
+  if (!isActiveWork) return null;
 
   const title = isSessionActivityStatus(status) && status !== "idle"
     ? getSessionActivityStatusLabel(status)
     : t("workspace_list.session_streaming");
 
   return (
-    <span className={LEFT_ACTIVITY_SLOT} role="status" title={title} aria-label={title}>
+    <span
+      data-session-loading-indicator
+      className="absolute right-2.5 top-1/2 z-10 flex size-5 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0"
+      role="status"
+      title={title}
+      aria-label={title}
+    >
       <SessionCircularProgress />
     </span>
   );
@@ -407,7 +413,7 @@ type SessionHoverQuickActionsProps = {
   relativeTime: string | null;
 };
 
-/** Pin → Archive → relative time — same trailing slot as status dots (Paper hover). */
+/** Pin → Archive → relative time — 与运行 loading 共用行尾位置，悬浮时优先显示。 */
 function SessionHoverQuickActions({
   className,
   sessionId,
@@ -422,7 +428,7 @@ function SessionHoverQuickActions({
     <div
       data-session-hover-actions
       className={cn(
-        "absolute right-2.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 opacity-0 pointer-events-none transition-opacity group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto",
+        "absolute right-2.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1.5 opacity-0 pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-has-data-popup-open/menu-sub-item:opacity-100 group-has-data-popup-open/menu-sub-item:pointer-events-auto group-has-[:focus-visible]/menu-sub-item:opacity-100 group-has-[:focus-visible]/menu-sub-item:pointer-events-auto",
         className,
       )}
     >
@@ -516,17 +522,13 @@ function WorkspaceActionsMenu({ workspace, isConnectionActionBusy, canRecover, c
         }
       />
       <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="w-56">
-        <DropdownMenuItem
-          onClick={() => ctx.onCreateTaskInWorkspace(workspace.id)}
-          disabled={ctx.newTaskDisabled}
-        >
-          <Plus className="size-4" />
-          {t("session.cmd_new_session_title")}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => ctx.onOpenRenameWorkspace(workspace.id)}>
+        <DropdownMenuItem className="text-sm" onClick={() => ctx.onOpenRenameWorkspace(workspace.id)}>
           <Pencil className="size-4" />
           {t("workspace_list.edit_name")}
+        </DropdownMenuItem>
+        <DropdownMenuItem className="text-sm" onClick={() => ctx.onShareWorkspace(workspace.id)}>
+          <Share2 className="size-4" />
+          {t("workspace_list.share")}
         </DropdownMenuItem>
         {workspace.workspaceType === "local" ? (
           <DropdownMenuItem onClick={() => ctx.onRevealWorkspace(workspace.id)}>
@@ -584,6 +586,7 @@ function RemoteConnectionIssueCard(props: {
   tone: "error" | "offline";
   canRecover: boolean;
   busy: boolean;
+  rebuilt: boolean;
   onRecover: () => void;
   onTest: () => void;
   onEdit: () => void;
@@ -609,10 +612,14 @@ function RemoteConnectionIssueCard(props: {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-medium text-dls-text">
-              {t("workspace_list.remote_worker_unavailable")}
+              {props.rebuilt
+                ? t("workspace_list.remote_worker_rebuilt_title")
+                : t("workspace_list.remote_worker_unavailable")}
             </div>
             <div className="mt-1 text-[11px] leading-5 text-gray-10">
-              {t("workspace_list.remote_worker_unavailable_hint")}
+              {props.rebuilt
+                ? t("workspace_list.remote_worker_rebuilt_hint")
+                : t("workspace_list.remote_worker_unavailable_hint")}
             </div>
             <div
               className={cn(
@@ -625,6 +632,18 @@ function RemoteConnectionIssueCard(props: {
             </div>
             <JuggleWorkDenHelpLink />
             <div className="mt-2 flex flex-wrap gap-1.5">
+              {props.rebuilt ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1.5 rounded-lg px-2.5 text-[11px]"
+                  onClick={props.onEdit}
+                  disabled={props.busy}
+                >
+                  <Settings size={12} />
+                  {t("workspace_list.update_connection")}
+                </Button>
+              ) : null}
               {props.canRecover ? (
                 <Button
                   type="button"
@@ -719,11 +738,13 @@ function useSessionTree(
 }
 
 function isSessionActivityStatus(status: string | undefined): status is SessionActivityStatus {
-  return status === "idle" || status === "thinking" || status === "responding" || status === "stalled" || status === "error" || status === "compacting" || status === "waiting";
+  return status === "idle" || status === "thinking" || status === "responding" || status === "stalled" || status === "error" || status === "compacting" || status === "waiting" || status === "incomplete";
 }
 
 export function AppSidebar(props: AppSidebarProps) {
   const taskScope = useTaskScope();
+  const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
+  const rememberWorkspace = useTaskScopeStore((state) => state.rememberWorkspace);
   const [sessionQuery, setSessionQuery] = React.useState("");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
     () => new Set(),
@@ -733,6 +754,7 @@ export function AppSidebar(props: AppSidebarProps) {
     () => new Set(),
   );
   const previousSessionStatusRef = React.useRef<Record<string, string>>({});
+  const autoExpandedWorkspaceIdRef = React.useRef("");
 
   // Green unread dots: agent finished while the user was on another session.
   React.useEffect(() => {
@@ -740,8 +762,16 @@ export function AppSidebar(props: AppSidebarProps) {
     const previous = previousSessionStatusRef.current;
     const selectedId = props.selectedSessionId;
     const store = useSessionManagementStore.getState();
+    const accessibleMainSessionIds = new Set(
+      props.workspaceSessionGroups.flatMap((group) => group.sessions.filter(isMainSession).map((session) => session.id)),
+    );
+
+    // TIPS: 状态源还会返回子会话，但侧栏只暴露主会话。子会话若进入 unreadIds，用户没有对应
+    // item 可以点击清除，会导致导航栏绿色状态永久残留。
+    store.retainUnread(accessibleMainSessionIds);
 
     for (const [sessionId, status] of Object.entries(statuses)) {
+      if (!accessibleMainSessionIds.has(sessionId)) continue;
       if (sessionId === selectedId) {
         store.clearUnread(sessionId);
         continue;
@@ -754,7 +784,7 @@ export function AppSidebar(props: AppSidebarProps) {
 
     if (selectedId) store.clearUnread(selectedId);
     previousSessionStatusRef.current = statuses;
-  }, [props.selectedSessionId, props.sessionStatusById]);
+  }, [props.selectedSessionId, props.sessionStatusById, props.workspaceSessionGroups]);
 
   const expandWorkspace = React.useCallback((workspaceId: string) => {
     const id = workspaceId.trim();
@@ -800,7 +830,10 @@ export function AppSidebar(props: AppSidebarProps) {
 
   React.useEffect(() => {
     const id = props.selectedWorkspaceId.trim();
-    if (!id) return;
+    if (!id || autoExpandedWorkspaceIdRef.current === id) return;
+    // TIPS: 只在选中的工作区真正变化时自动展开一次。用户手动折叠当前工作区后，普通重渲染
+    // 或 onExpandWorkspace 回调身份变化都不能覆盖这次显式操作。
+    autoExpandedWorkspaceIdRef.current = id;
     expandWorkspace(id);
   }, [props.selectedWorkspaceId, expandWorkspace]);
 
@@ -822,6 +855,7 @@ export function AppSidebar(props: AppSidebarProps) {
       const scope = workspaceTaskScope(selected);
       syncedTaskScopeRef.current = scope;
       setTaskScope(scope);
+      rememberWorkspace(scope, workspaceId);
       return;
     }
 
@@ -829,13 +863,23 @@ export function AppSidebar(props: AppSidebarProps) {
     syncedTaskScopeRef.current = taskScope;
     if (selected && workspaceTaskScope(selected) === taskScope) return;
 
-    const firstInScope = props.workspaceSessionGroups.find(
+    // Returning to a scope should reopen the workspace the user last visited
+    // there, not the first one the list happens to contain. Restoring the id
+    // is enough: the route layer follows up by navigating to the remembered
+    // session of that workspace. Falls back to the first in-scope workspace
+    // when the previous one was deleted or has not been seen this run.
+    const groupsInScope = props.workspaceSessionGroups.filter(
       (group) => workspaceTaskScope(group.workspace) === taskScope,
-    )?.workspace;
-    if (!firstInScope) return;
-    syncedWorkspaceIdRef.current = firstInScope.id;
-    void props.onSelectWorkspace(firstInScope.id);
-  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope]);
+    );
+    const rememberedId = lastWorkspaceByScope[taskScope];
+    const restored = rememberedId
+      ? groupsInScope.find((group) => group.workspace.id === rememberedId)?.workspace
+      : undefined;
+    const target = restored ?? groupsInScope[0]?.workspace;
+    if (!target) return;
+    syncedWorkspaceIdRef.current = target.id;
+    void props.onSelectWorkspace(target.id);
+  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
 
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -936,7 +980,7 @@ export function AppSidebar(props: AppSidebarProps) {
     () => resolveWorkspaceSessionIndicator(
       props.workspaceSessionGroups
         .filter((group) => group.workspace.workspaceType === "local")
-        .flatMap((group) => group.sessions),
+        .flatMap((group) => group.sessions.filter(isMainSession)),
       props.sessionStatusById,
       unreadIds,
     ),
@@ -1023,12 +1067,12 @@ export function AppSidebar(props: AppSidebarProps) {
                 layoutScroll
                 data-slot="sidebar-content"
                 data-sidebar="content"
-                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
+                className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden"
               >
                 {pinnedSessions.length > 0 ? (
                   <GlobalPinnedSessions entries={pinnedSessions} />
                 ) : null}
-                <div className="flex flex-col gap-0">
+                <div className="flex flex-col gap-0.5">
                   {visibleWorkspaceSessionGroups.map((group) => (
                     <m.div
                       key={group.workspace.id}
@@ -1091,7 +1135,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
         </div>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuSub>
+            <SidebarMenuSub className="gap-0.5">
               {entries.map((entry) => (
                 <GlobalPinnedSessionTree
                   key={`${entry.group.workspace.id}:${entry.sessionId}`}
@@ -1121,30 +1165,28 @@ function GlobalArchivedSessions({ entries }: { entries: GlobalArchivedSessionEnt
     <SidebarGroup data-global-archived-sessions className="py-0">
       <SidebarGroupContent>
         <Collapsible open={open} onOpenChange={setExpanded} className="group/archived">
+          {/* TIPS: 与 WorkspaceHeader 同规格（h-10 / rounded-xl / px-2.5 / gap-1.5 / size-5 图标槽），
+              让「已归档」读起来是又一个可展开的分组，而不是一条另类的小标题。 */}
           <CollapsibleTrigger
             render={
               <button
                 type="button"
-                className="flex h-12 w-full cursor-pointer items-center rounded-xl border-0 bg-transparent px-2.5 text-sidebar-foreground shadow-none transition-colors duration-150 hover:bg-sidebar-accent/25"
+                className="group/separator relative flex h-10 w-full cursor-pointer items-center gap-1.5 rounded-xl px-2.5 text-left transition-colors duration-150 hover:bg-sidebar-accent/25"
               >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-transparent">
-                  <Archive className="size-4.5" strokeWidth={1.8} />
+                <span className="relative flex size-5 shrink-0 items-center justify-center text-sidebar-foreground">
+                  <Archive className="size-4" strokeWidth={1.8} />
                 </span>
-                <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <span className="truncate text-[13px] font-normal">
-                    {t("session_management.archived_label")}
-                  </span>
-                  <span className="shrink-0 rounded-md bg-foreground/[0.07] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-                    {entries.length}
-                  </span>
+                <span className="min-w-0 truncate text-[13px] font-normal text-sidebar-foreground">
+                  {t("session_management.archived_label")}
                 </span>
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-open/archived:rotate-90" />
               </button>
             }
           />
-          <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+          <CollapsibleContent className="flex flex-col gap-0.5">
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuSub className="ml-3 mt-0 border-l-0 pb-1 pl-1 pt-0">
+                <SidebarMenuSub className="gap-0.5">
                   {entries.map((entry) => (
                     <GlobalArchivedSessionItem
                       key={`${entry.group.workspace.id}:${entry.session.id}`}
@@ -1183,6 +1225,8 @@ function GlobalArchivedSessionItem({ group, session }: GlobalArchivedSessionEntr
       workspaceId={group.workspace.id}
       forcedExpandedSessionIds={forcedExpandedSessionIds}
       isPinned={pinnedIds.has(session.id)}
+      workspaceName={workspaceLabel(group.workspace)}
+      showWorkspaceIcon={false}
     />
   );
 }
@@ -1227,7 +1271,6 @@ function GlobalPinnedSessionTree({ group, sessionId }: GlobalPinnedSessionEntry)
 
 type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
   workspace: WorkspaceInfo;
-  sessionCount: number;
   statusLabel: string;
   isError: boolean;
   isLoading: boolean;
@@ -1238,7 +1281,6 @@ type WorkspaceHeaderProps = React.ComponentProps<typeof SidebarMenuButton> & {
 
 function WorkspaceHeader({
   workspace,
-  sessionCount,
   statusLabel,
   isError,
   isLoading,
@@ -1252,7 +1294,8 @@ function WorkspaceHeader({
     <SidebarMenuButton
       {...props}
       className={cn(
-        "relative h-12 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
+        // TIPS: gap-1.5 + size-5 图标槽，让工作区名称贴近文件夹图标；名称起点与会话行标题对齐。
+        "relative h-10 gap-1.5 rounded-xl border-0 bg-transparent px-2.5 shadow-none transition-colors duration-150",
         "group-hover/workspace-header:bg-sidebar-accent/25",
       )}
       onClick={(event) => {
@@ -1261,7 +1304,7 @@ function WorkspaceHeader({
       }}
       aria-expanded={isExpanded}
     >
-      <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-sidebar-foreground">
+      <span className="relative flex size-5 shrink-0 items-center justify-center rounded-lg border-0 bg-transparent text-sidebar-foreground">
         {isExpanded ? (
           <FolderOpen className={cn("size-4.5", isLoading && "animate-pulse")} strokeWidth={1.8} />
         ) : (
@@ -1269,14 +1312,14 @@ function WorkspaceHeader({
         )}
       </span>
       <div
-        className={cn("min-w-0 flex-1", showActivity ? "pr-14" : "pr-7")}
+        // TIPS: 默认仅给 loading 留出小槽，尽可能展示名称；悬浮、菜单打开或键盘聚焦时
+        // 扩大尾部留白，让名称以省略号收缩并给「加号 + 更多」让位，与会话行行为一致。
+        className={cn(
+          "min-w-0 flex-1 transition-[padding] duration-150 group-hover/workspace-header:pr-10 group-has-data-popup-open/workspace-header:pr-10 group-has-[:focus-visible]/workspace-header:pr-10",
+          showActivity ? "pr-6" : "pr-0",
+        )}
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
-          <span className="shrink-0 rounded-md bg-foreground/[0.07] px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-            {sessionCount}
-          </span>
-        </span>
+        <span className="block truncate text-[13px] font-normal text-sidebar-foreground">{workspaceLabel(workspace)}</span>
         {statusLabel ? (
           <span className={cn("mt-0.5 block truncate text-[11px] leading-none", isError ? "text-destructive" : "text-muted-foreground")}>
             {statusLabel}
@@ -1415,7 +1458,6 @@ function WorkspaceSidebarGroup({
             <div className="group/workspace-header relative max-md:hidden">
               <WorkspaceHeader
                 workspace={workspace}
-                sessionCount={getRootSessions(activeSessions).length}
                 statusLabel={statusLabel}
                 isError={group.status === "error"}
                 isLoading={group.status === "loading" || isConnecting}
@@ -1423,10 +1465,17 @@ function WorkspaceSidebarGroup({
                 showActivity={showWorkspaceActivity}
                 onToggleExpanded={() => ctx.toggleWorkspaceExpanded(workspace.id)}
               />
-              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              {/* TIPS: 行尾同一锚点上「运行中 loading」与「加号/更多」互斥呈现：
+                  折叠且有任务运行时默认只显示 loading；悬停、键盘聚焦（:focus-visible）
+                  或菜单打开（data-popup-open）时淡入操作图标并淡出 loading，鼠标移开即恢复。
+                  显隐用 :has(:focus-visible) 而非 focus-within —— 点击行会留下 DOM 焦点，
+                  focus-within 会让图标在鼠标移走后常驻；:focus-visible 只在键盘聚焦时命中。
+                  loading 绝对定位在同一锚点，切换时行内布局零抖动；图标隐藏时不接收指针事件，
+                  避免挡住右侧空白处的点击。 */}
+              <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 {showWorkspaceActivity ? (
                   <span
-                    className="flex size-6 items-center justify-center"
+                    className="absolute right-0 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center transition-opacity duration-150 group-hover/workspace-header:opacity-0 group-has-data-popup-open/workspace-header:opacity-0 group-has-[:focus-visible]/workspace-header:opacity-0"
                     role="status"
                     title={t("workspace_list.session_streaming")}
                     aria-label={t("workspace_list.session_streaming")}
@@ -1434,23 +1483,43 @@ function WorkspaceSidebarGroup({
                     <SessionCircularProgress />
                   </span>
                 ) : null}
-                <WorkspaceActionsMenu
-                  workspace={workspace}
-                  isConnectionActionBusy={isConnectionActionBusy}
-                  canRecover={canRecover}
-                  className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground data-popup-open:bg-background/60 data-popup-open:text-foreground"
-                />
+                <div
+                  data-workspace-actions
+                  className="flex items-center gap-0.5 opacity-0 pointer-events-none transition-opacity duration-150 group-hover/workspace-header:opacity-100 group-hover/workspace-header:pointer-events-auto group-has-data-popup-open/workspace-header:opacity-100 group-has-data-popup-open/workspace-header:pointer-events-auto group-has-[:focus-visible]/workspace-header:opacity-100 group-has-[:focus-visible]/workspace-header:pointer-events-auto"
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                    disabled={ctx.newTaskDisabled}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      ctx.onCreateTaskInWorkspace(workspace.id);
+                    }}
+                    aria-label={t("session.cmd_new_session_title")}
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                  <WorkspaceActionsMenu
+                    workspace={workspace}
+                    isConnectionActionBusy={isConnectionActionBusy}
+                    canRecover={canRecover}
+                    className="size-6 rounded-lg text-muted-foreground hover:bg-background/60 hover:text-foreground data-popup-open:bg-background/60 data-popup-open:text-foreground"
+                  />
+                </div>
               </div>
             </div>
 
-            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-              <SidebarMenuSub className="ml-3 mt-0 border-l-0 pb-1 pl-1 pt-0">
+            <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden pt-0.5 transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+              {/* TIPS: 不加左缩进，会话行的选中底色才能与工作区行左右对齐等宽（两者都是 x=80..315）。 */}
+              <SidebarMenuSub className="mt-0 gap-0.5 border-l-0 pb-1 pt-0">
                 {showRemoteConnectionIssue ? (
                   <RemoteConnectionIssueCard
                     message={connectionIssueMessage}
                     tone={taskLoadError.tone}
                     canRecover={canRecover}
                     busy={isConnectionActionBusy}
+                    rebuilt={isRemoteWorkerUnreachableState(connectionState)}
                     onRecover={() => {
                       void Promise.resolve(ctx.onRecoverWorkspace(workspace.id));
                     }}
@@ -1493,7 +1562,7 @@ function WorkspaceSidebarGroup({
                           const full = [...ids, ...allRootIds.filter((id) => !visible.has(id))];
                           store.getState().reorderSessions(workspace.id, full);
                         }}
-                        className="flex flex-col"
+                        className="flex flex-col gap-0.5"
                       >
                         {sessionRows.map((row) => (
                           <SessionMenuItem
@@ -1954,7 +2023,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
         axis="y"
         values={groups.map((group) => group.id)}
         onReorder={(ids) => store.getState().reorderGroups(workspaceId, ids)}
-        className="flex flex-col"
+        className="flex flex-col gap-0.5"
       >
         {groups.map(renderGroup)}
       </Reorder.Group>
@@ -1970,7 +2039,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
               expanded={ungroupedExpanded}
               onToggle={() => store.getState().toggleGroupExpanded(workspaceId, UNGROUPED_GROUP_ID)}
             />
-            <CollapsibleContent>
+            <CollapsibleContent className="pt-0.5">
               <Reorder.Group
                 as="div"
                 axis="y"
@@ -1984,7 +2053,7 @@ function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, tree,
                   const full = allRootIds.map((id) => ungroupedSet.has(id) ? fullUngrouped[ui++] : id);
                   store.getState().reorderSessions(workspaceId, full);
                 }}
-                className="flex flex-col"
+                className="flex flex-col gap-0.5"
               >
                 {visibleUngroupedRows.map((row) => (
                   <React.Fragment key={row.session.id}>
@@ -2071,7 +2140,7 @@ function SessionGroupSection({ group, rows, expanded, workspaceId, store, render
             workspaceId={workspaceId}
             onTitlePointerDown={(event) => dragControls.start(event)}
           />
-          <CollapsibleContent>
+          <CollapsibleContent className="flex flex-col gap-0.5 pt-0.5">
             {visibleRows.length > 0
               ? (
                 <>
@@ -2115,6 +2184,12 @@ type SessionMenuItemProps = {
   groupDraggable?: boolean;
   layoutDependency?: string;
   workspaceName?: string;
+  /**
+   * 是否在标题前显示工作区色点。默认跟随 workspaceName。
+   * TIPS: 「已归档」要求与工作区内的会话行长得完全一致，所以关掉色点；
+   * workspaceName 仍然保留，悬浮提示与无障碍标签照样能读出所属工作区。
+   */
+  showWorkspaceIcon?: boolean;
 };
 
 function SessionMenuItem({
@@ -2128,6 +2203,7 @@ function SessionMenuItem({
   groupDraggable = false,
   layoutDependency,
   workspaceName,
+  showWorkspaceIcon = Boolean(workspaceName),
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
   const unreadIds = useUnreadSessionIds();
@@ -2176,9 +2252,7 @@ function SessionMenuItem({
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
-    // The left activity slot is the indent — dot-matrix sits in the chevron
-    // lane and the title starts in the group-label lane without shifting.
-    "relative h-12 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
+    "relative h-10 rounded-[11px] transition-[padding,background-color] duration-150 ps-3 pe-7 group-hover/menu-sub-item:pe-20 group-has-data-popup-open/menu-sub-item:pe-20 data-active:font-medium",
     isSelected
       ? "!bg-black/[0.045] hover:!bg-black/[0.055] group-hover/menu-sub-item:!bg-black/[0.055] dark:!bg-white/[0.08] dark:hover:!bg-white/[0.095] dark:group-hover/menu-sub-item:!bg-white/[0.095]"
       : "hover:!bg-black/[0.025] group-hover/menu-sub-item:!bg-black/[0.025] dark:hover:!bg-white/[0.045] dark:group-hover/menu-sub-item:!bg-white/[0.045]",
@@ -2187,15 +2261,18 @@ function SessionMenuItem({
 
   const leading = (
     <>
-      <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
-      {workspaceName ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
+      <span aria-hidden="true" className={LEFT_ACTIVITY_SLOT} />
+      {showWorkspaceIcon ? <WorkspaceIcon workspaceId={workspaceId} sizeClass="size-3.5" /> : null}
     </>
   );
 
   const trailing = (
     <>
+      {/* TIPS: 与工作区行保持一致，loading 和悬浮操作绝对定位到同一尾部锚点；
+          默认展示运行状态，悬浮、菜单打开或键盘聚焦时 loading 淡出、操作淡入，结束后自动恢复。 */}
+      <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
       <SessionOutcomeIndicator
-        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 pointer-events-none select-none"
+        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0 pointer-events-none select-none"
         status={sessionActivityStatus}
         isActiveWork={resolvedActiveWork}
         isUnread={isUnread}

@@ -108,7 +108,6 @@ const DEN_API_BASE_PATH = `${DEN_CONTROL_PLANE_PATH}/api`;
 /** The pre-`/jwork` layout: den-web proxied den-api at `<origin>/api/den`. */
 const LEGACY_DEN_API_BASE_PATH = "/api/den";
 export const DEN_DASHBOARD_PATH = `${DEN_CONTROL_PLANE_PATH}/console`;
-export const DEN_INFERENCE_PATH = `${DEN_CONTROL_PLANE_PATH}/console/dashboard/inference`;
 
 // Den wire types moved to den-types.ts (leaf module); re-exported here so
 // the many existing den.ts importers keep working.
@@ -120,6 +119,7 @@ import type {
   DenOrgPluginResolved,
   DenPluginCloudReadiness,
   DenPluginCloudReadinessConnection,
+  DenPluginMcpComponent,
   DenPluginCloudReadinessState,
   DenPluginConfigObject,
   DenPluginConfigObjectType,
@@ -186,6 +186,27 @@ export type DenOrgSummary = {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
+  kind?: "personal" | "organization";
+  tier?: DenTenantTier | null;
+  accountStatus?: string | null;
+};
+
+export type DenTenantTier = "normal" | "pro" | "power" | "team" | "business";
+
+export type DenTenantAccount = {
+  kind: "personal" | "organization";
+  tier: DenTenantTier;
+  status: string;
+  tierVersion: number;
+  points: {
+    available: number;
+    reserved: number;
+    version: number;
+  };
+  permissions: {
+    canViewLedger: boolean;
+    canManageBilling: boolean;
+  };
 };
 
 export type DenWorkerSummary = {
@@ -233,6 +254,51 @@ export type DenMcpToken = {
   resource: string;
 };
 
+/** 服务端声明的自动化稳定 envelope 与投影兼容能力。 */
+export type DenAutomationCapabilities = {
+  envelopeVersions: number[];
+  documentMediaTypes: string[];
+  projections: Record<string, number[]>;
+  limits: Record<string, number>;
+};
+
+/** 服务端返回的自动化镜像，未知字段必须由调用方原样保留。 */
+export type DenAutomationMirror = Record<string, unknown> & {
+  automationId?: string;
+  revision?: number;
+  executorDeviceId?: string;
+  compatibility?: string;
+};
+
+/** 服务端返回的自动化运行镜像，运行详情 envelope 保持开放结构。 */
+export type DenAutomationRunMirror = Record<string, unknown> & {
+  runId?: string;
+  automationId?: string;
+  runRevision?: number;
+};
+
+export type DenAutomationPage<T> = {
+  items: T[];
+  nextCursor?: string;
+};
+
+export type DenAutomationListOptions = {
+  executorDeviceId?: string;
+  state?: string;
+  cursor?: string;
+  limit?: number;
+};
+
+export type DenAutomationRunListOptions = {
+  automationId?: string;
+  status?: string;
+  triggerSource?: string;
+  startedAfter?: string;
+  startedBefore?: string;
+  cursor?: string;
+  limit?: number;
+};
+
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -242,11 +308,15 @@ export type DenOrgLlmProviderModel = {
 
 export type DenOrgLlmProvider = {
   id: string;
-  source: "models_dev" | "custom" | "jugglework";
+  source: "models_dev" | "custom" | "jugglework" | "juggle_router";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
+  managed?: boolean;
+  managedKind?: "juggle_router" | null;
+  accessScope?: "explicit" | "organization";
+  enabled?: boolean;
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
@@ -543,24 +613,6 @@ export function denOriginComparisonKey(input: string | null | undefined): string
   } catch {
     return normalized;
   }
-}
-
-/**
- * True when the effective Den control plane is not the hosted JuggleWork Cloud
- * (work.juggle.im). Self-hosted deployments point the app at their own
- * control plane via VITE_DEN_BASE_URL or the desktop bootstrap config, so
- * hosted-only surfaces (e.g. JuggleWork Models upsells) should stay hidden.
- */
-export function isSelfHostedControlPlane(): boolean {
-  return (
-    denOriginComparisonKey(readDenSettings().baseUrl) !==
-    denOriginComparisonKey(HOSTED_DEFAULT_DEN_BASE_URL)
-  );
-}
-
-export function getDenInferenceUrl(baseUrl?: string | null): string {
-  const normalized = normalizeDenBaseUrl(baseUrl ?? readDenSettings().baseUrl) ?? DEFAULT_DEN_BASE_URL;
-  return `${normalized}${DEN_INFERENCE_PATH}`;
 }
 
 /**
@@ -1239,9 +1291,54 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
         name: entry.name,
         slug: entry.slug,
         role: entry.role,
+        kind: entry.kind === "personal" || entry.kind === "organization" ? entry.kind : undefined,
+        tier: isDenTenantTier(entry.tier) ? entry.tier : null,
+        accountStatus: typeof entry.accountStatus === "string" ? entry.accountStatus : null,
       } satisfies DenOrgSummary,
     ];
   });
+}
+
+function isDenTenantTier(value: unknown): value is DenTenantTier {
+  return value === "normal" || value === "pro" || value === "power" || value === "team" || value === "business";
+}
+
+function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown): tier is DenTenantTier {
+  return kind === "personal"
+    ? tier === "normal" || tier === "pro" || tier === "power"
+    : tier === "team" || tier === "business";
+}
+
+function getTenantAccount(payload: unknown): DenTenantAccount | null {
+  if (!isRecord(payload) || !isRecord(payload.points) || !isRecord(payload.permissions)) return null;
+  if (
+    (payload.kind !== "personal" && payload.kind !== "organization") ||
+    !isDenTenantTierForKind(payload.kind, payload.tier) ||
+    typeof payload.status !== "string" ||
+    typeof payload.tierVersion !== "number" || !Number.isSafeInteger(payload.tierVersion) ||
+    typeof payload.points.available !== "number" || !Number.isSafeInteger(payload.points.available) ||
+    typeof payload.points.reserved !== "number" || !Number.isSafeInteger(payload.points.reserved) ||
+    typeof payload.points.version !== "number" || !Number.isSafeInteger(payload.points.version) ||
+    typeof payload.permissions.canViewLedger !== "boolean" ||
+    typeof payload.permissions.canManageBilling !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    kind: payload.kind,
+    tier: payload.tier,
+    status: payload.status,
+    tierVersion: payload.tierVersion,
+    points: {
+      available: payload.points.available,
+      reserved: payload.points.reserved,
+      version: payload.points.version,
+    },
+    permissions: {
+      canViewLedger: payload.permissions.canViewLedger,
+      canManageBilling: payload.permissions.canManageBilling,
+    },
+  };
 }
 
 function getWorkers(payload: unknown): DenWorkerSummary[] {
@@ -1377,7 +1474,8 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     typeof value.name !== "string" ||
     (value.source !== "models_dev" &&
       value.source !== "custom" &&
-      value.source !== "jugglework")
+      value.source !== "jugglework" &&
+      value.source !== "juggle_router")
   ) {
     return null;
   }
@@ -1389,6 +1487,14 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     name: value.name,
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
+    ...(typeof value.managed === "boolean" ? { managed: value.managed } : {}),
+    ...(value.managedKind === "juggle_router" || value.managedKind === null
+      ? { managedKind: value.managedKind }
+      : {}),
+    ...(value.accessScope === "explicit" || value.accessScope === "organization"
+      ? { accessScope: value.accessScope }
+      : {}),
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
@@ -1833,6 +1939,33 @@ function parsePluginCloudReadinessConnection(value: unknown): DenPluginCloudRead
   };
 }
 
+/**
+ * 解析单条 MCP 承载明细。
+ *
+ * TIPS: 单条非法只丢这一条——服务端可能逐步补齐字段，一条脏数据不应让整个插件
+ * 退回未知状态。
+ */
+function parsePluginMcpComponent(value: unknown): DenPluginMcpComponent | null {
+  if (!isRecord(value) || typeof value.configObjectId !== "string") return null;
+  if (value.delivery !== "cloud" && value.delivery !== "desktop") return null;
+  const command = Array.isArray(value.command)
+    ? value.command.filter((part): part is string => typeof part === "string")
+    : [];
+  const credentialMode = value.credentialMode === "shared" || value.credentialMode === "per_member"
+    ? value.credentialMode
+    : undefined;
+  return {
+    configObjectId: value.configObjectId,
+    serverName: typeof value.serverName === "string" ? value.serverName : "",
+    delivery: value.delivery,
+    ...(typeof value.url === "string" && value.url.trim() ? { url: value.url.trim() } : {}),
+    ...(command.length > 0 ? { command } : {}),
+    ...(value.connectionId === null || typeof value.connectionId === "string" ? { connectionId: value.connectionId } : {}),
+    ...(credentialMode ? { credentialMode } : {}),
+    ...(typeof value.connectedForMe === "boolean" ? { connectedForMe: value.connectedForMe } : {}),
+  };
+}
+
 function parsePluginCloudReadiness(value: unknown): DenPluginCloudReadiness | null {
   if (!isRecord(value) || typeof value.hasInstructional !== "boolean" || !Array.isArray(value.connections)) return null;
   const state = parsePluginCloudReadinessState(value.state);
@@ -1844,6 +1977,12 @@ function parsePluginCloudReadiness(value: unknown): DenPluginCloudReadiness | nu
       const connection = parsePluginCloudReadinessConnection(entry);
       return connection ? [connection] : [];
     }),
+    components: Array.isArray(value.components)
+      ? value.components.flatMap((entry) => {
+        const component = parsePluginMcpComponent(entry);
+        return component ? [component] : [];
+      })
+      : [],
   };
 }
 
@@ -2280,6 +2419,19 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
       };
     },
 
+    async getTenantAccount(orgId?: string | null): Promise<DenTenantAccount> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/tenant-account", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      const account = getTenantAccount(payload);
+      if (!account) {
+        throw new DenApiError(500, "invalid_tenant_account_payload", "Tenant account response was invalid.");
+      }
+      return account;
+    },
+
     async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {
       const params = new URLSearchParams();
       params.set("limit", String(limit));
@@ -2289,6 +2441,92 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         organizationId: orgId,
       });
       return getWorkers(payload);
+    },
+
+    /** 读取自动化稳定 envelope、投影和资源限制能力。 */
+    async getAutomationCapabilities(orgId: string): Promise<DenAutomationCapabilities> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/automations/capabilities", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationCapabilities(payload);
+    },
+
+    /** 分页读取组织内的自动化定义镜像，可按执行设备和生命周期过滤。 */
+    async listAutomationMirrors(orgId: string, options: DenAutomationListOptions = {}): Promise<DenAutomationPage<DenAutomationMirror>> {
+      const params = automationQuery(options);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automations${params}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationPage(payload);
+    },
+
+    /** 读取一个自动化定义的完整稳定 envelope。 */
+    async getAutomationMirror(orgId: string, automationId: string): Promise<DenAutomationMirror> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      if (!isRecord(payload)) throw new DenApiError(500, "invalid_automation_payload", "Automation response was invalid.");
+      return payload;
+    },
+
+    /** 幂等上传一个客户端拥有的自动化定义 envelope。 */
+    async upsertAutomationMirror(orgId: string, automationId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 写入版本化任务墓碑，防止旧离线写复活任务。 */
+    async deleteAutomationMirror(orgId: string, automationId: string, body: { baseRevision: number; mutationId: string }): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}`, {
+        method: "DELETE",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 幂等上传一个自动化运行详情 envelope。 */
+    async upsertAutomationRunMirror(orgId: string, runId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+      return await requestJson<Record<string, unknown>>(baseUrls, `/v1/automation-runs/${encodeURIComponent(runId)}`, {
+        method: "PUT",
+        token,
+        organizationId: orgId,
+        body,
+      });
+    },
+
+    /** 分页读取自动化运行镜像，可按任务、状态、触发来源和时间区间过滤。 */
+    async listAutomationRunMirrors(orgId: string, options: DenAutomationRunListOptions = {}): Promise<DenAutomationPage<DenAutomationRunMirror>> {
+      const params = automationQuery(options);
+      const payload = await requestJson<unknown>(baseUrls, `/v1/automation-runs${params}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      return normalizeAutomationPage(payload);
+    },
+
+    /** 获取绑定任务、运行和定义版本的短期 MCP scope。 */
+    async mintAutomationMcpToken(orgId: string, input: { automationId: string; runId: string; definitionRevision: number }): Promise<DenMcpToken> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: { scopes: ["mcp:read", "mcp:write"], ...input },
+      });
+      const minted = getMcpToken(payload);
+      if (!minted) throw new DenApiError(500, "invalid_mcp_token_payload", "Automation MCP token response was invalid.");
+      return minted;
     },
 
     async listMemory(orgId: string): Promise<DenMemory[]> {
@@ -2484,6 +2722,51 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
 }
 
 export type DenClient = ReturnType<typeof createDenClient>;
+
+function automationQuery(values: object): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === "") continue;
+    params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function normalizeAutomationCapabilities(payload: unknown): DenAutomationCapabilities {
+  if (!isRecord(payload)) throw new DenApiError(500, "invalid_automation_capabilities", "Automation capabilities response was invalid.");
+  const projections = isRecord(payload.projections)
+    ? Object.fromEntries(Object.entries(payload.projections).map(([kind, versions]) => [kind, numberArray(versions)]))
+    : {};
+  const limits = isRecord(payload.limits)
+    ? Object.fromEntries(Object.entries(payload.limits).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])))
+    : {};
+  return {
+    envelopeVersions: numberArray(payload.envelopeVersions),
+    documentMediaTypes: stringArray(payload.documentMediaTypes),
+    projections,
+    limits,
+  };
+}
+
+function normalizeAutomationPage<T extends Record<string, unknown>>(payload: unknown): DenAutomationPage<T> {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    throw new DenApiError(500, "invalid_automation_page", "Automation list response was invalid.");
+  }
+  const items = payload.items.filter(isRecord) as T[];
+  return {
+    items,
+    ...(typeof payload.nextCursor === "string" && payload.nextCursor ? { nextCursor: payload.nextCursor } : {}),
+  };
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isInteger(item)) : [];
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
 
 /**
  * Mint an org-scoped MCP access token for the Den cloud MCP using the

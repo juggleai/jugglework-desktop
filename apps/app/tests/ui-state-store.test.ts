@@ -118,4 +118,18 @@ describe("ui state store", () => {
     const closed = toggleSidePanelState(opened, "ses_1", "extensions");
     expect(closed.sidePanelState).toEqual({ ses_1: null });
   });
+
+  test("persists the final sidebar width only after resizing stops", () => {
+    useUiStateStore.getState().setWorkspaceLeftSidebarResizing(false);
+    useUiStateStore.getState().setWorkspaceLeftSidebarWidth(260);
+    const beforeResize = storage.getItem(PERSISTED_UI_STATE_KEY);
+
+    useUiStateStore.getState().setWorkspaceLeftSidebarResizing(true);
+    useUiStateStore.getState().setWorkspaceLeftSidebarWidth(312);
+    expect(storage.getItem(PERSISTED_UI_STATE_KEY)).toBe(beforeResize);
+
+    useUiStateStore.getState().setWorkspaceLeftSidebarResizing(false);
+    const persisted = requireJsonObject(storage.getItem(PERSISTED_UI_STATE_KEY));
+    expect(objectValue(persisted, "workspaceLeftSidebarWidth")).toBe(312);
+  });
 });

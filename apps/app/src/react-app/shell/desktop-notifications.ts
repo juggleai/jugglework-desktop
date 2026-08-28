@@ -6,6 +6,7 @@ import {
   type DesktopNotificationPreference,
 } from "@/react-app/kernel/desktop-notification-preferences";
 import { LOCAL_PREFERENCES_KEY } from "@/react-app/kernel/local-preferences-storage";
+import { t } from "@/i18n";
 
 type DesktopNotificationImportance = "important" | "routine";
 
@@ -13,7 +14,9 @@ export type DesktopNotificationEvent =
   | { type: "task.completed"; sessionId: string }
   | { type: "task.failed"; sessionId: string; errorText?: string }
   | { type: "permission.asked"; sessionId: string; detail?: string }
-  | { type: "question.asked"; sessionId: string; question?: string };
+  | { type: "question.asked"; sessionId: string; question?: string }
+  | { type: "automation.succeeded"; automationName: string; href: string }
+  | { type: "automation.failed"; automationName: string; errorText?: string; href: string };
 
 type NotificationCopy = {
   title: string;
@@ -78,6 +81,18 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
         body: event.question?.trim() || "A session is waiting for your answer.",
         importance: "important",
       };
+    case "automation.succeeded":
+      return {
+        title: t("automation.notification_succeeded", { name: event.automationName }),
+        body: t("automation.notification_succeeded_body"),
+        importance: "routine",
+      };
+    case "automation.failed":
+      return {
+        title: t("automation.notification_failed", { name: event.automationName }),
+        body: event.errorText?.trim() || t("automation.notification_failed_body"),
+        importance: "important",
+      };
   }
 }
 
@@ -90,5 +105,6 @@ export function notifyDesktopEvent(event: DesktopNotificationEvent): void {
   void desktopNotificationShow({
     title: copy.title,
     body: copy.body,
+    ...("href" in event ? { href: event.href } : {}),
   }).catch(() => undefined);
 }

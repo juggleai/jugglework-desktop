@@ -395,15 +395,40 @@ function normalizePluginMcpConfig(input: unknown): Record<string, unknown> | nul
   return null;
 }
 
-function pluginMcpConfigsFromPayload(object: CloudPluginConfigObject, namespace: string) {
+/**
+ * 从 MCP 配置对象解析出要写进工作区的 server 配置。
+ *
+ * TIPS: 是否分流取决于插件来源。组织云端插件的远程 MCP 由 JuggleWork Connect 网关承载，
+ * 再写一份本地副本会把组织统一的凭据摊给每台机器，也会和会话列表的去重语义冲突；而
+ * GitHub Claude bundle 没有任何网关兜底，它的远程 MCP 必须落到本地配置才能用。
+ *
+ * @param object MCP 配置对象
+ * @param namespace 插件命名空间
+ * @param cloudGatewayHosted 远程组件是否由云端网关承载（组织云端插件为 true）
+ * @returns 需落盘的 server 配置，以及被判为云端承载而跳过的数量
+ */
+function pluginMcpConfigsFromPayload(
+  object: CloudPluginConfigObject,
+  namespace: string,
+  cloudGatewayHosted: boolean,
+) {
   const version = object.latestVersion;
   const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
-  if (!payload) return [];
+  if (!payload) return { configs: [], cloudHostedCount: 0 };
 
   const configs = new Map<string, { name: string; config: Record<string, unknown>; path: string }>();
+  // 云端承载的组件不落盘，但它们是"已识别"而非"配置缺失"，调用方据此决定要不要告警。
+  let cloudHostedCount = 0;
   const addConfig = (rawName: string, rawConfig: unknown, namespaceName: boolean) => {
     const config = normalizePluginMcpConfig(rawConfig);
     if (!config) return;
+    // TIPS: 只有 stdio 组件需要落到本工作区配置——远程 MCP 由云端网关承载，
+    // 再写一份本地副本会让组织统一的凭据退化成各机器各自持有，也会和会话列表里的
+    // 去重语义打架（同一个能力出现两条）。
+    if (cloudGatewayHosted && config.type !== "local") {
+      cloudHostedCount += 1;
+      return;
+    }
     const name = pluginMcpName(rawName, namespace, object.id, namespaceName);
     configs.set(name, {
       name,
@@ -418,9 +443,9 @@ function pluginMcpConfigsFromPayload(object: CloudPluginConfigObject, namespace:
   if (isRecord(payload.mcpServers)) {
     for (const [name, config] of Object.entries(payload.mcpServers)) addConfig(name, config, false);
   }
-  if (configs.size === 0) addConfig(object.title, payload, true);
+  if (configs.size === 0 && cloudHostedCount === 0) addConfig(object.title, payload, true);
 
-  return [...configs.values()];
+  return { configs: [...configs.values()], cloudHostedCount };
 }
 
 function mcpNoConfigWarning(title: string): string {
@@ -601,7 +626,13 @@ export async function installCloudPlugin(input: {
   marketplaceId: string | null;
   marketplace?: { id: string; name: string; updatedAt: string | null } | null;
   resolved: CloudPluginResolved;
+  /**
+   * 远程 MCP 是否由 JuggleWork Connect 网关承载。组织云端插件传 true（远程组件不落盘）；
+   * GitHub Claude bundle 保持默认 false，其远程 MCP 仍写入本地配置。
+   */
+  cloudGatewayHosted?: boolean;
 }): Promise<CloudPluginInstallResult> {
+  const cloudGatewayHosted = input.cloudGatewayHosted === true;
   const namespace = pluginNamespace(input.resolved.plugin.name, input.resolved.plugin.id);
   const cloudImports = await readInstalledCloudPlugins(input.serverConfig, input.workspaceId);
   const existing = cloudImports.plugins[input.resolved.plugin.id];
@@ -618,8 +649,9 @@ export async function installCloudPlugin(input: {
     }
 
     if (object.objectType === "mcp") {
-      const configs = pluginMcpConfigsFromPayload(object, namespace);
-      if (configs.length === 0) warnings.push(mcpNoConfigWarning(object.title));
+      const { configs, cloudHostedCount } = pluginMcpConfigsFromPayload(object, namespace, cloudGatewayHosted);
+      // 全部由云端承载时没有任何东西要落盘，这是正常路径，不该报"装不了"。
+      if (configs.length === 0 && cloudHostedCount === 0) warnings.push(mcpNoConfigWarning(object.title));
       for (const config of configs) {
         await addMcp(input.serverConfig, input.workspaceId, config.name, config.config);
         files.push({

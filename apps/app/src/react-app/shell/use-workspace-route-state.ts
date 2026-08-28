@@ -32,6 +32,8 @@ import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
 } from "@/react-app/infra/workspace-server-client";
+import { serializeWorkspaceActivation } from "./workspace-activation-coordinator";
+import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
 import {
   diagnoseRemoteWorkspaceTaskLoadFailure,
   getRemoteWorkspaceConnectionKey,
@@ -118,6 +120,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [client, setClient] = useState<JuggleWorkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [hostToken, setHostToken] = useState("");
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
@@ -143,12 +146,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // through `loadWorkspaceSessionsInBackground` and `refreshRouteState` and
   // produce a tight render-refresh-setWorkspaces loop.
   const currentWorkspaceServerClientResolver = useMemo(
-    () => createWorkspaceServerClientResolver({ baseUrl, token }),
-    [baseUrl, token],
+    () => createWorkspaceServerClientResolver({ baseUrl, token, hostToken }),
+    [baseUrl, hostToken, token],
   );
   const workspaceServerClientResolverRef = useRef(currentWorkspaceServerClientResolver);
   workspaceServerClientResolverRef.current = currentWorkspaceServerClientResolver;
-  const updateLocalServer = useCallback((next: { baseUrl: string; token: string }) => {
+  const updateLocalServer = useCallback((next: { baseUrl: string; token: string; hostToken: string }) => {
     const resolver = createWorkspaceServerClientResolver(next);
     workspaceServerClientResolverRef.current = resolver;
     return resolver;
@@ -158,7 +161,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       workspaceServerClientResolverRef.current(workspace),
     [],
   );
-  const refreshInFlightRef = useRef(false);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
   const workspaceOrderIdsRef = useRef(workspaceOrderIds);
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
@@ -423,13 +425,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     [endpointForWorkspace, mergeFetchedSessionsWithPending, updateWorkspaceSessionLoadState],
   );
 
-  const refreshRouteState = useCallback(async () => {
-    // Dedupe: if a refresh is already running, skip this call. Fast workspace
-    // switches used to fire 5-6 overlapping refreshRouteState() calls which
-    // each fetched workspaces + sessions for every workspace. That workload
-    // multiplied quickly on the event loop and caused the UI to freeze.
-    if (refreshInFlightRef.current) return;
-    refreshInFlightRef.current = true;
+  const performRefreshRouteState = useCallback(async () => {
     setLoading(true);
     setRouteError(null);
     let desktopList: WorkspaceList | null = null;
@@ -458,10 +454,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         // Keep the workspace endpoint resolver in lockstep with the disconnected state.
         // Otherwise a previously-cached baseUrl/token would still resolve a
         // (now invalid) endpoint for any callback that consults the resolver ref.
-        updateLocalServer({ baseUrl: "", token: "" });
+        updateLocalServer({ baseUrl: "", token: "", hostToken: "" });
         setClient(null);
         setBaseUrl("");
         setToken("");
+        setHostToken("");
         const orderedDesktopWorkspaces = stabilizeWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
@@ -481,7 +478,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // `loadWorkspaceSessionsInBackground` calls that fire later in this
       // function. Stale ref => `resolveWorkspaceEndpoint` returns null for
       // local workspaces => sidebar gets stuck in "loading" forever.
-      const routeWorkspaceServerClientResolver = updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
+      const routeWorkspaceServerClientResolver = updateLocalServer({
+        baseUrl: normalizedBaseUrl,
+        token: resolvedToken,
+        hostToken: resolvedHostToken,
+      });
 
       const juggleworkClient = createJuggleWorkServerClient({
         baseUrl: normalizedBaseUrl,
@@ -521,11 +522,16 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         if (match?.workspaceId) nextWorkspaceId = match.workspaceId;
       }
 
-      updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
+      updateLocalServer({
+        baseUrl: normalizedBaseUrl,
+        token: resolvedToken,
+        hostToken: resolvedHostToken,
+      });
 
       setClient(juggleworkClient);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
+      setHostToken(resolvedHostToken);
       setWorkspaces(nextWorkspaces);
       const nextSessionsByWorkspaceId = Object.fromEntries(cachedEntries.map((entry) => [entry.workspaceId, entry.sessions]));
       sessionsByWorkspaceIdRef.current = nextSessionsByWorkspaceId;
@@ -540,16 +546,23 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       setRetryingWorkspaceIds([]);
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
-      // Mark the chosen workspace as active on the server so that the
-      // OpenCode engine bound to it re-reads opencode.jsonc and applies
-      // permissions. Fire-and-forget; the route is idempotent and any
-      // transport failure is non-fatal. See issue #870.
+      // Keep the server registry's active workspace aligned with navigation.
+      // Activation is intentionally non-destructive; configuration changes use
+      // the explicit engine-reload path, which is gated while tasks are active.
       if (nextWorkspaceId && list.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
-        launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
         const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
         if (nextEndpoint) {
-          void nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId).catch(() => undefined);
+          try {
+            await serializeWorkspaceActivation(() => (
+              nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId)
+            ));
+          } catch (error) {
+            throw new Error(
+              `[workspace_activation:${nextWorkspaceId}] ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
         }
       }
       recordInspectorEvent("route.refresh.complete", {
@@ -590,7 +603,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       }
     } finally {
       setLoading(false);
-      refreshInFlightRef.current = false;
       setRouteRefreshVersion((current) => current + 1);
       // Tell the boot overlay the first route data load has completed so
       // the overlay dismisses after BOTH the desktop boot and the workspace
@@ -600,6 +612,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       }
     }
   }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, stabilizeWorkspaceOrder, updateLocalServer, workspaceInferenceSessionId]);
+  const refreshRouteStateQueue = useMemo(
+    () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
+    [],
+  );
+  const refreshRouteState = useCallback(
+    () => refreshRouteStateQueue.run(performRefreshRouteState),
+    [performRefreshRouteState, refreshRouteStateQueue],
+  );
   const handleRuntimeSessionUpdated = useCallback((update: { sessionId: string; info: Record<string, unknown> }) => {
     if (!selectedWorkspaceId) return;
     setSessionsByWorkspaceId((current) => {
@@ -707,10 +727,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
     const handleSettingsChange = () => {
       onServerSettingsChanged();
-      // Self-heal: if the previous refresh got stuck mid-flight (e.g. macOS
-      // backgrounded the webview and never let a fetch resolve), clear the
-      // guard so a re-entry after resume actually goes through.
-      refreshInFlightRef.current = false;
       void refreshRouteState();
     };
     window.addEventListener("jugglework-server-settings-changed", handleSettingsChange);
@@ -720,7 +736,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     const handleVisibility = () => {
       if (typeof document === "undefined") return;
       if (document.visibilityState !== "visible") return;
-      refreshInFlightRef.current = false;
       void refreshRouteState();
     };
     if (typeof document !== "undefined") {
@@ -881,7 +896,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // Single source of truth for the selected workspace's server URL/token/id.
   // For remote workspaces this is the worker that owns the workspace; for
   // local workspaces it's the user's local JuggleWork server.
-  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
+  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, {
+    baseUrl,
+    token,
+    hostToken,
+  });
   const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
@@ -1108,13 +1127,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     errorsByWorkspaceId,
     setErrorsByWorkspaceId,
     workspaceConnectionOverrides,
+    setWorkspaceConnectionOverrides,
     routeError,
     setRouteError,
     legacySelectedWorkspaceId,
     setLegacySelectedWorkspaceId,
     retryingWorkspaceIds,
     setRetryingWorkspaceIds,
-    refreshInFlightRef,
     startupRetryTimerRef,
     selectedWorkspaceId,
     selectedWorkspace,

@@ -40,7 +40,8 @@ import { ShellConfigProvider } from "./shell-config";
 import { resolveSigninGateDecision } from "./signin-gate";
 import { WelcomeRoute } from "./welcome-route";
 import { NotificationCenterController } from "./notification-center";
-
+import { RootJuggleWorkServerProvider } from "../domains/connections/root-jugglework-server-provider";
+import { AutomationRunNotificationCoordinator } from "../domains/automations/automation-run-notification-coordinator";
 
 type DenSigninGateProps = {
   children: ReactNode;
@@ -308,7 +309,9 @@ export function AppRoot() {
           <DenAuthControlActions />
           <BrandThemeControlActions />
           <DenSigninGate>
-            <Routes>
+              <RootJuggleWorkServerProvider>
+                <AutomationRunNotificationCoordinator />
+                <Routes>
               <Route
                 path="/signin"
                 element={
@@ -345,7 +348,8 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
-            </Routes>
+              </Routes>
+            </RootJuggleWorkServerProvider>
           </DenSigninGate>
         </JuggleWorkControlProvider>
         </AppMenuProvider>

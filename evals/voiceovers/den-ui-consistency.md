@@ -16,4 +16,4 @@ The Den dashboard keeps its useful workspace actions while repeated catalog artw
 
 7. When a protected action requires a fresh sign-in, Den shows a compact security dialog that explains why and offers the correct sign-in method. After verification it completes the original action, while users without permission get a polished transition instead of bare “checking” or “redirecting” text.
 
-8. I open the destination now labeled Stripe and see a cleaner billing page with truthful loading and error states, clear seat and model pricing, one refresh action, and an obvious next step for the current subscription state.
+8. I open the destination now labeled Stripe and see a cleaner billing page with truthful loading and error states, clear seat counts, one refresh action, and an obvious next step for the current billing state.

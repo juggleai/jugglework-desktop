@@ -23,6 +23,7 @@ import {
   workspaceJuggleWorkWrite,
 } from "../../../../app/lib/desktop";
 import { JuggleWorkServerError } from "../../../../app/lib/jugglework-server";
+import type { JuggleWorkServerClient } from "../../../../app/lib/jugglework-server";
 import type {
   Client,
   ProviderListItem,
@@ -36,6 +37,11 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import { ensureProviderListQuery } from "../../../infra/provider-list-query";
 import type { JuggleWorkServerStoreSnapshot } from "../jugglework-server-store";
+import {
+  applyDisabledProviderEntry,
+  normalizeDisabledProviders,
+  sameDisabledProviderList,
+} from "./disabled-providers";
 
 /**
  * The slice of the jugglework-server store this store actually consumes.
@@ -68,16 +74,20 @@ import {
 } from "../../../../app/cloud/import-state";
 import {
   buildRuntimeProviderPatch,
-  CLOUD_PROVIDER_METADATA_VERSION,
-  formatConfigWithoutCloudProvider,
+  buildCloudImportedProvider,
+  filterImportableCloudOrgProviders,
+  formatConfigWithoutCloudProviders,
   getCloudManagedProviderId,
   getCloudProviderEnv,
-  getProviderModelIds,
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
   missingCloudProviderReloadKey,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
+import {
+  removeGatewayMirror,
+  writeGatewayMirror,
+} from "./gateway-mirror";
 import {
   buildCustomProviderConfig,
   formatConfigWithCustomProvider,
@@ -88,7 +98,12 @@ import {
 } from "./custom-provider-config";
 import { loadDeploymentModelCatalog } from "./deployment-model-catalog";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
-import { updateManagedDisabledProviders } from "../managed-engine-config";
+import {
+  readRuntimeDisabledProviders,
+  removeManagedRuntimeDisabledProviders,
+  updateManagedDisabledProviders,
+  withoutDisabledProviders,
+} from "../managed-engine-config";
 import {
   DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
   isDesktopProviderBlocked,
@@ -497,7 +512,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     importedCloudProvidersWorkspaceKey = currentWorkspaceKey();
   };
 
-  const readProjectConfigFile = async () => {
+  const readProviderConfigFile = async (scope: "project" | "global") => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
@@ -505,7 +520,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await resolveJuggleWorkConfigTarget("read");
 
     if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
-      return await juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, "project");
+      return await juggleworkClient.readOpencodeConfigFile(juggleworkWorkspaceId, scope);
     }
 
     if (hasJuggleWorkTarget) {
@@ -513,13 +528,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      return await readOpencodeConfig("project", root);
+      return await readOpencodeConfig(scope, root);
     }
 
     return null;
   };
 
-  const writeProjectConfigFile = async (content: string) => {
+  const writeProviderConfigFile = async (
+    scope: "project" | "global",
+    content: string,
+  ) => {
     const root = options.selectedWorkspaceRoot().trim();
     const isLocalWorkspace =
       options.selectedWorkspaceDisplay().workspaceType === "local";
@@ -529,7 +547,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
       const result = await juggleworkClient.writeOpencodeConfigFile(
         juggleworkWorkspaceId,
-        "project",
+        scope,
         content,
       ) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
@@ -543,7 +561,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     if (isLocalWorkspace && isDesktopRuntime() && root) {
-      const result = await writeOpencodeConfig("project", root, content) as { ok: boolean; stderr?: string; stdout?: string };
+      const result = await writeOpencodeConfig(scope, root, content) as { ok: boolean; stderr?: string; stdout?: string };
       if (!result.ok) {
         throw new Error(result.stderr || result.stdout || "Failed to write opencode.jsonc");
       }
@@ -552,6 +570,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
     return false;
   };
+
+  const readProjectConfigFile = () => readProviderConfigFile("project");
+  const writeProjectConfigFile = (content: string) =>
+    writeProviderConfigFile("project", content);
+  const readGlobalConfigFile = () => readProviderConfigFile("global");
+  const writeGlobalConfigFile = (content: string) =>
+    writeProviderConfigFile("global", content);
 
   /**
    * Upsert/delete cloud-managed provider entries in the workspace's runtime
@@ -579,13 +604,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const ids = [...new Set(providerIds.flatMap((id) => (id?.trim() ? [id.trim()] : [])))];
     if (ids.length === 0) return;
     try {
-      await updateProjectConfigFile((raw) => {
-        let next = raw;
-        for (const id of ids) {
-          next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
-        }
-        return next;
-      });
+      await updateProjectConfigFile((raw) => formatConfigWithoutCloudProviders(raw, ids));
     } catch {
       // Legacy cleanup only — the runtime entry already owns the provider.
     }
@@ -634,18 +653,6 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return true;
   };
 
-  const normalizeDisabledProviders = (value: unknown) =>
-    Array.isArray(value)
-      ? [
-          ...new Set(
-            value
-              .filter((entry): entry is string => typeof entry === "string")
-              .map((entry) => entry.trim())
-              .filter(Boolean),
-          ),
-        ]
-      : [];
-
   const formatConfigWithProviderDisabledState = (
     raw: string,
     providerId: string,
@@ -657,9 +664,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
     const parsed = parse(updated) as Record<string, unknown> | undefined;
     const currentDisabled = normalizeDisabledProviders(parsed?.disabled_providers);
-    const nextDisabled = disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+    const nextDisabled = applyDisabledProviderEntry(currentDisabled, resolvedProviderId, disabled);
 
     const disabledEdits = modify(
       updated,
@@ -680,17 +685,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.provider_id_required"));
     }
 
+    // 合并后的有效停用列表，驱动列表条目的连接状态展示。
     const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
-    const nextDisabled = disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
-
-    if (
-      nextDisabled.length === currentDisabled.length &&
-      nextDisabled.every((entry, index) => entry === currentDisabled[index])
-    ) {
-      return false;
-    }
+    const nextDisabled = applyDisabledProviderEntry(currentDisabled, resolvedProviderId, disabled);
 
     // Prefer runtime OPENCODE_CONFIG injection (server SQLite) so OpenCode Zen
     // and other built-in/env-backed providers can be disabled without editing
@@ -705,22 +702,41 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
 
     if (canUseManagedRuntime || c) {
+      const runtimeDisabled = await readRuntimeDisabledProviders(
+        juggleworkSnapshot.juggleworkServerClient,
+        workspaceId,
+      );
+      const writeBase = runtimeDisabled ?? currentDisabled;
+      const nextWrite = applyDisabledProviderEntry(writeBase, resolvedProviderId, disabled);
+      if (
+        sameDisabledProviderList(writeBase, nextWrite) &&
+        sameDisabledProviderList(currentDisabled, nextDisabled)
+      ) {
+        return false;
+      }
+
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
         juggleworkClient: juggleworkSnapshot.juggleworkServerClient,
         workspaceId,
         workspaceType,
-        disabledProviders: nextDisabled,
+        disabledProviders: nextWrite,
         removeFallbackKeyWhenEmpty: true,
         markReloadRequired: () => options.markOpencodeConfigReloadRequired(),
       });
-      options.setDisabledProviders(result.disabledProviders);
-      if (!result.managedRuntime) {
+      // 运行时层只是有效配置的一层，界面状态用合并后的结果，避免其他来源声明的
+      // 停用项在刷新前从列表里短暂消失。
+      options.setDisabledProviders(nextDisabled);
+      if (!result.managedRuntime && result.changed) {
         options.markOpencodeConfigReloadRequired();
       }
       refreshSnapshot();
       emitChange();
       return true;
+    }
+
+    if (sameDisabledProviderList(currentDisabled, nextDisabled)) {
+      return false;
     }
 
     const updatedConfig = await updateProjectConfigFile(
@@ -751,6 +767,25 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (isProviderBlocked(providerId)) {
       throw new Error(`${providerId} is blocked by your organization desktop policy.`);
     }
+  };
+
+  const removeCloudProviderDisabledState = async (
+    providerIds: readonly string[],
+  ) => {
+    const target = await resolveJuggleWorkConfigTarget("write");
+    if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
+      throw new Error("JuggleWork server unavailable. Connect to manage cloud providers.");
+    }
+
+    const result = await removeManagedRuntimeDisabledProviders({
+      juggleworkClient: target.juggleworkClient,
+      workspaceId: target.juggleworkWorkspaceId,
+      providerIds,
+    });
+    options.setDisabledProviders(
+      withoutDisabledProviders(options.disabledProviders(), providerIds),
+    );
+    return result;
   };
 
   // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
@@ -794,13 +829,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           ? Object.keys(providerSection as Record<string, unknown>).filter((key) => /^lpr_/i.test(key))
           : [];
       if (fileOrphans.length > 0) {
-        await updateProjectConfigFile((raw) => {
-          let next = raw;
-          for (const id of fileOrphans) {
-            next = formatConfigWithoutCloudProvider(next, id, options.disabledProviders());
-          }
-          return next;
-        });
+        await updateProjectConfigFile((raw) =>
+          formatConfigWithoutCloudProviders(raw, fileOrphans)
+        );
         for (const id of fileOrphans) orphanIds.add(id);
       }
     }
@@ -899,9 +930,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const request = client
       .listOrgLlmProviders(orgId)
       .then((providers) => {
-        const supportedProviders = providers.filter((provider) =>
-          provider.source !== "jugglework" && provider.providerId.trim().toLowerCase() !== "jugglework"
-        );
+        const supportedProviders = filterImportableCloudOrgProviders(providers);
         // An organization switch can finish while this request is in flight.
         // Never let the previous organization's providers overwrite the new
         // organization's state.
@@ -1442,31 +1471,37 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   /**
-   * Write a user-declared provider block. The workspace `opencode.jsonc` is the
-   * owner whenever we can reach it — the user wrote this provider themselves,
-   * so it should stay hand-editable and travel with the workspace. Only when
-   * there is no config file to edit (a workspace served without the config API)
-   * does it fall back to the runtime config the JuggleWork server merges in.
+   * 将用户本地添加的模型组写入全局 OpenCode 配置，使所有工作区共享。
+   *
+   * TIPS：旧版本把自定义模型组写进项目配置。全局写入成功后必须清理
+   * 当前项目中的同名配置，否则项目级配置会继续覆盖刚保存的全局值。
    */
   const writeCustomProviderConfig = async (
     providerId: string,
     config: ReturnType<typeof buildCustomProviderConfig>,
   ) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (configFile) {
-      const raw = configFile.content?.trim()
-        ? configFile.content
-        : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
-      const next = formatConfigWithCustomProvider(raw, providerId, config);
-      if (!configsAreSemanticallyEqual(raw, next)) {
-        await writeProjectConfigFile(next);
-      }
-      return;
+    const globalConfigFile = (await readGlobalConfigFile()) as { content?: string } | null;
+    if (!globalConfigFile) {
+      throw new Error(t("providers.global_config_unavailable"));
     }
 
-    await patchRuntimeProviders({
-      [providerId]: config as unknown as Record<string, unknown>,
-    });
+    const globalRaw = globalConfigFile.content?.trim()
+      ? globalConfigFile.content
+      : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
+    const nextGlobal = formatConfigWithCustomProvider(globalRaw, providerId, config);
+    if (!configsAreSemanticallyEqual(globalRaw, nextGlobal)) {
+      await writeGlobalConfigFile(nextGlobal);
+    }
+
+    const projectConfigFile = (await readProjectConfigFile()) as { content?: string } | null;
+    if (!projectConfigFile?.content?.trim()) return;
+    const nextProject = formatConfigWithoutCustomProvider(
+      projectConfigFile.content,
+      providerId,
+    );
+    if (!configsAreSemanticallyEqual(projectConfigFile.content, nextProject)) {
+      await writeProjectConfigFile(nextProject);
+    }
   };
 
   /**
@@ -1528,30 +1563,39 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
-  const removeCustomProviderConfig = async (providerId: string) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (configFile) {
+  const removeCustomProviderConfigFrom = async (
+    scope: "project" | "global",
+    providerId: string,
+  ) => {
+    const configFile = (await readProviderConfigFile(scope)) as { content?: string } | null;
+    if (configFile?.content?.trim()) {
       const raw = configFile.content?.trim()
         ? configFile.content
         : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
       const next = formatConfigWithoutCustomProvider(raw, providerId);
       if (!configsAreSemanticallyEqual(raw, next)) {
-        await writeProjectConfigFile(next);
+        await writeProviderConfigFile(scope, next);
       }
-      return;
     }
-
-    // Custom providers fall back to the runtime provider map when a workspace
-    // has no editable project config. Mirror that ownership during deletion.
-    await patchRuntimeProviders({ [providerId]: null });
   };
 
-  const assertWorkspaceOwnsProviderConfig = async (providerId: string) => {
-    const configFile = (await readProjectConfigFile()) as { content?: string } | null;
-    if (!configFile) return;
-    const parsed = parse(configFile.content ?? "") as Record<string, unknown> | undefined;
-    const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
-    if (!Object.prototype.hasOwnProperty.call(configuredProviders, providerId)) {
+  const removeCustomProviderConfig = async (providerId: string) => {
+    await removeCustomProviderConfigFrom("global", providerId);
+    // 同时清理旧版本遗留在当前项目中的同名模型组。
+    await removeCustomProviderConfigFrom("project", providerId);
+  };
+
+  const assertLocalConfigOwnsProvider = async (providerId: string) => {
+    const configFiles = await Promise.all([
+      readGlobalConfigFile(),
+      readProjectConfigFile(),
+    ]) as Array<{ content?: string } | null>;
+    const isConfiguredLocally = configFiles.some((configFile) => {
+      const parsed = parse(configFile?.content ?? "") as Record<string, unknown> | undefined;
+      const configuredProviders = isRecord(parsed?.provider) ? parsed.provider : {};
+      return Object.prototype.hasOwnProperty.call(configuredProviders, providerId);
+    });
+    if (!isConfiguredLocally) {
       throw new Error(t("providers.delete_not_workspace_owned"));
     }
   };
@@ -1575,7 +1619,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
-      await assertWorkspaceOwnsProviderConfig(resolved);
+      await assertLocalConfigOwnsProvider(resolved);
       try {
         await removeProviderAuthCredentials(resolved);
       } catch (error) {
@@ -1663,8 +1707,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
+        // Mirror the token where stdio MCP servers can reach it. auth.json is
+        // OpenCode's own store and is not visible to a spawned MCP process; see
+        // `gatewayMirrorEnvName` for why the server's variable name cannot be used.
+        await writeGatewayMirror(
+          options.juggleworkServer.getSnapshot().juggleworkServerClient,
+          cloudProviderId,
+          primaryApiKey,
+        );
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
+        // The mirror is keyed by the stable cloud row id, not the local runtime
+        // provider id. The write above replaced its value, so deleting it here
+        // would remove the freshly issued token during legacy-id migration.
         try {
           await removeProviderAuthCredentials(existingImported.providerId);
         } catch (error) {
@@ -1689,31 +1744,18 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         ),
       );
       await stripLegacyCloudProviderBlocks([localProviderId, existingImported?.providerId]);
+      await removeCloudProviderDisabledState([
+        localProviderId,
+        existingImported?.providerId ?? "",
+      ]);
+      options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
-        [provider.id]: {
-          cloudProviderId: provider.id,
-          providerId: localProviderId,
-          // Track the provider id as shipped by the server at import time
-          // so we can detect local/remote drift later (see dev #1510 "key
-          // cloud providers by cloud id"). On first import both match.
-          sourceProviderId: provider.providerId,
-          name: provider.name,
-          source: provider.source,
-          updatedAt: provider.updatedAt ?? null,
-          modelIds: getProviderModelIds(provider),
-          importedAt: Date.now(),
-          metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
-        },
+        [provider.id]: buildCloudImportedProvider(provider),
       };
       await persistImportedCloudProviders(nextImportedProviders);
 
-      const nextDisabledProviders = options
-        .disabledProviders()
-        .filter((id) => id !== localProviderId && id !== existingImported?.providerId);
-      options.setDisabledProviders(nextDisabledProviders);
-      options.markOpencodeConfigReloadRequired();
       await refreshProviders({ dispose: true });
       refreshSnapshot();
       emitChange();
@@ -1744,6 +1786,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
+      // Revoking the provider must take its mirrored token with it, otherwise a
+      // live gateway credential outlives the provider it belongs to.
+      await removeGatewayMirror(
+        options.juggleworkServer.getSnapshot().juggleworkServerClient,
+        cloudProviderId,
+      );
       try {
         await removeProviderAuthCredentials(imported.providerId);
       } catch (error) {
@@ -1757,15 +1805,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // left by pre-runtime builds. Both are idempotent.
       await patchRuntimeProviders({ [imported.providerId]: null });
       await stripLegacyCloudProviderBlocks([imported.providerId]);
+      await removeCloudProviderDisabledState([
+        imported.providerId,
+        imported.cloudProviderId,
+      ]);
+      options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = { ...state.importedCloudProviders };
       delete nextImportedProviders[cloudProviderId];
       await persistImportedCloudProviders(nextImportedProviders);
 
-      options.setDisabledProviders(
-        options.disabledProviders().filter((id) => id !== imported.providerId),
-      );
-      options.markOpencodeConfigReloadRequired();
       refreshSnapshot();
       emitChange();
       return `${t("providers.disconnected_prefix")} ${imported.name}`;
@@ -1947,7 +1996,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   async function performCloudProviderSync(reason: CloudProviderSyncReason) {
     if (!hasCloudProviderSyncPrerequisites()) {
-      return;
+      return false;
     }
 
     // Imports, baseline reads, and persistence all go through the JuggleWork
@@ -1956,7 +2005,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // and re-import every org provider — engine dispose churn on settings open.
     const target = await resolveJuggleWorkConfigTarget("write");
     if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
-      return;
+      return false;
     }
 
     let importedProviders: Record<string, CloudImportedProvider>;
@@ -1964,7 +2013,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       importedProviders = await refreshImportedCloudProviders({ strict: true });
     } catch (error) {
       logCloudProviderSyncError(reason, error);
-      return;
+      return false;
     }
 
     // Settle workspace ownership before reconciling. A sign-out or account
@@ -2091,11 +2140,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (failures.length > 0) {
       throw new Error(failures.join("\n"));
     }
+    return true;
   }
 
+  let latestCloudProviderSyncSucceeded = false;
   const cloudProviderSyncQueue = createLatestSyncQueue<CloudProviderSyncReason>(
     async (reason) => {
-      await performCloudProviderSync(reason).catch((error) => {
+      latestCloudProviderSyncSucceeded = false;
+      await performCloudProviderSync(reason).then((succeeded) => {
+        latestCloudProviderSyncSucceeded = succeeded;
+      }).catch((error) => {
         const message = logCloudProviderSyncError(reason, error);
         if (reason === "settings_cloud_opened") {
           setStateField("providerAuthError", message);
@@ -2106,6 +2160,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   function runCloudProviderSync(reason: CloudProviderSyncReason) {
     return cloudProviderSyncQueue.run(reason);
+  }
+
+  async function runCloudProviderSyncForReadiness(reason: CloudProviderSyncReason) {
+    await cloudProviderSyncQueue.run(reason);
+    return latestCloudProviderSyncSucceeded;
   }
 
   async function disconnectProvider(providerId: string) {
@@ -2202,6 +2261,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     } finally {
       setStateField("providerAuthBusy", false);
     }
+  }
+
+  /**
+   * 直接打开本地模型组详情，不依赖提供商认证方式加载。
+   *
+   * TIPS：详情数据已经由当前 provider 列表提供。若继续复用新增连接前的
+   * 认证加载，认证接口异常会导致点击本地模型组后没有任何可见反馈。
+   */
+  function openCustomProviderModal() {
+    mutateState((current) => ({
+      ...current,
+      providerAuthModalOpen: true,
+      providerAuthBusy: false,
+      providerAuthError: null,
+      providerAuthPreferredProviderId: null,
+      providerAuthReturnFocusTarget: "none",
+    }));
   }
 
   function closeProviderAuthModal(optionsArg?: { restorePromptFocus?: boolean }) {
@@ -2369,6 +2445,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshCloudOrgProviders,
     refreshImportedCloudProviders,
     runCloudProviderSync,
+    runCloudProviderSyncForReadiness,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,
@@ -2380,6 +2457,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     deleteProvider,
     ensureProjectProviderDisabledState,
     openProviderAuthModal,
+    openCustomProviderModal,
     closeProviderAuthModal,
   };
 }

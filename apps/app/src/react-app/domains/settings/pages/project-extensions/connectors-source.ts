@@ -1,5 +1,6 @@
 import type { McpDirectoryInfo } from "@/app/constants";
 import { getMcpServerName } from "@/app/constants";
+import { extensionResource } from "@/app/extensions";
 import { getMcpIdentityKey } from "@/app/mcp";
 import type { McpServerEntry, McpStatusMap } from "@/app/types";
 import { canDisconnectOrgMcpConnection } from "@/react-app/domains/connections/native-provider-connections";
@@ -20,6 +21,7 @@ export type BuildConnectorsInput = {
   connectDirectory: (entry: McpDirectoryInfo) => void;
   authorizeMcp: (entry: McpServerEntry) => void;
   removeMcp: (name: string) => void;
+  setMcpEnabled: (name: string, enabled: boolean) => void;
   connectOrg: (connectionId: string) => void;
   disconnectOrg: (connectionId: string) => void;
 };
@@ -31,12 +33,60 @@ function isServerConnected(entry: McpServerEntry, statuses: McpStatusMap): boole
 }
 
 /**
+ * 取失败状态下引擎报告的错误原文。
+ * @param status 该 server 的运行状态
+ *
+ * TIPS: 不做任何改写——`Please provide a database URL as a command-line argument`
+ * 这类服务器自述的失败原因，比任何「连接失败，请检查配置」都更能指向要补的参数。
+ */
+export function readConnectorErrorDetail(status: McpStatusMap[string] | undefined): string | undefined {
+  if (!status || status.status !== "failed") return undefined;
+  const error = "error" in status ? status.error?.trim() : "";
+  return error ? error : undefined;
+}
+
+/**
+ * 判断目录项是否由 MCP 提供能力。
+ * @param entry 快速连接目录项
+ */
+export function isMcpConnectorEntry(entry: McpDirectoryInfo): boolean {
+  const kind = entry.kind ?? "mcp";
+  if (kind === "mcp" || kind === "ui-control") return true;
+  return Boolean(extensionResource(entry.extensionManifest, "mcp"));
+}
+
+/**
+ * 把不透明的连接失败原因翻译成可行动的提示键。
+ * @param detail 引擎报告的错误原文
+ * @returns i18n 键；无法归类时返回 undefined
+ *
+ * TIPS: `-32000 connection closed` 只说明子进程退出了，不说为什么——引擎不透出子进程 stderr。
+ * 这类不透明错误配一句「常见原因」比让用户对着错误码干瞪眼有用，但原文仍要照常展示。
+ */
+export function explainConnectorErrorKey(detail: string | undefined): string | undefined {
+  if (!detail) return undefined;
+  const text = detail.toLowerCase();
+  if (text.includes("enoent") || text.includes("command not found")) {
+    return "mcp.error_hint_command_not_found";
+  }
+  if (text.includes("-32000") || text.includes("connection closed")) {
+    return "mcp.error_hint_process_exited";
+  }
+  if (text.includes("timed out") || text.includes("timeout")) {
+    return "mcp.error_hint_timeout";
+  }
+  return undefined;
+}
+
+/**
  * 汇总「已装 MCP + 快速连接目录 + 组织下发连接器」为统一的连接器行，按身份去重。
  * 复用既有连接/授权/断开动作，不新造连接逻辑。
  */
 export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRow[] {
   const rows: ConnectorRow[] = [];
   const seen = new Set<string>();
+  // TIPS: 快速连接目录同时承载插件、Provider 与本地服务；连接器面板只展示 MCP 能力。
+  const mcpQuickConnect = input.quickConnect.filter(isMcpConnectorEntry);
 
   const push = (row: ConnectorRow, identity: string) => {
     const key = identity.trim().toLowerCase();
@@ -48,13 +98,15 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
   // TIPS: 已装 MCP 大多来自快速连接目录，按身份回查目录项即可复用其图标与描述，
   // 否则列表里只能显示默认占位头像。
   const directoryByIdentity = new Map(
-    input.quickConnect.map((entry) => [getMcpIdentityKey(entry), entry] as const),
+    mcpQuickConnect.map((entry) => [getMcpIdentityKey(entry), entry] as const),
   );
 
   // 1) 已装 MCP 服务（优先级最高）。
   for (const server of input.mcpServers) {
     const connected = isServerConnected(server, input.mcpStatuses);
     const directory = directoryByIdentity.get(server.name);
+    const disabled = server.config.enabled === false;
+    const isCustom = !directory;
     push(
       {
         key: `installed:${server.name}`,
@@ -68,9 +120,25 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         url: server.config.url ?? directory?.url,
         command: server.config.command ?? directory?.command,
         preview: directory?.preview,
+        errorDetail: readConnectorErrorDetail(input.mcpStatuses[server.name]),
+        disabled,
+        // TIPS: 自定义 MCP 没有目录项兜底——删掉就连同命令与环境变量一起消失，且列表里不留痕迹。
+        // 所以它的「断开」是停用（配置留着，可一键启用）；目录条目删掉还能从目录一键重加，维持原语义。
+        disconnectKind: isCustom ? "disable" : "remove",
+        serverName: server.name,
+        serverConfig: server.config,
         entry: directory,
-        onConnect: connected ? undefined : () => input.authorizeMcp(server),
-        onDisconnect: connected ? () => input.removeMcp(server.name) : undefined,
+        onConnect: connected
+          ? undefined
+          : disabled
+            ? () => input.setMcpEnabled(server.name, true)
+            : () => input.authorizeMcp(server),
+        onDisconnect: connected
+          ? isCustom
+            ? () => input.setMcpEnabled(server.name, false)
+            : () => input.removeMcp(server.name)
+          : undefined,
+        onRemove: () => input.removeMcp(server.name),
       },
       server.name,
     );
@@ -101,7 +169,7 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
   }
 
   // 3) 快速连接目录中尚未安装的项。
-  for (const entry of input.quickConnect) {
+  for (const entry of mcpQuickConnect) {
     const identity = getMcpIdentityKey(entry);
     const alreadyInstalled = input.mcpServers.some((server) => server.name === identity);
     if (alreadyInstalled) continue;

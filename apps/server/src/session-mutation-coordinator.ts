@@ -23,6 +23,14 @@ export interface ActiveSessionMutation {
 
 interface StoredSessionMutation extends ActiveSessionMutation {
   abortAccepted: boolean;
+  authoritativeIdleObservedAt: number | null;
+}
+
+export interface SessionMutationIdleReconciliation {
+  cleared: boolean;
+  run: ActiveSessionMutation | null;
+  terminalStatus: SessionMutationTerminalStatus | null;
+  retryAfterMs: number | null;
 }
 
 export class SessionMutationError extends Error {
@@ -43,7 +51,11 @@ function sessionKey(workspaceId: string, sessionId: string): string {
 }
 
 function publicRun(run: StoredSessionMutation): ActiveSessionMutation {
-  const { abortAccepted: _abortAccepted, ...safe } = run;
+  const {
+    abortAccepted: _abortAccepted,
+    authoritativeIdleObservedAt: _authoritativeIdleObservedAt,
+    ...safe
+  } = run;
   return { ...safe };
 }
 
@@ -81,6 +93,7 @@ export function createSessionMutationCoordinator(options: {
       activeObservedAt: null,
       abortRequestedAt: null,
       abortAccepted: false,
+      authoritativeIdleObservedAt: null,
     };
     runs.set(key, run);
     return publicRun(run);
@@ -97,6 +110,9 @@ export function createSessionMutationCoordinator(options: {
       run.status = "running";
       run.updatedAt = now();
     }
+    // Idle evidence observed before upstream accepted the start may belong to
+    // the previous engine state. Require fresh authoritative samples.
+    run.authoritativeIdleObservedAt = null;
     return publicRun(run);
   }
 
@@ -126,6 +142,7 @@ export function createSessionMutationCoordinator(options: {
     run.abortRequestedAt = timestamp;
     run.updatedAt = timestamp;
     run.abortAccepted = false;
+    run.authoritativeIdleObservedAt = null;
     return { run: publicRun(run), previousStatus };
   }
 
@@ -157,6 +174,7 @@ export function createSessionMutationCoordinator(options: {
     run.abortCommandCorrelationId = null;
     run.abortRequestedAt = null;
     run.updatedAt = now();
+    run.authoritativeIdleObservedAt = null;
     return true;
   }
 
@@ -189,6 +207,7 @@ export function createSessionMutationCoordinator(options: {
     }
 
     const timestamp = now();
+    run.authoritativeIdleObservedAt = null;
     if (input.status !== "starting" && !run.observedActive) {
       run.observedActive = true;
       run.activeObservedAt = timestamp;
@@ -197,6 +216,84 @@ export function createSessionMutationCoordinator(options: {
     if (run.status !== "aborting" || input.status === "aborting") run.status = input.status;
     run.updatedAt = timestamp;
     return { cleared: false, run: publicRun(run), terminalStatus: null };
+  }
+
+  /**
+   * Reconcile a coordinator reservation against a fresh `/session/status`
+   * sample that says the engine is idle.
+   *
+   * A single idle sample cannot clear an accepted run whose active event was
+   * never observed: it may be a pre-start status racing with prompt dispatch.
+   * Two authoritative samples separated by a grace interval close the
+   * fast-completion / lost-event case without weakening the start fence.
+   */
+  function reconcileAuthoritativeIdle(input: {
+    workspaceId: string;
+    sessionId: string;
+    runId: string;
+    minimumIntervalMs: number;
+  }): SessionMutationIdleReconciliation {
+    const key = sessionKey(input.workspaceId, input.sessionId);
+    const run = runs.get(key);
+    if (!run || run.runId !== input.runId) {
+      throw new SessionMutationError("run_mismatch", run?.runId ?? null);
+    }
+
+    if (!Number.isFinite(input.minimumIntervalMs) || input.minimumIntervalMs < 0) {
+      throw new TypeError("minimumIntervalMs must be a non-negative finite number");
+    }
+
+    if (run.status === "starting") {
+      return {
+        cleared: false,
+        run: publicRun(run),
+        terminalStatus: null,
+        retryAfterMs: null,
+      };
+    }
+
+    if (run.status === "aborting") {
+      if (!run.abortAccepted) {
+        return {
+          cleared: false,
+          run: publicRun(run),
+          terminalStatus: null,
+          retryAfterMs: null,
+        };
+      }
+      runs.delete(key);
+      return { cleared: true, run: null, terminalStatus: "aborted", retryAfterMs: null };
+    }
+
+    if (run.observedActive) {
+      runs.delete(key);
+      return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
+    }
+
+    const timestamp = now();
+    if (run.authoritativeIdleObservedAt === null) {
+      run.authoritativeIdleObservedAt = timestamp;
+      run.updatedAt = timestamp;
+      return {
+        cleared: false,
+        run: publicRun(run),
+        terminalStatus: null,
+        retryAfterMs: input.minimumIntervalMs,
+      };
+    }
+
+    const elapsed = Math.max(0, timestamp - run.authoritativeIdleObservedAt);
+    if (elapsed < input.minimumIntervalMs) {
+      return {
+        cleared: false,
+        run: publicRun(run),
+        terminalStatus: null,
+        retryAfterMs: input.minimumIntervalMs - elapsed,
+      };
+    }
+
+    runs.delete(key);
+    return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
   }
 
   function listActive(workspaceId?: string): ActiveSessionMutation[] {
@@ -218,6 +315,7 @@ export function createSessionMutationCoordinator(options: {
     acceptAbort,
     rollbackAbort,
     observe,
+    reconcileAuthoritativeIdle,
     listActive,
     getActive,
   });

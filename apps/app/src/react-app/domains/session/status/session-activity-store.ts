@@ -3,18 +3,29 @@ import { create } from "zustand";
 
 import { t } from "../../../../i18n";
 
-export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting";
+export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting" | "incomplete";
 
 export const SESSION_STALLED_AFTER_MS = 5 * 60_000;
 
 type SessionMessageRole = "assistant" | "system" | "user";
 
-type SessionActivityRecord = {
+export type SessionActivityRecord = {
   status: SessionActivityStatus;
   runActive: boolean;
+  runGeneration: number;
   assistantOutput: boolean;
   errorActive: boolean;
   errorMessage: string | null;
+  completionBlocked: boolean;
+  /**
+   * 实时事件流已经宣告本次运行结束（idle / 中断 / 报错），在下一次实时 running 之前有效。
+   *
+   * TIPS: 侧栏会话列表是按工作区整体拉取的快照，运行期间取到的 busy 会一直留在列表里，
+   * 而列表对象每次变更都会重新 seed 一遍。没有这个标记时，被打断（aborted）或报错的会话
+   * 会被这份陈旧 busy 快照复活，工作区折叠后行尾的 loading 就再也不消失。
+   */
+  liveRunEnded: boolean;
+  finishReason: string | null;
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
@@ -36,6 +47,7 @@ type SessionActivityStore = {
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
+  getFinishReason: (workspaceId: string, sessionId: string) => string | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
@@ -46,6 +58,9 @@ type SessionActivityStore = {
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
+  setCompletionDiagnostic: (workspaceId: string, sessionId: string, blocked: boolean, finishReason?: string | null) => void;
+  markFinishReason: (workspaceId: string, sessionId: string, finishReason: string) => void;
+  markProviderDisconnected: (workspaceId: string) => void;
   clearError: (workspaceId: string, sessionId: string) => void;
   setCompacting: (workspaceId: string, sessionId: string, compacting: boolean) => void;
   removeSession: (workspaceId: string, sessionId: string) => void;
@@ -54,9 +69,13 @@ type SessionActivityStore = {
 const createRecord = (): SessionActivityRecord => ({
   status: "idle",
   runActive: false,
+  runGeneration: 0,
   assistantOutput: false,
   errorActive: false,
   errorMessage: null,
+  completionBlocked: false,
+  liveRunEnded: false,
+  finishReason: null,
   compacting: false,
   waitingPermissionIds: [],
   waitingQuestionIds: [],
@@ -88,6 +107,7 @@ function statusForRecord(record: SessionActivityRecord): SessionActivityStatus {
   if (record.errorActive) return "error";
   if (record.waitingPermissionIds.length > 0 || record.waitingQuestionIds.length > 0) return "waiting";
   if (record.compacting) return "compacting";
+  if (record.completionBlocked) return "incomplete";
   if (!record.runActive) return "idle";
   if (record.stalledAt !== null) return "stalled";
   return record.assistantOutput ? "responding" : "thinking";
@@ -162,6 +182,9 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
 
     return record.errorMessage;
   },
+  getFinishReason: (workspaceId, sessionId) => (
+    get().recordsByWorkspaceId[workspaceId.trim()]?.[sessionId.trim()]?.finishReason ?? null
+  ),
   seedWorkspaceSessions: (workspaceId, sessions) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -176,7 +199,13 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           ...nextState,
           ...updateRecord(nextState, id, sessionId, (record) => {
             const normalized = normalizeRunStatus(status);
-            const runActive = normalized === "running" || normalized === "retry";
+            const snapshotRunActive = normalized === "running" || normalized === "retry";
+            // TIPS: 工作区会话列表可能在 session.idle 之后重放旧 busy 快照（列表是整体拉取的，
+            // 运行期间取到的 busy 会一直留到下次拉取，且列表每次变更都重新 seed 一遍）。
+            // 实时事件流已宣告结束（liveRunEnded）或已写入 completion diagnostic 的终态，
+            // 都不能被这类列表快照复活；真正的新任务会先通过实时 setRunStatus(running)
+            // 清除这两个标记，再由快照继续维护。
+            const runActive = snapshotRunActive && !record.completionBlocked && !record.liveRunEnded;
             const starting = runActive && !record.runActive;
             return {
               ...record,
@@ -184,6 +213,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
               assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
               errorActive: runActive ? false : record.errorActive,
               errorMessage: runActive ? null : record.errorMessage,
+              completionBlocked: runActive ? false : record.completionBlocked,
+              finishReason: runActive ? null : record.finishReason,
               compacting: runActive ? record.compacting : false,
               waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
               waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -204,14 +235,21 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     if (!workspace || !session) return;
     set((state) => updateRecord(state, workspace, session, (record) => {
       const normalized = normalizeRunStatus(status);
-      const runActive = normalized === "running" || normalized === "retry";
+      const snapshotRunActive = normalized === "running" || normalized === "retry";
+      const runActive = snapshotRunActive && !record.completionBlocked;
       const starting = runActive && !record.runActive;
       return {
         ...record,
         runActive,
+        runGeneration: starting ? record.runGeneration + 1 : record.runGeneration,
+        // TIPS: 单会话快照是打开会话时按需拉取的权威状态，可以推翻实时结束标记；
+        // 工作区列表那份陈旧快照不行（见 seedWorkspaceSessions）。
+        liveRunEnded: runActive ? false : record.liveRunEnded,
         assistantOutput: runActive && assistantOutput,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
+        completionBlocked: runActive ? false : record.completionBlocked,
+        finishReason: runActive ? null : record.finishReason,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -233,9 +271,13 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         runActive,
+        // 实时状态是唯一权威：running 解除封印，idle 立刻封印住后续的陈旧 busy 快照。
+        liveRunEnded: !runActive,
         assistantOutput: runActive && record.runActive ? record.assistantOutput : false,
         errorActive: runActive ? false : record.errorActive,
         errorMessage: runActive ? null : record.errorMessage,
+        completionBlocked: runActive ? false : record.completionBlocked,
+        finishReason: runActive ? null : record.finishReason,
         compacting: runActive ? record.compacting : false,
         waitingPermissionIds: runActive ? record.waitingPermissionIds : [],
         waitingQuestionIds: runActive ? record.waitingQuestionIds : [],
@@ -344,11 +386,56 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       errorActive: true,
       errorMessage: message ? message : "Session failed",
       runActive: false,
+      liveRunEnded: true,
       assistantOutput: false,
       compacting: false,
       lastMeaningfulProgressAt: null,
       stalledAt: null,
     })));
+  },
+  setCompletionDiagnostic: (workspaceId, sessionId, blocked, finishReason) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    if (!workspace || !session) return;
+    set((state) => updateRecord(state, workspace, session, (record) => ({
+      ...record,
+      completionBlocked: blocked,
+      finishReason: finishReason?.trim() || record.finishReason,
+      // Task incomplete 是终态而不是活动状态。即使 provider 断连或 idle 事件乱序，也必须立即
+      // 清掉 loading 相关字段；否则切换会话后旧 busy/stalled 状态会再次出现在侧栏。
+      runActive: blocked ? false : record.runActive,
+      assistantOutput: blocked ? false : record.assistantOutput,
+      compacting: blocked ? false : record.compacting,
+      waitingPermissionIds: blocked ? [] : record.waitingPermissionIds,
+      waitingQuestionIds: blocked ? [] : record.waitingQuestionIds,
+      lastMeaningfulProgressAt: blocked ? null : record.lastMeaningfulProgressAt,
+      stalledAt: blocked ? null : record.stalledAt,
+    })));
+  },
+  markFinishReason: (workspaceId, sessionId, finishReason) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    const reason = finishReason.trim();
+    if (!workspace || !session || !reason) return;
+    set((state) => updateRecord(state, workspace, session, (record) => ({ ...record, finishReason: reason })));
+  },
+  markProviderDisconnected: (workspaceId) => {
+    const workspace = workspaceId.trim();
+    if (!workspace) return;
+    set((state) => {
+      let nextState = state;
+      for (const [sessionId, record] of Object.entries(state.recordsByWorkspaceId[workspace] ?? {})) {
+        if (!record.runActive) continue;
+        nextState = {
+          ...nextState,
+          ...updateRecord(nextState, workspace, sessionId, (current) => ({
+            ...current,
+            finishReason: "provider_disconnected",
+          })),
+        };
+      }
+      return nextState;
+    });
   },
   clearError: (workspaceId, sessionId) => {
     const workspace = workspaceId.trim();
@@ -405,5 +492,6 @@ export function getSessionActivityStatusLabel(status: SessionActivityStatus) {
   if (status === "waiting") return t("session.assistant_waiting");
   if (status === "compacting") return t("session.assistant_compacting");
   if (status === "error") return t("session.assistant_error");
+  if (status === "incomplete") return "Task incomplete";
   return t("session.assistant_idle");
 }

@@ -1,6 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { resolveWorkspaceEndpoint, workspaceServerId } from "../src/app/lib/workspace-endpoint";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 describe("workspace endpoint resolution", () => {
   test("local workspaces use the local server and local workspace id", () => {
@@ -13,12 +19,45 @@ describe("workspace endpoint resolution", () => {
     }, {
       baseUrl: "http://127.0.0.1:4096",
       token: "local-token",
+      hostToken: "local-host-token",
     });
 
     expect(endpoint?.workspaceId).toBe("ws_local");
     expect(endpoint?.baseUrl).toBe("http://127.0.0.1:4096");
     expect(endpoint?.isRemote).toBe(false);
     expect(endpoint?.mountedBaseUrl).toBe("http://127.0.0.1:4096/workspace/ws_local");
+  });
+
+  test("local workspace clients authenticate host-scoped env writes with the host token", async () => {
+    let requestUrl = "";
+    let requestInit: RequestInit | undefined;
+    globalThis.fetch = (async (input, init) => {
+      requestUrl = String(input);
+      requestInit = init;
+      return new Response(JSON.stringify({ ok: true, count: 1 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const endpoint = resolveWorkspaceEndpoint({
+      id: "ws_local",
+      name: "Local",
+      path: "/tmp/ws-local",
+      preset: "minimal",
+      workspaceType: "local",
+    }, {
+      baseUrl: "http://127.0.0.1:4096",
+      token: "local-token",
+      hostToken: "local-host-token",
+    });
+    if (!endpoint) throw new Error("Expected a local workspace endpoint.");
+
+    await endpoint.client.upsertUserEnv([{ key: "LPR_TEST_API_KEY", value: "secret" }]);
+
+    expect(requestUrl).toBe("http://127.0.0.1:4096/env");
+    expect(new Headers(requestInit?.headers).get("Authorization")).toBe("Bearer local-token");
+    expect(new Headers(requestInit?.headers).get("X-JuggleWork-Host-Token")).toBe("local-host-token");
   });
 
   test("remote workspaces use the owning worker URL and server-side workspace id", () => {

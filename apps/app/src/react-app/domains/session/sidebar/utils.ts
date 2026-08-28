@@ -183,7 +183,7 @@ export const buildSessionTreeState = (
     const children = childrenByParent.get(session.id) ?? [];
     let descendantCount = 0;
     const ownStatus = sessionStatusById?.[session.id] ?? "idle";
-    let subtreeActive = ownStatus !== "idle";
+    let subtreeActive = isActiveWorkSessionStatus(ownStatus);
     let subtreeStreaming = isStreamingSessionStatus(ownStatus);
 
     children.forEach((child) => {

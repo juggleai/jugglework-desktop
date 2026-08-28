@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   mintCloudControlMcpToken,
@@ -7,6 +7,7 @@ import {
   type DenSettings,
 } from "../../../app/lib/den";
 import { recordInspectorEvent } from "../../../app/lib/app-inspector";
+import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import type {
   JuggleWorkCloudMcpFailure,
   JuggleWorkCloudMcpHealth,
@@ -25,15 +26,76 @@ import {
   runJuggleWorkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
+import {
+  createSessionMcpVisibilityResumeHandler,
+  runSessionMcpMaintenanceSingleflight,
+  trackSessionMcpResumeMaintenance,
+  waitForSessionMcpResumeMaintenance,
+  type SessionMcpMaintenanceRun,
+  type SessionMcpResumeWaitResult,
+} from "./session-mcp-maintenance-coordinator";
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
+/**
+ * Watchdog margin: with valid inputs a maintenance run converges (ready /
+ * skipped / failed) well inside SESSION_MCP_MAINTENANCE_TIMEOUT_MS. If the
+ * status is still non-terminal past that plus this margin, something wedged
+ * the loop (e.g. a hung engine reload keeping engineReloadBusy true) and the
+ * status bar would otherwise show a perpetual, dishonest "Checking".
+ */
+export const SESSION_MCP_MAINTENANCE_STALL_MARGIN_MS = 30 * 1000;
+
+/**
+ * Pure watchdog decision: given how long the maintenance status has been
+ * non-terminal (idle/checking/retrying) and whether the run inputs are
+ * valid, produce the honest terminal state or null (keep waiting).
+ */
+export function resolveStalledMaintenanceState(input: {
+  status: SessionCloudMcpMaintenanceState["status"];
+  nonTerminalSince: number | null;
+  now: number;
+  inputsValid: boolean;
+}): { status: "failed"; issue: CloudMcpMaintenanceIssue } | null {
+  const { status, nonTerminalSince, now, inputsValid } = input;
+  if (status === "ready" || status === "skipped" || status === "failed") return null;
+  if (nonTerminalSince === null) return null;
+  if (now - nonTerminalSince <= SESSION_MCP_MAINTENANCE_TIMEOUT_MS + SESSION_MCP_MAINTENANCE_STALL_MARGIN_MS) {
+    return null;
+  }
+  return {
+    status: "failed",
+    issue: {
+      code: inputsValid
+        ? "cloud_mcp_maintenance_stalled"
+        : "cloud_mcp_maintenance_missing_runtime",
+      stage: "engine_delivery",
+      retryable: true,
+      recommendedAction: inputsValid
+        ? "Retry, then open Settings → Connect if the problem continues."
+        : "Reopen the workspace, then open Settings → Connect if the problem continues.",
+      message: inputsValid
+        ? "JuggleWork Connect checks stalled while the workspace engine was busy."
+        : "JuggleWork Connect checks could not run because the workspace runtime is unavailable.",
+    },
+  };
+}
 export const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 export const CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS = [1_000, 3_000];
+export const SESSION_MCP_RESUME_SEND_WAIT_TIMEOUT_MS = 5_000;
 
 type CloudMcpMaintenanceClient = CloudMcpClient & Pick<JuggleWorkServerClient, "listMcp">;
 
-const maintenanceInFlight = new Map<string, symbol>();
+const runtimeObjectIds = new WeakMap<object, number>();
+let nextRuntimeObjectId = 0;
+
+function runtimeObjectId(value: object): number {
+  const existing = runtimeObjectIds.get(value);
+  if (existing !== undefined) return existing;
+  const id = ++nextRuntimeObjectId;
+  runtimeObjectIds.set(value, id);
+  return id;
+}
 
 export type CloudMcpMaintenanceIssue = Pick<
   JuggleWorkCloudMcpFailure,
@@ -64,6 +126,10 @@ export type SessionCloudMcpMaintenanceState = {
   issue: CloudMcpMaintenanceIssue | null;
   attempt: number;
   maxAttempts: number;
+};
+
+export type SessionCloudMcpMaintenance = SessionCloudMcpMaintenanceState & {
+  waitForResumeMaintenance: (timeoutMs?: number) => Promise<SessionMcpResumeWaitResult>;
 };
 
 const IDLE_CLOUD_MCP_MAINTENANCE_STATE: SessionCloudMcpMaintenanceState = {
@@ -119,56 +185,26 @@ export function getSessionMcpMaintenanceTargetKey(input: {
   ]);
 }
 
-type MaintenanceTaskSettled =
-  | { kind: "ok" }
-  | { kind: "error"; detail: string }
-  | { kind: "timed_out" };
-
-function maintenanceErrorDetail(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export async function runSessionMcpMaintenanceTask(input: {
   targetKey: string;
   task: () => Promise<void>;
   timeoutMs?: number;
-}): Promise<boolean> {
-  if (maintenanceInFlight.has(input.targetKey)) return false;
-  const runToken = Symbol("session-mcp-maintenance-run");
-  maintenanceInFlight.set(input.targetKey, runToken);
-  // A hung await inside one tick must not wedge every future tick for this
-  // target (field incident: maintenance stayed blocked until app restart).
-  // The run token keeps a late-settling task from releasing a newer run's
-  // lock after we timed out and moved on.
-  const releaseOwnLock = () => {
-    if (maintenanceInFlight.get(input.targetKey) === runToken) {
-      maintenanceInFlight.delete(input.targetKey);
-    }
-  };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<MaintenanceTaskSettled>((resolve) => {
-    timer = setTimeout(() => resolve({ kind: "timed_out" }), input.timeoutMs ?? SESSION_MCP_MAINTENANCE_TIMEOUT_MS);
+}): Promise<SessionMcpMaintenanceRun> {
+  const run = await runSessionMcpMaintenanceSingleflight({
+    targetKey: input.targetKey,
+    task: input.task,
+    timeoutMs: input.timeoutMs ?? SESSION_MCP_MAINTENANCE_TIMEOUT_MS,
   });
-  try {
-    const settled = await Promise.race([
-      input.task().then(
-        (): MaintenanceTaskSettled => ({ kind: "ok" }),
-        (error: unknown): MaintenanceTaskSettled => ({ kind: "error", detail: maintenanceErrorDetail(error) }),
-      ),
-      timedOut,
-    ]);
-    if (settled.kind === "timed_out") {
+  if (run.started) {
+    if (run.completion.status === "timed_out") {
       recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "timed_out" });
-    } else if (settled.kind === "error") {
-      recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "error", detail: settled.detail });
+    } else if (run.completion.status === "error") {
+      recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "error", detail: run.completion.detail });
     } else {
       recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "ok" });
     }
-    return true;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    releaseOwnLock();
   }
+  return run;
 }
 
 export async function syncCloudControlMcpInBackground(input: {
@@ -335,15 +371,47 @@ export function useSessionMcpMaintenance(input: {
   directory: string;
   engineReloadBusy?: boolean;
   providerModel?: JuggleWorkCloudMcpProviderModelContext;
-}): SessionCloudMcpMaintenanceState {
+}): SessionCloudMcpMaintenance {
   const [cloudMcpState, setCloudMcpState] = useState<SessionCloudMcpMaintenanceState>(
     IDLE_CLOUD_MCP_MAINTENANCE_STATE,
   );
+  const [settingsVersion, setSettingsVersion] = useState(0);
+  const engineReloadEpochRef = useRef(0);
+  const nonTerminalSinceRef = useRef<number | null>(null);
+  const previousEngineReloadBusyRef = useRef(Boolean(input.engineReloadBusy));
+  if (input.engineReloadBusy && !previousEngineReloadBusyRef.current) {
+    engineReloadEpochRef.current += 1;
+  }
+  previousEngineReloadBusyRef.current = Boolean(input.engineReloadBusy);
+  const targetKeyRef = useRef<string | null>(null);
+  const waitForResumeMaintenance = useCallback((timeoutMs = SESSION_MCP_RESUME_SEND_WAIT_TIMEOUT_MS) => {
+    const targetKey = targetKeyRef.current;
+    if (!targetKey) return Promise.resolve<SessionMcpResumeWaitResult>({ outcome: "not_running" });
+    return waitForSessionMcpResumeMaintenance(targetKey, timeoutMs);
+  }, []);
+
+  useEffect(() => {
+    const handleSettingsChanged = () => setSettingsVersion((version) => version + 1);
+    window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
+    return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
+  }, []);
 
   useEffect(() => {
     if (input.engineReloadBusy) {
       setCloudMcpState(input.cloudSignedIn
-        ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
+        ? {
+            ...IDLE_CLOUD_MCP_MAINTENANCE_STATE,
+            status: "checking",
+            // Honest description while the reload owns the engine: this is a
+            // wait state, not an active check.
+            issue: {
+              code: "cloud_mcp_waiting_engine_reload",
+              stage: "engine_delivery",
+              retryable: true,
+              recommendedAction: "Waiting for the engine reload to finish.",
+              message: "Waiting for the engine reload to finish.",
+            },
+          }
         : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
       return;
     }
@@ -356,17 +424,24 @@ export function useSessionMcpMaintenance(input: {
       return;
     }
     const settings = readDenSettings();
-    const targetKey = getSessionMcpMaintenanceTargetKey({
+    const targetKey = JSON.stringify([
+      getSessionMcpMaintenanceTargetKey({
       client,
       cloudSignedIn: input.cloudSignedIn,
       denBaseUrl: settings.baseUrl,
       orgId: settings.activeOrgId,
       workspaceId,
-      providerModel: input.providerModel,
-    });
+      // Resume repair is transport/workspace scoped. Model projection remains
+      // part of normal health reporting, but must not couple split-pane sends.
+      providerModel: undefined,
+      }),
+      directory,
+      runtimeObjectId(opencodeClient),
+      engineReloadEpochRef.current,
+    ]);
+    targetKeyRef.current = targetKey;
 
     let cancelled = false;
-    let busyRetryTimer: number | null = null;
     setCloudMcpState(input.cloudSignedIn
       ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
       : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
@@ -404,41 +479,61 @@ export function useSessionMcpMaintenance(input: {
       });
     };
 
-    const scheduleBusyRetry = () => {
-      if (cancelled || busyRetryTimer !== null) return;
-      busyRetryTimer = window.setTimeout(() => {
-        busyRetryTimer = null;
-        void tick();
-      }, 250);
-    };
-
-    const tick = async () => {
-      if (cancelled) return;
-      const started = await runSessionMcpMaintenanceTask({
+    const tick = (reason: "background" | "resume" = "background"): Promise<SessionMcpMaintenanceRun> => {
+      if (cancelled) {
+        return Promise.resolve({ started: false, completion: { status: "ok" } });
+      }
+      return runSessionMcpMaintenanceTask({
         targetKey,
         task: async () => {
+          let cloudFailure: CloudMcpMaintenanceIssue | null = null;
           if (input.cloudSignedIn) {
-            await runCloudMcpMaintenanceWithRetry({
+            const cloudResult = await runCloudMcpMaintenanceWithRetry({
               attempt: () => syncCloudControlMcpInBackground({
                 client,
                 workspaceId,
-                providerModel: input.providerModel,
+                providerModel: reason === "resume" ? undefined : input.providerModel,
               }),
               onAttempt: recordCloudAttempt,
             });
+            if (cloudResult.outcome === "failed") {
+              cloudFailure = cloudResult.issue;
+            }
           }
-          await healWorkspaceMcpInBackground({
-            client,
-            workspaceId,
-            opencodeClient,
-            directory,
-          }).catch(() => {
+          let healFailure: unknown = null;
+          await healWorkspaceMcpInBackground({ client, workspaceId, opencodeClient, directory }).catch((error) => {
+            healFailure = error;
             recordInspectorEvent("mcp.session_reauth_failed", { workspaceId });
             return false;
           });
+          if (cloudFailure) throw new Error(cloudFailure.message);
+          if (healFailure) {
+            throw healFailure instanceof Error
+              ? healFailure
+              : new Error("JuggleWork could not restore workspace MCP connections.");
+          }
         },
+      }).then((run) => {
+        if (!cancelled) {
+          if (run.completion.status === "ok") {
+            setCloudMcpState((current) => current.status === "failed"
+              ? current
+              : { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "ready" });
+          } else {
+            setCloudMcpState((current) => ({
+              ...current,
+              status: "failed",
+              issue: current.issue ?? genericCloudMcpMaintenanceIssue({
+                code: run.completion.status === "timed_out"
+                  ? "cloud_mcp_maintenance_timeout"
+                  : "cloud_mcp_maintenance_failed",
+                message: run.completion.status === "error" ? run.completion.detail : undefined,
+              }),
+            }));
+          }
+        }
+        return run;
       });
-      if (!started) scheduleBusyRetry();
     };
 
     void tick();
@@ -446,15 +541,24 @@ export function useSessionMcpMaintenance(input: {
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();
     };
+    const handleVisibilityResume = createSessionMcpVisibilityResumeHandler({
+      visibilityState: () => document.visibilityState,
+      run: () => {
+        const resumeTask = tick("resume");
+        trackSessionMcpResumeMaintenance(targetKey, resumeTask);
+      },
+    });
     window.addEventListener("online", handleOnline);
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityResume);
     const interval = window.setInterval(() => void tick(), SESSION_MCP_MAINTENANCE_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityResume);
       window.clearInterval(interval);
-      if (busyRetryTimer !== null) window.clearTimeout(busyRetryTimer);
+      if (targetKeyRef.current === targetKey) targetKeyRef.current = null;
     };
   }, [
     input.client,
@@ -464,8 +568,49 @@ export function useSessionMcpMaintenance(input: {
     input.opencodeClient,
     input.providerModel?.model,
     input.providerModel?.provider,
+    settingsVersion,
     input.workspaceId,
   ]);
 
-  return cloudMcpState;
+  // Track when the state last entered a non-terminal status (idle/checking/
+  // retrying). Terminal statuses clear it; the watchdog below uses the
+  // timestamp to distinguish "actively checking" from "wedged checking".
+  useEffect(() => {
+    const status = cloudMcpState.status;
+    if (status === "ready" || status === "skipped" || status === "failed") {
+      nonTerminalSinceRef.current = null;
+      return;
+    }
+    if (nonTerminalSinceRef.current === null) nonTerminalSinceRef.current = Date.now();
+  }, [cloudMcpState.status]);
+
+  // Watchdog: a signed-in workspace whose maintenance never converges must
+  // surface an honest failure instead of a perpetual "Checking" badge. Covers
+  // wedged engine reloads (engineReloadBusy stuck true stalls the loop) and
+  // missing runtimes (idle forever because inputs are invalid).
+  useEffect(() => {
+    if (!input.cloudSignedIn) return;
+    const inputsValid = Boolean(
+      input.client && input.opencodeClient && input.workspaceId?.trim() && input.directory.trim(),
+    );
+    const timer = window.setInterval(() => {
+      const stalled = resolveStalledMaintenanceState({
+        status: cloudMcpState.status,
+        nonTerminalSince: nonTerminalSinceRef.current,
+        now: Date.now(),
+        inputsValid,
+      });
+      if (!stalled) return;
+      nonTerminalSinceRef.current = Date.now();
+      setCloudMcpState((current) => ({
+        ...stalled,
+        issue: current.issue ?? stalled.issue,
+        attempt: current.attempt,
+        maxAttempts: current.maxAttempts,
+      }));
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [input.cloudSignedIn, input.client, input.opencodeClient, input.workspaceId, input.directory, cloudMcpState.status]);
+
+  return { ...cloudMcpState, waitForResumeMaintenance };
 }

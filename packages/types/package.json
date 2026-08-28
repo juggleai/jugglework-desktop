@@ -20,6 +20,11 @@
       "development": "./src/desktop-remote-control.ts",
       "default": "./dist/desktop-remote-control.js"
     },
+    "./automation": {
+      "types": "./src/automation.ts",
+      "development": "./src/automation.ts",
+      "default": "./dist/automation.js"
+    },
     "./jugglework-affordance": {
       "types": "./src/jugglework-affordance.ts",
       "development": "./src/jugglework-affordance.ts",
@@ -49,11 +54,6 @@
       "types": "./src/den/egress-diagnostics.ts",
       "development": "./src/den/egress-diagnostics.ts",
       "default": "./src/den/egress-diagnostics.ts"
-    },
-    "./den/inference": {
-      "types": "./src/den/inference.ts",
-      "development": "./src/den/inference.ts",
-      "default": "./src/den/inference.ts"
     },
     "./den/microsoft-365": {
       "types": "./src/den/microsoft-365.ts",

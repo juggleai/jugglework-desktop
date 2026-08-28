@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
 import type { ComposerMentionKind } from "./composer/mention-encoding";
+import type { ComposerCapabilityKind } from "./composer/capability-tags";
 
 export type ComposerPastePart = {
   id: string;
@@ -10,11 +11,24 @@ export type ComposerPastePart = {
   lines: number;
 };
 
+/**
+ * 一枚能力标签的登记信息
+ * @param kind 能力种类
+ * @param name 标签内显示的能力名称
+ * @param prompt 提交时替换 token 的完整文案
+ */
+export type ComposerCapabilityPart = {
+  kind: ComposerCapabilityKind;
+  name: string;
+  prompt: string;
+};
+
 export type ComposerSessionState = {
   draft: string;
   attachments: ComposerAttachment[];
   mentions: Record<string, ComposerMentionKind>;
   pasteParts: ComposerPastePart[];
+  capabilities: ComposerCapabilityPart[];
 };
 
 export type QueuedComposerDraft = {
@@ -36,6 +50,7 @@ export type ComposerStateStore = {
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
+  setCapabilities: (sessionId: string, capabilities: ComposerCapabilityPart[]) => void;
   appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => QueuedComposerDraft;
   removeQueuedDraft: (sessionId: string, id: string) => QueuedComposerDraft | null;
@@ -48,6 +63,7 @@ export type ComposerStateStore = {
 const EMPTY_ATTACHMENTS: ComposerAttachment[] = [];
 const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
+const EMPTY_CAPABILITIES: ComposerCapabilityPart[] = [];
 const EMPTY_HISTORY: string[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerDraft[] = [];
 const HISTORY_LIMIT = 50;
@@ -58,6 +74,7 @@ function createEmptyComposerSession(): ComposerSessionState {
     attachments: [],
     mentions: {},
     pasteParts: [],
+    capabilities: [],
   };
 }
 
@@ -74,7 +91,11 @@ function queuedDraftId() {
 function composerStateFromDraft(draft: ComposerDraft): ComposerSessionState {
   const mentions: Record<string, ComposerMentionKind> = {};
   const pasteParts: ComposerPastePart[] = [];
+  const capabilities: ComposerCapabilityPart[] = [];
   for (const part of draft.parts) {
+    if (part.type === "capability") {
+      capabilities.push({ kind: part.kind, name: part.name, prompt: part.prompt });
+    }
     if (part.type === "agent") mentions[part.name] = "agent";
     if (part.type === "file") mentions[part.path] = "file";
     if (part.type === "app") mentions[part.name] = "app";
@@ -92,6 +113,7 @@ function composerStateFromDraft(draft: ComposerDraft): ComposerSessionState {
     attachments: draft.attachments,
     mentions,
     pasteParts,
+    capabilities,
   };
 }
 
@@ -118,6 +140,11 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const current = getWritableSession(state, sessionId);
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
+  }),
+  setCapabilities: (sessionId, capabilities) => set((state) => {
+    const current = getWritableSession(state, sessionId);
+    if (current.capabilities === capabilities) return state;
+    return { sessions: { ...state.sessions, [sessionId]: { ...current, capabilities } } };
   }),
   appendHistory: (sessionId, text) => set((state) => {
     const trimmed = text.trim();
@@ -208,6 +235,10 @@ export function getComposerMentions(state: ComposerStateStore, sessionId: string
 
 export function getComposerPasteParts(state: ComposerStateStore, sessionId: string): ComposerPastePart[] {
   return state.sessions[sessionId]?.pasteParts ?? EMPTY_PASTE_PARTS;
+}
+
+export function getComposerCapabilities(state: ComposerStateStore, sessionId: string): ComposerCapabilityPart[] {
+  return state.sessions[sessionId]?.capabilities ?? EMPTY_CAPABILITIES;
 }
 
 export function getComposerHistory(state: ComposerStateStore, sessionId: string): string[] {

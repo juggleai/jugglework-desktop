@@ -5,6 +5,7 @@ export type WorkspaceAppPath =
   | { view: "settings"; workspaceId: string | null }
   | { view: "apps"; workspaceId: string | null }
   | { view: "chat"; workspaceId: string | null }
+  | { view: "automations"; workspaceId: null }
   | null;
 
 function decodeRoutePart(value: string | undefined): string {
@@ -69,6 +70,10 @@ export function parseWorkspaceAppPath(pathname: string): WorkspaceAppPath {
 
   if (/^\/chat\/?$/.test(pathname)) {
     return { view: "chat", workspaceId: null };
+  }
+
+  if (/^\/automations(?:\/.*)?$/.test(pathname)) {
+    return { view: "automations", workspaceId: null };
   }
 
   return null;

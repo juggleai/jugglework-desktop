@@ -6,6 +6,7 @@ import { AppsPage } from "./apps-page";
 import { ChatPage } from "./chat-page";
 import { SessionRoute } from "./session-route";
 import { SettingsRoute } from "./settings-route";
+import { AutomationPage } from "../domains/automations/automation-page";
 import { readActiveWorkspaceId, readLastSessionFor } from "./session-memory";
 import {
   WorkspaceShellActionsProvider,
@@ -128,6 +129,7 @@ function WorkspaceAppRouteContent() {
   const settingsVisible = appPath.view === "settings";
   const chatVisible = appPath.view === "chat";
   const appsVisible = appPath.view === "apps";
+  const automationsVisible = appPath.view === "automations";
   const sessionPath = activeSession.workspaceId
     ? workspaceSessionRoute(activeSession.workspaceId, activeSession.sessionId)
     : legacySessionRoute(activeSession.sessionId);
@@ -151,8 +153,8 @@ function WorkspaceAppRouteContent() {
   return (
     <div className="relative h-dvh min-h-screen w-full overflow-hidden">
       <div
-        className={settingsVisible || chatVisible || appsVisible ? "hidden" : "h-full min-h-0"}
-        aria-hidden={settingsVisible || chatVisible || appsVisible || undefined}
+        className={settingsVisible || chatVisible || appsVisible || automationsVisible ? "hidden" : "h-full min-h-0"}
+        aria-hidden={settingsVisible || chatVisible || appsVisible || automationsVisible || undefined}
         data-testid="retained-session-surface"
       >
         <SessionRoute
@@ -161,14 +163,21 @@ function WorkspaceAppRouteContent() {
         />
       </div>
 
+      {/*
+        TIPS: 隐藏态必须用 display:none，不能用 visibility:hidden。
+        设置页（尤其是「扩展」这类长页面）一旦滚动过，其滚动容器会被提升为独立合成层；
+        visibility:hidden 只是让它不可见，布局盒与合成层仍然保留，并且它是绝对定位、盖在
+        会话面板之上的。切回本地工作区时旧图层来不及失效，就会在工作区页面上残留「扩展」
+        页的内容。display:none 直接把它移出布局与合成，切换一帧到位。
+        组件本身仍然挂载（React 状态、路由解析、请求都不丢），只是不参与排版。
+      */}
       <div
-        className={settingsVisible
-          ? "visible absolute inset-0 z-10 bg-background"
-          : "invisible pointer-events-none absolute inset-0 z-0 bg-background"}
+        className={settingsVisible ? "absolute inset-0 z-10 bg-background" : "hidden"}
         aria-hidden={!settingsVisible || undefined}
         data-testid="workspace-settings-surface"
       >
         <SettingsRoute
+          active={settingsVisible}
           workspaceId={(settingsVisible ? appPath.workspaceId : retainedSettings.workspaceId) ?? undefined}
           routePath={settingsVisible ? location.pathname : retainedSettings.routePath}
         />
@@ -206,6 +215,20 @@ function WorkspaceAppRouteContent() {
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
             onOpenSettings={() => openSurfaceSettings("preferences", workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenTaskSearch={workspaceShellActions.openTaskSearch}
+            onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
+          />
+        </div>
+      ) : null}
+
+      {automationsVisible ? (
+        <div className="absolute inset-0" data-testid="workspace-automations-surface">
+          <AutomationPage
+            sessionPath={sessionPath}
+            onOpenAccount={() => openSurfaceSettings("cloud-account", location.pathname)}
+            onOpenApps={() => navigate(workspaceAppsRoute(activeSession.workspaceId))}
+            onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}
+            onOpenSettings={() => openSurfaceSettings("preferences", location.pathname)}
             onOpenTaskSearch={workspaceShellActions.openTaskSearch}
             onOpenCreateWorkspace={workspaceShellActions.openCreateWorkspace}
           />

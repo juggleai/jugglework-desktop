@@ -273,7 +273,6 @@ async function advanceVisibleOnboarding(ctx) {
     return clickExactButtonIfPresent(ctx, "Use this folder");
   }
   if (await clickExactButtonIfPresent(ctx, "Skip and use the free model")) return true;
-  if (await clickExactButtonIfPresent(ctx, "Continue without JuggleWork Models")) return true;
   if (await clickExactButtonIfPresent(ctx, "Skip")) return true;
   if (await clickExactButtonIfPresent(ctx, "Continue with organization")) return true;
   return clickExactButtonIfPresent(ctx, "Continue to workspace");

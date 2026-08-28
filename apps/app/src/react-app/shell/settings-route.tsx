@@ -6,6 +6,7 @@ import { toast } from "@/components/ui/sonner";
 import { SUGGESTED_PLUGINS } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
 import {
   createJuggleWorkServerClient,
   isLoopbackJuggleWorkServerUrl,
@@ -63,6 +64,10 @@ import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import {
+  customProviderInputFromProvider,
+  type CustomProviderInput,
+} from "@/react-app/domains/connections/provider-auth/custom-provider-config";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
@@ -92,6 +97,23 @@ import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pa
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
 import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
 import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
+import {
+  readGlobalAutoCompaction,
+  writeGlobalAutoCompaction,
+} from "@/react-app/domains/settings/state/global-compaction-preference";
+import type { GlobalConfigTarget } from "@/react-app/domains/settings/state/global-opencode-config";
+import {
+  readGlobalMcpEntries,
+  removeGlobalMcp,
+  setGlobalMcpEnabled,
+  upsertGlobalMcp,
+  type GlobalMcpEntry,
+} from "@/react-app/domains/settings/state/global-mcp-config";
+import { GlobalSkillsView } from "@/react-app/domains/settings/pages/global-skills-view";
+import {
+  GlobalConnectorsView,
+  type GlobalConnectorItem,
+} from "@/react-app/domains/settings/pages/global-connectors-view";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
@@ -111,6 +133,7 @@ import { useBootState } from "./boot-state";
 import { SettingsShell } from "@/react-app/domains/settings/shell/settings-shell";
 import { createExtensionsStore, useExtensionsStoreSnapshot } from "@/react-app/domains/settings/state/extensions-store";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { createLatestSyncQueue } from "@/react-app/kernel/latest-sync-queue";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import {
   juggleworkServerInfo,
@@ -160,7 +183,7 @@ import {
   testRemoteWorkspaceConnection,
 } from "@/react-app/domains/workspace/remote-workspace-diagnostics";
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal";
-import type { ModelRef } from "@/app/types";
+import type { McpServerConfig, ModelRef } from "@/app/types";
 import { workspaceSwatchColor } from "@/react-app/domains/session/sidebar/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
@@ -283,14 +306,15 @@ export function parseSettingsPath(pathname: string): {
     case "updates":
     case "recovery":
     case "debug":
+    // 全局技能与全局连接器，与工作区级的 `extensions` 是两个不同的页面。
+    case "skills":
+    case "connectors":
       return { tab: head, redirectPath: null };
     case "cloud-account":
     case "connect":
     case "cloud-providers":
     case "memory":
       return { tab: head, redirectPath: null };
-    case "skills":
-      return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "all" };
     case "cloud-marketplaces":
       return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
     case "den":
@@ -368,6 +392,15 @@ export type SettingsSurfaceProps = {
   initialPath?: string;
   /** Keep parsing the retained settings route while this surface is hidden behind another app module. */
   routePath?: string;
+  /**
+   * Whether this surface currently owns the browser route. Defaults to true.
+   *
+   * TIPS: 设置面板是常驻挂载的，被会话页盖住时也在渲染。它的两处规范化重定向走的是全局
+   * 路由（`<Navigate replace>`），隐藏时若照样执行，就会在启动阶段把整个 app 的 URL 抢到
+   * `/settings/preferences` —— 表现为冷启动首屏是设置页而不是本地工作区。隐藏态下必须
+   * 只解析路由、不改路由。
+   */
+  active?: boolean;
   workspaceId?: string;
   onClose?: () => void;
 };
@@ -418,12 +451,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [location.state, navigate, props.embedded, selectedWorkspaceId]);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [hostToken, setHostToken] = useState("");
   const [juggleworkClient, setJuggleWorkClient] = useState<JuggleWorkServerClient | null>(null);
   const [activeClient, setActiveClient] = useState<Client | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const workspacesRef = useRef<RouteWorkspace[]>([]);
-  const refreshInFlightRef = useRef(false);
   const reconnectAttemptedWorkspaceIdRef = useRef("");
   const refreshMcpServersRef = useRef<(() => void | Promise<void>) | null>(null);
   const notifyMcpReloadingRef = useRef<(() => void) | null>(null);
@@ -431,6 +464,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const remoteWorkspaceCheckRunRef = useRef<Record<string, string>>({});
   const remoteWorkspaceCheckRunCounterRef = useRef(0);
   const [providers, setProviders] = useState<ProviderListItem[]>([]);
+  const providerDisplayCacheRef = useRef(new Map<string, ProviderListItem>());
   const [providerDefaults, setProviderDefaults] = useState<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = useState<string[]>([]);
   const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
@@ -451,6 +485,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   // in-flight provider so the row can show progress instead of looking inert.
   const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
   const [deletingProviderId, setDeletingProviderId] = useState<string | null>(null);
+  const [editingLocalProvider, setEditingLocalProvider] = useState<CustomProviderInput | null>(null);
   const [reconnectingProviderId, setReconnectingProviderId] = useState<string | null>(null);
   const [providerDisconnectError, setProviderDisconnectError] = useState<string | null>(null);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
@@ -469,6 +504,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [autoCompactContext, setAutoCompactContext] = useState(true);
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
+  const [globalMcpEntries, setGlobalMcpEntries] = useState<GlobalMcpEntry[]>([]);
+  const [pendingGlobalConnector, setPendingGlobalConnector] = useState<string | null>(null);
+  const [deletingGlobalSkill, setDeletingGlobalSkill] = useState<string | null>(null);
+  const [globalExtensionsError, setGlobalExtensionsError] = useState<string | null>(null);
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
@@ -551,10 +590,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [emptyWorkspaceDisplay, selectedWorkspace],
   );
   const workspaceServerClientResolver = useMemo(
-    () => createWorkspaceServerClientResolver({ baseUrl, token }),
-    [baseUrl, token],
+    () => createWorkspaceServerClientResolver({ baseUrl, token, hostToken }),
+    [baseUrl, hostToken, token],
   );
-  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
+  const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, {
+    baseUrl,
+    token,
+    hostToken,
+  });
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
@@ -720,6 +763,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
 
+  useEffect(() => {
+    for (const provider of providers) {
+      providerDisplayCacheRef.current.set(provider.id.trim().toLowerCase(), provider);
+    }
+  }, [providers]);
+
   const juggleworkServerStatusForMcp = juggleworkServerSnapshot.juggleworkServerStatus;
   useEffect(() => {
     if (juggleworkServerStatusForMcp !== "connected") return;
@@ -807,6 +856,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       return;
     }
 
+    setEditingLocalProvider(null);
     void providerAuthStore.openProviderAuthModal();
   }, [checkDesktopRestriction, providerAuthStore, restrictionNotice]);
 
@@ -1197,9 +1247,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [updateAutoDownload]);
 
   const { markRouteReady: markBootRouteReady } = useBootState();
-  const refreshRouteState = useMemo(() => async () => {
-    if (refreshInFlightRef.current) return;
-    refreshInFlightRef.current = true;
+  const performRefreshRouteState = useCallback(async () => {
     setLoading(true);
     let desktopList: WorkspaceList | null = null;
     let desktopWorkspaces = workspacesRef.current;
@@ -1225,6 +1273,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         setJuggleWorkClient(null);
         setBaseUrl("");
         setToken("");
+        setHostToken("");
         setWorkspaces(desktopWorkspaces);
         setSessionsByWorkspaceId({});
         setErrorsByWorkspaceId({});
@@ -1247,6 +1296,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       const routeWorkspaceServerClientResolver = createWorkspaceServerClientResolver({
         baseUrl: normalizedBaseUrl,
         token: resolvedToken,
+        hostToken: resolvedHostToken,
       });
       const sessionEntries = await Promise.all(
         nextWorkspaces.map(async (workspace) => {
@@ -1295,6 +1345,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setJuggleWorkClient(client);
       setBaseUrl(normalizedBaseUrl);
       setToken(resolvedToken);
+      setHostToken(resolvedHostToken);
       setWorkspaces(nextWorkspaces);
       setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
       setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
@@ -1341,13 +1392,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     } finally {
       setLoading(false);
-      refreshInFlightRef.current = false;
       // Settings can be the first route a user lands on (direct link, deep
       // link, or after reload). Let the boot overlay dismiss once we've
       // completed our first data load.
       markBootRouteReady();
     }
   }, [markBootRouteReady, navigationSessionId, navigationWorkspaceId, routeWorkspaceId]);
+  const refreshRouteStateQueue = useMemo(
+    () => createLatestSyncQueue<() => Promise<void>>((refresh) => refresh()),
+    [],
+  );
+  const refreshRouteState = useCallback(
+    () => refreshRouteStateQueue.run(performRefreshRouteState),
+    [performRefreshRouteState, refreshRouteStateQueue],
+  );
 
   const reloadWorkspaceEngineFromUi = useCallback(async () => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId.trim();
@@ -1528,39 +1586,47 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [refreshRouteState]);
 
-  // Load auto-compaction state from OpenCode config on workspace change.
-  useEffect(() => {
-    if (!juggleworkClient || !selectedWorkspaceId) return;
+  // TIPS: 全局 OpenCode 配置的读写目标，自动压缩与全局连接器共用。这里仍依赖
+  // workspaceId，只是因为服务端按工作区暴露配置文件读写入口，与作用域无关；
+  // 切换工作区不会改变取值。
+  const globalConfigTarget = useCallback((): GlobalConfigTarget | null => {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    if (!workspaceId) return null;
+    return {
+      juggleworkClient,
+      workspaceId,
+      workspaceRoot: selectedWorkspaceRoot,
+      isLocalWorkspace: (selectedWorkspace?.workspaceType ?? "local") === "local",
+    };
+  }, [juggleworkClient, selectedWorkspace?.workspaceType, selectedWorkspaceId, selectedWorkspaceRoot]);
+
+  useEffect(() => {
+    const target = globalConfigTarget();
+    if (!target) return;
     let cancelled = false;
     (async () => {
       try {
-        const config = await juggleworkClient.getConfig(workspaceId);
+        const auto = await readGlobalAutoCompaction(target);
         if (cancelled) return;
-        const compaction = config.opencode?.compaction;
-        const auto = compaction && typeof compaction === "object" && "auto" in compaction
-          ? (compaction as { auto?: boolean }).auto
-          : undefined;
-        setAutoCompactContext(auto !== false);
-        setAutoCompactContextLoaded(true);
+        setAutoCompactContext(auto);
       } catch {
+        // 读取失败时保留默认的开启状态。
+      } finally {
         if (!cancelled) setAutoCompactContextLoaded(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [juggleworkClient, selectedWorkspaceId]);
+  }, [globalConfigTarget]);
 
   const toggleAutoCompactContext = useCallback(async () => {
     if (autoCompactContextBusy) return;
-    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
-    if (!juggleworkClient || !workspaceId) return;
+    const target = globalConfigTarget();
+    if (!target) return;
     const next = !autoCompactContext;
     setAutoCompactContext(next);
     setAutoCompactContextBusy(true);
     try {
-      await juggleworkClient.patchConfig(workspaceId, {
-        opencode: { compaction: { auto: next } },
-      });
+      await writeGlobalAutoCompaction(target, next);
       reloadCoordinator.markReloadRequired("config", {
         type: "config",
         name: "opencode.json",
@@ -1571,7 +1637,110 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     } finally {
       setAutoCompactContextBusy(false);
     }
-  }, [autoCompactContext, autoCompactContextBusy, juggleworkClient, reloadCoordinator, selectedWorkspaceId]);
+  }, [autoCompactContext, autoCompactContextBusy, globalConfigTarget, reloadCoordinator]);
+
+  // ---- 全局技能与全局连接器 ----
+
+  const globalSkills = useMemo(
+    () => extensionsSnapshot.skills.filter((skill) => skill.scope === "global"),
+    [extensionsSnapshot.skills],
+  );
+
+  const refreshGlobalConnectors = useCallback(async () => {
+    const target = globalConfigTarget();
+    if (!target) return;
+    try {
+      setGlobalMcpEntries(await readGlobalMcpEntries(target));
+      setGlobalExtensionsError(null);
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.load_failed"));
+    }
+  }, [globalConfigTarget]);
+
+  // 只在打开对应页面时读取，避免会话右侧面板和其他设置页付出无谓的配置文件读取。
+  const connectorsTabActive = route.tab === "connectors";
+  useEffect(() => {
+    if (!connectorsTabActive) return;
+    void refreshGlobalConnectors();
+  }, [connectorsTabActive, refreshGlobalConnectors]);
+
+  const skillsTabActive = route.tab === "skills";
+  useEffect(() => {
+    if (!skillsTabActive) return;
+    void extensionsStore.refreshSkills({ force: true });
+  }, [extensionsStore, skillsTabActive]);
+
+  // TIPS: 条目与连接状态来自全局配置文件，写入也回到同一个文件。运行时层的
+  // MCP 接口只作用于工作区，不能用来承载全局连接器。
+  const globalConnectors = useMemo<GlobalConnectorItem[]>(
+    () => globalMcpEntries.map((entry) => ({
+      name: entry.name,
+      config: entry.config,
+      status: connectionsSnapshot.mcpStatuses[entry.name],
+    })),
+    [connectionsSnapshot.mcpStatuses, globalMcpEntries],
+  );
+
+  const runGlobalConnectorWrite = useCallback(async (
+    name: string,
+    write: (target: GlobalConfigTarget) => Promise<void>,
+  ) => {
+    const target = globalConfigTarget();
+    if (!target) return;
+    setPendingGlobalConnector(name);
+    setGlobalExtensionsError(null);
+    try {
+      await write(target);
+      reloadCoordinator.markReloadRequired("config", {
+        type: "config",
+        name: "opencode.json",
+        action: "updated",
+      });
+      await refreshGlobalConnectors();
+      void connectionsStore.refreshMcpServers();
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
+      throw error;
+    } finally {
+      setPendingGlobalConnector(null);
+    }
+  }, [connectionsStore, globalConfigTarget, refreshGlobalConnectors, reloadCoordinator]);
+
+  const addGlobalConnector = useCallback(
+    (name: string, config: McpServerConfig) =>
+      runGlobalConnectorWrite(name, (target) => upsertGlobalMcp(target, name, config)),
+    [runGlobalConnectorWrite],
+  );
+
+  const toggleGlobalConnector = useCallback(
+    (name: string, enabled: boolean) =>
+      runGlobalConnectorWrite(name, (target) => setGlobalMcpEnabled(target, name, enabled)),
+    [runGlobalConnectorWrite],
+  );
+
+  const removeGlobalConnector = useCallback(
+    (name: string) => runGlobalConnectorWrite(name, (target) => removeGlobalMcp(target, name)),
+    [runGlobalConnectorWrite],
+  );
+
+  const deleteGlobalSkill = useCallback(async (name: string) => {
+    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    if (!juggleworkClient || !workspaceId) {
+      // 不能静默返回：用户点了删除却毫无反馈，会以为是应用卡住了。
+      setGlobalExtensionsError(t("skills.uninstall_failed"));
+      return;
+    }
+    setDeletingGlobalSkill(name);
+    setGlobalExtensionsError(null);
+    try {
+      await juggleworkClient.deleteSkill(workspaceId, name, { scope: "global" });
+      await extensionsStore.refreshSkills({ force: true });
+    } catch (error) {
+      setGlobalExtensionsError(error instanceof Error ? error.message : t("skills.uninstall_failed"));
+    } finally {
+      setDeletingGlobalSkill(null);
+    }
+  }, [extensionsStore, juggleworkClient, selectedWorkspaceId]);
 
   useEffect(() => {
     juggleworkServerStore.start();
@@ -1671,26 +1840,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const disabledProviderIdSet = new Set(
     disabledProviders.map((id) => id.trim().toLowerCase()).filter(Boolean),
   );
-  const connectedProviders = providers.flatMap((provider) =>
-    providerConnectedIdSet.has(provider.id) &&
-    provider.id.trim().toLowerCase() !== "jugglework" &&
-    !disabledProviderIdSet.has(provider.id.trim().toLowerCase())
-      ? [{
-          id: provider.id,
-          name: provider.name ?? provider.id,
-          source: provider.source,
-        }]
-      : [],
-  );
-  // Providers a Disconnect parked in `disabled_providers`. They are dropped
-  // from the engine's provider list, so the id is all we have to show — and it
-  // is the only way back for a provider declared in the user's OpenCode config.
-  // Ones the org itself blocks stay hidden; reconnecting them would be undone
-  // by the next desktop-restriction sync. TIPS: everything in this list got
-  // there because the user disconnected a provider they had configured, so
-  // judge it as `source: "config"` — that applies the `allowZenModel` and
-  // `allowCustomProviders` policies without running it past the cloud catalog,
-  // which can never list a locally configured provider.
+  // Providers a Disconnect parked in `disabled_providers` are dropped from
+  // the engine list. Keep their last known metadata so the same row can remain
+  // visible while only its connection state and actions change.
+  // TIPS：首次加载时可能只有 provider id，此时仍合并进主列表，避免断开项
+  // 被移动到独立区域；下一次连接后会用引擎返回的完整信息刷新缓存。
   const reconnectableDisabledProviderIds = disabledProviders
     .map((id) => id.trim())
     .filter(
@@ -1703,6 +1857,46 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           providerSource: "config",
         }),
     );
+  const retainedDisconnectedProviderIds = Array.from(new Set([
+    ...reconnectableDisabledProviderIds,
+    ...(reconnectingProviderId ? [reconnectingProviderId] : []),
+  ]));
+  const providerRows = new Map<string, {
+    id: string;
+    name: string;
+    source?: "env" | "api" | "config" | "custom";
+    connected: boolean;
+  }>();
+  for (const provider of providers) {
+    const normalizedId = provider.id.trim().toLowerCase();
+    if (!normalizedId || normalizedId === "jugglework") continue;
+    const isConnected =
+      providerConnectedIdSet.has(provider.id) && !disabledProviderIdSet.has(normalizedId);
+    if (!isConnected && !disabledProviderIdSet.has(normalizedId)) continue;
+    providerRows.set(normalizedId, {
+      id: provider.id,
+      name: provider.name ?? provider.id,
+      source: provider.source,
+      connected: isConnected,
+    });
+  }
+  for (const providerId of retainedDisconnectedProviderIds) {
+    const normalizedId = providerId.toLowerCase();
+    if (providerRows.has(normalizedId)) continue;
+    const cached = providerDisplayCacheRef.current.get(normalizedId);
+    providerRows.set(normalizedId, {
+      id: cached?.id ?? providerId,
+      name: cached?.name ?? providerId,
+      source: cached?.source ?? "config",
+      connected: false,
+    });
+  }
+  // TIPS: 排序键必须与连接状态无关。断开后的条目会从引擎列表消失、退回本地缓存
+  // 渲染，缓存未命中时名称退化为 provider ID；若按名称排序，条目会在断开瞬间跳到
+  // 列表另一处，用户在同一屏幕位置连续点击就会命中另一个模型组。
+  const connectedProviders = Array.from(providerRows.entries())
+    .toSorted(([leftId], [rightId]) => leftId.localeCompare(rightId))
+    .map(([, row]) => row);
   const mcpConnectedAppsCount = connectionsSnapshot.mcpServers.length;
   const juggleworkCloudMcpUrl = connectionsSnapshot.mcpServers.find(
     (server) => server.name === "jugglework-cloud",
@@ -2047,20 +2241,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setCreateWorkspaceError(null);
     try {
       const workspaceName = folderNameFromPath(folder);
-      let list: WorkspaceList | null = null;
-      if (juggleworkClient) {
-        list = await juggleworkClient
-          .createLocalWorkspace({ folderPath: folder, name: workspaceName, preset })
-          .catch(() => null);
-      }
-      if (!list) {
+      if (!juggleworkClient) {
         throw new Error("JuggleWork server is unavailable. Start or reconnect the server before creating a workspace.");
       }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
+      await createLocalWorkspaceForRuntime(juggleworkClient, {
+        folderPath: folder,
+        name: workspaceName,
+        preset,
+      });
       setCreateWorkspaceOpen(false);
       await refreshRouteState();
     } catch (error) {
@@ -2115,14 +2303,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   };
 
-  if (route.redirectPath && !props.embedded) {
+  // 只有真正持有路由的设置面板才能改 URL：嵌入式面板自己管路径，隐藏的常驻面板不能抢路由。
+  const ownsBrowserRoute = !props.embedded && props.active !== false;
+
+  if (route.redirectPath && ownsBrowserRoute) {
     const target = selectedWorkspaceId
       ? workspaceSettingsRoute(selectedWorkspaceId, route.redirectPath)
       : `/settings/${route.redirectPath}`;
     return <Navigate to={target} replace state={location.state} />;
   }
 
-  if (!props.embedded && !routeWorkspaceId && selectedWorkspaceId) {
+  if (ownsBrowserRoute && !routeWorkspaceId && selectedWorkspaceId) {
     return <Navigate to={workspaceSettingsRoute(selectedWorkspaceId, settingsPathForRoute(route))} replace state={location.state} />;
   }
 
@@ -2171,6 +2362,25 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             providerConnectError={providerAuthSnapshot.providerAuthError}
             providerDisconnectError={providerDisconnectError}
             onOpenProviderAuth={handleOpenProviderAuth}
+            onEditLocalProvider={async (providerId) => {
+              if (checkDesktopRestriction({ restriction: "allowCustomProviders" })) {
+                restrictionNotice.show({
+                  title: "Editing custom providers is disabled",
+                  message: "Your organization administrator has disabled custom providers.",
+                });
+                return;
+              }
+              const provider = providers.find((item) => item.id === providerId) ??
+                providerDisplayCacheRef.current.get(providerId.trim().toLowerCase());
+              const draft = provider ? customProviderInputFromProvider(provider) : null;
+              if (!draft) {
+                setProviderDisconnectError(t("providers.custom_edit_unsupported"));
+                return;
+              }
+              setProviderDisconnectError(null);
+              setEditingLocalProvider(draft);
+              providerAuthStore.openCustomProviderModal();
+            }}
             onDisconnectProvider={async (providerId) => {
               if (disconnectingProviderId) return;
               setDisconnectingProviderId(providerId);
@@ -2201,6 +2411,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 if (typeof message === "string" && message.trim()) {
                   setConfigActionStatus(message);
                 }
+                providerDisplayCacheRef.current.delete(providerId.trim().toLowerCase());
                 return true;
               } catch (error) {
                 setProviderDisconnectError(
@@ -2219,7 +2430,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             canDeleteProvider={(provider) =>
               provider.source === "config" || provider.source === "custom"
             }
-            disabledProviderIds={reconnectableDisabledProviderIds}
             reconnectingProviderId={reconnectingProviderId}
             onReconnectProvider={async (providerId) => {
               if (reconnectingProviderId) return;
@@ -2244,32 +2454,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               imported: providerAuthSnapshot.importedCloudProviders ?? {},
               liveProviders: providerAuthSnapshot.cloudOrgProviders,
             }))}
-            cloudProviderImportIds={Object.fromEntries(
-              Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((provider) => [
-                provider.providerId,
-                provider.cloudProviderId,
-              ]),
-            )}
-            onRemoveCloudProvider={async (providerId, cloudProviderId) => {
-              if (disconnectingProviderId) return;
-              setDisconnectingProviderId(providerId);
-              setProviderDisconnectError(null);
-              setConfigActionStatus(null);
-              try {
-                const message = await providerAuthStore.removeCloudProvider(cloudProviderId);
-                if (typeof message === "string" && message.trim()) {
-                  setConfigActionStatus(message);
-                }
-              } catch (error) {
-                setProviderDisconnectError(
-                  error instanceof Error && error.message.trim()
-                    ? error.message
-                    : t("providers.disconnect_failed"),
-                );
-              } finally {
-                setDisconnectingProviderId(null);
-              }
-            }}
           />
         );
       case "preferences":
@@ -2297,6 +2481,32 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "shell":
         return <ShellCustomizationView />;
+      case "skills":
+        return (
+          <GlobalSkillsView
+            busy={busy}
+            skills={globalSkills}
+            status={extensionsSnapshot.skillsStatus}
+            error={globalExtensionsError}
+            deletingSkillName={deletingGlobalSkill}
+            onDeleteSkill={deleteGlobalSkill}
+            onRefresh={() => { void extensionsStore.refreshSkills({ force: true }); }}
+            projectDir={selectedWorkspaceRoot}
+          />
+        );
+      case "connectors":
+        return (
+          <GlobalConnectorsView
+            busy={busy}
+            connectors={globalConnectors}
+            error={globalExtensionsError}
+            pendingConnectorName={pendingGlobalConnector}
+            onAddConnector={addGlobalConnector}
+            onToggleEnabled={toggleGlobalConnector}
+            onRemoveConnector={removeGlobalConnector}
+            onRefresh={() => { void refreshGlobalConnectors(); }}
+          />
+        );
       case "extensions": {
         // TIPS: 仅会话右侧 rail（embedded）改为分组卡片面板；独立设置页维持既有 ExtensionsView。
         if (props.embedded) {
@@ -2311,14 +2521,15 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             connectDirectory: (entry) => { void connectionsStore.connectMcp(entry); },
             authorizeMcp: (entry) => { void connectionsStore.authorizeMcp(entry); },
             removeMcp: (name) => { void connectionsStore.removeMcp(name); },
+            setMcpEnabled: (name, enabled) => { void connectionsStore.setMcpEnabled(name, enabled); },
             connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });
-          // TIPS: 「本地已安装」= listLocalSkills 的完整结果（本工作区 + 全局，带 scope）。
+          // TIPS: 技能弹窗的数据源 = 完整技能列表（本工作区 + 全局，带 scope）按工作区过滤。
           // 不能用 extensionItems.installedSkills：那份列表会把「属于某个云端市场包」的技能
           // 剔除（旧扩展页把它们折叠进插件卡片），导致刚安装到工作区的市场技能不显示。
-          // JuggleWork Connect 下发的云端技能则归「云端运行」页，不混入本地列表。
-          const projectSkills = extensionsSnapshot.skills;
+          // 全局技能已拆到设置页的「技能」，这里只保留工作区技能。
+          const projectSkills = extensionsSnapshot.skills.filter((skill) => skill.scope !== "global");
           return (
             <ProjectExtensionsPanel
               projectDir={selectedWorkspaceRoot}
@@ -2329,15 +2540,22 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
               configSlotForConnector={extensionController.configSlotForEntry}
               installedSkills={projectSkills}
-              cloudSkillsSlot={(
+              pluginsSlot={({ search }) => (
                 <CloudMarketplacesView
                   extensions={extensionsStore}
                   onOpenAccount={openCloudAccountSettings}
                   session={denSession}
-                  skillsOnly
                   hideSectionHeader
+                  hideMarketplaceFilter
+                  uniformCardHeight
+                  plainCards
+                  searchValue={search}
                 />
               )}
+              onRefreshPlugins={async () => {
+                denSession.syncCurrentDenSettings();
+                await extensionsStore.refreshCloudOrgMarketplaces({ force: true });
+              }}
               onUninstallSkill={(name) => { void extensionsStore.uninstallSkill(name); }}
               onRefreshSkills={() => { void extensionsStore.refreshSkills({ force: true }); }}
               onUploadSkill={async () => {
@@ -2678,10 +2896,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSelect={providerAuthStore.startProviderAuth}
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onConnectCustomProvider={providerAuthStore.connectCustomProvider}
+        customProviderDraft={editingLocalProvider}
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        onClose={() => providerAuthStore.closeProviderAuthModal()}
+        onClose={() => {
+          setEditingLocalProvider(null);
+          providerAuthStore.closeProviderAuthModal();
+        }}
       />
       <CreateWorkspaceModal
         open={createWorkspaceOpen}

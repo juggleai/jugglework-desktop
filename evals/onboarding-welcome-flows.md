@@ -329,26 +329,7 @@ Founder/designer pass criteria:
 
 ---
 
-## Flow 28 — JuggleWork Models path explains payment before value
-
-**Why**: JuggleWork Models is the preferred business path, but it must make the tradeoff clear: pay/sign in through JuggleWork Cloud to skip API keys, then return to task execution.
-
-Steps:
-1. Start from a clean first-run app at `/welcome` with no workspaces.
-2. Create a local workspace through the welcome CTA.
-3. On “Power your first task,” choose “Use JuggleWork Models.”
-4. Expect: the user sees the JuggleWork Models value proposition and sign-in/payment CTA.
-5. If a paid/signed-in test account is available, complete sign-in, select an JuggleWork model, and run the recommended first task prompt.
-6. If no paid/signed-in test account is available, record the exact stop point and mark the run as “funnel blocked before task value.”
-
-Founder/designer pass criteria:
-- The recording clearly shows the paid path and what value it unlocks.
-- The summary states whether payment/sign-in blocks first task execution.
-- If blocked, the summary proposes the smallest product fix, such as demo credits, a trial task, or an inline fallback to bring-your-own-key.
-
----
-
-## Flow 29 — Ollama local model reaches first task value
+## Flow 28 — Ollama local model reaches first task value
 
 **Why**: Local model onboarding should prove that users can understand setup requirements, connect an available local model, reload if needed, and still reach chat value.
 

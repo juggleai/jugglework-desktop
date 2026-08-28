@@ -74,7 +74,27 @@ describe("runtime-config disabled providers route", () => {
     expect(response.status).toBe(200);
     const body: unknown = await response.json();
     expect(isRecord(body) ? body.disabledProviders : null).toEqual(["anthropic", "openai"]);
+    expect(isRecord(body) ? body.changed : null).toBe(true);
     expect((await readRuntimeOpencodeConfig(config, "ws_1")).disabled_providers).toEqual(["anthropic", "openai"]);
+  });
+
+  test("reports an unchanged semantic write without emitting a reload event", async () => {
+    const root = await createTempRoot();
+    const { base } = await startJuggleWorkServer(root);
+    const write = () => fetch(`${base}/workspace/ws_1/runtime-config/disabled-providers`, {
+      method: "POST",
+      headers: clientAuth(),
+      body: JSON.stringify({ providers: ["openai"] }),
+    });
+
+    expect((await write()).status).toBe(200);
+    const second = await write();
+    expect(second.status).toBe(200);
+    await expect(second.json()).resolves.toMatchObject({ changed: false, disabledProviders: ["openai"] });
+
+    const events = await fetch(`${base}/workspace/ws_1/events`, { headers: clientAuth() });
+    const body = await events.json() as { items?: unknown[] };
+    expect(body.items).toHaveLength(1);
   });
 
   test("preserves other runtime keys while updating disabled providers", async () => {

@@ -6,7 +6,13 @@ import type { McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
-import type { DenExternalMcpConnection, DenOrgMarketplaceResolved, DenOrgPlugin, DenOrgPluginResolved } from "@/app/lib/den";
+import type {
+  DenExternalMcpConnection,
+  DenOrgMarketplaceResolved,
+  DenOrgPlugin,
+  DenOrgPluginResolved,
+  DenPluginMcpComponent,
+} from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
@@ -14,6 +20,11 @@ import { canDisconnectNativeProviderAccount } from "@/react-app/domains/connecti
 import { ExtensionCard } from "@/react-app/design-system/extension-card";
 import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
 import { resolveMarketplaceDeliveryAction } from "@/react-app/domains/settings/connect-delivery";
+import {
+  aggregatePluginDelivery,
+  resolvePluginMcpComponents,
+  type PluginDeliveryComposition,
+} from "@/react-app/domains/settings/connect-cloud-readiness";
 import {
   isOrgMcpConnectionItem,
   isOrgMcpConnectionReady,
@@ -76,6 +87,10 @@ type MarketplacePackageRow = {
   status: MarketplacePackageStatus;
   counts: string[];
   composition: Array<{ count: number; label: string; type: string }>;
+  /** 逐个 MCP server 的承载明细，服务端下发时带连接绑定。 */
+  mcpComponents: DenPluginMcpComponent[];
+  /** 按最弱环节聚合出的投递构成；无 MCP 组件时为 null。 */
+  delivery: PluginDeliveryComposition | null;
   searchableText: string;
 };
 
@@ -152,6 +167,14 @@ export type CloudMarketplacesViewProps = {
   skillsOnly?: boolean;
   /** 隐藏分区标题/描述/刷新（宿主已有自己的标题栏时使用）。 */
   hideSectionHeader?: boolean;
+  /** 由宿主接管搜索词；传入后不再渲染内置搜索框。 */
+  searchValue?: string;
+  /** 隐藏「筛选」下拉（按市场过滤），状态筛选按钮仍保留。 */
+  hideMarketplaceFilter?: boolean;
+  /** 卡片按固定行高等高展示。 */
+  uniformCardHeight?: boolean;
+  /** 卡片使用中性配色，不因已安装而整块变绿。 */
+  plainCards?: boolean;
 };
 
 /** 市场包是否包含技能组件。 */
@@ -227,12 +250,22 @@ export function CloudMarketplacesView({
   setBuiltInEnabled,
   skillsOnly = false,
   hideSectionHeader = false,
+  searchValue,
+  hideMarketplaceFilter = false,
+  uniformCardHeight = false,
+  plainCards = false,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
   const [actionId, setActionId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [search, setSearch] = React.useState("");
+  const [internalSearch, setInternalSearch] = React.useState("");
+  // TIPS: searchValue 受控时由宿主（插件弹窗标题栏）提供搜索词，内置搜索框不再渲染。
+  const searchControlled = searchValue !== undefined;
+  const search = searchControlled ? searchValue : internalSearch;
+  const setSearch = (value: string) => {
+    if (!searchControlled) setInternalSearch(value);
+  };
   const [statusFilter, setStatusFilter] = React.useState<MarketplaceStatusFilter>("all");
   const [marketplaceFilter, setMarketplaceFilter] = React.useState("all");
   const [detailRow, setDetailRow] = React.useState<MarketplaceRow | null>(null);
@@ -280,6 +313,9 @@ export function CloudMarketplacesView({
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
+      // 列表阶段只有插件摘要，没有配置对象 payload，因此这里只用服务端下发的明细；
+      // 详情弹窗拿到 resolved 后会再补一次推断。
+      const mcpComponents = resolvePluginMcpComponents(plugin);
       const item = extensionItemsByPluginId.get(plugin.id);
       const status: MarketplacePackageStatus = imported && pendingChanges[plugin.id] === "modified" && !isCloudBuiltInPlugin(plugin)
         ? "update_available"
@@ -294,6 +330,8 @@ export function CloudMarketplacesView({
         status,
         counts,
         composition,
+        mcpComponents,
+        delivery: aggregatePluginDelivery(mcpComponents),
         searchableText: [
           plugin.name,
           plugin.description ?? "",
@@ -557,11 +595,13 @@ export function CloudMarketplacesView({
       ))}
 
       <div className="space-y-3">
-        <SettingsListSearchInput
-          value={search}
-          onChange={(event) => setSearch(event.currentTarget.value)}
-          placeholder={t("marketplace.search_placeholder")}
-        />
+        {!searchControlled ? (
+          <SettingsListSearchInput
+            value={search}
+            onChange={(event) => setSearch(event.currentTarget.value)}
+            placeholder={t("marketplace.search_placeholder")}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {(["all", "available", "installed", "update_available"] as const).map((filter) => (
             <Button
@@ -579,7 +619,7 @@ export function CloudMarketplacesView({
                     : t("marketplace.filter_available")}
             </Button>
           ))}
-          <details className="group relative">
+          <details className={hideMarketplaceFilter ? "hidden" : "group relative"}>
             <summary className="flex h-7 cursor-pointer list-none items-center rounded-md border border-dls-border px-2.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text">
               {t("marketplace.filters")}
             </summary>
@@ -617,7 +657,12 @@ export function CloudMarketplacesView({
       ) : null}
 
       {visibleRows.length > 0 ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">
+        <div
+          className={`grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3${
+            // TIPS: 等高模式下固定行高并让卡片撑满，避免描述长短导致条目高低不一。
+            uniformCardHeight ? " auto-rows-[7rem] [&>div]:h-full [&>div>button]:h-full [&>div>button]:overflow-hidden" : ""
+          }`}
+        >
           {visibleRows.map((row) => {
             const pluginName = row.source === "cloud" ? row.plugin.name : row.source === "built-in" ? row.entry.name : row.item.name;
             const isHighlighted = highlightPluginName != null && pluginName === highlightPluginName;
@@ -633,6 +678,7 @@ export function CloudMarketplacesView({
                 builtInDisabled={builtInExtensionsDisabled}
                 builtInConnectingName={builtInConnectingName}
                 highlighted={isHighlighted}
+                plain={plainCards}
               />
             );
           })}
@@ -685,9 +731,33 @@ export function CloudMarketplacesView({
 }
 
 function marketplaceDeliveryLabel(action: ReturnType<typeof resolveMarketplaceDeliveryAction>) {
-  return action === "cloud_active_local_copy"
-    ? t("connect.marketplace_local_copy_badge")
-    : t("extensions.marketplace_active_cloud_label");
+  switch (action) {
+    case "cloud_active_local_copy":
+      return t("connect.marketplace_local_copy_badge");
+    case "desktop_install_required":
+      return t("marketplace.delivery_desktop_required");
+    case "mixed_partial_desktop":
+      return t("marketplace.delivery_partial_desktop");
+    default:
+      return t("extensions.marketplace_active_cloud_label");
+  }
+}
+
+/** 组成明细：`3 MCP · 1 云端 · 2 需本地`，只在含 MCP 组件时展示。 */
+function deliveryCompositionSummary(delivery: PluginDeliveryComposition | null) {
+  if (!delivery) return null;
+  return t("marketplace.delivery_composition", {
+    total: delivery.total,
+    cloud: delivery.cloudCount,
+    desktop: delivery.desktopCount,
+  });
+}
+
+/** 组件行的承载位置文案。 */
+function componentDeliveryLabel(component: DenPluginMcpComponent) {
+  return component.delivery === "cloud"
+    ? t("marketplace.delivery_component_cloud")
+    : t("marketplace.delivery_component_desktop");
 }
 
 function MarketplaceCard(props: {
@@ -700,6 +770,7 @@ function MarketplaceCard(props: {
   builtInDisabled: boolean;
   builtInConnectingName: string | null;
   highlighted?: boolean;
+  plain?: boolean;
 }) {
   const { actionId, row, onOpenDetail } = props;
   const highlightRef = React.useRef<HTMLDivElement>(null);
@@ -733,6 +804,7 @@ function MarketplaceCard(props: {
           disabled={props.builtInDisabled}
           disabledReason={props.builtInDisabled ? "Disabled by organization" : null}
           actionLabel={row.active ? "Manage" : "View setup"}
+          plain={props.plain}
           onClick={() => onOpenDetail(row)}
         />
       </div>
@@ -756,6 +828,7 @@ function MarketplaceCard(props: {
           beta
           connecting={actionBusy}
           actionLabel={actionBusy ? t("mcp.waiting_for_browser") : disconnecting ? t("mcp.org_connection_disconnecting_action") : ready ? t("mcp.view_details") : orgMcpConnectionActionLabel(row.connection)}
+          plain={props.plain}
           onClick={() => onOpenDetail(row)}
         />
         {canDisconnect ? (
@@ -778,8 +851,12 @@ function MarketplaceCard(props: {
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
   const deliveryAction = resolveMarketplaceDeliveryAction({
     importedLocally: Boolean(row.imported),
+    composition: row.delivery,
   });
   const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
+  // TIPS: 含 desktop 组件的插件在装到工作区之前用不了，卡片不能呈现为「已就绪」。
+  const cloudReady = deliveryAction === "cloud_active" || deliveryAction === "cloud_active_local_copy";
+  const compositionSummary = deliveryCompositionSummary(row.delivery);
 
   return (
     <div ref={highlightRef} className={`flex flex-col gap-2 ${highlightClass}`}>
@@ -789,10 +866,15 @@ function MarketplaceCard(props: {
         iconSlug={manifest?.icon?.simpleIconSlug}
         iconSrc={manifest?.icon?.src}
         kind="extension"
-        connected
+        connected={cloudBuiltIn || cloudReady}
         connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
         connecting={actionBusy}
-        actionLabel={cloudBuiltIn ? t("mcp.view_details") : deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
+        actionLabel={cloudBuiltIn
+          ? t("mcp.view_details")
+          : compositionSummary ?? (deliveryAction === "cloud_active_local_copy"
+            ? t("connect.marketplace_local_copy_badge")
+            : t("extensions.marketplace_runs_in_cloud"))}
+        plain={props.plain}
         onClick={() => onOpenDetail(row)}
       />
     </div>
@@ -915,10 +997,16 @@ function MarketplacePackageDetailModal(props: {
   const actionBusy = actionId === row.plugin.id;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
   const manifest = row.plugin.extension?.manifest;
+  // 详情里已经拿到 resolved，缺 components 的旧服务端在这里也能推断出承载方式。
+  const mcpComponents = resolvePluginMcpComponents(row.plugin, resolved);
+  const delivery = aggregatePluginDelivery(mcpComponents);
   const deliveryAction = resolveMarketplaceDeliveryAction({
     importedLocally: Boolean(row.imported),
+    composition: delivery,
   });
   const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
+  // 已落盘的组件按 configObjectId 记账，用于逐行判断"这个组件装了没有"。
+  const installedConfigObjectIds = new Set(row.imported?.files.map((file) => file.configObjectId) ?? []);
   const importedExternalConnectionIds = row.imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? [];
   const importedConnections = [...new Set(importedExternalConnectionIds)].flatMap((connectionId) => {
     const connection = orgMcpConnections.find((entry) => entry.id === connectionId);
@@ -978,6 +1066,68 @@ function MarketplacePackageDetailModal(props: {
               ))}
             </div>
           </div>
+          {/* TIPS: 混合插件靠整插件一个状态说不清哪一部分不可用，这里按 MCP server 逐行展开，
+              云端组件与需要本地安装的组件各自标注，操作入口跟着行走。 */}
+          {mcpComponents.length > 0 ? (
+            <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {t("marketplace.delivery_components_title")}
+              </div>
+              <div className="mt-2 grid gap-2">
+                {mcpComponents.map((component) => {
+                  const installed = installedConfigObjectIds.has(component.configObjectId);
+                  const needsInstall = component.delivery === "desktop" && !installed;
+                  // 云端组件绑定到组织连接、但当前成员还没授权时，给一个定向授权入口。
+                  const needsMemberAuth = component.delivery === "cloud"
+                    && Boolean(component.connectionId)
+                    && component.connectedForMe === false;
+                  return (
+                    <div
+                      key={`${component.configObjectId}:${component.serverName}`}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dls-border bg-dls-surface px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-card-foreground">
+                          {component.serverName || row.plugin.name}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {component.url ?? component.command?.join(" ") ?? ""}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <SettingsPill>{componentDeliveryLabel(component)}</SettingsPill>
+                        {needsInstall ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={actionBusy}
+                            onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
+                          >
+                            {actionBusy ? t("marketplace.working") : t("marketplace.install_in_workspace")}
+                          </Button>
+                        ) : component.delivery === "desktop" ? (
+                          <SettingsPill>{t("marketplace.delivery_component_installed")}</SettingsPill>
+                        ) : needsMemberAuth && onConnectOrgMcp && component.connectionId ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={orgMcpConnectingId === component.connectionId}
+                            onClick={() => onConnectOrgMcp(component.connectionId as string)}
+                          >
+                            {orgMcpConnectingId === component.connectionId
+                              ? t("mcp.waiting_for_browser")
+                              : t("marketplace.delivery_component_connect")}
+                          </Button>
+                        ) : component.delivery === "cloud" && component.connectionId && component.connectedForMe ? (
+                          <SettingsPill>{t("marketplace.delivery_component_ready")}</SettingsPill>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
           {resolveError ? (
             <SettingsNotice tone="error">{resolveError}</SettingsNotice>
           ) : null}

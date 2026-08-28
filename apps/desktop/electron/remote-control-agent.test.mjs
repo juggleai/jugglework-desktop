@@ -8,6 +8,7 @@ import {
   createRemoteControlAgent,
   normalizeRemoteControlAgentContext,
 } from "./remote-control-agent.mjs";
+import { RemoteControlCloudError } from "./remote-control-cloud-client.mjs";
 import {
   canonicalRemoteControlAAD,
   decryptRemoteControlPayload,
@@ -139,6 +140,7 @@ class FakeSocket extends EventEmitter {
     /** @type {Array<Record<string, any>>} */
     this.sent = [];
     this.closeCalls = 0;
+    this.terminateCalls = 0;
     this.closed = false;
   }
 
@@ -149,6 +151,11 @@ class FakeSocket extends EventEmitter {
 
   close() {
     this.closeCalls += 1;
+    this.closed = true;
+  }
+
+  terminate() {
+    this.terminateCalls += 1;
     this.closed = true;
   }
 
@@ -221,7 +228,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -240,14 +247,16 @@ function harness({
   onControlRevoked = () => {},
   onPolicyExpired = () => {},
   onAuthorizationChanged = () => {},
+  issueTokenError = null,
 } = {}) {
   const clock = new FakeClock();
-  let settings = { schemaVersion: 1, enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+  let settings = { schemaVersion: 1, enabled, preventSleepWhileWaiting: enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
   let credential = enrolled ? enrolledCredential() : null;
   let uuid = 10;
   let tokenCalls = 0;
   let enrollmentCalls = 0;
   let deleteCalls = 0;
+  let disableSettingsCalls = 0;
   /** @type {FakeSocket[]} */
   const sockets = [];
   /** @type {Array<Record<string, any>>} */
@@ -291,6 +300,7 @@ function harness({
     },
     issueAgentToken: async () => {
       tokenCalls += 1;
+      if (issueTokenError) throw issueTokenError;
       return {
         accessToken: `short-lived-token-${tokenCalls}`,
         expiresAt: new Date(clock.time + tokenLifetime).toISOString(),
@@ -299,7 +309,14 @@ function harness({
     },
   });
   const agent = createRemoteControlAgent({
-    settingsStore: { read: async () => ({ ...settings }) },
+    settingsStore: {
+      read: async () => ({ ...settings }),
+      disable: async () => {
+        disableSettingsCalls += 1;
+        settings = { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
+        return { ...settings };
+      },
+    },
     credentialStore,
     e2eeKeyStore,
     operationRegistry,
@@ -338,6 +355,7 @@ function harness({
     get tokenCalls() { return tokenCalls; },
     get enrollmentCalls() { return enrollmentCalls; },
     get deleteCalls() { return deleteCalls; },
+    get disableSettingsCalls() { return disableSettingsCalls; },
     setSettings(next) { settings = { ...next }; },
   };
 }
@@ -448,6 +466,31 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(heartbeat.payload.localControlEnabled, true);
   });
 
+  it("terminates a silent welcomed socket and reconnects with fresh authentication", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    await fixture.clock.advance(21_000);
+    assert.equal(socket.terminateCalls, 1);
+    assert.equal(fixture.agent.status().lastErrorCode, "transport_stale");
+    const delay = fixture.clock.nextDelay();
+    assert.ok(delay >= 250 && delay <= 30_000);
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.tokenCalls, 2);
+  });
+
+  it("refreshes the liveness deadline on every inbound cloud frame", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await fixture.clock.advance(19_000);
+    socket.receive(envelope("cloud.ping", { nonce: "still-alive" }));
+    await fixture.clock.advance(19_000);
+    assert.equal(socket.terminateCalls, 0);
+  });
+
   it("normalizes and caps active runs in hello and heartbeat", async () => {
     const runs = Array.from({ length: 105 }, (_, index) => ({
       workspaceId: `ws_${index}`,
@@ -484,7 +527,7 @@ describe("remote-control agent context and lifecycle", () => {
     const socket = await connect(fixture);
     assert.equal(socket.closeCalls, 0);
     await fixture.clock.advance(6 * 60_000);
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.agent.status().localControlEnabled, false);
     assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
   });
@@ -529,15 +572,13 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.tokenCalls, 2);
   });
 
-  it("authorizes execution sleep only while session mutation policy is fresh and enabled", async () => {
+  it("authorizes remote waiting sleep prevention while the base remote policy is fresh", async () => {
     const authorizations = [];
     const fixture = harness({ onAuthorizationChanged: (authorized) => authorizations.push(authorized) });
     await fixture.agent.start();
     await fixture.agent.syncContext(signedInContext());
-    assert.deepEqual(authorizations, []);
-    await fixture.agent.syncContext(signedInContext({ featureGates: { ...readGates, sessionMutation: true } }));
     assert.deepEqual(authorizations, [true]);
-    await fixture.agent.syncContext(signedInContext());
+    await fixture.agent.syncContext(signedInContext({ policyFresh: false, validatedAt: null }));
     assert.deepEqual(authorizations, [true, false]);
   });
 
@@ -658,10 +699,83 @@ describe("remote-control agent context and lifecycle", () => {
     await settle();
     assert.equal(socket.closeCalls, 1);
     assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.disableSettingsCalls, 1);
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
     assert.equal(fixture.agent.status().enrolled, false);
     assert.equal(fixture.clock.nextDelay(), null);
     assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("a cloud-disabled device keeps credentials and reconnects until access is restored", async () => {
+    const revocations = [];
+    const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
+    const socket = await connect(fixture);
+    socket.receive(envelope("device.disabled", { deviceId: DEVICE_ID, reason: "Remote control was disabled" }));
+    socket.unexpectedClose(1008, Buffer.from("device disabled"));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_disabled");
+    assert.equal(fixture.agent.status().enrolled, true);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.deepEqual(revocations, [], "suspension is not revocation");
+    const delay = fixture.clock.nextDelay();
+    assert.ok(delay >= 250 && delay <= 30_000, "a reconnect backoff is scheduled");
+
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2, "a fresh authenticated socket is created");
+    assert.equal(fixture.tokenCalls, 2, "the retry performs a new challenge/token handshake");
+    fixture.sockets[1].open();
+    await settle();
+    fixture.sockets[1].receive(welcome(77));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("a malformed disabled notice fails the transport without deleting credentials", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(envelope("device.disabled", { deviceId: "11111111-2222-4333-8444-555555555555", reason: "Not this device" }));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "invalid_disabled_notice");
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.notEqual(fixture.clock.nextDelay(), null, "the normal retry path stays armed");
+  });
+
+  it("a permanently deleted device (404 token issue) disables remote control durably", async () => {
+    const revocations = [];
+    const fixture = harness({
+      onControlRevoked: (input) => revocations.push(input),
+      issueTokenError: new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 404.", { status: 404 }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await settle();
+    assert.equal(fixture.sockets.length, 0, "no transport is created for a deleted device");
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
+    assert.equal(fixture.agent.status().enrolled, false);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_deleted");
+    assert.equal(fixture.clock.nextDelay(), null, "no reconnect is scheduled");
+    assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("a retryable token failure keeps reconnecting without disabling", async () => {
+    const fixture = harness({
+      issueTokenError: new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 401.", { status: 401 }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "token_unavailable");
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.notEqual(fixture.clock.nextDelay(), null, "a reconnect backoff is scheduled");
   });
 
   it("reports explicit local stop once without misclassifying it as disconnect", async () => {
@@ -737,7 +851,7 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(frames(socket, "device.local_stop").length, 1);
     socket.unexpectedClose();
     await Promise.all([first, second]);
-    assert.equal(socket.closeCalls, 2);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 2);
     assert.equal(fixture.sockets.length, 1);
     assert.equal(fixture.clock.nextDelay(), null);
 
@@ -756,7 +870,7 @@ describe("remote-control agent context and lifecycle", () => {
     const fixture = harness();
     const socket = await connect(fixture);
     const first = fixture.agent.stop();
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.clock.nextDelay(), null);
     await first;
     await fixture.agent.stop();
@@ -1089,7 +1203,7 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
     socket.receive(envelope("session.unbound", { controlSessionId: CONTROL_ID, reason: "future_reason" }));
     await settle();
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
   });
 
   it("prepares flattened metadata before dispatch, sends accepted/running, journals terminal before send, and wraps result bodies", async () => {

@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
-import type * as React from "react";
+import * as React from "react";
 import { Loader2 } from "lucide-react";
 
+import { getResolvedThemeMode, subscribeToTheme } from "@/app/theme";
 import { cn } from "@/lib/utils";
 import { MarkdownBlock } from "../surface/markdown";
 
@@ -36,9 +37,13 @@ interface MarkdownPreviewProps extends React.ComponentProps<"div"> {
 }
 
 export function MarkdownPreview({ content, className, ...props }: MarkdownPreviewProps) {
+  const themeMode = React.useSyncExternalStore(subscribeToTheme, getResolvedThemeMode, () => "light");
+
   return (
-    <div data-jugglework-markdown-preview="" className={cn("h-full overflow-auto p-4", className)} {...props}>
-      <MarkdownBlock text={content} />
+    <div data-jugglework-markdown-preview="" className={cn("subtle-scrollbar h-full overflow-auto px-4 py-6", className)} {...props}>
+      <div className="mx-auto w-full max-w-3xl">
+        <MarkdownBlock text={content} copyCodeBlocks mermaidTheme={themeMode === "dark" ? "dark" : "default"} />
+      </div>
     </div>
   );
 }

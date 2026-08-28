@@ -13,6 +13,7 @@ import { desktopFetch } from "./desktop";
 import {
   createJuggleWorkServerClient,
   JuggleWorkServerError,
+  type JuggleWorkSessionRun,
   type JuggleWorkSessionRunObservation,
 } from "./jugglework-server";
 import { isDesktopRuntime } from "./runtime-env";
@@ -212,7 +213,55 @@ function sessionRunKey(mount: { baseUrl: string; workspaceId: string }, sessionI
   return `${mount.baseUrl}\0${mount.workspaceId}\0${sessionId}`;
 }
 
-const mountedSessionRunIds = new Map<string, string>();
+type MountedSessionRunFence = Pick<JuggleWorkSessionRun, "runId" | "generation">;
+
+const mountedSessionRuns = new Map<string, MountedSessionRunFence>();
+const mountedSessionObservationQueues = new Map<string, Promise<void>>();
+const mountedSessionRunRevisions = new Map<string, number>();
+
+function bumpMountedSessionRunRevision(key: string): void {
+  mountedSessionRunRevisions.set(key, (mountedSessionRunRevisions.get(key) ?? 0) + 1);
+}
+
+function rememberMountedSessionRun(key: string, run: MountedSessionRunFence): MountedSessionRunFence {
+  const current = mountedSessionRuns.get(key);
+  if (!current || run.generation >= current.generation) {
+    const next = { runId: run.runId, generation: run.generation };
+    if (!current || current.runId !== next.runId || current.generation !== next.generation) {
+      bumpMountedSessionRunRevision(key);
+    }
+    mountedSessionRuns.set(key, next);
+    return next;
+  }
+  return current;
+}
+
+function forgetMountedSessionRun(key: string, runId: string): void {
+  if (mountedSessionRuns.get(key)?.runId === runId) {
+    mountedSessionRuns.delete(key);
+    bumpMountedSessionRunRevision(key);
+  }
+}
+
+function mountedSessionRunPrefix(mount: { baseUrl: string; workspaceId: string }): string {
+  return `${mount.baseUrl}\0${mount.workspaceId}\0`;
+}
+
+function sessionRunMismatchCurrentId(error: JuggleWorkServerError): string | null | undefined {
+  if (error.code !== "run_mismatch" || !error.details || typeof error.details !== "object") return undefined;
+  const currentRunId = "currentRunId" in error.details
+    ? (error.details as { currentRunId?: unknown }).currentRunId
+    : undefined;
+  return typeof currentRunId === "string" || currentRunId === null ? currentRunId : undefined;
+}
+
+function observationRetryDelay(attempt: number): number {
+  return [100, 500, 2_000][attempt] ?? 2_000;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function commandCorrelationId(): string {
   const uuid = globalThis.crypto?.randomUUID?.();
@@ -266,7 +315,8 @@ function sessionRunObservation(raw: unknown): { sessionId: string; status: Juggl
     : properties.status;
   if (status === "busy") return { sessionId: properties.sessionID, status: "running" };
   if (status === "retry") return { sessionId: properties.sessionID, status: "retrying" };
-  if (status === "idle" || status === "completed" || status === "failed" || status === "aborted") {
+  if (status === "running" || status === "retrying" || status === "waiting" ||
+    status === "idle" || status === "completed" || status === "failed" || status === "aborted") {
     return { sessionId: properties.sessionID, status };
   }
   return null;
@@ -639,7 +689,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
           startCommandCorrelationId: commandCorrelationId(),
           prompt: body,
         });
-        mountedSessionRunIds.set(sessionRunKey(juggleworkMount, sessionID), result.run.runId);
+        rememberMountedSessionRun(sessionRunKey(juggleworkMount, sessionID), result.run);
         return {};
       }, options);
     }
@@ -657,13 +707,14 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     return wrapJuggleWorkMutation(url, async () => {
       const key = sessionRunKey(juggleworkMount, parameters.sessionID);
       const activeRunId = (await juggleworkSessionClient.listActiveSessionRuns(juggleworkMount.workspaceId)).items
-        .find((run) => run.sessionId === parameters.sessionID)?.runId;
+        .find((run) => run.sessionId === parameters.sessionID);
       if (!activeRunId) {
-        mountedSessionRunIds.delete(key);
+        const stale = mountedSessionRuns.get(key);
+        if (stale) forgetMountedSessionRun(key, stale.runId);
         return false;
       }
-      mountedSessionRunIds.set(key, activeRunId);
-      await juggleworkSessionClient.abortSessionRun(juggleworkMount.workspaceId, parameters.sessionID, activeRunId, {
+      rememberMountedSessionRun(key, activeRunId);
+      await juggleworkSessionClient.abortSessionRun(juggleworkMount.workspaceId, parameters.sessionID, activeRunId.runId, {
         abortCommandCorrelationId: commandCorrelationId(),
       });
       return true;
@@ -684,38 +735,120 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   };
 
   if (juggleworkMount && juggleworkSessionClient) {
+    const hydrateMountedSessionRuns = async () => {
+      const prefix = mountedSessionRunPrefix(juggleworkMount);
+      const revisionsAtStart = new Map<string, number>();
+      for (const key of mountedSessionRuns.keys()) {
+        if (key.startsWith(prefix)) revisionsAtStart.set(key, mountedSessionRunRevisions.get(key) ?? 0);
+      }
+      const items = (await juggleworkSessionClient.listActiveSessionRuns(juggleworkMount.workspaceId)).items;
+      const activeKeys = new Set<string>();
+      for (const run of items) {
+        const key = sessionRunKey(juggleworkMount, run.sessionId);
+        activeKeys.add(key);
+        rememberMountedSessionRun(key, run);
+      }
+      for (const key of mountedSessionRuns.keys()) {
+        if (key.startsWith(prefix) && !activeKeys.has(key) &&
+          revisionsAtStart.get(key) === (mountedSessionRunRevisions.get(key) ?? 0)) {
+          mountedSessionRuns.delete(key);
+          bumpMountedSessionRunRevision(key);
+        }
+      }
+      return items;
+    };
+
+    const observeMountedSessionRun = async (input: {
+      observation: { sessionId: string; status: JuggleWorkSessionRunObservation };
+      fence: MountedSessionRunFence;
+    }) => {
+      const { observation, fence } = input;
+      const key = sessionRunKey(juggleworkMount, observation.sessionId);
+
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const current = mountedSessionRuns.get(key);
+        if (!current || current.runId !== fence.runId || current.generation !== fence.generation) return;
+        try {
+          const result = await juggleworkSessionClient.observeSessionRun(
+            juggleworkMount.workspaceId,
+            observation.sessionId,
+            fence.runId,
+            { status: observation.status },
+          );
+          if (result.cleared) forgetMountedSessionRun(key, fence.runId);
+          return;
+        } catch (error) {
+          if (error instanceof JuggleWorkServerError) {
+            const currentRunId = sessionRunMismatchCurrentId(error);
+            if (currentRunId !== undefined) {
+              forgetMountedSessionRun(key, fence.runId);
+              if (currentRunId) {
+                try {
+                  const replacement = (await hydrateMountedSessionRuns())
+                    .find((run) => run.sessionId === observation.sessionId && run.runId === currentRunId);
+                  if (replacement) rememberMountedSessionRun(key, replacement);
+                } catch {
+                  // A later event or explicit reconciliation will hydrate it.
+                }
+              }
+              return;
+            }
+            if (error.status < 500) return;
+          }
+          const retryFence = mountedSessionRuns.get(key);
+          if (attempt === 3 || !retryFence || retryFence.runId !== fence.runId || retryFence.generation !== fence.generation) return;
+          await delay(observationRetryDelay(attempt));
+        }
+      }
+    };
+
+    const enqueueMountedSessionObservation = (observation: { sessionId: string; status: JuggleWorkSessionRunObservation }) => {
+      const key = sessionRunKey(juggleworkMount, observation.sessionId);
+      const bindFence = async (): Promise<MountedSessionRunFence | null> => {
+        const current = mountedSessionRuns.get(key);
+        if (current) return { ...current };
+        // A terminal event without a known run identity must not be rebound to
+        // a later generation. Server-side authoritative idle reconciliation
+        // safely recovers this missed pre-registration terminal.
+        if (observation.status === "idle" || observation.status === "completed" ||
+          observation.status === "failed" || observation.status === "aborted") return null;
+        try {
+          const active = (await hydrateMountedSessionRuns())
+            .find((run) => run.sessionId === observation.sessionId);
+          if (!active) return null;
+          return { ...rememberMountedSessionRun(key, active) };
+        } catch {
+          return null;
+        }
+      };
+      const bound = bindFence();
+      const previous = mountedSessionObservationQueues.get(key) ?? Promise.resolve();
+      const queued = previous.catch(() => undefined).then(async () => {
+        const fence = await bound;
+        if (fence) await observeMountedSessionRun({ observation, fence });
+      });
+      mountedSessionObservationQueues.set(key, queued);
+      void queued.finally(() => {
+        if (mountedSessionObservationQueues.get(key) === queued) mountedSessionObservationQueues.delete(key);
+      });
+    };
+
     const eventClient = client.event as any;
     const subscribeOriginal = eventClient.subscribe.bind(eventClient);
     eventClient.subscribe = async (...args: unknown[]) => {
       const subscription = await subscribeOriginal(...args);
+      try {
+        await hydrateMountedSessionRuns();
+      } catch {
+        // Events can still hydrate individual sessions after a reconnect.
+      }
       const stream = subscription.stream as AsyncIterable<unknown>;
       return {
         ...subscription,
         stream: (async function* () {
           for await (const event of stream) {
             const observation = sessionRunObservation(event);
-            if (observation) {
-              const key = sessionRunKey(juggleworkMount, observation.sessionId);
-              const expectedRunId = mountedSessionRunIds.get(key);
-              if (expectedRunId) {
-                try {
-                  const result = await juggleworkSessionClient.observeSessionRun(
-                    juggleworkMount.workspaceId,
-                    observation.sessionId,
-                    expectedRunId,
-                    { status: observation.status },
-                  );
-                  if (result.cleared && mountedSessionRunIds.get(key) === expectedRunId) {
-                    mountedSessionRunIds.delete(key);
-                  }
-                } catch {
-                  if (observation.status === "completed" || observation.status === "failed" || observation.status === "aborted") {
-                    if (mountedSessionRunIds.get(key) === expectedRunId) mountedSessionRunIds.delete(key);
-                  }
-                  // Another observer or a newer run may already have fenced this observation.
-                }
-              }
-            }
+            if (observation) enqueueMountedSessionObservation(observation);
             yield event;
           }
         })(),

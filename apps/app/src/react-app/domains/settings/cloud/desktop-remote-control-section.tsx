@@ -6,11 +6,10 @@ import type {
   DesktopRemoteControlSettings,
 } from "@jugglework/types/desktop-ipc";
 import { Button } from "@/components/ui/button";
+import { t } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
-import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import {
-  desktopRemoteControlCredentialDelete,
   desktopRemoteControlEnroll,
   desktopRemoteControlSettingsRead,
   desktopRemoteControlSettingsUpdate,
@@ -40,6 +39,7 @@ import {
 const disabledSettings: DesktopRemoteControlSettings = {
   schemaVersion: 1,
   enabled: false,
+  preventSleepWhileWaiting: false,
   backgroundMode: false,
   launchAtLogin: false,
   allowBusySessionSteer: false,
@@ -62,14 +62,14 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
 };
 
 function statusPresentation(status: DesktopRemoteControlAgentStatus) {
-  if (status.connected) return { label: "传输已连接", tone: "ready" as const };
+  if (status.connected) return { label: t("settings.remote_control.status_connected"), tone: "ready" as const };
   if (status.state === "connecting" || status.state === "awaiting_welcome" || status.state === "backoff") {
-    return { label: "连接中", tone: "warning" as const };
+    return { label: t("settings.remote_control.status_connecting"), tone: "warning" as const };
   }
   if (status.revoked || status.state === "revoked") return { label: "已撤销", tone: "error" as const };
-  if (status.enrolled) return { label: "已注册，当前离线", tone: "warning" as const };
+  if (status.enrolled) return { label: t("settings.remote_control.status_offline"), tone: "warning" as const };
   if (status.state === "error") return { label: "异常", tone: "error" as const };
-  return { label: "未注册", tone: "neutral" as const };
+  return { label: t("settings.remote_control.status_unenrolled"), tone: "neutral" as const };
 }
 
 type RemoteControlActivityIndicatorProps = {
@@ -92,7 +92,7 @@ export function RemoteControlActivityIndicator({
         role="status"
       >
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
-        <span className="font-medium text-green-700 dark:text-green-400">远程控制活跃中</span>
+        <span className="font-medium text-green-700 dark:text-green-400">{t("settings.remote_control.active")}</span>
         <span className="text-muted-foreground">
           {status.activeControlSessionCount} 个控制会话
           {controllers ? ` · 控制者：${controllers}` : ""}
@@ -104,7 +104,7 @@ export function RemoteControlActivityIndicator({
           disabled={busy}
           onClick={onStopAll}
         >
-          全部停止远程控制
+          {t("settings.remote_control.stop_all")}
         </Button>
       </div>
     );
@@ -117,7 +117,7 @@ export function RemoteControlActivityIndicator({
       role="status"
     >
       <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
-      <span>传输已连接，当前没有活跃远程控制</span>
+      <span>{t("settings.remote_control.connected_idle")}</span>
     </div>
   );
 }
@@ -129,7 +129,6 @@ export function DesktopRemoteControlSection() {
   const [status, setStatus] = React.useState<DesktopRemoteControlAgentStatus>(stoppedStatus);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const desktopRuntime = isDesktopRuntime();
   const gates = desktopConfig.config.desktopRemoteFeatureGates;
   const policyAllowsRemote = gates?.schemaVersion === 1 && gates.enrollment === true && gates.readOnlyControl === true;
@@ -170,7 +169,7 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const setSetting = async (key: "backgroundMode" | "launchAtLogin" | "allowBusySessionSteer" | "allowBusySessionEnqueue", value: boolean) => {
+  const setSetting = async (key: "preventSleepWhileWaiting" | "backgroundMode" | "launchAtLogin" | "allowBusySessionSteer" | "allowBusySessionEnqueue", value: boolean) => {
     setBusy(true);
     setError(null);
     try {
@@ -216,27 +215,11 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const deleteCredential = async () => {
-    setConfirmDelete(false);
-    setBusy(true);
-    setError(null);
-    try {
-      await desktopRemoteControlStopAll();
-      setStatus(await desktopRemoteControlCredentialDelete());
-      setSettings(await desktopRemoteControlSettingsRead());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法删除本机设备凭据。");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (!desktopRuntime) return null;
 
   return (
-    <>
-      <SettingsSection>
-        <SettingsSectionHeader>
+    <SettingsSection>
+      <SettingsSectionHeader>
           <SettingsSectionHeaderContent>
             <SettingsSectionHeaderTitle>
               Desktop 远程控制
@@ -247,9 +230,9 @@ export function DesktopRemoteControlSection() {
             </SettingsSectionHeaderDescription>
           </SettingsSectionHeaderContent>
           <RefreshButton busy={busy} onRefresh={refresh} disabled={busy}>刷新状态</RefreshButton>
-        </SettingsSectionHeader>
+      </SettingsSectionHeader>
 
-        <LayoutSectionItem>
+      <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>允许本机远程控制</LayoutSectionItemTitle>
             <LayoutSectionItemDescription>
@@ -258,21 +241,21 @@ export function DesktopRemoteControlSection() {
             <LayoutSectionItemHeaderActions>
               <Switch
                 checked={settings.enabled}
-                disabled={busy || !policyAllowsRemote}
+                disabled={busy || (!settings.enabled && !policyAllowsRemote)}
                 onCheckedChange={(checked) => void setEnabled(checked)}
                 aria-label="允许本机远程控制"
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>
-        </LayoutSectionItem>
+      </LayoutSectionItem>
 
-        {!policyAllowsRemote ? (
-          <SettingsNotice tone="error">当前 Cloud 策略未同时启用设备注册和只读远程控制。</SettingsNotice>
-        ) : null}
-        {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
-        {status.lastErrorCode ? (
-          <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
-        ) : null}
+      {!policyAllowsRemote ? (
+        <SettingsNotice tone="error">当前 Cloud 策略未同时启用设备注册和只读远程控制。</SettingsNotice>
+      ) : null}
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      {status.lastErrorCode ? (
+        <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
+      ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           {!status.enrolled ? (
@@ -286,11 +269,6 @@ export function DesktopRemoteControlSection() {
           {status.enrolled && !status.connected ? (
             <Button variant="outline" onClick={() => void setEnabled(true)} disabled={busy || !policyAllowsRemote}>
               重新连接
-            </Button>
-          ) : null}
-          {status.enrolled ? (
-            <Button variant="outline" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              删除本机设备凭据
             </Button>
           ) : null}
         </div>
@@ -309,6 +287,15 @@ export function DesktopRemoteControlSection() {
         />
 
         <div className="flex items-center gap-4 rounded-xl border border-dls-border p-3">
+          <label className="flex items-center gap-2 text-xs">
+            <Switch
+              checked={settings.preventSleepWhileWaiting}
+              disabled={busy || !settings.enabled}
+              onCheckedChange={(checked) => void setSetting("preventSleepWhileWaiting", checked)}
+              aria-label="等待远程任务时不休眠"
+            />
+            <span>等待远程任务时不休眠</span>
+          </label>
           <label className="flex items-center gap-2 text-xs">
             <Switch
               checked={settings.backgroundMode}
@@ -351,18 +338,6 @@ export function DesktopRemoteControlSection() {
             </label>
           </div>
         </div>
-      </SettingsSection>
-
-      <ConfirmModal
-        open={confirmDelete}
-        variant="danger"
-        title="删除本机设备凭据？"
-        message="这会立即停止远程连接并删除系统安全存储中的设备私钥。Cloud 中的旧设备记录会保留为离线状态。"
-        confirmLabel="删除凭据"
-        cancelLabel="取消"
-        onConfirm={() => void deleteCredential()}
-        onCancel={() => setConfirmDelete(false)}
-      />
-    </>
+    </SettingsSection>
   );
 }

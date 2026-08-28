@@ -183,7 +183,6 @@ export default {
           screenshot: {
             name: "extensions-open",
             requireText: ["Extensions (Legacy)"],
-            rejectText: ["Use JuggleWork Models without API keys"],
           },
         });
       },

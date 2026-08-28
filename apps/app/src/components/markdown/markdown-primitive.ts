@@ -14,7 +14,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
-export type MarkdownPresentation = "chat" | "surface";
+export type MarkdownPresentation = "chat" | "surface" | "surface-copyable";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
   | { kind: "single"; theme: string }
@@ -124,6 +124,19 @@ function surfaceCodeBlockHtml(text: string, lang: string | undefined) {
   return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
 }
 
+function surfaceCopyableCodeBlockContainer(html: string, shiki: boolean) {
+  const shikiAttribute = shiki ? ` data-jugglework-shiki="true"` : "";
+  return `<div data-jugglework-code-block=""${shikiAttribute} class="relative my-4 overflow-hidden rounded-[18px] border border-dls-border/70 bg-gray-1/80 text-xs leading-6 text-muted-foreground">${codeCopyButton()}${html}</div>`;
+}
+
+function surfaceCopyableCodeBlockHtml(text: string, lang: string | undefined) {
+  if (lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid") return surfaceCodeBlockHtml(text, lang);
+  return surfaceCopyableCodeBlockContainer(
+    `<pre class="overflow-x-auto px-4 pb-3 pt-11"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`,
+    false,
+  );
+}
+
 function parseShikiLanguage(lang: string) {
   const normalized = lang.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   return normalized in bundledLanguages ? normalized : "text";
@@ -190,7 +203,8 @@ function sanitizeMarkdownHtml(value: string) {
 }
 
 function markdownProfileForPresentation(presentation: MarkdownPresentation): MarkdownProfile {
-  if (presentation === "surface") {
+  if (presentation === "surface" || presentation === "surface-copyable") {
+    const copyable = presentation === "surface-copyable";
     return {
       rawHtmlMode: "shiki-only",
       headingClassName: (depth) => depth === 1
@@ -200,13 +214,15 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
           : "my-3 text-base font-semibold",
       listClassName: (ordered) => ordered ? "my-3 list-decimal pl-6" : "my-3 list-disc pl-6",
       blockquoteClassName: "my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-muted-foreground",
-      codeBlockHtml: surfaceCodeBlockHtml,
+      codeBlockHtml: copyable ? surfaceCopyableCodeBlockHtml : surfaceCodeBlockHtml,
       codeSpanClassName: "rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground",
       linkPresentation: "simple",
       imagePresentation: "simple",
       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
       tableCellClassName: "border border-dls-border p-2 align-top",
-      shikiContainer: `<div data-jugglework-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
+      shikiContainer: copyable
+        ? surfaceCopyableCodeBlockContainer(`<div class="overflow-x-auto px-4 pb-3 pt-11">%s</div>`, true)
+        : `<div data-jugglework-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
       shikiTheme: { kind: "single", theme: "github-light" },
     };
   }
@@ -320,7 +336,7 @@ function createMarkedOptions(profile: MarkdownProfile, isAsync: boolean) {
         const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
         const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
 
-        return `<table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+        return `<div data-jugglework-markdown-table="" class="my-4 w-full overflow-x-auto"><table class="w-full min-w-max border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table></div>`;
       },
       tablerow({ text }) {
         return `<tr>${text}</tr>`;
@@ -395,9 +411,12 @@ function createMarkdownParsers(presentation: MarkdownPresentation) {
 
 const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
+const copyableSurfaceParsers = createMarkdownParsers("surface-copyable");
 
 function parsersForPresentation(presentation: MarkdownPresentation) {
-  return presentation === "surface" ? surfaceParsers : chatParsers;
+  if (presentation === "surface") return surfaceParsers;
+  if (presentation === "surface-copyable") return copyableSurfaceParsers;
+  return chatParsers;
 }
 
 export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {

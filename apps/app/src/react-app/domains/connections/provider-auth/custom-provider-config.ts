@@ -13,7 +13,7 @@ import { isCloudManagedProviderKey } from "./cloud-provider-config";
  * so the shape stays deliberately boring: `npm` + `options.baseURL` + `models`.
  * The credential never lands here — it goes into the engine's auth store keyed
  * by the provider id, the same way cloud-managed providers do it, so a
- * workspace config that gets committed carries no secret.
+ * global config remains free of secrets.
  */
 
 export const CUSTOM_PROVIDER_NPM = "@ai-sdk/openai-compatible";
@@ -187,7 +187,63 @@ export const buildCustomProviderConfig = (
 };
 
 /**
- * Upsert the provider block in a workspace `opencode.jsonc`. The whole block is
+ * 将引擎返回的本地模型组转换为编辑表单数据。
+ *
+ * @param provider 引擎返回的模型组
+ * @returns 可安全编辑的数据；非 OpenAI 兼容或模型限制不一致时返回 null
+ */
+export const customProviderInputFromProvider = (
+  provider: {
+    id: string;
+    name: string;
+    options: Record<string, unknown>;
+    models: Record<string, {
+      id: string;
+      name: string;
+      api?: { npm?: string };
+      limit?: { context?: number; output?: number };
+    }>;
+  },
+): CustomProviderInput | null => {
+  const baseUrl = typeof provider.options?.baseURL === "string"
+    ? provider.options.baseURL.trim()
+    : "";
+  const models = Object.values(provider.models ?? {});
+  if (
+    !baseUrl ||
+    models.length === 0 ||
+    models.some((model) => model.api?.npm !== CUSTOM_PROVIDER_NPM)
+  ) {
+    return null;
+  }
+
+  const [firstModel] = models;
+  const firstContext = firstModel.limit?.context ?? 0;
+  const firstOutput = firstModel.limit?.output ?? 0;
+  const hasConsistentLimits = models.every(
+    (model) =>
+      (model.limit?.context ?? 0) === firstContext &&
+      (model.limit?.output ?? 0) === firstOutput,
+  );
+  if (!hasConsistentLimits || (firstContext > 0) !== (firstOutput > 0)) {
+    return null;
+  }
+
+  return {
+    providerId: provider.id,
+    name: provider.name,
+    baseUrl,
+    models: Object.values(provider.models).map((model) => ({
+      id: model.id,
+      name: model.name || model.id,
+    })),
+    contextLimit: firstContext > 0 ? firstContext : null,
+    outputLimit: firstOutput > 0 ? firstOutput : null,
+  };
+};
+
+/**
+ * Upsert the provider block in an `opencode.jsonc`. The whole block is
  * replaced on purpose: reconnecting with a new base URL or model list is an
  * edit of the same provider, not a merge with whatever it used to be.
  */
@@ -207,7 +263,7 @@ export const formatConfigWithCustomProvider = (
 };
 
 /**
- * Permanently remove a user-declared provider from a workspace config. This
+ * Permanently remove a user-declared provider from an OpenCode config. This
  * also clears a matching disabled_providers entry left by Disconnect while
  * preserving unrelated JSONC comments and settings.
  */
@@ -219,12 +275,23 @@ export const formatConfigWithoutCustomProvider = (raw: string, providerId: strin
     ? raw
     : '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
 
-  updated = applyEdits(
-    updated,
-    modify(updated, ["provider", resolvedProviderId], undefined, {
-      formattingOptions: { insertSpaces: true, tabSize: 2 },
-    }),
-  );
+  const initial = parse(updated) as Record<string, unknown> | undefined;
+  const initialProviders = initial?.provider;
+  // TIPS: jsonc-parser 删除缺失路径时会抛出 “Can not delete in empty document”。
+  // 删除动作必须先确认目标字段存在，目标不存在应当是幂等 no-op。
+  if (
+    initialProviders &&
+    typeof initialProviders === "object" &&
+    !Array.isArray(initialProviders) &&
+    Object.prototype.hasOwnProperty.call(initialProviders, resolvedProviderId)
+  ) {
+    updated = applyEdits(
+      updated,
+      modify(updated, ["provider", resolvedProviderId], undefined, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }),
+    );
+  }
 
   const parsedAfterProvider = parse(updated) as Record<string, unknown> | undefined;
   const providers = parsedAfterProvider?.provider;
@@ -243,21 +310,26 @@ export const formatConfigWithoutCustomProvider = (raw: string, providerId: strin
   }
 
   const parsed = parse(updated) as Record<string, unknown> | undefined;
-  const disabledProviders = Array.isArray(parsed?.disabled_providers)
-    ? parsed.disabled_providers.filter(
+  const existingDisabledProviders = Array.isArray(parsed?.disabled_providers)
+    ? parsed.disabled_providers
+    : [];
+  const disabledProviders = existingDisabledProviders.length
+    ? existingDisabledProviders.filter(
         (entry): entry is string =>
           typeof entry === "string" && entry.trim() !== resolvedProviderId,
       )
     : [];
-  updated = applyEdits(
-    updated,
-    modify(
+  if (existingDisabledProviders.some((entry) => typeof entry === "string" && entry.trim() === resolvedProviderId)) {
+    updated = applyEdits(
       updated,
-      ["disabled_providers"],
-      disabledProviders.length ? disabledProviders : undefined,
-      { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-    ),
-  );
+      modify(
+        updated,
+        ["disabled_providers"],
+        disabledProviders.length ? disabledProviders : undefined,
+        { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+      ),
+    );
+  }
 
   return updated.endsWith("\n") ? updated : `${updated}\n`;
 };

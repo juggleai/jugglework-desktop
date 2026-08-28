@@ -38,7 +38,7 @@ import { createApplicationMenu } from "./app-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
-import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
+import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs";
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
@@ -55,7 +55,7 @@ import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs"
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
-import { createRemoteControlBackgroundIndicator } from "./remote-control-background-indicator.mjs";
+import { createAppTrayIndicator } from "./app-tray.mjs";
 import { applyLaunchAtLogin as applyLaunchAtLoginSetting, shouldStartHidden } from "./launch-at-login.mjs";
 import { createRemoteControlPendingPolicySynchronizer } from "./remote-control-pending-policy.mjs";
 import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings, stopAllRemoteControl } from "./remote-control-settings-lifecycle.mjs";
@@ -114,6 +114,7 @@ const {
 const pty = require(["node", "pty"].join("-"));
 const WebSocketClient = require("ws");
 const NATIVE_DEEP_LINK_EVENT = "jugglework:deep-link-native";
+const REMOTE_CONTROL_POLICY_RECOVERY_EVENT = "jugglework:remote-control:policy-recovery";
 const TAURI_APP_IDENTIFIER = "com.juggleai.jugglework";
 const DEV_APP_IDENTIFIER = "com.juggleai.jugglework.dev";
 const DESKTOP_PROTOCOL_SCHEME = "jugglework";
@@ -589,7 +590,7 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
   });
 }
 
-async function focusMainWindowFromNotification() {
+async function focusMainWindowFromNotification(href) {
   const win = mainWindow;
   if (!win) return;
   if (win.isDestroyed()) return;
@@ -598,6 +599,11 @@ async function focusMainWindowFromNotification() {
   win.show();
   win.focus();
   flushPendingDeepLinks();
+  const internalHref = typeof href === "string" && href.startsWith("/") && !href.startsWith("//") ? href : "";
+  if (internalHref && !win.webContents.isDestroyed()) {
+    // TIPS: 通知只允许跳转应用内 HashRouter 路径，禁止把任意 URL 注入渲染进程。
+    await win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(`#${internalHref}`)}`);
+  }
 }
 
 /**
@@ -627,7 +633,7 @@ function showDesktopNotification(input) {
   try {
     const notification = new ElectronNotification(options);
     notification.on("click", () => {
-      void focusMainWindowFromNotification();
+      void focusMainWindowFromNotification(Reflect.get(record, "href"));
     });
     notification.show();
     return { ok: true };
@@ -1042,6 +1048,10 @@ const remoteControlSleepController = createRemoteControlSleepController({
 const remoteControlPowerMonitorController = createRemoteControlPowerMonitorController({
   powerMonitor,
   getAgent: () => remoteControlAgent,
+  onResume: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(REMOTE_CONTROL_POLICY_RECOVERY_EVENT);
+  },
   logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
 });
 const remoteControlPendingPolicy = createRemoteControlPendingPolicySynchronizer({
@@ -1061,10 +1071,23 @@ const sessionMutationCoordinator = createSessionMutationCoordinator({
   onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
 });
 let startMainWindowHidden = false;
-let remoteControlBackgroundModeRequested = false;
-const remoteControlBackgroundIndicator = createRemoteControlBackgroundIndicator({
+// TIPS: macOS 状态栏图标的推荐尺寸是 16pt，直接复用大尺寸应用图标会被系统
+// 拉伸导致模糊；Windows/Linux 托盘由系统自行缩放，保持原图即可。
+function trayIndicatorIconImage() {
+  const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+  if (!image || process.platform !== "darwin") return image;
+  try {
+    const resized = image.resize({ width: 16, height: 16 });
+    return resized.isEmpty() ? image : resized;
+  } catch {
+    return image;
+  }
+}
+// 常驻托盘：macOS 状态栏 / Windows 系统托盘图标，是"关闭仅隐藏"模式下
+// 用户找回窗口的唯一可见入口，也是真正的退出入口（Quit 菜单项）。
+const appTrayIndicator = createAppTrayIndicator({
   createTray: () => {
-    const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
+    const image = trayIndicatorIconImage();
     if (!image || image.isEmpty()) throw new Error("Tray icon unavailable.");
     return new Tray(image);
   },
@@ -1074,8 +1097,8 @@ const remoteControlBackgroundIndicator = createRemoteControlBackgroundIndicator(
     await createMainWindow();
     await focusMainWindowFromNotification();
   },
-  stopAll: () => executeRemoteControlStopAll(),
-  logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
+  quitApp: () => app.quit(),
+  logger: { warn: (message) => console.warn(`[desktop-tray] ${message}`) },
 });
 
 function stoppedRemoteControlAgentStatus() {
@@ -1163,6 +1186,8 @@ function createMainRemoteControlAgent() {
     },
     onAuthorizationChanged: (authorized) => {
       remoteControlSleepController.setAuthorized(authorized);
+    },
+    onMutationAuthorizationChanged: (authorized) => {
       if (!authorized) sessionMutationCoordinator.clearRemoteRuns();
     },
     logger: {
@@ -1263,6 +1288,8 @@ function configHomePath() {
 }
 
 function globalOpencodeRoot() {
+  const configuredRoot = process.env.OPENCODE_CONFIG_DIR?.trim();
+  if (configuredRoot) return configuredRoot;
   return path.join(configHomePath(), "opencode");
 }
 
@@ -1992,6 +2019,49 @@ async function skillhubInstall(params = {}) {
   };
 }
 
+const NPM_REGISTRY_BASE = (process.env.NPM_REGISTRY_URL || "https://registry.npmjs.org").replace(/\/+$/, "");
+const NPM_PACKAGE_NAME_PATTERN = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+
+const NPM_README_MAX_CHARS = 200_000;
+
+/**
+ * 取 npm 包的 README 原文，供渲染端提取环境变量键建议。
+ * @param {{ packageName?: string }} params
+ * @returns {Promise<import("@jugglework/types/desktop-ipc").NpmPackageReadme>}
+ *
+ * TIPS: 只负责取原文、不做提取——提取规则连同其单测都留在渲染端 `mcp-env-hints.ts`，
+ * 避免主进程再抄一份正则造成两处漂移。
+ * TIPS: 建议是加速器不是前置条件——包名非法、网络失败、包不存在一律返回 found:false 的空结果，
+ * 绝不抛错中断添加流程。
+ */
+async function npmPackageReadme(params = {}) {
+  const packageName = String(params?.packageName ?? "").trim();
+  const empty = { packageName, found: false, readme: "", homepage: "" };
+  if (!packageName || !NPM_PACKAGE_NAME_PATTERN.test(packageName)) return empty;
+
+  const homepage = `https://www.npmjs.com/package/${packageName}`;
+  try {
+    const url = `${NPM_REGISTRY_BASE}/${packageName.replace("/", "%2f")}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let body;
+    try {
+      const response = await fetch(url, {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response.ok) return { ...empty, homepage };
+      body = await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+    const readme = typeof body?.readme === "string" ? body.readme.slice(0, NPM_README_MAX_CHARS) : "";
+    return { packageName, found: Boolean(readme), readme, homepage };
+  } catch {
+    return { ...empty, homepage };
+  }
+}
+
 async function findSkillFile(projectDir, name) {
   const safeName = validateSkillName(name);
   for (const root of await collectSkillRoots(projectDir)) {
@@ -2049,6 +2119,7 @@ function applyNativeTheme(mode) {
 
 async function executeRemoteControlStopAll() {
   remoteControlSleepController.setAuthorized(false);
+  remoteControlSleepController.setPreventSleepWhileWaiting(false);
   return stopAllRemoteControl({
     disableSettings: () => remoteControlSettingsStore.disable(),
     applyLocalEffects: applyRemoteControlLocalEffects,
@@ -2095,6 +2166,7 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
       const settings = await remoteControlSettingsStore.update(args[0] ?? {});
+      remoteControlSleepController.setPreventSleepWhileWaiting(settings.enabled && settings.preventSleepWhileWaiting);
       return reconcilePersistedRemoteControlSettings({
         settings,
         applyLaunchAtLogin,
@@ -2463,6 +2535,9 @@ const desktopCommandHandlers = {
   },
   "skillhubInstall": async (event, ...args) => {
       return skillhubInstall(args[0] ?? {});
+  },
+  "npmPackageReadme": async (event, ...args) => {
+      return npmPackageReadme(args[0] ?? {});
   },
   "getGitBranch": async (event, ...args) => {
       return getGitBranch(String(args[0] ?? "").trim());
@@ -2878,10 +2953,12 @@ async function createMainWindow() {
     }
   });
 
-  installMacCloseToHide({
+  // 关闭窗口只隐藏到托盘（跨平台）；仅当托盘图标真实存在时才允许隐藏，
+  // 否则放行原生关闭行为，避免出现无可见入口的后台进程。
+  installCloseToHide({
     window: mainWindow,
     canQuit: () => runtimeDisposedForQuit,
-    canHide: () => !remoteControlBackgroundModeRequested || remoteControlBackgroundIndicator.active(),
+    canHide: () => appTrayIndicator.active(),
   });
 
   mainWindow.on("closed", () => {
@@ -3037,7 +3114,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (runtimeDisposeInProgress) return;
     remoteControlPowerMonitorController.stop();
-    remoteControlBackgroundIndicator.stop();
+    appTrayIndicator.stop();
     remoteControlSleepController.stop();
     showShutdownScreen();
     void Promise.all([
@@ -3119,10 +3196,16 @@ if (!app.requestSingleInstanceLock()) {
 
     queueDeepLinks(forwardedDeepLinks(process.argv));
     const remoteSettings = await remoteControlSettingsStore.read();
+    remoteControlSleepController.setPreventSleepWhileWaiting(
+      remoteSettings.enabled === true && remoteSettings.preventSleepWhileWaiting === true,
+    );
     let wasOpenedAsHidden = false;
     try { wasOpenedAsHidden = app.getLoginItemSettings().wasOpenedAsHidden === true; } catch {}
     startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings, wasOpenedAsHidden });
-    if (!updateRemoteControlBackgroundIndicator(remoteSettings)) startMainWindowHidden = false;
+    updateRemoteControlBackgroundIndicator(remoteSettings);
+    // TIPS: fail-closed —— 托盘创建失败时禁止隐藏启动，否则会得到一个
+    // 没有任何可见入口的后台进程。
+    if (!appTrayIndicator.start()) startMainWindowHidden = false;
     const win = await createMainWindow();
     if (process.platform === "linux") {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
@@ -3154,7 +3237,7 @@ if (!app.requestSingleInstanceLock()) {
         if (windowAllClosedAction({
           platform: process.platform,
           settings,
-          backgroundIndicatorActive: remoteControlBackgroundIndicator.active(),
+          backgroundIndicatorActive: appTrayIndicator.active(),
         }) === "quit") app.quit();
       }).catch(() => {
         app.quit();
@@ -3184,11 +3267,18 @@ function applyLaunchAtLogin(settings) {
 }
 
 function updateRemoteControlBackgroundIndicator(settings) {
-  remoteControlBackgroundModeRequested = settings.enabled === true && settings.backgroundMode === true;
-  return remoteControlBackgroundIndicator.update(settings);
+  const backgroundRequested = settings.enabled === true && settings.backgroundMode === true;
+  appTrayIndicator.updateRemoteControl({
+    backgroundRequested,
+    stopAll: () => executeRemoteControlStopAll(),
+  });
+  return appTrayIndicator.active();
 }
 
 function applyRemoteControlLocalEffects(settings) {
+  remoteControlSleepController.setPreventSleepWhileWaiting(
+    settings.enabled === true && settings.preventSleepWhileWaiting === true,
+  );
   return applyPersistedRemoteControlLocalEffects({
     settings,
     applyLaunchAtLogin,

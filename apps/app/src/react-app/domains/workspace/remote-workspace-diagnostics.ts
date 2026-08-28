@@ -1,4 +1,4 @@
-import type { WorkspaceConnectionState } from "../../../app/types";
+import type { WorkspaceConnectionState, WorkspaceConnectionFailureReason } from "../../../app/types";
 import type { WorkspaceInfo } from "../../../app/lib/desktop";
 import {
   createJuggleWorkServerClient,
@@ -38,13 +38,18 @@ function trim(value: string | null | undefined) {
   return value?.trim() ?? "";
 }
 
-function fail(message: string, checkedAt = Date.now()): RemoteWorkspaceConnectionResult {
+function fail(
+  message: string,
+  checkedAt = Date.now(),
+  reason: WorkspaceConnectionFailureReason = "unknown",
+): RemoteWorkspaceConnectionResult {
   return {
     ok: false,
     state: {
       status: "error",
       message,
       checkedAt,
+      reason,
     },
   };
 }
@@ -101,6 +106,34 @@ function isServerErrorStatus(error: unknown, status: number | number[]) {
 
 function rejectedTokenMessage(target: RemoteWorkspaceConnectionTarget) {
   return remoteSupportMessage(`Token was rejected by ${target.endpointLabel}. Edit connection and reconnect the worker.`);
+}
+
+// Redeploying a cloud worker provisions a new sandbox and therefore a new
+// routing URL; the old host either stops resolving or the gateway answers
+// 404 "The sandbox route is unavailable". Both mean "the saved URL points at
+// a worker that no longer exists", which the UI presents as an update-
+// connection prompt instead of a generic network error.
+const UNREACHABLE_ERROR_HINTS = [
+  "sandbox route is unavailable",
+  "enotfound",
+  "econnrefused",
+  "econnreset",
+  "eai_again",
+  "failed to fetch",
+  "fetch failed",
+  "network error",
+  "networkerror",
+  "load failed",
+];
+
+function classifyUnreachableError(error: unknown): boolean {
+  if (isServerErrorStatus(error, 404)) return true;
+  const text = describeUnknownError(error).toLowerCase();
+  return UNREACHABLE_ERROR_HINTS.some((hint) => text.includes(hint));
+}
+
+function workerUnreachableMessage(target: RemoteWorkspaceConnectionTarget, cause: string) {
+  return `Cannot reach ${target.endpointLabel} (${cause}). The cloud workspace may have been redeployed and its URL changed. Copy the new connection details from the JuggleWork Cloud console and update this connection.`;
 }
 
 function remoteSupportMessage(message: string) {
@@ -246,6 +279,15 @@ export async function testRemoteWorkspaceConnection(
       );
     }
   } catch (error) {
+    if (classifyUnreachableError(error)) {
+      return fail(workerUnreachableMessage(target, describeUnknownError(error)), checkedAt, "worker_unreachable");
+    }
+    // The edge answers 401 when the endpoint exists but the presented token is
+    // wrong (the health request carries the same bearer as every other call).
+    // That is a stale-token problem, not a redeployed worker.
+    if (isServerErrorStatus(error, [401, 403])) {
+      return fail(rejectedTokenMessage(target), checkedAt, "token_rejected");
+    }
     return fail(
       remoteSupportMessage(`Cannot reach ${target.endpointLabel}. Health check failed: ${describeUnknownError(error)}`),
       checkedAt,
@@ -263,7 +305,7 @@ export async function testRemoteWorkspaceConnection(
     await client.capabilities();
   } catch (error) {
     if (isServerErrorStatus(error, [401, 403])) {
-      return fail(rejectedTokenMessage(target), checkedAt);
+      return fail(rejectedTokenMessage(target), checkedAt, "token_rejected");
     }
     return fail(
       remoteSupportMessage(`Connected to ${target.endpointLabel}, but capabilities failed: ${describeUnknownError(error)}`),
@@ -279,6 +321,7 @@ export async function testRemoteWorkspaceConnection(
         return fail(
           remoteSupportMessage(`Workspace ${target.workspaceId} was not found on ${target.endpointLabel}. Reconnect the worker.`),
           checkedAt,
+          "workspace_missing",
         );
       }
       const name = displayWorkspaceName(workspace) || target.workspaceId;
@@ -354,6 +397,7 @@ export async function diagnoseRemoteWorkspaceTaskLoadFailure(
       status: "error",
       message: diagnostic.state.message?.trim() || fallback,
       checkedAt: diagnostic.state.checkedAt ?? checkedAt,
+      reason: diagnostic.state.reason ?? null,
     };
   } catch (error) {
     return {
@@ -362,4 +406,11 @@ export async function diagnoseRemoteWorkspaceTaskLoadFailure(
       checkedAt,
     };
   }
+}
+
+/** True when the saved connection points at a worker endpoint that no longer
+ * exists — typically because the cloud worker was redeployed and its URL
+ * changed. UI uses this to show an "update connection" prompt. */
+export function isRemoteWorkerUnreachableState(state: WorkspaceConnectionState | null | undefined): boolean {
+  return state?.status === "error" && state.reason === "worker_unreachable";
 }

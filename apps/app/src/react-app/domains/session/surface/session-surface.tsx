@@ -41,11 +41,17 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { effectiveSessionRunning, isSessionBusyError } from "./session-run-recovery";
+import {
+  classifyTaskProgress,
+  shouldAcknowledgeTerminalProgress,
+  shouldShowTaskProgress,
+  shouldSynthesizeBusyAfterAcceptance,
+} from "./task-progress-state";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { isNewSessionCommand, parseSlashCommandInvocation, withBuiltinSlashCommands } from "./composer/slash-command";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
-import { PaperGrainGradient } from "@jugglework/ui/react";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
@@ -65,21 +71,34 @@ import { shouldDrainQueuedTask } from "./queued-draft-policy";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  captureTodoSnapshotRevision,
+  clearSessionTodos,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
   transcriptKey as reactTranscriptKey,
 } from "@/react-app/domains/session/sync/session-sync";
+import { useSessionTodos } from "@/react-app/domains/session/sync/use-session-todos";
 import { resolveForkBoundaryId } from "@/react-app/domains/session/sync/transcript-reconcile";
 import {
   getComposerAttachments,
+  getComposerCapabilities,
   getComposerDraft,
   getComposerHistory,
   getComposerMentions,
   getComposerPasteParts,
   getComposerQueuedDrafts,
   useComposerStateStore,
+  type ComposerCapabilityPart,
 } from "./composer-state-store";
+import { liveActivityLabel } from "@/lib/live-activity";
+import {
+  COMPOSER_TOKEN_SPLIT_RE,
+  composerCapabilityToken,
+  fallbackCapabilityPrompt,
+  parseComposerCapabilityToken,
+  replaceComposerCapabilityTokens,
+} from "./composer/capability-tags";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
 import type {
@@ -102,6 +121,7 @@ import {
 import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
+  mergeConnectLocalMcpServers,
   type ConnectCapabilityInventory,
 } from "./connect-capability-inventory";
 
@@ -164,7 +184,10 @@ export type SessionSurfaceProps = {
   onModelClick: () => void;
   modelPickerOpen: boolean;
   modelUnavailable?: boolean;
+  taskSubmissionDisabled?: boolean;
   selectedModel: ModelRef;
+  /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
+  contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
@@ -187,7 +210,6 @@ export type SessionSurfaceProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
-  todos?: TodoItem[];
   activePermission?: PendingPermission | null;
   permissionReplyBusy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
@@ -298,23 +320,12 @@ function messageHasVisibleAssistantOutput(message: UIMessage) {
   });
 }
 
-function AssistantWaitingCard({ label = t("session.assistant_thinking") }: { label?: string }) {
+/** 与消息列表底部的实时提示保持同一形态：流光文字，无图标。 */
+function AssistantWaitingCard({ label = liveActivityLabel("responding") }: { label?: string }) {
   return (
-    <div className="flex justify-start" role="status" aria-live="polite">
-      <div className="inline-flex items-center gap-1.5 px-1 py-1 text-[12px] text-dls-secondary">
-        <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
-          <PaperGrainGradient
-            speed={12}
-            softness={0.1}
-            intensity={1}
-            noise={0.05}
-            shape="sphere"
-            colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
-            colorBack="#ffffff00"
-            style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
-          />
-        </div>
-        <span>{label}</span>
+    <div className="-mt-1 flex justify-start" role="status" aria-live="polite">
+      <div className="inline-flex items-center py-0 text-[12px]">
+        <span className="live-activity-text font-medium tracking-[-0.01em]">{`${label}...`}</span>
       </div>
     </div>
   );
@@ -469,6 +480,12 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const local = useLocal();
+  const todos = useSessionTodos(props.workspaceId, props.sessionId);
+  const taskProgressKind = classifyTaskProgress(todos);
+  const [terminalProgressAcknowledgement, setTerminalProgressAcknowledgement] = useState(false);
+  const taskProgressWasActiveRef = useRef(false);
+  const taskProgressPreviousKindRef = useRef(taskProgressKind);
+  const taskProgressRunEndedAtRef = useRef(0);
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
   const findOpen = useSessionFindStore((state) => state.open);
@@ -480,14 +497,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionActivityStatus = useSessionActivityStore(
     (state) => state.statusesByWorkspaceId[props.workspaceId]?.[props.sessionId] ?? "idle",
   );
+  const sessionActivityRunActive = useSessionActivityStore(
+    (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.runActive ?? false,
+  );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
   const pasteParts = useComposerStateStore((state) => getComposerPasteParts(state, props.sessionId));
+  const capabilities = useComposerStateStore((state) => getComposerCapabilities(state, props.sessionId));
   const setComposerDraft = useComposerStateStore((state) => state.setDraft);
   const setComposerAttachments = useComposerStateStore((state) => state.setAttachments);
   const setComposerMentions = useComposerStateStore((state) => state.setMentions);
   const setComposerPasteParts = useComposerStateStore((state) => state.setPasteParts);
+  const setComposerCapabilities = useComposerStateStore((state) => state.setCapabilities);
   const clearComposerSession = useComposerStateStore((state) => state.clearSession);
   const inputHistory = useComposerStateStore((state) => getComposerHistory(state, props.sessionId));
   const appendComposerHistory = useComposerStateStore((state) => state.appendHistory);
@@ -527,6 +549,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const hydratedKeyRef = useRef<string | null>(null);
   const autoOpenedTargetRef = useRef<string | null>(null);
   const initializedAutoOpenSessionRef = useRef<string | null>(null);
+  const activeSurfaceIdentityRef = useRef(`${props.workspaceId}:${props.sessionId}`);
+  const inFlightSendIdentitiesRef = useRef(new Set<string>());
+  activeSurfaceIdentityRef.current = `${props.workspaceId}:${props.sessionId}`;
   const opencodeClient = useMemo(
     () => createClient(props.opencodeBaseUrl, undefined, { token: props.juggleworkToken, mode: "jugglework" }),
     [props.opencodeBaseUrl, props.juggleworkToken],
@@ -544,13 +569,29 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => reactStatusKey(props.workspaceId, props.sessionId),
     [props.workspaceId, props.sessionId],
   );
+  const activeRunsQuery = useQuery({
+    queryKey: ["session-active-runs", props.workspaceId],
+    queryFn: () => props.client.listActiveSessionRuns(props.workspaceId),
+    staleTime: 250,
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
+  });
+  const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
-    queryFn: async () => (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item,
+    queryFn: async () => {
+      const todoRevision = captureTodoSnapshotRevision();
+      const snapshot = (await props.client.getSessionSnapshot(props.workspaceId, props.sessionId, { limit: 140 })).item;
+      snapshotTodoRevisionBySnapshotRef.current.set(snapshot, todoRevision);
+      return snapshot;
+    },
     staleTime: 500,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
+  const currentSnapshotTodoRevision = currentSnapshot
+    ? snapshotTodoRevisionBySnapshotRef.current.get(currentSnapshot)
+    : undefined;
   const transcriptState = useSharedQueryState<UIMessage[]>(transcriptQueryKey, EMPTY_TRANSCRIPT);
   const statusState = useSharedQueryState(statusQueryKey, currentSnapshot?.status ?? IDLE_STATUS);
 
@@ -565,12 +606,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     setShowDelayedLoading(false);
     setAwaitingAssistantBaseline(null);
+    setTerminalProgressAcknowledgement(false);
+    taskProgressWasActiveRef.current = false;
+    taskProgressPreviousKindRef.current = "empty";
+    taskProgressRunEndedAtRef.current = 0;
     // Composer draft state lives in the shared store keyed by session id, so
     // switching sessions preserves each session's own in-progress composer.
     autoOpenedTargetRef.current = null;
     initializedAutoOpenSessionRef.current = null;
     setVerifiedOpenTargets([]);
-  }, [props.sessionId]);
+  }, [props.sessionId, props.workspaceId]);
 
   // Publish a composer inspector slice so external drivers can read draft
   // state, attachments, mentions, and sending status from the running app.
@@ -625,16 +670,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   useEffect(() => {
     if (!currentSnapshot) return;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [currentSnapshot, props.sessionId, props.workspaceId]);
+    seedSessionState(props.workspaceId, currentSnapshot, {
+      snapshotTodoRevision: currentSnapshotTodoRevision,
+      skipTodos: currentSnapshotTodoRevision === undefined,
+    });
+  }, [currentSnapshot, currentSnapshotTodoRevision, props.sessionId, props.workspaceId]);
 
   useEffect(() => {
     if (!currentSnapshot) return;
     const key = `${props.sessionId}:${currentSnapshot.session.time?.updated ?? currentSnapshot.session.time?.created ?? 0}:${currentSnapshot.messages.length}`;
     if (hydratedKeyRef.current === key) return;
     hydratedKeyRef.current = key;
-    seedSessionState(props.workspaceId, currentSnapshot);
-  }, [props.sessionId, currentSnapshot, props.workspaceId]);
+    seedSessionState(props.workspaceId, currentSnapshot, {
+      snapshotTodoRevision: currentSnapshotTodoRevision,
+      skipTodos: currentSnapshotTodoRevision === undefined,
+    });
+  }, [props.sessionId, currentSnapshot, currentSnapshotTodoRevision, props.workspaceId]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -642,9 +693,52 @@ export function SessionSurface(props: SessionSurfaceProps) {
     cachedRendered: rendered,
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
+  const coordinatorRun = activeRunsQuery.data?.items.find((run) => run.sessionId === props.sessionId) ?? null;
   const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
     props.cloudMcpSubmissionState.status === "repairing";
-  const chatStreaming = sending || liveStatus.type === "busy" || liveStatus.type === "retry";
+  const chatStreaming = effectiveSessionRunning({
+    sending,
+    liveStatus: liveStatus.type,
+    activityRunActive: sessionActivityRunActive,
+    coordinatorActive: coordinatorRun !== null,
+  });
+  const showTaskProgress = shouldShowTaskProgress({
+    kind: taskProgressKind,
+    runActive: chatStreaming,
+    terminalAcknowledgement: terminalProgressAcknowledgement,
+  });
+
+  useEffect(() => {
+    const wasActive = taskProgressWasActiveRef.current;
+    const previousKind = taskProgressPreviousKindRef.current;
+    taskProgressWasActiveRef.current = chatStreaming;
+    taskProgressPreviousKindRef.current = taskProgressKind;
+    if (wasActive && !chatStreaming) taskProgressRunEndedAtRef.current = Date.now();
+    if (chatStreaming || taskProgressKind !== "terminal") {
+      setTerminalProgressAcknowledgement(false);
+      return;
+    }
+    const acknowledge = shouldAcknowledgeTerminalProgress({
+      runJustEnded: wasActive && !chatStreaming,
+      terminalJustArrivedAfterRunEnd:
+        previousKind !== "terminal" &&
+        Date.now() - taskProgressRunEndedAtRef.current <= 2_000,
+      kind: taskProgressKind,
+    });
+    if (!acknowledge) return;
+    setTerminalProgressAcknowledgement(true);
+    const timer = window.setTimeout(() => setTerminalProgressAcknowledgement(false), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [chatStreaming, taskProgressKind]);
+
+  useEffect(() => {
+    void activeRunsQuery.refetch();
+  }, [activeRunsQuery.refetch, liveStatus.type, props.sessionId]);
+
+  useEffect(() => {
+    if (!activeRunsQuery.isSuccess || coordinatorRun || liveStatus.type !== "idle" || !sessionActivityRunActive) return;
+    useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "idle" });
+  }, [activeRunsQuery.isSuccess, coordinatorRun, liveStatus.type, props.sessionId, props.workspaceId, sessionActivityRunActive]);
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -807,7 +901,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const capabilityByToken = new Map(
+      capabilities.map((item) => [composerCapabilityToken(item.kind, item.name), item]),
+    );
+    const parts: ComposerPart[] = text.split(COMPOSER_TOKEN_SPLIT_RE).flatMap((segment) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
@@ -821,9 +918,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
           return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines }];
         }
       }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
+      const capability = parseComposerCapabilityToken(segment);
+      if (capability) {
+        // 本地技能沿用原有的 skill part；云端技能/扩展/MCP 走 capability part，
+        // 并带上登记的完整文案，队列草稿回填时才不会丢失。
+        if (capability.kind === "skill") {
+          return [{ type: "skill", name: capability.name } satisfies ComposerDraft["parts"][number]];
+        }
+        return [{
+          type: "capability",
+          kind: capability.kind,
+          name: capability.name,
+          prompt: capabilityByToken.get(segment)?.prompt
+            ?? fallbackCapabilityPrompt(capability.kind, capability.name),
+        } satisfies ComposerDraft["parts"][number]];
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
@@ -841,7 +949,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
     }
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
-    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
+    // 能力标签在这里展开成模型真正看到的文本：本地技能是一句自然语言，
+    // 云端技能/扩展/MCP 用插入时登记的完整指令（登记丢失时退回通用表述）。
+    resolved = replaceComposerCapabilityTokens(resolved, (kind, name) => (
+      capabilityByToken.get(composerCapabilityToken(kind, name))?.prompt
+        ?? fallbackCapabilityPrompt(kind, name)
+    ));
     for (const value of Object.keys(mentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
@@ -854,7 +967,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolvedText: resolved,
       command: slashCommand ?? undefined,
     };
-  }, [mentions, pasteParts]);
+  }, [capabilities, mentions, pasteParts]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -881,25 +994,73 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
-    setError(null);
+    const workspaceId = props.workspaceId;
+    const sessionId = props.sessionId;
+    const surfaceIdentity = `${workspaceId}:${sessionId}`;
+    const isCurrentSurface = () => activeSurfaceIdentityRef.current === surfaceIdentity;
+    if (props.taskSubmissionDisabled) {
+      return { outcome: "cancelled", reason: "context_changed" } as const;
+    }
+    // 同一会话的 prompt acceptance 返回前只允许一次提交；不同会话仍可独立发送。
+    if (inFlightSendIdentitiesRef.current.has(surfaceIdentity)) {
+      return { outcome: "cancelled", reason: "context_changed" } as const;
+    }
+    inFlightSendIdentitiesRef.current.add(surfaceIdentity);
+    const runGenerationBeforeSend = useSessionActivityStore.getState()
+      .recordsByWorkspaceId[workspaceId]?.[sessionId]?.runGeneration ?? 0;
+    if (isCurrentSurface()) setError(null);
+    // Progress belongs to the task that produced it. Hide stale progress as
+    // soon as the next task is submitted (including a drained queued task);
+    // fresh todo.updated events will populate the panel for the new run.
+    clearSessionTodos(workspaceId, sessionId);
     try {
-      const result = await props.onSendDraft(nextDraft, props.sessionId);
+      const result = await props.onSendDraft(nextDraft, sessionId);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
-      appendComposerHistory(props.sessionId, nextDraft.text);
-      useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
-      setAwaitingAssistantBaseline(renderedMessages.length);
+      appendComposerHistory(sessionId, nextDraft.text);
+      const activityStore = useSessionActivityStore.getState();
+      const activityAfterSend = activityStore.recordsByWorkspaceId[workspaceId]?.[sessionId];
+      const synthesizeBusy = shouldSynthesizeBusyAfterAcceptance({
+        runGenerationBeforeSend,
+        activityAfterSend,
+      });
+      if (synthesizeBusy) {
+        activityStore.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      }
+      void activeRunsQuery.refetch();
+      if (isCurrentSurface() && (synthesizeBusy || activityAfterSend?.runActive)) {
+        setAwaitingAssistantBaseline(renderedMessages.length);
+      }
       return result;
     } catch (nextError) {
+      if (isSessionBusyError(nextError)) {
+        const refreshed = await activeRunsQuery.refetch();
+        const active = refreshed.data?.items.some((run) => run.sessionId === sessionId) ?? false;
+        if (active) {
+          useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+          if (isCurrentSurface()) {
+            setError(null);
+            setAwaitingAssistantBaseline(null);
+            toast.info("This session is already running. You can stop it or queue this message.");
+          }
+          return { outcome: "cancelled", reason: "context_changed" } as const;
+        }
+      }
       const parsed = parseSessionError(nextError);
       captureAnalyticsEvent("task_send_failed", {});
-      setError(parsed);
-      useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
-      setAwaitingAssistantBaseline(null);
+      // TIPS: SessionSurface is reused when switching tabs. A late rejection
+      // belongs to the captured session and must never repaint the new tab.
+      if (isCurrentSurface()) {
+        setError(parsed);
+        setAwaitingAssistantBaseline(null);
+      }
+      useSessionActivityStore.getState().setError(workspaceId, sessionId, parsed.message);
       throw nextError;
+    } finally {
+      inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
+  }, [activeRunsQuery.refetch, appendComposerHistory, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -909,6 +1070,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
+    if (props.taskSubmissionDisabled) return;
+    const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
@@ -943,9 +1106,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
           .forEach(revokeAttachmentPreview);
       }
     } catch (nextError) {
-      setError(parseSessionError(nextError));
+      if (activeSurfaceIdentityRef.current === surfaceIdentity) {
+        setError(parseSessionError(nextError));
+      }
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft]);
 
   const handleSteer = useCallback(async () => {
     setSteering(true);
@@ -964,12 +1129,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Queue: hold the draft locally and clear the composer. The drain effect
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
+    if (props.taskSubmissionDisabled) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
     queueWaitsForIdleRef.current = true;
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId]);
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, props.taskSubmissionDisabled]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const removed = removeQueuedDraftFromStore(props.sessionId, id);
@@ -991,6 +1157,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
+    useSessionActivityStore.getState().markFinishReason(props.workspaceId, props.sessionId, "user_cancelled");
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
@@ -1009,9 +1176,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: t("session.stop_failed") });
       return;
     }
+    void activeRunsQuery.refetch();
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
+  }, [activeRunsQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
@@ -1034,6 +1202,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       draining: drainingQueueRef.current,
       blocked: cloudQueueBlockedRef.current,
     })) return;
+    if (props.taskSubmissionDisabled) return;
     const target = queuedDrafts[0];
     if (!target) return;
     drainingQueueRef.current = true;
@@ -1065,7 +1234,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         setQueueDrainVersion((version) => version + 1);
       }
     })();
-  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
+  }, [chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.sessionId, props.taskSubmissionDisabled, queueDrainVersion, queuedDrafts, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -1156,6 +1325,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     setComposerAttachments(props.sessionId, attachments.filter((item) => item.id !== id));
     setComposerDraft(props.sessionId, draft.replaceAll(`[attachment ${id}]`, ""));
+  };
+
+  /**
+   * 登记一枚能力标签的展开文案
+   * TIPS: 同一能力重复插入只保留一份登记；名称+种类构成唯一键。
+   */
+  const handleRegisterCapability = (capability: ComposerCapabilityPart) => {
+    const exists = capabilities.some(
+      (item) => item.kind === capability.kind && item.name === capability.name && item.prompt === capability.prompt,
+    );
+    if (exists) return;
+    const next = capabilities.filter(
+      (item) => !(item.kind === capability.kind && item.name === capability.name),
+    );
+    setComposerCapabilities(props.sessionId, [...next, capability]);
   };
 
   const handleInsertMention = (kind: ComposerMentionKind, value: string) => {
@@ -1268,13 +1452,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the currently visible composer draft to the active session.",
     sideEffect: "mutation",
-    disabled: props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
+    disabled: chatStreaming || props.taskSubmissionDisabled || props.modelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [attachments.length, draft, handleSend, model.transitionState, props.modelUnavailable]);
+  }), [attachments.length, chatStreaming, draft, handleSend, model.transitionState, props.modelUnavailable, props.taskSubmissionDisabled]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<JuggleWorkControlAction>(() => ({
@@ -1402,8 +1586,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
 
     const connect = await connectPromise;
-    const servers = [...localServers, ...connect.mcpServers];
-    const statuses = { ...connect.mcpStatuses, ...localStatuses };
+    // TIPS: 插件装到工作区后，同一个 stdio MCP 在两份清单里各有一条（能力目录 + 本地配置），
+    // 这里认亲去重，只留本地那条并带上插件归属；没装下来的仍单独列出并标为未安装。
+    const merged = mergeConnectLocalMcpServers({
+      localServers,
+      connectServers: connect.mcpServers,
+      localStatuses,
+    });
+    const servers = merged.servers;
+    const statuses = { ...connect.mcpStatuses, ...merged.statuses, ...localStatuses };
     const status = servers.length ? null : "No MCP servers loaded.";
     setToolMcpServers(servers);
     setToolMcpStatuses(statuses);
@@ -1765,7 +1956,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           onScroll={sessionScroll.handleScroll}
           // Extra top padding while the find bar is open so it never covers
           // the first message (short transcripts cannot scroll it clear).
-          className={`absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
+          className={`subtle-scrollbar absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 pb-4 sm:px-5 ${findOwned ? "pt-16" : "pt-4"}`}
         >
           {/* Chat column: tighter than the composer (800px) so messages
                keep a comfortable reading width and don't feel "too big". */}
@@ -1855,7 +2046,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         />
       </div>
 
-      <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2">
+      <div ref={composerShellRef} className="shrink-0 px-0 pb-2">
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"
@@ -1886,6 +2077,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </button>
           </div>
         ) : null}
+        {error && renderedMessages.length > 0 ? (
+          <SessionErrorCard
+            error={error}
+            onDismiss={handleDismissError}
+            onChangeModel={props.onChangeModel}
+            onOpenModelPicker={props.onModelClick}
+          />
+        ) : null}
         <ReactSessionComposer
           draft={draft}
           mentions={mentions}
@@ -1897,12 +2096,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
         busy={chatStreaming}
         steering={steering}
         submissionPreparing={preparingCloudTools}
+        submissionDisabled={Boolean(props.taskSubmissionDisabled)}
         queuedCount={queuedDrafts.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}
         modelUnavailable={Boolean(props.modelUnavailable)}
         statusLabel={statusLabel(snapshot ?? undefined, chatStreaming)}
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
+        contextUsageMessages={snapshot?.messages ?? []}
+        contextWindowTokens={props.contextWindowTokens}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
         onModelChange={props.onModelChange}
         attachments={attachments}
@@ -1927,10 +2129,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
         mcpStatuses={toolMcpStatuses}
         listImportedPlugins={listImportedPlugins}
         importedPlugins={toolImportedPlugins}
-        onOpenSettingsSection={props.onOpenSettingsSection}
         recentFiles={props.recentFiles}
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
+        onRegisterCapability={handleRegisterCapability}
         inputHistory={inputHistory}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
@@ -1940,9 +2142,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         isRemoteWorkspace={props.isRemoteWorkspace}
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
-          compactTopSpacing={Boolean(props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0)}
           topAccessory={
-            props.activeQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || queuedDrafts.length > 0 ? (
+            props.activeQuestion || showTaskProgress || props.activePermission || queuedDrafts.length > 0 ? (
               <div>
                 {queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
@@ -1962,8 +2163,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       }
                     }}
                   />
-                ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
-                  <TodoPanel todos={props.todos ?? []} />
+                ) : showTaskProgress ? (
+                  <TodoPanel todos={todos} />
                 ) : null}
                 {props.activePermission ? (
                   <PermissionApprovalPanel

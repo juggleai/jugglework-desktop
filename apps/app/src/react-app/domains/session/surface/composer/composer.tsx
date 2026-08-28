@@ -1,21 +1,29 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
-import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
+import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-icon-src";
 import { ModelBehaviorSelect } from "@/components/model-behavior-select";
 import { ModelSelect } from "@/components/model-select";
+import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
+import {
+  buildCapabilityInstruction,
+  composerCapabilityToken,
+  resolveMcpCapabilitySelection,
+  type ComposerCapabilityKind,
+} from "./capability-tags";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
@@ -25,6 +33,7 @@ import {
 } from "./slash-command";
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
+import { ContextUsage } from "./context-usage";
 
 type MentionItem = {
   id: string;
@@ -40,8 +49,7 @@ type PastedTextChip = {
   lines: number;
 };
 
-type ToolMenuSettingsSection = "commands" | "skills" | "mcps" | "plugins";
-type ToolMenuSection = "agents" | "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
+type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
@@ -62,12 +70,17 @@ type ComposerProps = {
   busy: boolean;
   steering: boolean;
   submissionPreparing: boolean;
+  submissionDisabled: boolean;
   queuedCount: number;
   disabled: boolean;
   modelUnavailable?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
+  /** 当前会话的原始消息，用于读取引擎返回的真实 token 计量。 */
+  contextUsageMessages: JuggleWorkSessionMessage[];
+  /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
+  contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
   attachments: ComposerAttachment[];
@@ -92,10 +105,14 @@ type ComposerProps = {
   mcpStatuses?: McpStatusMap;
   listImportedPlugins?: () => Promise<CloudImportedPlugin[]>;
   importedPlugins?: CloudImportedPlugin[];
-  onOpenSettingsSection?: (section: ToolMenuSettingsSection) => void;
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: ComposerMentionKind, value: string) => void;
+  /**
+   * 登记一枚能力标签送给模型时要展开成的完整文案。
+   * TIPS: 草稿里只存紧凑 token，真正的指令在 buildDraft 里按登记内容还原。
+   */
+  onRegisterCapability?: (capability: { kind: ComposerCapabilityKind; name: string; prompt: string }) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
   onPasteText: (text: string) => void;
@@ -107,7 +124,6 @@ type ComposerProps = {
   isSandboxWorkspace: boolean;
   onUploadInboxFiles?: ((files: File[]) => void | Promise<unknown>) | null;
   draftScopeKey?: string;
-  compactTopSpacing?: boolean;
   topAccessory?: ReactNode;
 };
 
@@ -221,6 +237,10 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
       return t("mcp.friendly_status_needs_signin");
     case "disabled":
       return t("mcp.friendly_status_paused");
+    case "not_installed":
+      return t("mcp.friendly_status_not_installed");
+    case "not_configured":
+      return t("mcp.friendly_status_not_configured");
     case "disconnected":
       return t("mcp.friendly_status_offline");
     case "failed":
@@ -229,11 +249,13 @@ function formatMcpStatusLabel(status: McpServerStatus | undefined) {
   }
 }
 
-type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected";
+type McpServerStatus = "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "not_installed" | "not_configured" | "disconnected";
 
 function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStatusMap): McpServerStatus {
   const configured = statuses[name];
   if (configured?.status === "connected") return "connected";
+  if (configured?.status === "not_installed") return "not_installed";
+  if (configured?.status === "not_configured") return "not_configured";
   if (configured?.status === "needs_auth") return "needs_auth";
   if (configured?.status === "needs_client_registration") return "needs_client_registration";
   if (configured?.status === "failed") return "failed";
@@ -243,12 +265,28 @@ function toReactMcpStatus(name: string, entry: McpServerEntry, statuses: McpStat
   return "disconnected";
 }
 
+/**
+ * MCP 状态徽标的悬浮说明。
+ * TIPS: 「异常」可能来自组织未配置、市场未同步、能力未就绪等多种原因，
+ * 后端给出的 error 只存在于状态原始数据里，这里补到 title 上，避免界面只剩一个同质徽标。
+ * @param status 归一化后的展示状态
+ * @param detail 状态原始数据（failed / needs_client_registration 会带 error）
+ */
+function mcpStatusTooltip(status: McpServerStatus, detail: McpStatus | undefined) {
+  const label = formatMcpStatusLabel(status);
+  const reason = detail && "error" in detail && typeof detail.error === "string" ? detail.error.trim() : "";
+  return reason ? `${label} · ${reason}` : label;
+}
+
 function mcpStatusBadgeClass(status: McpServerStatus) {
   switch (status) {
     case "connected":
       return "bg-green-3 text-green-11";
     case "needs_auth":
     case "needs_client_registration":
+      return "bg-amber-3 text-amber-11";
+    case "not_installed":
+    case "not_configured":
       return "bg-amber-3 text-amber-11";
     case "disabled":
     case "disconnected":
@@ -401,13 +439,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
-    if (props.submissionPreparing) return;
+    if (props.submissionPreparing || props.submissionDisabled) return;
     if (resolveComposerSubmitAction(props.busy) === "queue") {
       void props.onQueue();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionPreparing]);
+  }, [props.busy, props.draft, props.attachments, props.onSend, props.onQueue, props.submissionDisabled, props.submissionPreparing]);
 
   // 编辑器只显示草稿的文本部分（剥离附件 token），每次变更再把当前附件 token
   // 追加回去，保证草稿这一附件生命周期真源不被破坏。
@@ -438,9 +476,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [mentionOpenNext, mentionQuery]);
 
   useEffect(() => {
-    if (!agentMenuOpen && !(toolMenuOpen && toolMenuSection === "agents")) return;
+    if (!agentMenuOpen) return;
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [agentMenuOpen, toolMenuOpen, toolMenuSection, props.listAgents]);
+  }, [agentMenuOpen, props.listAgents]);
 
   useEffect(() => {
     if (!showAgentPicker) setAgentMenuOpen(false);
@@ -850,40 +888,59 @@ export function ReactSessionComposer(props: ComposerProps) {
     setToolMenuOpen(false);
   };
 
+  /**
+   * 把一项能力作为 tag 插入草稿，并登记它送给模型时要展开成什么
+   *
+   * TIPS: 草稿里只留紧凑 token，展开文案交给 session-surface 的 buildDraft。
+   * 过去云端能力是直接把整段指令散文写进输入框，用户看到的是一堆半截文本。
+   * @param kind 能力种类
+   * @param name 能力名称，即 tag 内显示的文本
+   * @param prompt 送给模型的完整表述
+   * @param options replaceSkillDraft 表示替换整段草稿（斜杠命令补全路径）
+   */
+  const insertCapabilityTag = (
+    kind: ComposerCapabilityKind,
+    name: string,
+    prompt: string,
+    options?: { replaceSkillDraft?: boolean },
+  ) => {
+    props.onRegisterCapability?.({ kind, name, prompt });
+    const token = composerCapabilityToken(kind, name);
+    if (options?.replaceSkillDraft) {
+      props.onDraftChange(`${token} `);
+    } else {
+      const editor = editorRef.current;
+      if (editor) {
+        editor.insertSkillAtSelection(name, kind);
+      } else {
+        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
+        props.onDraftChange(`${props.draft}${separator}${token} `);
+      }
+    }
+    setSlashOpen(false);
+    setToolMenuOpen(false);
+  };
+
   const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
     const skill = typeof input === "string"
       ? { name: input, path: "", origin: "local" as const }
       : input;
     if (skill.origin === "jugglework-connect") {
-      const prompt = t("composer.connect_skill_prompt", {
-        name: skill.name,
-        marketplace: skill.marketplaceName ?? "assigned",
-        capability: skill.connectCapabilityName ?? skill.name,
-      });
-      if (options?.replaceSkillDraft) {
-        props.onDraftChange(prompt);
-      } else {
-        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
-        props.onDraftChange(`${props.draft}${separator}${prompt}`);
-      }
-      setSlashOpen(false);
-      setToolMenuOpen(false);
+      // 未安装的技能要先经 Cloud MCP 取回内容，细节放进括号，整句仍可折叠成 tag。
+      insertCapabilityTag(
+        "cloud-skill",
+        skill.name,
+        buildCapabilityInstruction(
+          "cloud-skill",
+          skill.name,
+          `find it with jugglework-cloud_search_capabilities in the ${skill.marketplaceName ?? "assigned"} marketplace, `
+          + `then call jugglework-cloud_execute_capability with the exact capability name ${skill.connectCapabilityName ?? skill.name}`,
+        ),
+        options,
+      );
       return;
     }
-    const name = skill.name;
-    if (options?.replaceSkillDraft) {
-      props.onDraftChange(`[skill ${name}] `);
-    } else {
-      const editor = editorRef.current;
-      if (editor) {
-        editor.insertSkillAtSelection(name);
-      } else {
-        const separator = props.draft.length > 0 && !/\s$/.test(props.draft) ? " " : "";
-        props.onDraftChange(`${props.draft}${separator}[skill ${name}] `);
-      }
-    }
-    setSlashOpen(false);
-    setToolMenuOpen(false);
+    insertCapabilityTag("skill", skill.name, buildCapabilityInstruction("skill", skill.name), options);
   };
 
   const applyPluginFileSelection = (file: CloudImportedPluginFile) => {
@@ -908,15 +965,20 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const applyExtensionSelection = (entry: McpDirectoryInfo) => {
-    props.onDraftChange(entry.composerPrompt ?? `Use ${entry.name} to `);
-    setToolMenuOpen(false);
+    // TIPS: 目录里的 composerPrompt（如 "Use Computer Use to "）是给草稿起手用的半截文案，
+    // 不能直接当指令发送，这里统一改用能力指令模板。
+    insertCapabilityTag("extension", entry.name, buildCapabilityInstruction("extension", entry.name));
   };
 
-  const openToolMenuSettings = () => {
-    const section: ToolMenuSettingsSection = toolMenuSection === "commands" || toolMenuSection === "skills" || toolMenuSection === "mcps"
-      ? toolMenuSection
-      : "plugins";
-    props.onOpenSettingsSection?.(section);
+  /**
+   * 选择一个 MCP 服务
+   * @param entry MCP 服务条目
+   * @param status 归一化后的连接状态，仅 connected 可选
+   */
+  const applyMcpSelection = (entry: McpServerEntry, status: McpServerStatus) => {
+    if (status !== "connected") return;
+    const selection = resolveMcpCapabilitySelection(entry);
+    insertCapabilityTag(selection.kind, entry.name, selection.prompt);
   };
 
   const acceptActiveItem = () => {
@@ -1130,6 +1192,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const activeMcpItems = mcpServers.map((entry) => ({
     entry,
     status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
+    detail: mcpStatuses[entry.id ?? entry.name],
   }));
 
   const panelRoundedClass =
@@ -1256,7 +1319,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
+      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1269,7 +1332,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       <div className="max-w-[800px] mx-auto">
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)] ring-1 ring-black/[0.035] transition-[border-color,box-shadow,ring-color] dark:ring-white/[0.055] ${panelRoundedClass}`}
+          className={`relative overflow-visible rounded-[24px] border border-dls-border bg-dls-surface shadow-[0_10px_30px_rgba(15,23,42,0.1)] transition-[border-color,box-shadow] dark:shadow-[0_14px_36px_rgba(0,0,0,0.3)] ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1304,23 +1367,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                     title={attachment.name}
                   >
                     {isImageAttachment(attachment) && attachment.previewUrl ? (
-                      <>
-                        <img
-                          src={attachment.previewUrl}
-                          alt={attachment.name}
-                          decoding="async"
-                          className="h-14 w-14 rounded-xl border border-border/70 object-cover"
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white transition-colors hover:bg-black/75"
-                          aria-label={`Remove ${attachment.name}`}
-                          title="Remove"
-                          onClick={() => props.onRemoveAttachment(attachment.id)}
-                        >
-                          <X size={12} />
-                        </button>
-                      </>
+                      // TIPS: 图片附件复用会话页的 ImageAttachmentBadge：点击缩略图
+                      // 打开灯箱预览（与消息区行为一致），移除按钮由组件内置。
+                      // thumbnailClassName 维持输入栏原有 14×14 规格（组件默认 10×10）。
+                      <ImageAttachmentBadge
+                        src={attachment.previewUrl}
+                        alt={attachment.name}
+                        thumbnailClassName="h-14 w-14"
+                        onRemove={() => props.onRemoveAttachment(attachment.id)}
+                      />
                     ) : (
                       <div className="relative flex w-[220px] max-w-[220px] items-center gap-2 rounded-xl border border-border/70 bg-muted/40 py-1.5 pl-2.5 pr-7">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground">
@@ -1489,10 +1544,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                   </button>
                   {toolMenuOpen ? (
                     <div className="absolute bottom-full left-0 z-40 mb-3 w-[min(calc(100vw-2.5rem),34rem)] overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div className="grid grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
-                        <div className="border-r border-dls-border bg-gray-2/30 p-2">
+                      <div className="grid h-48 grid-cols-[152px_minmax(0,1fr)] sm:grid-cols-[176px_minmax(0,1fr)]">
+                        <div className="subtle-scrollbar overflow-y-auto border-r border-dls-border bg-gray-2/30 p-2">
                           {([
-                            ["agents", t("composer.agents_label")],
                             ["commands", t("dashboard.commands")],
                             ["skills", t("dashboard.skills")],
                             ["extensions", "Extensions"],
@@ -1521,74 +1575,37 @@ export function ReactSessionComposer(props: ComposerProps) {
                             </button>
                           ))}
                         </div>
-                        <div className="h-60 overflow-y-auto p-2">
-                          <div className="mb-2 flex justify-end border-b border-dls-border px-1 pb-2">
-                            <button
-                              type="button"
-                              className="inline-flex items-center gap-1.5 rounded-full border border-dls-border px-3 py-1.5 text-[12px] font-medium text-gray-11 transition-colors hover:bg-gray-2"
-                              onClick={() => {
-                                setToolMenuOpen(false);
-                                openToolMenuSettings();
-                              }}
-                            >
-                              <Settings size={12} />
-                              {t("composer.configure")}
-                            </button>
-                          </div>
-                          {toolMenuSection === "agents" ? (
-                            <div className="grid gap-1">
-                              <button
-                                type="button"
-                                className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${props.selectedAgent === null ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                onClick={() => applyAgentSelection(null)}
-                              >
-                                <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                <div className="min-w-0 flex-1 truncate text-xs font-semibold">{t("composer.default_agent")}</div>
-                                {props.selectedAgent === null ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                              </button>
-                              {nonDefaultAgents.map((agent) => {
-                                const active = props.selectedAgent === agent.name;
-                                return (
-                                  <button
-                                    key={agent.name}
-                                    type="button"
-                                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${active ? "bg-gray-2 text-gray-12" : "text-gray-11"}`}
-                                    onClick={() => applyAgentSelection(agent.name)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="truncate text-xs font-semibold">{agent.name.charAt(0).toUpperCase() + agent.name.slice(1)}</div>
-                                      {agent.description ? <div className="truncate text-xs text-gray-10">{agent.description}</div> : null}
-                                    </div>
-                                    {active ? <Check size={14} className="mt-0.5 shrink-0 text-gray-10" /> : null}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ) : null}
+                        <div className="subtle-scrollbar m-2 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto">
                           {toolMenuSection === "commands" ? (
                             toolCommandItems.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {toolCommandItems.map((command) => (
                                   <button
                                     key={command.id}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyCommandSelection(command)}
                                   >
                                     <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <div className="truncate text-xs font-semibold text-gray-11">/{command.name}</div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={`/${command.name}`}>
+                                          /{command.name}
+                                        </div>
                                         {command.origin === "jugglework-connect" ? (
                                           <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
                                             {t("composer.source_cloud")}
                                           </span>
                                         ) : null}
                                       </div>
-                                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
+                                      {command.description ? (
+                                        <div className="truncate text-xs text-gray-10" title={command.description}>{command.description}</div>
+                                      ) : null}
                                       {command.origin === "jugglework-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
+                                        <div
+                                          className="truncate text-[10px] text-gray-9"
+                                          title={[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
+                                        >
                                           {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
                                         </div>
                                       ) : null}
@@ -1604,7 +1621,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "skills" ? (
                             skillMenuItems.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {skillMenuItems.map((skill) => (
                                   <button
                                     key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
@@ -1614,8 +1631,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div
+                                          className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11"
+                                          title={`/${skillMenuSlashCommandName(skill)}`}
+                                        >
                                           /{skillMenuSlashCommandName(skill)}
                                         </div>
                                         {isLocalCapability(skill.origin) ? (
@@ -1624,9 +1644,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                                           </span>
                                         ) : null}
                                       </div>
-                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
+                                      {skill.description ? (
+                                        <div className="truncate text-xs text-gray-10" title={skill.description}>{skill.description}</div>
+                                      ) : null}
                                       {skill.origin === "jugglework-connect" ? (
-                                        <div className="truncate text-[10px] text-gray-9">
+                                        <div
+                                          className="truncate text-[10px] text-gray-9"
+                                          title={[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
+                                        >
                                           {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
                                         </div>
                                       ) : null}
@@ -1642,37 +1667,57 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "mcps" ? (
                             activeMcpItems.length > 0 ? (
-                              <div className="grid gap-1">
-                                {activeMcpItems.map(({ entry, status }) => (
-                                  // MCP 仅作只读展示：显示已连接的服务与状态，不可点击、不注入。
-                                  <div key={entry.id ?? entry.name} className="flex items-start gap-3 rounded-[16px] px-3 py-2.5 text-gray-11">
+                              <div className="grid min-w-0 gap-1">
+                                {activeMcpItems.map(({ entry, status, detail }) => {
+                                  // 只有已就绪（connected）的 MCP 可以被选中插入；其余保持只读展示。
+                                  const selectable = status === "connected";
+                                  const description = entry.origin === "jugglework-connect"
+                                    ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
+                                      || entry.config.url
+                                      || "Remote MCP"
+                                    : entry.config.type === "remote"
+                                      ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+                                      : entry.config.command?.join(" ") ?? "Local MCP";
+                                  return (
+                                  <button
+                                    key={entry.id ?? entry.name}
+                                    type="button"
+                                    disabled={!selectable}
+                                    aria-disabled={!selectable}
+                                    title={selectable ? undefined : mcpStatusTooltip(status, detail)}
+                                    className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
+                                      selectable ? "hover:bg-gray-2/70" : "cursor-default opacity-60"
+                                    }`}
+                                    onClick={() => applyMcpSelection(entry, status)}
+                                  >
                                     <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">{entry.name}</div>
                                         <div className="flex shrink-0 items-center gap-1">
                                           {isLocalCapability(entry.origin) ? (
                                             <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
                                               {t("composer.source_local")}
                                             </span>
                                           ) : null}
-                                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}>
+                                          <span
+                                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}
+                                            title={mcpStatusTooltip(status, detail)}
+                                          >
                                             {formatMcpStatusLabel(status)}
                                           </span>
                                         </div>
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">
-                                        {entry.origin === "jugglework-connect"
-                                          ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                            || entry.config.url
-                                            || "Remote MCP"
-                                          : entry.config.type === "remote"
-                                            ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                            : entry.config.command?.join(" ") ?? "Local MCP"}
+                                      <div
+                                        className="w-full truncate text-xs text-gray-10"
+                                        title={description}
+                                      >
+                                        {description}
                                       </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  </button>
+                                  );
+                                })}
                               </div>
                             ) : (
                               <div className="px-3 py-2 text-xs text-gray-10">
@@ -1682,25 +1727,27 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {toolMenuSection === "extensions" ? (
                             composerExtensions.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {composerExtensions.map((entry) => (
                                   <button
                                     key={entry.id ?? entry.serverName ?? entry.name}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyExtensionSelection(entry)}
                                   >
                                     <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
                                       {extensionIcon(entry, 16)}
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{entry.name}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={entry.name}>
+                                          {entry.name}
+                                        </div>
                                         {entry.defaultEnabled ? (
                                           <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
                                         ) : null}
                                       </div>
-                                      <div className="truncate text-xs text-gray-10">{entry.description}</div>
+                                      <div className="truncate text-xs text-gray-10" title={entry.description}>{entry.description}</div>
                                     </div>
                                   </button>
                                 ))}
@@ -1711,18 +1758,20 @@ export function ReactSessionComposer(props: ComposerProps) {
                           ) : null}
                           {activePlugin ? (
                             activePlugin.files.length > 0 ? (
-                              <div className="grid gap-1">
+                              <div className="grid min-w-0 gap-1">
                                 {activePlugin.files.map((file) => (
                                   <button
                                     key={`${file.configObjectId}:${file.path}`}
                                     type="button"
-                                    className="flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
                                     onClick={() => applyPluginFileSelection(file)}
                                   >
                                     <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
                                     <div className="min-w-0 flex-1">
-                                      <div className="flex items-center justify-between gap-3">
-                                        <div className="truncate text-xs font-semibold text-gray-11">{file.title}</div>
+                                      <div className="flex min-w-0 items-center justify-between gap-3">
+                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={file.title}>
+                                          {file.title}
+                                        </div>
                                         <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
                                           {formatPluginObjectType(file.objectType)}
                                         </span>
@@ -1812,15 +1861,23 @@ export function ReactSessionComposer(props: ComposerProps) {
                   ) : null}
                 </div>
 
-                <ModelSelect
-                  open={props.modelPickerOpen}
-                  value={props.selectedModel}
-                  onOpenChange={props.onModelPickerOpenChange}
-                  onChange={(model) => {
-                    if (!props.steering) props.onModelChange(model);
-                  }}
-                  disabled={props.steering}
-                />
+                <div className="flex items-center gap-0">
+                  <ModelSelect
+                    open={props.modelPickerOpen}
+                    value={props.selectedModel}
+                    onOpenChange={props.onModelPickerOpenChange}
+                    onChange={(model) => {
+                      if (!props.steering) props.onModelChange(model);
+                    }}
+                    disabled={props.steering}
+                  />
+
+                  <ContextUsage
+                    messages={props.contextUsageMessages}
+                    model={props.selectedModel}
+                    contextLimit={props.contextWindowTokens}
+                  />
+                </div>
                 {props.modelUnavailable ? (
                   <span className="text-xs font-medium text-red-10">Model no longer available</span>
                 ) : null}
@@ -1862,10 +1919,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     </button>
                     <button
                       type="button"
-                      onClick={canSend ? props.onQueue : undefined}
-                      disabled={!canSend}
+                      onClick={canSend && !props.submissionDisabled && !props.submissionPreparing ? props.onQueue : undefined}
+                      disabled={!canSend || props.submissionDisabled || props.submissionPreparing}
                       className={`relative inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors active:scale-[0.98] ${
-                        canSend
+                        canSend && !props.submissionDisabled && !props.submissionPreparing
                           ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                           : "bg-gray-4 text-gray-10"
                       }`}
@@ -1883,10 +1940,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                 ) : (
                   <button
                     type="button"
-                    onClick={canSend && !props.submissionPreparing ? props.onSend : undefined}
-                    disabled={props.disabled || !canSend || props.submissionPreparing}
+                    onClick={canSend && !props.submissionDisabled && !props.submissionPreparing ? props.onSend : undefined}
+                    disabled={props.disabled || props.submissionDisabled || !canSend || props.submissionPreparing}
                     className={`inline-flex h-9 max-h-9 items-center gap-2 rounded-full px-4 text-[13px] font-medium transition-colors ${
-                      !canSend || props.disabled || props.submissionPreparing
+                      !canSend || props.disabled || props.submissionDisabled || props.submissionPreparing
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}

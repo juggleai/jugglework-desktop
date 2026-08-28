@@ -243,12 +243,6 @@ export default {
           await ctx.clickText("Use this folder", { timeoutMs: 20_000 });
         }
         await ctx.waitFor("window.location.hash.includes('/workspace/')", { timeoutMs: 60_000, label: "workspace open" });
-        // Dismiss the JuggleWork Models upsell if it appears.
-        await ctx.eval(`(() => {
-          const btn = [...document.querySelectorAll('button')].find((el) => el.textContent.trim() === 'Continue without JuggleWork Models');
-          btn?.click();
-          return true;
-        })()`);
       },
     },
     {

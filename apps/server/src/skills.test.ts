@@ -45,3 +45,48 @@ describe("deleteSkill", () => {
     await expect(deleteSkill(workspace, "does-not-exist")).rejects.toThrow("Skill not found");
   });
 });
+
+describe("deleteSkill with global scope", () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "jugglework-skills-home-"));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  test("deletes a skill from the global directory", async () => {
+    const dir = join(home, ".config", "opencode", "skills", "global-skill");
+    await writeSkill(dir, "global-skill");
+    await deleteSkill(workspace, "global-skill", "global", { homeDir: home });
+    expect(await exists(dir)).toBe(false);
+  });
+
+  test("resolves nested global layouts", async () => {
+    const dir = join(home, ".claude", "skills", "domain", "nested-global");
+    await writeSkill(dir, "nested-global");
+    await deleteSkill(workspace, "nested-global", "global", { homeDir: home });
+    expect(await exists(dir)).toBe(false);
+  });
+
+  // 两个作用域严格互不越界，否则全局技能页会误删工作区文件。
+  test("global scope does not touch workspace skills", async () => {
+    const projectDir = join(workspace, ".opencode", "skills", "only-project");
+    await writeSkill(projectDir, "only-project");
+    await expect(deleteSkill(workspace, "only-project", "global", { homeDir: home })).rejects.toThrow();
+    expect(await exists(projectDir)).toBe(true);
+  });
+
+  test("project scope does not touch global skills", async () => {
+    const globalDir = join(home, ".config", "opencode", "skills", "only-global");
+    await writeSkill(globalDir, "only-global");
+    await expect(deleteSkill(workspace, "only-global", "project", { homeDir: home })).rejects.toThrow();
+    expect(await exists(globalDir)).toBe(true);
+  });
+
+  test("missing global skill reports not found", async () => {
+    await expect(deleteSkill(workspace, "absent-skill", "global", { homeDir: home })).rejects.toThrow();
+  });
+});

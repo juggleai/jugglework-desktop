@@ -12,7 +12,6 @@ export function getReactQueryClient(): QueryClient {
   for (const queryKey of [
     ["react-session-transcript"],
     ["react-session-status"],
-    ["react-session-todos"],
   ] as const) {
     queryClient.setQueryDefaults(queryKey, { gcTime: 15_000 });
   }
@@ -27,6 +26,7 @@ export function getReactQueryClient(): QueryClient {
   for (const queryKey of [
     ["react-session-permissions"],
     ["react-session-questions"],
+    ["react-session-todos"],
   ] as const) {
     queryClient.setQueryDefaults(queryKey, { gcTime: Infinity });
   }

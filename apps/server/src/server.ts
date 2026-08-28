@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -8,9 +7,15 @@ import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostic
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
-import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
+import {
+  addMcp,
+  listMcp,
+  removeMcp,
+  resolveGlobalOpenCodeConfigPath,
+  setMcpEnabled,
+} from "./mcp.js";
 import { exportExtensions } from "./extensions-export.js";
-import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
+import { deleteSkill, globalSkillDirs, listSkills, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -67,6 +72,10 @@ import { createSessionPendingOperationPump, type SessionPendingOperationPump } f
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { registerAutomationRoutes } from "./routes/automations.js";
+import { AutomationRepository } from "./automation/repository.js";
+import { AutomationExecutor } from "./automation/executor.js";
+import { AutomationScheduler } from "./automation/scheduler.js";
 import {
   createSessionMutationCoordinator,
   SessionMutationError,
@@ -665,7 +674,7 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
   };
 }
 
-const reloadBaselineRefreshers = new WeakMap<
+const internalReloadDispatchers = new WeakMap<
   ServerConfig,
   (workspaceId: string, reasons?: ReloadReason[]) => Promise<void>
 >();
@@ -838,9 +847,15 @@ export async function startServer(config: ServerConfig, options: {
   const env = new EnvService();
   const logger = createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
-  const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
-    watcherHandle.refreshWorkspace(workspaceId, reasons);
-  reloadBaselineRefreshers.set(config, refreshWorkspaceReloadBaseline);
+  const dispatchInternalReloadRequired = async (workspaceId: string, reasons: ReloadReason[] = []) => {
+    // Internal repairs write the same files watched below. Advance the
+    // fingerprint first so fs.watch does not emit a duplicate, then expose one
+    // deferred reload request. Never dispose inline: active tasks own the
+    // current engine until the explicit, run-gated reload path is safe.
+    await watcherHandle.refreshWorkspace(workspaceId, reasons);
+    for (const reason of reasons) reloadEvents.record(workspaceId, reason);
+  };
+  internalReloadDispatchers.set(config, dispatchInternalReloadRequired);
   const restartReloadWatchers = () => {
     watcherHandle.close();
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
@@ -856,6 +871,19 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations.close();
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
+  const automationRepository = await AutomationRepository.open(config);
+  const localAutomationEnabled = resolveLocalAutomationEnabled();
+  const automationExecutor = new AutomationExecutor({
+    config,
+    repository: automationRepository,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+  });
+  const automationScheduler = new AutomationScheduler({
+    repository: automationRepository,
+    executor: automationExecutor,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -867,6 +895,9 @@ export async function startServer(config: ServerConfig, options: {
     sessionPendingOperations,
     () => sessionPendingOperationPump,
     interactionResolutions,
+    automationRepository,
+    automationScheduler,
+    (event, fields) => logger.log("info", event, fields),
   );
 
   const serverOptions: {
@@ -1047,8 +1078,11 @@ export async function startServer(config: ServerConfig, options: {
   } catch (error) {
     invalidateEngineMcpServerState(config, engineMcpServerState);
     watcherHandle.close();
-    reloadBaselineRefreshers.delete(config);
+    internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
+    void automationScheduler.dispose();
+    automationExecutor.dispose();
+    automationRepository.close();
     throw error;
   }
 
@@ -1082,13 +1116,19 @@ export async function startServer(config: ServerConfig, options: {
     },
   });
 
+  if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
+    automationScheduler.start();
+  }
+
   return {
     ...server,
     stop: async () => {
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
-      reloadBaselineRefreshers.delete(config);
+      internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
+      automationExecutor.dispose();
+      try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
         errors.push(error);
@@ -1102,6 +1142,7 @@ export async function startServer(config: ServerConfig, options: {
       if (pendingPumpClosed) {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
+      try { automationRepository.close(); } catch (error) { errors.push(error); }
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
@@ -1118,6 +1159,61 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
 
 function buildOpencodeDirectoryHeader(directory: string) {
   return /[^\x00-\x7F]/.test(directory) ? encodeURIComponent(directory) : directory;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (!isRecord(value)) return JSON.stringify(value);
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    .join(",")}}`;
+}
+
+async function skipNoopOpencodeConfigPatch(input: {
+  method: string;
+  proxyPath: string;
+  targetUrl: string;
+  headers: Headers;
+  body: ArrayBuffer | undefined;
+}): Promise<Response | null> {
+  if (input.method !== "PATCH" || normalizeOpencodeProxyPath(input.proxyPath) !== "/config" || !input.body) {
+    return null;
+  }
+
+  let requested: unknown;
+  try {
+    requested = JSON.parse(new TextDecoder().decode(input.body));
+  } catch {
+    return null;
+  }
+
+  const getHeaders = new Headers(input.headers);
+  getHeaders.delete("content-length");
+  getHeaders.delete("content-type");
+  let currentResponse: Response;
+  try {
+    currentResponse = await loopbackFetch(input.targetUrl, {
+      method: "GET",
+      headers: getHeaders,
+    });
+  } catch {
+    return null;
+  }
+  if (!currentResponse.ok) return null;
+
+  let current: unknown;
+  try {
+    current = JSON.parse(await currentResponse.text());
+  } catch {
+    return null;
+  }
+  if (stableJson(current) !== stableJson(requested)) return null;
+
+  // Config.update returns the effective Config. Returning the matching GET
+  // payload preserves that contract without forwarding a mtime-only write to
+  // OpenCode, whose watcher would otherwise dispose active tool executions.
+  return jsonResponse(current);
 }
 
 function createOpencodeDirectoryFetch(directory: string, fetchImpl: typeof fetch = fetch): typeof fetch {
@@ -1271,6 +1367,14 @@ async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  const noopConfigResponse = await skipNoopOpencodeConfigPatch({
+    method,
+    proxyPath,
+    targetUrl,
+    headers,
+    body,
+  });
+  if (noopConfigResponse) return noopConfigResponse;
   const executionStart = parseSessionExecutionStartProxyRequest(method, proxyPath);
   let executionRun: ReturnType<SessionMutationCoordinator["reserveStart"]> | null = null;
   if (executionStart && workspace) {
@@ -1281,11 +1385,11 @@ async function proxyOpencodeRequest(input: {
         origin: "local-renderer",
         startCommandCorrelationId: null,
       });
-      input.sessionMutations.acceptStart({
-        workspaceId: workspace.id,
-        sessionId: executionStart.sessionId,
-        runId: executionRun.runId,
-      });
+      // Keep proxied command/shell reservations in `starting` until their
+      // upstream request settles. OpenCode can transiently report idle while
+      // that request is still in flight; an accepted/unobserved run would look
+      // indistinguishable from a stale fast-completion reservation and could
+      // otherwise be reconciled away by a competing start.
     } catch (error) {
       if (error instanceof SessionMutationError) {
         throw new ApiError(409, error.code, "The session already has an active run", {
@@ -1482,6 +1586,12 @@ function resolveInboxEnabled(): boolean {
 
 function resolveOutboxEnabled(): boolean {
   const raw = (process.env.JUGGLEWORK_OUTBOX_ENABLED ?? "").trim().toLowerCase();
+  if (!raw) return true;
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
+function resolveLocalAutomationEnabled(): boolean {
+  const raw = (process.env.JUGGLEWORK_LOCAL_AUTOMATION_ENABLED ?? "").trim().toLowerCase();
   if (!raw) return true;
   return ["1", "true", "yes", "on"].includes(raw);
 }
@@ -1687,6 +1797,9 @@ function createRoutes(
   sessionPendingOperations: SessionPendingOperationStore,
   getSessionPendingOperationPump: () => SessionPendingOperationPump | null,
   interactionResolutions: InteractionResolutionCoordinator,
+  automationRepository: AutomationRepository,
+  automationScheduler: AutomationScheduler,
+  automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1721,10 +1834,8 @@ function createRoutes(
     readOptionalJsonBody,
     parseOptionalBoolean,
     ensureWritable,
-    resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
-    reloadOpencodeEngine: (routeConfig, workspace) =>
-      reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });
 
   registerSessionRoutes({
@@ -1788,6 +1899,22 @@ function createRoutes(
         engineMcpServerState,
       ),
     serverMetadata: { serverVersion: SERVER_VERSION, expectedOpencodeVersion: OPENCODE_VERSION },
+  });
+
+  registerAutomationRoutes({
+    routes,
+    config,
+    repository: automationRepository,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    onChanged: () => automationScheduler.notifyChanged(),
+    log: automationLog,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    listWorkspaceMcp: listMcp,
+    enabled: resolveLocalAutomationEnabled(),
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
@@ -1938,6 +2065,8 @@ function createRoutes(
             updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
           }
         : null,
+      // 组织云端插件：远程 MCP 走 Connect 网关，不在工作区留本地副本。
+      cloudGatewayHosted: true,
       resolved,
     });
     const imported = result.item;
@@ -2220,6 +2349,7 @@ function createRoutes(
     return jsonResponse({
       ok: true,
       disabledProviders: runtimeDisabledProviderList(result.config),
+      changed: result.changed,
     });
   });
 
@@ -2392,6 +2522,11 @@ function createRoutes(
           ...(isRecord(currentRuntime.compaction) ? currentRuntime.compaction : {}),
           ...compaction,
         };
+      } else if (compaction === null) {
+        // TIPS: 显式 null 表示清除运行时层的 compaction，与 `provider` 字段的
+        // "null 删除" 约定一致。自动压缩已改为全局配置项，客户端需要能移除
+        // 工作区运行时层的遗留值，否则工作区级旧值会静默压过全局设置。
+        logicalUpdates.compaction = undefined;
       }
 
       const permissionUpdate = ensurePlainObject(permission);
@@ -2456,6 +2591,7 @@ function createRoutes(
     readJsonBody,
     requireClientScope,
     resolveWorkspace,
+    hasActiveSessionRuns: (workspaceId) => sessionMutations.listActive(workspaceId).length > 0,
     reloadOpencodeEngine: (routeConfig, workspace) =>
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState),
   });
@@ -2613,13 +2749,16 @@ function createRoutes(
     if (!name) {
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
+    const skillScope = normalizeOpencodeScope(ctx.url.searchParams.get("scope"));
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "skills.delete",
-      summary: `Delete skill ${name}`,
-      paths: [join(workspace.path, ".opencode", "skills", name)],
+      summary: `Delete ${skillScope} skill ${name}`,
+      paths: skillScope === "global"
+        ? globalSkillDirs().map((dir) => join(dir, name))
+        : [join(workspace.path, ".opencode", "skills", name)],
     });
-    const result = await deleteSkill(workspace.path, name);
+    const result = await deleteSkill(workspace.path, name, skillScope);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -3091,17 +3230,10 @@ async function resolveWorkspace(config: ServerConfig, id: string): Promise<Works
       bootstrapReloadReasons.add("commands");
     }
     if (bootstrapReloadReasons.size > 0) {
-      await reloadBaselineRefreshers.get(config)?.(workspace.id, Array.from(bootstrapReloadReasons));
-      reloadOpencodeEngineAfterInternalBootstrap(config, { ...workspace, path: resolvedWorkspace });
+      await internalReloadDispatchers.get(config)?.(workspace.id, Array.from(bootstrapReloadReasons));
     }
   }
   return workspace;
-}
-
-function reloadOpencodeEngineAfterInternalBootstrap(config: ServerConfig, workspace: WorkspaceInfo): void {
-  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
-  if (!connection.baseUrl?.trim()) return;
-  void reloadOpencodeEngine(config, workspace).catch(() => undefined);
 }
 
 async function isAuthorizedRoot(workspacePath: string, roots: string[]): Promise<boolean> {
@@ -3296,12 +3428,7 @@ function normalizeOpencodeScope(value: string | null | undefined): "project" | "
 
 function resolveOpencodeConfigFilePath(scope: "project" | "global", workspaceRoot: string): string {
   if (scope === "global") {
-    const base = join(homedir(), ".config", "opencode");
-    const jsoncPath = join(base, "opencode.jsonc");
-    const jsonPath = join(base, "opencode.json");
-    if (existsSync(jsoncPath)) return jsoncPath;
-    if (existsSync(jsonPath)) return jsonPath;
-    return jsoncPath;
+    return resolveGlobalOpenCodeConfigPath();
   }
   return opencodeConfigPath(workspaceRoot);
 }

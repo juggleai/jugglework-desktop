@@ -74,16 +74,6 @@ async function closeStaleDialogs(ctx) {
   }
 }
 
-async function dismissJuggleWorkModelsDialog(ctx) {
-  const clicked = await ctx.eval(`(() => {
-    const button = [...document.querySelectorAll('button')]
-      .find((candidate) => (candidate.textContent ?? '').trim() === 'Continue without JuggleWork Models');
-    button?.click();
-    return Boolean(button);
-  })()`);
-  if (clicked) await sleep(300);
-}
-
 async function clickExactButtonIfPresent(ctx, label) {
   const clicked = await ctx.eval(`(() => {
     const button = [...document.querySelectorAll('button')]
@@ -169,7 +159,6 @@ async function returnToApp(ctx) {
   if (inSettings) {
     await ctx.clickText("Back to app", { selector: "button", timeoutMs: 10_000 });
   }
-  await dismissJuggleWorkModelsDialog(ctx);
   await ctx.waitFor("(() => { const text = document.body?.innerText ?? ''; return text.includes('Add workspace') || text.includes('Welcome to JuggleWork'); })()", {
     timeoutMs: 30_000,
     label: "workspace shell or welcome screen",
@@ -196,7 +185,6 @@ async function ensureWorkspaceShellForRemote(ctx) {
 async function openConnectRemoteDialog(ctx) {
   await ensureWorkspaceShellForRemote(ctx);
   await closeStaleDialogs(ctx);
-  await dismissJuggleWorkModelsDialog(ctx);
   await ctx.clickText("Add workspace", { selector: "button", timeoutMs: 30_000 });
   await ctx.waitForText("Create Workspace", { timeoutMs: 30_000 });
   await ctx.clickText("Connect custom remote", { selector: "button", timeoutMs: 30_000 });
@@ -237,7 +225,6 @@ async function createStarterWorkspaceFromWelcome(ctx) {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const ready = await ctx.eval("(document.body?.innerText ?? '').includes('Add workspace')");
     if (ready) return;
-    await dismissJuggleWorkModelsDialog(ctx);
     await clickExactButtonIfPresent(ctx, "Skip and use the free model");
     await clickExactButtonIfPresent(ctx, "Skip");
     await sleep(500);

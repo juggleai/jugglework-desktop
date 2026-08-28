@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +42,7 @@ function startMockOpencode() {
   const commands: Array<{ sessionId: string; body: unknown }> = [];
   const shells: Array<{ sessionId: string; body: unknown }> = [];
   const statusRequests: string[] = [];
+  const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -60,6 +61,10 @@ function startMockOpencode() {
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
+      }
+      if (request.method === "POST" && url.pathname === "/instance/dispose") {
+        disposes.push({ directory: url.searchParams.get("directory") });
+        return Response.json({ disposed: true });
       }
 
       const v2PromptMatch = url.pathname.match(/^\/api\/session\/([^/]+)\/prompt$/);
@@ -136,6 +141,7 @@ function startMockOpencode() {
     commands,
     shells,
     statusRequests,
+    disposes,
     statuses,
     heldPrompts,
     heldMessageIds,
@@ -151,8 +157,11 @@ function startMockOpencode() {
 
 async function startHarness(enginePort: number) {
   const root = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-"));
+  const secondRoot = await mkdtemp(join(tmpdir(), "jugglework-session-mutation-second-"));
   roots.push(root);
+  roots.push(secondRoot);
   await mkdir(join(root, ".opencode"), { recursive: true });
+  await mkdir(join(secondRoot, ".opencode"), { recursive: true });
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
@@ -161,15 +170,25 @@ async function startHarness(enginePort: number) {
     configPath: join(root, "server.json"),
     approval: { mode: "auto", timeoutMs: 1_000 },
     corsOrigins: ["*"],
-    workspaces: [{
-      id: "ws_1",
-      name: "Workspace",
-      path: root,
-      preset: "starter",
-      workspaceType: "local",
-      baseUrl: `http://127.0.0.1:${enginePort}`,
-    }],
-    authorizedRoots: [root],
+    workspaces: [
+      {
+        id: "ws_1",
+        name: "Workspace",
+        path: root,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: `http://127.0.0.1:${enginePort}`,
+      },
+      {
+        id: "ws_2",
+        name: "Second Workspace",
+        path: secondRoot,
+        preset: "starter",
+        workspaceType: "local",
+        baseUrl: `http://127.0.0.1:${enginePort}`,
+      },
+    ],
+    authorizedRoots: [root, secondRoot],
     readOnly: false,
     startedAt: Date.now(),
     tokenSource: "cli",
@@ -777,6 +796,178 @@ describe("authoritative session mutation APIs", () => {
     await expect(stale.json()).resolves.toMatchObject({ code: "run_mismatch", details: { currentRunId: second.runId } });
     const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(active.json()).resolves.toMatchObject({ items: [{ runId: second.runId }] });
+  });
+
+  test("a new start self-heals an accepted run whose active event was missed", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const firstResponse = await fetch(`${runPath(harness.base, "ses_self_heal")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_first",
+        prompt: { parts: [{ type: "text", text: "First" }] },
+      }),
+    });
+    expect(firstResponse.status).toBe(202);
+    const first = (await firstResponse.json() as { run: { runId: string } }).run;
+
+    const idle = await fetch(`${runPath(harness.base, "ses_self_heal")}/${first.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "idle" }),
+    });
+    await expect(idle.json()).resolves.toMatchObject({ cleared: false, run: { observedActive: false } });
+
+    const secondResponse = await fetch(`${runPath(harness.base, "ses_self_heal")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_second",
+        prompt: { parts: [{ type: "text", text: "Second" }] },
+      }),
+    });
+    expect(secondResponse.status).toBe(202);
+    await expect(secondResponse.json()).resolves.toMatchObject({
+      run: { generation: 2, startCommandCorrelationId: "cmd_second" },
+    });
+    expect(engine.prompts.map((item) => item.sessionId)).toEqual(["ses_self_heal", "ses_self_heal"]);
+    expect(engine.statusRequests.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("active-run reads eventually reconcile an accepted run against authoritative idle", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_list_reconcile")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_list_reconcile",
+        prompt: { parts: [{ type: "text", text: "Fast completion" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+
+    const first = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(first.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_list_reconcile" }] });
+    await new Promise((resolve) => setTimeout(resolve, 510));
+    const second = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(second.json()).resolves.toEqual({ items: [] });
+  });
+
+  test("engine reload is blocked until the authoritative active run clears", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_reload_gate")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_reload_gate",
+        prompt: { parts: [{ type: "text", text: "Run" }] },
+      }),
+    });
+    const { run } = await started.json() as { run: { runId: string } };
+
+    const blocked = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
+
+    const terminal = await fetch(`${runPath(harness.base, "ses_reload_gate")}/${run.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "completed" }),
+    });
+    expect(terminal.status).toBe(200);
+
+    const reloaded = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+    });
+    expect(reloaded.status).toBe(200);
+  });
+
+  test("workspace navigation preserves an authoritative active run without aborting or disposing", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_navigation")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_navigation",
+        prompt: { parts: [{ type: "text", text: "Keep running" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+
+    for (const workspaceId of ["ws_2", "ws_1"]) {
+      const activated = await fetch(`${harness.base}/workspaces/${workspaceId}/activate`, {
+        method: "POST",
+        headers: harness.hostHeaders,
+      });
+      expect(activated.status).toBe(200);
+    }
+
+    expect(engine.disposes).toEqual([]);
+    expect(engine.aborts).toEqual([]);
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, {
+      headers: harness.collaboratorHeaders,
+    });
+    expect(active.status).toBe(200);
+    await expect(active.json()).resolves.toMatchObject({
+      items: [{ runId: run.runId, sessionId: "ses_navigation" }],
+    });
+  });
+
+  test("internal workspace repair defers reload and preserves an authoritative active run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const started = await fetch(`${runPath(harness.base, "ses_repair")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_repair",
+        prompt: { parts: [{ type: "text", text: "Keep running during repair" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const { run } = await started.json() as { run: { runId: string } };
+
+    const commandsDir = join(harness.root, ".opencode", "commands");
+    await mkdir(commandsDir, { recursive: true });
+    await writeFile(
+      join(commandsDir, "legacy.md"),
+      "---\nname: legacy\nmodel:\n---\nRun the legacy command.\n",
+      "utf8",
+    );
+    const config = await fetch(`${harness.base}/workspace/ws_1/config`, {
+      headers: harness.collaboratorHeaders,
+    });
+    expect(config.status).toBe(200);
+
+    expect(engine.disposes).toEqual([]);
+    expect(engine.aborts).toEqual([]);
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, {
+      headers: harness.collaboratorHeaders,
+    });
+    await expect(active.json()).resolves.toMatchObject({
+      items: [{ runId: run.runId, sessionId: "ses_repair" }],
+    });
+    const events = await fetch(`${harness.base}/workspace/ws_1/events`, {
+      headers: harness.collaboratorHeaders,
+    });
+    await expect(events.json()).resolves.toMatchObject({
+      items: [{ reason: "commands" }],
+    });
   });
 
   test("semantic mutation and active-state APIs require collaborator scope", async () => {

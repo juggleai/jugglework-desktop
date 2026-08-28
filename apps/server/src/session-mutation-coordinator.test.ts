@@ -71,6 +71,92 @@ describe("session mutation coordinator", () => {
     });
   });
 
+  test("clears an accepted unobserved run only after two separated authoritative idle samples", () => {
+    let timestamp = 1_000;
+    const coordinator = createSessionMutationCoordinator({
+      randomUUID: () => "run-1",
+      now: () => timestamp,
+    });
+    const run = coordinator.reserveStart({
+      workspaceId: "ws",
+      sessionId: "ses",
+      origin: "local-renderer",
+      startCommandCorrelationId: null,
+    });
+    coordinator.acceptStart({ workspaceId: "ws", sessionId: "ses", runId: run.runId });
+
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 500,
+    })).toMatchObject({ cleared: false, retryAfterMs: 500 });
+
+    timestamp += 499;
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 500,
+    })).toMatchObject({ cleared: false, retryAfterMs: 1 });
+
+    timestamp += 1;
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 500,
+    })).toEqual({ cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null });
+  });
+
+  test("active engine evidence resets authoritative idle confirmation", () => {
+    let timestamp = 1_000;
+    const coordinator = createSessionMutationCoordinator({
+      randomUUID: () => "run-1",
+      now: () => timestamp,
+    });
+    const run = coordinator.reserveStart({
+      workspaceId: "ws",
+      sessionId: "ses",
+      origin: "local-renderer",
+      startCommandCorrelationId: null,
+    });
+    coordinator.acceptStart({ workspaceId: "ws", sessionId: "ses", runId: run.runId });
+    coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 500,
+    });
+
+    timestamp += 500;
+    coordinator.observe({ workspaceId: "ws", sessionId: "ses", runId: run.runId, status: "running" });
+    expect(coordinator.getActive("ws", "ses")).toMatchObject({ observedActive: true });
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 500,
+    })).toEqual({ cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null });
+  });
+
+  test("never reconciles a starting run away", () => {
+    const coordinator = harness();
+    const run = coordinator.reserveStart({
+      workspaceId: "ws",
+      sessionId: "ses",
+      origin: "local-renderer",
+      startCommandCorrelationId: null,
+    });
+    expect(coordinator.reconcileAuthoritativeIdle({
+      workspaceId: "ws",
+      sessionId: "ses",
+      runId: run.runId,
+      minimumIntervalMs: 0,
+    })).toMatchObject({ cleared: false, retryAfterMs: null, run: { status: "starting" } });
+    expect(coordinator.getActive("ws", "ses")?.runId).toBe(run.runId);
+  });
+
   test("keeps a delayed abort fenced until upstream accepts it", () => {
     const coordinator = harness();
     const run = coordinator.reserveStart({

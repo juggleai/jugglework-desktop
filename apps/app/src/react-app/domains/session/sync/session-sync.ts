@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import { isToolUIPart, type UIMessage } from "ai";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
@@ -6,7 +6,7 @@ import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
 import { normalizeEvent } from "@/app/utils";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
+import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import { createSessionErrorUIMessage, describeOpencodeSessionError, snapshotToUIMessages } from "./usechat-adapter";
 import {
   parseDynamicToolUIPart,
@@ -19,6 +19,7 @@ import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
+import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 
 type SyncOptions = {
   workspaceId: string;
@@ -63,6 +64,8 @@ const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
+const liveTodoRevision = new Map<string, number>();
+let todoRevision = 0;
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -76,6 +79,20 @@ export const permissionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-permissions", workspaceId, sessionId] as const;
 export const questionKey = (workspaceId: string, sessionId: string) =>
   ["react-session-questions", workspaceId, sessionId] as const;
+const todoRevisionKey = (workspaceId: string, sessionId: string) => `${workspaceId}:${sessionId}`;
+export function captureTodoSnapshotRevision(): number {
+  return todoRevision;
+}
+
+/**
+ * Clear progress from the previous task before submitting another task in the
+ * same session. Recording a live revision prevents an older in-flight
+ * snapshot from restoring the cleared progress.
+ */
+export function clearSessionTodos(workspaceId: string, sessionId: string) {
+  liveTodoRevision.set(todoRevisionKey(workspaceId, sessionId), ++todoRevision);
+  getReactQueryClient().setQueryData(todoKey(workspaceId, sessionId), []);
+}
 
 function syncKey(input: SyncOptions) {
   return `${input.workspaceId}:${input.baseUrl}:${input.juggleworkToken}`;
@@ -99,6 +116,15 @@ function shouldRetrySyncSubscribe(error: unknown) {
 
 function isTrackedSession(entry: SyncEntry, sessionId: string) {
   return (entry.trackedSessionRefs.get(sessionId) ?? 0) > 0 || entry.retainedSessionTimers.has(sessionId);
+}
+
+function isTrackedByAnotherSync(input: SyncOptions, entry: SyncEntry, sessionId: string) {
+  for (const candidate of syncs.values()) {
+    if (candidate === entry) continue;
+    if (candidate.input.workspaceId !== input.workspaceId) continue;
+    if (isTrackedSession(candidate, sessionId)) return true;
+  }
+  return false;
 }
 
 function getSessionUpdatedInfo(event: OpencodeEvent) {
@@ -206,6 +232,11 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   );
   const queryClient = getReactQueryClient();
   queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+  if (!isTrackedByAnotherSync(input, entry, sessionId)) {
+    queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+    liveTodoRevision.delete(todoRevisionKey(input.workspaceId, sessionId));
+  }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }
@@ -496,12 +527,22 @@ function upsertMessage(messages: UIMessage[], next: UIMessage) {
  * promptAsync), that user message flashed as an assistant-styled block
  * until the real role arrived a tick later.
  *
- * Infer the stub role from the conversation instead. Chat sessions
- * alternate, so the new message is almost always the opposite role of the
- * most recent known message. If the transcript is empty the first message
- * is always the user's.
+ * Assistant-only part kinds provide a definitive role. For ambiguous text or
+ * file parts, infer from the conversation until message.updated supplies the
+ * authoritative role. If the transcript is empty the first ambiguous message
+ * is the user's.
  */
-function inferStubRole(messages: UIMessage[]): UIMessage["role"] {
+function inferStubRole(
+  messages: UIMessage[],
+  part?: UIMessage["parts"][number],
+): UIMessage["role"] {
+  // Reasoning, tool calls, and step boundaries can only belong to assistant
+  // output. Multi-step tool runs legitimately create consecutive assistant
+  // messages, so the generic user/assistant alternation heuristic is wrong
+  // for these parts.
+  if (part && (part.type === "reasoning" || isToolUIPart(part) || part.type === "step-start")) {
+    return "assistant";
+  }
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage) return "user";
   if (lastMessage.role === "user") return "assistant";
@@ -616,9 +657,50 @@ export function coalescePendingDeltas(items: PendingDelta[]) {
   return ordered;
 }
 
+/** 意味着工作区文件已落盘改动的引擎事件，「变更」面板据此重取，无需轮询 */
+const FILE_CHANGE_EVENT_TYPES = new Set(["session.diff", "file.edited", "file.watcher.updated"]);
+
+const fileChangeListeners = new Map<string, Set<() => void>>();
+
+/**
+ * 订阅某个工作区的文件改动事件
+ *
+ * TIPS: 引擎事件流由本模块统一维护，「文件」面板不在 kernel 的 GlobalSDKProvider
+ * 作用域内，拿不到那条总线，只能从这里转发。
+ *
+ * @param workspaceId 工作区 id
+ * @param listener 改动回调
+ * @returns 取消订阅的函数
+ */
+export function subscribeWorkspaceFileChanges(workspaceId: string, listener: () => void) {
+  let bucket = fileChangeListeners.get(workspaceId);
+
+  if (!bucket) {
+    bucket = new Set();
+    fileChangeListeners.set(workspaceId, bucket);
+  }
+
+  bucket.add(listener);
+
+  return () => {
+    const current = fileChangeListeners.get(workspaceId);
+
+    if (!current) return;
+
+    current.delete(listener);
+
+    if (current.size === 0) fileChangeListeners.delete(workspaceId);
+  };
+}
+
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const queryClient = getReactQueryClient();
   const input = entry.input;
+
+  if (FILE_CHANGE_EVENT_TYPES.has(event.type)) {
+    for (const listener of fileChangeListeners.get(workspaceId) ?? []) listener();
+    return;
+  }
 
   if (event.type === "session.created") {
     const session = getSessionCreatedInfo(event);
@@ -705,7 +787,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!props.sessionID || !props.status) return;
     useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, props.status);
     const tracked = isTrackedSession(entry, props.sessionID);
-    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+    if (tracked) {
+      queryClient.setQueryData(statusKey(workspaceId, props.sessionID), props.status);
+      if (isLiveStatus(props.status)) {
+        // A provider/SSE interruption can recover. Once authoritative live
+        // activity resumes, remove the provisional interruption receipt.
+        queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) =>
+          current.filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
+        );
+      }
+    }
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: props.status });
     if (input && tracked && !isLiveStatus(props.status)) {
       void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
@@ -718,6 +809,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { sessionID?: string; todos?: Todo[] };
     if (!props.sessionID || !props.todos) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
+    liveTodoRevision.set(todoRevisionKey(workspaceId, props.sessionID), ++todoRevision);
     queryClient.setQueryData(todoKey(workspaceId, props.sessionID), props.todos);
     return;
   }
@@ -812,20 +904,33 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
-    useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
-    if (info.role === "assistant") useSessionActivityStore.getState().markProgress(workspaceId, info.sessionID);
+    const messageActivityStore = useSessionActivityStore.getState();
+    messageActivityStore.markMessageRole(workspaceId, info.sessionID, info.id, info.role);
+    if (info.role === "assistant") {
+      // TIPS: 带 error 的助手消息就是这次运行的终点。中断（MessageAbortedError）只写在消息上，
+      // 引擎不一定再发 session.error，session.idle 也可能因为 SSE 重连而丢；不在这里收口，
+      // 侧栏（尤其工作区折叠后行尾的 loading）会一直转。
+      if (info.error) messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
+      else messageActivityStore.markProgress(workspaceId, info.sessionID);
+    }
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
+    const completed = info.time?.completed;
+    const timingMetadata = {
+      ...(typeof created === "number" ? { created } : {}),
+      ...(typeof completed === "number" ? { completed } : {}),
+      ...(info.role === "assistant" && typeof info.finish === "string" ? { finish: info.finish } : {}),
+    };
     const next = {
       id: info.id,
       role: info.role,
-      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
       parts: [],
     } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
@@ -901,7 +1006,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // stub's role matches what we'd write anyway, and any subsequent
       // message.updated will overwrite both.
       const existing = current.find((m) => m.id === part.messageID);
-      const role = existing?.role ?? inferStubRole(current);
+      const role = existing?.role ?? inferStubRole(current, seededPart);
       const withMessage = upsertMessage(current, { id: part.messageID, role, parts: [] });
       const seededPartId = getPartMetadataId(seededPart) ?? part.id;
       let next = upsertPart(withMessage, part.messageID, seededPartId, seededPart);
@@ -957,9 +1062,24 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       trackTaskCompleted(props.sessionID, Date.now() - runStartedAt);
       notifyDesktopEvent({ type: "task.completed", sessionId: props.sessionID });
     }
-    useSessionActivityStore.getState().setRunStatus(workspaceId, props.sessionID, idleStatus);
+    const activityStore = useSessionActivityStore.getState();
+    const recordedFinishReason = activityStore.getFinishReason(workspaceId, props.sessionID);
+    activityStore.setRunStatus(workspaceId, props.sessionID, idleStatus);
     const tracked = isTrackedSession(entry, props.sessionID);
-    if (tracked) queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+    if (tracked) {
+      queryClient.setQueryData(statusKey(workspaceId, props.sessionID), idleStatus);
+      const todos = queryClient.getQueryData<Todo[]>(todoKey(workspaceId, props.sessionID)) ?? [];
+      queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, props.sessionID), (current = []) => {
+        const result = reconcileRunCompletionDiagnostic(current, todos, { finishReason: recordedFinishReason });
+        activityStore.setCompletionDiagnostic(
+          workspaceId,
+          props.sessionID!,
+          Boolean(result.diagnostic),
+          result.diagnostic?.finishReason ?? recordedFinishReason,
+        );
+        return result.messages;
+      });
+    }
     for (const listener of entry.sessionStatusListeners) listener({ sessionId: props.sessionID, status: idleStatus });
     if (input && tracked) {
       void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, props.sessionID) });
@@ -1009,22 +1129,7 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
       (current = []) => {
         let next = current;
         const nextById = new Map(next.map((message) => [message.id, message]));
-        // Track which message shells we've ensured exist this flush so we
-        // don't call upsertMessage for the same message on every delta.
-        const ensuredMessageIds = new Set<string>();
         for (const item of items) {
-          if (!ensuredMessageIds.has(item.messageId)) {
-            // Preserve the existing role if the message is already in
-            // state; otherwise infer it from the alternation pattern
-            // so the brief "stub before message.updated" window doesn't
-            // mislabel the message's bubble style.
-            const existing = nextById.get(item.messageId);
-            const role = existing?.role ?? inferStubRole(next);
-            const ensuredMessage = { id: item.messageId, role, parts: existing?.parts ?? [] };
-            next = upsertMessage(next, ensuredMessage);
-            nextById.set(item.messageId, ensuredMessage);
-            ensuredMessageIds.add(item.messageId);
-          }
           // Resolve the part kind from the transcript instead of trusting
           // the inbound delta event (opencode emits `field: "text"` for
           // both text and reasoning parts). If the part hasn't been
@@ -1044,6 +1149,10 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
           const ownerPart = ownerPartsById.get(item.partId);
 
           if (!ownerPart) {
+            // A delta can beat both message.updated and message.part.updated.
+            // Buffer it without creating a role-guessed message shell. The
+            // authoritative message event or typed part event will create the
+            // message later, avoiding false user rows between assistant steps.
             const existing = entry.pendingDeltas.get(item.partId) ?? {
               messageId: item.messageId,
               reasoning: item.reasoning,
@@ -1102,10 +1211,30 @@ function startSync(input: SyncOptions) {
       }
       if (!controller.signal.aborted && activeConnectionController === connectionController) scheduleRetry();
     } catch (error) {
+      const activityStore = useSessionActivityStore.getState();
+      const liveSessionIds = Object.entries(activityStore.recordsByWorkspaceId[input.workspaceId] ?? {})
+        .flatMap(([sessionId, record]) => record.runActive ? [sessionId] : []);
       if (
         !controller.signal.aborted &&
         (connectionController.signal.aborted || shouldRetrySyncSubscribe(error))
       ) {
+        if (liveSessionIds.length > 0 && !connectionController.signal.aborted) {
+          activityStore.markProviderDisconnected(input.workspaceId);
+          const queryClient = getReactQueryClient();
+          for (const sessionId of liveSessionIds) {
+            const todos = queryClient.getQueryData<Todo[]>(todoKey(input.workspaceId, sessionId)) ?? [];
+            queryClient.setQueryData<UIMessage[]>(transcriptKey(input.workspaceId, sessionId), (current = []) => {
+              const result = reconcileRunCompletionDiagnostic(current, todos, { finishReason: "provider_disconnected" });
+              activityStore.setCompletionDiagnostic(
+                input.workspaceId,
+                sessionId,
+                Boolean(result.diagnostic),
+                result.diagnostic?.finishReason ?? "provider_disconnected",
+              );
+              return result.messages;
+            });
+          }
+        }
         scheduleRetry();
       }
     } finally {
@@ -1186,17 +1315,32 @@ function releaseWorkspaceSessionSync(input: SyncOptions) {
   }
 }
 
-export function seedSessionState(workspaceId: string, snapshot: JuggleWorkSessionSnapshot) {
+export function seedSessionState(
+  workspaceId: string,
+  snapshot: JuggleWorkSessionSnapshot,
+  options?: { snapshotTodoRevision?: number; skipTodos?: boolean },
+) {
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
-  const incoming = snapshotToUIMessages(snapshot);
+  const incomingSnapshotMessages = snapshotToUIMessages(snapshot);
+  const completion = snapshot.status.type === "idle"
+    ? reconcileRunCompletionDiagnostic(incomingSnapshotMessages, snapshot.todos)
+    : { messages: incomingSnapshotMessages, diagnostic: null };
+  const incoming = completion.messages;
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
-  useSessionActivityStore.getState().seedSessionRun(
+  const activityStore = useSessionActivityStore.getState();
+  activityStore.seedSessionRun(
     workspaceId,
     snapshot.session.id,
     snapshot.status,
     assistantOutputAfterLatestUser(incoming),
+  );
+  activityStore.setCompletionDiagnostic(
+    workspaceId,
+    snapshot.session.id,
+    Boolean(completion.diagnostic),
+    completion.diagnostic?.finishReason ?? null,
   );
 
   // The snapshot's revert cursor is authoritative: messages at/after it are
@@ -1212,7 +1356,11 @@ export function seedSessionState(workspaceId: string, snapshot: JuggleWorkSessio
   ));
 
   queryClient.setQueryData(statusKey(workspaceId, snapshot.session.id), snapshot.status);
-  queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  const snapshotTodoRevision = options?.snapshotTodoRevision ?? todoRevision;
+  const latestLiveTodoRevision = liveTodoRevision.get(todoRevisionKey(workspaceId, snapshot.session.id)) ?? 0;
+  if (!options?.skipTodos && latestLiveTodoRevision <= snapshotTodoRevision) {
+    queryClient.setQueryData(todoKey(workspaceId, snapshot.session.id), snapshot.todos);
+  }
 }
 
 /**

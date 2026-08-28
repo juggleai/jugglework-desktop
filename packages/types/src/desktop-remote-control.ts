@@ -1199,6 +1199,14 @@ const deviceRevokedEnvelopeSchema = z
   })
   .strict()
 
+const deviceDisabledEnvelopeSchema = z
+  .object({
+    ...envelopeBaseShape,
+    type: z.literal("device.disabled"),
+    payload: z.object({ deviceId: z.string().uuid(), reason: displayTextSchema }).strict(),
+  })
+  .strict()
+
 const sessionUnboundEnvelopeSchema = z
   .object({
     ...envelopeBaseShape,
@@ -1280,6 +1288,7 @@ export const desktopRemoteWssEnvelopeSchema = z.discriminatedUnion("type", [
   commandLifecycleEnvelopeSchema,
   sessionEventEnvelopeSchema,
   deviceRevokedEnvelopeSchema,
+  deviceDisabledEnvelopeSchema,
   sessionUnboundEnvelopeSchema,
   protocolErrorEnvelopeSchema,
   encryptedPayloadEnvelopeSchema,

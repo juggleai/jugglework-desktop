@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   AlertTriangle,
   Check,
+  ChevronRight,
   Copy,
   Download,
   FileIcon,
@@ -12,7 +13,6 @@ import {
   Split,
   Undo2,
 } from "lucide-react"
-import { PaperGrainGradient } from "@jugglework/ui/react"
 import {
   DynamicToolUIPart,
   isFileUIPart,
@@ -48,6 +48,11 @@ import {
 } from "@/components/descriptive-button"
 import { Button } from "@/components/ui/button"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -62,6 +67,7 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
+import { redactSensitiveCommand } from "@/components/chat/reasoning-redaction"
 import {
   isApplyPatchToolPart,
   isBashToolPart,
@@ -81,15 +87,66 @@ import {
 } from "@/lib/build-in-tools"
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 import type { ThreadStatus } from "@/lib/messages"
-import {
-  collectToolParts,
-  getActiveToolLabel,
-} from "@/lib/tool-activity"
+import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
-import { t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { getLiveActivityKind, liveActivityLabel } from "@/lib/live-activity"
+import {
+  CAPABILITY_INSTRUCTION_RE,
+  composerCapabilityTagClassName,
+  composerCapabilityTagTitlePrefix,
+  parseCapabilityInstruction,
+  type ComposerCapabilityKind,
+} from "@/react-app/domains/session/surface/composer/capability-tags"
+import { currentLocale, t } from "@/i18n"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
+
+/**
+ * 消息操作条（时间 + 复制/分支/回退图标）的显隐样式。
+ *
+ * TIPS: 操作条常驻会让每条消息多出一段视觉噪音，这里默认完全透明且不接收指针事件，
+ * 仅在悬停所在消息（group/message-actions）或键盘聚焦到条内按钮时浮现；
+ * 元素始终占位，避免悬停时产生布局抖动。
+ */
+const MESSAGE_ACTIONS_REVEAL_CLASS =
+  "pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message-actions:pointer-events-auto group-hover/message-actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+
+function TaskDuration({ messages, userMessageIndex, isStreaming }: {
+  messages: UIMessage[]
+  userMessageIndex: number
+  isStreaming: boolean
+}) {
+  const timing = React.useMemo(
+    () => getTaskTiming(messages, userMessageIndex, isStreaming),
+    [messages, userMessageIndex, isStreaming],
+  )
+  const [now, setNow] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    if (!timing?.running) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [timing?.running, timing?.startedAt])
+
+  if (!timing) return null
+
+  const endedAt = timing.running ? Math.max(timing.startedAt, now) : timing.endedAt
+  const locale = currentLocale() === "zh" ? "zh" : "en"
+  const label = locale === "zh" ? "耗时" : "Elapsed"
+  const duration = formatTaskDuration(endedAt - timing.startedAt, locale)
+
+  return (
+    <span
+      className="inline-flex items-center text-sm font-medium tracking-[-0.01em] tabular-nums text-muted-foreground"
+      data-testid="task-duration"
+      title={`${label}: ${duration}`}
+    >
+      {label} {duration}
+    </span>
+  )
+}
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -110,6 +167,60 @@ function MessageTimestamp({ message, className }: { message: UIMessage; classNam
 
 interface ToolMessageProps {
   part: ToolUIPart | DynamicToolUIPart
+}
+
+export function toolRunPreviewLabel(part: ToolUIPart | DynamicToolUIPart): string {
+  if (isBashToolPart(part)) {
+    const command = redactSensitiveCommand(part.input?.command).trim()
+    const description = redactSensitiveCommand(part.input?.description).trim()
+    return description || command || getToolActivityLabel(part)
+  }
+
+  return getToolActivityLabel(part)
+}
+
+function ToolRunGroup({
+  parts,
+  isStreaming,
+}: {
+  parts: Array<ToolUIPart | DynamicToolUIPart>
+  isStreaming: boolean
+}) {
+  const [open, setOpen] = React.useState(false)
+  const firstRunningPart = parts.find(isToolPartInFlight)
+  const previewPart = firstRunningPart ?? parts[0]
+  if (!previewPart) return null
+
+  const running = parts.some(isToolPartInFlight)
+  const label = toolRunPreviewLabel(previewPart)
+
+  React.useEffect(() => {
+    if (!isStreaming) setOpen(false)
+  }, [isStreaming])
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="w-full" data-testid="task-tool-run">
+      <CollapsibleTrigger
+        className="group/tool-run flex w-full min-w-0 cursor-pointer items-center gap-2 py-0.5 text-left text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-2"
+        aria-label={`${open ? "Collapse" : "Expand"} ${parts.length} tool ${parts.length === 1 ? "call" : "calls"}`}
+        data-testid="task-tool-run-toggle"
+      >
+        {running ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null}
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronRight className="size-4 shrink-0 opacity-0 transition-all duration-200 group-hover/tool-run:opacity-100 group-data-panel-open/tool-run:rotate-90 group-data-panel-open/tool-run:opacity-100" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+        <div className="space-y-2 pb-1 pl-6 pt-2">
+          {parts.map((part, index) => (
+            <ToolMessage
+              key={part.type === "dynamic-tool" ? part.toolCallId : `tool-${index}`}
+              part={part}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
 
 /**
@@ -352,7 +463,7 @@ function CopyMessageButton({ messages }: CopyMessageButtonProps) {
     <MessageAction tooltip={copied ? t("session.message_copied") : t("session.message_copy")}>
       <Button
         variant="ghost"
-        size="icon"
+        size="icon-xs"
         aria-label={t("session.message_copy")}
         onClick={() => void onCopy()}
       >
@@ -367,19 +478,26 @@ type AssistantMessageProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  presentation?: "default" | "process" | "summary"
 }
 
 const AssistantMessage = React.memo(
-  ({ message }: AssistantMessageProps) => {
+  ({ message, isStreaming, presentation = "default" }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const isProcess = presentation === "process"
     const assistantRenderGroups = React.useMemo(
       () => getAssistantRenderGroups(message.parts, showThinking),
       [message.parts, showThinking]
     )
 
+    if (assistantRenderGroups.length === 0) return null
+
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
+        className={cn(
+          "flex w-full flex-col items-start gap-2",
+          isProcess ? "px-0" : "mx-auto max-w-5xl px-3 md:px-8",
+        )}
         data-message-id={message.id}
         data-message-role={message.role}
       >
@@ -389,7 +507,12 @@ const AssistantMessage = React.memo(
               return (
                 <MessageContent
                   key={`text-${index}`}
-                  className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                  className={cn(
+                    "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-foreground",
+                    isProcess
+                      ? "text-sm leading-6 text-foreground/90 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-7 [&_li]:my-1.5 [&_p]:my-2.5 [&_p]:leading-7",
+                  )}
                   markdown
                   highlightQuery={highlightQuery}
                 >
@@ -402,7 +525,12 @@ const AssistantMessage = React.memo(
               return (
                 <MessageContent
                   key={`reasoning-${index}`}
-                  className="text-muted-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                  className={cn(
+                    "prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0 text-muted-foreground",
+                    isProcess
+                      ? "text-sm leading-6 [&_li]:my-1 [&_p]:my-2 [&_p]:leading-6"
+                      : "text-[15px] leading-7 [&_p]:leading-7",
+                  )}
                   markdown
                 >
                   {group.text}
@@ -419,8 +547,8 @@ const AssistantMessage = React.memo(
             }
 
             return (
-              <div key={`tool-${index}`} className="w-full">
-                <ToolMessage part={group.part} />
+              <div key={`tools-${index}`} className={cn("w-full", isProcess && "py-0.5")}>
+                <ToolRunGroup parts={group.parts} isStreaming={isStreaming} />
               </div>
             )
           })}
@@ -437,11 +565,12 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
-const USER_SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/
-
-function UserSkillChip(props: { name: string }) {
+function UserSkillChip(props: { kind: ComposerCapabilityKind; name: string }) {
   return (
-    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
+    <span
+      className={`mx-0.5 align-middle ${composerCapabilityTagClassName(props.kind)}`}
+      title={`${composerCapabilityTagTitlePrefix(props.kind)}: ${props.name}`}
+    >
       {props.name}
     </span>
   )
@@ -482,14 +611,20 @@ function renderPlainTextWithSearchHighlights(text: string, highlightQuery: strin
   return nodes
 }
 
+/**
+ * 把用户消息里的能力指令整句折叠成一枚 tag
+ *
+ * TIPS: 展示与提交是同一套语法（capability-tags）。此前这里只认 `[skill x]`，
+ * 云端技能/扩展/MCP 因此在会话记录里裸露成一整句文本。
+ */
 function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
+  if (!CAPABILITY_INSTRUCTION_RE.test(text)) return renderPlainTextWithSearchHighlights(text, highlightQuery, "text")
   let offset = 0
-  return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
+  return text.split(CAPABILITY_INSTRUCTION_RE).map((segment) => {
     const key = `${offset}:${segment}`
     offset += segment.length
-    const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
-    if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
+    const capability = segment ? parseCapabilityInstruction(segment) : null
+    if (capability) return <UserSkillChip key={key} kind={capability.kind} name={capability.name} />
     return <React.Fragment key={key}>{renderPlainTextWithSearchHighlights(segment, highlightQuery, key)}</React.Fragment>
   })
 }
@@ -504,9 +639,11 @@ const UserMessage = React.memo(
     )
     const hasContent = inlineParts.length > 0
 
+    if (!hasContent) return null
+
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-end gap-2 px-2 md:px-10"
+        className="mx-auto flex w-full max-w-5xl flex-col items-end gap-2 px-3 md:px-8"
         data-message-id={message.id}
         data-message-role={message.role}
       >
@@ -516,12 +653,13 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className="group/message-actions group flex w-full flex-col items-end gap-1 !select-text"
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
+                  /* 发送消息气泡背景统一 token --app-msg-sent-bg（定义于 app/index.css，消息页同源） */
                   <MessageContent
-                    className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
+                    className="bg-[var(--app-msg-sent-bg)] text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
                     style={{ userSelect: "text" }}
                   >
                     {inlineParts.map((part, index) => {
@@ -547,18 +685,14 @@ const UserMessage = React.memo(
                   </MessageContent>
                 ) : null}
                 {!isStreaming && (
-                  <MessageActions
-                    className={cn(
-                      "flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
-                    )}
-                  >
+                  <MessageActions className={cn("flex items-center gap-0", MESSAGE_ACTIONS_REVEAL_CLASS)}>
                     <MessageTimestamp message={message} className="mr-1.5" />
                     <CopyMessageButton messages={[message]} />
                     {messageText ? (
                       <MessageAction tooltip={t("session.edit_message_label")}>
                         <Button
                           variant="ghost"
-                          size="icon"
+                          size="icon-xs"
                           aria-label={t("session.edit_message_label")}
                           onClick={() => onEditUserMessage(message.id, messageText)}
                         >
@@ -569,7 +703,7 @@ const UserMessage = React.memo(
                     <MessageAction tooltip={t("session.branch_new_chat")}>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon-xs"
                         aria-label={t("session.branch_new_chat")}
                         onClick={() => onForkAtMessage(message.id)}
                       >
@@ -579,7 +713,7 @@ const UserMessage = React.memo(
                     <MessageAction tooltip={t("session.revert_label")}>
                       <Button
                         variant="ghost"
-                        size="icon"
+                        size="icon-xs"
                         aria-label={t("session.revert_label")}
                         onClick={() => onRevertToUserMessage(message.id)}
                       >
@@ -626,10 +760,11 @@ type MessageComponentProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
+  presentation?: "default" | "process" | "summary"
 }
 
 const MessageComponent = React.memo(
-  ({ message, isLastMessage, isStreaming, isLastStep }: MessageComponentProps) => {
+  ({ message, isLastMessage, isStreaming, isLastStep, presentation }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
@@ -645,6 +780,7 @@ const MessageComponent = React.memo(
           isLastMessage={isLastMessage}
           isStreaming={isStreaming}
           isLastStep={isLastStep}
+          presentation={presentation}
         />
       )
     }
@@ -660,23 +796,15 @@ const MessageComponent = React.memo(
 
 MessageComponent.displayName = "MessageComponent"
 
+// TIPS: 容器与消息正文/「耗时」行保持同一套 max-w-5xl + px-3/md:px-8，
+// 左边缘才能和上下文对齐；此前用的是 max-w-3xl + px-2/md:px-10，会偏右十几像素。
 const LoadingMessage = React.memo(({ label }: { label?: string }) => (
-  <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+  <Message className="mx-auto -mt-1 flex w-full max-w-5xl flex-col items-start gap-0 px-3 md:px-8">
     <div className="group flex w-full flex-col gap-0">
-      <div className="flex items-center gap-1.5 px-1 py-1 text-sm text-muted-foreground">
-        <div style={{ width: 20, height: 20, borderRadius: "50%", overflow: "hidden" }}>
-          <PaperGrainGradient
-            speed={12}
-            softness={0.1}
-            intensity={1}
-            noise={0.05}
-            shape="sphere"
-            colors={["#818cf8", "#fb7185", "#fbbf24", "#34d399"]}
-            colorBack="#ffffff00"
-            style={{ backgroundColor: "#818cf8", width: "100%", height: "100%", borderRadius: "50%" }}
-          />
-        </div>
-        <span>{label ?? "Thinking…"}</span>
+      <div className="flex items-center py-0 text-sm" role="status" aria-live="polite">
+        <span className="live-activity-text font-medium tracking-[-0.01em]">
+          {`${label ?? liveActivityLabel("responding")}...`}
+        </span>
       </div>
     </div>
   </Message>
@@ -799,59 +927,113 @@ function MessageGroup({
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const isLiveGroup = isStreaming && lastItem !== undefined && lastItem.index === messages.length - 1
-  const stepsRef = React.useRef<HTMLDivElement>(null)
+  const [processOpen, setProcessOpen] = React.useState(() => isLiveGroup)
 
-  // Keep the capped step run pinned to the latest step while streaming.
   React.useEffect(() => {
-    const node = stepsRef.current
-    if (node && isLiveGroup) {
-      node.scrollTop = node.scrollHeight
-    }
-  })
+    setProcessOpen(isLiveGroup)
+  }, [isLiveGroup])
 
   if (!lastItem || isMessageEmptyGroup(items)) {
     return null;
   }
 
-  const renderableItems = getRenderableMessages(items)
-  const lastTextMessage = getLastTextPart(lastItem.message)
-
-  // Leading messages without prose (tool/reasoning steps) render inside a
-  // height-capped scroll area so long runs stay compact; messages with text
-  // or files render inline below it.
-  let stepCount = 0
-  while (stepCount < items.length && !getRenderableMessage(items[stepCount].message)) {
-    stepCount += 1
+  const { processItems, summaryItems } = splitAssistantTaskMessages(items, isLiveGroup)
+  const processDisplayItem = mergeAssistantProcessItems(processItems)
+  const renderableItems = getRenderableMessages(summaryItems)
+  const summaryItem = summaryItems.at(-1)
+  const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
+  // 只要有过程内容就保留折叠器：运行中默认展开，结束后收起但仍可展开。
+  // TIPS: 此前的条件是 `processItems.length > 0 && (isLiveGroup || summaryItems.length === 0)`，
+  // 任务一结束并产出结论，整个折叠器（连同「耗时」后面的箭头）就消失，
+  // 于是流式期间折起来的过程再也展不开。
+  const showProcessDisclosure = processItems.length > 0
+  let userMessageIndex = items[0]?.index ?? -1
+  while (userMessageIndex > 0 && messages[userMessageIndex - 1]?.role !== "user") {
+    userMessageIndex -= 1
   }
-  const stepItems = items.slice(0, stepCount)
-  const proseItems = items.slice(stepCount)
+  userMessageIndex = messages[userMessageIndex - 1]?.role === "user" ? userMessageIndex - 1 : -1
+  const showTaskTiming = userMessageIndex >= 0 && getMessageCreated(messages[userMessageIndex]) !== null
 
-  const renderItem = (item: UIMessageWithIndex, groupIndex: number) => {
+  const renderItem = (
+    item: UIMessageWithIndex,
+    groupIndex: number,
+    presentation: "process" | "summary",
+  ) => {
     const isLastMessage = item.index === messages.length - 1
 
     return (
-      <div key={item.message.id}>
+      <React.Fragment key={item.message.id}>
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
           isStreaming={isLastMessage && isStreaming}
           isLastStep={groupIndex === items.length - 1}
+          presentation={presentation}
         />
         <MessageArtifacts message={item.message} />
-      </div>
+      </React.Fragment>
     )
   }
 
   return (
-      <div className="flex flex-col gap-2 group/message-group">
-      {stepItems.length > 0 ? (
-        <div ref={stepsRef} className="max-h-[520px] overflow-y-auto">
-          {stepItems.map((item, groupIndex) => renderItem(item, groupIndex))}
+    <div className="group/message-actions group/message-group mt-5 flex flex-col gap-0">
+      {showProcessDisclosure ? (
+        <Collapsible open={processOpen} onOpenChange={setProcessOpen} className="mx-auto w-full max-w-5xl px-3 md:px-8">
+          <CollapsibleTrigger
+            className="group/process flex w-full cursor-pointer items-center gap-1.5 border-b border-border/65 pb-3 text-left text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-4"
+            data-testid="task-process-toggle"
+          >
+            {showTaskTiming ? (
+              <TaskDuration
+                messages={messages}
+                userMessageIndex={userMessageIndex}
+                isStreaming={isLiveGroup}
+              />
+            ) : (
+              <span className="text-sm font-medium">
+                {currentLocale() === "zh" ? "执行过程" : "Process"}
+              </span>
+            )}
+            <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/process:rotate-90" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+            <div className={cn("pt-4", isLiveGroup ? "pb-1" : "pb-5")}>
+              {processDisplayItem ? (
+                <MessageComponent
+                  message={processDisplayItem.message}
+                  isLastMessage={processDisplayItem.index === messages.length - 1}
+                  isStreaming={isLiveGroup}
+                  isLastStep={processItems.length === items.length}
+                  presentation="process"
+                />
+              ) : null}
+              <ArtifactList messages={processItems.map((item) => item.message)} includeTargetFallbacks={false} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : showTaskTiming ? (
+        <div className="mx-auto w-full max-w-5xl px-3 md:px-8">
+          <div className="border-b border-border/65 pb-3">
+            <TaskDuration
+              messages={messages}
+              userMessageIndex={userMessageIndex}
+              isStreaming={isLiveGroup}
+            />
+          </div>
         </div>
       ) : null}
-      {proseItems.map((item, groupIndex) => renderItem(item, stepItems.length + groupIndex))}
+      <div className={cn(
+        (showProcessDisclosure || showTaskTiming) && (isLiveGroup && processOpen ? "pt-2" : "pt-5"),
+      )}>
+        {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
+      </div>
       {lastTextMessage && !isStreaming && (
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 opacity-0 transition-opacity duration-150 group-hover/message-group:opacity-100 md:px-8">
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-5xl flex-wrap items-center gap-1.5 px-3 text-muted-foreground md:px-8",
+            MESSAGE_ACTIONS_REVEAL_CLASS,
+          )}
+        >
           <MessageActions className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
             {lastRealItem ? (
@@ -859,7 +1041,7 @@ function MessageGroup({
                 <MessageAction tooltip={t("session.branch_new_chat")}>
                   <Button
                     variant="ghost"
-                    size="icon"
+                    size="icon-xs"
                     aria-label={t("session.branch_new_chat")}
                     onClick={() => onForkAtMessage(lastRealItem.message.id)}
                   >
@@ -869,7 +1051,7 @@ function MessageGroup({
                 <MessageAction tooltip={t("session.revert_label")}>
                   <Button
                     variant="ghost"
-                    size="icon"
+                    size="icon-xs"
                     aria-label={t("session.revert_label")}
                     onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
                   >
@@ -898,8 +1080,10 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
+  // TIPS: 底部提示展示的是当前真实动作（执行命令 / 写文件 / 工具调用…），
+  // 而不是一个恒定的「Thinking…」；推不出具体动作时落到「生成回复中」。
   const liveActionLabel = isStreaming
-    ? getActiveToolLabel(collectToolParts(messages))
+    ? liveActivityLabel(getLiveActivityKind(messages))
     : null
 
   return (

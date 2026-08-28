@@ -35,6 +35,14 @@ import {
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
+import {
+  COMPOSER_TOKEN_SPLIT_RE,
+  composerCapabilityTagClassName,
+  composerCapabilityTagTitlePrefix,
+  composerCapabilityToken,
+  parseComposerCapabilityToken,
+  type ComposerCapabilityKind,
+} from "./capability-tags";
 import { shouldCollapsePastedText } from "./pasted-text";
 import { insertStyledPastedText } from "./pasted-text-insertion";
 
@@ -55,7 +63,7 @@ type EditorProps = {
   disabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
-  onSubmit: (options: { queue: boolean }) => void | Promise<void>;
+  onSubmit?: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
@@ -66,7 +74,7 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
-  insertSkillAtSelection: (skillName: string) => void;
+  insertSkillAtSelection: (skillName: string, kind?: ComposerCapabilityKind) => void;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -91,6 +99,8 @@ type SerializedComposerSlashCommandNode = Spread<
 type SerializedComposerSkillNode = Spread<
   {
     skillName: string;
+    /** 省略时按本地技能处理，兼容旧的序列化数据。 */
+    capabilityKind?: ComposerCapabilityKind;
     type: "composer-skill";
     version: 1;
   },
@@ -247,30 +257,39 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
+/**
+ * 能力标签节点：本地技能、云端技能、扩展、MCP 共用一种节点，只在 kind 上区分。
+ *
+ * TIPS: 类型名保留 `composer-skill` 以兼容既有的序列化数据（旧数据没有 capabilityKind，
+ * 按本地技能处理）。节点文本是紧凑 token，展示出来的始终是干净完整的能力名。
+ */
 class ComposerSkillNode extends TextNode {
   __skillName: string;
+  __capabilityKind: ComposerCapabilityKind;
 
   static override getType() {
     return "composer-skill";
   }
 
   static override clone(node: ComposerSkillNode) {
-    return new ComposerSkillNode(node.__skillName, node.__key);
+    return new ComposerSkillNode(node.__skillName, node.__capabilityKind, node.__key);
   }
 
   static override importJSON(serializedNode: SerializedComposerSkillNode) {
-    return $createComposerSkillNode(serializedNode.skillName);
+    return $createComposerSkillNode(serializedNode.skillName, serializedNode.capabilityKind ?? "skill");
   }
 
-  constructor(skillName = "", key?: NodeKey) {
-    super(`[skill ${skillName}]`, key);
+  constructor(skillName = "", capabilityKind: ComposerCapabilityKind = "skill", key?: NodeKey) {
+    super(composerCapabilityToken(capabilityKind, skillName), key);
     this.__skillName = skillName;
+    this.__capabilityKind = capabilityKind;
   }
 
   override exportJSON(): SerializedComposerSkillNode {
     return {
       ...super.exportJSON(),
       skillName: this.__skillName,
+      capabilityKind: this.__capabilityKind,
       type: "composer-skill",
       version: 1,
     };
@@ -278,18 +297,19 @@ class ComposerSkillNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    dom.className = "inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11";
+    dom.className = composerCapabilityTagClassName(this.__capabilityKind);
     dom.textContent = this.__skillName;
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
-    dom.title = `Skill: ${this.__skillName}`;
+    dom.title = `${composerCapabilityTagTitlePrefix(this.__capabilityKind)}: ${this.__skillName}`;
     return dom;
   }
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
-    if (prevNode.__skillName !== this.__skillName) {
+    if (prevNode.__skillName !== this.__skillName || prevNode.__capabilityKind !== this.__capabilityKind) {
+      dom.className = composerCapabilityTagClassName(this.__capabilityKind);
       dom.textContent = this.__skillName;
-      dom.title = `Skill: ${this.__skillName}`;
+      dom.title = `${composerCapabilityTagTitlePrefix(this.__capabilityKind)}: ${this.__skillName}`;
     }
     return false;
   }
@@ -311,8 +331,8 @@ class ComposerSkillNode extends TextNode {
   }
 }
 
-function $createComposerSkillNode(skillName: string) {
-  return $applyNodeReplacement(new ComposerSkillNode(skillName));
+function $createComposerSkillNode(skillName: string, capabilityKind: ComposerCapabilityKind = "skill") {
+  return $applyNodeReplacement(new ComposerSkillNode(skillName, capabilityKind));
 }
 
 function pastedTextChipLabel(lines: number) {
@@ -715,7 +735,7 @@ function setPrompt(
     value = slashMatch[2] ?? "";
   }
 
-  const segments = value.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
+  const segments = value.split(COMPOSER_TOKEN_SPLIT_RE);
   const pastedTextByLabel = new Map((pastedText ?? []).map((item) => [item.label, item]));
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
@@ -736,9 +756,9 @@ function setPrompt(
         continue;
       }
     }
-    const skillMatch = segment.match(/^\[skill (.+)\]$/);
-    if (skillMatch?.[1]) {
-      paragraph.append($createComposerSkillNode(skillMatch[1]));
+    const capability = parseComposerCapabilityToken(segment);
+    if (capability) {
+      paragraph.append($createComposerSkillNode(capability.name, capability.kind));
       continue;
     }
     if (segment.startsWith("@")) {
@@ -753,24 +773,24 @@ function setPrompt(
   }
 }
 
-function appendSkillAtEnd(skillName: string) {
+function appendSkillAtEnd(skillName: string, kind: ComposerCapabilityKind) {
   const root = $getRoot();
   const lastChild = root.getLastChild();
   const paragraph = $isElementNode(lastChild) ? lastChild : $createParagraphNode();
   if (!$isElementNode(lastChild)) root.append(paragraph);
-  const skillNode = $createComposerSkillNode(skillName);
+  const skillNode = $createComposerSkillNode(skillName, kind);
   const spaceNode = $createTextNode(" ");
   paragraph.append(skillNode, spaceNode);
   setSelectionAfterNode(spaceNode);
 }
 
-function insertSkillAtSelection(skillName: string) {
+function insertSkillAtSelection(skillName: string, kind: ComposerCapabilityKind) {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) {
-    appendSkillAtEnd(skillName);
+    appendSkillAtEnd(skillName, kind);
     return;
   }
-  const skillNode = $createComposerSkillNode(skillName);
+  const skillNode = $createComposerSkillNode(skillName, kind);
   const spaceNode = $createTextNode(" ");
   selection.insertNodes([skillNode, spaceNode]);
   setSelectionAfterNode(spaceNode);
@@ -1104,8 +1124,8 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
-    insertSkillAtSelection(skillName: string) {
-      editor.update(() => insertSkillAtSelection(skillName));
+    insertSkillAtSelection(skillName: string, kind: ComposerCapabilityKind = "skill") {
+      editor.update(() => insertSkillAtSelection(skillName, kind));
       editor.focus();
     },
   }), [editor]);
@@ -1231,7 +1251,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           attachments={props.attachments}
           disabled={props.disabled}
         />
-        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        {props.onSubmit ? <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} /> : null}
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />

@@ -9,14 +9,17 @@ function containsJuggleChatRouterEndpoint(value: string) {
   return JUGGLECHAT_ROUTER_ENDPOINT.test(value)
 }
 
-export function isJuggleChatRouterCommand(command: string): boolean {
-  return containsJuggleChatRouterEndpoint(command) && /\bcurl\b/i.test(command)
+export function isJuggleChatRouterCommand(command: unknown): boolean {
+  return typeof command === "string"
+    && containsJuggleChatRouterEndpoint(command)
+    && /\bcurl\b/i.test(command)
 }
 
-export function redactSensitiveCommand(command: string): string {
-  return isJuggleChatRouterCommand(command)
+export function redactSensitiveCommand(command: unknown): string {
+  const value = typeof command === "string" ? command : ""
+  return isJuggleChatRouterCommand(value)
     ? HIDDEN_JUGGLECHAT_ROUTER_OPERATION
-    : command
+    : value
 }
 
 /**

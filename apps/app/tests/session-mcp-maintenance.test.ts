@@ -461,21 +461,22 @@ describe("session MCP maintenance", () => {
     });
     await Promise.resolve();
 
-    await expect(runSessionMcpMaintenanceTask({
+    const sharedTargetA = runSessionMcpMaintenanceTask({
       targetKey: recreatedTargetA,
       task: async () => {
         targetARuns += 1;
       },
-    })).resolves.toBe(false);
+    });
     await expect(runSessionMcpMaintenanceTask({
       targetKey: targetB,
       task: async () => {
         targetBRuns += 1;
       },
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({ started: true, completion: { status: "ok" } });
 
     releaseTargetA();
-    await expect(firstTargetA).resolves.toBe(true);
+    await expect(firstTargetA).resolves.toMatchObject({ started: true, completion: { status: "ok" } });
+    await expect(sharedTargetA).resolves.toMatchObject({ started: false, completion: { status: "ok" } });
     expect(targetARuns).toBe(1);
     expect(targetBRuns).toBe(1);
   });

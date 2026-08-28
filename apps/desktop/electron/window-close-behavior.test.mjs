@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { installMacCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
+import { installCloseToHide, windowAllClosedAction } from "./window-close-behavior.mjs";
 
 class FakeWindow extends EventEmitter {
   hideCount = 0;
@@ -12,8 +12,8 @@ class FakeWindow extends EventEmitter {
   }
 }
 
-/** @param {{ platform?: NodeJS.Platform, quitting?: boolean, canHide?: boolean }} options */
-function fixture({ platform = "darwin", quitting = false, canHide = true } = {}) {
+/** @param {{ quitting?: boolean, canHide?: boolean }} options */
+function fixture({ quitting = false, canHide = true } = {}) {
   const window = new FakeWindow();
   const event = {
     prevented: false,
@@ -21,37 +21,29 @@ function fixture({ platform = "darwin", quitting = false, canHide = true } = {})
       this.prevented = true;
     },
   };
-  const dispose = installMacCloseToHide({
+  const dispose = installCloseToHide({
     window,
-    platform,
     canQuit: () => quitting,
     canHide: () => canHide,
   });
   return { window, event, dispose };
 }
 
-test("macOS close button hides the window without destroying it", () => {
+test("close button hides the window on every platform while the tray is active", () => {
   const target = fixture();
   target.window.emit("close", target.event);
   assert.equal(target.event.prevented, true);
   assert.equal(target.window.hideCount, 1);
 });
 
-test("explicit macOS quit is not intercepted", () => {
+test("explicit quit is not intercepted", () => {
   const target = fixture({ quitting: true });
   target.window.emit("close", target.event);
   assert.equal(target.event.prevented, false);
   assert.equal(target.window.hideCount, 0);
 });
 
-test("other platforms keep their native close behavior", () => {
-  const target = fixture({ platform: "win32" });
-  target.window.emit("close", target.event);
-  assert.equal(target.event.prevented, false);
-  assert.equal(target.window.hideCount, 0);
-});
-
-test("macOS does not hide a window when background continuation is unsafe", () => {
+test("close falls through to native behavior when no visible tray exists", () => {
   const target = fixture({ canHide: false });
   target.window.emit("close", target.event);
   assert.equal(target.event.prevented, false);

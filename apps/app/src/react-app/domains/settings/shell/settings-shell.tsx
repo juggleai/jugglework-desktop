@@ -87,7 +87,7 @@ export function SettingsShell(props: SettingsShellProps) {
   if (props.compact) {
     return (
       <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-        <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
+        <header className="session-panel-header flex shrink-0 items-center justify-between gap-2 border-b border-dls-border px-3 mac:titlebar-drag">
           <div className="flex min-w-0 items-center gap-2 mac:titlebar-no-drag">
             {props.compactTitle ? (
               <h1 className="truncate text-[15px] font-semibold text-dls-text">{props.compactTitle}</h1>
@@ -110,18 +110,6 @@ export function SettingsShell(props: SettingsShellProps) {
                 ) : null}
               </>
             )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
-            <Button
-              variant="ghost"
-              type="button"
-              className="flex size-8 shrink-0 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
-              onClick={props.onClose}
-              title={t("dashboard.close_settings")}
-              aria-label={t("dashboard.close_settings")}
-            >
-              <X size={17} />
-            </Button>
           </div>
         </header>
 
@@ -165,7 +153,7 @@ export function SettingsShell(props: SettingsShellProps) {
         />
         <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="flex h-14 shrink-0 items-center justify-between border-b border-dls-border px-4 md:px-6 mac:titlebar-drag">
+            <header className="flex h-[var(--app-topbar-height)] shrink-0 items-center justify-between border-b border-dls-border bg-background px-4 md:px-6 mac:titlebar-drag">
               <div className="flex min-w-0 items-center gap-3">
                 <SidebarTrigger className="mac:titlebar-no-drag md:hidden" />
                 {props.headerLeadingSlot}
@@ -221,11 +209,12 @@ export function SettingsShell(props: SettingsShellProps) {
 
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
   const { memoryEnabled } = useFeatureFlagsPreferences();
+  // 分组为空时整组不渲染，与侧栏保持一致。
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
     { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
     { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode) },
     { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
-  ];
+  ].filter((section) => section.tabs.length > 0);
   const ActiveIcon = getSettingsTabIcon(props.activeTab);
 
   return (

@@ -35,10 +35,7 @@ async function authDelay(ctx, action) {
   return response.json();
 }
 
-async function dismissModelUpsells(ctx) {
-  if (await ctx.hasText("Use JuggleWork Models without API keys")) {
-    await ctx.clickText("Continue without JuggleWork Models", { selector: "button", timeoutMs: 15_000 });
-  }
+async function dismissFirstTaskOnboarding(ctx) {
   if (await ctx.hasText("Power your first task")) {
     await ctx.clickText("Skip and use the free model", { selector: "button", timeoutMs: 15_000 });
   }
@@ -79,7 +76,7 @@ async function ensureLocalCloudSession(ctx) {
   })()`);
   await ctx.eval("location.reload()");
   await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs: 60_000, label: "control API after Cloud session restore" });
-  await dismissModelUpsells(ctx);
+  await dismissFirstTaskOnboarding(ctx);
 }
 
 async function createFreshTask(ctx) {
@@ -123,7 +120,7 @@ async function beginSavedSessionRestore(ctx) {
   await authDelay(ctx, "hold");
   await ctx.eval("location.reload()");
   await ctx.waitFor("Boolean(window.__juggleworkControl)", { timeoutMs: 60_000, label: "control API during saved-session restore" });
-  await dismissModelUpsells(ctx);
+  await dismissFirstTaskOnboarding(ctx);
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const delay = await authDelay(ctx);
@@ -217,7 +214,7 @@ async function setup(ctx) {
     await createFreshTask(ctx);
     await ctx.waitFor("window.location.hash.includes('/session/ses_')", { timeoutMs: 90_000, label: "fresh task session" });
   }
-  await dismissModelUpsells(ctx);
+  await dismissFirstTaskOnboarding(ctx);
   await waitForConnectReady(ctx);
   state.transcriptCount = await transcriptCount(ctx);
 }
@@ -266,7 +263,7 @@ export default {
             ctx.assert(clicked, "Could not submit the normal task while Connect was checking.");
             await new Promise((resolve) => setTimeout(resolve, 500));
             if (await ctx.hasText("Power your first task")) {
-              await dismissModelUpsells(ctx);
+              await dismissFirstTaskOnboarding(ctx);
               await ctx.control("composer.set_text", { text: PROMPT });
               const retried = await ctx.waitFor(`(() => {
                 const button = [...document.querySelectorAll("button")].find((entry) => entry.title === "Run task");

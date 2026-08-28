@@ -34,11 +34,31 @@ test("remote-control settings are disabled when missing or corrupt", async () =>
   assert.deepEqual(await reloaded.read(), disabledRemoteControlSettings);
 });
 
+test("legacy enabled settings migrate to prevent sleep while waiting", () => {
+  assert.deepEqual(normalizeRemoteControlSettings({
+    schemaVersion: 1,
+    enabled: true,
+    backgroundMode: true,
+    launchAtLogin: false,
+    allowBusySessionSteer: false,
+    allowBusySessionEnqueue: false,
+  }), {
+    schemaVersion: 1,
+    enabled: true,
+    preventSleepWhileWaiting: true,
+    backgroundMode: true,
+    launchAtLogin: false,
+    allowBusySessionSteer: false,
+    allowBusySessionEnqueue: false,
+  });
+});
+
 test("remote-control settings persist explicit local enablement atomically", async () => {
   const { filePath, store } = await isolatedStore();
   assert.deepEqual(await store.update({ enabled: true, backgroundMode: true }), {
     schemaVersion: 1,
     enabled: true,
+    preventSleepWhileWaiting: true,
     backgroundMode: true,
     launchAtLogin: false,
     allowBusySessionSteer: false,
@@ -54,6 +74,7 @@ test("busy-session policies are independent, explicit, and default false", async
   assert.deepEqual(await store.read(), {
     schemaVersion: 1,
     enabled: true,
+    preventSleepWhileWaiting: true,
     backgroundMode: false,
     launchAtLogin: false,
     allowBusySessionSteer: true,

@@ -4,13 +4,13 @@ import { Plus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
-import { SkillAvatar } from "./skill-avatar";
 import { ConnectorPickerModal } from "./connector-picker-modal";
 import { SkillsManagerModal } from "./skills-manager-modal";
+import { PluginsModal } from "./plugins-modal";
 import { InstructionsModal } from "./instructions-modal";
 import type { ProjectExtensionsPanelProps } from "./types";
 
-type ActiveModal = "instructions" | "connector" | "skill" | null;
+type ActiveModal = "instructions" | "connector" | "skill" | "plugin" | null;
 
 /** 分组卡片外壳 */
 function GroupCard({ title, description, count, disabled, onAdd, children }: {
@@ -54,8 +54,7 @@ function GroupCard({ title, description, count, disabled, onAdd, children }: {
 }
 
 /**
- * 会话右侧「扩展」分组卡片面板：按类别（指令 / 连接器 / 专家 / 技能 / 自动化）
- * 展示项目级扩展配置，专家与自动化为预留占位。
+ * 会话右侧设置分组卡片面板：只展示当前可配置的指令、连接器和技能。
  */
 export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
   const [modal, setModal] = useState<ActiveModal>(null);
@@ -68,8 +67,6 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
     () => props.installedSkills.filter((skill) => skill.scope !== "global").length,
     [props.installedSkills],
   );
-  const skillPreview = props.installedSkills.slice(0, 8);
-
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-y-auto px-3 py-3">
       <GroupCard
@@ -86,30 +83,16 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
       />
 
       <GroupCard
-        title={t("project_extensions.group_expert")}
-        description={t("project_extensions.expert_card_desc")}
-        disabled
+        title={t("project_extensions.group_skill")}
+        description={t("project_extensions.skill_card_desc")}
+        count={projectSkillCount || undefined}
+        onAdd={() => setModal("skill")}
       />
 
       <GroupCard
-        title={t("project_extensions.group_skill")}
-        description={skillPreview.length === 0 ? t("project_extensions.skill_card_desc") : undefined}
-        count={projectSkillCount || undefined}
-        onAdd={() => setModal("skill")}
-      >
-        {skillPreview.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {skillPreview.map((skill) => (
-              <SkillAvatar key={skill.name} name={skill.name} sizeClass="size-8" />
-            ))}
-          </div>
-        ) : null}
-      </GroupCard>
-
-      <GroupCard
-        title={t("project_extensions.group_automation")}
-        description={t("project_extensions.automation_card_desc")}
-        disabled
+        title={t("project_extensions.group_plugin")}
+        description={t("project_extensions.plugin_card_desc")}
+        onAdd={() => setModal("plugin")}
       />
 
       <InstructionsModal
@@ -131,11 +114,16 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
         open={modal === "skill"}
         projectDir={props.projectDir}
         skills={props.installedSkills}
-        cloudSkillsSlot={props.cloudSkillsSlot}
         onClose={() => setModal(null)}
         onUninstall={props.onUninstallSkill}
         onUpload={props.onUploadSkill}
         onRefresh={props.onRefreshSkills}
+      />
+      <PluginsModal
+        open={modal === "plugin"}
+        contentSlot={props.pluginsSlot}
+        onClose={() => setModal(null)}
+        onRefresh={props.onRefreshPlugins}
       />
     </div>
   );

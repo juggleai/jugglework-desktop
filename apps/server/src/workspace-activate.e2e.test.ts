@@ -147,7 +147,7 @@ async function startJuggleWorkServerWithWorkspaces(input: {
 }
 
 describe("workspace activation", () => {
-  test("reloads the bound OpenCode engine on workspace switch only", async () => {
+  test("never reloads the bound OpenCode engine during workspace navigation", async () => {
     const firstRoot = await createWorkspaceRoot();
     const secondRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();
@@ -189,15 +189,7 @@ describe("workspace activation", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.activeId).toBe("ws_2");
-    expect(disposeCount()).toBe(1);
-
-    const reloadRequest = mock.requests.find(
-      (request) => request.method === "POST" && request.pathname === "/instance/dispose",
-    );
-    expect(reloadRequest).toBeDefined();
-    expect(reloadRequest?.search).toContain(
-      `directory=${encodeURIComponent(secondRoot)}`,
-    );
+    expect(disposeCount()).toBe(0);
 
     const sameWorkspaceResponse = await fetch(`${base}/workspaces/ws_2/activate`, {
       method: "POST",
@@ -205,7 +197,7 @@ describe("workspace activation", () => {
     });
 
     expect(sameWorkspaceResponse.status).toBe(200);
-    expect(disposeCount()).toBe(1);
+    expect(disposeCount()).toBe(0);
   });
 
   test("persists activation order only when requested", async () => {

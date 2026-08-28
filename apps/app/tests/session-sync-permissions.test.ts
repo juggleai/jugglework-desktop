@@ -10,6 +10,8 @@ import {
   __disposeWorkspaceSessionSyncForTest,
   __hasWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
+  captureTodoSnapshotRevision,
+  clearSessionTodos,
   ensureWorkspaceSessionSync,
   permissionKey,
   questionKey,
@@ -18,6 +20,7 @@ import {
   seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
+  todoKey,
 } from "../src/react-app/domains/session/sync/session-sync";
 
 function permission(id: string, sessionID: string): PermissionRequest {
@@ -258,6 +261,55 @@ describe("session transcript sync", () => {
     ]);
   });
 
+  test("does not create a false user row when a consecutive assistant delta arrives first", async () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
+      uiMessage("msg-user", "user", "hello"),
+      uiMessage("msg-assistant-1", "assistant", "first step"),
+    ]);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "session-a",
+          messageID: "msg-assistant-2",
+          partID: "part-reasoning",
+          delta: "thinking",
+        },
+      } as any);
+      await Promise.resolve();
+
+      let transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.map((entry) => entry.id)).toEqual(["msg-user", "msg-assistant-1"]);
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "part-reasoning",
+            type: "reasoning",
+            text: "",
+            sessionID: "session-a",
+            messageID: "msg-assistant-2",
+          },
+        },
+      } as any);
+
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
+      expect(transcript?.[2]).toMatchObject({
+        id: "msg-assistant-2",
+        role: "assistant",
+        parts: [{ type: "reasoning", text: "thinking" }],
+      });
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
   test("keeps live-only messages when an idle snapshot is stale", () => {
     getReactQueryClient().setQueryData(transcriptKey("workspace-a", "session-a"), [
       uiMessage("msg-user", "user", "hello"),
@@ -285,6 +337,51 @@ describe("session transcript sync", () => {
 
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"));
     expect(transcript?.[1]?.parts[0]).toMatchObject({ text: "finished answer" });
+  });
+
+  test("keeps live todos when an older snapshot arrives later", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    try {
+      const snapshotTodoRevision = captureTodoSnapshotRevision();
+      __applySessionSyncEventForTest(syncInput, {
+        type: "todo.updated",
+        properties: {
+          sessionID: "session-a",
+          todos: [{ id: "todo-live", content: "still working", status: "in_progress", priority: "high" }],
+        },
+      } as any);
+
+      seedSessionState("workspace-a", snapshotWithMessages([]), { snapshotTodoRevision });
+
+      expect(getReactQueryClient().getQueryData(todoKey("workspace-a", "session-a"))).toMatchObject([
+        { id: "todo-live", status: "in_progress" },
+      ]);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
+  test("clears previous progress for a new task and rejects an older snapshot", () => {
+    const queryClient = getReactQueryClient();
+    queryClient.setQueryData(todoKey("workspace-a", "session-a"), [
+      { id: "todo-old", content: "old task", status: "in_progress", priority: "high" },
+    ]);
+    const snapshotTodoRevision = captureTodoSnapshotRevision();
+
+    clearSessionTodos("workspace-a", "session-a");
+
+    expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
+
+    const staleSnapshot = snapshotWithMessages([]);
+    staleSnapshot.todos = [
+      { id: "todo-old", content: "old task", status: "in_progress", priority: "high" },
+    ];
+    seedSessionState("workspace-a", staleSnapshot, { snapshotTodoRevision });
+
+    expect(queryClient.getQueryData(todoKey("workspace-a", "session-a"))).toEqual([]);
   });
 
   test("continues accepting stream deltas for a recently unselected session", async () => {

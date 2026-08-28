@@ -68,6 +68,8 @@ const DEFAULT_DESKTOP_CONFIG: DenDesktopConfig = {};
 // agent-token cadence instead of treating the one-hour presentation cache as
 // sufficient authorization.
 const DESKTOP_CONFIG_REFRESH_MS = 5 * 60 * 1000;
+export const remoteControlPolicyRecoveryEvent = "jugglework:remote-control:policy-recovery";
+const REMOTE_POLICY_RECOVERY_DELAYS_MS = [0, 1_000, 2_000, 4_000, 8_000, 15_000, 30_000] as const;
 const DESKTOP_CONFIG_CACHE_PREFIX = "jugglework.den.desktopConfig:";
 const DESKTOP_CONFIG_ITEMS = [
   ...desktopPolicyKeys,
@@ -201,6 +203,8 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const [settingsVersion, bumpSettingsVersion] = useReducer((value: number) => value + 1, 0);
   // Monotonic run id — same guard-against-stale-resolution pattern as DenAuthProvider.
   const refreshRunRef = useRef(0);
+  const remotePolicyRecoveryRef = useRef<Promise<void> | null>(null);
+  const remotePolicyRecoveryWakeRef = useRef<(() => void) | null>(null);
   const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
@@ -353,6 +357,41 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     [desktopConfigHandler],
   );
 
+  const recoverRemotePolicy = useCallback(() => {
+    if (!isSignedIn) return Promise.resolve();
+    if (remotePolicyRecoveryRef.current) {
+      remotePolicyRecoveryWakeRef.current?.();
+      return remotePolicyRecoveryRef.current;
+    }
+    // TIPS: resume 通常早于 Wi-Fi/DNS 恢复；串行退避避免并发请求互相用 run id 判旧。
+    const recovery = (async () => {
+      for (const delay of REMOTE_POLICY_RECOVERY_DELAYS_MS) {
+        if (delay > 0) {
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, delay);
+            remotePolicyRecoveryWakeRef.current = () => {
+              window.clearTimeout(timer);
+              remotePolicyRecoveryWakeRef.current = null;
+              resolve();
+            };
+          });
+          remotePolicyRecoveryWakeRef.current = null;
+        }
+        try {
+          await desktopConfigHandler(true);
+          return;
+        } catch {
+          // 下一档延迟继续；周期刷新仍是最终兜底。
+        }
+      }
+    })().finally(() => {
+      if (remotePolicyRecoveryRef.current === recovery) remotePolicyRecoveryRef.current = null;
+      remotePolicyRecoveryWakeRef.current = null;
+    });
+    remotePolicyRecoveryRef.current = recovery;
+    return recovery;
+  }, [desktopConfigHandler, isSignedIn]);
+
   // Re-run whenever auth flips or Den settings change. Read the cache
   // synchronously so gated UI never flickers through "unrestricted" just
   // because we haven't finished the HTTP call yet.
@@ -395,6 +434,17 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       window.clearInterval(interval);
     };
   }, [desktopConfigHandler, isSignedIn]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isDesktopRuntime()) return;
+    const handleRecovery = () => { void recoverRemotePolicy(); };
+    window.addEventListener(remoteControlPolicyRecoveryEvent, handleRecovery);
+    window.addEventListener("online", handleRecovery);
+    return () => {
+      window.removeEventListener(remoteControlPolicyRecoveryEvent, handleRecovery);
+      window.removeEventListener("online", handleRecovery);
+    };
+  }, [recoverRemotePolicy]);
 
   useEffect(() => {
     if (!isDesktopRuntime()) return;

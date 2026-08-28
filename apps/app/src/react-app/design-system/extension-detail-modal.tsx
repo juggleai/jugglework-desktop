@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { useEffect, useState } from "react";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import {
   Card,
@@ -8,7 +9,6 @@ import {
 } from "@/components/ui/card";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -54,6 +54,17 @@ export type ExtensionDetailModalProps = {
   url?: string;
   /** Declarative setup instructions from an extension manifest. */
   setupInstructions?: string;
+  /** Raw failure text reported by the engine, shown verbatim when the server failed to start. */
+  errorDetail?: string;
+  /** Actionable hint for opaque failures (e.g. a bare JSON-RPC code), shown alongside the raw text. */
+  errorHint?: string;
+  /** Edit the underlying configuration. Shown for user-configurable entries. */
+  onEdit?: () => void;
+  editLabel?: string;
+  /** Permanently delete the entry from config. Always available, unlike onUninstall. */
+  onRemove?: () => void;
+  removeLabel?: string;
+  removeConfirmLabel?: string;
   /** Declarative install resource labels from an extension manifest. */
   resourceLabels?: string[];
   /** Declarative UI/runtime contribution labels from an extension manifest. */
@@ -196,6 +207,13 @@ export function ExtensionDetailModal({
   disabledReason = null,
   url,
   setupInstructions,
+  errorDetail,
+  errorHint,
+  onEdit,
+  editLabel,
+  onRemove,
+  removeLabel,
+  removeConfirmLabel,
   resourceLabels = [],
   contributionLabels = [],
   oauth,
@@ -218,6 +236,12 @@ export function ExtensionDetailModal({
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
+  const [removeArmed, setRemoveArmed] = useState(false);
+
+  // 关闭后复位确认态，避免下次打开时删除按钮还停在「确认」上。
+  useEffect(() => {
+    if (!open) setRemoveArmed(false);
+  }, [open]);
 
   return (
     <Dialog
@@ -288,6 +312,24 @@ export function ExtensionDetailModal({
             <div className="text-sm leading-relaxed text-card-foreground">
               {description}
             </div>
+
+            {/* TIPS: 失败原文原样呈现且不截断——服务器自述的失败原因往往直接点名缺失的参数。 */}
+            {errorDetail ? (
+              <Card variant="outline" size="sm" className="border-red-6 bg-red-2">
+                <CardHeader>
+                  <CardTitle className="text-red-11">{t("mcp.failure_detail_title")}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-red-11">
+                    {errorDetail}
+                  </pre>
+                  {/* TIPS: 提示是补充不是替代——原文永远保留，否则真正的失败线索会被泛化文案盖掉。 */}
+                  {errorHint ? (
+                    <div className="mt-2 text-xs leading-relaxed text-red-11/80">{errorHint}</div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
 
             {setupInstructions ? (
               <Card variant="outline" size="sm">
@@ -505,9 +547,28 @@ export function ExtensionDetailModal({
             ) : null}
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <DialogClose render={<Button variant="outline" />}>
-              Close
-            </DialogClose>
+            {/* TIPS: 编辑与连接状态无关——启动失败的条目恰恰最需要改配置，
+                若跟着 connected 走，用户就只能删掉重建。 */}
+            {onEdit ? (
+              <Button variant="outline" size="sm" onClick={onEdit}>
+                {editLabel ?? "Edit"}
+              </Button>
+            ) : null}
+            {/* TIPS: 删除会连同命令与环境变量一起丢失且无法撤销，故走两段式确认；
+                与 onUninstall 不同，它不以 connected 为前提——失败或已停用的条目同样需要能删。 */}
+            {onRemove ? (
+              <Button
+                variant={removeArmed ? "destructive" : "outline"}
+                size="sm"
+                onClick={() => {
+                  if (!removeArmed) { setRemoveArmed(true); return; }
+                  onRemove();
+                  onClose();
+                }}
+              >
+                {removeArmed ? (removeConfirmLabel ?? "Confirm remove") : (removeLabel ?? "Remove")}
+              </Button>
+            ) : null}
             {connected && onUninstall ? (
               <Button
                 variant="destructive"

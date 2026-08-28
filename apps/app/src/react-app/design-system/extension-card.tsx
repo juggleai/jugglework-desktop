@@ -38,6 +38,8 @@ export type ExtensionCardProps = {
   actionLabel?: string;
   /** Click handler. */
   onClick?: () => void;
+  /** 中性配色：已连接/已安装时不使用绿色卡片底色，仅保留状态标签。 */
+  plain?: boolean;
 };
 
 const kindLabel: Record<ExtensionKind, string> = {
@@ -80,6 +82,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
     disabledReason = null,
     actionLabel,
     onClick,
+    plain = false,
   } = props;
 
   // When enablement results are provided, derive connected + partial state from them.
@@ -94,7 +97,9 @@ export function ExtensionCard(props: ExtensionCardProps) {
       disabled={disabled || connecting}
       onClick={onClick}
       className={`group w-full rounded-xl border p-4 text-left transition-all ${
-        connected
+        plain
+          ? "border-dls-border bg-dls-surface hover:bg-dls-hover"
+          : connected
           ? "border-green-6 bg-green-2"
           : someMet
           ? "border-amber-6 bg-amber-2"
@@ -106,7 +111,9 @@ export function ExtensionCard(props: ExtensionCardProps) {
         <div className="relative shrink-0">
           <div
             className={`flex size-10 items-center justify-center rounded-lg border ${
-              connected ? "border-green-6 bg-green-2" : someMet ? "border-amber-6 bg-amber-2" : "border-dls-border bg-dls-hover"
+              plain
+                ? "border-dls-border bg-dls-hover"
+                : connected ? "border-green-6 bg-green-2" : someMet ? "border-amber-6 bg-amber-2" : "border-dls-border bg-dls-hover"
             }`}
           >
             {connecting ? (

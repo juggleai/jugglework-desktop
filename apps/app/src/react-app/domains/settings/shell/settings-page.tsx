@@ -72,6 +72,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return CloudCog;
     case "skills":
       return Sparkles;
+    case "connectors":
+      return Cable;
     case "memory":
       return BrainCircuit;
     case "extensions":
@@ -115,6 +117,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_cloud_providers");
     case "skills":
       return t("settings.tab_skills");
+    case "connectors":
+      return t("settings.tab_connectors");
     case "memory":
       return t("memory.tab_label");
     case "extensions":
@@ -160,6 +164,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_cloud_providers");
     case "skills":
       return t("settings.tab_description_skills");
+    case "connectors":
+      return t("settings.tab_description_connectors");
     case "memory":
       return t("memory.tab_description");
     case "extensions":
@@ -183,19 +189,35 @@ export function getSettingsTabDescription(tab: SettingsTab) {
   }
 }
 
+/**
+ * 工作区分组：已清空。
+ *
+ * TIPS: 设置页只承载全局配置，工作区级的技能、MCP 与市场包由会话右侧扩展面板
+ * 承载（它带 workspaceId，天然项目级）。该列表同时决定页头是否显示工作区切换器
+ * （见 `SettingsShell`），返回空数组后切换器在设置页自然不再出现。往这里加任何
+ * 一项之前，先确认它切换工作区后取值真的会变。
+ */
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "extensions"];
+  return [];
 }
 
+/** 全局分组：页内配置不随工作区切换而变化。「通用」为首项。 */
 export function getGlobalSettingsTabs(developerMode: boolean): SettingsTab[] {
-  const tabs: SettingsTab[] = ["notifications", "appearance", "updates", "ai"];
+  const tabs: SettingsTab[] = [
+    "preferences",
+    "skills",
+    "connectors",
+    "notifications",
+    "appearance",
+    "updates",
+    "ai",
+  ];
   if (developerMode) tabs.push("debug");
   return tabs;
 }
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
-  "connect",
 ];
 
 export function isSettingsTabBeta(tab: SettingsTab) {
@@ -238,9 +260,13 @@ export function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
  * Cloud settings tabs, gated by client-only preview flags. The Memory tab is
  * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
  * surfaces (sidebar + compact section menu) must use this so they can't drift.
+ *
+ * TIPS: `connect`（JuggleWork Connect 预览页）不在导航里，仍可通过 connect 深链
+ * 直达（见 `app/lib/jugglework-links.ts`），路由与页面保持可用。它与全局分组的
+ * 「连接器」(`connectors`，管理全局 MCP) 是两个不同的页面。
  */
 export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
-  return memoryEnabled ? ["cloud-account", "memory", "connect"] : CLOUD_SETTINGS_TABS;
+  return memoryEnabled ? ["cloud-account", "memory"] : CLOUD_SETTINGS_TABS;
 }
 
 type SettingsPageProps = {
@@ -306,33 +332,39 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
             </div>
           </header>
           <SidebarContent className="overflow-y-auto px-2 pb-6 pt-2">
-        <SidebarGroup className="rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
-          <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
-            {t("settings.group_workspace")}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {workspaceTabs.map((tab) => {
-                const Icon = getSettingsTabIcon(tab);
-                return (
-                  <SidebarMenuItem key={tab}>
-                    <SidebarMenuButton
-                      className="min-h-10 rounded-lg px-3"
-                      type="button"
-                      isActive={props.activeTab === tab}
-                      onClick={() => props.onSelectTab(tab)}
-                    >
-                      <Icon />
-                      <SettingsSidebarTabLabel tab={tab} />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* 分组为空时整组不渲染，避免留下一个空壳标题。 */}
+        {workspaceTabs.length > 0 ? (
+          <SidebarGroup className="rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
+            <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
+              {t("settings.group_workspace")}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {workspaceTabs.map((tab) => {
+                  const Icon = getSettingsTabIcon(tab);
+                  return (
+                    <SidebarMenuItem key={tab}>
+                      <SidebarMenuButton
+                        className="min-h-10 rounded-lg px-3"
+                        type="button"
+                        isActive={props.activeTab === tab}
+                        onClick={() => props.onSelectTab(tab)}
+                      >
+                        <Icon />
+                        <SettingsSidebarTabLabel tab={tab} />
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
-        <SidebarGroup className="mt-3 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3">
+        <SidebarGroup className={cn(
+          "rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 px-2 py-3",
+          workspaceTabs.length > 0 && "mt-3",
+        )}>
           <SidebarGroupLabel className="mb-1 h-7 px-2 text-[11px] font-bold uppercase tracking-[0.12em] text-sidebar-foreground/70">
             {t("settings.group_global")}
           </SidebarGroupLabel>

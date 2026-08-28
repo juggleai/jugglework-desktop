@@ -18,6 +18,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 function mockFetch(handler: (call: FetchCall) => Response | Promise<Response>): FetchCall[] {
   const calls: FetchCall[] = [];
   globalThis.fetch = (async (input, init) => {
@@ -59,6 +65,34 @@ function activeRun(runId: string, origin: "local-renderer" | "remote-control" = 
     activeObservedAt: 2,
     abortRequestedAt: null,
   } as const;
+}
+
+function eventResponse(events: unknown[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.close();
+    },
+  }), { headers: { "Content-Type": "text/event-stream" } });
+}
+
+async function drainEvents(client: ReturnType<typeof mountedClient>): Promise<void> {
+  const subscription = await client.event.subscribe();
+  for await (const _event of subscription.stream) {
+    // Observation delivery happens on a serialized side-effect queue.
+  }
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for condition");
 }
 
 afterEach(() => {
@@ -197,6 +231,104 @@ describe("mounted JuggleWork session mutations", () => {
     });
     expect(calls).toHaveLength(2);
     expect(calls.some((call) => call.url.includes("/opencode/session/session-1/abort"))).toBe(false);
+  });
+
+  test("hydrates an active run when a status event arrives before local start registration", async () => {
+    const calls = mockFetch((call) => {
+      if (call.url.includes("/opencode/event")) {
+        return eventResponse([{
+          type: "session.status",
+          properties: { sessionID: "session-1", status: { type: "running" } },
+        }]);
+      }
+      if (call.url.endsWith("/workspace/workspace-1/session-runs")) {
+        return jsonResponse({ items: [{ ...activeRun("run-hydrated"), generation: 4 }] });
+      }
+      if (call.url.endsWith("/sessions/session-1/runs/run-hydrated/observations")) {
+        return jsonResponse({ cleared: false, run: activeRun("run-hydrated"), terminalStatus: null });
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+
+    await drainEvents(mountedClient());
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://worker.example.test/workspace/workspace-1/session-runs",
+      "https://worker.example.test/workspace/workspace-1/opencode/event",
+      "https://worker.example.test/workspace/workspace-1/sessions/session-1/runs/run-hydrated/observations",
+    ]);
+    expect(calls[2]?.body).toEqual({ status: "running" });
+  });
+
+  test("retries a transient terminal observation without forgetting its run fence", async () => {
+    let observationAttempts = 0;
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/sessions/session-1/runs/start")) {
+        return jsonResponse({ run: { ...activeRun("run-terminal"), generation: 7 } }, 202);
+      }
+      if (call.url.includes("/opencode/event")) {
+        return eventResponse([{
+          type: "session.status",
+          properties: { sessionID: "session-1", status: { type: "completed" } },
+        }]);
+      }
+      if (call.url.endsWith("/workspace/workspace-1/session-runs")) {
+        return jsonResponse({ items: [{ ...activeRun("run-terminal"), generation: 7 }] });
+      }
+      if (call.url.endsWith("/sessions/session-1/runs/run-terminal/observations")) {
+        observationAttempts += 1;
+        if (observationAttempts === 1) {
+          return jsonResponse({ code: "temporary", message: "retry" }, 503);
+        }
+        return jsonResponse({ cleared: true, run: null, terminalStatus: "completed" });
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+    const client = mountedClient();
+    await client.session.promptAsync({ sessionID: "session-1", parts: [{ type: "text", text: "start" }] });
+
+    await drainEvents(client);
+    await waitUntil(() => observationAttempts === 2);
+
+    expect(observationAttempts).toBe(2);
+    const observations = calls.filter((call) => call.url.endsWith("/sessions/session-1/runs/run-terminal/observations"));
+    expect(observations.map((call) => call.body)).toEqual([{ status: "completed" }, { status: "completed" }]);
+  });
+
+  test("does not let an older empty active-run snapshot erase a newly accepted generation", async () => {
+    const listResponse = deferred<Response>();
+    let started = false;
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/workspace/workspace-1/session-runs")) {
+        return listResponse.promise;
+      }
+      if (call.url.includes("/opencode/event")) {
+        return eventResponse([{
+          type: "session.status",
+          properties: { sessionID: "session-1", status: { type: "running" } },
+        }]);
+      }
+      if (call.url.endsWith("/sessions/session-1/runs/start")) {
+        started = true;
+        return jsonResponse({ run: { ...activeRun("run-new"), generation: 20 } }, 202);
+      }
+      if (call.url.endsWith("/sessions/session-1/runs/run-new/observations")) {
+        return jsonResponse({ cleared: false, run: { ...activeRun("run-new"), generation: 20 }, terminalStatus: null });
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+    const client = mountedClient();
+    const subscribing = client.event.subscribe();
+    await waitUntil(() => calls.some((call) => call.url.endsWith("/workspace/workspace-1/session-runs")));
+    await client.session.promptAsync({ sessionID: "session-1", parts: [{ type: "text", text: "new generation" }] });
+    expect(started).toBe(true);
+    listResponse.resolve(jsonResponse({ items: [] }));
+    const subscription = await subscribing;
+    for await (const _event of subscription.stream) {
+      // Drain the running event after the stale list response applies.
+    }
+    await waitUntil(() => calls.some((call) => call.url.endsWith("/sessions/session-1/runs/run-new/observations")));
+    expect(calls.some((call) => call.url.endsWith("/sessions/session-1/runs/run-new/observations"))).toBe(true);
   });
 });
 

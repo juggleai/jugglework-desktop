@@ -613,7 +613,7 @@ describe("runtime MCP engine sync", () => {
     }
   });
 
-  test("cloud plugin install writes a remote MCP and hot-syncs it into the engine", async () => {
+  test("cloud plugin install writes a stdio MCP and hot-syncs it into the engine", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
     process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
@@ -646,8 +646,8 @@ describe("runtime MCP engine sync", () => {
                   updatedAt: "2026-06-02T00:00:00.000Z",
                   latestVersion: {
                     id: "version_mcp_valid",
-                    rawSourceText: JSON.stringify({ mcpServers: { brief: { url: "https://example.com/mcp" } } }),
-                    normalizedPayloadJson: { mcpServers: { brief: { url: "https://example.com/mcp" } } },
+                    rawSourceText: JSON.stringify({ mcp: { brief: { type: "local", command: ["npx", "-y", "brief-mcp"] } } }),
+                    normalizedPayloadJson: { mcp: { brief: { type: "local", command: ["npx", "-y", "brief-mcp"] } } },
                   },
                 },
               },
@@ -662,15 +662,17 @@ describe("runtime MCP engine sync", () => {
       expect(item.pluginId).toBe("plugin_cloud_mcp");
       expect(body.warnings).toEqual([]);
 
+      // 组织云端插件的远程 MCP 走 Connect 网关，不落本地；只有 stdio 组件才写工作区配置，
+      // 这条链路的热同步仍要照常发生。
       expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.brief).toMatchObject({
-        type: "remote",
-        url: "https://example.com/mcp",
+        type: "local",
+        command: ["npx", "-y", "brief-mcp"],
       });
       const addRequest = mock.requests.find((entry) => entry.method === "POST" && entry.pathname === "/mcp");
       expect(addRequest).toBeDefined();
       expect(addRequest?.body).toEqual({
         name: "brief",
-        config: { type: "remote", url: "https://example.com/mcp", enabled: true },
+        config: { type: "local", command: ["npx", "-y", "brief-mcp"], enabled: true },
       });
     } finally {
       if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;

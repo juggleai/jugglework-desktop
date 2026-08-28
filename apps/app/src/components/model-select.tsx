@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Settings2 } from "lucide-react";
+import { Check, ChevronDown, Settings2 } from "lucide-react";
 
 import type { ModelOption, ModelRef } from "@/app/types";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
@@ -280,13 +280,14 @@ export function ModelSelect({
                 <CommandCollection>
                   {(item: ModelSelectModelItem) => {
                     const option = item.option;
+                    const selected = isSameModel(value, option);
                     return (
                       <CommandItem
                         className="gap-2"
                         key={item.id}
                         value={`${option.providerID}:${option.modelID} ${option.title} ${option.description ?? ""}`}
                         onClick={() => handleSelect(option)}
-                        data-checked={isSameModel(value, option)}
+                        data-checked={selected}
                       >
                         <ProviderIcon
                           providerId={option.providerID}
@@ -303,6 +304,10 @@ export function ModelSelect({
                               getProviderDisplayName(option.providerID)}
                           </span>
                         </span>
+                        <Check
+                          aria-hidden="true"
+                          className={`size-4 shrink-0 text-foreground transition-opacity ${selected ? "opacity-100" : "opacity-0"}`}
+                        />
                       </CommandItem>
                     );
                   }}

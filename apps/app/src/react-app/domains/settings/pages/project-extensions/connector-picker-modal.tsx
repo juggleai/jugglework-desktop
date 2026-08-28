@@ -22,11 +22,13 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import type { McpDirectoryInfo } from "@/app/constants";
+import type { AddMcpInitialValue } from "@/react-app/domains/connections/modals/add-mcp-modal";
 import { AddMcpModal } from "@/react-app/domains/connections/modals/add-mcp-modal";
 import {
   isJuggleWorkExtensionHidden,
   setJuggleWorkExtensionHidden,
 } from "@/react-app/domains/settings/extension-state";
+import { explainConnectorErrorKey } from "./connectors-source";
 import type { ConnectorRow } from "./types";
 
 /** 连接器头像：品牌图标 → 服务域名 favicon → 名称哈希占位，与扩展卡片同一套解析规则。 */
@@ -67,12 +69,20 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
       <ConnectorIcon row={row} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-dls-text">{row.name}</p>
-        {row.description ? (
+        {/* TIPS: 失败原文优先于描述——服务器自述的缺参数原因才是用户此刻需要的信息。 */}
+        {row.errorDetail ? (
+          <p className="truncate text-xs text-red-11" title={row.errorDetail}>{row.errorDetail}</p>
+        ) : row.description ? (
           <p className="truncate text-xs text-dls-secondary">{row.description}</p>
         ) : null}
       </div>
       {/* TIPS: 行本身可点开详情，行内按钮需阻止冒泡，否则点「连接」会同时弹出详情。 */}
       <div className="shrink-0" onClick={(event) => event.stopPropagation()}>
+      {!row.connected && row.disabled ? (
+        <span className="mr-2 inline-flex items-center rounded-full bg-dls-bg px-2 py-0.5 text-xs text-dls-secondary">
+          {t("project_extensions.disabled_badge")}
+        </span>
+      ) : null}
       {row.connected ? (
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1 rounded-full bg-green-3 px-2 py-0.5 text-xs text-green-11">
@@ -88,7 +98,9 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
               className="border-amber-6/60 bg-amber-2/50 text-amber-11 hover:border-amber-7 hover:bg-amber-3 hover:text-amber-11"
             >
               {row.busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              {t("project_extensions.disconnect")}
+              {row.disconnectKind === "disable"
+                ? t("project_extensions.disable")
+                : t("project_extensions.disconnect")}
             </Button>
           ) : null}
         </div>
@@ -100,7 +112,7 @@ function ConnectorItem({ row, onOpenDetail }: { row: ConnectorRow; onOpenDetail:
           onClick={row.onConnect}
         >
           {row.busy ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-          {t("project_extensions.connect")}
+          {row.disabled ? t("project_extensions.enable") : t("project_extensions.connect")}
         </Button>
       )}
       </div>
@@ -131,6 +143,7 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
 }) {
   const [addCustomOpen, setAddCustomOpen] = useState(false);
   const [detailKey, setDetailKey] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const { connected, unconnected } = useMemo(() => {
     const connectedRows = connectors.filter((row) => row.connected);
@@ -144,9 +157,30 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
     [connectors, detailKey],
   );
 
+  // TIPS: 编辑对象同样按 key 回查，配置保存后回填的是最新值而非打开弹窗那一刻的快照。
+  const editingRow = useMemo(
+    () => connectors.find((row) => row.key === editingKey) ?? null,
+    [connectors, editingKey],
+  );
+
+  const editingInitial = useMemo((): AddMcpInitialValue | undefined => {
+    if (!editingRow?.serverName || !editingRow.serverConfig) return undefined;
+    const config = editingRow.serverConfig;
+    return {
+      serverName: editingRow.serverName,
+      type: config.type,
+      url: config.url,
+      command: config.command,
+      environment: config.environment,
+      headers: config.headers,
+      cwd: config.cwd,
+      timeout: config.timeout,
+    };
+  }, [editingRow]);
+
   return (
     <>
-      <Dialog open={open && !addCustomOpen && !detailRow} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog open={open && !addCustomOpen && !detailRow && !editingRow} onOpenChange={(next) => { if (!next) onClose(); }}>
         <DialogContent className="max-w-[750px] sm:max-w-[750px]">
           <DialogHeader className="gap-2 space-y-0">
             <div className="flex items-center justify-between gap-4 pr-8">
@@ -213,14 +247,29 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
         open={open && addCustomOpen}
         busy={Boolean(busy)}
         isRemoteWorkspace={Boolean(isRemoteWorkspace)}
-        onAdd={(entry) => { void onAddCustomMcp?.(entry); }}
+        onAdd={(entry) => onAddCustomMcp?.(entry)}
         onClose={() => setAddCustomOpen(false)}
       />
+
+      {editingInitial ? (
+        <AddMcpModal
+          open={open && Boolean(editingRow)}
+          busy={Boolean(busy)}
+          isRemoteWorkspace={Boolean(isRemoteWorkspace)}
+          initial={editingInitial}
+          onAdd={(entry) => onAddCustomMcp?.(entry)}
+          onClose={() => setEditingKey(null)}
+        />
+      ) : null}
 
       {open && detailRow ? (
         <ConnectorDetailModal
           row={detailRow}
           configSlotForEntry={configSlotForEntry}
+          onEdit={detailRow.serverConfig ? () => {
+            setEditingKey(detailRow.key);
+            setDetailKey(null);
+          } : undefined}
           onClose={() => setDetailKey(null)}
         />
       ) : null}
@@ -233,9 +282,10 @@ export function ConnectorPickerModal({ open, connectors, error, busy, isRemoteWo
  * 安装说明、能力/贡献清单、「What this enables」、启动命令、服务地址、OAuth、隐藏开关。
  * 组织下发连接器没有目录项（无 manifest），此时只展示其自有信息。
  */
-function ConnectorDetailModal({ row, configSlotForEntry, onClose }: {
+function ConnectorDetailModal({ row, configSlotForEntry, onEdit, onClose }: {
   row: ConnectorRow;
   configSlotForEntry?: (entry: McpDirectoryInfo) => ReactNode | null;
+  onEdit?: () => void;
   onClose: () => void;
 }) {
   const entry = row.entry;
@@ -258,6 +308,12 @@ function ConnectorDetailModal({ row, configSlotForEntry, onClose }: {
       url={row.url}
       oauth={entry?.oauth}
       launchCommand={row.command}
+      errorDetail={row.errorDetail}
+      errorHint={explainConnectorErrorKey(row.errorDetail)
+        ? t(explainConnectorErrorKey(row.errorDetail)!)
+        : undefined}
+      onEdit={onEdit}
+      editLabel={t("mcp.edit_server_button")}
       setupInstructions={entry?.extensionManifest?.setup?.instructions}
       resourceLabels={entry?.extensionManifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
       contributionLabels={entry?.extensionManifest?.contributions?.map(
@@ -265,8 +321,13 @@ function ConnectorDetailModal({ row, configSlotForEntry, onClose }: {
       ) ?? []}
       configSlot={configSlot}
       onConnect={configSlot ? undefined : row.onConnect}
-      uninstallLabel={t("project_extensions.disconnect")}
+      uninstallLabel={row.disconnectKind === "disable"
+        ? t("project_extensions.disable")
+        : t("project_extensions.disconnect")}
       onUninstall={row.onDisconnect}
+      onRemove={row.onRemove}
+      removeLabel={t("project_extensions.remove")}
+      removeConfirmLabel={t("project_extensions.remove_confirm")}
       onHide={entry ? () => setJuggleWorkExtensionHidden(entry, true) : undefined}
       onShow={entry ? () => setJuggleWorkExtensionHidden(entry, false) : undefined}
     />

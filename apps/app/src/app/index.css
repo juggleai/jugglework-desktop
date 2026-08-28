@@ -13,6 +13,19 @@
 
 @import "@fontsource-variable/ibm-plex-sans";
 
+/* TIPS 放大版系统表情字体：textarea 无法给单个字符设样式，这里用 @font-face 的
+   size-adjust + unicode-range，只把 emoji 码位交给系统表情字体并放大到 1.6 倍
+   （消息页输入框正文 14px → 表情 22px，与表情面板里的字形同大），其余文字不受影响。
+   注意：@font-face 必须声明在文档级样式表 —— Chromium 会忽略 shadow root 内的 @font-face，
+   而消息页（jugglechat）整体跑在 shadow DOM 里，只能在这里声明、在 shadow 内按名引用。
+   字体缺字时浏览器会自动回退到下一档字体并按原字号渲染，不会影响中英文排版。 */
+@font-face {
+  font-family: "JW Emoji Large";
+  src: local("Apple Color Emoji"), local("Segoe UI Emoji"), local("Noto Color Emoji");
+  size-adjust: 160%;
+  unicode-range: U+200D, U+20E3, U+FE0F, U+2600-26FF, U+2700-27BF, U+2B00-2BFF, U+1F000-1FAFF;
+}
+
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 @custom-variant electron {
   html.jugglework-electron & {
@@ -42,6 +55,36 @@
 
 @utility titlebar-no-drag {
   app-region: no-drag;
+}
+
+/* 可滚动内容统一使用窄滚动条，避免系统轨道形成不透明的宽边栏。 */
+@supports not selector(::-webkit-scrollbar) {
+  .subtle-scrollbar {
+    scrollbar-color: #efefef transparent;
+    scrollbar-width: thin;
+  }
+}
+
+.subtle-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-track,
+.subtle-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-thumb {
+  background: #efefef;
+  background-clip: content-box;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+}
+
+.subtle-scrollbar::-webkit-scrollbar-thumb:hover,
+.subtle-scrollbar::-webkit-scrollbar-thumb:active {
+  background: #585a5b;
+  background-clip: content-box;
 }
 
 @keyframes accordion-down {
@@ -130,11 +173,26 @@
 
 :root {
   color-scheme: light;
-  --dls-surface: var(--slate-1);
-  --dls-sidebar: var(--slate-2);
-  --dls-app-bg: var(--slate-1);
-  --dls-background: var(--slate-1);
-  --dls-canvas: var(--slate-2);
+  /* TIPS 统一页面背景色 token（唯一来源，改色只改这里）：
+     - --app-page-bg 页面级背景：工作区会话页、通讯录/消息页、自动化任务页（#ffffff）
+     - --app-list-bg  列表级背景：工作区列表、左侧导航栏等侧栏（#fcfcfc）
+     下方所有 dls-* / background / sidebar token 统一引用这两个语义 token，
+     暗色主题在 [data-theme="dark"] / .dark 块中重新映射，不影响亮色。 */
+  --app-page-bg: #ffffff;
+  --app-list-bg: #fcfcfc;
+  /* TIPS 已发送消息气泡背景 token（唯一来源，改色只改这里）：
+     工作区会话内容、消息页（jugglechat）发送出的消息气泡统一引用。 */
+  --app-msg-sent-bg: #f3f3f4;
+  /* TIPS 统一页面顶栏高度 token（唯一来源，改高度只改这里）：
+     会话页顶栏(.session-header)、右侧面板头(.session-panel-header)、
+     设置页/自动化任务页顶栏、消息页会话头、通讯录页内容头统一引用。
+     尺寸 token 无需暗色映射；shadow DOM 内样式可通过自定义属性继承引用。 */
+  --app-topbar-height: 50px;
+  --dls-surface: var(--app-page-bg);
+  --dls-sidebar: var(--app-list-bg);
+  --dls-app-bg: var(--app-page-bg);
+  --dls-background: var(--app-page-bg);
+  --dls-canvas: var(--app-list-bg);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #f3f4f6;
   --dls-accent: #011627;
@@ -150,7 +208,7 @@
   --dls-radius-lg: 24px;
   --dls-shell-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
   --dls-card-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-  --background: var(--slate-1);
+  --background: var(--app-page-bg);
   --foreground: var(--slate-12);
   --card: var(--slate-1);
   --card-foreground: var(--slate-12);
@@ -176,7 +234,7 @@
   --chart-4: var(--violet-9);
   --chart-5: var(--purple-9);
   --radius: 0.45rem;
-  --sidebar: var(--slate-2);
+  --sidebar: var(--app-list-bg);
   --sidebar-foreground: var(--slate-12);
   --sidebar-primary: var(--blue-9);
   --sidebar-primary-foreground: white;
@@ -188,11 +246,15 @@
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --dls-surface: var(--slate-1);
-  --dls-sidebar: var(--slate-2);
-  --dls-app-bg: var(--slate-1);
-  --dls-background: var(--slate-1);
-  --dls-canvas: var(--slate-2);
+  /* 暗色下统一背景 token 回映射到 slate 灰阶（页面 slate-1 / 列表 slate-2） */
+  --app-page-bg: var(--slate-1);
+  --app-list-bg: var(--slate-2);
+  --app-msg-sent-bg: var(--slate-3);
+  --dls-surface: var(--app-page-bg);
+  --dls-sidebar: var(--app-list-bg);
+  --dls-app-bg: var(--app-page-bg);
+  --dls-background: var(--app-page-bg);
+  --dls-canvas: var(--app-list-bg);
   --dls-surface-muted: var(--slate-3);
   --dls-border: #262626;
   --dls-accent: #011627;
@@ -508,9 +570,49 @@ select:disabled {
   }
 }
 
+/* 助手「当前在做什么」的实时提示：文字底色在 #898989 与 #9e9e9e 之间循环扫过。
+   TIPS: 只动 background-position，不触发布局与重排，长时间运行也不掉帧。 */
+@keyframes live-activity-shimmer {
+  0% {
+    background-position: 200% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.live-activity-text {
+  background-image: linear-gradient(
+    100deg,
+    #898989 0%,
+    #898989 38%,
+    #fafafa 50%,
+    #898989 62%,
+    #898989 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: live-activity-shimmer 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-activity-text {
+    animation: none;
+    background-image: none;
+    color: #898989;
+  }
+}
+
 .dark,
 [data-theme="dark"] {
-  --background: var(--slate-1);
+  /* 双保险：兼容仅挂 .dark 类（无 data-theme 属性）的场景，
+     避免语义 token 塌回 :root 的亮色值 */
+  --app-page-bg: var(--slate-1);
+  --app-list-bg: var(--slate-2);
+  --app-msg-sent-bg: var(--slate-3);
+  --background: var(--app-page-bg);
   --foreground: var(--slate-12);
   --card: var(--slate-2);
   --card-foreground: var(--slate-12);
@@ -535,7 +637,7 @@ select:disabled {
   --chart-3: var(--indigo-9);
   --chart-4: var(--violet-9);
   --chart-5: var(--purple-9);
-  --sidebar: var(--slate-2);
+  --sidebar: var(--app-list-bg);
   --sidebar-foreground: var(--slate-12);
   --sidebar-primary: var(--blue-9);
   --sidebar-primary-foreground: var(--slate-12);

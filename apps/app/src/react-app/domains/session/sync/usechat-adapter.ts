@@ -5,36 +5,20 @@ import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
 import type { JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
 import { safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
+import { t } from "../../../../i18n";
+import {
+  classifyProviderLimit,
+  type ProviderLimitKind,
+} from "./provider-limit-classify";
+import {
+  classifyProviderError,
+  extractProviderErrorSignals,
+} from "./provider-error-classify";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
-
-function recordValue(value: unknown, key: string) {
-  if (!value || typeof value !== "object") return undefined;
-  return (value as Record<string, unknown>)[key];
-}
-
-function firstStringValue(records: unknown[], keys: string[]) {
-  for (const record of records) {
-    for (const key of keys) {
-      const value = recordValue(record, key);
-      if (typeof value === "string" && value.trim()) return value.trim();
-    }
-  }
-  return null;
-}
-
-function firstNumberValue(records: unknown[], keys: string[]) {
-  for (const record of records) {
-    for (const key of keys) {
-      const value = recordValue(record, key);
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-    }
-  }
-  return null;
-}
 
 function defaultErrorMessage(name: string | null, fallback: string) {
   if (name === "ProviderAuthError") return "Provider authentication failed";
@@ -67,24 +51,72 @@ function withSessionErrorHints(text: string) {
   return withOpenAiTokenRefreshHint(withAttachmentRecoveryHint(text));
 }
 
+/**
+ * Terminal provider limits get a localized heading plus an actionable hint
+ * (switch model / check quota, or recover context overflow), keeping the raw
+ * provider text as a diagnostic line below.
+ */
+function limitHeadingAndHint(kind: ProviderLimitKind): [string, string] {
+  return kind === "usage_limit"
+    ? [t("app.error_usage_limit"), t("app.error_usage_limit_hint")]
+    : [t("app.error_context_overflow"), t("app.error_context_overflow_hint")];
+}
+
+function describeLimitedError(kind: ProviderLimitKind, detail: string | null, fallback: string): string {
+  const [heading, hint] = limitHeadingAndHint(kind);
+  const lines = [heading, hint];
+  if (detail && detail.trim() && detail !== heading) lines.push(detail);
+  return withSessionErrorHints(lines.join("\n"));
+}
+
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
-  if (error instanceof Error) return withSessionErrorHints(error.message || fallback);
-  if (typeof error === "string") return withSessionErrorHints(error.trim() || fallback);
+  const providerError = classifyProviderError(error);
+  const signals = extractProviderErrorSignals(error);
+  if (providerError === "ip_not_authorized") {
+    const lines = [t("app.error_ip_authorization"), t("app.error_ip_authorization_hint")];
+    if (signals.message && !lines.includes(signals.message)) lines.push(signals.message);
+    if (signals.status) lines.push(`Status: ${signals.status}`);
+    if (signals.provider) lines.push(`Provider: ${signals.provider}`);
+    if (signals.code) lines.push(`Code: ${signals.code}`);
+    if (signals.responseBody && signals.responseBody !== signals.message) {
+      lines.push(`Response: ${signals.responseBody}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (error instanceof Error) {
+    const limit = classifyProviderLimit({ text: error.message });
+    if (limit) return describeLimitedError(limit, error.message, fallback);
+    return withSessionErrorHints(error.message || fallback);
+  }
+  if (typeof error === "string") {
+    const limit = classifyProviderLimit({ text: error });
+    if (limit) return describeLimitedError(limit, error, fallback);
+    return withSessionErrorHints(error.trim() || fallback);
+  }
   if (!error || typeof error !== "object") return fallback;
 
-  const data = recordValue(error, "data");
-  const cause = recordValue(error, "cause");
-  const causeData = recordValue(cause, "data");
-  const records = [error, data, cause, causeData].filter(Boolean);
-  const name = firstStringValue(records, ["name", "type"]);
-  const message = firstStringValue(records, ["message", "detail", "reason", "error"]);
-  const status = firstNumberValue(records, ["statusCode", "status"]);
-  const provider = firstStringValue(records, ["providerID", "providerId", "provider"]);
-  const code = firstStringValue(records, ["code", "errorCode"]);
-  const retries = firstNumberValue(records, ["retries", "retryCount"]);
-  const responseBody = firstStringValue(records, ["responseBody", "body", "response"]);
+  const name = signals.type;
+  const message = signals.message;
+  const status = signals.status;
+  const provider = signals.provider;
+  const code = signals.code;
+  const retries = signals.retries;
+  const responseBody = signals.responseBody;
 
-  const lines = [message ?? defaultErrorMessage(name, fallback)];
+  const lines = (() => {
+    const limit = classifyProviderLimit({
+      status,
+      code,
+      name,
+      text: [message, responseBody].filter(Boolean).join("\n"),
+    });
+    if (!limit) return [message ?? defaultErrorMessage(name, fallback)];
+    const [heading, hint] = limitHeadingAndHint(limit);
+    const limited = [heading, hint];
+    if (message && message !== heading) limited.push(message);
+    return limited;
+  })();
   if (status && !lines[0]?.includes(String(status))) lines.push(`Status: ${status}`);
   if (provider && !lines[0]?.includes(provider)) lines.push(`Provider: ${provider}`);
   if (code) lines.push(`Code: ${code}`);
@@ -201,10 +233,20 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
 export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMessage[] {
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
+    const completed = message.info.time && "completed" in message.info.time
+      ? message.info.time.completed
+      : undefined;
+    const timingMetadata = {
+      ...(typeof created === "number" ? { created } : {}),
+      ...(typeof completed === "number" ? { completed } : {}),
+      ...(message.info.role === "assistant" && typeof message.info.finish === "string"
+        ? { finish: message.info.finish }
+        : {}),
+    };
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      ...(typeof created === "number" ? { metadata: { opencode: { created } } } : {}),
+      ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           if (part.synthetic || part.ignored) return [];

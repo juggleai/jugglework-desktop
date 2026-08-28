@@ -69,7 +69,7 @@ async function waitForEvents(base: string, token: string): Promise<ReloadEvent[]
 }
 
 describe("reload event API", () => {
-  test("does not expose internal workspace bootstrap writes as reload events", async () => {
+  test("does not expose an event when internal workspace bootstrap changes nothing", async () => {
     const root = await createWorkspaceRoot();
     const { base, token } = await startJuggleWorkServer(root);
 

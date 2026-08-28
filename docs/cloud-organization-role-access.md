@@ -6,7 +6,7 @@ This guide documents the approved cloud organization hierarchy as it exists toda
 
 Organization roles authorize access inside one cloud workspace. They are separate from platform admin access: platform admins are allowlisted operators for admin routes and the admin MCP surface, and organization `owner` or `admin` roles do not grant that platform access.
 
-The web console enforces policy in the client by hiding or disabling actions, and the API enforces policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. JuggleWork Models is an operational Models surface outside Settings.
+The web console enforces policy in the client by hiding or disabling actions, and the API enforces policy by rejecting unauthorized requests. UI disabling is not security enforcement; route guards and handler checks are the security boundary. Organization LLM providers are an operational Models surface outside Settings.
 
 ## Built-in hierarchy
 
@@ -42,7 +42,6 @@ For cloud organization admins (`owner` and `admin`), the sidebar order is:
   - Plugins
   - Connectors
 - Models
-  - JuggleWork Models
   - LLM Providers
 - Members
 - Analytics
