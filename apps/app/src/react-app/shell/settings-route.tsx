@@ -2900,10 +2900,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        onClose={() => {
-          setEditingLocalProvider(null);
-          providerAuthStore.closeProviderAuthModal();
-        }}
+        onClose={() => providerAuthStore.closeProviderAuthModal()}
+        onAfterClose={() => setEditingLocalProvider(null)}
       />
       <CreateWorkspaceModal
         open={createWorkspaceOpen}
