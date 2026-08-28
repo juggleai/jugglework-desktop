@@ -23,6 +23,14 @@ describe("provider auth modal lifecycle", () => {
     expect(routeSource).toContain("onAfterClose={() => setEditingLocalProvider(null)}");
   });
 
+  test("drops the unreachable custom-draft branch from the back handler", () => {
+    const handleBack = modalSource.slice(
+      modalSource.indexOf("const handleBack"),
+      modalSource.indexOf("const submittingLabel"),
+    );
+    expect(handleBack).not.toContain("handleClose()");
+  });
+
   test("places Edit in the detail header instead of the former Close action", () => {
     expect(modalSource).toMatch(/isViewingCustomProvider \? \([\s\S]+setCustomProviderEditing\(true\)[\s\S]+t\("common\.edit"\)/);
     expect(modalSource).not.toContain('t(hasCustomProviderDraft ? "common.close" : "common.back")');
