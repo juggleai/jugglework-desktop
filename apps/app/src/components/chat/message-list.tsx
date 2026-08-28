@@ -9,6 +9,7 @@ import {
   Download,
   FileIcon,
   LoaderCircle,
+  NotebookTabs,
   Pencil,
   Split,
   Undo2,
@@ -99,6 +100,10 @@ import {
 } from "@/react-app/domains/session/surface/composer/capability-tags"
 import { currentLocale, t } from "@/i18n"
 import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import {
+  getSessionCompactionFromMessage,
+  type SessionCompactionPresentation,
+} from "@/app/lib/session-compaction"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
@@ -145,6 +150,59 @@ function TaskDuration({ messages, userMessageIndex, isStreaming }: {
     >
       {label} {duration}
     </span>
+  )
+}
+
+function CompactionStatusRow({ state }: { state: SessionCompactionPresentation }) {
+  const zh = currentLocale() === "zh"
+  const label = state.running
+    ? state.mode === "auto"
+      ? (zh ? "上下文压缩中" : "Context compaction in progress")
+      : (zh ? "正在压缩上下文" : "Compacting context")
+    : state.mode === "auto"
+      ? (zh ? "上下文已自动压缩" : "Context automatically compacted")
+      : (zh ? "上下文已压缩" : "Context compacted")
+
+  return (
+    <div
+      className="flex items-center gap-2 text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+      data-testid="session-compaction-status"
+    >
+      <NotebookTabs className="size-4 shrink-0" strokeWidth={1.8} />
+      <span className={cn("font-medium tracking-[-0.01em]", state.running && "live-activity-text")}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function StandaloneManualCompactionTask({ state }: { state: SessionCompactionPresentation }) {
+  const [now, setNow] = React.useState(() => Date.now())
+
+  React.useEffect(() => {
+    if (!state.running) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [state.running, state.startedAt])
+
+  const startedAt = state.startedAt ?? now
+  const finishedAt = state.finishedAt ?? now
+  const locale = currentLocale() === "zh" ? "zh" : "en"
+  const duration = formatTaskDuration(Math.max(0, finishedAt - startedAt), locale)
+  const processed = locale === "zh" ? `已处理 ${duration}` : `Processed for ${duration}`
+
+  return (
+    <div className="group/message-group mt-5 mx-auto w-full max-w-5xl px-3 md:px-8" data-testid="manual-compaction-task">
+      {state.running ? (
+        <div className="mb-5 border-b border-border/65 pb-3 text-sm font-medium tabular-nums text-muted-foreground">
+          {processed}
+        </div>
+      ) : null}
+      <CompactionStatusRow state={state} />
+    </div>
   )
 }
 
@@ -536,6 +594,10 @@ const AssistantMessage = React.memo(
                   {group.text}
                 </MessageContent>
               )
+            }
+
+            if (group.kind === "compaction") {
+              return <CompactionStatusRow key={`compaction-${index}`} state={group.state} />
             }
 
             if (group.kind === "file") {
@@ -937,6 +999,13 @@ function MessageGroup({
     return null;
   }
 
+  const manualCompaction = items.length === 1
+    ? getSessionCompactionFromMessage(items[0]!.message)
+    : null
+  if (manualCompaction?.mode === "manual") {
+    return <StandaloneManualCompactionTask state={manualCompaction} />
+  }
+
   const { processItems, summaryItems } = splitAssistantTaskMessages(items, isLiveGroup)
   const processDisplayItem = mergeAssistantProcessItems(processItems)
   const renderableItems = getRenderableMessages(summaryItems)
@@ -1075,9 +1144,10 @@ interface MessageListProps {
   messages: UIMessage[]
   status: ThreadStatus
   retryStatus?: RetryStatus | null
+  compactionRunning?: boolean
 }
 
-export function MessageList({ messages, status, retryStatus }: MessageListProps) {
+export function MessageList({ messages, status, retryStatus, compactionRunning = false }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
@@ -1121,7 +1191,7 @@ export function MessageList({ messages, status, retryStatus }: MessageListProps)
         )
       })}
 
-      {status === "streaming" && <LoadingMessage label={liveActionLabel ?? undefined} />}
+      {status === "streaming" && !compactionRunning && <LoadingMessage label={liveActionLabel ?? undefined} />}
       {retryStatus ? <RetryMessage status={retryStatus} /> : null}
       {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
     </div>

@@ -15,6 +15,7 @@ import {
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { parseJuggleWorkSessionCreateResult } from "../src/components/tools/jugglework-session-create";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
+import { getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -227,6 +228,91 @@ describe("tool part mapper", () => {
     } finally {
       release();
       cleanup();
+    }
+  });
+
+  test("session sync exposes one manual compaction marker and updates it in place", () => {
+    const syncInput = { workspaceId: "workspace-compact", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-compact");
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.started",
+        properties: {
+          sessionID: "session-compact",
+          messageID: "message-compact",
+          reason: "manual",
+          timestamp: 1_700_000_000_000,
+        },
+      });
+
+      let transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey("workspace-compact", "session-compact"),
+      ) ?? [];
+      expect(transcript).toHaveLength(1);
+      expect(getSessionCompactionFromMessage(transcript[0]!)).toEqual({
+        mode: "manual",
+        running: true,
+        startedAt: 1_700_000_000_000,
+        finishedAt: null,
+      });
+      expect(useSessionActivityStore.getState().getStatus("workspace-compact", "session-compact")).toBe("compacting");
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-compact",
+            role: "assistant",
+            sessionID: "session-compact",
+            summary: true,
+            time: { created: 1_700_000_000_000 },
+          },
+        },
+      });
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "summary-text",
+            sessionID: "session-compact",
+            messageID: "message-compact",
+            type: "text",
+            text: "internal summary",
+          },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.ended",
+        properties: {
+          sessionID: "session-compact",
+          messageID: "message-compact",
+          reason: "manual",
+          timestamp: 1_700_000_004_000,
+        },
+      });
+
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey("workspace-compact", "session-compact"),
+      ) ?? [];
+      expect(transcript).toHaveLength(1);
+      expect(transcript[0]?.parts.filter((part) => getSessionCompactionFromMessage({
+        id: "probe",
+        role: "assistant",
+        parts: [part],
+      })).length).toBe(1);
+      expect(getSessionCompactionFromMessage(transcript[0]!)).toEqual({
+        mode: "manual",
+        running: false,
+        startedAt: 1_700_000_000_000,
+        finishedAt: 1_700_000_004_000,
+      });
+      expect(useSessionActivityStore.getState().getStatus("workspace-compact", "session-compact")).not.toBe("compacting");
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession("workspace-compact", "session-compact");
     }
   });
 

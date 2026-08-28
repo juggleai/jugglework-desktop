@@ -5,6 +5,7 @@ import { toolRunPreviewLabel } from "../src/components/chat/message-list"
 import {
   formatTaskDuration,
   getAssistantRenderGroups,
+  getMessagesText,
   getTaskTiming,
   groupMessages,
   isMessageGroup,
@@ -12,6 +13,10 @@ import {
   splitAssistantTaskMessages,
 } from "../src/components/chat/utils"
 import { reconcileRunCompletionDiagnostic } from "../src/react-app/domains/session/sync/run-completion-diagnostics"
+import {
+  createSessionCompactionUIPart,
+  getSessionCompactionFromMessage,
+} from "../src/app/lib/session-compaction"
 
 const message = (
   id: string,
@@ -123,6 +128,75 @@ describe("task message presentation", () => {
       "assistant",
       "assistant",
     ])
+  })
+
+  test("keeps automatic compaction inside the current task and hides its summary details", () => {
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-process", "assistant", 1_700_000_001_000, [{ type: "text", text: "Working" }]),
+      {
+        ...message("assistant-compaction", "assistant", 1_700_000_002_000, [
+          { type: "text", text: "Internal compressed summary that must stay hidden" },
+          createSessionCompactionUIPart({
+            partId: "part-compaction",
+            mode: "auto",
+            running: false,
+            startedAt: 1_700_000_002_000,
+            finishedAt: 1_700_000_003_000,
+          }),
+        ], 1_700_000_003_000),
+        metadata: {
+          opencode: {
+            created: 1_700_000_002_000,
+            completed: 1_700_000_003_000,
+            summary: true,
+          },
+        },
+      },
+      message("assistant-final", "assistant", 1_700_000_004_000, [{ type: "text", text: "Done" }]),
+    ], "ready")
+
+    expect(grouped).toHaveLength(2)
+    expect(isMessageGroup(grouped[1]!)).toBe(true)
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected assistant message group")
+    expect(grouped[1].messages).toHaveLength(3)
+    expect(grouped[1].messages[1]?.message.parts).toHaveLength(1)
+    expect(getSessionCompactionFromMessage(grouped[1].messages[1]!.message)).toMatchObject({
+      mode: "auto",
+      running: false,
+    })
+    expect(getMessagesText(grouped[1].messages.map((item) => item.message))).not.toContain("Internal compressed summary")
+
+    const split = splitAssistantTaskMessages(grouped[1].messages)
+    expect(split.processItems.flatMap((item) => item.message.parts).some((part) => (
+      getAssistantRenderGroups([part], false).some((renderGroup) => renderGroup.kind === "compaction")
+    ))).toBe(true)
+    expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Done" }])
+  })
+
+  test("makes manual compact a standalone assistant task boundary", () => {
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-final", "assistant", 1_700_000_001_000, [{ type: "text", text: "Done" }]),
+      message("assistant-compact", "assistant", 1_700_000_002_000, [
+        createSessionCompactionUIPart({
+          partId: "part-manual-compaction",
+          mode: "manual",
+          running: true,
+          startedAt: 1_700_000_002_000,
+        }),
+      ]),
+    ], "streaming")
+
+    expect(grouped).toHaveLength(3)
+    expect(isMessageGroup(grouped[1]!)).toBe(true)
+    expect(isMessageGroup(grouped[2]!)).toBe(true)
+    if (!isMessageGroup(grouped[2]!)) throw new Error("expected manual compaction group")
+    expect(grouped[2].messages).toHaveLength(1)
+    expect(getSessionCompactionFromMessage(grouped[2].messages[0]!.message)).toMatchObject({
+      mode: "manual",
+      running: true,
+    })
   })
 
   test("keeps the real summary outside process when completion is incomplete", () => {

@@ -1,6 +1,13 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
 import { redactSensitiveReasoning } from "./reasoning-redaction"
+import {
+  getSessionCompactionFromMessage,
+  getSessionCompactionFromPart,
+  isSessionCompactionUIPart,
+  toCompactionPresentationMessage,
+  type SessionCompactionPresentation,
+} from "@/app/lib/session-compaction"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -64,7 +71,7 @@ export function splitAssistantTaskMessages(items: UIMessageWithIndex[], isLive =
       (part) => part.type === "text" && part.text.trim().length > 0,
     )
     const lastProcessPartIndex = item.message.parts.findLastIndex(
-      (part) => part.type !== "text" && part.type !== "file",
+      (part) => isSessionCompactionUIPart(part) || (part.type !== "text" && part.type !== "file"),
     )
     const summaryTextIndexes = new Set(
       item.message.parts.flatMap((part, partIndex) =>
@@ -263,17 +270,18 @@ export function isMessageGroup(item: MessageListItem): item is MessageGroup {
 }
 
 function asAssistantPresentationMessage(message: UIMessage): UIMessage | null {
-  if (message.role === "assistant") return message
+  const presentationMessage = toCompactionPresentationMessage(message)
+  if (presentationMessage.role === "assistant") return presentationMessage
 
-  const hasUserContent = message.parts.some(
+  const hasUserContent = presentationMessage.parts.some(
     (part) => (part.type === "text" && part.text.trim().length > 0) || part.type === "file",
   )
   if (hasUserContent) return null
 
-  const hasAssistantProcess = message.parts.some(
-    (part) => isReasoningUIPart(part) || isToolUIPart(part) || part.type === "step-start",
+  const hasAssistantProcess = presentationMessage.parts.some(
+    (part) => isReasoningUIPart(part) || isToolUIPart(part) || part.type === "step-start" || isSessionCompactionUIPart(part),
   )
-  return hasAssistantProcess ? { ...message, role: "assistant" } : null
+  return hasAssistantProcess ? { ...presentationMessage, role: "assistant" } : null
 }
 
 export function groupMessages(messages: UIMessage[], status: ThreadStatus): MessageListItem[] {
@@ -295,8 +303,14 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
     while (index < messages.length) {
       const nextAssistantMessage = asAssistantPresentationMessage(messages[index])
       if (!nextAssistantMessage) break
+      const compaction = getSessionCompactionFromMessage(nextAssistantMessage)
+      // `/compact` does not create a visible user message, so without an
+      // explicit boundary its output would be absorbed into the preceding
+      // assistant run. A manual compaction is intentionally its own task.
+      if (compaction?.mode === "manual" && assistantMessages.length > 0) break
       assistantMessages.push({ message: nextAssistantMessage, index });
       index++
+      if (compaction?.mode === "manual") break
     }
 
     items.push({ messages: assistantMessages });
@@ -310,6 +324,7 @@ type AssistantRenderGroup =
   | { kind: "reasoning"; text: string; isStreaming: boolean }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tools"; parts: Array<ToolUIPart | DynamicToolUIPart> }
+  | { kind: "compaction"; state: SessionCompactionPresentation }
 
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
@@ -352,6 +367,11 @@ export function getAssistantRenderGroups(
   }
 
   for (const part of filteredParts) {
+    const compaction = getSessionCompactionFromPart(part)
+    if (compaction) {
+      groups.push({ kind: "compaction", state: compaction })
+      continue
+    }
     if (part.type === "text") {
       appendText(part.text)
       continue

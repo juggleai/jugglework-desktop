@@ -20,6 +20,13 @@ import {
 } from "../status/session-activity-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
+import {
+  completeRunningSessionCompactions,
+  createSessionCompactionUIPart,
+  getSessionCompactionFromPart,
+  upsertSessionCompactionMessage,
+  type SessionCompactionMode,
+} from "@/app/lib/session-compaction";
 
 type SyncOptions = {
   workspaceId: string;
@@ -181,6 +188,30 @@ function sessionIdFromProperties(properties: unknown) {
   if (!properties || typeof properties !== "object") return "";
   const sessionID = (properties as { sessionID?: unknown }).sessionID;
   return typeof sessionID === "string" ? sessionID : "";
+}
+
+function compactionEventProperties(properties: unknown) {
+  if (!properties || typeof properties !== "object") return null;
+  const record = properties as {
+    sessionID?: unknown;
+    messageID?: unknown;
+    reason?: unknown;
+    timestamp?: unknown;
+  };
+  if (typeof record.sessionID !== "string" || !record.sessionID) return null;
+  const mode: SessionCompactionMode = record.reason === "auto" || record.reason === "manual"
+    ? record.reason
+    : "unknown";
+  return {
+    sessionId: record.sessionID,
+    messageId: typeof record.messageID === "string" && record.messageID
+      ? record.messageID
+      : null,
+    mode,
+    timestamp: typeof record.timestamp === "number" && Number.isFinite(record.timestamp)
+      ? record.timestamp
+      : null,
+  };
 }
 
 function sessionErrorFromProperties(properties: unknown) {
@@ -478,6 +509,13 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
     };
   }
   if (part.type === "step-start") return { type: "step-start" };
+  if (part.type === "compaction") {
+    return createSessionCompactionUIPart({
+      partId: part.id,
+      mode: part.auto ? "auto" : "manual",
+      running: false,
+    });
+  }
   return null;
 }
 
@@ -512,6 +550,16 @@ function upsertMessage(messages: UIMessage[], next: UIMessage) {
       ? {
           ...message,
           ...next,
+          metadata: message.metadata || next.metadata
+            ? {
+                ...(message.metadata ?? {}),
+                ...(next.metadata ?? {}),
+                opencode: {
+                  ...((message.metadata as { opencode?: Record<string, unknown> } | undefined)?.opencode ?? {}),
+                  ...((next.metadata as { opencode?: Record<string, unknown> } | undefined)?.opencode ?? {}),
+                },
+              }
+            : undefined,
           parts: next.parts.length > 0 ? next.parts : message.parts,
         }
       : message,
@@ -771,14 +819,51 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   }
 
   if (event.type === "session.next.compaction.started") {
-    const sessionId = sessionIdFromProperties(event.properties);
-    if (sessionId) useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, true);
+    const compaction = compactionEventProperties(event.properties);
+    if (!compaction) return;
+    useSessionActivityStore.getState().setCompacting(workspaceId, compaction.sessionId, true);
+    if (compaction.messageId && isTrackedSession(entry, compaction.sessionId)) {
+      queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, compaction.sessionId), (current = []) =>
+        upsertSessionCompactionMessage(current, {
+          messageId: compaction.messageId!,
+          mode: compaction.mode,
+          running: true,
+          startedAt: compaction.timestamp,
+        }),
+      );
+    }
     return;
   }
 
-  if (event.type === "session.next.compaction.ended" || event.type === "session.compacted") {
+  if (event.type === "session.next.compaction.ended") {
+    const compaction = compactionEventProperties(event.properties);
+    if (!compaction) return;
+    useSessionActivityStore.getState().setCompacting(workspaceId, compaction.sessionId, false);
+    if (isTrackedSession(entry, compaction.sessionId)) {
+      queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, compaction.sessionId), (current = []) => {
+        if (compaction.messageId) {
+          return upsertSessionCompactionMessage(current, {
+            messageId: compaction.messageId,
+            mode: compaction.mode,
+            running: false,
+            finishedAt: compaction.timestamp,
+          });
+        }
+        return completeRunningSessionCompactions(current, compaction.timestamp);
+      });
+    }
+    return;
+  }
+
+  if (event.type === "session.compacted") {
     const sessionId = sessionIdFromProperties(event.properties);
-    if (sessionId) useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, false);
+    if (!sessionId) return;
+    useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, false);
+    if (isTrackedSession(entry, sessionId)) {
+      queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) =>
+        completeRunningSessionCompactions(current, Date.now()),
+      );
+    }
     return;
   }
 
@@ -904,7 +989,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; error?: unknown; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; finish?: string; summary?: boolean; error?: unknown; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -926,6 +1011,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
       ...(info.role === "assistant" && typeof info.finish === "string" ? { finish: info.finish } : {}),
+      ...(info.role === "assistant" && info.summary === true ? { summary: true } : {}),
     };
     const next = {
       id: info.id,
@@ -1000,6 +1086,17 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       );
     }
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID), (current = []) => {
+      const compaction = getSessionCompactionFromPart(seededPart);
+      if (compaction) {
+        return upsertSessionCompactionMessage(current, {
+          messageId: part.messageID,
+          partId: part.id,
+          mode: compaction.mode,
+          running: compaction.running,
+          startedAt: compaction.startedAt,
+          finishedAt: compaction.finishedAt,
+        });
+      }
       // If we already have this message, keep its role; otherwise infer
       // from the alternation pattern. Only the newly-stubbed case needs
       // the inference — upsertMessage preserves existing role when the

@@ -63,3 +63,25 @@ The system SHALL NOT mark a session active solely because a prompt-acceptance re
 #### Scenario: Fast task completes before acceptance response
 - **WHEN** a task emits its final response and idle state before the send request resolves
 - **THEN** processing the successful send response does not restore a busy or waiting state
+
+### Requirement: Context compaction preserves task-output continuity
+The system SHALL present context compaction as task activity without exposing the generated internal compaction summary.
+
+#### Scenario: Automatic compaction during an active task
+- **WHEN** automatic context compaction starts while a task is running
+- **THEN** the current task's process output shows one compaction status marker instead of creating a separate task output
+- **AND** the marker is collapsed with the rest of the process output when the task finishes
+
+#### Scenario: Automatic compaction completes
+- **WHEN** automatic context compaction completes and the task continues
+- **THEN** the process marker changes to a completed automatic-compaction receipt
+- **AND** the generated compaction summary text is absent from rendered and copied transcript output
+
+#### Scenario: Manual compact command starts
+- **WHEN** the user submits `/compact` with Enter or the run-task button
+- **THEN** the composer is cleared immediately
+- **AND** a standalone compaction task shows elapsed processing time and an in-progress compaction marker
+
+#### Scenario: Manual compact command completes
+- **WHEN** the standalone manual compaction finishes
+- **THEN** its task output reduces to one completed compaction receipt without summary details

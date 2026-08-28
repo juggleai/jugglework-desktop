@@ -5,6 +5,7 @@ import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX } from "../../../../app/types";
 import { mergeSnapshotAndLiveMessages } from "../sync/message-merge";
 import { applyRevertCursor } from "../sync/transcript-reconcile";
 import { snapshotToUIMessages } from "../sync/usechat-adapter";
+import { toCompactionPresentationMessage } from "../../../../app/lib/session-compaction";
 
 export function resolveRenderedSessionSnapshot(input: {
   sessionId: string;
@@ -45,7 +46,9 @@ export function deriveRenderedSessionMessages(input: {
   // cache. They are structured activity state, not assistant transcript, and
   // would otherwise displace the real final summary during message grouping.
   return applyRevertCursor(
-    messages.filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
+    messages
+      .filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX))
+      .map(toCompactionPresentationMessage),
     revertMessageId,
   );
 }

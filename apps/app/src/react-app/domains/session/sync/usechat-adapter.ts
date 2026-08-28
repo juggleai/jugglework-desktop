@@ -5,6 +5,7 @@ import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
 import type { JuggleWorkSessionSnapshot } from "../../../../app/lib/jugglework-server";
 import { safeStringify } from "../../../../app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
+import { createSessionCompactionUIPart } from "../../../../app/lib/session-compaction";
 import { t } from "../../../../i18n";
 import {
   classifyProviderLimit,
@@ -242,6 +243,9 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       ...(message.info.role === "assistant" && typeof message.info.finish === "string"
         ? { finish: message.info.finish }
         : {}),
+      ...(message.info.role === "assistant" && message.info.summary === true
+        ? { summary: true }
+        : {}),
     };
     const uiMessage = {
       id: message.info.id,
@@ -281,6 +285,15 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
         }
         if (part.type === "step-start") {
           return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
+        }
+        if (part.type === "compaction") {
+          return [createSessionCompactionUIPart({
+            partId: part.id,
+            mode: part.auto ? "auto" : "manual",
+            running: false,
+            startedAt: typeof created === "number" ? created : null,
+            finishedAt: typeof completed === "number" ? completed : created ?? null,
+          })];
         }
         return [];
       }),

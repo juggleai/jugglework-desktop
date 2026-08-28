@@ -327,7 +327,7 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (typeof record.type === "string") {
     return {
       type: record.type,
-      properties: record.properties,
+      properties: record.properties ?? record.data,
     };
   }
 
@@ -336,7 +336,7 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
     if (typeof payload.type === "string") {
       return {
         type: payload.type,
-        properties: payload.properties,
+        properties: payload.properties ?? payload.data,
       };
     }
   }

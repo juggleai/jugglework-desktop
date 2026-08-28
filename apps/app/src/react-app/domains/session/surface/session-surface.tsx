@@ -8,7 +8,7 @@ import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { abortSessionSafe } from "@/app/lib/opencode-session";
+import { abortSessionSafe, isCompactSessionCommand } from "@/app/lib/opencode-session";
 import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
@@ -1091,7 +1091,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
         return;
       }
 
-      const result = await sendDraft(nextDraft);
+      const compactCommand = isCompactSessionCommand(nextDraft.command);
+      const pendingSend = sendDraft(nextDraft);
+      // `/compact` is an action rather than conversational input. Clear it as
+      // soon as the compaction run starts so the composer does not keep showing
+      // a command that is already executing during the potentially long request.
+      if (compactCommand) {
+        const currentState = useComposerStateStore.getState();
+        const currentDraft = getComposerDraft(currentState, props.sessionId);
+        const currentAttachments = getComposerAttachments(currentState, props.sessionId);
+        if (currentDraft === originalDraft && sameAttachments(currentAttachments, sentAttachments)) {
+          clearComposer();
+        }
+      }
+      const result = await pendingSend;
       if (result.outcome === "blocked" || result.outcome === "cancelled") return;
       const currentState = useComposerStateStore.getState();
       const currentDraft = getComposerDraft(currentState, props.sessionId);
@@ -2025,6 +2038,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         messages={renderedMessages}
                         status={status}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                        compactionRunning={effectiveActivityStatus === "compacting"}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
