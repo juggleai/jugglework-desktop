@@ -146,6 +146,8 @@ export type ProviderAuthModalProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
   onClose: () => void;
+  /** 弹窗退出动画完成后的清理回调，避免关闭过程中切换到其它内部视图。 */
+  onAfterClose?: () => void;
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
@@ -364,17 +366,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleClose = () => {
-    void props.onRefreshProviders?.();
     stopOauthAutoPolling();
     stopProviderPolling();
-    resetState();
     props.onClose();
   };
 
   useEffect(() => {
     if (!props.open) {
       autoOpenedPreferredProviderIdRef.current = null;
-      resetState();
     }
   }, [props.open]);
 
@@ -720,11 +719,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "custom" && hasCustomProviderDraft) {
-      handleClose();
-      return;
-    }
-
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
@@ -831,6 +825,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       open={props.open}
       onOpenChange={(open) => {
         if (!open) handleClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (open) return;
+        // TIPS: Base UI 在退出动画期间仍挂载内容。必须等动画结束再重置 view/draft，
+        // 否则详情关闭时会短暂闪出模型组列表或新增表单。
+        resetState();
+        void props.onRefreshProviders?.();
+        props.onAfterClose?.();
       }}
     >
       <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
@@ -1074,9 +1076,21 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           : "providers.custom_subtitle")}
                       </div>
                     </div>
-                    <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
-                      {t(hasCustomProviderDraft ? "common.close" : "common.back")}
-                    </Button>
+                    {isViewingCustomProvider ? (
+                      <Button
+                        onClick={() => {
+                          setCustomProviderEditing(true);
+                          setLocalError(null);
+                        }}
+                        disabled={actionDisabled}
+                      >
+                        {t("common.edit")}
+                      </Button>
+                    ) : hasCustomProviderDraft ? null : (
+                      <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
+                        {t("common.back")}
+                      </Button>
+                    )}
                   </div>
 
                   <TextInput
@@ -1208,16 +1222,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     <div className="text-[11px] text-gray-9">
                       {t("providers.custom_storage_note")}
                     </div>
-                    {isViewingCustomProvider ? (
-                      <Button
-                        onClick={() => {
-                          setCustomProviderEditing(true);
-                          setLocalError(null);
-                        }}
-                      >
-                        {t("common.edit")}
-                      </Button>
-                    ) : (
+                    {!isViewingCustomProvider ? (
                       <Button
                         onClick={() => void handleCustomSubmit()}
                         disabled={
@@ -1240,7 +1245,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                             : "providers.custom_submit")
                         )}
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ) : null}
