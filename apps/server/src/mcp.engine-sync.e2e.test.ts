@@ -51,6 +51,7 @@ function startMockOpencode(options?: {
   liveMcpStatusByName?: () => Record<string, unknown>;
   mcpResponseForName?: (name: string) => Response | null;
   disposeResponse?: () => Response | null;
+  disconnectResponse?: (name: string) => Response | null;
 }) {
   const requests: EngineRequest[] = [];
   const server = Bun.serve({
@@ -80,7 +81,10 @@ function startMockOpencode(options?: {
       if (url.pathname === "/mcp" && request.method === "GET") {
         return Response.json(options?.liveMcpStatusByName?.() ?? {});
       }
-      if (url.pathname.match(/^\/mcp\/[^/]+\/disconnect$/) && request.method === "POST") return Response.json({});
+      const disconnectName = url.pathname.match(/^\/mcp\/([^/]+)\/disconnect$/)?.[1];
+      if (disconnectName && request.method === "POST") {
+        return options?.disconnectResponse?.(decodeURIComponent(disconnectName)) ?? Response.json({});
+      }
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
     },
   }) as Served;
@@ -91,7 +95,11 @@ function startMockOpencode(options?: {
 async function startJuggleWorkServer(
   workspaceRoot: string,
   opencodeBaseUrl: string,
-  options?: { trustedProcessIdentity?: string | null; isAlive?: () => boolean },
+  options?: {
+    trustedProcessIdentity?: string | null;
+    isAlive?: () => boolean;
+    workspaceType?: "local" | "remote";
+  },
 ) {
   const config: ServerConfig = {
     host: "127.0.0.1",
@@ -106,7 +114,7 @@ async function startJuggleWorkServer(
         name: "Workspace",
         path: workspaceRoot,
         preset: "starter",
-        workspaceType: "local",
+        workspaceType: options?.workspaceType ?? "local",
         baseUrl: opencodeBaseUrl,
       },
     ],
@@ -664,15 +672,387 @@ describe("runtime MCP engine sync", () => {
 
       // 组织云端插件的远程 MCP 走 Connect 网关，不落本地；只有 stdio 组件才写工作区配置，
       // 这条链路的热同步仍要照常发生。
-      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.brief).toMatchObject({
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["cloud-mcp-plugin-brief"]).toMatchObject({
         type: "local",
         command: ["npx", "-y", "brief-mcp"],
       });
       const addRequest = mock.requests.find((entry) => entry.method === "POST" && entry.pathname === "/mcp");
       expect(addRequest).toBeDefined();
       expect(addRequest?.body).toEqual({
-        name: "brief",
+        name: "cloud-mcp-plugin-brief",
         config: { type: "local", command: ["npx", "-y", "brief-mcp"], enabled: true },
+      });
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin install rolls back and returns failure when engine sync fails", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode({ failMcpNames: ["cloud-mcp-plugin-brief"] });
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+
+      const response = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: { id: "plugin_cloud_mcp", name: "Cloud MCP Plugin", description: null, updatedAt: null },
+            memberships: [{
+              configObjectId: "config_mcp_valid",
+              configObject: {
+                id: "config_mcp_valid",
+                objectType: "mcp",
+                title: "Brief MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_mcp_valid",
+                  rawSourceText: null,
+                  normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+                },
+              },
+            }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        code: "cloud_plugin_install_failed",
+        details: { status: "failed" },
+      });
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["cloud-mcp-plugin-brief"]).toBeUndefined();
+      const installedResponse = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        headers: auth(jugglework.token),
+      });
+      expect(await installedResponse.json()).toMatchObject({ plugins: {} });
+      expect(mock.requests.some((entry) => entry.pathname === "/mcp/cloud-mcp-plugin-brief/disconnect")).toBe(true);
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin install fails and rolls back when the engine endpoint is missing", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const jugglework = await startJuggleWorkServer(workspaceRoot, "", { trustedProcessIdentity: null });
+      const response = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: { id: "plugin_missing_endpoint", name: "Missing Endpoint", description: null, updatedAt: null },
+            memberships: [{
+              configObjectId: "config_mcp",
+              configObject: {
+                id: "config_mcp",
+                objectType: "mcp",
+                title: "Brief MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_mcp",
+                  rawSourceText: null,
+                  normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+                },
+              },
+            }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        code: "cloud_plugin_install_failed",
+        details: {
+          status: "failed",
+          cause: "Live plugin MCP reconciliation requires an OpenCode engine endpoint.",
+        },
+      });
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["missing-endpoint-plugin-brief"]).toBeUndefined();
+      const installed = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        headers: auth(jugglework.token),
+      });
+      expect(await installed.json()).toMatchObject({ plugins: {} });
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin install fails and rolls back when the engine endpoint identity is invalid", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const jugglework = await startJuggleWorkServer(workspaceRoot, "not-an-engine-url", { trustedProcessIdentity: null });
+      const response = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: { id: "plugin_missing_identity", name: "Missing Identity", description: null, updatedAt: null },
+            memberships: [{
+              configObjectId: "config_mcp",
+              configObject: {
+                id: "config_mcp",
+                objectType: "mcp",
+                title: "Brief MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_mcp",
+                  rawSourceText: null,
+                  normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+                },
+              },
+            }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        code: "cloud_plugin_install_failed",
+        details: {
+          status: "failed",
+          cause: "Live plugin MCP reconciliation requires a valid OpenCode engine endpoint identity.",
+        },
+      });
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["missing-identity-plugin-brief"]).toBeUndefined();
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("direct remote workspaces reject plugin mutation as unsupported", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const jugglework = await startJuggleWorkServer(
+        workspaceRoot,
+        `http://127.0.0.1:${mock.server.port}`,
+        { workspaceType: "remote" },
+      );
+      const response = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({ resolved: {} }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "cloud_plugin_workspace_unsupported",
+        details: { status: "unsupported", workspaceType: "remote" },
+      });
+      expect(mock.requests).toEqual([]);
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin removal disconnects its live engine MCP", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const payload = {
+        marketplaceId: null,
+        resolved: {
+          plugin: { id: "plugin_cloud_mcp", name: "Cloud MCP Plugin", description: null, updatedAt: null },
+          memberships: [{
+            configObjectId: "config_mcp_valid",
+            configObject: {
+              id: "config_mcp_valid",
+              objectType: "mcp",
+              title: "Brief MCP",
+              description: null,
+              currentRelativePath: null,
+              status: "active",
+              updatedAt: null,
+              latestVersion: {
+                id: "version_mcp_valid",
+                rawSourceText: null,
+                normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+              },
+            },
+          }],
+        },
+      };
+      const install = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify(payload),
+      });
+      expect(install.status).toBe(200);
+      mock.requests.length = 0;
+
+      const remove = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins/plugin_cloud_mcp`, {
+        method: "DELETE",
+        headers: auth(jugglework.token),
+      });
+
+      expect(remove.status).toBe(200);
+      expect(mock.requests).toContainEqual(expect.objectContaining({
+        method: "POST",
+        pathname: "/mcp/cloud-mcp-plugin-brief/disconnect",
+      }));
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["cloud-mcp-plugin-brief"]).toBeUndefined();
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin removal rolls back when the engine rejects disconnect", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    let rejectDisconnect = false;
+    try {
+      const mock = startMockOpencode({
+        disconnectResponse: () => rejectDisconnect
+          ? Response.json({ code: "disconnect_failed" }, { status: 503 })
+          : null,
+      });
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const install = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: { id: "plugin_disconnect_failure", name: "Disconnect Failure", description: null, updatedAt: null },
+            memberships: [{
+              configObjectId: "config_mcp",
+              configObject: {
+                id: "config_mcp",
+                objectType: "mcp",
+                title: "Brief MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_mcp",
+                  rawSourceText: null,
+                  normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+                },
+              },
+            }],
+          },
+        }),
+      });
+      expect(install.status).toBe(200);
+      rejectDisconnect = true;
+
+      const remove = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins/plugin_disconnect_failure`, {
+        method: "DELETE",
+        headers: auth(jugglework.token),
+      });
+
+      expect(remove.status).toBe(500);
+      expect(await remove.json()).toMatchObject({
+        code: "cloud_plugin_remove_failed",
+        details: {
+          status: "failed",
+          cause: "Failed to disconnect MCP disconnect-failure-plugin-brief from the engine",
+        },
+      });
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["disconnect-failure-plugin-brief"]).toBeDefined();
+      const installed = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        headers: auth(jugglework.token),
+      });
+      expect(await installed.json()).toMatchObject({
+        plugins: { plugin_disconnect_failure: { status: "installed" } },
+      });
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("cloud plugin removal fails and restores the plugin when disconnect cannot target an engine", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    try {
+      const mock = startMockOpencode();
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const install = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify({
+          marketplaceId: null,
+          resolved: {
+            plugin: { id: "plugin_remove_endpoint", name: "Remove Endpoint", description: null, updatedAt: null },
+            memberships: [{
+              configObjectId: "config_mcp",
+              configObject: {
+                id: "config_mcp",
+                objectType: "mcp",
+                title: "Brief MCP",
+                description: null,
+                currentRelativePath: null,
+                status: "active",
+                updatedAt: null,
+                latestVersion: {
+                  id: "version_mcp",
+                  rawSourceText: null,
+                  normalizedPayloadJson: { mcp: { brief: { command: ["npx", "-y", "brief-mcp"] } } },
+                },
+              },
+            }],
+          },
+        }),
+      });
+      expect(install.status).toBe(200);
+      mock.requests.length = 0;
+      jugglework.config.workspaces[0]!.baseUrl = undefined;
+
+      const remove = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins/plugin_remove_endpoint`, {
+        method: "DELETE",
+        headers: auth(jugglework.token),
+      });
+
+      expect(remove.status).toBe(500);
+      expect(await remove.json()).toMatchObject({
+        code: "cloud_plugin_remove_failed",
+        details: {
+          status: "failed",
+          cause: "Live plugin MCP reconciliation requires an OpenCode engine endpoint.",
+        },
+      });
+      expect(mock.requests).toEqual([]);
+      expect((await readRuntimeOpencodeConfig(jugglework.config, "ws_1")).mcp?.["remove-endpoint-plugin-brief"]).toBeDefined();
+      const installed = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        headers: auth(jugglework.token),
+      });
+      expect(await installed.json()).toMatchObject({
+        plugins: { plugin_remove_endpoint: { status: "installed" } },
       });
     } finally {
       if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;

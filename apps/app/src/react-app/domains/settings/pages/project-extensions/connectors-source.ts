@@ -101,8 +101,18 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
     mcpQuickConnect.map((entry) => [canonicalIdentity(getMcpServerName(entry)), entry] as const),
   );
 
-  // 1) 已装 MCP 服务（优先级最高）。
+  // 1) 已装 MCP 服务。OpenCode 的有效配置语义是 workspace 覆盖 global；同名时
+  // 只展示一条有效项，避免一个 serverName 软策略控制两张看似独立的卡片。
+  const sourcePriority: Record<string, number> = { "config.global": 0, "config.project": 1, "config.remote": 2 };
+  const effectiveServers = new Map<string, McpServerEntry>();
   for (const server of input.mcpServers) {
+    const identity = canonicalIdentity(server.name);
+    const current = effectiveServers.get(identity);
+    if (!current || (sourcePriority[server.source ?? ""] ?? 0) >= (sourcePriority[current.source ?? ""] ?? 0)) {
+      effectiveServers.set(identity, server);
+    }
+  }
+  for (const server of effectiveServers.values()) {
     const runtimeConnected = isServerConnected(server, input.mcpStatuses);
     const directory = directoryByIdentity.get(canonicalIdentity(server.name));
     const disabled = server.config.enabled === false;
@@ -133,8 +143,8 @@ export function buildProjectConnectors(input: BuildConnectorsInput): ConnectorRo
         serverName: server.name,
         serverConfig: server.config,
         entry: directory,
-        // TIPS: config.global 必须用全局配置专用接口修改。会话面板这里只读展示，
-        // 不能误用工作区接口制造一个同名工作区覆盖。
+        // TIPS: config.global 的安装/授权/全局配置仍只在个人设置修改；这里不透出
+        // 编辑、删除或配置级 enabled，仅由上层附加不写配置的工作区软策略开关。
         onConnect: server.source === "config.global" || connected
           ? undefined
           : disabled

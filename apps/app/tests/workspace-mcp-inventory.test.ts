@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, selectComposerAvailableMcpEntries } from "../src/react-app/domains/connections/workspace-mcp-inventory";
+import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, selectComposerAvailableMcpEntries, selectEffectiveMcpEntries } from "../src/react-app/domains/connections/workspace-mcp-inventory";
 
 describe("shared workspace MCP inventory projection", () => {
   test("hides internal transport and disables local/Cloud rows from workspace policy", () => {
@@ -50,5 +50,25 @@ describe("shared workspace MCP inventory projection", () => {
         failed: { status: "failed", error: "boom" },
       },
     }).map((entry) => entry.name)).toEqual(["ready"]);
+  });
+
+  test("global MCP follows workspace soft policy", () => {
+    const result = applyWorkspaceMcpInventoryPolicy({
+      servers: [{ name: "global-db", source: "config.global", config: { type: "remote", url: "https://global.test" } }],
+      statuses: { "global-db": { status: "connected" } },
+      disabledServerNames: ["global-db"],
+      cloudPolicy: [],
+    });
+    expect(result.servers[0]?.workspaceEnabled).toBe(false);
+    expect(selectComposerAvailableMcpEntries(result)).toHaveLength(0);
+  });
+
+  test("workspace entry overrides a same-name global entry", () => {
+    const selected = selectEffectiveMcpEntries([
+      { name: "notion", source: "config.global", config: { type: "remote", url: "https://global.test" } },
+      { name: "notion", source: "config.remote", config: { type: "remote", url: "https://workspace.test" } },
+    ]);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.source).toBe("config.remote");
   });
 });

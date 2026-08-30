@@ -268,7 +268,7 @@ describe("claude plugin bundles", () => {
     // MCP registered in the runtime DB and pushed to the engine.
     const listResponse = await fetch(`${jugglework.base}/workspace/ws_1/mcp`, { headers: jugglework.headers });
     const listBody = await listResponse.json() as { items: Array<{ name: string; source: string }> };
-    const slackEntry = listBody.items.find((entry) => entry.name === "slack");
+    const slackEntry = listBody.items.find((entry) => entry.name === "slack-plugin-slack");
     expect(slackEntry?.source).toBe("config.remote");
     expect(jugglework.engine.requests.some((entry) => entry.method === "POST" && entry.pathname === "/mcp")).toBe(true);
 
@@ -282,6 +282,6 @@ describe("claude plugin bundles", () => {
     expect(existsSync(commandPath)).toBe(false);
     const afterRemove = await fetch(`${jugglework.base}/workspace/ws_1/mcp`, { headers: jugglework.headers });
     const afterRemoveBody = await afterRemove.json() as { items: Array<{ name: string }> };
-    expect(afterRemoveBody.items.some((entry) => entry.name === "slack")).toBe(false);
+    expect(afterRemoveBody.items.some((entry) => entry.name === "slack-plugin-slack")).toBe(false);
   });
 });

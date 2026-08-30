@@ -33,7 +33,32 @@ export type CloudImportedPluginFile = {
   title: string;
   path: string;
   updatedAt: string | null;
+  delivery?: "local_file" | "runtime_mcp" | "cloud";
+  outcome?: "installed_local" | "available_cloud" | "needs_signin" | "needs_admin_setup" | "unsupported" | "failed";
+  ownerPluginId?: string;
+  ownerConfigObjectId?: string;
+  digest?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
 };
+
+export type CloudImportedPluginReadinessOutcome = Extract<
+  NonNullable<CloudImportedPluginFile["outcome"]>,
+  "needs_signin" | "needs_admin_setup"
+>;
+
+/**
+ * 从已持久化的插件文件结果中解析当前 Cloud 就绪状态。
+ * @param files 工作区插件文件结果
+ */
+export function resolveCloudImportedPluginReadiness(
+  files: CloudImportedPluginFile[],
+): CloudImportedPluginReadinessOutcome | null {
+  // TIPS: 管理员配置是组织级阻塞，优先于成员登录提示，避免给成员不可执行的操作入口。
+  if (files.some((file) => file.outcome === "needs_admin_setup")) return "needs_admin_setup";
+  if (files.some((file) => file.outcome === "needs_signin")) return "needs_signin";
+  return null;
+}
 
 export type CloudImportedPlugin = {
   pluginId: string;
@@ -43,6 +68,7 @@ export type CloudImportedPlugin = {
   updatedAt: string | null;
   files: CloudImportedPluginFile[];
   importedAt: number | null;
+  status?: "installed" | "partial" | "failed" | "repair_required";
 };
 
 export type WorkspaceCloudImports = {
@@ -145,6 +171,19 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
                 title,
                 path,
                 updatedAt: typeof file.updatedAt === "string" ? file.updatedAt.trim() || null : null,
+                delivery: file.delivery === "local_file" || file.delivery === "runtime_mcp" || file.delivery === "cloud"
+                  ? file.delivery
+                  : undefined,
+                outcome: file.outcome === "installed_local" || file.outcome === "available_cloud"
+                  || file.outcome === "needs_signin" || file.outcome === "needs_admin_setup"
+                  || file.outcome === "unsupported" || file.outcome === "failed"
+                  ? file.outcome
+                  : undefined,
+                ownerPluginId: typeof file.ownerPluginId === "string" ? file.ownerPluginId.trim() || undefined : undefined,
+                ownerConfigObjectId: typeof file.ownerConfigObjectId === "string" ? file.ownerConfigObjectId.trim() || undefined : undefined,
+                digest: typeof file.digest === "string" ? file.digest : file.digest === null ? null : undefined,
+                errorCode: typeof file.errorCode === "string" ? file.errorCode.trim() || null : file.errorCode === null ? null : undefined,
+                errorMessage: typeof file.errorMessage === "string" ? file.errorMessage.trim() || null : file.errorMessage === null ? null : undefined,
               } satisfies CloudImportedPluginFile,
             ];
           })
@@ -159,6 +198,9 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
         importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
           ? entry.importedAt
           : null,
+        status: entry.status === "installed" || entry.status === "partial" || entry.status === "failed" || entry.status === "repair_required"
+          ? entry.status
+          : undefined,
       } satisfies CloudImportedPlugin;
       return [[pluginId, imported] as const];
     }),

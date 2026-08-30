@@ -36,7 +36,7 @@ export function applyWorkspaceMcpInventoryPolicy(input: {
       const connectionId = cloudConnectionIdFromMcpEntry(entry);
       const workspaceEnabled = connectionId
         ? cloudEnabled.get(connectionId) !== false
-        : entry.source === "config.project" || entry.source === "config.remote"
+        : entry.source === "config.global" || entry.source === "config.project" || entry.source === "config.remote"
           ? !disabled.has(entry.name)
           : true;
       return { ...entry, workspaceEnabled };
@@ -60,4 +60,18 @@ export function selectComposerAvailableMcpEntries(input: {
     if (entry.workspaceEnabled === false) return false;
     return input.statuses[entry.id ?? entry.name]?.status === "connected";
   });
+}
+
+/** 按有效配置语义去重：本工作区来源覆盖同名全局来源。 */
+export function selectEffectiveMcpEntries(entries: McpServerEntry[]): McpServerEntry[] {
+  const priority: Record<string, number> = { "config.global": 0, "config.project": 1, "config.remote": 2 };
+  const output = new Map<string, McpServerEntry>();
+  for (const entry of entries) {
+    const key = entry.origin === "jugglework-connect"
+      ? entry.id ?? `cloud:${entry.name}`
+      : entry.name.trim().toLowerCase();
+    const current = output.get(key);
+    if (!current || (priority[entry.source ?? ""] ?? 0) >= (priority[current.source ?? ""] ?? 0)) output.set(key, entry);
+  }
+  return [...output.values()];
 }

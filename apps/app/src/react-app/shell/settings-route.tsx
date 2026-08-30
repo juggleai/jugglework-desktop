@@ -514,6 +514,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [globalSkillsStatus, setGlobalSkillsStatus] = useState<string | null>(null);
   const [globalSkillsBusy, setGlobalSkillsBusy] = useState(false);
   const [pendingGlobalConnector, setPendingGlobalConnector] = useState<string | null>(null);
+  const globalConnectorWriteInFlightRef = useRef<Promise<void> | null>(null);
   const [deletingGlobalSkill, setDeletingGlobalSkill] = useState<string | null>(null);
   const [globalSkillsError, setGlobalSkillsError] = useState<string | null>(null);
   const [globalConnectorsError, setGlobalConnectorsError] = useState<string | null>(null);
@@ -745,15 +746,33 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         workspaceType: () => routeStateRef.current.selectedWorkspaceType,
         juggleworkServer: juggleworkServerStore,
         juggleworkServerConnection: () => ({
-          juggleworkServerClient: routeStateRef.current.juggleworkServerClient,
-          juggleworkServerStatus: routeStateRef.current.juggleworkServerStatus,
-          juggleworkServerCapabilities: routeStateRef.current.juggleworkServerCapabilities,
+          juggleworkServerClient: routeStateRef.current.selectedWorkspaceJuggleWorkClient,
+          juggleworkServerStatus: routeStateRef.current.selectedWorkspaceJuggleWorkClient ? "connected" : "disconnected",
+          juggleworkServerCapabilities: routeStateRef.current.selectedWorkspaceJuggleWorkClient
+            ? routeStateRef.current.juggleworkServerCapabilities
+            : null,
         }),
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         ensureRuntimeWorkspaceId: async () =>
           routeStateRef.current.runtimeWorkspaceId?.trim() ||
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
+        workspacePluginInstallationSupported: () => {
+          const workspace = workspacesRef.current.find(
+            (entry) => entry.id === routeStateRef.current.selectedWorkspaceId,
+          );
+          return routeStateRef.current.selectedWorkspaceType === "local"
+            || workspace?.remoteType === "jugglework";
+        },
+        refreshWorkspaceCapabilities: async () => {
+          await Promise.all([
+            connectionsStore.refreshMcpServers(),
+            orgMcpConnectionsRefreshRef.current?.(),
+            refreshConnectCapabilitiesRef.current?.(),
+          ]);
+          // 会话路由已监听该事件并刷新工作区引擎侧能力，覆盖命令、Agent 与工具库存。
+          window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
+        },
         setBusy,
         setBusyLabel,
         setBusyStartedAt: () => {},
@@ -771,6 +790,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
+  const orgMcpConnectionsRefreshRef = useRef<(() => void | Promise<void>) | null>(null);
+  const refreshConnectCapabilitiesRef = useRef<(() => void | Promise<void>) | null>(null);
+  orgMcpConnectionsRefreshRef.current = orgMcpConnections.refresh;
 
   useEffect(() => {
     for (const provider of providers) {
@@ -850,6 +872,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     }
   }, [cloudSession.activeOrganization?.id, cloudSession.client, cloudSession.isSignedIn]);
+  refreshConnectCapabilitiesRef.current = refreshConnectCapabilities;
 
   useEffect(() => {
     if (route.tab !== "extensions") return;
@@ -1747,24 +1770,36 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     name: string,
     write: (target: GlobalConfigTarget) => Promise<void>,
   ) => {
+    // TIPS: 每次写入都会读取并重写完整配置，重叠执行会让后完成者覆盖前一项变更。
+    if (globalConnectorWriteInFlightRef.current) throw new Error(t("common.saving"));
     const target = globalConfigTarget();
     if (!target) return;
-    setPendingGlobalConnector(name);
-    setGlobalConnectorsError(null);
+    const operation = (async () => {
+      setPendingGlobalConnector(name);
+      setGlobalConnectorsError(null);
+      try {
+        await write(target);
+        reloadCoordinator.markReloadRequired("config", {
+          type: "config",
+          name: "opencode.json",
+          action: "updated",
+        });
+        await refreshGlobalConnectors();
+        void connectionsStore.refreshMcpServers();
+      } catch (error) {
+        setGlobalConnectorsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
+        throw error;
+      } finally {
+        setPendingGlobalConnector(null);
+      }
+    })();
+    globalConnectorWriteInFlightRef.current = operation;
     try {
-      await write(target);
-      reloadCoordinator.markReloadRequired("config", {
-        type: "config",
-        name: "opencode.json",
-        action: "updated",
-      });
-      await refreshGlobalConnectors();
-      void connectionsStore.refreshMcpServers();
-    } catch (error) {
-      setGlobalConnectorsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
-      throw error;
+      await operation;
     } finally {
-      setPendingGlobalConnector(null);
+      if (globalConnectorWriteInFlightRef.current === operation) {
+        globalConnectorWriteInFlightRef.current = null;
+      }
     }
   }, [connectionsStore, globalConfigTarget, refreshGlobalConnectors, reloadCoordinator]);
 
@@ -2635,7 +2670,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });
           const projectConnectorsWithScope = projectConnectors.map((row) => {
-            if ((row.mcpSource === "config.remote" || row.mcpSource === "config.project") && workspaceMcpToolPolicy.available && row.serverConfig?.enabled !== false) {
+            if ((row.mcpSource === "config.global" || row.mcpSource === "config.remote" || row.mcpSource === "config.project") && workspaceMcpToolPolicy.available && row.serverConfig?.enabled !== false) {
               const enabled = !workspaceMcpToolPolicy.disabledServerNames.includes(row.key.slice("installed:".length));
               return {
                 ...row,
@@ -2670,8 +2705,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           // TIPS: 技能弹窗的数据源 = 完整技能列表（本工作区 + 全局，带 scope）按工作区过滤。
           // 不能用 extensionItems.installedSkills：那份列表会把「属于某个云端市场包」的技能
           // 剔除（旧扩展页把它们折叠进插件卡片），导致刚安装到工作区的市场技能不显示。
-          // 全局技能已拆到设置页的「技能」，这里只保留工作区技能。
-          const projectSkills = extensionsSnapshot.skills.filter((skill) => skill.scope !== "global");
+          // 会话技能列表同时展示全局与本工作区技能；全局项在弹窗中只读，管理仍在
+          // 个人设置「全局 › 技能」。不能在这里过滤 scope，否则用户无法知道本会话
+          // 实际还能使用哪些全局技能。
+          const sessionSkills = extensionsSnapshot.skills;
           return (
             <ProjectExtensionsPanel
               projectDir={selectedWorkspaceRoot}
@@ -2681,7 +2718,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               connectorError={workspaceMcpToolPolicy.error ?? workspaceMcpPolicy.error ?? orgMcpConnections.error}
               onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
               configSlotForConnector={extensionController.configSlotForEntry}
-              installedSkills={projectSkills}
+              installedSkills={sessionSkills}
+              installedMarketplacePluginCount={Object.keys(extensionsSnapshot.importedCloudPlugins).length}
               pluginsSlot={({ search }) => (
                 <CloudMarketplacesView
                   extensions={extensionsStore}

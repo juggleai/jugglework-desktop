@@ -183,11 +183,9 @@ export function SkillDetailModal({ open, skill, projectDir, onClose }: {
             <SkillAvatar name={skill.name} sizeClass="size-10" />
             <div className="min-w-0">
               <DialogTitle className="truncate text-lg">{skill.name}</DialogTitle>
-              {skill.scope === "global" ? (
-                <span className="mt-0.5 inline-block rounded-full bg-dls-bg px-1.5 py-0.5 text-[10px] text-dls-secondary">
-                  {t("project_extensions.scope_global")}
-                </span>
-              ) : null}
+              <span className="mt-0.5 inline-block rounded-full bg-dls-bg px-1.5 py-0.5 text-[10px] text-dls-secondary">
+                {t(skill.scope === "global" ? "project_extensions.scope_global" : "project_extensions.scope_workspace")}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-1.5 border-b border-dls-border">

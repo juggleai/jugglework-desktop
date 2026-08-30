@@ -170,6 +170,30 @@ describe("project connector source", () => {
     expect(calls).toEqual([]);
   });
 
+  test("keeps one effective same-name MCP and lets workspace scope override global", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [
+        { name: "notion", source: "config.global", config: { type: "remote", url: "https://global.test/mcp" } },
+        { name: "notion", source: "config.project", config: { type: "remote", url: "https://workspace.test/mcp" } },
+      ] as never,
+      mcpStatuses: { notion: { status: "connected" } } as never,
+      quickConnect: [],
+      orgMcpItems: [],
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.mcpSource).toBe("config.project");
+    expect(rows[0]?.url).toBe("https://workspace.test/mcp");
+  });
+
   test("keeps an authorized organization MCP in the connected group", () => {
     const rows = buildProjectConnectors({
       mcpServers: [],

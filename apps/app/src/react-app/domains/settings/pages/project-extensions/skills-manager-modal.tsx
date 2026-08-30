@@ -50,21 +50,24 @@ function SkillCard({ skill, onUninstall, onOpen }: {
           <p className="mt-0.5 line-clamp-2 text-xs text-dls-secondary">{skill.description}</p>
         ) : null}
       </div>
-      {/* TIPS: 全局技能同样可卸载（会从用户目录删除，影响所有工作区），删除前统一走确认弹窗。 */}
-      <button
-        type="button"
-        onClick={(event) => { event.stopPropagation(); onUninstall(skill); }}
-        className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-        aria-label={t("project_extensions.uninstall")}
-      >
-        <Trash2 className="size-3.5" />
-      </button>
+      {/* TIPS: 全局技能在会话设置中只读，只能查看；删除必须到个人设置「全局 › 技能」。 */}
+      {!isGlobal ? (
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); onUninstall(skill); }}
+          className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+          aria-label={t("project_extensions.uninstall")}
+        >
+          <Trash2 className="size-3.5" />
+        </button>
+      ) : null}
     </div>
   );
 }
 
 /**
- * 技能管理弹窗：展示本地已安装技能，卡片上用标签区分本工作区与全局，两类都可卸载。
+ * 技能管理弹窗：展示本地已安装技能，卡片上用标签区分本工作区与全局；
+ * 本工作区技能可卸载，全局技能只允许查看。
  * 标题行提供搜索、恒为选中态的「我安装的」与「添加技能」入口。
  * @param open 是否打开
  * @param projectDir 项目根目录
@@ -180,11 +183,7 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
       <ConfirmModal
         open={Boolean(uninstallTarget)}
         title={t("skills.uninstall_title")}
-        message={
-          uninstallTarget?.scope === "global"
-            ? t("project_extensions.uninstall_global_warning").replace("{name}", uninstallTarget?.name ?? "")
-            : t("skills.uninstall_warning").replace("{name}", uninstallTarget?.name ?? "")
-        }
+        message={t("skills.uninstall_warning").replace("{name}", uninstallTarget?.name ?? "")}
         confirmLabel={t("skills.uninstall")}
         cancelLabel={t("common.cancel")}
         confirmButtonVariant="destructive"
@@ -192,7 +191,7 @@ export function SkillsManagerModal({ open, projectDir, skills, onClose, onUninst
         onConfirm={() => {
           const target = uninstallTarget;
           setUninstallTarget(null);
-          if (target) onUninstall(target.name);
+          if (target && target.scope !== "global") onUninstall(target.name);
         }}
       />
     </>

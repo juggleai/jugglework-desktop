@@ -10,6 +10,7 @@ import {
   resetMcpWorkspaceToolPolicyCacheForTests,
   resolveMcpServerNameFromToolId,
   writeMcpWorkspaceToolPolicy,
+  findWorkspaceByDirectory,
 } from "./mcp-workspace-tool-policy.js";
 import type { ServerConfig } from "./types.js";
 
@@ -45,6 +46,17 @@ describe("workspace MCP tool policy", () => {
   test("sanitized namespace collisions fail closed", () => {
     expect(resolveMcpServerNameFromToolId("salesforce_prod_query", ["salesforce.prod", "salesforce prod"]))
       .toBeTruthy();
+  });
+
+  test("maps nested OpenCode worktrees to the longest containing workspace", () => {
+    const serverConfig = {
+      workspaces: [
+        { id: "parent", path: "/Users/test/projects", workspaceType: "local" },
+        { id: "devtodo", path: "/Users/test/projects/devtodo", workspaceType: "local" },
+      ],
+    } as never;
+    expect(findWorkspaceByDirectory(serverConfig, "/Users/test/projects/devtodo/.opencode/worktrees/session-1")?.id).toBe("devtodo");
+    expect(findWorkspaceByDirectory(serverConfig, "/Users/test/outside")).toBeNull();
   });
 
   test("filters next-turn catalog without re-enabling caller-denied tools", () => {

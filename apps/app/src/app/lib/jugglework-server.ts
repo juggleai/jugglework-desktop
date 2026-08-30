@@ -295,6 +295,15 @@ export type JuggleWorkDesktopCloudSyncResult = {
 export type JuggleWorkCloudPluginInstallResult = {
   item: CloudImportedPlugin;
   warnings: string[];
+  status?: "installed" | "partial" | "failed" | "repair_required";
+  outcomes?: CloudImportedPlugin["files"];
+  conflicts?: Array<{
+    code: "file_ownership_conflict" | "mcp_ownership_conflict";
+    configObjectId: string;
+    resource: string;
+    message: string;
+  }>;
+  refreshHints?: string[];
 };
 
 export type JuggleWorkCloudPluginsResult = {

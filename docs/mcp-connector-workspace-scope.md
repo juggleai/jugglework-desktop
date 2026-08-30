@@ -155,9 +155,11 @@ reconcile 一并铸造，并通过请求体的 `catalog.config` 交给 JuggleWor
 
 ### 3.1 普通工作区 MCP 的无重载软策略
 
-工作区 runtime MCP 的开关只在 runtime SQLite 保存关闭的 `serverName`，不写 `enabled`、不停止 transport、也不触发 OpenCode 重载。下一轮 prompt 通过 `tools=false` 隐藏对应工具，常驻 `tool.execute.before` 插件在真正调用前再按最新策略拦截。全局 MCP 在会话列表中只读，只能在个人设置的全局连接器页修改。已连接 Cloud MCP 的工作区开关仍使用服务端 capability 过滤，同样不触发引擎重载。
+普通 MCP（`config.global` / `config.project` / `config.remote`）的工作区开关只在 runtime SQLite 保存关闭的有效 `serverName`，不写任何来源配置的 `enabled`、不停止 transport、也不触发 OpenCode 重载。下一轮 prompt 通过 `tools=false` 隐藏对应工具，常驻 `tool.execute.before` 插件在真正调用前再按最新策略拦截。全局 MCP 的安装、授权、全局总开关、编辑和删除仍只能在个人设置的全局连接器页修改；会话右侧只控制它是否在当前工作区生效。已连接 Cloud MCP 继续使用 connection policy，同样不触发引擎重载。
 
 普通 MCP 软策略目前只在本机受管 OpenCode 上展示：服务端与常驻 plugin 能共同证明目录过滤和执行拦截均可用。远程/外部 OpenCode 在完成版本化 plugin 握手之前隐藏该开关，避免界面显示“已关闭”而远程执行仍可绕过。`config.project` 与 `config.remote` 都使用同一软策略；历史 `config.remote.enabled=false` 会幂等迁移为软策略关闭项并恢复 transport 配置。
+
+OpenCode plugin 的 factory context 可能把 `directory` / `workspaceId` 放在 `context` 对象中，且 directory 可能是 workspace 下的 session worktree。执行拦截器必须解析嵌套 context，优先携带显式 workspaceId，并让服务端按“最长包含根目录”解析 worktree；否则 inventory 初始化 404 会导致已关闭 MCP 工具被错误当作普通工具放行。
 
 | | 生效时机 | UI 处理 |
 | --- | --- | --- |
@@ -283,5 +285,5 @@ steering 文案中「只接受 query 与 limit」在服务端批 2 加入 `type`
 11. 旧服务端上运行新桌面：开关不出现，已连接的行退回「就绪」标签，连接/断开照常可用。
 12. 会话右侧「连接器」同时显示 `config.global` 全局 MCP、当前工作区的 `config.project` / `config.remote` MCP 和 Cloud MCP，不显示其他工作区专属项；行上分别标明作用域。
 13. 会话右侧不出现「组织连接」页签；已授权 Cloud MCP 位于「已连接」，工作区开关直接显示在该 MCP 行上。
-14. 会话右侧的全局 MCP 为只读状态，不得调用工作区启停、删除或编辑接口制造同名工作区覆盖。
+14. 会话右侧全局 MCP 可通过软策略关闭当前工作区，但不得修改全局配置、授权或删除；同名工作区 MCP 覆盖全局 MCP，界面只展示一条有效项。
 15. 会话右侧「连接器」使用宽弹窗和响应式两列：统一 MCP 列表在足够宽时按两列完整展示，窗口高度不足时列表区域独立滚动，不得被弹窗裁切。

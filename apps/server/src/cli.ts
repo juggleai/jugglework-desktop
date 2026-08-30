@@ -143,6 +143,7 @@ if (!config.opencodeBaseUrl && process.env.JUGGLEWORK_MANAGE_OPENCODE === "1") {
         ...(process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY ? { JUGGLEWORK_UI_CONTROL_DISCOVERY: process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY } : {}),
         JUGGLEWORK_SERVER_URL: serverUrl,
         JUGGLEWORK_SERVER_TOKEN: config.token,
+        JUGGLEWORK_WORKSPACE_ID: workspace.id,
         OPENCODE_CONFIG: runtimeConfigPath,
         ...(opencodeModelsUrl ? { OPENCODE_MODELS_URL: opencodeModelsUrl } : {}),
       },

@@ -75,6 +75,8 @@ export type ProjectExtensionsPanelProps = {
   installedSkills: SkillItem[];
   /** 插件弹窗内容，由宿主注入云端市场视图；入参为标题栏的搜索词。 */
   pluginsSlot?: (controls: { search: string }) => React.ReactNode;
+  /** 当前工作区已安装的市场插件数量。 */
+  installedMarketplacePluginCount: number;
   /** 刷新插件（云端市场）列表。 */
   onRefreshPlugins?: () => void | Promise<void>;
   /** 卸载项目级技能。 */

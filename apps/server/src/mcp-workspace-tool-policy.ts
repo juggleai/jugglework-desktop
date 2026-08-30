@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import { automationSqliteAdapter } from "./automation/sqlite.js";
 import { openRuntimeSqliteDatabase, runtimeDbPath } from "./runtime-db.js";
@@ -191,7 +191,22 @@ export function checkMcpWorkspaceToolPolicy(input: {
 /** 按目录定位本机工作区，供常驻 OpenCode plugin 执行前检查。 */
 export function findWorkspaceByDirectory(config: ServerConfig, directory: string): WorkspaceInfo | null {
   const target = resolve(directory);
-  return config.workspaces.find((workspace) => workspace.workspaceType !== "remote" && resolve(workspace.path) === target) ?? null;
+  // OpenCode 的 plugin context 可能是工作区根目录，也可能是 session worktree、仓库
+  // 子目录或同一项目下的实际执行目录。只做字符串全等会让策略端点返回 404，进而
+  // 让未知 MCP 工具被当作普通工具放行。选择包含 target 的最长工作区根可避免嵌套
+  // authorized root 误匹配，同时不允许 `../` 越界。
+  return config.workspaces
+    .filter((workspace) => workspace.workspaceType !== "remote")
+    .flatMap((workspace) => {
+      const roots = [workspace.path, workspace.directory, workspace.opencode?.directory]
+        .flatMap((value) => typeof value === "string" && value.trim() ? [resolve(value)] : []);
+      return [...new Set(roots)].map((root) => ({ workspace, root }));
+    })
+    .filter(({ root }) => {
+      const child = relative(root, target);
+      return child === "" || (!child.startsWith("..") && !isAbsolute(child));
+    })
+    .sort((left, right) => right.root.length - left.root.length)[0]?.workspace ?? null;
 }
 
 /** 返回工作区当前所有 MCP serverName，供执行检查确认工具来源。 */

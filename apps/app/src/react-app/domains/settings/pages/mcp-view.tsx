@@ -54,6 +54,7 @@ import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
 import { canDisconnectNativeProviderAccount } from "../../connections/native-provider-connections";
 import type { JuggleWorkClaudePluginPreview } from "../../../../app/lib/jugglework-server";
+import type { CloudPluginMutationResult } from "../state/extensions-store";
 import {
   isJuggleWorkExtensionEnabled,
   isJuggleWorkExtensionHidden,
@@ -137,7 +138,7 @@ export type McpViewProps = {
   /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
   previewClaudePlugin?: (url: string) => Promise<JuggleWorkClaudePluginPreview>;
   /** Install a Claude Code plugin bundle from a GitHub URL. */
-  installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
+  installClaudePlugin?: (url: string) => Promise<CloudPluginMutationResult>;
   /** 组织下发且允许当前成员使用的 MCP 连接器。 */
   orgMcpItems?: ExtensionItem[];
   /** 当前正在等待浏览器授权完成的组织 MCP 连接器 ID。 */

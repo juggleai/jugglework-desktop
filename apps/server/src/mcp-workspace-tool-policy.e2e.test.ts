@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -20,10 +20,15 @@ afterEach(async () => {
 async function harness() {
   const root = await mkdtemp(join(tmpdir(), "jwork-mcp-policy-route-"));
   roots.push(root);
+  const staleRoot = join(root, "stale-workspace");
+  await mkdir(staleRoot);
   const config: ServerConfig = {
     host: "127.0.0.1", port: 0, configPath: join(root, "server.json"), token: TOKEN, hostToken: HOST_TOKEN,
     approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: ["*"],
-    workspaces: [{ id: "ws_1", name: "Workspace", path: root, preset: "starter", workspaceType: "local" }],
+    workspaces: [
+      { id: "ws_1", name: "Workspace", path: root, preset: "starter", workspaceType: "local" },
+      { id: "ws_stale", name: "Stale workspace", path: staleRoot, preset: "starter", workspaceType: "local" },
+    ],
     authorizedRoots: [root], readOnly: false, startedAt: Date.now(), tokenSource: "cli", hostTokenSource: "cli",
     logFormat: "pretty", logRequests: false,
   };
@@ -60,5 +65,32 @@ describe("MCP workspace soft-policy routes", () => {
     }).then((response) => response.json());
     await expect(check("read")).resolves.toMatchObject({ allowed: true });
     await expect(check("github_search")).resolves.toMatchObject({ allowed: false, serverName: "github" });
+  });
+
+  test("internal check prefers the execution directory over a conflicting stale workspace ID", async () => {
+    const { base } = await harness();
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    await fetch(`${base}/workspace/ws_1/mcp-tool-policy`, {
+      method: "PUT", headers, body: JSON.stringify({ disabledServerNames: ["github"] }),
+    });
+    const response = await fetch(`${base}/internal/mcp-tool-policy/check`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: roots[0], workspaceId: "ws_stale", toolId: "github_search" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ allowed: false, serverName: "github" });
+  });
+
+  test("internal check fails closed when a directory conflicts with a stale workspace ID", async () => {
+    const { base } = await harness();
+    const headers = { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" };
+    const response = await fetch(`${base}/internal/mcp-tool-policy/check`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: `${roots[0]}-unregistered`, workspaceId: "ws_1", toolId: "github_search" }),
+    });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: "workspace_not_found" });
   });
 });

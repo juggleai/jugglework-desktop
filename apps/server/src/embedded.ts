@@ -173,6 +173,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
           ...(process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY ? { JUGGLEWORK_UI_CONTROL_DISCOVERY: process.env.JUGGLEWORK_UI_CONTROL_DISCOVERY } : {}),
           JUGGLEWORK_SERVER_URL: serverUrl,
           JUGGLEWORK_SERVER_TOKEN: config.token,
+          // 一个受管 OpenCode 实例可能服务多个目录；启动 workspace 是稳定 fallback，
+          // tool hook 仍优先使用 factory context/session 推导的具体 workspace。
+          JUGGLEWORK_WORKSPACE_ID: workspace.id,
           OPENCODE_CONFIG: runtimeConfigPath,
           ...(opencodeModelsUrl ? { OPENCODE_MODELS_URL: opencodeModelsUrl } : {}),
         },

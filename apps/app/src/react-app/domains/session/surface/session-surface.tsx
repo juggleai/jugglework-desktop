@@ -36,7 +36,7 @@ import {
 } from "@/app/lib/app-inspector";
 import { useControlAction, type JuggleWorkControlAction } from "@/react-app/shell/control/control-provider";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
-import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, isInternalCloudMcpTransport, selectComposerAvailableMcpEntries } from "@/react-app/domains/connections/workspace-mcp-inventory";
+import { applyWorkspaceMcpInventoryPolicy, isComposerManageableMcpEntry, isInternalCloudMcpTransport, selectComposerAvailableMcpEntries, selectEffectiveMcpEntries } from "@/react-app/domains/connections/workspace-mcp-inventory";
 import { resolveWorkspaceMcpKey } from "@/react-app/domains/connections/workspace-mcp-key";
 import { MCP_QUICK_CONNECT, getMcpServerName } from "@/app/constants";
 import { isMcpConnectorEntry } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
@@ -1636,7 +1636,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       combinedStatuses[entry.name] = { status: "not_installed" };
     }
     const projected = applyWorkspaceMcpInventoryPolicy({
-      servers: [...manageableCloud, ...directoryServers].filter((entry) => !isInternalCloudMcpTransport(entry)),
+      servers: selectEffectiveMcpEntries([...manageableCloud, ...directoryServers].filter((entry) => !isInternalCloudMcpTransport(entry))),
       statuses: combinedStatuses,
       disabledServerNames,
       cloudPolicy,
