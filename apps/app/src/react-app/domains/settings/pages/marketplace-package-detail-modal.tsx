@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollAreaContent, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { t } from "@/i18n";
 import { SettingsNotice, SettingsPill } from "@/react-app/domains/settings/settings-section";
 import type { MarketplacePackageRow } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
@@ -120,7 +120,7 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) props.onClose(); }}>
-      <DialogContent className="flex max-h-[90vh] min-h-0 w-full max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] min-h-0 w-[calc(100%-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
         <DialogHeader className="shrink-0 border-b border-dls-border px-6 pb-5 pt-6 pr-14">
           <div className="flex min-w-0 items-start justify-between gap-4">
             <div className="min-w-0 space-y-2">
@@ -152,9 +152,10 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
           </div>
         </DialogHeader>
 
-        <ScrollArea className="min-h-0 flex-1">
-          <ScrollAreaViewport className="h-auto! min-h-0">
-            <div className="space-y-5 px-6 py-5">
+        <ScrollArea className="min-h-0 flex-1 overflow-hidden">
+          <ScrollAreaViewport className="min-h-0">
+            <ScrollAreaContent>
+            <div className="min-w-0 space-y-5 px-6 py-5 [overflow-wrap:anywhere]">
               <section className="space-y-3">
                 <div>
                   <h3 className="text-sm font-semibold text-card-foreground">{t("marketplace.component_availability_title")}</h3>
@@ -253,8 +254,8 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
                       <div className="font-semibold text-card-foreground">{t("marketplace.extension_contents")}</div>
                       <ul className="mt-2 grid gap-1">
                         {props.resolved.memberships.map((membership) => membership.configObject ? (
-                          <li key={membership.id} className="flex items-center justify-between gap-3">
-                            <span className="truncate">{membership.configObject.title}</span>
+                          <li key={membership.id} className="flex min-w-0 items-start justify-between gap-3">
+                            <span className="min-w-0 break-words">{membership.configObject.title}</span>
                             <span className="shrink-0 uppercase">{membership.configObject.objectType}</span>
                           </li>
                         ) : null)}
@@ -264,6 +265,7 @@ export function MarketplacePackageDetailModal(props: MarketplacePackageDetailMod
                 </div>
               </details>
             </div>
+            </ScrollAreaContent>
           </ScrollAreaViewport>
         </ScrollArea>
 

@@ -12,6 +12,7 @@ const storeSource = readFileSync(
 );
 const zh = readFileSync(new URL("../src/i18n/locales/zh.ts", import.meta.url), "utf8");
 const en = readFileSync(new URL("../src/i18n/locales/en.ts", import.meta.url), "utf8");
+const scrollAreaSource = readFileSync(new URL("../src/components/ui/scroll-area.tsx", import.meta.url), "utf8");
 
 const canonicalStates = [
   "not_installed",
@@ -70,6 +71,16 @@ describe("workspace marketplace plugin status UX", () => {
       { ...file, configObjectId: "object-2", outcome: "needs_admin_setup" },
     ])).toBe("needs_admin_setup");
     expect(resolveCloudImportedPluginReadiness([{ ...file, outcome: "installed_local" }])).toBeNull();
+  });
+
+  test("keeps expanded technical details inside a bounded scroll viewport", () => {
+    expect(modalSource).not.toContain('ScrollAreaViewport className="h-auto!');
+    expect(modalSource).toContain("<ScrollAreaContent>");
+    expect(modalSource).toContain("max-h-[calc(100dvh-2rem)]");
+    expect(modalSource).toContain("[overflow-wrap:anywhere]");
+    expect(modalSource).toContain('className="min-w-0 break-words"');
+    expect(scrollAreaSource).toContain("ScrollAreaPrimitive.Content");
+    expect(scrollAreaSource).toContain("style={{ minWidth: 0, ...style }}");
   });
 
   test("Claude installs use the captured workspace and structured marketplace mutation path", () => {

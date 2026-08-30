@@ -38,6 +38,26 @@ function ScrollAreaViewport({
   )
 }
 
+/**
+ * 可观察尺寸变化的滚动内容容器。
+ * @param className 内容样式
+ * @param style 内容内联样式
+ */
+function ScrollAreaContent({
+  className,
+  style,
+  ...props
+}: ScrollAreaPrimitive.Content.Props) {
+  return (
+    <ScrollAreaPrimitive.Content
+      data-slot="scroll-area-content"
+      className={cn("min-w-0", className)}
+      style={{ minWidth: 0, ...style }}
+      {...props}
+    />
+  )
+}
+
 function ScrollBar({
   className,
   orientation = "vertical",
@@ -62,4 +82,4 @@ function ScrollBar({
   )
 }
 
-export { ScrollArea, ScrollAreaViewport, ScrollBar }
+export { ScrollArea, ScrollAreaContent, ScrollAreaViewport, ScrollBar }
