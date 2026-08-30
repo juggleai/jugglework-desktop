@@ -89,4 +89,12 @@ describe("deleteSkill with global scope", () => {
   test("missing global skill reports not found", async () => {
     await expect(deleteSkill(workspace, "absent-skill", "global", { homeDir: home })).rejects.toThrow();
   });
+
+  test("global-only listing is not shadowed by a same-name project skill", async () => {
+    await writeSkill(join(workspace, ".opencode", "skills", "same-name"), "same-name");
+    await writeSkill(join(home, ".config", "opencode", "skills", "same-name"), "same-name");
+
+    const listed = await listSkills(workspace, true, { homeDir: home, scope: "global" });
+    expect(listed.map((skill) => [skill.name, skill.scope])).toEqual([["same-name", "global"]]);
+  });
 });

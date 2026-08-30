@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 
 import type { DenExternalMcpConnection, DenOrgPlugin } from "@/app/lib/den";
 import { mintCloudControlMcpToken, readDenSettings } from "@/app/lib/den";
@@ -14,6 +14,7 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { t } from "@/i18n";
 import { DenSignInSurface } from "@/react-app/domains/cloud/den-signin-surface";
 import { useDenAuth, type DenAuthStatus } from "@/react-app/domains/cloud/den-auth-provider";
@@ -22,6 +23,12 @@ import {
   connectionNeedsReconnect,
 } from "@/react-app/domains/connections/native-provider-connections";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
+import { useWorkspaceMcpPolicy, type WorkspaceMcpPolicy } from "@/react-app/domains/connections/use-workspace-mcp-policy";
+import {
+  connectRowConnectionIds,
+  resolveConnectRowWorkspaceScope,
+  type ConnectRowWorkspaceScope,
+} from "@/react-app/domains/settings/connect-workspace-scope";
 import {
   cloudReadinessConnectableConnectionId,
   cloudReadinessMissingConnectionNames,
@@ -95,6 +102,8 @@ export type ConnectViewProps = {
   session: ConnectSession;
   marketplaceItems?: ExtensionItem[];
   refreshMarketplaceItems?: () => Promise<unknown> | void;
+  /** 嵌入弹窗时解除设置页默认最大宽度，使两列连接器完整利用可用空间。 */
+  embedded?: boolean;
   juggleworkClient: JuggleWorkServerClient | null;
   workspaceId: string | null;
   currentModel: JuggleWorkCloudMcpProviderModelContext | null;
@@ -630,21 +639,7 @@ export function buildConnectRows(input: {
   role: "owner" | "admin" | "member" | null | undefined;
 }) {
   const marketplaceItems = input.items.filter(isCloudMarketplaceItem);
-  const pluginConnectionIds = new Set(
-    marketplaceItems.flatMap((item) => item.plugin.cloudReadiness?.connections.flatMap((connection) => connection.id ? [connection.id] : []) ?? []),
-  );
-  const connectionRows: ConnectOrganizationRow[] = input.connections.filter((connection) => !pluginConnectionIds.has(connection.id)).map((connection) => ({
-    kind: "connection",
-    id: connection.id,
-    group: resolveConnectionRowGroup(connection),
-    name: connection.name,
-    description: connection.url,
-    meta: connection.credentialMode === "shared" ? t("connect.row_meta_managed_by_org") : t("connect.row_meta_your_account"),
-    canManage: isConnectAdminRole(input.role),
-    connection,
-  }));
-
-  const pluginRows: ConnectOrganizationRow[] = marketplaceItems.flatMap((item) => {
+  const pluginRows: Extract<ConnectOrganizationRow, { kind: "plugin" }>[] = marketplaceItems.flatMap((item) => {
     const group = resolveConnectRowGroup(item.plugin.cloudReadiness, input.role, item.plugin.componentCounts);
     if (group === "excluded") return [];
     return [{
@@ -658,9 +653,31 @@ export function buildConnectRows(input: {
       plugin: item.plugin,
     }];
   });
+  // TIPS: 只有真正可见的插件行才能吸收底层连接。若插件因权限或同步状态被排除，
+  // 仍需保留连接行，否则两种表示会同时消失，造成连接器列表显示不全。
+  const pluginConnectionIds = new Set(
+    pluginRows.flatMap((row) => row.plugin.cloudReadiness?.connections.flatMap((connection) => connection.id ? [connection.id] : []) ?? []),
+  );
+  const connectionRows: ConnectOrganizationRow[] = input.connections.filter((connection) => !pluginConnectionIds.has(connection.id)).map((connection) => ({
+    kind: "connection",
+    id: connection.id,
+    group: resolveConnectionRowGroup(connection),
+    name: connection.name,
+    description: connection.url,
+    meta: connection.credentialMode === "shared" ? t("connect.row_meta_managed_by_org") : t("connect.row_meta_your_account"),
+    canManage: isConnectAdminRole(input.role),
+    connection,
+  }));
 
   return [...connectionRows, ...pluginRows];
 }
+
+/** 一行连接器的展示顺序：可以直接用的排在前面，其次是等你授权的，最后是等管理员配置的。 */
+const CONNECT_ROW_ORDER: Record<Exclude<ConnectRowGroup, "excluded">, number> = {
+  ready: 0,
+  needs_signin: 1,
+  needs_admin_setup: 2,
+};
 
 function ConnectOrganizationRow(props: {
   connectingId: string | null;
@@ -668,8 +685,13 @@ function ConnectOrganizationRow(props: {
   onConnect: (connectionId: string) => void;
   onDisconnect: (connectionId: string) => void;
   row: ConnectOrganizationRow;
+  /** 已连接的行才有工作区开关；服务端不支持工作区策略时为 null。 */
+  workspaceScope: ConnectRowWorkspaceScope | null;
+  workspaceScopeSaving: boolean;
+  onWorkspaceScopeChange: (connectionIds: string[], enabled: boolean) => void;
 }) {
   const row = props.row;
+  const scope = props.workspaceScope;
   const pluginManifest = row.kind === "plugin" ? row.plugin.extension?.manifest : null;
   const needsReconnect = row.kind === "connection"
     && connectionNeedsReconnect(row.connection);
@@ -687,7 +709,7 @@ function ConnectOrganizationRow(props: {
     <div
       data-testid="connect-organization-row"
       data-connect-row-kind={row.kind}
-      className="flex items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-3"
+      className="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-3"
     >
       <ConnectRowIcon
         name={row.name}
@@ -704,7 +726,9 @@ function ConnectOrganizationRow(props: {
             </span>
           ) : null}
         </div>
-        <div className="truncate text-xs text-dls-secondary">{row.meta}</div>
+        <div className="truncate text-xs text-dls-secondary">
+          {scope && !scope.enabled ? `${row.meta}${t("connect.row_meta_separator")}${t("connect.workspace_disabled_here")}` : row.meta}
+        </div>
       </div>
       {row.group === "needs_signin" && connectableConnectionId ? (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -732,6 +756,21 @@ function ConnectOrganizationRow(props: {
             {t("connect.row_action_set_up_connection")}
           </Button>
         )
+      ) : scope ? (
+        // 已连接的行用开关代替「就绪」标签：状态本身就写在开关上，再挂一个标签是重复。
+        <div className="flex shrink-0 items-center gap-2">
+          {props.workspaceScopeSaving ? <Loader2 size={13} className="animate-spin text-dls-secondary" /> : null}
+          {disconnectableConnectionId ? (
+            <Button size="sm" variant="ghost" disabled={disconnecting} onClick={() => props.onDisconnect(disconnectableConnectionId)}>
+              {disconnecting ? t("mcp.org_connection_disconnecting_action") : t("mcp.org_connection_disconnect_action")}
+            </Button>
+          ) : null}
+          <Switch
+            checked={scope.enabled}
+            onCheckedChange={(enabled) => props.onWorkspaceScopeChange(scope.connectionIds, enabled)}
+            aria-label={t("connect.workspace_toggle_label", { name: row.name })}
+          />
+        </div>
       ) : disconnectableConnectionId ? (
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <span className="rounded-md bg-green-3 px-2 py-1 text-xs font-medium text-green-11">
@@ -758,15 +797,26 @@ function ConnectOrganizationList(props: {
   onConnect: (connectionId: string) => void;
   onDisconnect: (connectionId: string) => void;
   role: "owner" | "admin" | "member" | null | undefined;
+  policy: WorkspaceMcpPolicy;
 }) {
   const [search, setSearch] = useState("");
+  const policy = props.policy;
+  // 一张列表，不分组：连接器的状态写在每一行上，用小标题把同一批东西切成三段
+  // 只会让「我的连接器有哪些」这个问题需要读三处。
   const rows = useMemo(
     () => buildConnectRows({ connections: props.connections, items: props.items, role: props.role })
-      .filter((row) => row.group === "ready"),
+      .sort((left, right) => CONNECT_ROW_ORDER[left.group] - CONNECT_ROW_ORDER[right.group]
+        || left.name.localeCompare(right.name)),
     [props.connections, props.items, props.role],
   );
   const query = search.trim().toLowerCase();
   const filteredRows = query ? rows.filter((row) => rowSearchText(row).includes(query)) : rows;
+  // 工作区开关只在服务端支持策略路由、且这一行确实已连接时出现。旧服务端上
+  // 整列表退回到原来的「就绪」标签，而不是给一个拨不动的开关。
+  const scopeOf = (row: ConnectOrganizationRow): ConnectRowWorkspaceScope | null => {
+    if (row.group !== "ready" || policy.availability !== "ready") return null;
+    return resolveConnectRowWorkspaceScope(connectRowConnectionIds(row), policy.items);
+  };
 
   return (
     <div
@@ -774,6 +824,10 @@ function ConnectOrganizationList(props: {
       data-connect-marketplace-item-count={props.items.length}
       className="space-y-3"
     >
+      {policy.availability === "ready" ? (
+        <div className="text-xs text-dls-secondary">{t("connect.workspace_scope_hint")}</div>
+      ) : null}
+      {policy.error ? <SettingsNotice tone="error">{policy.error}</SettingsNotice> : null}
       {rows.length > 10 ? (
         <Input
           value={search}
@@ -790,9 +844,10 @@ function ConnectOrganizationList(props: {
           <div className="text-sm text-dls-secondary">{t("connect.organization_no_matches")}</div>
         </SettingsInset>
       ) : (
-        <div className="space-y-2" data-connect-group="ready">
-          <div className="space-y-2">
-            {filteredRows.map((row) => (
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-[repeat(2,minmax(0,1fr))]" data-connect-layout="two-column">
+          {filteredRows.map((row) => {
+            const scope = scopeOf(row);
+            return (
               <ConnectOrganizationRow
                 key={`${row.kind}:${row.id}`}
                 row={row}
@@ -800,9 +855,12 @@ function ConnectOrganizationList(props: {
                 disconnectingId={props.disconnectingId}
                 onConnect={props.onConnect}
                 onDisconnect={props.onDisconnect}
+                workspaceScope={scope}
+                workspaceScopeSaving={Boolean(policy.savingConnectionId && scope?.connectionIds.includes(policy.savingConnectionId))}
+                onWorkspaceScopeChange={(connectionIds, enabled) => void policy.setConnectionsEnabled(connectionIds, enabled)}
               />
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -824,6 +882,7 @@ function ConnectActivePanel(props: {
   onDisconnect: (connectionId: string) => void;
 }) {
   const { activeOrganization } = useCloudSession();
+  const policy = useWorkspaceMcpPolicy({ client: props.juggleworkClient, workspaceId: props.workspaceId });
 
   return (
     <SettingsSection>
@@ -838,6 +897,7 @@ function ConnectActivePanel(props: {
         disconnectingId={props.disconnectingId}
         onConnect={props.onConnect}
         onDisconnect={props.onDisconnect}
+        policy={policy}
       />
     </SettingsSection>
   );
@@ -886,7 +946,7 @@ export function ConnectView(props: ConnectViewProps) {
   }, [refreshMarketplaceItems, state]);
 
   return (
-    <SettingsStack>
+    <SettingsStack className={props.embedded ? "max-w-none" : undefined}>
       {state === "loading" ? <ConnectLoadingPanel /> : null}
       {state === "signin" ? <ConnectSignInPanel {...props} /> : null}
       {state === "active" ? (

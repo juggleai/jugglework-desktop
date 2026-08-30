@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 
-import { SUGGESTED_PLUGINS } from "@/app/constants";
+import { getMcpServerName, SUGGESTED_PLUGINS, type McpDirectoryInfo } from "@/app/constants";
 import type { EnablementContext } from "@/app/enablement";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createLocalWorkspaceForRuntime } from "@/app/lib/local-workspace-create";
@@ -60,6 +60,8 @@ import {
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
 import { cleanupJuggleWorkCloudMcpAfterSignOut } from "@/react-app/domains/connections/cloud-mcp-reconciler";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
+import { useWorkspaceMcpPolicy } from "@/react-app/domains/connections/use-workspace-mcp-policy";
+import { useWorkspaceMcpToolPolicy } from "@/react-app/domains/connections/use-workspace-mcp-tool-policy";
 import { createJuggleWorkServerStore, useJuggleWorkServerStoreSnapshot } from "@/react-app/domains/connections/jugglework-server-store";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -78,6 +80,7 @@ import "@/react-app/domains/settings/jugglework-voice-config";
 import "@/react-app/domains/settings/google-workspace-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
 import { buildExtensionItems } from "@/react-app/domains/settings/extension-items";
+import { resolveConnectRowWorkspaceScope } from "@/react-app/domains/settings/connect-workspace-scope";
 import { isJuggleWorkExtensionEnabled, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { ShellCustomizationView } from "@/react-app/domains/settings/pages/shell-view";
@@ -103,6 +106,8 @@ import {
 } from "@/react-app/domains/settings/state/global-compaction-preference";
 import type { GlobalConfigTarget } from "@/react-app/domains/settings/state/global-opencode-config";
 import {
+  globalMcpConfigFromDirectory,
+  mergeGlobalMcpEntries,
   readGlobalMcpEntries,
   removeGlobalMcp,
   setGlobalMcpEnabled,
@@ -118,7 +123,7 @@ import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView } from "@/react-app/domains/settings/pages/extensions-view";
 import { CloudMarketplacesView } from "@/react-app/domains/settings/pages/cloud-marketplaces-view";
-import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
+import { McpView, type SkillItem } from "@/react-app/domains/settings/pages/mcp-view";
 import { ProjectExtensionsPanel } from "@/react-app/domains/settings/pages/project-extensions/project-extensions-panel";
 import { buildProjectConnectors } from "@/react-app/domains/settings/pages/project-extensions/connectors-source";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
@@ -505,9 +510,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [autoCompactContextBusy, setAutoCompactContextBusy] = useState(false);
   const [autoCompactContextLoaded, setAutoCompactContextLoaded] = useState(false);
   const [globalMcpEntries, setGlobalMcpEntries] = useState<GlobalMcpEntry[]>([]);
+  const [globalSkills, setGlobalSkills] = useState<SkillItem[]>([]);
+  const [globalSkillsStatus, setGlobalSkillsStatus] = useState<string | null>(null);
+  const [globalSkillsBusy, setGlobalSkillsBusy] = useState(false);
   const [pendingGlobalConnector, setPendingGlobalConnector] = useState<string | null>(null);
+  const globalConnectorWriteInFlightRef = useRef<Promise<void> | null>(null);
   const [deletingGlobalSkill, setDeletingGlobalSkill] = useState<string | null>(null);
-  const [globalExtensionsError, setGlobalExtensionsError] = useState<string | null>(null);
+  const [globalSkillsError, setGlobalSkillsError] = useState<string | null>(null);
+  const [globalConnectorsError, setGlobalConnectorsError] = useState<string | null>(null);
   const [localProviderBusy, setLocalProviderBusy] = useState(false);
   const [localProviderStatus, setLocalProviderStatus] = useState<string | null>(null);
   const [localProviderError, setLocalProviderError] = useState<string | null>(null);
@@ -736,15 +746,33 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         workspaceType: () => routeStateRef.current.selectedWorkspaceType,
         juggleworkServer: juggleworkServerStore,
         juggleworkServerConnection: () => ({
-          juggleworkServerClient: routeStateRef.current.juggleworkServerClient,
-          juggleworkServerStatus: routeStateRef.current.juggleworkServerStatus,
-          juggleworkServerCapabilities: routeStateRef.current.juggleworkServerCapabilities,
+          juggleworkServerClient: routeStateRef.current.selectedWorkspaceJuggleWorkClient,
+          juggleworkServerStatus: routeStateRef.current.selectedWorkspaceJuggleWorkClient ? "connected" : "disconnected",
+          juggleworkServerCapabilities: routeStateRef.current.selectedWorkspaceJuggleWorkClient
+            ? routeStateRef.current.juggleworkServerCapabilities
+            : null,
         }),
         runtimeWorkspaceId: () => routeStateRef.current.runtimeWorkspaceId,
         ensureRuntimeWorkspaceId: async () =>
           routeStateRef.current.runtimeWorkspaceId?.trim() ||
           routeStateRef.current.selectedWorkspaceId.trim() ||
           null,
+        workspacePluginInstallationSupported: () => {
+          const workspace = workspacesRef.current.find(
+            (entry) => entry.id === routeStateRef.current.selectedWorkspaceId,
+          );
+          return routeStateRef.current.selectedWorkspaceType === "local"
+            || workspace?.remoteType === "jugglework";
+        },
+        refreshWorkspaceCapabilities: async () => {
+          await Promise.all([
+            connectionsStore.refreshMcpServers(),
+            orgMcpConnectionsRefreshRef.current?.(),
+            refreshConnectCapabilitiesRef.current?.(),
+          ]);
+          // 会话路由已监听该事件并刷新工作区引擎侧能力，覆盖命令、Agent 与工具库存。
+          window.dispatchEvent(new CustomEvent("jugglework-server-settings-changed"));
+        },
         setBusy,
         setBusyLabel,
         setBusyStartedAt: () => {},
@@ -762,6 +790,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);
   const orgMcpConnections = useOrgMcpConnections();
+  const orgMcpConnectionsRefreshRef = useRef<(() => void | Promise<void>) | null>(null);
+  const refreshConnectCapabilitiesRef = useRef<(() => void | Promise<void>) | null>(null);
+  orgMcpConnectionsRefreshRef.current = orgMcpConnections.refresh;
 
   useEffect(() => {
     for (const provider of providers) {
@@ -841,6 +872,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     }
   }, [cloudSession.activeOrganization?.id, cloudSession.client, cloudSession.isSignedIn]);
+  refreshConnectCapabilitiesRef.current = refreshConnectCapabilities;
 
   useEffect(() => {
     if (route.tab !== "extensions") return;
@@ -931,6 +963,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   routeStateRef.current.runtimeWorkspaceId = runtimeWorkspaceId;
   routeStateRef.current.selectedWorkspaceJuggleWorkClient = selectedWorkspaceEndpoint?.client ?? juggleworkClient;
+  const workspaceMcpPolicy = useWorkspaceMcpPolicy({
+    client: selectedWorkspaceEndpoint?.client ?? juggleworkClient,
+    workspaceId: runtimeWorkspaceId,
+  });
+  useEffect(() => {
+    // OAuth/断开连接会刷新组织连接快照；同时刷新 workspace policy，确保新完成
+    // 授权的行立即拿到工作区开关。
+    void workspaceMcpPolicy.refresh();
+  }, [orgMcpConnections.connections, workspaceMcpPolicy.refresh]);
+  const workspaceMcpToolPolicy = useWorkspaceMcpToolPolicy({
+    // 软策略的执行拦截目前只由本机受管 OpenCode plugin 保证。远程/外部引擎
+    // 未完成 capability 握手前不展示开关，避免 UI 声称关闭但执行仍可绕过。
+    client: selectedWorkspace?.workspaceType === "remote" ? null : (selectedWorkspaceEndpoint?.client ?? juggleworkClient),
+    workspaceId: runtimeWorkspaceId,
+  });
 
   const opencodeClient = useMemo(() => {
     if (!selectedWorkspaceEndpoint || !selectedWorkspaceEndpoint.token) return null;
@@ -1593,12 +1640,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
     if (!workspaceId) return null;
     return {
-      juggleworkClient,
+      // 全局是当前运行环境的全局。远程工作区必须读写它自己的服务端；本地工作区
+      // 才回退到桌面 host，不能永远固定读 host 后误报空列表。
+      juggleworkClient: selectedWorkspaceEndpoint?.client ?? juggleworkClient,
       workspaceId,
       workspaceRoot: selectedWorkspaceRoot,
       isLocalWorkspace: (selectedWorkspace?.workspaceType ?? "local") === "local",
     };
-  }, [juggleworkClient, selectedWorkspace?.workspaceType, selectedWorkspaceId, selectedWorkspaceRoot]);
+  }, [juggleworkClient, selectedWorkspace?.workspaceType, selectedWorkspaceEndpoint?.client, selectedWorkspaceId, selectedWorkspaceRoot]);
 
   useEffect(() => {
     const target = globalConfigTarget();
@@ -1641,19 +1690,45 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   // ---- 全局技能与全局连接器 ----
 
-  const globalSkills = useMemo(
-    () => extensionsSnapshot.skills.filter((skill) => skill.scope === "global"),
-    [extensionsSnapshot.skills],
-  );
+  const refreshGlobalSkills = useCallback(async () => {
+    const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
+    if (!juggleworkClient || !workspaceId) {
+      setGlobalSkills([]);
+      setGlobalSkillsStatus(t("skills.pick_workspace_first"));
+      return;
+    }
+    setGlobalSkillsBusy(true);
+    setGlobalSkillsError(null);
+    try {
+      const response = await juggleworkClient.listSkills(workspaceId, { scope: "global" });
+      // 旧版服务端可能忽略 scope 查询参数并返回混合列表，客户端仍做最后一道过滤。
+      const items = Array.isArray(response.items)
+        ? response.items.filter((entry) => entry.scope === "global").map((entry) => ({
+            name: entry.name,
+            description: entry.description,
+            path: entry.path,
+            trigger: entry.trigger,
+            scope: entry.scope,
+          }))
+        : [];
+      setGlobalSkills(items);
+      setGlobalSkillsStatus(items.length ? null : t("skills.no_skills_found"));
+    } catch (error) {
+      setGlobalSkills([]);
+      setGlobalSkillsError(error instanceof Error ? error.message : t("skills.failed_to_load"));
+    } finally {
+      setGlobalSkillsBusy(false);
+    }
+  }, [juggleworkClient, selectedWorkspaceId]);
 
   const refreshGlobalConnectors = useCallback(async () => {
     const target = globalConfigTarget();
     if (!target) return;
     try {
       setGlobalMcpEntries(await readGlobalMcpEntries(target));
-      setGlobalExtensionsError(null);
+      setGlobalConnectorsError(null);
     } catch (error) {
-      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.load_failed"));
+      setGlobalConnectorsError(error instanceof Error ? error.message : t("mcp.load_failed"));
     }
   }, [globalConfigTarget]);
 
@@ -1667,42 +1742,64 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const skillsTabActive = route.tab === "skills";
   useEffect(() => {
     if (!skillsTabActive) return;
-    void extensionsStore.refreshSkills({ force: true });
-  }, [extensionsStore, skillsTabActive]);
+    void refreshGlobalSkills();
+  }, [refreshGlobalSkills, skillsTabActive]);
 
   // TIPS: 条目与连接状态来自全局配置文件，写入也回到同一个文件。运行时层的
   // MCP 接口只作用于工作区，不能用来承载全局连接器。
   const globalConnectors = useMemo<GlobalConnectorItem[]>(
-    () => globalMcpEntries.map((entry) => ({
+    () => mergeGlobalMcpEntries(globalMcpEntries, connectionsSnapshot.mcpServers).map((entry) => ({
       name: entry.name,
       config: entry.config,
       status: connectionsSnapshot.mcpStatuses[entry.name],
     })),
     [connectionsSnapshot.mcpStatuses, globalMcpEntries],
   );
+  const globalUnconnectedConnectors = useMemo(() => {
+    const globalNames = new Set(globalConnectors.map((entry) => entry.name.trim().toLowerCase()));
+    return connectionsStore.quickConnect.filter((entry) => {
+      const name = getMcpServerName(entry);
+      // 全局连接器只接受真实 MCP 目录项。Provider、浏览器、Voice 等扩展也在统一
+      // catalog 中，但没有 MCP resource，不能因为缺省 type 被误当成 remote MCP。
+      if ((entry.type !== "remote" && entry.type !== "local") || name === "jugglework-cloud" || entry.defaultHidden) return false;
+      return !globalNames.has(name.toLowerCase());
+    });
+  }, [connectionsStore, globalConnectors]);
 
   const runGlobalConnectorWrite = useCallback(async (
     name: string,
     write: (target: GlobalConfigTarget) => Promise<void>,
   ) => {
+    // TIPS: 每次写入都会读取并重写完整配置，重叠执行会让后完成者覆盖前一项变更。
+    if (globalConnectorWriteInFlightRef.current) throw new Error(t("common.saving"));
     const target = globalConfigTarget();
     if (!target) return;
-    setPendingGlobalConnector(name);
-    setGlobalExtensionsError(null);
+    const operation = (async () => {
+      setPendingGlobalConnector(name);
+      setGlobalConnectorsError(null);
+      try {
+        await write(target);
+        reloadCoordinator.markReloadRequired("config", {
+          type: "config",
+          name: "opencode.json",
+          action: "updated",
+        });
+        await refreshGlobalConnectors();
+        void connectionsStore.refreshMcpServers();
+      } catch (error) {
+        setGlobalConnectorsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
+        throw error;
+      } finally {
+        setPendingGlobalConnector(null);
+      }
+    })();
+    globalConnectorWriteInFlightRef.current = operation;
     try {
-      await write(target);
-      reloadCoordinator.markReloadRequired("config", {
-        type: "config",
-        name: "opencode.json",
-        action: "updated",
-      });
-      await refreshGlobalConnectors();
-      void connectionsStore.refreshMcpServers();
-    } catch (error) {
-      setGlobalExtensionsError(error instanceof Error ? error.message : t("mcp.remove_failed"));
-      throw error;
+      await operation;
     } finally {
-      setPendingGlobalConnector(null);
+      if (globalConnectorWriteInFlightRef.current === operation) {
+        globalConnectorWriteInFlightRef.current = null;
+      }
     }
   }, [connectionsStore, globalConfigTarget, refreshGlobalConnectors, reloadCoordinator]);
 
@@ -1711,6 +1808,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       runGlobalConnectorWrite(name, (target) => upsertGlobalMcp(target, name, config)),
     [runGlobalConnectorWrite],
   );
+
+  const connectGlobalDirectory = useCallback(async (entry: McpDirectoryInfo) => {
+    const globalEntry = globalMcpConfigFromDirectory(entry);
+    await addGlobalConnector(globalEntry.name, globalEntry.config);
+    if (globalEntry.config.type === "remote" && globalEntry.config.oauth !== false && entry.oauth) {
+      connectionsStore.authorizeMcp({
+        name: globalEntry.name,
+        source: "config.global",
+        config: globalEntry.config,
+      }, { needsReload: true });
+    }
+  }, [addGlobalConnector, connectionsStore]);
 
   const toggleGlobalConnector = useCallback(
     (name: string, enabled: boolean) =>
@@ -1727,20 +1836,43 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
     if (!juggleworkClient || !workspaceId) {
       // 不能静默返回：用户点了删除却毫无反馈，会以为是应用卡住了。
-      setGlobalExtensionsError(t("skills.uninstall_failed"));
+      setGlobalSkillsError(t("skills.uninstall_failed"));
       return;
     }
     setDeletingGlobalSkill(name);
-    setGlobalExtensionsError(null);
+    setGlobalSkillsError(null);
     try {
       await juggleworkClient.deleteSkill(workspaceId, name, { scope: "global" });
-      await extensionsStore.refreshSkills({ force: true });
+      await refreshGlobalSkills();
     } catch (error) {
-      setGlobalExtensionsError(error instanceof Error ? error.message : t("skills.uninstall_failed"));
+      setGlobalSkillsError(error instanceof Error ? error.message : t("skills.uninstall_failed"));
     } finally {
       setDeletingGlobalSkill(null);
     }
-  }, [extensionsStore, juggleworkClient, selectedWorkspaceId]);
+  }, [juggleworkClient, refreshGlobalSkills, selectedWorkspaceId]);
+
+  const uploadGlobalSkill = useCallback(async () => {
+    const dir = (await pickDirectory({ title: t("project_extensions.upload_skill") })) as string | null;
+    if (!dir) return;
+    setGlobalSkillsBusy(true);
+    setGlobalSkillsError(null);
+    try {
+      const result = await importSkill("", dir, { overwrite: false, scope: "global" });
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || t("skills.import_failed", { status: result.status }));
+      }
+      reloadCoordinator.markReloadRequired("skills", {
+        type: "skill",
+        name: folderNameFromPath(dir),
+        action: "added",
+      });
+      await refreshGlobalSkills();
+    } catch (error) {
+      setGlobalSkillsError(error instanceof Error ? error.message : t("skills.import_failed", { status: "unknown" }));
+    } finally {
+      setGlobalSkillsBusy(false);
+    }
+  }, [refreshGlobalSkills, reloadCoordinator]);
 
   useEffect(() => {
     juggleworkServerStore.start();
@@ -2484,13 +2616,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "skills":
         return (
           <GlobalSkillsView
-            busy={busy}
+            busy={busy || globalSkillsBusy}
             skills={globalSkills}
-            status={extensionsSnapshot.skillsStatus}
-            error={globalExtensionsError}
+            status={globalSkillsStatus}
+            error={globalSkillsError}
             deletingSkillName={deletingGlobalSkill}
             onDeleteSkill={deleteGlobalSkill}
-            onRefresh={() => { void extensionsStore.refreshSkills({ force: true }); }}
+            onUploadSkill={uploadGlobalSkill}
+            onRefresh={() => { void refreshGlobalSkills(); }}
             projectDir={selectedWorkspaceRoot}
           />
         );
@@ -2499,10 +2632,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           <GlobalConnectorsView
             busy={busy}
             connectors={globalConnectors}
-            error={globalExtensionsError}
+            unconnected={globalUnconnectedConnectors}
+            error={globalConnectorsError}
             pendingConnectorName={pendingGlobalConnector}
             onAddConnector={addGlobalConnector}
+            onConnectDirectory={connectGlobalDirectory}
             onToggleEnabled={toggleGlobalConnector}
+            onAuthorize={(connector) => connectionsStore.authorizeMcp({
+              name: connector.name,
+              source: "config.global",
+              config: connector.config,
+            })}
             onRemoveConnector={removeGlobalConnector}
             onRefresh={() => { void refreshGlobalConnectors(); }}
           />
@@ -2511,9 +2651,13 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         // TIPS: 仅会话右侧 rail（embedded）改为分组卡片面板；独立设置页维持既有 ExtensionsView。
         if (props.embedded) {
           const projectConnectors = buildProjectConnectors({
-            mcpServers: connectionsSnapshot.mcpServers,
+            // jugglework-cloud 是自动维护的 search/execute transport，不是业务连接器。
+            // 展示它会让用户误关整个 Cloud 能力轨道。
+            mcpServers: connectionsSnapshot.mcpServers.filter((server) => server.name !== "jugglework-cloud"),
             mcpStatuses: connectionsSnapshot.mcpStatuses,
-            quickConnect: extensionItems.quickConnectEntries,
+            quickConnect: extensionItems.quickConnectEntries.filter((entry) => getMcpServerName(entry) !== "jugglework-cloud"),
+            // 组织连接也是 MCP：直接合并进「已连接 / 未连接」列表，不向用户暴露
+            // 组织连接这一层后端概念。开关在已连接 MCP 行上按 connectionId 写策略。
             orgMcpItems: extensionItems.orgMcpConnectionItems,
             mcpConnectingName: connectionsSnapshot.mcpConnectingName,
             orgMcpConnectingId: orgMcpConnections.connectingId,
@@ -2525,21 +2669,57 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             connectOrg: (connectionId) => { void orgMcpConnections.connect(connectionId); },
             disconnectOrg: (connectionId) => { void orgMcpConnections.disconnect(connectionId); },
           });
+          const projectConnectorsWithScope = projectConnectors.map((row) => {
+            if ((row.mcpSource === "config.global" || row.mcpSource === "config.remote" || row.mcpSource === "config.project") && workspaceMcpToolPolicy.available && row.serverConfig?.enabled !== false) {
+              const enabled = !workspaceMcpToolPolicy.disabledServerNames.includes(row.key.slice("installed:".length));
+              return {
+                ...row,
+                workspaceScope: {
+                  connectionIds: [],
+                  enabled,
+                  saving: workspaceMcpToolPolicy.savingName === row.key.slice("installed:".length),
+                  onChange: (nextEnabled: boolean) => {
+                    void workspaceMcpToolPolicy.setServerEnabled(row.key.slice("installed:".length), nextEnabled);
+                  },
+                },
+              };
+            }
+            const connectionId = row.source === "org" ? row.key.slice("org:".length) : "";
+            const connection = connectionId
+              ? orgMcpConnections.connections.find((item) => item.id === connectionId)
+              : null;
+            if (!connection || !row.connected || workspaceMcpPolicy.availability !== "ready") {
+              return row;
+            }
+            const scope = resolveConnectRowWorkspaceScope([connectionId], workspaceMcpPolicy.items);
+            if (!scope) return row;
+            return {
+              ...row,
+              workspaceScope: {
+                ...scope,
+                saving: workspaceMcpPolicy.savingConnectionId === connectionId,
+                onChange: (enabled: boolean) => { void workspaceMcpPolicy.setConnectionEnabled(connectionId, enabled); },
+              },
+            };
+          });
           // TIPS: 技能弹窗的数据源 = 完整技能列表（本工作区 + 全局，带 scope）按工作区过滤。
           // 不能用 extensionItems.installedSkills：那份列表会把「属于某个云端市场包」的技能
           // 剔除（旧扩展页把它们折叠进插件卡片），导致刚安装到工作区的市场技能不显示。
-          // 全局技能已拆到设置页的「技能」，这里只保留工作区技能。
-          const projectSkills = extensionsSnapshot.skills.filter((skill) => skill.scope !== "global");
+          // 会话技能列表同时展示全局与本工作区技能；全局项在弹窗中只读，管理仍在
+          // 个人设置「全局 › 技能」。不能在这里过滤 scope，否则用户无法知道本会话
+          // 实际还能使用哪些全局技能。
+          const sessionSkills = extensionsSnapshot.skills;
           return (
             <ProjectExtensionsPanel
               projectDir={selectedWorkspaceRoot}
               isRemoteWorkspace={isRemoteWorkspace}
               busy={busy}
-              connectors={projectConnectors}
-              connectorError={orgMcpConnections.error}
+              connectors={projectConnectorsWithScope}
+              connectorError={workspaceMcpToolPolicy.error ?? workspaceMcpPolicy.error ?? orgMcpConnections.error}
               onAddCustomMcp={async (entry) => { await connectionsStore.connectMcp(entry); }}
               configSlotForConnector={extensionController.configSlotForEntry}
-              installedSkills={projectSkills}
+              installedSkills={sessionSkills}
+              installedMarketplacePluginCount={Object.keys(extensionsSnapshot.importedCloudPlugins).length}
               pluginsSlot={({ search }) => (
                 <CloudMarketplacesView
                   extensions={extensionsStore}
@@ -2685,6 +2865,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             currentModel={currentCloudMcpModel}
             onCloudMcpHealthChange={setCloudMcpHealth}
             orgMcpConnections={orgMcpConnections}
+            marketplaceItems={extensionItems.cloudPluginItems}
+            refreshMarketplaceItems={() => extensionsStore.refreshCloudOrgMarketplaces({ force: true })}
           />
         );
       case "memory":

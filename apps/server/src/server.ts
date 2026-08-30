@@ -35,7 +35,13 @@ import {
   readWorkspaceCloudImports,
   syncDesktopCloudResources,
 } from "./desktop-cloud-sync.js";
-import { installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
+import {
+  installCloudPlugin,
+  readCloudPluginResolved,
+  readInstalledCloudPlugins,
+  removeCloudPlugin,
+  type CloudPluginEngineMutation,
+} from "./cloud-plugins.js";
 import { resolveClaudePluginBundle } from "./claude-plugin-bundle.js";
 import {
   applyMaterializedBlueprintSessions,
@@ -73,6 +79,16 @@ import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import {
+  applyMcpWorkspacePolicyToPrompt,
+  checkMcpWorkspaceToolPolicy,
+  compileWorkspaceMcpToolPrefixes,
+  findWorkspaceByDirectory,
+  listWorkspaceMcpServerNames,
+  migrateLegacyDisabledRuntimeMcps,
+  readMcpWorkspaceToolPolicy,
+  writeMcpWorkspaceToolPolicy,
+} from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
@@ -1277,10 +1293,18 @@ async function dispatchSessionPromptAsync(
   prompt: Record<string, unknown>,
 ): Promise<void> {
   const path = `/session/${encodeURIComponent(sessionId)}/prompt_async`;
+  let effectivePrompt = prompt;
+  const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
+  if (policy.disabledServerNames.length) {
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const result = await opencode.tool.ids();
+    const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
+    effectivePrompt = applyMcpWorkspacePolicyToPrompt(prompt, toolIds, policy.disabledServerNames);
+  }
   const response = await loopbackFetch(workspaceOpencodeUrl(config, workspace, path), {
     method: "POST",
     headers: workspaceOpencodeHeaders(config, workspace),
-    body: JSON.stringify(prompt),
+    body: JSON.stringify(effectivePrompt),
   });
   if (!response.ok) {
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
@@ -1364,9 +1388,31 @@ async function proxyOpencodeRequest(input: {
   // Buffer the request body so it can be forwarded reliably across Node.js
   // stream boundaries (Readable.toWeb streams from the HTTP adapter aren't
   // always accepted directly by Node's global fetch as a body).
-  const body = method === "GET" || method === "HEAD"
+  let body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  if (workspace && body && method === "POST" && /\/session\/[^/]+\/(?:prompt_async|message)$/.test(proxyPath)) {
+    try {
+      const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const policy = await readMcpWorkspaceToolPolicy(input.config, workspace.id);
+        if (policy.disabledServerNames.length) {
+          const opencode = createWorkspaceOpencodeClient(input.config, workspace);
+          const result = await opencode.tool.ids();
+          const toolIds = Array.isArray(result.data) ? result.data.filter((value): value is string => typeof value === "string") : [];
+          body = new TextEncoder().encode(JSON.stringify(applyMcpWorkspacePolicyToPrompt(
+            parsed as Record<string, unknown>,
+            toolIds,
+            policy.disabledServerNames,
+          ))).buffer;
+          headers.set("Content-Type", "application/json");
+          headers.delete("content-length");
+        }
+      }
+    } catch {
+      // Let OpenCode return its normal invalid-body response.
+    }
+  }
   const noopConfigResponse = await skipNoopOpencodeConfigPatch({
     method,
     proxyPath,
@@ -2037,6 +2083,7 @@ function createRoutes(
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    requireCloudPluginWorkspaceSupported(workspace);
     const body = await readJsonBody(ctx.request);
     const resolved = readCloudPluginResolved(body.resolved);
     const marketplace = body.marketplace && typeof body.marketplace === "object" && !Array.isArray(body.marketplace)
@@ -2067,11 +2114,16 @@ function createRoutes(
         : null,
       // 组织云端插件：远程 MCP 走 Connect 网关，不在工作区留本地副本。
       cloudGatewayHosted: true,
+      synchronizeEngine: createCloudPluginEngineSynchronizer(
+        config,
+        workspace,
+        engineMcpServerState,
+      ),
       resolved,
     });
     const imported = result.item;
 
-    await recordAudit(workspace.path, {
+    if (result.status !== "failed") await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
@@ -2081,7 +2133,7 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
-    for (const file of imported.files) {
+    for (const file of result.status === "failed" ? [] : imported.files) {
       emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
         type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
         name: file.title,
@@ -2089,16 +2141,13 @@ function createRoutes(
       });
     }
 
-    // Hot-register any bundled MCP servers with the running engine.
-    await syncRuntimeMcpToOpencodeEngine(
-      config,
-      workspace,
-      undefined,
-      undefined,
-      engineMcpServerState,
-    ).catch(() => undefined);
-
-    return jsonResponse({ item: imported, warnings: result.warnings });
+    return jsonResponse({
+      item: imported,
+      warnings: result.warnings,
+      status: result.status,
+      outcomes: result.outcomes,
+      conflicts: result.conflicts,
+    });
   });
 
   // Claude Code plugin bundles (MCP + skills + commands + agents) installed
@@ -2118,6 +2167,7 @@ function createRoutes(
       return jsonResponse({ preview: bundle.preview });
     }
 
+    requireCloudPluginWorkspaceSupported(workspace);
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     await requireApproval(ctx, {
@@ -2133,10 +2183,15 @@ function createRoutes(
       workspaceRoot: workspace.path,
       marketplaceId: null,
       resolved: bundle.resolved,
+      synchronizeEngine: createCloudPluginEngineSynchronizer(
+        config,
+        workspace,
+        engineMcpServerState,
+      ),
     });
     const imported = result.item;
 
-    await recordAudit(workspace.path, {
+    if (result.status !== "failed") await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
@@ -2146,7 +2201,7 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
-    for (const file of imported.files) {
+    for (const file of result.status === "failed" ? [] : imported.files) {
       emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
         type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
         name: file.title,
@@ -2154,22 +2209,21 @@ function createRoutes(
       });
     }
 
-    // Hot-register any bundled MCP servers with the running engine.
-    await syncRuntimeMcpToOpencodeEngine(
-      config,
-      workspace,
-      undefined,
-      undefined,
-      engineMcpServerState,
-    ).catch(() => undefined);
-
-    return jsonResponse({ item: imported, preview: bundle.preview, warnings: result.warnings });
+    return jsonResponse({
+      item: imported,
+      preview: bundle.preview,
+      warnings: result.warnings,
+      status: result.status,
+      outcomes: result.outcomes,
+      conflicts: result.conflicts,
+    });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspace(config, ctx.params.id);
+    requireCloudPluginWorkspaceSupported(workspace);
     const pluginId = ctx.params.pluginId ?? "";
 
     await requireApproval(ctx, {
@@ -2184,6 +2238,11 @@ function createRoutes(
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
       pluginId,
+      synchronizeEngine: createCloudPluginEngineSynchronizer(
+        config,
+        workspace,
+        engineMcpServerState,
+      ),
     });
 
     await recordAudit(workspace.path, {
@@ -2204,7 +2263,13 @@ function createRoutes(
       });
     }
 
-    return jsonResponse({ item: removed, warnings: [] });
+    return jsonResponse({
+      item: removed,
+      warnings: [],
+      status: "installed",
+      outcomes: removed.files,
+      conflicts: [],
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
@@ -2688,7 +2753,8 @@ function createRoutes(
   addRoute(routes, "GET", "/workspace/:id/skills", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
-    const items = await listSkills(workspace.path, includeGlobal);
+    const scope = ctx.url.searchParams.get("scope") === "global" ? "global" : undefined;
+    const items = await listSkills(workspace.path, includeGlobal, { scope });
     return jsonResponse({ items });
   });
 
@@ -2784,6 +2850,87 @@ function createRoutes(
       items,
       engineSync: engineMcpSyncStateInState(config, engineMcpServerState, workspace),
     });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/mcp-tool-policy", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const items = await listMcp(config, workspace.id, workspace.path);
+    const migration = await migrateLegacyDisabledRuntimeMcps(config, workspace.id, items);
+    if (migration.migratedServerNames.length) {
+      await syncRuntimeMcpToOpencodeEngine(
+        config,
+        workspace,
+        migration.migratedServerNames,
+        undefined,
+        engineMcpServerState,
+      );
+    }
+    return jsonResponse({
+      ...(await readMcpWorkspaceToolPolicy(config, workspace.id)),
+      toolPrefixes: await compileWorkspaceMcpToolPrefixes(config, workspace.id),
+    });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/mcp-tool-policy", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    if (!Array.isArray(body.disabledServerNames)) {
+      throw new ApiError(400, "invalid_payload", "disabledServerNames must be an array");
+    }
+    const policy = await writeMcpWorkspaceToolPolicy(config, workspace.id, body.disabledServerNames);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "mcp.workspace-policy.update",
+      target: workspace.id,
+      summary: "Updated workspace MCP tool policy",
+      timestamp: Date.now(),
+    });
+    return jsonResponse(policy);
+  });
+
+  addRoute(routes, "POST", "/internal/mcp-tool-policy/check", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const directory = typeof body.directory === "string" ? body.directory.trim() : "";
+    const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId.trim() : "";
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+    const toolId = typeof body.toolId === "string" ? body.toolId.trim() : "";
+    if (!directory && !workspaceId && !sessionId) throw new ApiError(400, "invalid_payload", "directory, workspaceId, or sessionId is required");
+    // TIPS: 执行目录是当前调用的权威身份。显式 ID 可能来自已切换工作区的旧上下文，
+    // 因此只有目录缺失时才能使用；目录无法映射且同时携带 ID 时必须直接拒绝。
+    let workspace = directory
+      ? findWorkspaceByDirectory(config, directory)
+      : workspaceId
+        ? config.workspaces.find((entry) => entry.id === workspaceId && entry.workspaceType !== "remote") ?? null
+        : null;
+    if (directory && workspaceId && !workspace) {
+      throw new ApiError(404, "workspace_not_found", "Workspace not found for directory");
+    }
+    if (!workspace && sessionId) {
+      for (const candidate of config.workspaces.filter((entry) => entry.workspaceType !== "remote")) {
+        const session = await createWorkspaceOpencodeClient(config, candidate).session.get({ sessionID: sessionId }).catch(() => null);
+        if (session?.data) {
+          workspace = candidate;
+          break;
+        }
+      }
+    }
+    if (!workspace) throw new ApiError(404, "workspace_not_found", "Workspace not found for directory");
+    const policy = await readMcpWorkspaceToolPolicy(config, workspace.id);
+    const serverNames = await listWorkspaceMcpServerNames(config, workspace.id);
+    if (body.operation === "inventory") {
+      return jsonResponse({ allowed: true, workspaceId: workspace.id, serverNames, revision: policy.revision });
+    }
+    if (!toolId) throw new ApiError(400, "invalid_payload", "toolId is required");
+    return jsonResponse(checkMcpWorkspaceToolPolicy({
+      toolId,
+      args: body.args,
+      serverNames,
+      disabledServerNames: policy.disabledServerNames,
+    }));
   });
 
   // Portable export of installed skills and MCP servers (including
@@ -3757,6 +3904,98 @@ async function syncRuntimeMcpToOpencodeEngine(
     syncedNames: entries.map(([name]) => name),
     failures,
   };
+}
+
+function requireCloudPluginWorkspaceSupported(workspace: WorkspaceInfo): void {
+  if (workspace.workspaceType !== "remote") return;
+  throw new ApiError(
+    400,
+    "cloud_plugin_workspace_unsupported",
+    "Workspace plugin installation is not supported by a direct remote OpenCode workspace.",
+    { status: "unsupported", workspaceType: workspace.workspaceType },
+  );
+}
+
+function requireCloudPluginEngineTarget(config: ServerConfig, workspace: WorkspaceInfo): void {
+  const baseUrl = resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim() ?? "";
+  if (!baseUrl) {
+    throw new ApiError(
+      503,
+      "cloud_plugin_engine_endpoint_missing",
+      "Live plugin MCP reconciliation requires an OpenCode engine endpoint.",
+      { reason: "missing_endpoint", retryable: true },
+    );
+  }
+  if (!engineMcpConnectionIdentity(config, workspace)) {
+    throw new ApiError(
+      503,
+      "cloud_plugin_engine_identity_missing",
+      "Live plugin MCP reconciliation requires a valid OpenCode engine endpoint identity.",
+      { reason: "missing_identity", retryable: true },
+    );
+  }
+}
+
+/**
+ * 为一次插件事务创建实时 MCP 引擎同步器。
+ *
+ * TIPS：目标校验失败发生在任何引擎请求之前。事务随后仍会调用同步器恢复引擎快照，
+ * 此时可以安全跳过一次补偿；真正发出过请求的失败则必须照常执行引擎补偿。
+ *
+ * @param config 服务端配置
+ * @param workspace 目标工作区
+ * @param serverState 引擎 MCP 注册状态
+ * @returns 绑定当前插件事务的引擎同步回调
+ */
+function createCloudPluginEngineSynchronizer(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  serverState?: EngineMcpServerState | null,
+): (mutation: CloudPluginEngineMutation) => Promise<void> {
+  let skipNextCompensation = false;
+  return async (mutation) => {
+    if (skipNextCompensation) {
+      skipNextCompensation = false;
+      return;
+    }
+    try {
+      requireCloudPluginEngineTarget(config, workspace);
+    } catch (error) {
+      skipNextCompensation = true;
+      throw error;
+    }
+    await reconcileCloudPluginEngineMutation(config, workspace, mutation, serverState);
+  };
+}
+
+async function reconcileCloudPluginEngineMutation(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  mutation: CloudPluginEngineMutation,
+  serverState?: EngineMcpServerState | null,
+): Promise<void> {
+  for (const name of mutation.removeNames) {
+    await disconnectMcpFromOpencodeEngine(config, workspace, name);
+    const activeState = activeEngineMcpServerState(config, serverState);
+    if (activeState) deleteEngineMcpRegistration(config, activeState, workspace, name);
+  }
+  if (mutation.upsertNames.length > 0) {
+    const result = await syncRuntimeMcpToOpencodeEngine(
+      config,
+      workspace,
+      mutation.upsertNames,
+      { throwOnFailure: true },
+      serverState,
+    );
+    if (result.status === "skipped") {
+      throw new ApiError(
+        503,
+        "cloud_plugin_engine_reconciliation_skipped",
+        "OpenCode skipped live reconciliation for plugin MCP changes.",
+        { reason: "sync_skipped", names: mutation.upsertNames, retryable: true },
+      );
+    }
+  }
 }
 
 // POST one MCP entry to the engine, retrying once on 5xx/network errors

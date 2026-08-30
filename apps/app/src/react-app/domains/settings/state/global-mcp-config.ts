@@ -1,6 +1,7 @@
 import { applyEdits, modify, parse } from "jsonc-parser";
 
-import type { McpServerConfig } from "@/app/types";
+import { getMcpServerName, type McpDirectoryInfo } from "@/app/constants";
+import type { McpServerConfig, McpServerEntry } from "@/app/types";
 import {
   EMPTY_OPENCODE_CONFIG,
   readGlobalOpencodeConfig,
@@ -17,6 +18,66 @@ export type GlobalMcpEntry = {
   name: string;
   config: McpServerConfig;
 };
+
+/**
+ * 合并全局配置文件与引擎已识别的全局 MCP。
+ *
+ * TIPS: 配置文件读取与运行快照短暂不一致时，不能把已经被引擎识别为
+ * `config.global` 的连接器从列表中隐藏。同名时以配置文件为准，因为页面写回该文件。
+ *
+ * @param configuredEntries 全局配置文件中的 MCP
+ * @param runtimeEntries 当前引擎快照中的 MCP
+ */
+export function mergeGlobalMcpEntries(
+  configuredEntries: GlobalMcpEntry[],
+  runtimeEntries: McpServerEntry[],
+): GlobalMcpEntry[] {
+  const merged = new Map(configuredEntries.map((entry) => [entry.name, entry]));
+  for (const entry of runtimeEntries) {
+    if (entry.source !== "config.global" || merged.has(entry.name)) continue;
+    merged.set(entry.name, { name: entry.name, config: entry.config });
+  }
+  return [...merged.values()].toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * 从快速连接目录生成可持久化的全局 MCP 配置。
+ *
+ * @param entry MCP 目录条目
+ */
+export function globalMcpConfigFromDirectory(entry: McpDirectoryInfo): GlobalMcpEntry {
+  const name = getMcpServerName(entry);
+  const enabled = true;
+  if ((entry.type ?? "remote") === "local") {
+    if (!entry.command?.length) throw new Error("Missing MCP command.");
+    return {
+      name,
+      config: {
+        type: "local",
+        command: [...entry.command],
+        enabled,
+        ...(entry.environment ? { environment: { ...entry.environment } } : {}),
+        ...(entry.cwd?.trim() ? { cwd: entry.cwd.trim() } : {}),
+        ...(typeof entry.timeout === "number" && Number.isFinite(entry.timeout) && entry.timeout > 0
+          ? { timeout: Math.round(entry.timeout) }
+          : {}),
+      },
+    };
+  }
+  if (!entry.url?.trim()) throw new Error("Missing MCP URL.");
+  const headers = entry.headers && Object.keys(entry.headers).length ? { ...entry.headers } : undefined;
+  return {
+    name,
+    config: {
+      type: "remote",
+      url: entry.url.trim(),
+      enabled,
+      ...(headers ? { headers, oauth: false as const } : {}),
+      ...(!headers && entry.oauthConfig ? { oauth: { ...entry.oauthConfig } } : {}),
+      ...(!headers && !entry.oauthConfig && entry.oauth ? { oauth: {} } : {}),
+    },
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -6,6 +6,7 @@ export const CLOUD_MCP_SERVER_NAME = "jugglework-cloud";
 
 const CLOUD_MCP_USER_STATE_KEY = "jugglework.den.mcp.cloudControlUserState";
 const CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY = "jugglework.den.mcp.unhealthyRemintAttempt";
+const CLOUD_MCP_CATALOG_MARKER_KEY = "jugglework.den.mcp.catalogTokenMarker";
 
 export type CloudMcpUserState = "disabled" | "removed";
 export type CloudMcpScope = {
@@ -349,8 +350,97 @@ export function clearAllCloudMcpLocalState() {
     storage.removeItem(CLOUD_MCP_USER_STATE_KEY);
     storage.removeItem(CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY);
     storage.removeItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
+    storage.removeItem(CLOUD_MCP_CATALOG_MARKER_KEY);
   } catch {
     // Storage unavailable — nothing recorded, nothing to clear.
+  }
+}
+
+/** 账号级目录令牌的作用域：与工作区无关，只由部署与组织决定。 */
+export type CloudMcpCatalogScope = {
+  denBaseUrl: string;
+  serverBaseUrl: string;
+  orgId: string;
+};
+
+export type CloudMcpCatalogMarker = CloudMcpCatalogScope & {
+  expiresAt: string;
+};
+
+function normalizeCatalogScope(scope: CloudMcpCatalogScope): CloudMcpCatalogScope | null {
+  const denBaseUrl = normalizeMarkerBaseUrl(scope.denBaseUrl);
+  const serverBaseUrl = normalizeMarkerBaseUrl(scope.serverBaseUrl);
+  const orgId = scope.orgId.trim();
+  if (!denBaseUrl || !serverBaseUrl || !orgId) return null;
+  return { denBaseUrl, serverBaseUrl, orgId };
+}
+
+function catalogScopeEquals(left: CloudMcpCatalogScope, right: CloudMcpCatalogScope): boolean {
+  return left.denBaseUrl === right.denBaseUrl
+    && left.serverBaseUrl === right.serverBaseUrl
+    && left.orgId === right.orgId;
+}
+
+function readCloudMcpCatalogMarkers(): CloudMcpCatalogMarker[] {
+  try {
+    const raw = getStorage()?.getItem(CLOUD_MCP_CATALOG_MARKER_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    const candidates = isRecord(parsed) && Array.isArray(parsed.markers) ? parsed.markers : [];
+    return candidates.flatMap((value) => {
+      if (!isRecord(value) || typeof value.expiresAt !== "string" || !value.expiresAt) return [];
+      const scope = normalizeCatalogScope({
+        denBaseUrl: typeof value.denBaseUrl === "string" ? value.denBaseUrl : "",
+        serverBaseUrl: typeof value.serverBaseUrl === "string" ? value.serverBaseUrl : "",
+        orgId: typeof value.orgId === "string" ? value.orgId : "",
+      });
+      return scope ? [{ ...scope, expiresAt: value.expiresAt }] : [];
+    });
+  } catch {
+    // Corrupt marker — force one safe catalog re-mint.
+  }
+  return [];
+}
+
+/**
+ * 账号级目录令牌的过期时间标记。
+ *
+ * TIPS：目录令牌与执行令牌分属两种作用域，铸造节奏也不同——执行令牌每工作区一枚，
+ * 目录令牌整个账号一枚。用独立标记记住它的到期时间，维护循环才能在多数轮次里
+ * 完全跳过目录铸造，而不是每次 reconcile 都白铸一枚。
+ */
+export function readCloudMcpCatalogMarker(scope: CloudMcpCatalogScope): CloudMcpCatalogMarker | null {
+  const normalized = normalizeCatalogScope(scope);
+  if (!normalized) return null;
+  return readCloudMcpCatalogMarkers().find((marker) => catalogScopeEquals(marker, normalized)) ?? null;
+}
+
+export function writeCloudMcpCatalogMarker(marker: CloudMcpCatalogMarker) {
+  try {
+    const normalized = normalizeCatalogScope(marker);
+    if (!normalized) return;
+    const markers = readCloudMcpCatalogMarkers().filter((entry) => !catalogScopeEquals(entry, normalized));
+    getStorage()?.setItem(
+      CLOUD_MCP_CATALOG_MARKER_KEY,
+      JSON.stringify({ version: 1, markers: [...markers, { ...normalized, expiresAt: marker.expiresAt }] }),
+    );
+  } catch {
+    // Storage unavailable — the next maintenance tick simply mints again.
+  }
+}
+
+export function clearCloudMcpCatalogMarker(scope: CloudMcpCatalogScope) {
+  try {
+    const normalized = normalizeCatalogScope(scope);
+    if (!normalized) return;
+    const markers = readCloudMcpCatalogMarkers().filter((entry) => !catalogScopeEquals(entry, normalized));
+    if (markers.length) {
+      getStorage()?.setItem(CLOUD_MCP_CATALOG_MARKER_KEY, JSON.stringify({ version: 1, markers }));
+    } else {
+      getStorage()?.removeItem(CLOUD_MCP_CATALOG_MARKER_KEY);
+    }
+  } catch {
+    // ignore
   }
 }
 

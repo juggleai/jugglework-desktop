@@ -3,7 +3,11 @@ import * as React from "react";
 import { toast } from "@/components/ui/sonner";
 
 import type { McpDirectoryInfo } from "@/app/constants";
-import type { CloudImportedPlugin } from "@/app/cloud/import-state";
+import {
+  resolveCloudImportedPluginReadiness,
+  type CloudImportedPlugin,
+} from "@/app/cloud/import-state";
+import type { CloudPluginMutationResult, WorkspacePluginAccess } from "@/react-app/domains/settings/state/extensions-store";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type {
@@ -56,7 +60,6 @@ import {
   type OpenMarketplacePluginDetail,
 } from "@/react-app/shell/notifications";
 
-type AsyncResult = { ok: boolean; message: string; warnings?: string[] };
 type MarketplacePackageStatus = "available" | "installed" | "update_available";
 type MarketplaceStatusFilter = "all" | MarketplacePackageStatus;
 type CloudMarketplacesSession = Pick<
@@ -69,13 +72,34 @@ type DenSettingsExtensionsStore = {
   cloudOrgMarketplacesStatus: () => string | null;
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
+  marketplacePluginAccess: () => WorkspacePluginAccess;
   refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
   importCloudOrgPlugin: (
     marketplaceId: string | null,
     plugin: DenOrgPlugin,
-  ) => Promise<{ ok: boolean; message: string; warnings: string[] }>;
-  removeCloudOrgPlugin: (pluginId: string) => Promise<AsyncResult>;
+  ) => Promise<CloudPluginMutationResult>;
+  removeCloudOrgPlugin: (pluginId: string) => Promise<CloudPluginMutationResult>;
 };
+
+function workspacePluginAccessMessage(access: WorkspacePluginAccess) {
+  if (access.allowed) return null;
+  switch (access.reason) {
+    case "read_only":
+      return t("marketplace.workspace_gate_read_only");
+    case "unauthorized":
+      return t("marketplace.workspace_gate_unauthorized");
+    default:
+      return t("marketplace.workspace_gate_unsupported");
+  }
+}
+
+function showCloudPluginMutationToast(result: CloudPluginMutationResult) {
+  const details = [...result.warnings, ...(result.conflicts?.map((conflict) => conflict.message) ?? [])];
+  const description = details.length > 0 ? details.join("\n") : undefined;
+  if (result.status === "partial") toast.warning(result.message, { description });
+  else if (result.status === "repair_required" || result.status === "failed" || !result.ok) toast.error(result.message, { description });
+  else toast.success(result.message, { description });
+}
 
 type MarketplacePackageRow = {
   source: "cloud";
@@ -224,9 +248,28 @@ function pluginManifestSearchText(plugin: DenOrgPlugin) {
 
 function pluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgPlugin): MarketplacePackageStatus {
   if (!imported) return "available";
+  if (imported.status === "installed") return imported.updatedAt === plugin.updatedAt ? "installed" : "update_available";
+  if (imported.status === "partial" || imported.status === "failed" || imported.status === "repair_required") {
+    return "update_available";
+  }
   const importedObjectCount = new Set(imported.files.map((file) => file.configObjectId)).size;
   if (imported.updatedAt !== plugin.updatedAt || importedObjectCount !== plugin.memberCount) return "update_available";
   return "installed";
+}
+
+function pluginReadinessLabel(row: MarketplacePackageRow): string | null {
+  if (row.imported?.status === "repair_required") return t("marketplace.plugin_status_repair_required");
+  if (row.imported?.status === "failed") return t("marketplace.plugin_status_failed");
+  if (row.imported?.status === "partial") return t("marketplace.plugin_status_partial");
+  const persistedReadiness = resolveCloudImportedPluginReadiness(row.imported?.files ?? []);
+  if (persistedReadiness === "needs_signin") return t("marketplace.plugin_status_needs_signin");
+  if (persistedReadiness === "needs_admin_setup") return t("marketplace.plugin_status_needs_admin");
+  switch (row.plugin.cloudReadiness?.state) {
+    case "needs_signin": return t("marketplace.plugin_status_needs_signin");
+    case "needs_admin_setup": return t("marketplace.plugin_status_needs_admin");
+    case "not_synced": return t("marketplace.plugin_status_not_synced");
+    default: return null;
+  }
 }
 
 export function CloudMarketplacesView({
@@ -299,6 +342,8 @@ export function CloudMarketplacesView({
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
   const pendingChanges = extensions.pendingCloudPluginChanges();
+  const marketplacePluginAccess = extensions.marketplacePluginAccess();
+  const marketplacePluginAccessHint = workspacePluginAccessMessage(marketplacePluginAccess);
   const extensionItemsByBuiltInId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.builtInEntry ? [[item.builtInEntry.id ?? item.builtInEntry.serverName ?? item.builtInEntry.name, item] as const] : []),
   ), [extensionItems]);
@@ -502,8 +547,11 @@ export function CloudMarketplacesView({
 
       try {
         const result = await extensions.removeCloudOrgPlugin(pluginId);
-        if (!result.ok) throw new Error(result.message);
-        toast.success(result.message);
+        showCloudPluginMutationToast(result);
+        if (!result.ok) {
+          setActionError(result.message);
+          return;
+        }
         setDetailRow(null);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : `Failed to remove ${pluginName}.`);
@@ -521,8 +569,8 @@ export function CloudMarketplacesView({
       setActionError(null);
       try {
         const result = await extensions.importCloudOrgPlugin(marketplaceId, plugin);
-        if (!result.ok) throw new Error(result.message);
-        toast.success(result.message);
+        showCloudPluginMutationToast(result);
+        if (!result.ok) setActionError(result.message);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : `Failed to install ${plugin.name}.`);
       } finally {
@@ -572,6 +620,10 @@ export function CloudMarketplacesView({
 
       {actionError ?? extensions.cloudOrgMarketplacesStatus() ? (
         <SettingsNotice tone="error">{actionError ?? extensions.cloudOrgMarketplacesStatus()}</SettingsNotice>
+      ) : null}
+
+      {marketplacePluginAccessHint ? (
+        <SettingsNotice>{marketplacePluginAccessHint}</SettingsNotice>
       ) : null}
 
       {busy ? (
@@ -698,6 +750,7 @@ export function CloudMarketplacesView({
           onConnectOrgMcp={onConnectOrgMcp}
           onRemovePlugin={removePlugin}
           onInstallPlugin={installPlugin}
+          marketplacePluginAccess={marketplacePluginAccess}
         />
       ) : detailRow?.source === "built-in" ? (
         <BuiltInMarketplaceDetailModal
@@ -854,6 +907,7 @@ function MarketplaceCard(props: {
     composition: row.delivery,
   });
   const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
+  const readinessLabel = pluginReadinessLabel(row);
   // TIPS: 含 desktop 组件的插件在装到工作区之前用不了，卡片不能呈现为「已就绪」。
   const cloudReady = deliveryAction === "cloud_active" || deliveryAction === "cloud_active_local_copy";
   const compositionSummary = deliveryCompositionSummary(row.delivery);
@@ -866,8 +920,8 @@ function MarketplaceCard(props: {
         iconSlug={manifest?.icon?.simpleIconSlug}
         iconSrc={manifest?.icon?.src}
         kind="extension"
-        connected={cloudBuiltIn || cloudReady}
-        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
+        connected={cloudBuiltIn || (cloudReady && !readinessLabel)}
+        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : readinessLabel ?? deliveryLabel}
         connecting={actionBusy}
         actionLabel={cloudBuiltIn
           ? t("mcp.view_details")
@@ -980,6 +1034,7 @@ function MarketplacePackageDetailModal(props: {
   onConnectOrgMcp?: (connectionId: string) => void;
   onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
   onInstallPlugin: (marketplaceId: string, plugin: DenOrgPlugin) => void | Promise<void>;
+  marketplacePluginAccess: WorkspacePluginAccess;
 }) {
   const {
     actionId,
@@ -993,8 +1048,10 @@ function MarketplacePackageDetailModal(props: {
     onConnectOrgMcp,
     onRemovePlugin,
     onInstallPlugin,
+    marketplacePluginAccess,
   } = props;
   const actionBusy = actionId === row.plugin.id;
+  const accessHint = workspacePluginAccessMessage(marketplacePluginAccess);
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
   const manifest = row.plugin.extension?.manifest;
   // 详情里已经拿到 resolved，缺 components 的旧服务端在这里也能推断出承载方式。
@@ -1005,6 +1062,7 @@ function MarketplacePackageDetailModal(props: {
     composition: delivery,
   });
   const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
+  const readinessLabel = pluginReadinessLabel(row);
   // 已落盘的组件按 configObjectId 记账，用于逐行判断"这个组件装了没有"。
   const installedConfigObjectIds = new Set(row.imported?.files.map((file) => file.configObjectId) ?? []);
   const importedExternalConnectionIds = row.imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? [];
@@ -1023,8 +1081,8 @@ function MarketplacePackageDetailModal(props: {
       iconSlug={manifest?.icon?.simpleIconSlug}
       iconSrc={manifest?.icon?.src}
       kind="extension"
-      connected
-      connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
+      connected={cloudBuiltIn || !readinessLabel}
+      connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : readinessLabel ?? deliveryLabel}
       connecting={actionBusy}
       connectLabel={deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
       connectingLabel={t("marketplace.working")}
@@ -1033,7 +1091,7 @@ function MarketplacePackageDetailModal(props: {
       setupInstructions={manifest?.setup?.instructions}
       resourceLabels={manifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
       contributionLabels={manifest?.contributions?.map((contribution) => contribution.label ?? contribution.ref ?? contribution.type) ?? []}
-      onUninstall={!cloudBuiltIn && row.imported ? () => void onRemovePlugin(row.plugin.id, row.plugin.name) : undefined}
+      onUninstall={!cloudBuiltIn && row.imported && marketplacePluginAccess.allowed ? () => void onRemovePlugin(row.plugin.id, row.plugin.name) : undefined}
       configSlot={(
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">
@@ -1041,16 +1099,25 @@ function MarketplacePackageDetailModal(props: {
               {cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
             </SettingsPill>
             <SettingsPill>{row.marketplaceName}</SettingsPill>
+            {readinessLabel ? <SettingsPill>{readinessLabel}</SettingsPill> : null}
             {row.counts.map((label) => <SettingsPill key={label}>{label}</SettingsPill>)}
           </div>
           {!cloudBuiltIn ? (
-            <Button
-              size="sm"
-              disabled={actionBusy}
-              onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
-            >
-              {actionBusy ? t("marketplace.working") : row.imported ? t("marketplace.sync_to_workspace") : t("marketplace.install_in_workspace")}
-            </Button>
+            <div className="space-y-2">
+              <Button
+                size="sm"
+                disabled={actionBusy || !marketplacePluginAccess.allowed}
+                onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
+              >
+                {actionBusy ? t("marketplace.working") : row.imported ? t("marketplace.sync_to_workspace") : t("marketplace.install_in_workspace")}
+              </Button>
+              {accessHint ? <SettingsNotice>{accessHint}</SettingsNotice> : null}
+            </div>
+          ) : null}
+          {row.imported?.files.some((file) => file.errorMessage) ? (
+            <SettingsNotice>
+              {row.imported.files.flatMap((file) => file.errorMessage ? [`${file.title}: ${file.errorMessage}`] : []).join("\n")}
+            </SettingsNotice>
           ) : null}
           {deliveryAction === "cloud_active_local_copy" ? (
             <SettingsNotice>{t("connect.marketplace_local_copy_note")}</SettingsNotice>
@@ -1100,7 +1167,7 @@ function MarketplacePackageDetailModal(props: {
                           <Button
                             size="xs"
                             variant="outline"
-                            disabled={actionBusy}
+                            disabled={actionBusy || !marketplacePluginAccess.allowed}
                             onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
                           >
                             {actionBusy ? t("marketplace.working") : t("marketplace.install_in_workspace")}

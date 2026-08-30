@@ -122,10 +122,10 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
  *
  * 列出与删除必须共用同一份目录清单，否则会出现"列得出来但删不掉"。
  */
-export function globalSkillDirs(input?: { homeDir?: string }): string[] {
+export function globalSkillDirs(input?: { homeDir?: string; opencodeConfigDir?: string }): string[] {
   const home = input?.homeDir ?? homedir();
   return [
-    join(home, ".config", "opencode", "skills"),
+    join(input?.opencodeConfigDir?.trim() || process.env.OPENCODE_CONFIG_DIR?.trim() || join(home, ".config", "opencode"), "skills"),
     join(home, ".claude", "skills"),
     join(home, ".agents", "skills"),
     join(home, ".agent", "skills"),
@@ -135,18 +135,20 @@ export function globalSkillDirs(input?: { homeDir?: string }): string[] {
 export async function listSkills(
   workspaceRoot: string,
   includeGlobal: boolean,
-  options?: { homeDir?: string },
+  options?: { homeDir?: string; opencodeConfigDir?: string; scope?: "project" | "global" },
 ): Promise<SkillItem[]> {
-  const roots = await findWorkspaceRoots(workspaceRoot);
   const items: SkillItem[] = [];
-  for (const root of roots) {
-    const opencodeDir = join(root, ".opencode", "skills");
-    const claudeDir = join(root, ".claude", "skills");
-    items.push(...(await listSkillsInDir(opencodeDir, "project")));
-    items.push(...(await listSkillsInDir(claudeDir, "project")));
+  if (options?.scope !== "global") {
+    const roots = await findWorkspaceRoots(workspaceRoot);
+    for (const root of roots) {
+      const opencodeDir = join(root, ".opencode", "skills");
+      const claudeDir = join(root, ".claude", "skills");
+      items.push(...(await listSkillsInDir(opencodeDir, "project")));
+      items.push(...(await listSkillsInDir(claudeDir, "project")));
+    }
   }
 
-  if (includeGlobal) {
+  if (includeGlobal || options?.scope === "global") {
     for (const dir of globalSkillDirs(options)) {
       items.push(...(await listSkillsInDir(dir, "global")));
     }
@@ -230,7 +232,7 @@ export async function deleteSkill(
   workspaceRoot: string,
   name: string,
   scope: "project" | "global" = "project",
-  options?: { homeDir?: string },
+  options?: { homeDir?: string; opencodeConfigDir?: string },
 ): Promise<{ path: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);

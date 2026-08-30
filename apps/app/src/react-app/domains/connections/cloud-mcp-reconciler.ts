@@ -18,13 +18,16 @@ import {
   getCloudMcpScopeKey,
   isCloudMcpSyncMarkerFresh,
   normalizeCloudMcpScope,
+  readCloudMcpCatalogMarker,
   readCloudMcpSyncMarker,
   readCloudMcpUserState,
+  writeCloudMcpCatalogMarker,
   writeCloudMcpSyncMarker,
   writeCloudMcpUserState,
   type CloudMcpScope,
   type CloudMcpUserState,
 } from "./cloud-mcp-user-state";
+import { resolveWorkspaceMcpKey } from "./workspace-mcp-key";
 
 export const JUGGLEWORK_CLOUD_EXPECTED_TOOLS = [
   "jugglework-cloud_search_capabilities",
@@ -46,6 +49,8 @@ export type CloudMcpClient = {
     workspaceId: string,
     payload?: { provider?: string; model?: string; trigger?: string },
   ) => Promise<JuggleWorkCloudMcpEngineRefreshResult>;
+  /** 旧版 JuggleWork 服务端没有这条路由；缺省即退回账号级令牌行为。 */
+  getCloudMcpWorkspaceKey?: (workspaceId: string) => Promise<{ workspaceId: string; workspaceKey: string }>;
 };
 
 export type CloudMcpOperationContext = CloudMcpScope & {
@@ -56,6 +61,11 @@ export type CloudMcpOperationContext = CloudMcpScope & {
   providerModel?: JuggleWorkCloudMcpProviderModelContext;
   connectCatalogEnabled?: boolean;
   trigger?: string;
+  /**
+   * 该工作区稳定的工作区键。带上它铸造的令牌是执行令牌，云端按工作区策略过滤；
+   * 缺省（旧版 JuggleWork 服务端没有这条路由）则退回账号级行为，与升级前一致。
+   */
+  workspaceKey?: string | null;
 };
 
 export type CloudMcpOperationMode = "health" | "repair";
@@ -172,24 +182,36 @@ function resolveMcpUrl(token: DenMcpToken, fallbackUrl?: string | null): string 
   return fallback || null;
 }
 
+function cloudMcpRemoteConfig(url: string, token: DenMcpToken): Record<string, unknown> {
+  return {
+    type: "remote",
+    enabled: true,
+    url,
+    headers: { Authorization: `Bearer ${token.token}` },
+    oauth: false,
+  };
+}
+
 export function buildJuggleWorkCloudMcpReconcilePayload(input: {
   context: CloudMcpOperationContext;
   token: DenMcpToken;
+  /** 账号级目录令牌；只在需要刷新 host 级目录配置时传入。 */
+  catalogToken?: DenMcpToken | null;
 }): JuggleWorkCloudMcpReconcilePayload | null {
   const workspaceId = input.context.workspaceId.trim();
   const url = resolveMcpUrl(input.token, input.context.fallbackUrl);
   if (!workspaceId || !url) return null;
   const app = appMetadata();
+  const catalogUrl = input.catalogToken
+    ? resolveMcpUrl(input.catalogToken, input.context.fallbackUrl)
+    : null;
   return {
     workspaceId,
     name: CLOUD_MCP_SERVER_NAME,
-    config: {
-      type: "remote",
-      enabled: true,
-      url,
-      headers: { Authorization: `Bearer ${input.token.token}` },
-      oauth: false,
-    },
+    config: cloudMcpRemoteConfig(url, input.token),
+    ...(input.catalogToken && catalogUrl
+      ? { catalog: { config: cloudMcpRemoteConfig(catalogUrl, input.catalogToken) } }
+      : {}),
     tokenMetadata: tokenMetadata(input.token),
     org: orgMetadata(input.context),
     ...(app ? { app, appVersion: typeof app.version === "string" ? app.version : undefined, buildSha: typeof app.buildSha === "string" ? app.buildSha : undefined } : {}),
@@ -288,19 +310,62 @@ async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope,
   };
 }
 
+/**
+ * 判断这一轮是否需要顺带铸造账号级目录令牌。
+ *
+ * TIPS：目录令牌整个账号只需一枚，且与执行令牌同样是 6 天有效期。用独立标记
+ * 判断新鲜度，绝大多数维护轮次因此完全跳过目录铸造——否则每工作区每轮都会多
+ * 打一次铸造接口，正好撞上服务端的每会话铸造限流。
+ */
+function needsCatalogToken(input: CloudMcpReconcilerInput, scope: CloudMcpScope): boolean {
+  const marker = readCloudMcpCatalogMarker({
+    denBaseUrl: scope.denBaseUrl,
+    serverBaseUrl: scope.serverBaseUrl,
+    orgId: scope.orgId,
+  });
+  if (!marker) return true;
+  return !isCloudMcpSyncMarkerFresh({
+    expiresAt: marker.expiresAt,
+    now: input.now ?? Date.now(),
+    refreshMarginMs: input.refreshMarginMs,
+  });
+}
+
 async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<{ health: JuggleWorkCloudMcpHealth | null; token: DenMcpToken | null }> {
+  const workspaceKey = input.context.workspaceKey?.trim() ?? "";
   const token = await input.mintToken({
     baseUrl: scope.denBaseUrl,
     authToken: input.context.denAuthToken,
     orgId: scope.orgId,
+    workspaceKey: workspaceKey || null,
   });
   if (!token) return { health: null, token: null };
-  const payload = buildJuggleWorkCloudMcpReconcilePayload({ context: { ...input.context, ...scope }, token });
-  if (!payload) return { health: null, token };
-  return {
-    health: await input.client.reconcileJuggleWorkCloudMcp(scope.workspaceId, payload),
+  // 目录令牌只在带 workspaceKey 的部署上才有意义：不带工作区键时执行令牌本身
+  // 就是账号级的，服务端沿用它做目录即可，不必多铸一枚。
+  const catalogToken = workspaceKey && needsCatalogToken(input, scope)
+    ? await input.mintToken({
+        baseUrl: scope.denBaseUrl,
+        authToken: input.context.denAuthToken,
+        orgId: scope.orgId,
+        workspaceKey: null,
+      }).catch(() => null)
+    : null;
+  const payload = buildJuggleWorkCloudMcpReconcilePayload({
+    context: { ...input.context, ...scope },
     token,
-  };
+    catalogToken,
+  });
+  if (!payload) return { health: null, token };
+  const health = await input.client.reconcileJuggleWorkCloudMcp(scope.workspaceId, payload);
+  if (catalogToken && payload.catalog) {
+    writeCloudMcpCatalogMarker({
+      denBaseUrl: scope.denBaseUrl,
+      serverBaseUrl: scope.serverBaseUrl,
+      orgId: scope.orgId,
+      expiresAt: catalogToken.expiresAt,
+    });
+  }
+  return { health, token };
 }
 
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
@@ -358,7 +423,15 @@ export async function runJuggleWorkCloudMcpReconciler(input: CloudMcpReconcilerI
   if (!scopeKey) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };
   const existing = repairInFlight.get(scopeKey);
   if (existing) return existing;
-  const task = repairCloudMcp(input, scope).finally(() => {
+  // 工作区键在这里统一解析，所有调用点（会话维护、Settings › Connect 的测试与修复）
+  // 因此拿到同一个键，不会出现同一工作区两种令牌分片。
+  const resolved: CloudMcpReconcilerInput = input.context.workspaceKey !== undefined
+    ? input
+    : {
+        ...input,
+        context: { ...input.context, workspaceKey: await resolveWorkspaceMcpKey(input.client, scope.workspaceId) },
+      };
+  const task = repairCloudMcp(resolved, scope).finally(() => {
     repairInFlight.delete(scopeKey);
   });
   repairInFlight.set(scopeKey, task);

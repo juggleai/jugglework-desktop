@@ -309,17 +309,9 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     );
 
     if (input.prompt) {
-      const result = await opencode.session.promptAsync({
-        sessionID: session.id,
+      await dispatchSessionPromptAsync(config, workspace, session.id, {
         parts: [{ type: "text", text: input.prompt }],
       });
-      if (result.error !== undefined) {
-        throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-          status: result.response.status,
-          body: result.error,
-          path: `/session/${encodeURIComponent(session.id)}/prompt_async`,
-        });
-      }
     }
 
     return { item: session, started: Boolean(input.prompt) };

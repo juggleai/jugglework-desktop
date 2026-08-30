@@ -36,6 +36,7 @@ const token: DenMcpToken = {
   organizationId: "org_1",
   scopes: ["mcp:read", "mcp:write"],
   resource: "https://api.jugglework.test/mcp",
+  workspaceKey: "",
 };
 
 function installStorageStub() {

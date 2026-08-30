@@ -5,6 +5,7 @@ import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationErrorCode, type AutomationPromptPart }
   from "@jugglework/types/automation";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import { applyMcpWorkspacePolicyToPrompt, readMcpWorkspaceToolPolicy } from "../mcp-workspace-tool-policy.js";
 import { AutomationRepository, type AutomationRunSnapshot } from "./repository.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
@@ -86,7 +87,9 @@ export class AutomationExecutor {
         connectorIds: definition.connectors.map((connector) => connector.id),
       }, this.now());
 
-      const dispatched = await opencode.session.promptAsync({
+      const policy = await readMcpWorkspaceToolPolicy(this.options.config, workspace.id);
+      const observedToolIds = Object.keys(toolAllowlist);
+      const prompt = applyMcpWorkspacePolicyToPrompt({
         sessionID: current.sessionId!,
         ...(definition.model.mode === "explicit" ? {
           model: { providerID: definition.model.providerId, modelID: definition.model.modelId },
@@ -98,7 +101,8 @@ export class AutomationExecutor {
           : { system: "这是自动化任务，但运行在默认权限下：敏感操作需要用户确认，请在需要时正常发起确认。" }),
         tools: toolAllowlist,
         parts: promptParts(definition.prompt.parts, workspace.path),
-      });
+      }, observedToolIds, policy.disabledServerNames);
+      const dispatched = await opencode.session.promptAsync(prompt as Parameters<typeof opencode.session.promptAsync>[0]);
       if (dispatched.error !== undefined) throw failure("execution_failed", "OpenCode 未接受自动化提示词");
       await this.waitForTerminalEvent(opencode, current.sessionId!);
       if (this.disposed) throw failure("session_lost", "客户端退出，自动化会话已停止跟踪");

@@ -91,6 +91,174 @@ describe("project connector source", () => {
 
     expect(rows.map((row) => row.name)).toEqual(["Notion", "Computer Use"]);
   });
+
+  test("matches installed MCP metadata by serverName instead of a different directory id", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [{ name: "Notion-MCP", config: { type: "remote", url: "https://notion.example.test" } }] as never,
+      mcpStatuses: { "Notion-MCP": { status: "connected" } } as never,
+      quickConnect: [entry({ id: "catalog-notion", serverName: "notion-mcp", name: "Notion" })],
+      orgMcpItems: [],
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe("Notion");
+    expect(rows[0]?.key).toBe("installed:Notion-MCP");
+  });
+
+  test("keeps global and current-workspace MCP entries with their scopes", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [
+        { name: "global-db", source: "config.global", config: { type: "remote", url: "https://global.example.test" } },
+        { name: "project-db", source: "config.project", config: { type: "remote", url: "https://project.example.test" } },
+        { name: "runtime-db", source: "config.remote", config: { type: "remote", url: "https://runtime.example.test" } },
+      ] as never,
+      mcpStatuses: {
+        "global-db": { status: "connected" },
+        "project-db": { status: "connected" },
+        "runtime-db": { status: "connected" },
+      } as never,
+      quickConnect: [],
+      orgMcpItems: [],
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+
+    expect(rows.map((row) => [row.name, row.mcpSource])).toEqual([
+      ["global-db", "config.global"],
+      ["project-db", "config.project"],
+      ["runtime-db", "config.remote"],
+    ]);
+  });
+
+  test("does not attach workspace mutation actions to a global MCP", () => {
+    const calls: string[] = [];
+    const [row] = buildProjectConnectors({
+      mcpServers: [{ name: "global-db", source: "config.global", config: { type: "remote", url: "https://global.example.test" } }] as never,
+      mcpStatuses: { "global-db": { status: "connected" } } as never,
+      quickConnect: [],
+      orgMcpItems: [],
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => calls.push("authorize"),
+      removeMcp: () => calls.push("remove"),
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => calls.push("enable"),
+    });
+
+    expect(row?.onConnect).toBeUndefined();
+    expect(row?.onDisconnect).toBeUndefined();
+    expect(row?.onRemove).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  test("keeps one effective same-name MCP and lets workspace scope override global", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [
+        { name: "notion", source: "config.global", config: { type: "remote", url: "https://global.test/mcp" } },
+        { name: "notion", source: "config.project", config: { type: "remote", url: "https://workspace.test/mcp" } },
+      ] as never,
+      mcpStatuses: { notion: { status: "connected" } } as never,
+      quickConnect: [],
+      orgMcpItems: [],
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.mcpSource).toBe("config.project");
+    expect(rows[0]?.url).toBe("https://workspace.test/mcp");
+  });
+
+  test("keeps an authorized organization MCP in the connected group", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [],
+      mcpStatuses: {},
+      quickConnect: [],
+      orgMcpItems: [{
+        name: "GitHub",
+        description: "Organization GitHub MCP",
+        orgMcpConnection: {
+          id: "connection-github",
+          name: "GitHub",
+          url: "https://github.example.test/mcp",
+          credentialMode: "per_member",
+          connectedForMe: true,
+          connected: false,
+          needsReconnect: true,
+          missingFeatures: [],
+        },
+      }] as never,
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.source).toBe("org");
+    expect(rows[0]?.connected).toBe(true);
+    expect(rows[0]?.key).toBe("org:connection-github");
+  });
+
+  test("does not deduplicate local and cloud MCP rows by display name", () => {
+    const rows = buildProjectConnectors({
+      mcpServers: [{ name: "github", source: "config.remote", config: { type: "remote", url: "http://localhost/mcp" } }] as never,
+      mcpStatuses: { github: { status: "connected" } } as never,
+      quickConnect: [],
+      orgMcpItems: [{
+        name: "github",
+        orgMcpConnection: {
+          id: "connection-github",
+          name: "github",
+          url: "https://github.example.test/mcp",
+          credentialMode: "shared",
+          connected: true,
+          connectedForMe: true,
+        },
+      }] as never,
+      mcpConnectingName: null,
+      orgMcpConnectingId: null,
+      orgMcpDisconnectingId: null,
+      connectDirectory: () => undefined,
+      authorizeMcp: () => undefined,
+      removeMcp: () => undefined,
+      connectOrg: () => undefined,
+      disconnectOrg: () => undefined,
+      setMcpEnabled: () => undefined,
+    });
+
+    expect(rows.map((row) => row.key)).toEqual(["installed:github", "org:connection-github"]);
+  });
 });
 
 describe("readConnectorErrorDetail", () => {
@@ -118,6 +286,7 @@ describe("readConnectorErrorDetail", () => {
 describe("buildProjectConnectors 失败详情", () => {
   const server = {
     name: "postgres",
+    source: "config.remote" as const,
     config: { type: "local" as const, command: ["uvx", "postgres-mcp"], enabled: true },
   };
 
@@ -142,7 +311,7 @@ describe("buildProjectConnectors 失败详情", () => {
   test("启动失败的已装 MCP 带上 errorDetail", () => {
     const rows = build({ postgres: { status: "failed", error: "Missing DATABASE_URI" } });
     expect(rows[0]?.errorDetail).toBe("Missing DATABASE_URI");
-    expect(rows[0]?.connected).toBe(false);
+    expect(rows[0]?.connected).toBe(true);
   });
 
   test("已连接的 MCP 不带 errorDetail", () => {
@@ -200,11 +369,11 @@ describe("buildProjectConnectors 编辑所需数据", () => {
   });
 });
 
-describe("断开语义：自定义 MCP 停用而非删除", () => {
+describe("工作区 MCP 行基础语义", () => {
   function build(config: Record<string, unknown>, statuses: Record<string, unknown> = {}) {
     const calls = { removed: [] as string[], enabled: [] as Array<[string, boolean]> };
     const rows = buildProjectConnectors({
-      mcpServers: [{ name: "mysql", config } as never],
+      mcpServers: [{ name: "mysql", source: "config.remote", config } as never],
       mcpStatuses: statuses as never,
       quickConnect: [],
       orgMcpItems: [],
@@ -223,20 +392,21 @@ describe("断开语义：自定义 MCP 停用而非删除", () => {
 
   const localConfig = { type: "local" as const, command: ["npx", "-y", "x"], enabled: true };
 
-  test("已连接的自定义 MCP：断开走停用，配置保留", () => {
+  test("已连接的自定义 MCP 不再暴露旧 enabled 断开动作", () => {
     const { row, calls } = build(localConfig, { mysql: { status: "connected" } });
     expect(row.disconnectKind).toBe("disable");
-    row.onDisconnect?.();
-    expect(calls.enabled).toEqual([["mysql", false]]);
+    expect(row.onDisconnect).toBeUndefined();
+    expect(row.workspaceScope).toBeUndefined();
+    expect(calls.enabled).toEqual([]);
     expect(calls.removed).toEqual([]);
   });
 
-  test("停用后条目仍在列表里，且可一键启用", () => {
+  test("旧配置停用条目仍在列表里但不复用软策略开关", () => {
     const { row, calls } = build({ ...localConfig, enabled: false });
     expect(row.disabled).toBe(true);
-    expect(row.connected).toBe(false);
-    row.onConnect?.();
-    expect(calls.enabled).toEqual([["mysql", true]]);
+    expect(row.connected).toBe(true);
+    expect(row.workspaceScope).toBeUndefined();
+    expect(calls.enabled).toEqual([]);
   });
 
   test("移除是独立动作，仍然真删", () => {
@@ -245,9 +415,9 @@ describe("断开语义：自定义 MCP 停用而非删除", () => {
     expect(calls.removed).toEqual(["mysql"]);
   });
 
-  test("启动失败的条目也能移除", () => {
+  test("启动失败的条目仍在已连接分组并能移除", () => {
     const { row, calls } = build(localConfig, { mysql: { status: "failed", error: "boom" } });
-    expect(row.connected).toBe(false);
+    expect(row.connected).toBe(true);
     row.onRemove?.();
     expect(calls.removed).toEqual(["mysql"]);
   });

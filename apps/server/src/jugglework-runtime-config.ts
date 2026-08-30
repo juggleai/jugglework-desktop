@@ -23,6 +23,7 @@ import {
   juggleworkOfficeAttachmentsPluginPath,
   juggleworkSafeGrepPluginPath,
   juggleworkContextOverflowPluginPath,
+  juggleworkMcpWorkspacePolicyPluginPath,
 } from "./jugglework-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -142,6 +143,7 @@ export function buildJuggleWorkRuntimeConfigObjectFromSnapshot(
       juggleworkAnthropicToolSchemaPluginPath(),
       juggleworkSafeGrepPluginPath(),
       juggleworkContextOverflowPluginPath(),
+      juggleworkMcpWorkspacePolicyPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

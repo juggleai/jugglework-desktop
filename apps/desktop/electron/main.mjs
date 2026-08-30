@@ -1955,8 +1955,8 @@ async function skillhubSearch(params = {}) {
 }
 
 /**
- * 从 SkillHub 下载技能包（ZIP）并解压安装到项目 .opencode/skills/<slug>/。
- * @param {{ projectDir?: string, namespace?: string, slug?: string, version?: string }} params
+ * 从 SkillHub 下载技能包（ZIP）并安装到指定作用域的技能目录。
+ * @param {{ projectDir?: string, namespace?: string, slug?: string, version?: string, scope?: "project" | "global" }} params
  * @returns {Promise<{ ok: boolean, installedPath?: string, skippedEntries?: string[], stdout?: string, stderr?: string, status?: number, message?: string }>}
  */
 async function skillhubInstall(params = {}) {
@@ -1964,7 +1964,8 @@ async function skillhubInstall(params = {}) {
   const namespace = String(params?.namespace ?? "").trim();
   const slug = String(params?.slug ?? "").trim();
   const version = params?.version ? String(params.version).trim() : "";
-  if (!projectDir) throw new Error("projectDir is required");
+  const scope = params?.scope === "global" ? "global" : "project";
+  if (scope === "project" && !projectDir) throw new Error("projectDir is required");
   if (!namespace || !slug) throw new Error("namespace and slug are required");
   const safeSlug = validateSkillName(slug);
 
@@ -1985,7 +1986,7 @@ async function skillhubInstall(params = {}) {
     return execResult(false, "", `Unzip failed: ${error?.message ?? String(error)}`);
   }
 
-  const skillRoot = await ensureProjectSkillRoot(projectDir);
+  const skillRoot = await ensureSkillRoot(scope, projectDir);
   const destination = path.join(skillRoot, safeSlug);
   await rm(destination, { recursive: true, force: true });
   await mkdir(destination, { recursive: true });
@@ -2090,6 +2091,20 @@ async function ensureProjectSkillRoot(projectDir) {
   }
   await mkdir(modern, { recursive: true });
   return modern;
+}
+
+/**
+ * 解析并创建技能安装根目录。
+ * @param {"project" | "global"} scope 安装作用域
+ * @param {string} projectDir 工作区目录；全局安装时忽略
+ */
+async function ensureSkillRoot(scope, projectDir) {
+  if (scope === "global") {
+    const root = path.join(globalOpencodeRoot(), "skills");
+    await mkdir(root, { recursive: true });
+    return root;
+  }
+  return ensureProjectSkillRoot(projectDir);
 }
 
 function engineDoctor(options = {}) {
@@ -2464,10 +2479,11 @@ const desktopCommandHandlers = {
       const projectDir = String(args[0] ?? "").trim();
       const sourceDir = String(args[1] ?? "").trim();
       const overwrite = args[2]?.overwrite === true;
-      if (!projectDir || !sourceDir) {
-        throw new Error("projectDir and sourceDir are required");
+      const scope = args[2]?.scope === "global" ? "global" : "project";
+      if (!sourceDir || (scope === "project" && !projectDir)) {
+        throw new Error(scope === "global" ? "sourceDir is required" : "projectDir and sourceDir are required");
       }
-      const skillRoot = await ensureProjectSkillRoot(projectDir);
+      const skillRoot = await ensureSkillRoot(scope, projectDir);
       const name = validateSkillName(path.basename(sourceDir));
       const destination = path.join(skillRoot, name);
       if (await pathExists(destination)) {

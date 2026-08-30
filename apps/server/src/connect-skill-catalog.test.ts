@@ -266,7 +266,7 @@ describe("JuggleWork Connect skill catalog", () => {
     expect(skills[0]?.name).toBe("customer-briefing");
   });
 
-  test("promotes legacy workspace jugglework-cloud config into server scope", async () => {
+  test("ignores workspace runtime copies — they carry workspace-scoped execution tokens", async () => {
     const config = await serverConfig();
     await writeRuntimeOpencodeConfig(config, "ws_legacy", (current) => ({
       ...current,
@@ -279,17 +279,13 @@ describe("JuggleWork Connect skill catalog", () => {
       },
     }));
 
-    const skills = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
-    expect(skills[0]?.capability).toBe("skill:skill_promoted");
-
-    // Second read should use the promoted host-level copy even if workspace config is cleared.
-    await writeRuntimeOpencodeConfig(config, "ws_legacy", () => ({ mcp: {} }));
-    resetJuggleWorkConnectSkillCatalogCacheForTests();
-    const again = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_promoted"));
-    expect(again[0]?.capability).toBe("skill:skill_promoted");
+    // A workspace token is filtered by that workspace's connection policy, so it
+    // cannot stand in for the account-level catalog.
+    expect(await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher("skill:skill_workspace"))).toEqual([]);
+    expect(await readConnectCloudMcp(config)).toBeNull();
   });
 
-  test("skips revoked or dead configs and promotes the first working candidate", async () => {
+  test("a dead host-level catalog config yields an empty catalog, not a workspace fallback", async () => {
     const config = await serverConfig();
     // Poisoned server-scoped copy: stale local Den URL with a revoked token.
     await writeConnectCloudMcp(config, {
@@ -318,12 +314,10 @@ describe("JuggleWork Connect skill catalog", () => {
       return working(url, init);
     };
 
-    const skills = await readJuggleWorkConnectSkillCatalog(config, fetcher);
-    expect(skills[0]?.capability).toBe("skill:skill_live");
-
-    // The working workspace config must replace the poisoned server-scoped copy.
-    const promoted = await readConnectCloudMcp(config);
-    expect(promoted?.url).toBe("https://connect.example/mcp/agent");
+    expect(await readJuggleWorkConnectSkillCatalog(config, fetcher)).toEqual([]);
+    // The host-level entry is left alone; the next maintenance tick re-mints it.
+    const kept = await readConnectCloudMcp(config);
+    expect(kept?.url).toBe("https://stale.local.test/mcp/agent");
   });
 
   test("returns empty when every candidate config is unusable", async () => {

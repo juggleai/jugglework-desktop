@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
@@ -16,6 +16,8 @@ import {
 } from "../settings-layout";
 import { SkillAvatar } from "./project-extensions/skill-avatar";
 import { SkillDetailModal } from "./project-extensions/skill-detail-modal";
+import { SkillAddMenu } from "./project-extensions/skill-add-menu";
+import { SkillHubModal } from "./project-extensions/skill-hub-modal";
 import type { SkillItem } from "./mcp-view";
 
 export type GlobalSkillsViewProps = {
@@ -27,6 +29,7 @@ export type GlobalSkillsViewProps = {
   /** 正在删除的技能名，用于按条目隔离忙碌状态。 */
   deletingSkillName?: string | null;
   onDeleteSkill: (name: string) => void | Promise<void>;
+  onUploadSkill: () => void | Promise<void>;
   onRefresh: () => void;
   /** 详情弹窗读取技能文件时使用的工作区根目录。 */
   projectDir: string;
@@ -35,6 +38,11 @@ export type GlobalSkillsViewProps = {
 export function GlobalSkillsView(props: GlobalSkillsViewProps) {
   const [detailSkill, setDetailSkill] = useState<SkillItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SkillItem | null>(null);
+  const [hubOpen, setHubOpen] = useState(false);
+  const installedSlugs = useMemo(
+    () => new Set(props.skills.map((skill) => skill.name.trim().toLowerCase())),
+    [props.skills],
+  );
 
   return (
     <>
@@ -43,30 +51,46 @@ export function GlobalSkillsView(props: GlobalSkillsViewProps) {
           <LayoutSectionHeader>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <LayoutSectionTitle>{t("settings.tab_skills")}</LayoutSectionTitle>
+                <div className="flex items-center gap-1.5">
+                  <LayoutSectionTitle>{t("settings.tab_skills")}</LayoutSectionTitle>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={props.busy}
+                    onClick={props.onRefresh}
+                    aria-label={t("common.refresh")}
+                    title={t("common.refresh")}
+                  >
+                    <RefreshCw className={props.busy ? "size-4 animate-spin" : "size-4"} />
+                  </Button>
+                </div>
                 <LayoutSectionDescription className="mt-1">
                   {t("global_skills.description")}
                 </LayoutSectionDescription>
               </div>
-              <Button variant="outline" disabled={props.busy} onClick={props.onRefresh}>
-                <RefreshCw size={14} className={props.busy ? "animate-spin" : undefined} />
-                {t("common.refresh")}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <SkillAddMenu
+                  disabled={props.busy}
+                  onUpload={props.onUploadSkill}
+                  onOpenSkillHub={() => setHubOpen(true)}
+                />
+              </div>
             </div>
           </LayoutSectionHeader>
 
           {props.skills.length > 0 ? (
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {props.skills.map((skill) => {
                 const rowDeleting = props.deletingSkillName === skill.name;
                 return (
                   <LayoutSectionItem
                     key={skill.path || skill.name}
-                    className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3"
+                    className="group relative flex-col items-stretch gap-3 rounded-2xl border border-dls-border px-4 py-3"
                   >
                     <button
                       type="button"
-                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left hover:opacity-80"
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg pr-7 text-left hover:opacity-80"
                       onClick={() => setDetailSkill(skill)}
                     >
                       <SkillAvatar name={skill.name} />
@@ -78,22 +102,18 @@ export function GlobalSkillsView(props: GlobalSkillsViewProps) {
                         <div className="truncate font-mono text-[11px] text-muted-foreground">{skill.path}</div>
                       </div>
                     </button>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                      <Button
-                        variant="outline"
-                        disabled={props.busy}
-                        onClick={() => setDetailSkill(skill)}
-                      >
-                        {t("settings.provider_view_details")}
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        disabled={props.busy || rowDeleting}
-                        onClick={() => setDeleteTarget(skill)}
-                      >
-                        {rowDeleting ? t("providers.deleting") : t("skills.uninstall")}
-                      </Button>
-                    </div>
+                    <button
+                      type="button"
+                      disabled={props.busy || rowDeleting}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setDeleteTarget(skill);
+                      }}
+                      className="absolute right-2 top-2 rounded-md bg-dls-surface p-1 text-dls-secondary opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 disabled:cursor-not-allowed group-hover:opacity-100"
+                      aria-label={t("skills.uninstall")}
+                    >
+                      {rowDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                    </button>
                   </LayoutSectionItem>
                 );
               })}
@@ -111,6 +131,14 @@ export function GlobalSkillsView(props: GlobalSkillsViewProps) {
         skill={detailSkill}
         projectDir={props.projectDir}
         onClose={() => setDetailSkill(null)}
+      />
+
+      <SkillHubModal
+        open={hubOpen}
+        scope="global"
+        installedSlugs={installedSlugs}
+        onClose={() => setHubOpen(false)}
+        onInstalled={props.onRefresh}
       />
 
       <ConfirmModal

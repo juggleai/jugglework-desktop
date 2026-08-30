@@ -63,10 +63,7 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
     () => props.connectors.filter((row) => row.connected).length,
     [props.connectors],
   );
-  const projectSkillCount = useMemo(
-    () => props.installedSkills.filter((skill) => skill.scope !== "global").length,
-    [props.installedSkills],
-  );
+  const visibleSkillCount = props.installedSkills.length;
   return (
     <div className="flex h-full w-full flex-col gap-2 overflow-y-auto px-3 py-3">
       <GroupCard
@@ -85,13 +82,14 @@ export function ProjectExtensionsPanel(props: ProjectExtensionsPanelProps) {
       <GroupCard
         title={t("project_extensions.group_skill")}
         description={t("project_extensions.skill_card_desc")}
-        count={projectSkillCount || undefined}
+        count={visibleSkillCount || undefined}
         onAdd={() => setModal("skill")}
       />
 
       <GroupCard
         title={t("project_extensions.group_plugin")}
         description={t("project_extensions.plugin_card_desc")}
+        count={props.installedMarketplacePluginCount || undefined}
         onAdd={() => setModal("plugin")}
       />
 

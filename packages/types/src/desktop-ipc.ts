@@ -668,7 +668,7 @@ export type DesktopCommandMap = {
 
   // Skills
   importSkill: {
-    args: [projectDir: string, sourceDir: string, options?: { overwrite?: boolean }];
+    args: [projectDir: string, sourceDir: string, options?: { overwrite?: boolean; scope?: "project" | "global" }];
     result: ExecResult;
   };
   installSkillTemplate: {
@@ -688,7 +688,7 @@ export type DesktopCommandMap = {
     result: SkillHubSearchResult;
   };
   skillhubInstall: {
-    args: [params: { projectDir: string; namespace: string; slug: string; version?: string }];
+    args: [params: { projectDir?: string; namespace: string; slug: string; version?: string; scope?: "project" | "global" }];
     result: SkillHubInstallResult;
   };
 
