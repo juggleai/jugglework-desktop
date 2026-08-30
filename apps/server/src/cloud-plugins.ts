@@ -76,6 +76,8 @@ export type CloudPluginResolved = {
 
 export type CloudImportedPluginFile = {
   configObjectId: string;
+  componentKey?: string;
+  serverName?: string;
   versionId: string | null;
   objectType: string;
   title: string;
@@ -98,11 +100,13 @@ export type CloudImportedPlugin = {
   updatedAt: string | null;
   files: CloudImportedPluginFile[];
   importedAt: number | null;
+  resolvedRevision?: string;
   status?: CloudPluginOperationStatus;
   repair?: CloudPluginRepairDetails;
 };
 
 export type CloudPluginOperationStatus = "installed" | "partial" | "failed" | "repair_required";
+export type CloudPluginOperation = "install" | "sync" | "remove";
 
 export type CloudPluginRollbackFailure = {
   stage: string;
@@ -110,8 +114,9 @@ export type CloudPluginRollbackFailure = {
 };
 
 export type CloudPluginRepairDetails = {
-  operation: "install" | "remove";
+  operation: CloudPluginOperation;
   cause: string;
+  conflicts: CloudPluginConflict[];
   rollbackFailures: CloudPluginRollbackFailure[];
   recordedAt: number;
 };
@@ -130,10 +135,39 @@ export type CloudPluginConflict = {
 
 export type CloudPluginInstallResult = {
   item: CloudImportedPlugin;
+  changed: boolean;
+  current: CloudImportedPlugin | null;
+  operation: Exclude<CloudPluginOperation, "remove">;
+  mutations: CloudPluginMutations;
+  refreshHints: string[];
   warnings: string[];
   status: CloudPluginOperationStatus;
   outcomes: CloudImportedPluginFile[];
   conflicts: CloudPluginConflict[];
+  cause?: string;
+  rollbackFailures?: CloudPluginRollbackFailure[];
+};
+
+export type CloudPluginMutations = {
+  filesWritten: string[];
+  filesRemoved: string[];
+  mcpUpserted: string[];
+  mcpRemoved: string[];
+  installationRecordChanged: boolean;
+  engineSynchronized: boolean;
+};
+
+export type CloudPluginRemoveResult = {
+  item: CloudImportedPlugin;
+  changed: true;
+  current: null;
+  operation: "remove";
+  mutations: CloudPluginMutations;
+  refreshHints: string[];
+  warnings: string[];
+  status: "installed";
+  outcomes: CloudImportedPluginFile[];
+  conflicts: [];
 };
 
 type CloudPluginFileWrite = {
@@ -252,7 +286,7 @@ function readOperationStatus(value: unknown): CloudPluginOperationStatus | undef
 }
 
 function readRepairDetails(value: unknown): CloudPluginRepairDetails | undefined {
-  if (!isRecord(value) || (value.operation !== "install" && value.operation !== "remove")) return undefined;
+  if (!isRecord(value) || (value.operation !== "install" && value.operation !== "sync" && value.operation !== "remove")) return undefined;
   const cause = readString(value.cause);
   const recordedAt = typeof value.recordedAt === "number" && Number.isFinite(value.recordedAt) ? value.recordedAt : null;
   if (!cause || recordedAt === null || !Array.isArray(value.rollbackFailures)) return undefined;
@@ -262,7 +296,14 @@ function readRepairDetails(value: unknown): CloudPluginRepairDetails | undefined
     const message = readString(entry.message);
     return stage && message ? [{ stage, message }] : [];
   });
-  return { operation: value.operation, cause, rollbackFailures, recordedAt };
+  const conflicts: CloudPluginConflict[] = Array.isArray(value.conflicts) ? value.conflicts.flatMap((entry): CloudPluginConflict[] => {
+    if (!isRecord(entry) || (entry.code !== "file_ownership_conflict" && entry.code !== "mcp_ownership_conflict")) return [];
+    const configObjectId = readString(entry.configObjectId);
+    const resource = readString(entry.resource);
+    const message = readString(entry.message);
+    return configObjectId && resource && message ? [{ code: entry.code, configObjectId, resource, message }] : [];
+  }) : [];
+  return { operation: value.operation, cause, conflicts, rollbackFailures, recordedAt };
 }
 
 function stableValue(value: unknown): unknown {
@@ -272,7 +313,56 @@ function stableValue(value: unknown): unknown {
 }
 
 function digestValue(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex");
+  return createHash("sha256").update(JSON.stringify(stableValue(value)) ?? "undefined").digest("hex");
+}
+
+/**
+ * 计算 resolved 插件图的确定性版本标识。
+ *
+ * TIPS：成员顺序和 JSON 对象键顺序不属于发布身份；组件图、版本 ID、原始内容、规范化载荷
+ * 以及 Cloud 投递绑定才属于。这样相同发布无论上游返回顺序如何都得到同一个 revision。
+ *
+ * @param resolved 已解析的插件图
+ * @returns SHA-256 resolved revision
+ */
+export function resolveCloudPluginRevision(resolved: CloudPluginResolved): string {
+  const memberships = resolved.memberships.map((membership) => ({
+    configObjectId: membership.configObjectId,
+    configObject: membership.configObject ? {
+      id: membership.configObject.id,
+      objectType: membership.configObject.objectType,
+      title: membership.configObject.title,
+      description: membership.configObject.description,
+      currentRelativePath: membership.configObject.currentRelativePath,
+      status: membership.configObject.status,
+      latestVersion: membership.configObject.latestVersion ? {
+        id: membership.configObject.latestVersion.id,
+        rawSourceText: membership.configObject.latestVersion.rawSourceText,
+        normalizedPayloadJson: membership.configObject.latestVersion.normalizedPayloadJson,
+      } : null,
+    } : null,
+  })).sort((left, right) => left.configObjectId.localeCompare(right.configObjectId)
+    || digestValue(left).localeCompare(digestValue(right)));
+  const readiness = resolved.plugin.cloudReadiness ? {
+    ...resolved.plugin.cloudReadiness,
+    connections: [...resolved.plugin.cloudReadiness.connections].sort((left, right) =>
+      `${left.id ?? ""}\0${left.configObjectId ?? ""}\0${left.serverName ?? ""}`
+        .localeCompare(`${right.id ?? ""}\0${right.configObjectId ?? ""}\0${right.serverName ?? ""}`)
+      || digestValue(left).localeCompare(digestValue(right))),
+    components: [...resolved.plugin.cloudReadiness.components].sort((left, right) =>
+      `${left.configObjectId}\0${left.serverName}`.localeCompare(`${right.configObjectId}\0${right.serverName}`)
+      || digestValue(left).localeCompare(digestValue(right))),
+  } : null;
+  return digestValue({
+    plugin: {
+      id: resolved.plugin.id,
+      name: resolved.plugin.name,
+      description: resolved.plugin.description,
+      updatedAt: resolved.plugin.updatedAt,
+      cloudReadiness: readiness,
+    },
+    memberships,
+  });
 }
 
 function mcpOwnershipDigest(config: Record<string, unknown>): string {
@@ -653,22 +743,22 @@ function pluginMcpConfigsFromPayload(
 ) {
   const version = object.latestVersion;
   const payload = version?.normalizedPayloadJson ?? parseJsonRecord(version?.rawSourceText ?? null);
-  if (!payload) return { configs: [], cloudHostedCount: 0 };
+  if (!payload) return { configs: [], cloudHostedNames: [] };
 
   const configs: Array<{ name: string; config: Record<string, unknown>; path: string }> = [];
-  // 云端承载的组件不落盘，但它们是"已识别"而非"配置缺失"，调用方据此决定要不要告警。
-  let cloudHostedCount = 0;
+  // 云端承载的独立 server 不落盘，但每个 server 仍需单独进入组件账本。
+  const cloudHostedNames: string[] = [];
   const addConfig = (rawName: string, rawConfig: unknown, namespaceName: boolean) => {
     const config = normalizePluginMcpConfig(rawConfig);
     if (!config) return;
+    const name = pluginMcpName(rawName, namespace, object.id, namespaceName);
     // TIPS: 只有 stdio 组件需要落到本工作区配置——远程 MCP 由云端网关承载，
     // 再写一份本地副本会让组织统一的凭据退化成各机器各自持有，也会和会话列表里的
     // 去重语义打架（同一个能力出现两条）。
     if (cloudGatewayHosted && config.type !== "local") {
-      cloudHostedCount += 1;
+      cloudHostedNames.push(name);
       return;
     }
-    const name = pluginMcpName(rawName, namespace, object.id, namespaceName);
     configs.push({
       name,
       config,
@@ -682,9 +772,9 @@ function pluginMcpConfigsFromPayload(
   if (isRecord(payload.mcpServers)) {
     for (const [name, config] of Object.entries(payload.mcpServers)) addConfig(name, config, false);
   }
-  if (configs.length === 0 && cloudHostedCount === 0) addConfig(object.title, payload, true);
+  if (configs.length === 0 && cloudHostedNames.length === 0) addConfig(object.title, payload, true);
 
-  return { configs, cloudHostedCount };
+  return { configs, cloudHostedNames: [...new Set(cloudHostedNames)].sort() };
 }
 
 function mcpNoConfigWarning(title: string): string {
@@ -724,6 +814,8 @@ function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImport
       if (!configObjectId || !objectType || !title || !path) return [];
       return [{
         configObjectId,
+        ...(readString(file.componentKey) ? { componentKey: readString(file.componentKey)! } : {}),
+        ...(readString(file.serverName) ? { serverName: readString(file.serverName)! } : {}),
         versionId: readString(file.versionId),
         objectType,
         title,
@@ -746,6 +838,7 @@ function readCloudImports(config: Record<string, unknown>): WorkspaceCloudImport
       updatedAt: readString(value.updatedAt),
       files,
       importedAt: typeof value.importedAt === "number" && Number.isFinite(value.importedAt) ? value.importedAt : null,
+      ...(readString(value.resolvedRevision) ? { resolvedRevision: readString(value.resolvedRevision)! } : {}),
       ...(readOperationStatus(value.status) ? { status: readOperationStatus(value.status) } : {}),
       ...(readRepairDetails(value.repair) ? { repair: readRepairDetails(value.repair) } : {}),
     }]];
@@ -868,6 +961,31 @@ function engineMutationForSnapshot(
     upsertNames: affectedNames.filter((name) => runtimeMcps[name] !== undefined),
     removeNames: affectedNames.filter((name) => runtimeMcps[name] === undefined),
   };
+}
+
+const CLOUD_PLUGIN_REFRESH_HINTS = [
+  "cloudPlugins",
+  "marketplace",
+  "skills",
+  "mcp",
+  "commands",
+  "agents",
+  "sessionCapabilities",
+] as const;
+
+function emptyCloudPluginMutations(): CloudPluginMutations {
+  return {
+    filesWritten: [],
+    filesRemoved: [],
+    mcpUpserted: [],
+    mcpRemoved: [],
+    installationRecordChanged: false,
+    engineSynchronized: false,
+  };
+}
+
+function sameStableValue(left: unknown, right: unknown): boolean {
+  return digestValue(left) === digestValue(right);
 }
 
 async function restoreAffectedRuntimeMcps(
@@ -999,6 +1117,7 @@ function localFileLedger(input: {
 }): CloudImportedPluginFile {
   return {
     configObjectId: input.object.id,
+    componentKey: input.object.id,
     versionId: input.object.latestVersion?.id ?? null,
     objectType: input.object.objectType,
     title: input.object.title,
@@ -1016,10 +1135,13 @@ function mcpLedger(input: {
   pluginId: string;
   object: CloudPluginConfigObject;
   name: string;
+  sourceServerName?: string;
   config: Record<string, unknown>;
 }): CloudImportedPluginFile {
   return {
     configObjectId: input.object.id,
+    componentKey: `${input.object.id}:${input.sourceServerName ?? input.name}`,
+    serverName: input.sourceServerName ?? input.name,
     versionId: input.object.latestVersion?.id ?? null,
     objectType: input.object.objectType,
     title: input.object.title,
@@ -1039,32 +1161,39 @@ function outcomeLedger(input: {
   outcome: NonNullable<CloudImportedPluginFile["outcome"]>;
   errorCode?: string;
   errorMessage?: string;
+  serverName?: string;
 }): CloudImportedPluginFile {
   const object = input.membership.configObject;
+  const componentId = object?.id ?? input.membership.configObjectId;
   return {
-    configObjectId: object?.id ?? input.membership.configObjectId,
+    configObjectId: componentId,
+    componentKey: input.serverName ? `${componentId}:${input.serverName}` : componentId,
+    ...(input.serverName ? { serverName: input.serverName } : {}),
     versionId: object?.latestVersion?.id ?? null,
     objectType: object?.objectType ?? "custom",
     title: object?.title ?? input.membership.configObjectId,
-    path: `cloud://${object?.id ?? input.membership.configObjectId}`,
+    path: input.serverName ? `cloud://${componentId}/${encodeURIComponent(input.serverName)}` : `cloud://${componentId}`,
     updatedAt: object?.updatedAt ?? null,
     delivery: "cloud",
     outcome: input.outcome,
     ownerPluginId: input.pluginId,
     ownerConfigObjectId: object?.id ?? input.membership.configObjectId,
     digest: object?.latestVersion ? digestValue(object.latestVersion) : null,
-    errorCode: input.errorCode ?? null,
-    errorMessage: input.errorMessage ?? null,
+    ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
   };
 }
 
 function cloudOutcomeForComponent(
   resolved: CloudPluginResolved,
   configObjectId: string,
+  serverName?: string,
 ): Pick<CloudImportedPluginFile, "outcome" | "errorCode" | "errorMessage"> {
   const readiness = resolved.plugin.cloudReadiness;
   const components = readiness?.components.filter((component) =>
-    component.configObjectId === configObjectId && component.delivery === "cloud"
+    component.configObjectId === configObjectId
+    && component.delivery === "cloud"
+    && (!serverName || !component.serverName || component.serverName === serverName)
   ) ?? [];
   if (components.some((component) => !component.connectedForMe && !component.connectionId)) {
     return {
@@ -1154,17 +1283,18 @@ export function buildCloudPluginDeliveryPlan(input: {
     }
     if (object.objectType === "mcp") {
       const parsed = pluginMcpConfigsFromPayload(object, namespace, input.cloudGatewayHosted === true);
-      if (parsed.configs.length === 0 && parsed.cloudHostedCount === 0) {
+      if (parsed.configs.length === 0 && parsed.cloudHostedNames.length === 0) {
         failedComponentIds.add(object.id);
         const message = mcpNoConfigWarning(object.title);
         warnings.push(message);
         outcomes.push(outcomeLedger({ pluginId, membership, outcome: "failed", errorCode: "mcp_config_missing", errorMessage: message }));
       }
-      if (parsed.cloudHostedCount > 0) {
-        const cloudOutcome = cloudOutcomeForComponent(input.resolved, object.id);
+      for (const serverName of parsed.cloudHostedNames) {
+        const cloudOutcome = cloudOutcomeForComponent(input.resolved, object.id, serverName);
         outcomes.push(outcomeLedger({
           pluginId,
           membership,
+          serverName,
           outcome: cloudOutcome.outcome!,
           ...(cloudOutcome.errorCode ? { errorCode: cloudOutcome.errorCode } : {}),
           ...(cloudOutcome.errorMessage ? { errorMessage: cloudOutcome.errorMessage } : {}),
@@ -1172,7 +1302,7 @@ export function buildCloudPluginDeliveryPlan(input: {
       }
       for (const config of parsed.configs) {
         const name = pluginMcpName(config.name, namespace, object.id, true);
-        const ledger = mcpLedger({ pluginId, object, name, config: config.config });
+        const ledger = mcpLedger({ pluginId, object, name, sourceServerName: config.name, config: config.config });
         mcpCandidates.push({ name, config: config.config, ledger });
       }
       continue;
@@ -1307,6 +1437,7 @@ export function buildCloudPluginDeliveryPlan(input: {
 async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise<CloudPluginInstallResult> {
   const cloudImports = await readInstalledCloudPlugins(input.serverConfig, input.workspaceId);
   const existing = cloudImports.plugins[input.resolved.plugin.id];
+  const operation: CloudPluginInstallResult["operation"] = existing ? "sync" : "install";
   const runtimeBefore = await readRuntimeOpencodeConfig(input.serverConfig, input.workspaceId);
   const plan = buildCloudPluginDeliveryPlan({
     resolved: input.resolved,
@@ -1317,10 +1448,12 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
 
   // 已有账本的文件若被成员修改，不再静默覆盖或删除。
   const previousByPath = new Map((existing?.files ?? []).map((entry) => [entry.path, entry]));
+  const actualFileContent = new Map<string, string | null>();
   for (const path of [...plan.fileWrites.map((entry) => entry.path), ...plan.fileRemovals]) {
     const previous = previousByPath.get(path);
     try {
       const current = await readFile(await resolveSafeWorkspaceInstallPath(input.workspaceRoot, path), "utf8");
+      actualFileContent.set(path, current);
       if (!previous || !ledgerOwns(previous, input.resolved.plugin.id) || !previous.digest || digestValue(current) !== previous.digest) {
         plan.conflicts.push({
           code: "file_ownership_conflict",
@@ -1333,6 +1466,7 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
       }
     } catch (error) {
       if (!isRecord(error) || error.code !== "ENOENT") throw error;
+      actualFileContent.set(path, null);
     }
   }
   plan.conflicts.sort((a, b) => a.resource.localeCompare(b.resource));
@@ -1352,11 +1486,25 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
     updatedAt: input.resolved.plugin.updatedAt,
     files: plan.outcomes,
     importedAt: existing?.importedAt ?? Date.now(),
+    resolvedRevision: resolveCloudPluginRevision(input.resolved),
     status: initialStatus,
   };
 
   if (plan.conflicts.length > 0) {
-    return { item: imported, warnings: plan.warnings, status: "failed", outcomes: plan.outcomes, conflicts: plan.conflicts };
+    return {
+      item: imported,
+      changed: false,
+      current: existing ?? null,
+      operation,
+      mutations: emptyCloudPluginMutations(),
+      refreshHints: [],
+      warnings: plan.warnings,
+      status: "failed",
+      outcomes: plan.outcomes,
+      conflicts: plan.conflicts,
+      cause: "Plugin resources conflict with existing or modified workspace resources.",
+      rollbackFailures: [],
+    };
   }
 
   const nextPlugins = {
@@ -1381,8 +1529,46 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
     };
   }
 
+  // TIPS：所有权校验完成后才允许把计划收缩成实际变更。仅比较版本号会漏掉成员编辑，
+  // 仅比较账本会漏掉文件丢失；这里同时比较实际文件内容和含成员 enabled 偏好的 MCP 配置。
+  plan.fileWrites = plan.fileWrites.filter((write) => {
+    const current = actualFileContent.get(write.path);
+    return current === null || current === undefined || digestValue(current) !== write.ledger.digest;
+  });
+  plan.fileRemovals = plan.fileRemovals.filter((path) => actualFileContent.get(path) !== null);
+  plan.mcpUpserts = plan.mcpUpserts.filter((upsert) => !sameStableValue(runtimeMcpMap(runtimeBefore)[upsert.name], upsert.config));
+
   const affectedPaths = [...new Set([...plan.fileWrites.map((entry) => entry.path), ...plan.fileRemovals])];
   const affectedMcpNames = [...new Set([...plan.mcpUpserts.map((entry) => entry.name), ...plan.mcpRemovals])].sort();
+  const nextCloudImports: WorkspaceCloudImports = {
+    ...cloudImports,
+    marketplaces: nextMarketplaces,
+    plugins: nextPlugins,
+  };
+  const installationRecordChanged = !sameStableValue(cloudImports, nextCloudImports);
+  const changed = affectedPaths.length > 0 || affectedMcpNames.length > 0 || installationRecordChanged;
+  const mutations: CloudPluginMutations = {
+    filesWritten: plan.fileWrites.map((entry) => entry.path),
+    filesRemoved: plan.fileRemovals,
+    mcpUpserted: plan.mcpUpserts.map((entry) => entry.name),
+    mcpRemoved: plan.mcpRemovals,
+    installationRecordChanged,
+    engineSynchronized: false,
+  };
+  if (!changed) {
+    return {
+      item: existing!,
+      changed: false,
+      current: existing!,
+      operation,
+      mutations,
+      refreshHints: [],
+      warnings: plan.warnings,
+      status: initialStatus,
+      outcomes: plan.outcomes,
+      conflicts: [],
+    };
+  }
   const fileSnapshots = new Map<string, string | null>();
   let engineMutationAttempted = false;
   for (const path of affectedPaths) {
@@ -1409,11 +1595,9 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
     }
     if (input.failAfterStage === "mcp") throw new Error("Injected cloud plugin MCP stage failure");
 
-    await writeInstalledCloudPlugins(input.serverConfig, input.workspaceId, (current) => ({
-      ...current,
-      marketplaces: nextMarketplaces,
-      plugins: nextPlugins,
-    }));
+    if (installationRecordChanged) {
+      await writeInstalledCloudPlugins(input.serverConfig, input.workspaceId, () => nextCloudImports);
+    }
     if (input.failAfterStage === "record") throw new Error("Injected cloud plugin record stage failure");
 
     if (input.synchronizeEngine && affectedMcpNames.length > 0) {
@@ -1422,6 +1606,7 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
         upsertNames: plan.mcpUpserts.map((entry) => entry.name),
         removeNames: plan.mcpRemovals,
       });
+      mutations.engineSynchronized = true;
     }
     if (input.failAfterStage === "engine") throw new Error("Injected cloud plugin engine stage failure");
   } catch (error) {
@@ -1452,8 +1637,9 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
 
     if (rollbackFailures.length > 0) {
       const repair: CloudPluginRepairDetails = {
-        operation: "install",
+        operation,
         cause: errorMessage(error),
+        conflicts: [],
         rollbackFailures,
         recordedAt: Date.now(),
       };
@@ -1472,19 +1658,37 @@ async function installCloudPluginLocked(input: CloudPluginInstallInput): Promise
       }
       throw new ApiError(500, "cloud_plugin_repair_required", "Plugin installation failed and rollback was incomplete.", {
         status: "repair_required",
+        operation,
+        current: repairItem,
         outcomes: plan.outcomes,
         cause: errorMessage(error),
+        conflicts: [],
         rollbackFailures,
       });
     }
     throw new ApiError(500, "cloud_plugin_install_failed", "Plugin installation failed and the previous state was restored.", {
       status: "failed",
+      operation,
+      current: existing ?? null,
       outcomes: plan.outcomes,
       cause: errorMessage(error),
+      conflicts: [],
+      rollbackFailures: [],
     });
   }
 
-  return { item: imported, warnings: plan.warnings, status: initialStatus, outcomes: plan.outcomes, conflicts: [] };
+  return {
+    item: imported,
+    changed: true,
+    current: imported,
+    operation,
+    mutations,
+    refreshHints: [...CLOUD_PLUGIN_REFRESH_HINTS],
+    warnings: plan.warnings,
+    status: initialStatus,
+    outcomes: plan.outcomes,
+    conflicts: [],
+  };
 }
 
 /**
@@ -1497,7 +1701,7 @@ export async function installCloudPlugin(input: CloudPluginInstallInput): Promis
   return serializeWorkspacePluginMutation(input.serverConfig, input.workspaceId, () => installCloudPluginLocked(input));
 }
 
-async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<CloudImportedPlugin> {
+async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<CloudPluginRemoveResult> {
   const cloudImports = await readInstalledCloudPlugins(input.serverConfig, input.workspaceId);
   const imported = cloudImports.plugins[input.pluginId];
   if (!imported) throw new ApiError(404, "cloud_plugin_not_installed", "Marketplace package is not installed in this workspace.");
@@ -1550,6 +1754,7 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
       repair: {
         operation: "remove" as const,
         cause: "Plugin-owned resources were modified after installation.",
+        conflicts,
         rollbackFailures: [],
         recordedAt: Date.now(),
       },
@@ -1560,7 +1765,11 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
     }));
     throw new ApiError(409, "cloud_plugin_ownership_conflict", "Plugin removal requires repair because some resources have uncertain or modified ownership.", {
       status: "repair_required",
+      operation: "remove",
+      current: repairItem,
       conflicts,
+      cause: repairItem.repair.cause,
+      rollbackFailures: [],
     });
   }
 
@@ -1575,11 +1784,15 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
   try {
     for (const path of removableFiles) await removePluginWorkspaceFile(input.workspaceRoot, path);
     if (input.failAfterStage === "files") throw new Error("Injected cloud plugin removal file stage failure");
-    await writeRuntimeOpencodeConfig(input.serverConfig, input.workspaceId, (current) => {
-      const mcp = { ...runtimeMcpMap(current) };
-      for (const name of removableMcps) delete mcp[name];
-      return { ...current, mcp };
-    });
+    if (removableMcps.length > 0) {
+      await writeRuntimeOpencodeConfig(input.serverConfig, input.workspaceId, (current) => {
+        const mcp = { ...runtimeMcpMap(current) };
+        for (const name of removableMcps) delete mcp[name];
+        if (Object.keys(mcp).length > 0) return { ...current, mcp };
+        const { mcp: _mcp, ...withoutMcp } = current;
+        return withoutMcp;
+      });
+    }
     if (input.failAfterStage === "mcp") throw new Error("Injected cloud plugin removal MCP stage failure");
     await writeInstalledCloudPlugins(input.serverConfig, input.workspaceId, (current) => ({
       ...current,
@@ -1621,6 +1834,7 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
       const repair: CloudPluginRepairDetails = {
         operation: "remove",
         cause: errorMessage(error),
+        conflicts: [],
         rollbackFailures,
         recordedAt: Date.now(),
       };
@@ -1635,17 +1849,42 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
       }
       throw new ApiError(500, "cloud_plugin_repair_required", "Plugin removal failed and rollback was incomplete.", {
         status: "repair_required",
+        operation: "remove",
+        current: repairItem,
         cause: errorMessage(error),
+        conflicts: [],
         rollbackFailures,
       });
     }
     throw new ApiError(500, "cloud_plugin_remove_failed", "Plugin removal failed and the previous state was restored.", {
       status: "failed",
+      operation: "remove",
+      current: imported,
       cause: errorMessage(error),
+      conflicts: [],
+      rollbackFailures: [],
     });
   }
 
-  return imported;
+  return {
+    item: imported,
+    changed: true,
+    current: null,
+    operation: "remove",
+    mutations: {
+      filesWritten: [],
+      filesRemoved: [...removableFiles].sort(),
+      mcpUpserted: [],
+      mcpRemoved: [...removableMcps].sort(),
+      installationRecordChanged: true,
+      engineSynchronized: Boolean(input.synchronizeEngine && removableMcps.length > 0),
+    },
+    refreshHints: [...CLOUD_PLUGIN_REFRESH_HINTS],
+    warnings: [],
+    status: "installed",
+    outcomes: imported.files,
+    conflicts: [],
+  };
 }
 
 /**
@@ -1654,6 +1893,6 @@ async function removeCloudPluginLocked(input: CloudPluginRemoveInput): Promise<C
  * @param input 插件移除上下文和实时引擎同步器
  * @returns 已移除插件的原安装记录
  */
-export async function removeCloudPlugin(input: CloudPluginRemoveInput): Promise<CloudImportedPlugin> {
+export async function removeCloudPlugin(input: CloudPluginRemoveInput): Promise<CloudPluginRemoveResult> {
   return serializeWorkspacePluginMutation(input.serverConfig, input.workspaceId, () => removeCloudPluginLocked(input));
 }

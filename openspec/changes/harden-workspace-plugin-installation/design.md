@@ -55,6 +55,18 @@ Alternative rejected: only clean removed MCP names. It leaves removed Skills, Co
 
 Install/sync/remove returns overall status (`installed`, `partial`, `failed`, `repair_required`), component outcomes, warnings, and refresh hints. The app uses these values for Toast severity and detail status instead of assuming any HTTP 2xx means complete success.
 
+### Project one canonical Marketplace lifecycle
+
+Marketplace detail derives one state from the current organization/plugin identity, active operation, resolved version, component ledger, and Cloud readiness: `not_installed`, `installing`, `current`, `update_available`, `partial`, `needs_signin`, `needs_admin`, `failed`, `repair_required`, or `removing`. State-to-action mapping is centralized. Cloud-only plugins never require a workspace install; desktop-only plugins follow the local ledger; mixed plugins combine Cloud readiness with desktop installation without treating Cloud components as missing local files.
+
+### Scope live detail and last-known-good data by identity
+
+The selected detail stores organization and plugin identity, then resolves the current plugin from live Marketplace data. Detail fetches are cached by organization, plugin, and resolved version. A refresh failure retains last-known-good data only for the same key and exposes a structured refresh error; organization or version changes cannot reuse it. Structured mutation failures also trigger authoritative refresh before the canonical state is projected.
+
+### Short-circuit an unchanged synchronization plan
+
+Synchronization compares the resolved version, component ledger, owned resource digests, and runtime MCP plan before mutation. An exact match returns `current` without file, runtime configuration, installation-record, engine synchronization, or reload effects.
+
 ## Risks / Trade-offs
 
 - [Rollback across files and engine sync can itself fail] → Persist repair-required state with snapshots and expose retry/remove repair actions.

@@ -13,6 +13,7 @@
 - **消费服务端新增的 `cloudReadiness.components`**：有该字段时以它为准；缺失时回退到已解析的配置对象 payload 自行推断，保证旧服务端下行为不退化。
 - **会话调用按承载方式分流**：选择 Cloud 托管 MCP 时生成 `search_capabilities → execute_capability` 指令并使用独立 `cloud-mcp` token；只有引擎已注册的本地 MCP 才提示直接调用 `<server>_*` 工具。
 - **会话能力列表保持紧凑**：弹层沿用现有默认宽度且不产生横向滚动；Agent、指令、技能、MCP、Extensions 与插件文件的标题和描述均限制在右侧内容列内，超长文本单行省略并保留完整悬浮提示。
+- **详情状态收敛**：按实时组织/插件身份投影规范生命周期与确定性操作；弹窗先展示用户结果，技术明细默认折叠，刷新失败保留同组织同版本的最后正确数据。
 - **BREAKING**: 无。`cloudReadiness.components` 为新增可选字段；已导入插件的本地文件记录格式不变，仅新安装的 `cloud` 组件不再落地本地配置。
 
 ## Capabilities

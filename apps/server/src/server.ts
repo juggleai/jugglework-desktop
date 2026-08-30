@@ -2123,7 +2123,7 @@ function createRoutes(
     });
     const imported = result.item;
 
-    if (result.status !== "failed") await recordAudit(workspace.path, {
+    if (result.changed && result.status !== "failed") await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
@@ -2133,7 +2133,7 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
-    for (const file of result.status === "failed" ? [] : imported.files) {
+    for (const file of !result.changed || result.status === "failed" ? [] : imported.files) {
       emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
         type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
         name: file.title,
@@ -2143,10 +2143,17 @@ function createRoutes(
 
     return jsonResponse({
       item: imported,
+      changed: result.changed,
+      current: result.current,
+      operation: result.operation,
+      mutations: result.mutations,
+      refreshHints: result.refreshHints,
       warnings: result.warnings,
       status: result.status,
       outcomes: result.outcomes,
       conflicts: result.conflicts,
+      ...(result.cause ? { cause: result.cause } : {}),
+      ...(result.rollbackFailures ? { rollbackFailures: result.rollbackFailures } : {}),
     });
   });
 
@@ -2191,7 +2198,7 @@ function createRoutes(
     });
     const imported = result.item;
 
-    if (result.status !== "failed") await recordAudit(workspace.path, {
+    if (result.changed && result.status !== "failed") await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
@@ -2201,7 +2208,7 @@ function createRoutes(
       timestamp: Date.now(),
     });
 
-    for (const file of result.status === "failed" ? [] : imported.files) {
+    for (const file of !result.changed || result.status === "failed" ? [] : imported.files) {
       emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
         type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
         name: file.title,
@@ -2212,10 +2219,17 @@ function createRoutes(
     return jsonResponse({
       item: imported,
       preview: bundle.preview,
+      changed: result.changed,
+      current: result.current,
+      operation: result.operation,
+      mutations: result.mutations,
+      refreshHints: result.refreshHints,
       warnings: result.warnings,
       status: result.status,
       outcomes: result.outcomes,
       conflicts: result.conflicts,
+      ...(result.cause ? { cause: result.cause } : {}),
+      ...(result.rollbackFailures ? { rollbackFailures: result.rollbackFailures } : {}),
     });
   });
 
@@ -2233,7 +2247,7 @@ function createRoutes(
       paths: [juggleworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
     });
 
-    const removed = await removeCloudPlugin({
+    const result = await removeCloudPlugin({
       serverConfig: config,
       workspaceId: workspace.id,
       workspaceRoot: workspace.path,
@@ -2244,8 +2258,9 @@ function createRoutes(
         engineMcpServerState,
       ),
     });
+    const removed = result.item;
 
-    await recordAudit(workspace.path, {
+    if (result.changed) await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
@@ -2265,10 +2280,15 @@ function createRoutes(
 
     return jsonResponse({
       item: removed,
-      warnings: [],
-      status: "installed",
-      outcomes: removed.files,
-      conflicts: [],
+      changed: result.changed,
+      current: result.current,
+      operation: result.operation,
+      mutations: result.mutations,
+      refreshHints: result.refreshHints,
+      warnings: result.warnings,
+      status: result.status,
+      outcomes: result.outcomes,
+      conflicts: result.conflicts,
     });
   });
 

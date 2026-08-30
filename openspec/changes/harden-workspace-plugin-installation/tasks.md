@@ -35,3 +35,11 @@
 - [x] 5.1 Add two-workspace isolation tests for install, update, remove, state preservation, and out-of-order refreshes.
 - [x] 5.2 Add mixed organization plugin end-to-end tests covering local files, local MCP, Cloud MCP, update cleanup, partial failure, rollback, retry, and removal.
 - [x] 5.3 Run Desktop Server tests/build, App tests/typecheck, OpenSpec strict validation, and `git diff --check`; record all checks green before marking complete.
+
+## 6. Canonical detail lifecycle optimization
+
+- [x] 6.1 Implement the canonical Marketplace lifecycle resolver and deterministic state-to-action mapping; cover every canonical state and unsupported workspace action.
+- [x] 6.2 Resolve open detail from live organization/plugin identity and isolate detail cache entries by organization, plugin, and resolved version.
+- [x] 6.3 Preserve same-key last-known-good detail on refresh failure, expose structured retryable failure data, and refresh authoritative state after structured mutation failures.
+- [x] 6.4 Detect an exact installed graph before mutation and prove repeated sync performs no persistence, engine synchronization, or reload effects.
+- [x] 6.5 Add Cloud-only, desktop-only, mixed, organization-switch, version-change, and refresh-failure tests; run strict OpenSpec validation and affected app/server checks.

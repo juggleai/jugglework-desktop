@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCloudPluginDeliveryPlan, installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin, type CloudPluginResolved } from "./cloud-plugins.js";
+import { buildCloudPluginDeliveryPlan, installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin, resolveCloudPluginRevision, type CloudPluginResolved } from "./cloud-plugins.js";
 import { addMcp, setMcpEnabled } from "./mcp.js";
 import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
@@ -256,7 +256,17 @@ describe("cloud plugin installs", () => {
         command: ["npx", "-y", "vision-mcp"],
       });
 
-      await removeCloudPlugin({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, pluginId: "plugin_1" });
+      const removal = await removeCloudPlugin({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, pluginId: "plugin_1" });
+      expect(removal).toMatchObject({
+        changed: true,
+        current: null,
+        operation: "remove",
+        mutations: {
+          filesRemoved: [".opencode/skills/creative-brief-plugin/brief-builder/SKILL.md"],
+          mcpRemoved: ["creative-brief-plugin-vision"],
+          installationRecordChanged: true,
+        },
+      });
       expect((await readInstalledCloudPlugins(config, WORKSPACE_ID)).plugins.plugin_1).toBeUndefined();
       // 卸载时缺少远程组件的本地文件不应导致失败或残留。
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["creative-brief-plugin-vision"]).toBeUndefined();
@@ -550,6 +560,97 @@ describe("cloud plugin installs", () => {
     expect(first.outcomes.find((entry) => entry.configObjectId === "cloud-mcp")).toMatchObject({ outcome: "available_cloud" });
   });
 
+  test("derives the same resolved revision from reordered graph and payload keys", () => {
+    const first = mixedPlugin();
+    const second = mixedPlugin();
+    second.memberships.reverse();
+    const localMcp = second.memberships.find((entry) => entry.configObjectId === "local-mcp")!.configObject!;
+    localMcp.latestVersion!.normalizedPayloadJson = {
+      mcp: { search: { enabled: true, command: ["bunx", "search-mcp"] } },
+    };
+    const firstLocalMcp = first.memberships.find((entry) => entry.configObjectId === "local-mcp")!.configObject!;
+    firstLocalMcp.latestVersion!.normalizedPayloadJson = {
+      mcp: { search: { command: ["bunx", "search-mcp"], enabled: true } },
+    };
+
+    expect(resolveCloudPluginRevision(second)).toBe(resolveCloudPluginRevision(first));
+    second.memberships[0]!.configObject!.latestVersion!.id = "different-version";
+    expect(resolveCloudPluginRevision(second)).not.toBe(resolveCloudPluginRevision(first));
+  });
+
+  test("records independent MCP servers from one component with stable ledger identities", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      const resolved = mixedPlugin();
+      const mcp = resolved.memberships.find((entry) => entry.configObjectId === "local-mcp")!.configObject!;
+      mcp.latestVersion!.normalizedPayloadJson = {
+        mcp: {
+          beta: { command: ["beta"] },
+          alpha: { command: ["alpha"] },
+        },
+      };
+      resolved.memberships = resolved.memberships.filter((entry) => entry.configObjectId === "local-mcp");
+
+      const result = await installCloudPlugin({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        marketplaceId: null,
+        resolved,
+      });
+
+      expect(result.item.files).toEqual([
+        expect.objectContaining({
+          componentKey: "local-mcp:alpha",
+          serverName: "alpha",
+          path: "opencode.jsonc#mcp.mixed-plugin-alpha",
+        }),
+        expect.objectContaining({
+          componentKey: "local-mcp:beta",
+          serverName: "beta",
+          path: "opencode.jsonc#mcp.mixed-plugin-beta",
+        }),
+      ]);
+    });
+  });
+
+  test("records independent Cloud MCP readiness per server", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      const resolved = mixedPlugin();
+      const mcp = resolved.memberships.find((entry) => entry.configObjectId === "cloud-mcp")!.configObject!;
+      mcp.latestVersion!.normalizedPayloadJson = {
+        mcp: {
+          ready: { url: "https://ready.example.com/mcp" },
+          signin: { url: "https://signin.example.com/mcp" },
+        },
+      };
+      resolved.memberships = resolved.memberships.filter((entry) => entry.configObjectId === "cloud-mcp");
+      resolved.plugin.cloudReadiness = {
+        state: "needs_signin",
+        hasInstructional: false,
+        connections: [],
+        components: [
+          { configObjectId: "cloud-mcp", serverName: "ready", delivery: "cloud", connectionId: "ready-connection", connectedForMe: true },
+          { configObjectId: "cloud-mcp", serverName: "signin", delivery: "cloud", connectionId: "signin-connection", connectedForMe: false },
+        ],
+      };
+
+      const result = await installCloudPlugin({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        marketplaceId: null,
+        resolved,
+        cloudGatewayHosted: true,
+      });
+
+      expect(result.item.files).toEqual([
+        expect.objectContaining({ serverName: "ready", outcome: "available_cloud" }),
+        expect.objectContaining({ serverName: "signin", outcome: "needs_signin" }),
+      ]);
+      expect(result.status).toBe("partial");
+    });
+  });
+
   test("accounts for a pure Cloud plugin as installed without local resources", async () => {
     await withWorkspace(async ({ root, config }) => {
       const cloud = mixedPlugin();
@@ -658,6 +759,58 @@ describe("cloud plugin installs", () => {
       await removeCloudPlugin({ serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root, pluginId: "mixed-plugin" });
       await expectMissing(newSkill);
       expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["mixed-plugin-search"]).toBeUndefined();
+    });
+  });
+
+  test("repeated exact sync does not rewrite files, runtime MCP, ledger timestamp, or engine", async () => {
+    await withWorkspace(async ({ root, config }) => {
+      let engineSyncCalls = 0;
+      const install = () => installCloudPlugin({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        marketplaceId: null,
+        resolved: mixedPlugin(),
+        cloudGatewayHosted: true,
+        synchronizeEngine: async () => {
+          engineSyncCalls += 1;
+        },
+      });
+      const first = await install();
+      const skillPath = join(root, ".opencode", "skills", "mixed-plugin", "planner", "SKILL.md");
+      const database = new Database(join(root, "runtime.sqlite"));
+      const timestamps = () => ({
+        plugin: (database.query("SELECT updated_at AS updatedAt FROM cloud_plugin_install_configs WHERE workspace_id = ?").get(WORKSPACE_ID) as { updatedAt: number }).updatedAt,
+        runtime: (database.query("SELECT updated_at AS updatedAt FROM runtime_opencode_configs WHERE workspace_id = ?").get(WORKSPACE_ID) as { updatedAt: number }).updatedAt,
+      });
+      try {
+        const before = timestamps();
+        const fileBefore = (await stat(skillPath)).mtimeMs;
+        await Bun.sleep(10);
+
+        const repeated = await install();
+
+        expect(first.changed).toBe(true);
+        expect(repeated).toMatchObject({
+          changed: false,
+          operation: "sync",
+          current: { pluginId: "mixed-plugin", resolvedRevision: first.item.resolvedRevision },
+          mutations: {
+            filesWritten: [],
+            filesRemoved: [],
+            mcpUpserted: [],
+            mcpRemoved: [],
+            installationRecordChanged: false,
+            engineSynchronized: false,
+          },
+          refreshHints: [],
+        });
+        expect(timestamps()).toEqual(before);
+        expect((await stat(skillPath)).mtimeMs).toBe(fileBefore);
+        expect(engineSyncCalls).toBe(1);
+      } finally {
+        database.close();
+      }
     });
   });
 
@@ -830,7 +983,11 @@ describe("cloud plugin installs", () => {
         code: "cloud_plugin_ownership_conflict",
         details: expect.objectContaining({
           status: "repair_required",
+          operation: "remove",
+          current: expect.objectContaining({ pluginId: "mixed-plugin", status: "repair_required" }),
+          cause: "Plugin-owned resources were modified after installation.",
           conflicts: [expect.objectContaining({ code: "mcp_ownership_conflict", resource: "mixed-plugin-search" })],
+          rollbackFailures: [],
         }),
       });
 
@@ -1278,6 +1435,10 @@ describe("cloud plugin installs", () => {
         code: "cloud_plugin_repair_required",
         details: expect.objectContaining({
           status: "repair_required",
+          operation: "remove",
+          current: expect.objectContaining({ pluginId: "mixed-plugin", status: "repair_required" }),
+          cause: "Injected cloud plugin removal record stage failure",
+          conflicts: [],
           rollbackFailures: expect.arrayContaining([
             expect.objectContaining({ stage: expect.stringMatching(/^files:/) }),
           ]),

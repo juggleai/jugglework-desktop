@@ -3,11 +3,12 @@ import * as React from "react";
 import { toast } from "@/components/ui/sonner";
 
 import type { McpDirectoryInfo } from "@/app/constants";
-import {
-  resolveCloudImportedPluginReadiness,
-  type CloudImportedPlugin,
-} from "@/app/cloud/import-state";
-import type { CloudPluginMutationResult, WorkspacePluginAccess } from "@/react-app/domains/settings/state/extensions-store";
+import type { CloudImportedPlugin } from "@/app/cloud/import-state";
+import type {
+  CloudPluginMutationResult,
+  WorkspacePluginAccess,
+  WorkspacePluginOperationState,
+} from "@/react-app/domains/settings/state/extensions-store";
 import type { PendingCloudPluginChange } from "@/app/cloud/desktop-cloud-sync";
 import { evaluateEnablement, type EnablementContext } from "@/app/enablement";
 import type {
@@ -23,7 +24,6 @@ import { t } from "@/i18n";
 import { canDisconnectNativeProviderAccount } from "@/react-app/domains/connections/native-provider-connections";
 import { ExtensionCard } from "@/react-app/design-system/extension-card";
 import { ExtensionDetailModal } from "@/react-app/design-system/extension-detail-modal";
-import { resolveMarketplaceDeliveryAction } from "@/react-app/domains/settings/connect-delivery";
 import {
   aggregatePluginDelivery,
   resolvePluginMcpComponents,
@@ -54,6 +54,15 @@ import {
   SettingsListEmptyState,
   SettingsListSearchInput,
 } from "@/react-app/domains/settings/settings-list";
+import { MarketplacePackageDetailModal } from "@/react-app/domains/settings/pages/marketplace-package-detail-modal";
+import {
+  marketplaceResolvedCacheKey,
+  resolveMarketplaceDetailResolution,
+  resolveMarketplaceDetailSelection,
+  resolveMarketplacePluginLifecycle,
+  resolveMarketplaceResolvedCache,
+  type MarketplacePluginLifecycle,
+} from "@/react-app/domains/settings/pages/marketplace-plugin-state";
 import {
   drainPendingMarketplacePlugin,
   openMarketplacePluginEvent,
@@ -72,6 +81,7 @@ type DenSettingsExtensionsStore = {
   cloudOrgMarketplacesStatus: () => string | null;
   importedCloudPlugins: () => Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: () => Record<string, PendingCloudPluginChange>;
+  marketplacePluginOperations: () => Record<string, WorkspacePluginOperationState>;
   marketplacePluginAccess: () => WorkspacePluginAccess;
   refreshCloudOrgMarketplaces: (options?: { force?: boolean }) => Promise<unknown>;
   importCloudOrgPlugin: (
@@ -101,7 +111,7 @@ function showCloudPluginMutationToast(result: CloudPluginMutationResult) {
   else toast.success(result.message, { description });
 }
 
-type MarketplacePackageRow = {
+export type MarketplacePackageRow = {
   source: "cloud";
   marketplaceId: string;
   marketplaceName: string;
@@ -115,6 +125,7 @@ type MarketplacePackageRow = {
   mcpComponents: DenPluginMcpComponent[];
   /** 按最弱环节聚合出的投递构成；无 MCP 组件时为 null。 */
   delivery: PluginDeliveryComposition | null;
+  lifecycle: MarketplacePluginLifecycle;
   searchableText: string;
 };
 
@@ -199,6 +210,8 @@ export type CloudMarketplacesViewProps = {
   uniformCardHeight?: boolean;
   /** 卡片使用中性配色，不因已安装而整块变绿。 */
   plainCards?: boolean;
+  /** 当前工作区稳定标识，用于隔离详情选择与异步解析结果。 */
+  workspaceKey: string;
 };
 
 /** 市场包是否包含技能组件。 */
@@ -246,30 +259,20 @@ function pluginManifestSearchText(plugin: DenOrgPlugin) {
   ].join(" ");
 }
 
-function pluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgPlugin): MarketplacePackageStatus {
-  if (!imported) return "available";
-  if (imported.status === "installed") return imported.updatedAt === plugin.updatedAt ? "installed" : "update_available";
-  if (imported.status === "partial" || imported.status === "failed" || imported.status === "repair_required") {
-    return "update_available";
-  }
-  const importedObjectCount = new Set(imported.files.map((file) => file.configObjectId)).size;
-  if (imported.updatedAt !== plugin.updatedAt || importedObjectCount !== plugin.memberCount) return "update_available";
+function marketplaceListStatus(lifecycle: MarketplacePluginLifecycle): MarketplacePackageStatus {
+  if (lifecycle.state === "not_installed") return "available";
+  if (lifecycle.state === "update_available") return "update_available";
   return "installed";
 }
 
-function pluginReadinessLabel(row: MarketplacePackageRow): string | null {
-  if (row.imported?.status === "repair_required") return t("marketplace.plugin_status_repair_required");
-  if (row.imported?.status === "failed") return t("marketplace.plugin_status_failed");
-  if (row.imported?.status === "partial") return t("marketplace.plugin_status_partial");
-  const persistedReadiness = resolveCloudImportedPluginReadiness(row.imported?.files ?? []);
-  if (persistedReadiness === "needs_signin") return t("marketplace.plugin_status_needs_signin");
-  if (persistedReadiness === "needs_admin_setup") return t("marketplace.plugin_status_needs_admin");
-  switch (row.plugin.cloudReadiness?.state) {
-    case "needs_signin": return t("marketplace.plugin_status_needs_signin");
-    case "needs_admin_setup": return t("marketplace.plugin_status_needs_admin");
-    case "not_synced": return t("marketplace.plugin_status_not_synced");
-    default: return null;
-  }
+function marketplaceLifecycleLabel(lifecycle: MarketplacePluginLifecycle): string {
+  return t(`marketplace.lifecycle_${lifecycle.state}`);
+}
+
+function marketplaceRowKey(row: MarketplaceRow): string {
+  if (row.source === "cloud") return `cloud:${row.marketplaceId}:${row.plugin.id}`;
+  if (row.source === "built-in") return `built-in:${row.entry.id ?? row.entry.serverName ?? row.entry.name}`;
+  return `org-mcp:${row.connection.id}`;
 }
 
 export function CloudMarketplacesView({
@@ -297,6 +300,7 @@ export function CloudMarketplacesView({
   hideMarketplaceFilter = false,
   uniformCardHeight = false,
   plainCards = false,
+  workspaceKey,
 }: CloudMarketplacesViewProps) {
   const { activeOrganization: activeOrg, authToken, client, isSignedIn, user } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -311,10 +315,16 @@ export function CloudMarketplacesView({
   };
   const [statusFilter, setStatusFilter] = React.useState<MarketplaceStatusFilter>("all");
   const [marketplaceFilter, setMarketplaceFilter] = React.useState("all");
-  const [detailRow, setDetailRow] = React.useState<MarketplaceRow | null>(null);
+  const [detailSelection, setDetailSelection] = React.useState<{
+    rowKey: string;
+    organizationId: string;
+    workspaceKey: string;
+  } | null>(null);
   const [resolvedPlugins, setResolvedPlugins] = React.useState<Record<string, DenOrgPluginResolved>>({});
-  const [detailLoadingId, setDetailLoadingId] = React.useState<string | null>(null);
-  const [detailError, setDetailError] = React.useState<string | null>(null);
+  const [detailLoadingKey, setDetailLoadingKey] = React.useState<string | null>(null);
+  const [detailError, setDetailError] = React.useState<{ key: string; message: string } | null>(null);
+  const [detailRetryRequest, setDetailRetryRequest] = React.useState<{ key: string; sequence: number } | null>(null);
+  const detailRequestsRef = React.useRef(new Set<string>());
   const [highlightPluginName, setHighlightPluginName] = React.useState<string | null>(null);
   const activeOrgId = activeOrg?.id ?? "";
   const canShowRows = shouldShowMarketplaceRows(isSignedIn, activeOrgId);
@@ -342,6 +352,7 @@ export function CloudMarketplacesView({
   const marketplaces = extensions.cloudOrgMarketplaces();
   const importedPlugins = extensions.importedCloudPlugins();
   const pendingChanges = extensions.pendingCloudPluginChanges();
+  const marketplacePluginOperations = extensions.marketplacePluginOperations();
   const marketplacePluginAccess = extensions.marketplacePluginAccess();
   const marketplacePluginAccessHint = workspacePluginAccessMessage(marketplacePluginAccess);
   const extensionItemsByBuiltInId = React.useMemo(() => new Map(
@@ -350,7 +361,8 @@ export function CloudMarketplacesView({
   const extensionItemsByPluginId = React.useMemo(() => new Map(
     extensionItems.flatMap((item) => item.plugin ? [[item.plugin.id, item] as const] : []),
   ), [extensionItems]);
-  const lastRowsRef = React.useRef<MarketplaceRow[]>([]);
+  const rowContextKey = `${activeOrgId}:${workspaceKey}`;
+  const lastRowsRef = React.useRef<{ contextKey: string; rows: MarketplaceRow[] }>({ contextKey: rowContextKey, rows: [] });
   const cloudRows = React.useMemo<MarketplacePackageRow[]>(() => {
     return marketplaces.flatMap((marketplace) => marketplace.plugins.flatMap((plugin) => {
       if (!includeCloudMarketplaceRows) return [];
@@ -358,13 +370,22 @@ export function CloudMarketplacesView({
       const imported = importedPlugins[plugin.id] ?? null;
       const composition = pluginComposition(plugin);
       const counts = pluginCounts(plugin);
-      // 列表阶段只有插件摘要，没有配置对象 payload，因此这里只用服务端下发的明细；
-      // 详情弹窗拿到 resolved 后会再补一次推断。
-      const mcpComponents = resolvePluginMcpComponents(plugin);
+      // TIPS: 详情解析完成后列表也立即复用同一发布版本的数据，避免卡片与弹窗投递语义不一致。
+      const resolved = resolvedPlugins[marketplaceResolvedCacheKey(activeOrgId, plugin)] ?? null;
+      const mcpComponents = resolvePluginMcpComponents(plugin, resolved);
       const item = extensionItemsByPluginId.get(plugin.id);
-      const status: MarketplacePackageStatus = imported && pendingChanges[plugin.id] === "modified" && !isCloudBuiltInPlugin(plugin)
-        ? "update_available"
-        : item?.installState ?? (isCloudBuiltInPlugin(plugin) ? "installed" : pluginStatus(imported, plugin));
+      const operation = marketplacePluginOperations[plugin.id];
+      const lifecycle = resolveMarketplacePluginLifecycle({
+        plugin,
+        imported,
+        pendingChange: pendingChanges[plugin.id],
+        components: mcpComponents,
+        operation: operation?.state ?? null,
+        operationError: operation?.message ?? null,
+        failedOperation: operation?.operation ?? null,
+      });
+      const status: MarketplacePackageStatus = item?.installState
+        ?? (isCloudBuiltInPlugin(plugin) ? "installed" : marketplaceListStatus(lifecycle));
       return [{
         source: "cloud",
         marketplaceId: marketplace.marketplace.id,
@@ -377,6 +398,7 @@ export function CloudMarketplacesView({
         composition,
         mcpComponents,
         delivery: aggregatePluginDelivery(mcpComponents),
+        lifecycle,
         searchableText: [
           plugin.name,
           plugin.description ?? "",
@@ -387,7 +409,7 @@ export function CloudMarketplacesView({
         ].join(" ").toLowerCase(),
       }];
     }));
-  }, [extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplaces, pendingChanges, skillsOnly]);
+  }, [activeOrgId, extensionItemsByPluginId, importedPlugins, includeCloudMarketplaceRows, marketplacePluginOperations, marketplaces, pendingChanges, resolvedPlugins, skillsOnly]);
 
   const builtInRows = React.useMemo<BuiltInMarketplaceRow[]>(() => {
     return builtInEntries.map((entry) => {
@@ -443,20 +465,27 @@ export function CloudMarketplacesView({
   );
 
   React.useEffect(() => {
-    if (detailRow?.source !== "org-mcp") return;
-    const current = orgMcpRows.find((row) => row.connection.id === detailRow.connection.id);
-    if (!current) {
-      setDetailRow(null);
-      return;
-    }
-    if (current.item !== detailRow.item) setDetailRow(current);
-  }, [detailRow, orgMcpRows]);
+    if (rows.length > 0) lastRowsRef.current = { contextKey: rowContextKey, rows };
+  }, [rowContextKey, rows]);
+
+  const displayRows = rows.length > 0
+    ? rows
+    : busy && lastRowsRef.current.contextKey === rowContextKey ? lastRowsRef.current.rows : rows;
+
+  // TIPS: 详情只保存稳定身份；每次渲染都从当前工作区/组织的最新 rows 派生，安装结果可立即反映。
+  const detailRow = React.useMemo(() => resolveMarketplaceDetailSelection(
+    rows,
+    detailSelection,
+    { organizationId: activeOrgId, workspaceKey },
+    marketplaceRowKey,
+  ), [activeOrgId, detailSelection, rows, workspaceKey]);
 
   React.useEffect(() => {
-    if (rows.length > 0) lastRowsRef.current = rows;
-  }, [rows]);
-
-  const displayRows = rows.length > 0 ? rows : busy ? lastRowsRef.current : rows;
+    if (!detailSelection) return;
+    if (detailSelection.organizationId !== activeOrgId || detailSelection.workspaceKey !== workspaceKey || !detailRow) {
+      setDetailSelection(null);
+    }
+  }, [activeOrgId, detailRow, detailSelection, workspaceKey]);
 
   const marketplaceOptions = React.useMemo(
     () => canShowRows ? [
@@ -516,27 +545,44 @@ export function CloudMarketplacesView({
 
   React.useEffect(() => {
     if (!detailRow || detailRow.source !== "cloud" || !isSignedIn || !activeOrgId) return;
-    if (resolvedPlugins[detailRow.plugin.id]) return;
+    const cacheKey = marketplaceResolvedCacheKey(activeOrgId, detailRow.plugin);
+    const retrySequence = detailRetryRequest?.key === cacheKey ? detailRetryRequest.sequence : 0;
+    const requestKey = `${cacheKey}:${retrySequence}`;
+    if (resolvedPlugins[cacheKey] && retrySequence === 0) return;
+    if (detailRequestsRef.current.has(requestKey)) return;
+    detailRequestsRef.current.add(requestKey);
 
     let cancelled = false;
-    setDetailLoadingId(detailRow.plugin.id);
-    setDetailError(null);
+    setDetailLoadingKey(cacheKey);
+    setDetailError((current) => current?.key === cacheKey ? null : current);
     void client.getOrgPluginResolved(activeOrgId, detailRow.plugin)
       .then((resolved) => {
         if (cancelled) return;
-        setResolvedPlugins((current) => ({ ...current, [detailRow.plugin.id]: resolved }));
+        setResolvedPlugins((current) => ({ ...current, [cacheKey]: resolved }));
       })
       .catch((error) => {
         if (cancelled) return;
-        setDetailError(error instanceof Error ? error.message : "Failed to load extension composition.");
+        setDetailError({
+          key: cacheKey,
+          message: error instanceof Error ? error.message : t("marketplace.load_contents_failed"),
+        });
       })
       .finally(() => {
-        if (!cancelled) setDetailLoadingId(null);
+        if (!cancelled) setDetailLoadingKey(null);
       });
     return () => {
       cancelled = true;
+      detailRequestsRef.current.delete(requestKey);
     };
-  }, [activeOrgId, client, detailRow, isSignedIn, resolvedPlugins]);
+  }, [activeOrgId, client, detailRetryRequest, detailRow, isSignedIn, resolvedPlugins]);
+
+  const retryDetailResolution = React.useCallback((plugin: DenOrgPlugin) => {
+    const key = marketplaceResolvedCacheKey(activeOrgId, plugin);
+    setDetailRetryRequest((current) => ({
+      key,
+      sequence: current?.key === key ? current.sequence + 1 : 1,
+    }));
+  }, [activeOrgId]);
 
   const removePlugin = React.useCallback(
     async (pluginId: string, pluginName: string) => {
@@ -552,7 +598,7 @@ export function CloudMarketplacesView({
           setActionError(result.message);
           return;
         }
-        setDetailRow(null);
+        setDetailSelection(null);
       } catch (error) {
         setActionError(error instanceof Error ? error.message : `Failed to remove ${pluginName}.`);
       } finally {
@@ -723,7 +769,11 @@ export function CloudMarketplacesView({
                 key={row.source === "cloud" ? `${row.marketplaceId}:${row.plugin.id}` : row.source === "built-in" ? `${row.marketplaceId}:${row.entry.id ?? row.entry.name}` : row.item.id}
                 actionId={actionId}
                 row={row}
-                onOpenDetail={setDetailRow}
+                onOpenDetail={(selectedRow) => setDetailSelection({
+                  rowKey: marketplaceRowKey(selectedRow),
+                  organizationId: activeOrgId,
+                  workspaceKey,
+                })}
                 orgMcpConnectingId={orgMcpConnectingId}
                 orgMcpDisconnectingId={orgMcpDisconnectingId}
                 onDisconnectOrgMcp={onDisconnectOrgMcp}
@@ -738,20 +788,51 @@ export function CloudMarketplacesView({
       ) : null}
 
       {detailRow?.source === "cloud" ? (
-        <MarketplacePackageDetailModal
-          actionId={actionId}
-          row={detailRow}
-          resolved={resolvedPlugins[detailRow.plugin.id] ?? null}
-          resolving={detailLoadingId === detailRow.plugin.id}
-          resolveError={detailError}
-          orgMcpConnections={orgMcpConnections}
-          orgMcpConnectingId={orgMcpConnectingId}
-          onClose={() => setDetailRow(null)}
-          onConnectOrgMcp={onConnectOrgMcp}
-          onRemovePlugin={removePlugin}
-          onInstallPlugin={installPlugin}
-          marketplacePluginAccess={marketplacePluginAccess}
-        />
+        (() => {
+          const cacheKey = marketplaceResolvedCacheKey(activeOrgId, detailRow.plugin);
+          const resolvedCache = resolveMarketplaceResolvedCache(resolvedPlugins, activeOrgId, detailRow.plugin);
+          const currentResolveError = detailError?.key === cacheKey ? detailError.message : null;
+          const resolving = detailLoadingKey === cacheKey || (!resolvedCache.current && !currentResolveError);
+          const resolutionState = resolveMarketplaceDetailResolution({
+            hasCurrent: Boolean(resolvedCache.current),
+            hasLastKnownGood: Boolean(resolvedCache.lastKnownGood),
+            resolving,
+            hasError: Boolean(currentResolveError),
+          });
+          const operation = marketplacePluginOperations[detailRow.plugin.id];
+          return (
+            <MarketplacePackageDetailModal
+              row={detailRow}
+              lifecycle={resolveMarketplacePluginLifecycle({
+                plugin: detailRow.plugin,
+                imported: detailRow.imported,
+                pendingChange: pendingChanges[detailRow.plugin.id],
+                components: resolvePluginMcpComponents(
+                  detailRow.plugin,
+                  resolvedCache.current,
+                ),
+                resolvedConfigObjectIds: resolvedCache.current
+                  ?.memberships.flatMap((membership) => membership.configObject ? [membership.configObject.id] : []) ?? null,
+                operation: operation?.state ?? null,
+                operationError: operation?.message ?? null,
+                failedOperation: operation?.operation ?? null,
+              })}
+              resolved={resolvedCache.lastKnownGood}
+              resolutionState={resolutionState}
+              resolveError={currentResolveError}
+              orgMcpConnections={orgMcpConnections}
+              orgMcpConnectingId={orgMcpConnectingId}
+              onClose={() => setDetailSelection(null)}
+              onOpenAccount={onOpenAccount}
+              onConnectOrgMcp={onConnectOrgMcp}
+              onRemovePlugin={removePlugin}
+              onInstallPlugin={installPlugin}
+              onRetryResolve={() => retryDetailResolution(detailRow.plugin)}
+              accessHint={marketplacePluginAccessHint}
+              canMutate={marketplacePluginAccess.allowed}
+            />
+          );
+        })()
       ) : detailRow?.source === "built-in" ? (
         <BuiltInMarketplaceDetailModal
           row={detailRow}
@@ -759,14 +840,14 @@ export function CloudMarketplacesView({
           connecting={builtInConnectingName === detailRow.entry.name}
           configSlot={configSlotForBuiltIn?.(detailRow.entry) ?? null}
           onSetEnabled={setBuiltInEnabled}
-          onClose={() => setDetailRow(null)}
+          onClose={() => setDetailSelection(null)}
         />
       ) : detailRow?.source === "org-mcp" ? (
         <OrgMcpConnectionDetailModal
           row={detailRow}
           connecting={orgMcpConnectingId === detailRow.connection.id}
           disconnecting={orgMcpDisconnectingId === detailRow.connection.id}
-          onClose={() => setDetailRow(null)}
+          onClose={() => setDetailSelection(null)}
           onConnect={onConnectOrgMcp}
           onDisconnect={onDisconnectOrgMcp}
         />
@@ -783,19 +864,6 @@ export function CloudMarketplacesView({
   );
 }
 
-function marketplaceDeliveryLabel(action: ReturnType<typeof resolveMarketplaceDeliveryAction>) {
-  switch (action) {
-    case "cloud_active_local_copy":
-      return t("connect.marketplace_local_copy_badge");
-    case "desktop_install_required":
-      return t("marketplace.delivery_desktop_required");
-    case "mixed_partial_desktop":
-      return t("marketplace.delivery_partial_desktop");
-    default:
-      return t("extensions.marketplace_active_cloud_label");
-  }
-}
-
 /** 组成明细：`3 MCP · 1 云端 · 2 需本地`，只在含 MCP 组件时展示。 */
 function deliveryCompositionSummary(delivery: PluginDeliveryComposition | null) {
   if (!delivery) return null;
@@ -804,13 +872,6 @@ function deliveryCompositionSummary(delivery: PluginDeliveryComposition | null) 
     cloud: delivery.cloudCount,
     desktop: delivery.desktopCount,
   });
-}
-
-/** 组件行的承载位置文案。 */
-function componentDeliveryLabel(component: DenPluginMcpComponent) {
-  return component.delivery === "cloud"
-    ? t("marketplace.delivery_component_cloud")
-    : t("marketplace.delivery_component_desktop");
 }
 
 function MarketplaceCard(props: {
@@ -902,15 +963,9 @@ function MarketplaceCard(props: {
   const actionBusy = actionId === row.plugin.id;
   const manifest = row.plugin.extension?.manifest;
   const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
-  const deliveryAction = resolveMarketplaceDeliveryAction({
-    importedLocally: Boolean(row.imported),
-    composition: row.delivery,
-  });
-  const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
-  const readinessLabel = pluginReadinessLabel(row);
-  // TIPS: 含 desktop 组件的插件在装到工作区之前用不了，卡片不能呈现为「已就绪」。
-  const cloudReady = deliveryAction === "cloud_active" || deliveryAction === "cloud_active_local_copy";
+  const lifecycle = row.lifecycle;
   const compositionSummary = deliveryCompositionSummary(row.delivery);
+  const current = lifecycle.state === "current";
 
   return (
     <div ref={highlightRef} className={`flex flex-col gap-2 ${highlightClass}`}>
@@ -920,14 +975,12 @@ function MarketplaceCard(props: {
         iconSlug={manifest?.icon?.simpleIconSlug}
         iconSrc={manifest?.icon?.src}
         kind="extension"
-        connected={cloudBuiltIn || (cloudReady && !readinessLabel)}
-        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : readinessLabel ?? deliveryLabel}
+        connected={cloudBuiltIn || current}
+        connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : marketplaceLifecycleLabel(lifecycle)}
         connecting={actionBusy}
         actionLabel={cloudBuiltIn
           ? t("mcp.view_details")
-          : compositionSummary ?? (deliveryAction === "cloud_active_local_copy"
-            ? t("connect.marketplace_local_copy_badge")
-            : t("extensions.marketplace_runs_in_cloud"))}
+          : compositionSummary ?? t(`marketplace.delivery_${lifecycle.delivery}`)}
         plain={props.plain}
         onClick={() => onOpenDetail(row)}
       />
@@ -1016,263 +1069,6 @@ function OrgMcpConnectionDetailModal(props: {
           <SettingsNotice>
             {t("marketplace.org_signin_note")}
           </SettingsNotice>
-        </div>
-      )}
-    />
-  );
-}
-
-function MarketplacePackageDetailModal(props: {
-  actionId: string | null;
-  row: MarketplacePackageRow;
-  resolved: DenOrgPluginResolved | null;
-  resolving: boolean;
-  resolveError: string | null;
-  orgMcpConnections: DenExternalMcpConnection[];
-  orgMcpConnectingId: string | null;
-  onClose: () => void;
-  onConnectOrgMcp?: (connectionId: string) => void;
-  onRemovePlugin: (pluginId: string, pluginName: string) => void | Promise<void>;
-  onInstallPlugin: (marketplaceId: string, plugin: DenOrgPlugin) => void | Promise<void>;
-  marketplacePluginAccess: WorkspacePluginAccess;
-}) {
-  const {
-    actionId,
-    row,
-    resolved,
-    resolving,
-    resolveError,
-    orgMcpConnections,
-    orgMcpConnectingId,
-    onClose,
-    onConnectOrgMcp,
-    onRemovePlugin,
-    onInstallPlugin,
-    marketplacePluginAccess,
-  } = props;
-  const actionBusy = actionId === row.plugin.id;
-  const accessHint = workspacePluginAccessMessage(marketplacePluginAccess);
-  const cloudBuiltIn = isCloudBuiltInPlugin(row.plugin);
-  const manifest = row.plugin.extension?.manifest;
-  // 详情里已经拿到 resolved，缺 components 的旧服务端在这里也能推断出承载方式。
-  const mcpComponents = resolvePluginMcpComponents(row.plugin, resolved);
-  const delivery = aggregatePluginDelivery(mcpComponents);
-  const deliveryAction = resolveMarketplaceDeliveryAction({
-    importedLocally: Boolean(row.imported),
-    composition: delivery,
-  });
-  const deliveryLabel = marketplaceDeliveryLabel(deliveryAction);
-  const readinessLabel = pluginReadinessLabel(row);
-  // 已落盘的组件按 configObjectId 记账，用于逐行判断"这个组件装了没有"。
-  const installedConfigObjectIds = new Set(row.imported?.files.map((file) => file.configObjectId) ?? []);
-  const importedExternalConnectionIds = row.imported?.files.flatMap((file) => file.externalMcpConnectionId ? [file.externalMcpConnectionId] : []) ?? [];
-  const importedConnections = [...new Set(importedExternalConnectionIds)].flatMap((connectionId) => {
-    const connection = orgMcpConnections.find((entry) => entry.id === connectionId);
-    return connection ? [connection] : [];
-  });
-  const missingImportedConnectionCount = new Set(importedExternalConnectionIds).size - importedConnections.length;
-
-  return (
-    <ExtensionDetailModal
-      open
-      onClose={onClose}
-      name={row.plugin.name}
-      description={row.plugin.description || t("marketplace.no_description")}
-      iconSlug={manifest?.icon?.simpleIconSlug}
-      iconSrc={manifest?.icon?.src}
-      kind="extension"
-      connected={cloudBuiltIn || !readinessLabel}
-      connectedLabel={cloudBuiltIn ? t("marketplace.built_in") : readinessLabel ?? deliveryLabel}
-      connecting={actionBusy}
-      connectLabel={deliveryAction === "cloud_active_local_copy" ? t("connect.marketplace_local_copy_badge") : t("extensions.marketplace_runs_in_cloud")}
-      connectingLabel={t("marketplace.working")}
-      uninstallLabel={t("marketplace.remove")}
-      showEnablementCard={false}
-      setupInstructions={manifest?.setup?.instructions}
-      resourceLabels={manifest?.resources.map((resource) => resource.label ?? resource.id) ?? []}
-      contributionLabels={manifest?.contributions?.map((contribution) => contribution.label ?? contribution.ref ?? contribution.type) ?? []}
-      onUninstall={!cloudBuiltIn && row.imported && marketplacePluginAccess.allowed ? () => void onRemovePlugin(row.plugin.id, row.plugin.name) : undefined}
-      configSlot={(
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <SettingsPill>
-              {cloudBuiltIn ? t("marketplace.built_in") : deliveryLabel}
-            </SettingsPill>
-            <SettingsPill>{row.marketplaceName}</SettingsPill>
-            {readinessLabel ? <SettingsPill>{readinessLabel}</SettingsPill> : null}
-            {row.counts.map((label) => <SettingsPill key={label}>{label}</SettingsPill>)}
-          </div>
-          {!cloudBuiltIn ? (
-            <div className="space-y-2">
-              <Button
-                size="sm"
-                disabled={actionBusy || !marketplacePluginAccess.allowed}
-                onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
-              >
-                {actionBusy ? t("marketplace.working") : row.imported ? t("marketplace.sync_to_workspace") : t("marketplace.install_in_workspace")}
-              </Button>
-              {accessHint ? <SettingsNotice>{accessHint}</SettingsNotice> : null}
-            </div>
-          ) : null}
-          {row.imported?.files.some((file) => file.errorMessage) ? (
-            <SettingsNotice>
-              {row.imported.files.flatMap((file) => file.errorMessage ? [`${file.title}: ${file.errorMessage}`] : []).join("\n")}
-            </SettingsNotice>
-          ) : null}
-          {deliveryAction === "cloud_active_local_copy" ? (
-            <SettingsNotice>{t("connect.marketplace_local_copy_note")}</SettingsNotice>
-          ) : null}
-          <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.composition")}</div>
-            <div className="mt-2 grid gap-2">
-              {row.composition.map((entry) => (
-                <div key={entry.type} className="flex items-center justify-between text-sm">
-                  <span className="capitalize text-card-foreground">{entry.label}</span>
-                  <span className="rounded-full bg-dls-surface px-2 py-0.5 text-xs font-medium text-muted-foreground">{entry.count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          {/* TIPS: 混合插件靠整插件一个状态说不清哪一部分不可用，这里按 MCP server 逐行展开，
-              云端组件与需要本地安装的组件各自标注，操作入口跟着行走。 */}
-          {mcpComponents.length > 0 ? (
-            <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                {t("marketplace.delivery_components_title")}
-              </div>
-              <div className="mt-2 grid gap-2">
-                {mcpComponents.map((component) => {
-                  const installed = installedConfigObjectIds.has(component.configObjectId);
-                  const needsInstall = component.delivery === "desktop" && !installed;
-                  // 云端组件绑定到组织连接、但当前成员还没授权时，给一个定向授权入口。
-                  const needsMemberAuth = component.delivery === "cloud"
-                    && Boolean(component.connectionId)
-                    && component.connectedForMe === false;
-                  return (
-                    <div
-                      key={`${component.configObjectId}:${component.serverName}`}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dls-border bg-dls-surface px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-card-foreground">
-                          {component.serverName || row.plugin.name}
-                        </div>
-                        <div className="truncate text-xs text-muted-foreground">
-                          {component.url ?? component.command?.join(" ") ?? ""}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <SettingsPill>{componentDeliveryLabel(component)}</SettingsPill>
-                        {needsInstall ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            disabled={actionBusy || !marketplacePluginAccess.allowed}
-                            onClick={() => void onInstallPlugin(row.marketplaceId, row.plugin)}
-                          >
-                            {actionBusy ? t("marketplace.working") : t("marketplace.install_in_workspace")}
-                          </Button>
-                        ) : component.delivery === "desktop" ? (
-                          <SettingsPill>{t("marketplace.delivery_component_installed")}</SettingsPill>
-                        ) : needsMemberAuth && onConnectOrgMcp && component.connectionId ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            disabled={orgMcpConnectingId === component.connectionId}
-                            onClick={() => onConnectOrgMcp(component.connectionId as string)}
-                          >
-                            {orgMcpConnectingId === component.connectionId
-                              ? t("mcp.waiting_for_browser")
-                              : t("marketplace.delivery_component_connect")}
-                          </Button>
-                        ) : component.delivery === "cloud" && component.connectionId && component.connectedForMe ? (
-                          <SettingsPill>{t("marketplace.delivery_component_ready")}</SettingsPill>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-          {resolveError ? (
-            <SettingsNotice tone="error">{resolveError}</SettingsNotice>
-          ) : null}
-          {resolving ? (
-            <SettingsNotice>{t("marketplace.loading_contents")}</SettingsNotice>
-          ) : null}
-          {missingImportedConnectionCount > 0 ? (
-            <SettingsNotice tone="error">
-              You do not have access to {missingImportedConnectionCount === 1 ? "one required MCP connection" : `${missingImportedConnectionCount} required MCP connections`}. Ask an admin to update the connection sharing settings.
-            </SettingsNotice>
-          ) : null}
-          {importedConnections.length > 0 ? (
-            <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.cloud_mcp_connections")}</div>
-              <div className="mt-3 grid gap-2">
-                {importedConnections.map((connection) => {
-                  const ready = isOrgMcpConnectionReady(connection);
-                  const needsMemberConnect = connection.credentialMode === "per_member" && !connection.connectedForMe;
-                  const connecting = orgMcpConnectingId === connection.id;
-                  return (
-                    <div key={connection.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dls-border bg-dls-surface px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium text-card-foreground">{connection.name}</div>
-                        <div className="truncate text-xs text-muted-foreground">{connection.url}</div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <SettingsPill>{ready ? "Ready" : needsMemberConnect ? "Needs setup" : "Waiting for admin"}</SettingsPill>
-                        {needsMemberConnect && onConnectOrgMcp ? (
-                          <Button
-                            size="xs"
-                            variant="outline"
-                            disabled={connecting}
-                            onClick={() => onConnectOrgMcp(connection.id)}
-                          >
-                            {connecting ? t("mcp.waiting_for_browser") : "Connect account"}
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-          {resolved ? (
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("marketplace.extension_contents")}</div>
-              {resolved.memberships.length > 0 ? resolved.memberships.map((membership) => {
-                const object = membership.configObject;
-                const version = object?.latestVersion ?? null;
-                if (!object) return null;
-                const preview = version?.rawSourceText?.trim().slice(0, 600) ?? "";
-                return (
-                  <details key={membership.id} className="rounded-xl border border-dls-border bg-dls-surface px-3 py-2">
-                    <summary className="cursor-pointer text-sm font-medium text-card-foreground">
-                      <span className="uppercase text-[10px] tracking-[0.12em] text-muted-foreground">{object.objectType}</span> {object.title}
-                    </summary>
-                    <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-                      {object.description ? <div>{object.description}</div> : null}
-                      {object.currentRelativePath ? <div className="font-mono">{object.currentRelativePath}</div> : null}
-                      {preview ? (
-                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-dls-hover p-2 font-mono text-[11px] text-card-foreground">
-                          {preview}
-                        </pre>
-                      ) : null}
-                    </div>
-                  </details>
-                );
-              }) : (
-                <SettingsNotice>{t("marketplace.no_detailed_contents")}</SettingsNotice>
-              )}
-            </div>
-          ) : null}
-          {row.imported?.files.length ? (
-            <div className="rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-xs text-muted-foreground">
-              Installed files: {row.imported.files.map((file) => `${file.title} (${file.objectType})`).join(", ")}
-            </div>
-          ) : null}
         </div>
       )}
     />

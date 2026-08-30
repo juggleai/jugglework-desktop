@@ -4,12 +4,21 @@ import {
   isClaudePluginMutationSuccessful,
   isCloudPluginMutationSuccessful,
   isWorkspacePluginLoadCurrent,
+  isWorkspacePluginOperationCurrent,
   resolveClaudePluginMutationWarnings,
   resolveCloudPluginMutationStatus,
   resolveWorkspacePluginAccess,
 } from "../src/react-app/domains/settings/state/extensions-store";
-import type { CloudImportedPlugin } from "../src/app/cloud/import-state";
-import type { JuggleWorkServerCapabilities } from "../src/app/lib/jugglework-server";
+import {
+  readCloudImportedPlugin,
+  readWorkspaceCloudImports,
+  type CloudImportedPlugin,
+} from "../src/app/cloud/import-state";
+import {
+  JuggleWorkServerError,
+  readJuggleWorkCloudPluginMutationError,
+  type JuggleWorkServerCapabilities,
+} from "../src/app/lib/jugglework-server";
 
 const writableCapabilities: JuggleWorkServerCapabilities = {
   skills: { read: true, write: true, source: "jugglework" },
@@ -89,6 +98,27 @@ describe("workspace marketplace plugin access", () => {
     })).toBeFalse();
   });
 
+  test("accepts operation state writes only for the captured workspace and latest plugin sequence", () => {
+    expect(isWorkspacePluginOperationCurrent({
+      operationContextKey: "workspace-a",
+      currentContextKey: "workspace-a",
+      operationSequence: 4,
+      latestSequence: 4,
+    })).toBeTrue();
+    expect(isWorkspacePluginOperationCurrent({
+      operationContextKey: "workspace-a",
+      currentContextKey: "workspace-b",
+      operationSequence: 4,
+      latestSequence: 4,
+    })).toBeFalse();
+    expect(isWorkspacePluginOperationCurrent({
+      operationContextKey: "workspace-a",
+      currentContextKey: "workspace-a",
+      operationSequence: 3,
+      latestSequence: 4,
+    })).toBeFalse();
+  });
+
   test("does not report failed, repair-required, or conflicting installs as successful", () => {
     for (const status of ["failed", "repair_required"] as const) {
       const result = { item: installedPlugin, status, conflicts: [] };
@@ -149,5 +179,105 @@ describe("workspace marketplace plugin access", () => {
       "Shared warning.",
       "Skipped an unsupported MCP server.",
     ]);
+  });
+
+  test("parses additive plugin ledger fields while retaining legacy records", () => {
+    const legacy = readWorkspaceCloudImports({
+      cloudImports: {
+        plugins: {
+          legacy: {
+            name: "Legacy",
+            files: [{
+              configObjectId: "legacy-skill",
+              objectType: "skill",
+              title: "Legacy skill",
+              path: ".opencode/skills/legacy/SKILL.md",
+            }],
+          },
+        },
+      },
+    }).plugins.legacy;
+    expect(legacy).toMatchObject({ pluginId: "legacy", name: "Legacy" });
+
+    const current = readCloudImportedPlugin({
+      ...installedPlugin,
+      status: "installed",
+      resolvedRevision: "revision-2",
+      repair: {
+        operation: "install",
+        cause: "rollback incomplete",
+        conflicts: [],
+        rollbackFailures: [{ stage: "engine", message: "offline" }],
+        recordedAt: 42,
+      },
+      files: [{
+        configObjectId: "mcp-1",
+        componentKey: "mcp-1:search",
+        serverName: "search",
+        objectType: "mcp",
+        title: "Search",
+        path: "opencode.jsonc#mcp.search",
+      }],
+    });
+    expect(current).toMatchObject({
+      status: "installed",
+      resolvedRevision: "revision-2",
+      files: [{ componentKey: "mcp-1:search", serverName: "search" }],
+      repair: { operation: "install", rollbackFailures: [{ stage: "engine", message: "offline" }] },
+    });
+  });
+
+  test("parses structured persisted mutation errors without dropping additive fields", () => {
+    const current = {
+      ...installedPlugin,
+      status: "repair_required" as const,
+      resolvedRevision: "revision-3",
+      files: [{
+        configObjectId: "mcp-1",
+        componentKey: "mcp-1:docs",
+        serverName: "docs",
+        versionId: null,
+        objectType: "mcp",
+        title: "Docs",
+        path: "opencode.jsonc#mcp.docs",
+        updatedAt: null,
+      }],
+    };
+    const parsed = readJuggleWorkCloudPluginMutationError(new JuggleWorkServerError(
+      409,
+      "cloud_plugin_ownership_conflict",
+      "Repair required",
+      {
+        status: "repair_required",
+        changed: true,
+        current,
+        outcomes: current.files,
+        mutations: {
+          filesWritten: [],
+          filesRemoved: [],
+          mcpUpserted: [],
+          mcpRemoved: [],
+          installationRecordChanged: true,
+          engineSynchronized: false,
+        },
+        repair: {
+          operation: "remove",
+          cause: "modified",
+          conflicts: [],
+          rollbackFailures: [],
+          recordedAt: 10,
+        },
+        resolvedRevision: "revision-3",
+      },
+    ));
+    expect(parsed).toMatchObject({
+      status: "repair_required",
+      changed: true,
+      item: { pluginId: "plugin-1", resolvedRevision: "revision-3" },
+      outcomes: [{ componentKey: "mcp-1:docs", serverName: "docs" }],
+      mutations: { installationRecordChanged: true, engineSynchronized: false },
+      repair: { operation: "remove", cause: "modified" },
+      resolvedRevision: "revision-3",
+    });
   });
 });

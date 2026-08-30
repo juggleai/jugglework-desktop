@@ -8,6 +8,7 @@ const skillDetail = readFileSync(new URL("../src/react-app/domains/settings/page
 const settingsRoute = readFileSync(new URL("../src/react-app/shell/settings-route.tsx", import.meta.url), "utf8");
 const extensionsStore = readFileSync(new URL("../src/react-app/domains/settings/state/extensions-store.ts", import.meta.url), "utf8");
 const marketplaceView = readFileSync(new URL("../src/react-app/domains/settings/pages/cloud-marketplaces-view.tsx", import.meta.url), "utf8");
+const marketplaceModal = readFileSync(new URL("../src/react-app/domains/settings/pages/marketplace-package-detail-modal.tsx", import.meta.url), "utf8");
 const zh = readFileSync(new URL("../src/i18n/locales/zh.ts", import.meta.url), "utf8");
 
 describe("session project settings panel", () => {
@@ -39,8 +40,9 @@ describe("session project settings panel", () => {
     expect(extensionsStore.indexOf("if (!operation.access.allowed)")).toBeLessThan(
       extensionsStore.indexOf("client.getOrgPluginResolved(orgId, plugin)"),
     );
-    expect(marketplaceView).toContain("disabled={actionBusy || !marketplacePluginAccess.allowed}");
-    expect(marketplaceView).toContain("row.imported && marketplacePluginAccess.allowed");
+    expect(marketplaceView).toContain("canMutate={marketplacePluginAccess.allowed}");
+    expect(marketplaceModal).toContain("isMarketplacePluginActionDisabled(primary");
+    expect(marketplaceModal).toContain("lifecycle.hasLocalLedger && !cloudBuiltIn");
   });
 
   test("fences imported plugin refreshes and mutation completion by workspace context", () => {
@@ -49,6 +51,33 @@ describe("session project settings panel", () => {
     expect(extensionsStore).toContain("await operation.client.installCloudPlugin(operation.workspaceId");
     expect(extensionsStore).toContain("await operation.client.removeCloudPlugin(operation.workspaceId");
     expect(extensionsStore).toContain("if (isCurrentWorkspacePluginContext(operation)) options.setBusy(false)");
+  });
+
+  test("preserves scoped last-known-good data and exposes fenced mutation operations", () => {
+    expect(extensionsStore).toContain("importedCloudPluginsContextKey === operation.cloudKey");
+    expect(extensionsStore).toContain("cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgMarketplaces : []");
+    expect(extensionsStore).toContain("marketplacePluginOperations: state.marketplacePluginOperations");
+    expect(extensionsStore).toContain("isWorkspacePluginOperationCurrent({");
+    expect(extensionsStore).toContain("applyCloudPluginMutationResult(operation, result");
+    expect(extensionsStore).toContain("dismissMarketplacePluginOperation");
+  });
+
+  test("uses read-only refreshes for an unchanged graph", () => {
+    expect(extensionsStore).toContain('if (result?.changed === false || optionsOverride?.authoritativeReadOnly)');
+    expect(extensionsStore).toContain("mutateDesktopCloudSync: false");
+    expect(extensionsStore).toContain("refreshCloudOrgMarketplaces({ force: true, refreshImported: false })");
+    expect(extensionsStore.indexOf('if (result?.changed === false || optionsOverride?.authoritativeReadOnly)')).toBeLessThan(
+      extensionsStore.indexOf("options.refreshWorkspaceCapabilities?.(context.key)"),
+    );
+  });
+
+  test("clears cloud projections synchronously when workspace or organization context changes", () => {
+    expect(extensionsStore).toContain("const cloudKey = getCloudContextKey()");
+    expect(extensionsStore).toContain("cloudOrgMarketplaces: []");
+    expect(extensionsStore).toContain("importedCloudMarketplaces: {}");
+    expect(extensionsStore).toContain("importedCloudPlugins: {}");
+    expect(extensionsStore).toContain("pendingCloudPluginChanges: {}");
+    expect(extensionsStore).toContain("operationContextKey: context.cloudKey");
   });
 
   test("shows global and workspace skills while keeping global skills read-only", () => {

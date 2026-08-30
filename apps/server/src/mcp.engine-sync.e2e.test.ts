@@ -688,6 +688,113 @@ describe("runtime MCP engine sync", () => {
     }
   });
 
+  test("cloud plugin exact sync returns current without engine, audit, or reload effects", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;
+    const previousDataDir = process.env.JUGGLEWORK_DATA_DIR;
+    process.env.JUGGLEWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.JUGGLEWORK_DATA_DIR = join(workspaceRoot, "data");
+    try {
+      const mock = startMockOpencode();
+      const jugglework = await startJuggleWorkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      const payload = {
+        marketplaceId: null,
+        resolved: {
+          plugin: { id: "plugin_noop", name: "Noop Plugin", description: null, updatedAt: "v1" },
+          memberships: [{
+            configObjectId: "config_mcp",
+            configObject: {
+              id: "config_mcp",
+              objectType: "mcp",
+              title: "Noop MCP",
+              description: null,
+              currentRelativePath: null,
+              status: "active",
+              updatedAt: "v1",
+              latestVersion: {
+                id: "version_mcp",
+                rawSourceText: null,
+                normalizedPayloadJson: { mcp: { first: { command: ["first"] }, second: { command: ["second"] } } },
+              },
+            },
+          }],
+        },
+      };
+      const install = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify(payload),
+      });
+      expect(install.status).toBe(200);
+      const installed = requireRecord(await install.json(), "initial cloud plugin response");
+      expect(installed).toMatchObject({
+        changed: true,
+        operation: "install",
+        current: { pluginId: "plugin_noop" },
+        mutations: {
+          mcpUpserted: ["noop-plugin-first", "noop-plugin-second"],
+          engineSynchronized: true,
+        },
+      });
+      const installedItem = requireRecord(installed.item, "initial cloud plugin item");
+      expect(installedItem.files).toEqual([
+        expect.objectContaining({ componentKey: "config_mcp:first", serverName: "first" }),
+        expect.objectContaining({ componentKey: "config_mcp:second", serverName: "second" }),
+      ]);
+      const eventsBefore = await fetch(`${jugglework.base}/workspace/ws_1/events`, { headers: auth(jugglework.token) });
+      const cursor = requireRecord(await eventsBefore.json(), "events before no-op").cursor as number;
+      const auditBefore = await fetch(`${jugglework.base}/workspace/ws_1/audit`, { headers: auth(jugglework.token) });
+      const auditCount = (requireRecord(await auditBefore.json(), "audit before no-op").items as unknown[]).length;
+      mock.requests.length = 0;
+
+      const repeated = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins`, {
+        method: "POST",
+        headers: auth(jugglework.token),
+        body: JSON.stringify(payload),
+      });
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toMatchObject({
+        changed: false,
+        operation: "sync",
+        current: { pluginId: "plugin_noop", resolvedRevision: installedItem.resolvedRevision },
+        mutations: {
+          filesWritten: [],
+          filesRemoved: [],
+          mcpUpserted: [],
+          mcpRemoved: [],
+          installationRecordChanged: false,
+          engineSynchronized: false,
+        },
+        refreshHints: [],
+      });
+      expect(mock.requests).toEqual([]);
+      const eventsAfter = await fetch(`${jugglework.base}/workspace/ws_1/events?since=${cursor}`, { headers: auth(jugglework.token) });
+      expect(await eventsAfter.json()).toMatchObject({ items: [] });
+      const auditAfter = await fetch(`${jugglework.base}/workspace/ws_1/audit`, { headers: auth(jugglework.token) });
+      expect((requireRecord(await auditAfter.json(), "audit after no-op").items as unknown[]).length).toBe(auditCount);
+
+      const removal = await fetch(`${jugglework.base}/workspace/ws_1/cloud-plugins/plugin_noop`, {
+        method: "DELETE",
+        headers: auth(jugglework.token),
+      });
+      expect(await removal.json()).toMatchObject({
+        changed: true,
+        current: null,
+        operation: "remove",
+        mutations: {
+          mcpRemoved: ["noop-plugin-first", "noop-plugin-second"],
+          installationRecordChanged: true,
+          engineSynchronized: true,
+        },
+      });
+    } finally {
+      if (previousDb === undefined) delete process.env.JUGGLEWORK_RUNTIME_DB;
+      else process.env.JUGGLEWORK_RUNTIME_DB = previousDb;
+      if (previousDataDir === undefined) delete process.env.JUGGLEWORK_DATA_DIR;
+      else process.env.JUGGLEWORK_DATA_DIR = previousDataDir;
+    }
+  });
+
   test("cloud plugin install rolls back and returns failure when engine sync fails", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const previousDb = process.env.JUGGLEWORK_RUNTIME_DB;

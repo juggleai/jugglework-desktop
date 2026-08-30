@@ -36,9 +36,10 @@ import {
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
 import {
-  JuggleWorkServerError,
+  readJuggleWorkCloudPluginMutationError,
   type JuggleWorkClaudePluginPreview,
   type JuggleWorkCloudPluginInstallResult,
+  type JuggleWorkCloudPluginMutations,
   type JuggleWorkServerCapabilities,
   type JuggleWorkServerClient,
   type JuggleWorkServerStatus,
@@ -87,6 +88,7 @@ export type ExtensionsStoreSnapshot = {
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: Record<string, PendingCloudPluginChange>;
+  marketplacePluginOperations: Record<string, WorkspacePluginOperationState>;
   marketplacePluginAccess: WorkspacePluginAccess;
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
@@ -111,6 +113,7 @@ type MutableState = {
   importedCloudMarketplaces: Record<string, CloudImportedMarketplace>;
   importedCloudPlugins: Record<string, CloudImportedPlugin>;
   pendingCloudPluginChanges: Record<string, PendingCloudPluginChange>;
+  marketplacePluginOperations: Record<string, WorkspacePluginOperationState>;
   pluginScope: PluginScope;
   pluginConfig: OpencodeConfigFile | null;
   pluginConfigPath: string | null;
@@ -128,7 +131,9 @@ export type WorkspacePluginAccess =
 
 type WorkspacePluginOperationContext = {
   key: string;
+  cloudKey: string;
   operationKey: string;
+  sequence: number;
   workspaceId: string;
   root: string;
   workspaceType: "local" | "remote";
@@ -145,6 +150,20 @@ export type CloudPluginMutationResult = {
   conflicts?: NonNullable<JuggleWorkCloudPluginInstallResult["conflicts"]>;
   outcomes?: NonNullable<JuggleWorkCloudPluginInstallResult["outcomes"]>;
   files: CloudImportedPluginFile[];
+  changed?: boolean;
+  current?: JuggleWorkCloudPluginInstallResult["current"];
+  mutations?: JuggleWorkCloudPluginMutations;
+  repair?: JuggleWorkCloudPluginInstallResult["repair"];
+  resolvedRevision?: string;
+};
+
+export type WorkspacePluginOperationState = {
+  workspaceContextKey: string;
+  pluginId: string;
+  sequence: number;
+  state: "installing" | "removing" | "failed";
+  operation: "install" | "remove";
+  message: string | null;
 };
 
 /**
@@ -240,6 +259,20 @@ export function isWorkspacePluginLoadCurrent(input: {
 }): boolean {
   return input.loadKey === input.latestLoadKey
     && input.operationContextKey === input.currentContextKey;
+}
+
+/**
+ * 判断插件操作完成回调是否仍属于当前工作区、插件和最新序列。
+ * @param input 操作与当前快照的上下文及序列
+ */
+export function isWorkspacePluginOperationCurrent(input: {
+  operationContextKey: string;
+  currentContextKey: string;
+  operationSequence: number;
+  latestSequence: number | undefined;
+}): boolean {
+  return input.operationContextKey === input.currentContextKey
+    && input.operationSequence === input.latestSequence;
 }
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
@@ -493,6 +526,7 @@ export function createExtensionsStore(options: {
   let stopJuggleWorkSubscription: (() => void) | null = null;
   let stopDenSessionListener: (() => void) | null = null;
   let lastWorkspaceContextKey = "";
+  let lastCloudContextKey = "";
   let snapshot: ExtensionsStoreSnapshot;
 
   let refreshSkillsInFlight = false;
@@ -506,8 +540,11 @@ export function createExtensionsStore(options: {
   let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let cloudOrgMarketplacesLoadKey = "";
+  let cloudOrgMarketplacesContextKey = "";
   let importedCloudPluginsLoadKey = "";
+  let importedCloudPluginsContextKey = "";
   let workspacePluginOperationSequence = 0;
+  const latestWorkspacePluginOperationSequence = new Map<string, number>();
   /** Plugin IDs the user has already been notified about. Prevents repeated
    *  "new extension available" notifications across sync cycles. */
   const seenMarketplacePluginIds = new Set<string>();
@@ -522,6 +559,7 @@ export function createExtensionsStore(options: {
     importedCloudMarketplaces: {},
     importedCloudPlugins: {},
     pendingCloudPluginChanges: {},
+    marketplacePluginOperations: {},
     pluginScope: "project",
     pluginConfig: null,
     pluginConfigPath: null,
@@ -543,6 +581,11 @@ export function createExtensionsStore(options: {
     const runtimeWorkspaceId = (options.runtimeWorkspaceId() ?? "").trim();
     const workspaceType = options.workspaceType();
     return `${workspaceType}:${workspaceId}:${root}:${runtimeWorkspaceId}`;
+  };
+
+  const getCloudContextKey = () => {
+    const orgId = readDenSettings().activeOrgId?.trim() ?? "";
+    return `${getWorkspaceContextKey()}::${orgId}`;
   };
 
   const getJuggleWorkServerSnapshot = () => {
@@ -581,10 +624,13 @@ export function createExtensionsStore(options: {
     const root = normalizeDirectoryPath(options.selectedWorkspaceRoot().trim());
     const workspaceType = options.workspaceType();
     const key = getWorkspaceContextKey();
+    const cloudKey = getCloudContextKey();
     workspacePluginOperationSequence += 1;
     return Object.freeze({
       key,
-      operationKey: `${key}:${workspacePluginOperationSequence}`,
+      cloudKey,
+      operationKey: `${cloudKey}:${workspacePluginOperationSequence}`,
+      sequence: workspacePluginOperationSequence,
       workspaceId,
       root,
       workspaceType,
@@ -600,14 +646,69 @@ export function createExtensionsStore(options: {
   };
 
   const isCurrentWorkspacePluginContext = (context: WorkspacePluginOperationContext) =>
-    !disposed && context.key === getWorkspaceContextKey();
+    !disposed && context.key === getWorkspaceContextKey() && context.cloudKey === getCloudContextKey();
+
+  const marketplacePluginOperationSequenceKey = (context: WorkspacePluginOperationContext, pluginId: string) =>
+    `${context.cloudKey}:${pluginId}`;
+
+  const beginMarketplacePluginOperation = (
+    context: WorkspacePluginOperationContext,
+    pluginId: string,
+    state: "installing" | "removing",
+  ) => {
+    latestWorkspacePluginOperationSequence.set(
+      marketplacePluginOperationSequenceKey(context, pluginId),
+      context.sequence,
+    );
+    setMarketplacePluginOperation(context, pluginId, state);
+  };
+
+  const isCurrentMarketplacePluginOperation = (
+    context: WorkspacePluginOperationContext,
+    pluginId: string,
+  ) => !disposed && isWorkspacePluginOperationCurrent({
+    operationContextKey: context.cloudKey,
+    currentContextKey: getCloudContextKey(),
+    operationSequence: context.sequence,
+    latestSequence: latestWorkspacePluginOperationSequence.get(marketplacePluginOperationSequenceKey(context, pluginId)),
+  });
+
+  /**
+   * 更新插件操作状态；仅允许同一工作区和插件的最新序列写入。
+   * @param context 操作开始时捕获的工作区上下文
+   * @param pluginId 插件 ID
+   * @param next 下一操作状态，null 表示清除
+   */
+  const setMarketplacePluginOperation = (
+    context: WorkspacePluginOperationContext,
+    pluginId: string,
+    next: "installing" | "removing" | "failed" | null,
+    message: string | null = null,
+  ) => {
+    if (!isCurrentMarketplacePluginOperation(context, pluginId)) return;
+    const existing = state.marketplacePluginOperations[pluginId];
+    if (existing && existing.sequence > context.sequence) return;
+    mutateState((current) => {
+      const operations = { ...current.marketplacePluginOperations };
+      if (next === null) delete operations[pluginId];
+      else operations[pluginId] = {
+        workspaceContextKey: context.cloudKey,
+        pluginId,
+        sequence: context.sequence,
+        state: next,
+        operation: next === "removing" ? "remove" : next === "installing" ? "install" : existing?.operation ?? "install",
+        message,
+      };
+      return { ...current, marketplacePluginOperations: operations };
+    });
+  };
 
   const isCurrentImportedCloudPluginLoad = (context: WorkspacePluginOperationContext, loadKey: string) =>
     !disposed && isWorkspacePluginLoadCurrent({
       loadKey,
       latestLoadKey: importedCloudPluginsLoadKey,
-      operationContextKey: context.key,
-      currentContextKey: getWorkspaceContextKey(),
+      operationContextKey: context.cloudKey,
+      currentContextKey: getCloudContextKey(),
     });
 
   const readWorkspacePluginAccess = () => {
@@ -660,6 +761,7 @@ export function createExtensionsStore(options: {
       importedCloudMarketplaces: state.importedCloudMarketplaces,
       importedCloudPlugins: state.importedCloudPlugins,
       pendingCloudPluginChanges: state.pendingCloudPluginChanges,
+      marketplacePluginOperations: state.marketplacePluginOperations,
       marketplacePluginAccess: readWorkspacePluginAccess(),
       pluginScope: state.pluginScope,
       pluginConfig: state.pluginConfig,
@@ -751,6 +853,7 @@ export function createExtensionsStore(options: {
   const refreshPendingCloudPluginChanges = async (
     installedPlugins?: Record<string, CloudImportedPlugin>,
     context?: WorkspacePluginOperationContext,
+    optionsOverride?: { mutateDesktopCloudSync?: boolean },
   ) => {
     const operation = context ?? captureWorkspacePluginOperationContext();
     try {
@@ -759,10 +862,12 @@ export function createExtensionsStore(options: {
         setStateField("pendingCloudPluginChanges", {});
         return;
       }
-      const syncResult = await refreshDesktopCloudSync({
-        juggleworkClient: operation.client,
-        workspaceId: operation.workspaceId,
-      }).catch(() => null);
+      const syncResult = optionsOverride?.mutateDesktopCloudSync === false
+        ? null
+        : await refreshDesktopCloudSync({
+            juggleworkClient: operation.client,
+            workspaceId: operation.workspaceId,
+          }).catch(() => null);
       const changes = syncResult
         ? syncResult.changes
         : readPendingCloudSyncChanges(await operation.client.getDesktopCloudSync(operation.workspaceId));
@@ -805,7 +910,10 @@ export function createExtensionsStore(options: {
     }
   };
 
-  const refreshImportedCloudPlugins = async (context?: WorkspacePluginOperationContext) => {
+  const refreshImportedCloudPlugins = async (
+    context?: WorkspacePluginOperationContext,
+    optionsOverride?: { refreshPending?: boolean },
+  ) => {
     const operation = context ?? captureWorkspacePluginOperationContext();
     const loadKey = operation.operationKey;
     importedCloudPluginsLoadKey = loadKey;
@@ -813,28 +921,52 @@ export function createExtensionsStore(options: {
       if (operation.client && operation.workspaceId) {
         const result = await operation.client.listCloudPlugins(operation.workspaceId);
         if (!isCurrentImportedCloudPluginLoad(operation, loadKey)) return result.plugins;
+        importedCloudPluginsContextKey = operation.cloudKey;
         setStateField("importedCloudMarketplaces", result.marketplaces);
         setStateField("importedCloudPlugins", result.plugins);
-        void refreshPendingCloudPluginChanges(result.plugins, operation);
+        if (optionsOverride?.refreshPending !== false) {
+          void refreshPendingCloudPluginChanges(result.plugins, operation);
+        }
         return result.plugins;
       }
       if (!isCurrentWorkspacePluginContext(operation)) return {};
       const config = await readWorkspaceJuggleWorkConfigRecord();
       const cloudImports = readWorkspaceCloudImports(config);
       if (!isCurrentImportedCloudPluginLoad(operation, loadKey)) return cloudImports.plugins;
+      importedCloudPluginsContextKey = operation.cloudKey;
       setStateField("importedCloudMarketplaces", cloudImports.marketplaces);
       setStateField("importedCloudPlugins", cloudImports.plugins);
       return cloudImports.plugins;
     } catch {
-      if (!isCurrentImportedCloudPluginLoad(operation, loadKey)) return {};
-      setStateField("importedCloudMarketplaces", {});
-      setStateField("importedCloudPlugins", {});
-      setStateField("pendingCloudPluginChanges", {});
+      if (!isCurrentImportedCloudPluginLoad(operation, loadKey)) return snapshot.importedCloudPlugins;
+      // TIPS: 短暂刷新失败不能把当前/最后一次成功的安装账本投影成“未安装”。
+      if (importedCloudPluginsContextKey === operation.cloudKey) return snapshot.importedCloudPlugins;
+      mutateState((current) => ({
+        ...current,
+        importedCloudMarketplaces: {},
+        importedCloudPlugins: {},
+        pendingCloudPluginChanges: {},
+      }));
       return {};
     }
   };
 
-  const refreshWorkspaceAfterCloudPluginMutation = async (context: WorkspacePluginOperationContext) => {
+  const refreshWorkspaceAfterCloudPluginMutation = async (
+    context: WorkspacePluginOperationContext,
+    result?: Pick<JuggleWorkCloudPluginInstallResult, "changed" | "status">,
+    optionsOverride?: { authoritativeReadOnly?: boolean },
+  ) => {
+    if (!isCurrentWorkspacePluginContext(context)) return;
+    // TIPS: 精确同步不得触发会持久化审计的 desktop-cloud-sync POST，只执行权威 GET 和市场目录读取。
+    if (result?.changed === false || optionsOverride?.authoritativeReadOnly) {
+      const installedPlugins = await refreshImportedCloudPlugins(context, { refreshPending: false });
+      if (!isCurrentWorkspacePluginContext(context)) return;
+      await Promise.all([
+        refreshPendingCloudPluginChanges(installedPlugins, context, { mutateDesktopCloudSync: false }),
+        refreshCloudOrgMarketplaces({ force: true, refreshImported: false }),
+      ]);
+      return;
+    }
     await refreshImportedCloudPlugins(context);
     if (!isCurrentWorkspacePluginContext(context)) return;
     await Promise.all([
@@ -844,6 +976,69 @@ export function createExtensionsStore(options: {
       options.refreshWorkspaceCapabilities?.(context.key),
     ]);
   };
+
+  const applyCloudPluginMutationResult = (
+    context: WorkspacePluginOperationContext,
+    result: JuggleWorkCloudPluginInstallResult,
+    operation: "install" | "remove",
+  ) => {
+    if (!isCurrentMarketplacePluginOperation(context, result.item.pluginId)) return;
+    const currentItem = result.current && typeof result.current === "object" ? result.current : null;
+    if (result.status === "failed" && !currentItem && !result.item.repair && result.item.status !== "repair_required") return;
+    const item = currentItem ?? result.item;
+    importedCloudPluginsContextKey = context.cloudKey;
+    mutateState((current) => {
+      const plugins = { ...current.importedCloudPlugins };
+      if (operation === "remove" && result.status !== "failed" && result.status !== "repair_required") {
+        delete plugins[item.pluginId];
+      } else {
+        plugins[item.pluginId] = item;
+      }
+      return { ...current, importedCloudPlugins: plugins };
+    });
+  };
+
+  const structuredCloudPluginErrorResult = (
+    error: unknown,
+    fallbackFiles: CloudImportedPluginFile[] = [],
+  ): CloudPluginMutationResult | null => {
+    const details = readJuggleWorkCloudPluginMutationError(error);
+    if (!details) return null;
+    const message = error instanceof Error ? error.message : t("skills.unknown_error");
+    return {
+      ok: false,
+      message,
+      warnings: details.warnings ?? [],
+      status: details.status,
+      conflicts: details.conflicts,
+      outcomes: details.outcomes,
+      files: details.item?.files ?? details.outcomes ?? fallbackFiles,
+      changed: details.changed,
+      current: details.current,
+      mutations: details.mutations,
+      repair: details.repair ?? details.item?.repair,
+      resolvedRevision: details.resolvedRevision ?? details.item?.resolvedRevision,
+    };
+  };
+
+  const cloudPluginMutationResult = (
+    result: JuggleWorkCloudPluginInstallResult,
+    message: string,
+    warnings = result.warnings,
+  ): CloudPluginMutationResult => ({
+    ok: isCloudPluginMutationSuccessful(result),
+    message,
+    warnings,
+    status: resolveCloudPluginMutationStatus(result),
+    conflicts: result.conflicts,
+    outcomes: result.outcomes,
+    files: result.item.files,
+    changed: result.changed,
+    current: result.current,
+    mutations: result.mutations,
+    repair: result.repair ?? result.item.repair,
+    resolvedRevision: result.resolvedRevision ?? result.item.resolvedRevision,
+  });
 
   const persistImportedCloudMarketplaces = async (nextMarketplaces: Record<string, CloudImportedMarketplace>) => {
     const config = await readWorkspaceJuggleWorkConfigRecord();
@@ -1348,7 +1543,7 @@ export function createExtensionsStore(options: {
     emitChange();
   };
 
-  async function refreshCloudOrgMarketplaces(optionsOverride?: { force?: boolean }) {
+  async function refreshCloudOrgMarketplaces(optionsOverride?: { force?: boolean; refreshImported?: boolean }) {
     const wk = getWorkspaceContextKey();
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
@@ -1360,7 +1555,7 @@ export function createExtensionsStore(options: {
     }
 
     if (!optionsOverride?.force && cloudOrgMarketplacesLoaded) {
-      await refreshImportedCloudPlugins();
+      if (optionsOverride?.refreshImported !== false) await refreshImportedCloudPlugins();
       return;
     }
     if (refreshCloudOrgMarketplacesInFlight && refreshCloudOrgMarketplacesInFlightKey === loadKey) return;
@@ -1378,9 +1573,10 @@ export function createExtensionsStore(options: {
           cloudOrgMarketplaces: [],
           cloudOrgMarketplacesStatus: null,
         }));
+        cloudOrgMarketplacesContextKey = loadKey;
         cloudOrgMarketplacesLoaded = true;
         cloudOrgMarketplacesLoadKey = loadKey;
-        await refreshImportedCloudPlugins();
+        if (optionsOverride?.refreshImported !== false) await refreshImportedCloudPlugins();
         return;
       }
 
@@ -1395,6 +1591,7 @@ export function createExtensionsStore(options: {
         cloudOrgMarketplaces: resolved,
         cloudOrgMarketplacesStatus: null,
       }));
+      cloudOrgMarketplacesContextKey = loadKey;
 
       // Notify the user about newly available marketplace plugins. On the
       // first load we seed the seen set silently so only subsequent publishes
@@ -1430,12 +1627,12 @@ export function createExtensionsStore(options: {
 
       cloudOrgMarketplacesLoaded = true;
       cloudOrgMarketplacesLoadKey = loadKey;
-      await refreshImportedCloudPlugins();
+      if (optionsOverride?.refreshImported !== false) await refreshImportedCloudPlugins();
     } catch (error) {
       if (refreshCloudOrgMarketplacesAborted || getCurrentCloudOrgLoadKey() !== loadKey) return;
       mutateState((current) => ({
         ...current,
-        cloudOrgMarketplaces: [],
+        cloudOrgMarketplaces: cloudOrgMarketplacesContextKey === loadKey ? current.cloudOrgMarketplaces : [],
         cloudOrgMarketplacesStatus:
           error instanceof Error ? error.message : "Failed to load organization marketplaces.",
       }));
@@ -1452,6 +1649,7 @@ export function createExtensionsStore(options: {
     plugin: DenOrgPlugin,
   ): Promise<CloudPluginMutationResult> {
     const operation = captureWorkspacePluginOperationContext();
+    beginMarketplacePluginOperation(operation, plugin.id, "installing");
     options.setBusy(true);
     options.setError(null);
     setStateField("cloudOrgMarketplacesStatus", null);
@@ -1473,15 +1671,16 @@ export function createExtensionsStore(options: {
           marketplace,
           resolved,
         });
-        await refreshWorkspaceAfterCloudPluginMutation(operation);
+        applyCloudPluginMutationResult(operation, result, "install");
+        await refreshWorkspaceAfterCloudPluginMutation(operation, result);
         const status = resolveCloudPluginMutationStatus(result);
         const detailMessages = [
           ...(result.conflicts?.map((conflict) => conflict.message) ?? []),
           ...(result.outcomes?.flatMap((outcome) => outcome.errorMessage ? [outcome.errorMessage] : []) ?? []),
         ];
-        return {
-          ok: isCloudPluginMutationSuccessful(result),
-          message: detailMessages[0]
+        const mutationResult = cloudPluginMutationResult(
+          result,
+          detailMessages[0]
             ?? (status === "partial"
               ? t("marketplace.operation_partial", { name: plugin.name })
               : status === "repair_required"
@@ -1489,18 +1688,40 @@ export function createExtensionsStore(options: {
                 : status === "failed"
                   ? t("marketplace.operation_failed", { name: plugin.name })
                   : cloudPluginImportMessage(plugin.name, result.item.files.length, result.warnings)),
-          warnings: result.warnings,
-          status,
-          conflicts: result.conflicts,
-          outcomes: result.outcomes,
-          files: result.item.files,
-        };
+        );
+        setMarketplacePluginOperation(operation, plugin.id, mutationResult.ok ? null : "failed", mutationResult.message);
+        return mutationResult;
       }
       throw new Error(t("marketplace.workspace_gate_unsupported"));
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
+      const structured = structuredCloudPluginErrorResult(error);
+      const details = readJuggleWorkCloudPluginMutationError(error);
+      if (details?.item) {
+        applyCloudPluginMutationResult(operation, {
+          item: details.item,
+          warnings: details.warnings ?? [],
+          status: details.status,
+          outcomes: details.outcomes,
+          conflicts: details.conflicts,
+          changed: details.changed,
+          current: details.current,
+          mutations: details.mutations,
+          repair: details.repair,
+          resolvedRevision: details.resolvedRevision,
+        }, "install");
+      }
+      if (structured) {
+        await refreshWorkspaceAfterCloudPluginMutation(operation, structured, { authoritativeReadOnly: true }).catch(() => undefined);
+      }
+      setMarketplacePluginOperation(
+        operation,
+        plugin.id,
+        "failed",
+        message,
+      );
       if (isCurrentWorkspacePluginContext(operation)) options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, warnings: [], files: [] };
+      return structured ?? { ok: false, message, warnings: [], files: [] };
     } finally {
       if (isCurrentWorkspacePluginContext(operation)) options.setBusy(false);
     }
@@ -1517,6 +1738,7 @@ export function createExtensionsStore(options: {
 
   async function installClaudePlugin(url: string): Promise<CloudPluginMutationResult> {
     const operation = captureWorkspacePluginOperationContext();
+    let pluginId: string | null = null;
     options.setBusy(true);
     options.setError(null);
     try {
@@ -1527,14 +1749,17 @@ export function createExtensionsStore(options: {
         throw new Error("JuggleWork server unavailable. Connect to install plugins from GitHub.");
       }
       const result = await operation.client.installClaudePlugin(operation.workspaceId, { url });
-      await refreshWorkspaceAfterCloudPluginMutation(operation);
+      pluginId = result.item.pluginId;
+      beginMarketplacePluginOperation(operation, pluginId, "installing");
+      applyCloudPluginMutationResult(operation, result, "install");
+      await refreshWorkspaceAfterCloudPluginMutation(operation, result);
       const status = resolveCloudPluginMutationStatus(result);
       const warnings = resolveClaudePluginMutationWarnings(result);
       const detailMessage = result.conflicts?.[0]?.message
         ?? result.outcomes?.find((outcome) => outcome.errorMessage)?.errorMessage;
-      return {
-        ok: isClaudePluginMutationSuccessful({ ...result, warnings }),
-        message: detailMessage
+      const mutationResult = cloudPluginMutationResult(
+        result,
+        detailMessage
           ?? (status === "partial"
             ? t("marketplace.operation_partial", { name: result.item.name })
             : status === "repair_required"
@@ -1543,25 +1768,43 @@ export function createExtensionsStore(options: {
                 ? t("marketplace.operation_failed", { name: result.item.name })
                 : `Installed ${result.item.name} with ${result.item.files.length} component${result.item.files.length === 1 ? "" : "s"}.`),
         warnings,
-        status,
-        conflicts: result.conflicts,
-        outcomes: result.outcomes,
-        files: result.item.files,
-      };
+      );
+      mutationResult.ok = isClaudePluginMutationSuccessful({ ...result, warnings });
+      setMarketplacePluginOperation(operation, pluginId, mutationResult.ok ? null : "failed", mutationResult.message);
+      return mutationResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
-      const details = error instanceof JuggleWorkServerError && error.details && typeof error.details === "object"
-        ? error.details as { status?: unknown; outcomes?: unknown }
-        : null;
-      const status = details?.status === "failed" || details?.status === "repair_required"
-        ? details.status
-        : undefined;
-      const outcomes = Array.isArray(details?.outcomes)
-        ? details.outcomes as CloudImportedPluginFile[]
-        : undefined;
-      if (status) await refreshWorkspaceAfterCloudPluginMutation(operation).catch(() => undefined);
+      const details = readJuggleWorkCloudPluginMutationError(error);
+      pluginId = details?.item?.pluginId ?? pluginId;
+      if (pluginId) beginMarketplacePluginOperation(operation, pluginId, "installing");
+      if (details?.item && pluginId) {
+        applyCloudPluginMutationResult(operation, {
+          item: details.item,
+          warnings: details.warnings ?? [],
+          status: details.status,
+          outcomes: details.outcomes,
+          conflicts: details.conflicts,
+          changed: details.changed,
+          current: details.current,
+          mutations: details.mutations,
+          repair: details.repair,
+          resolvedRevision: details.resolvedRevision,
+        }, "install");
+      }
+      const structured = structuredCloudPluginErrorResult(error);
+      if (structured) {
+        await refreshWorkspaceAfterCloudPluginMutation(operation, structured, { authoritativeReadOnly: true }).catch(() => undefined);
+      }
+      if (pluginId) {
+        setMarketplacePluginOperation(
+          operation,
+          pluginId,
+          "failed",
+          message,
+        );
+      }
       if (isCurrentWorkspacePluginContext(operation)) options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, warnings: [], status, outcomes, files: outcomes ?? [] };
+      return structured ?? { ok: false, message, warnings: [], files: [] };
     } finally {
       if (isCurrentWorkspacePluginContext(operation)) options.setBusy(false);
     }
@@ -1569,6 +1812,7 @@ export function createExtensionsStore(options: {
 
   async function removeCloudOrgPlugin(pluginId: string): Promise<CloudPluginMutationResult> {
     const operation = captureWorkspacePluginOperationContext();
+    beginMarketplacePluginOperation(operation, pluginId, "removing");
     options.setBusy(true);
     options.setError(null);
     setStateField("cloudOrgMarketplacesStatus", null);
@@ -1579,28 +1823,54 @@ export function createExtensionsStore(options: {
       }
       if (operation.client && operation.workspaceId) {
         const result = await operation.client.removeCloudPlugin(operation.workspaceId, pluginId);
-        await refreshWorkspaceAfterCloudPluginMutation(operation);
+        applyCloudPluginMutationResult(operation, result, "remove");
+        await refreshWorkspaceAfterCloudPluginMutation(operation, result);
         const status = resolveCloudPluginMutationStatus(result);
-        return {
-          ok: isCloudPluginMutationSuccessful(result),
-          message: result.conflicts?.[0]?.message
+        const mutationResult = cloudPluginMutationResult(
+          result,
+          result.conflicts?.[0]?.message
             ?? (status === "repair_required"
               ? t("marketplace.operation_repair_required", { name: result.item.name })
               : status === "failed"
                 ? t("marketplace.operation_failed", { name: result.item.name })
                 : `Removed ${result.item.name}.`),
-          warnings: result.warnings,
-          status,
-          conflicts: result.conflicts,
-          outcomes: result.outcomes,
-          files: result.item.files,
-        };
+        );
+        setMarketplacePluginOperation(operation, pluginId, mutationResult.ok ? null : "failed", mutationResult.message);
+        return mutationResult;
       }
       throw new Error(t("marketplace.workspace_gate_unsupported"));
     } catch (error) {
       const message = error instanceof Error ? error.message : t("skills.unknown_error");
+      const structured = structuredCloudPluginErrorResult(
+        error,
+        snapshot.importedCloudPlugins[pluginId]?.files ?? [],
+      );
+      const details = readJuggleWorkCloudPluginMutationError(error);
+      if (details?.item) {
+        applyCloudPluginMutationResult(operation, {
+          item: details.item,
+          warnings: details.warnings ?? [],
+          status: details.status,
+          outcomes: details.outcomes,
+          conflicts: details.conflicts,
+          changed: details.changed,
+          current: details.current,
+          mutations: details.mutations,
+          repair: details.repair,
+          resolvedRevision: details.resolvedRevision,
+        }, "remove");
+      }
+      if (structured) {
+        await refreshWorkspaceAfterCloudPluginMutation(operation, structured, { authoritativeReadOnly: true }).catch(() => undefined);
+      }
+      setMarketplacePluginOperation(
+        operation,
+        pluginId,
+        "failed",
+        message,
+      );
       if (isCurrentWorkspacePluginContext(operation)) options.setError(addOpencodeCacheHint(message));
-      return { ok: false, message, warnings: [], files: [] };
+      return structured ?? { ok: false, message, warnings: [], files: [] };
     } finally {
       if (isCurrentWorkspacePluginContext(operation)) options.setBusy(false);
     }
@@ -2503,8 +2773,7 @@ export function createExtensionsStore(options: {
 
     if (typeof window !== "undefined") {
       const onDenSessionUpdated = () => {
-        cloudOrgMarketplacesLoaded = false;
-        touch();
+        syncFromOptions();
       };
       window.addEventListener("jugglework-den-session-updated", onDenSessionUpdated);
       stopDenSessionListener = () => window.removeEventListener("jugglework-den-session-updated", onDenSessionUpdated);
@@ -2532,15 +2801,46 @@ export function createExtensionsStore(options: {
   const syncFromOptions = () => {
     if (disposed) return;
     const key = getWorkspaceContextKey();
-    if (key === lastWorkspaceContextKey) return;
+    const cloudKey = getCloudContextKey();
+    if (key === lastWorkspaceContextKey && cloudKey === lastCloudContextKey) return;
+    const workspaceChanged = key !== lastWorkspaceContextKey;
     lastWorkspaceContextKey = key;
+    lastCloudContextKey = cloudKey;
     options.setBusy(false);
     invalidateWorkspaceCaches();
-    touch();
+    importedCloudPluginsLoadKey = "";
+    importedCloudPluginsContextKey = "";
+    cloudOrgMarketplacesContextKey = "";
+    // TIPS: 上下文切换时同步移除旧组织/工作区投影，异步响应再通过 cloudKey 栅栏恢复当前数据。
+    mutateState((current) => ({
+      ...current,
+      cloudOrgMarketplaces: [],
+      cloudOrgMarketplacesStatus: null,
+      importedCloudMarketplaces: {},
+      importedCloudPlugins: {},
+      pendingCloudPluginChanges: {},
+      marketplacePluginOperations: {},
+    }));
     if (!key || key === "::::") return;
-    void refreshSkills({ force: true });
-    void refreshPlugins();
-    void refreshImportedCloudPlugins();
+    if (workspaceChanged) {
+      void refreshSkills({ force: true });
+      void refreshPlugins();
+    }
+    void refreshCloudOrgMarketplaces({ force: true });
+  };
+
+  /**
+   * 关闭当前上下文中的插件失败状态。
+   * @param pluginId 插件 ID
+   */
+  const dismissMarketplacePluginOperation = (pluginId: string) => {
+    const operation = state.marketplacePluginOperations[pluginId];
+    if (!operation || operation.state !== "failed" || operation.workspaceContextKey !== getCloudContextKey()) return;
+    mutateState((current) => {
+      const operations = { ...current.marketplacePluginOperations };
+      delete operations[pluginId];
+      return { ...current, marketplacePluginOperations: operations };
+    });
   };
 
   refreshSnapshot();
@@ -2567,6 +2867,8 @@ export function createExtensionsStore(options: {
     importedCloudMarketplaces: () => snapshot.importedCloudMarketplaces,
     importedCloudPlugins: () => snapshot.importedCloudPlugins,
     pendingCloudPluginChanges: () => snapshot.pendingCloudPluginChanges,
+    marketplacePluginOperations: () => snapshot.marketplacePluginOperations,
+    dismissMarketplacePluginOperation,
     marketplacePluginAccess: () => snapshot.marketplacePluginAccess,
     get pluginScope() {
       return snapshot.pluginScope;

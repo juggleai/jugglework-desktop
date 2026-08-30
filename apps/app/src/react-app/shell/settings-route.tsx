@@ -2725,6 +2725,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                   extensions={extensionsStore}
                   onOpenAccount={openCloudAccountSettings}
                   session={denSession}
+                  workspaceKey={runtimeWorkspaceId || selectedWorkspaceRoot}
                   hideSectionHeader
                   hideMarketplaceFilter
                   uniformCardHeight
@@ -2842,6 +2843,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 extensions={extensionsStore}
                 onOpenAccount={openCloudAccountSettings}
                 session={denSession}
+                workspaceKey={runtimeWorkspaceId || selectedWorkspaceRoot}
               />
             }
 

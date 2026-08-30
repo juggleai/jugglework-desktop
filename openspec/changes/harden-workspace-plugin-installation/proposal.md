@@ -11,6 +11,7 @@ Workspace plugin installation currently reports success before the workspace has
 - Record Cloud-hosted components and component outcomes without writing their payloads locally, so Cloud-only and mixed plugins can reach a stable installed state.
 - Surface ready, update available, needs sign-in, needs administrator setup, partial failure, and unsupported workspace states accurately.
 - Gate install actions when the selected runtime cannot safely install workspace plugins, and refresh all affected workspace capabilities after success.
+- Project live Marketplace detail into one canonical lifecycle with deterministic actions, scoped last-known-good caching, structured refresh failures, and true no-op synchronization.
 
 ## Capabilities
 

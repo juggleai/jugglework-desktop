@@ -23,7 +23,14 @@ import { desktopFetch, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
-import type { CloudImportedMarketplace, CloudImportedPlugin } from "../cloud/import-state";
+import {
+  readCloudImportedPlugin,
+  readCloudImportedPluginFiles,
+  readCloudImportedPluginRepair,
+  type CloudImportedMarketplace,
+  type CloudImportedPlugin,
+  type CloudImportedPluginFile,
+} from "../cloud/import-state";
 import type {
   AutomationDefinitionRecord,
   AutomationDraft,
@@ -304,6 +311,40 @@ export type JuggleWorkCloudPluginInstallResult = {
     message: string;
   }>;
   refreshHints?: string[];
+  changed?: boolean;
+  current?: CloudImportedPlugin | null;
+  operation?: "install" | "sync" | "remove";
+  mutations?: JuggleWorkCloudPluginMutations;
+  repair?: CloudImportedPlugin["repair"];
+  resolvedRevision?: string;
+  cause?: string;
+  rollbackFailures?: Array<{ stage: string; message: string }>;
+};
+
+export type JuggleWorkCloudPluginMutations = {
+  filesWritten: string[];
+  filesRemoved: string[];
+  mcpUpserted: string[];
+  mcpRemoved: string[];
+  installationRecordChanged: boolean;
+  engineSynchronized: boolean;
+};
+
+export type JuggleWorkCloudPluginMutationErrorDetails = {
+  status?: JuggleWorkCloudPluginInstallResult["status"];
+  item?: CloudImportedPlugin;
+  warnings?: string[];
+  outcomes?: CloudImportedPluginFile[];
+  conflicts?: NonNullable<JuggleWorkCloudPluginInstallResult["conflicts"]>;
+  refreshHints?: string[];
+  changed?: boolean;
+  current?: CloudImportedPlugin | null;
+  operation?: "install" | "sync" | "remove";
+  mutations?: JuggleWorkCloudPluginMutations;
+  repair?: CloudImportedPlugin["repair"];
+  resolvedRevision?: string;
+  cause?: string;
+  rollbackFailures?: Array<{ stage: string; message: string }>;
 };
 
 export type JuggleWorkCloudPluginsResult = {
@@ -1164,6 +1205,101 @@ export class JuggleWorkServerError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readCloudPluginOperationStatus(value: unknown): JuggleWorkCloudPluginInstallResult["status"] {
+  return value === "installed" || value === "partial" || value === "failed" || value === "repair_required"
+    ? value
+    : undefined;
+}
+
+function readCloudPluginStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((entry) => typeof entry === "string" && entry.trim() ? [entry.trim()] : []);
+}
+
+function readCloudPluginConflicts(value: unknown): JuggleWorkCloudPluginMutationErrorDetails["conflicts"] {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((entry) => {
+    if (!isJsonRecord(entry)) return [];
+    if (entry.code !== "file_ownership_conflict" && entry.code !== "mcp_ownership_conflict") return [];
+    const configObjectId = typeof entry.configObjectId === "string" ? entry.configObjectId.trim() : "";
+    const resource = typeof entry.resource === "string" ? entry.resource.trim() : "";
+    const message = typeof entry.message === "string" ? entry.message.trim() : "";
+    return configObjectId && resource && message
+      ? [{ code: entry.code, configObjectId, resource, message }]
+      : [];
+  });
+}
+
+function readCloudPluginMutations(value: unknown): JuggleWorkCloudPluginMutations | undefined {
+  if (!isJsonRecord(value)) return undefined;
+  const filesWritten = readCloudPluginStringArray(value.filesWritten);
+  const filesRemoved = readCloudPluginStringArray(value.filesRemoved);
+  const mcpUpserted = readCloudPluginStringArray(value.mcpUpserted);
+  const mcpRemoved = readCloudPluginStringArray(value.mcpRemoved);
+  if (!filesWritten || !filesRemoved || !mcpUpserted || !mcpRemoved
+    || typeof value.installationRecordChanged !== "boolean" || typeof value.engineSynchronized !== "boolean") return undefined;
+  return {
+    filesWritten,
+    filesRemoved,
+    mcpUpserted,
+    mcpRemoved,
+    installationRecordChanged: value.installationRecordChanged,
+    engineSynchronized: value.engineSynchronized,
+  };
+}
+
+/**
+ * 解析插件安装或移除失败响应中的结构化结果。
+ * @param error 服务端请求错误
+ */
+export function readJuggleWorkCloudPluginMutationError(
+  error: unknown,
+): JuggleWorkCloudPluginMutationErrorDetails | null {
+  if (!(error instanceof JuggleWorkServerError) || !isJsonRecord(error.details)) return null;
+  const details = error.details;
+  const currentItem = readCloudImportedPlugin(details.current);
+  const item = readCloudImportedPlugin(details.item) ?? currentItem;
+  const repair = readCloudImportedPluginRepair(details.repair);
+  const rollbackFailures = Array.isArray(details.rollbackFailures)
+    ? details.rollbackFailures.flatMap((entry) => {
+        if (!isJsonRecord(entry)) return [];
+        const stage = typeof entry.stage === "string" ? entry.stage.trim() : "";
+        const message = typeof entry.message === "string" ? entry.message.trim() : "";
+        return stage && message ? [{ stage, message }] : [];
+      })
+    : undefined;
+  const resolvedRevision = typeof details.resolvedRevision === "string"
+    ? details.resolvedRevision.trim() || undefined
+    : undefined;
+  const resolvedItem = item ? {
+    ...item,
+    ...(repair ? { repair } : {}),
+    ...(resolvedRevision !== undefined ? { resolvedRevision } : {}),
+  } : undefined;
+  return {
+    status: readCloudPluginOperationStatus(details.status),
+    item: resolvedItem,
+    warnings: readCloudPluginStringArray(details.warnings),
+    outcomes: Array.isArray(details.outcomes) ? readCloudImportedPluginFiles(details.outcomes) : undefined,
+    conflicts: readCloudPluginConflicts(details.conflicts),
+    refreshHints: readCloudPluginStringArray(details.refreshHints),
+    changed: typeof details.changed === "boolean" ? details.changed : undefined,
+    current: details.current === null ? null : currentItem ?? undefined,
+    operation: details.operation === "install" || details.operation === "sync" || details.operation === "remove"
+      ? details.operation
+      : undefined,
+    mutations: readCloudPluginMutations(details.mutations),
+    repair,
+    resolvedRevision,
+    cause: typeof details.cause === "string" ? details.cause.trim() || undefined : undefined,
+    rollbackFailures,
+  };
 }
 
 function buildHeaders(

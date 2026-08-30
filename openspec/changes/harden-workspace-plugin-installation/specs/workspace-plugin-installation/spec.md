@@ -43,7 +43,7 @@ Synchronizing a plugin SHALL create or update current owned resources and remove
 
 #### Scenario: Same version is synchronized repeatedly
 - **WHEN** the same resolved plugin version is synchronized more than once
-- **THEN** files, MCP entries, installation records, and reload effects do not duplicate
+- **THEN** the repeated synchronization is a true no-op with no file, MCP, installation-record, engine synchronization, or reload effects
 
 #### Scenario: Components normalize to the same file destination
 - **WHEN** two incoming components normalize to the same workspace file path during install or update
@@ -96,3 +96,39 @@ After a successful install, sync, or removal, the initiating workspace SHALL ref
 #### Scenario: Mixed plugin installation succeeds
 - **WHEN** a plugin containing Skill, Command, Agent, local MCP, and Cloud MCP components installs successfully
 - **THEN** all corresponding workspace surfaces reflect the new state without requiring navigation or manual refresh
+
+### Requirement: Marketplace lifecycle state is canonical
+Marketplace card and detail state SHALL be one of `not_installed`, `installing`, `current`, `update_available`, `partial`, `needs_signin`, `needs_admin`, `failed`, `repair_required`, or `removing`. The system SHALL derive that state deterministically from the live organization/plugin identity, active operation, resolved version, component ledger, and Cloud readiness rather than retaining a stale selected-card snapshot.
+
+#### Scenario: A new plugin version arrives while detail is open
+- **WHEN** live Marketplace data replaces the selected plugin with a newer resolved version
+- **THEN** the open detail resolves the new object by organization and plugin identity and changes from `current` to `update_available`
+
+#### Scenario: A structured mutation failure is returned
+- **WHEN** install, sync, repair, or removal returns a structured failure outcome
+- **THEN** the initiating workspace refreshes authoritative installation and Marketplace data and projects `partial`, `failed`, or `repair_required` from the refreshed result
+
+### Requirement: Marketplace actions are deterministic
+The primary action SHALL be derived from canonical state, delivery shape, component next action, and workspace capability. `not_installed` SHALL offer install, `update_available` sync, `needs_signin` sign-in, `needs_admin` administrator guidance, `partial` or `failed` retry, and `repair_required` repair. `installing` and `removing` SHALL disable competing mutations. `current` SHALL offer removal only when the plugin owns desktop resources. Unsupported actions MUST be absent or disabled with their reason.
+
+#### Scenario: Repeated renders use the same inputs
+- **WHEN** canonical state, delivery shape, component outcomes, and workspace capability are unchanged
+- **THEN** the same primary action, disabled reason, and component actions are produced in a stable order
+
+### Requirement: Detail refresh preserves only scoped last-known-good data
+Plugin detail requests SHALL be cached by organization ID, plugin ID, and resolved version. A refresh failure SHALL preserve last-known-good detail only for that exact key and SHALL expose a structured failure containing the failed stage, stable error code, user-safe message, and retryability. Changing organization or resolved version MUST NOT display cached detail from the previous key.
+
+#### Scenario: Refresh fails for the open plugin version
+- **WHEN** detail refresh fails after data for the same organization, plugin, and version was loaded
+- **THEN** the modal keeps that last-known-good detail, marks it as not refreshed, and offers retry from the structured failure
+
+#### Scenario: Organization changes after a cached detail load
+- **WHEN** the active organization changes while a plugin detail request or cached result belongs to the prior organization
+- **THEN** the prior result is not rendered and the new organization receives an independent detail request
+
+### Requirement: Repeated synchronization has no runtime effects
+Before mutation, synchronization SHALL compare the resolved version, component ledger, owned resource digests, and runtime MCP plan. When all values match the installed graph, it SHALL return `current` without writing files, runtime MCP configuration, or installation records and without invoking engine synchronization or reload.
+
+#### Scenario: Installed graph is already exact
+- **WHEN** the user synchronizes a plugin whose resolved graph and owned resource digests exactly match the current installation
+- **THEN** the operation reports `current` and produces zero persistence, engine, and reload effects
