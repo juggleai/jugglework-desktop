@@ -66,3 +66,4 @@ transcript-analysis
 evals/results/
 .playwright-mcp/
 .vscode/
+.opencode

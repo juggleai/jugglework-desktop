@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { UIMessage } from "ai";
 
 import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
 import type { ModelRef } from "@/app/types";
@@ -12,48 +13,57 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getLocaleSnapshot, subscribeLocale } from "@/i18n";
-import { deriveContextUsage, formatTokenCount } from "./context-usage-data";
+import {
+  deriveContextUsage,
+  formatTokenCount,
+} from "./context-usage-data";
 
 type ContextUsageProps = {
   messages: JuggleWorkSessionMessage[];
+  transcript: UIMessage[];
   model: ModelRef;
   contextLimit: number;
+  streaming: boolean;
 };
 
 const COPY = {
   en: {
     title: "Context usage",
+    currentContext: "Current active context",
     used: "used",
-    noData: "Usage will appear after this model completes a response.",
     unknownLimit: "Context limit unavailable",
     input: "Non-cached input",
+    totalInput: "Total input",
     cacheRead: "Cached input",
     cacheWrite: "Cache write",
     output: "Model output",
     reasoning: "Reasoning",
-    currentCall: "Latest model call",
-    sessionUsage: "Loaded history usage",
+    latestCall: "Latest provider report",
+    sessionUsage: "Loaded history diagnostics",
     calls: "model calls",
     cost: "provider-reported cost",
-    note: "The provider reports aggregate input usage, so system prompts, tools, skills, messages, and MCP content cannot be separated reliably.",
-    excluded: "Reported separately; not added to the context bar.",
+    estimateNote: "Estimated from loaded conversation content. Hidden system prompts, tool schemas, skills, MCP definitions, and provider tokenization can change the final total.",
+    providerNote: "Calibrated from the provider's latest usable report for the selected model.",
+    historyNote: "These totals cover provider reports in the loaded history window. They are not the current active context or a complete lifetime bill.",
   },
   zh: {
     title: "上下文用量",
+    currentContext: "当前有效上下文",
     used: "已使用",
-    noData: "该模型完成一次响应后，将显示实际用量。",
     unknownLimit: "模型未提供上下文上限",
     input: "非缓存输入",
+    totalInput: "输入合计",
     cacheRead: "缓存读取",
     cacheWrite: "缓存写入",
     output: "模型输出",
     reasoning: "推理用量",
-    currentCall: "最近一次模型调用",
-    sessionUsage: "已加载记录累计用量",
+    latestCall: "最近一次提供商计量",
+    sessionUsage: "已加载记录诊断",
     calls: "次模型调用",
     cost: "提供商返回的费用",
-    note: "提供商只返回聚合后的输入用量，暂时无法可靠拆分系统提示词、工具、技能、对话消息与 MCP 内容。",
-    excluded: "单独统计，不计入上方上下文占用。",
+    estimateNote: "根据已加载的对话内容估算。隐藏的系统提示词、工具 Schema、技能、MCP 定义和提供商分词方式会影响最终结果。",
+    providerNote: "已使用当前所选模型最近一次可用的提供商计量校准。",
+    historyNote: "这些累计值只覆盖已加载记录中的提供商计量，不代表当前有效上下文，也不是完整会话账单。",
   },
 } as const;
 
@@ -64,48 +74,49 @@ function formatPercentage(value: number | null) {
 function BreakdownRow(props: {
   color: string;
   label: string;
-  value: number;
+  value: number | null;
   limit: number;
-  suffix?: string;
 }) {
-  const percentage = props.limit > 0 ? `${((props.value / props.limit) * 100).toFixed(1)}%` : "—";
+  const percentage = props.value !== null && props.limit > 0
+    ? `${((props.value / props.limit) * 100).toFixed(1)}%`
+    : "—";
   return (
     <div className="flex items-center gap-3 text-sm">
       <span className={`size-2.5 shrink-0 rounded-full ${props.color}`} />
       <span className="min-w-0 flex-1 text-gray-12">{props.label}</span>
-      <span className="tabular-nums text-gray-10">{formatTokenCount(props.value)}</span>
+      <span className="tabular-nums text-gray-10">{props.value === null ? "—" : formatTokenCount(props.value)}</span>
       <span className="w-12 text-right tabular-nums text-gray-9">{percentage}</span>
-      {props.suffix ? <span className="sr-only">{props.suffix}</span> : null}
     </div>
   );
 }
 
 /**
- * 会话输入栏中的上下文用量入口，悬浮展示摘要，点击展示真实计量明细。
- * @param props.messages 当前会话消息
+ * 会话输入栏中的上下文用量入口，悬浮展示摘要，点击展示估算状态与 Provider 诊断。
+ * @param props.messages 当前会话快照中的原始消息
+ * @param props.transcript 已合并实时事件的当前会话消息
  * @param props.model 当前模型
  * @param props.contextLimit 当前模型上下文窗口
+ * @param props.streaming 当前会话是否正在运行
  */
 export function ContextUsage(props: ContextUsageProps) {
   const [open, setOpen] = useState(false);
   const skipFinalFocusRef = useRef(false);
   const locale = useSyncExternalStore(subscribeLocale, getLocaleSnapshot, getLocaleSnapshot);
   const copy = locale === "zh" ? COPY.zh : COPY.en;
-  const usage = deriveContextUsage(props.messages, props.model, props.contextLimit);
+  const usage = useMemo(() => deriveContextUsage(
+    props.messages,
+    props.transcript,
+    props.model,
+    props.contextLimit,
+    props.streaming,
+  ), [props.contextLimit, props.messages, props.model, props.streaming, props.transcript]);
   const progress = Math.min(100, Math.max(0, usage.percentage ?? 0));
-  const tooltip = usage.current
-    ? usage.contextLimit > 0
-      ? `${formatPercentage(usage.percentage)} · ${formatTokenCount(usage.currentUsed)} / ${formatTokenCount(usage.contextLimit)} ${copy.used}`
-      : `${formatTokenCount(usage.currentUsed)} ${copy.used} · ${copy.unknownLimit}`
-    : copy.noData;
-  const segments = usage.current
-    ? [
-        { key: "input", value: usage.current.input, color: "bg-teal-9" },
-        { key: "cacheRead", value: usage.current.cacheRead, color: "bg-amber-8" },
-        { key: "cacheWrite", value: usage.current.cacheWrite, color: "bg-violet-9" },
-        { key: "output", value: usage.current.output, color: "bg-blue-9" },
-      ]
-    : [];
+  const tooltip = usage.contextLimit > 0
+    ? `${formatPercentage(usage.percentage)} · ${formatTokenCount(usage.currentUsed)} / ${formatTokenCount(usage.contextLimit)}`
+    : `${formatTokenCount(usage.currentUsed)} ${copy.used} · ${copy.unknownLimit}`;
+  const latest = usage.latestCall;
+  const latestUsesSelectedLimit = latest?.providerID === props.model.providerID && latest.modelID === props.model.modelID;
+  const latestLimit = latestUsesSelectedLimit ? usage.contextLimit : 0;
 
   return (
     <>
@@ -134,7 +145,7 @@ export function ContextUsage(props: ContextUsageProps) {
                 strokeLinecap="round"
                 pathLength="100"
                 strokeDasharray={`${progress} 100`}
-                className="text-blue-9 transition-[stroke-dasharray]"
+                className={`transition-[stroke-dasharray] ${usage.currentSource === "provider-reported" ? "text-blue-9" : "text-amber-9"}`}
               />
             </svg>
           </span>
@@ -162,56 +173,62 @@ export function ContextUsage(props: ContextUsageProps) {
         >
           <DialogHeader>
             <DialogTitle>{copy.title}</DialogTitle>
-            <DialogDescription>{copy.currentCall}</DialogDescription>
+            <DialogDescription>{copy.currentContext}</DialogDescription>
           </DialogHeader>
 
-          {usage.current ? (
-            <>
-              <div>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-semibold tabular-nums text-gray-12">{formatPercentage(usage.percentage)}</span>
-                  <span className="text-sm text-gray-10">
-                    {copy.used} {formatTokenCount(usage.currentUsed)}
-                    {usage.contextLimit > 0 ? ` / ${formatTokenCount(usage.contextLimit)}` : ""}
-                  </span>
-                </div>
-                {usage.contextLimit <= 0 ? <div className="mt-1 text-xs text-amber-10">{copy.unknownLimit}</div> : null}
-                <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-gray-3">
-                  {segments.map((segment) => (
-                    <span
-                      key={segment.key}
-                      className={`${segment.color} ${segment.value > 0 ? "min-w-px" : ""}`}
-                      style={{ width: usage.contextLimit > 0 ? `${Math.min(100, (segment.value / usage.contextLimit) * 100)}%` : "0" }}
-                    />
-                  ))}
-                </div>
-              </div>
+          <div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-semibold tabular-nums text-gray-12">{formatPercentage(usage.percentage)}</span>
+              <span className="text-sm text-gray-10">
+                {copy.used} {formatTokenCount(usage.currentUsed)}
+                {usage.contextLimit > 0 ? ` / ${formatTokenCount(usage.contextLimit)}` : ""}
+              </span>
+            </div>
+            {usage.contextLimit <= 0 ? <div className="mt-1 text-xs text-amber-10">{copy.unknownLimit}</div> : null}
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-gray-3">
+              <div
+                className={`h-full min-w-px rounded-full ${usage.currentSource === "provider-reported" ? "bg-blue-9" : "bg-amber-9"}`}
+                style={{ width: usage.contextLimit > 0 ? `${progress}%` : "0" }}
+              />
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-gray-9">
+              {usage.currentSource === "provider-reported" ? copy.providerNote : copy.estimateNote}
+            </p>
+          </div>
 
-              <div className="space-y-3">
-                <BreakdownRow color="bg-teal-9" label={copy.input} value={usage.current.input} limit={usage.contextLimit} />
-                <BreakdownRow color="bg-amber-8" label={copy.cacheRead} value={usage.current.cacheRead} limit={usage.contextLimit} />
-                <BreakdownRow color="bg-violet-9" label={copy.cacheWrite} value={usage.current.cacheWrite} limit={usage.contextLimit} />
-                <BreakdownRow color="bg-blue-9" label={copy.output} value={usage.current.output} limit={usage.contextLimit} />
-                <BreakdownRow color="bg-pink-9" label={copy.reasoning} value={usage.current.reasoning} limit={usage.contextLimit} suffix={copy.excluded} />
-                <div className="pl-[22px] text-xs text-gray-9">{copy.excluded}</div>
+          {latest ? (
+            <div className="border-t border-gray-4 pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-9">{copy.latestCall}</div>
+                <div className="truncate text-[11px] text-gray-9">{latest.providerID} / {latest.modelID}</div>
               </div>
-            </>
-          ) : (
-            <div className="rounded-2xl bg-gray-2 px-4 py-6 text-center text-sm text-gray-10">{copy.noData}</div>
-          )}
+              <div className="mt-3 space-y-3">
+                <BreakdownRow color="bg-teal-9" label={copy.input} value={latest.tokens.input} limit={latestLimit} />
+                {usage.optionalFields.cacheRead ? (
+                  <BreakdownRow color="bg-amber-8" label={copy.cacheRead} value={latest.tokens.cacheRead} limit={latestLimit} />
+                ) : null}
+                {usage.optionalFields.cacheWrite ? (
+                  <BreakdownRow color="bg-violet-9" label={copy.cacheWrite} value={latest.tokens.cacheWrite} limit={latestLimit} />
+                ) : null}
+                <BreakdownRow color="bg-blue-9" label={copy.output} value={latest.tokens.output} limit={latestLimit} />
+                {usage.optionalFields.reasoning ? (
+                  <BreakdownRow color="bg-pink-9" label={copy.reasoning} value={latest.tokens.reasoning} limit={latestLimit} />
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           <div className="rounded-2xl bg-gray-2/70 px-4 py-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-gray-9">{copy.sessionUsage}</div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-10">
               <span>{usage.sessionCalls} {copy.calls}</span>
-              <span>{copy.input} {formatTokenCount(usage.session.input + usage.session.cacheRead + usage.session.cacheWrite)}</span>
+              <span>{copy.totalInput} {formatTokenCount(usage.session.input + usage.session.cacheRead + usage.session.cacheWrite)}</span>
               <span>{copy.output} {formatTokenCount(usage.session.output)}</span>
-              <span>{copy.reasoning} {formatTokenCount(usage.session.reasoning)}</span>
+              {usage.sessionOptionalFields.reasoning ? <span>{copy.reasoning} {formatTokenCount(usage.session.reasoning)}</span> : null}
               {usage.sessionCost > 0 ? <span>{copy.cost} ${usage.sessionCost.toFixed(4)}</span> : null}
             </div>
+            <p className="mt-2 text-xs leading-relaxed text-gray-9">{copy.historyNote}</p>
           </div>
-
-          <p className="text-xs leading-relaxed text-gray-9">{copy.note}</p>
         </DialogContent>
       </Dialog>
     </>

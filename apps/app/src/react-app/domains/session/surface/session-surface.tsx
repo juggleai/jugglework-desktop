@@ -59,7 +59,7 @@ import { DevProfiler } from "@/react-app/shell/dev-profiler";
 import { useShellConfig } from "@/react-app/shell/shell-config";
 import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog";
 import { SessionDebugPanel } from "./debug-panel";
-import { deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
+import { deriveContextEstimationMessages, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
@@ -769,6 +769,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   const baseRenderedMessages = useMemo(
     () => deriveRenderedSessionMessages({ transcriptState, snapshot }),
+    [snapshot, transcriptState],
+  );
+  const contextEstimationMessages = useMemo(
+    () => deriveContextEstimationMessages({ transcriptState, snapshot }),
     [snapshot, transcriptState],
   );
   const renderedMessages = useMemo(() => {
@@ -2166,6 +2170,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelPickerOpen={props.modelPickerOpen}
         selectedModel={props.selectedModel}
         contextUsageMessages={snapshot?.messages ?? []}
+        contextUsageTranscript={contextEstimationMessages}
         contextWindowTokens={props.contextWindowTokens}
         onModelPickerOpenChange={props.onModelPickerOpenChange}
         onModelChange={props.onModelChange}

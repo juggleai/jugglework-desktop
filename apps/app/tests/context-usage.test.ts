@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { UIMessage } from "ai";
 
 import type { JuggleWorkSessionMessage } from "../src/app/lib/jugglework-server";
 import {
   deriveContextUsage,
+  estimateTextTokens,
   formatTokenCount,
   resolveModelContextLimit,
 } from "../src/react-app/domains/session/surface/composer/context-usage-data";
@@ -65,139 +67,227 @@ function assistantMessage(input: {
   };
 }
 
+function uiMessage(id: string, role: UIMessage["role"], text: string, metadata?: UIMessage["metadata"]): UIMessage {
+  return {
+    id,
+    role,
+    metadata,
+    parts: [{ type: "text", text, state: "done" }],
+  };
+}
+
+const OPENAI_MODEL = { providerID: "openai", modelID: "gpt-5" };
+
 describe("context usage", () => {
   test("uses the context limit published by the selected server model", () => {
     expect(resolveModelContextLimit(
       { providerID: "lpr_zhipu", modelID: "glm-5.2" },
-      [{
-        id: "lpr_zhipu",
-        models: {
-          "glm-5.2": { limit: { context: 1_000_000 } },
-        },
-      }],
+      [{ id: "lpr_zhipu", models: { "glm-5.2": { limit: { context: 1_000_000 } } } }],
     )).toBe(1_000_000);
   });
 
   test("returns zero when the server context limit is unavailable or invalid", () => {
     const model = { providerID: "lpr_zhipu", modelID: "glm-5.2" };
     expect(resolveModelContextLimit(model, [])).toBe(0);
-    expect(resolveModelContextLimit(model, [{
-      id: "lpr_zhipu",
-      models: { "glm-5.2": { limit: { context: 0 } } },
-    }])).toBe(0);
+    expect(resolveModelContextLimit(model, [{ id: "lpr_zhipu", models: { "glm-5.2": { limit: { context: 0 } } } }])).toBe(0);
   });
 
   test("falls back to the organization model config while the engine list is stale", () => {
     expect(resolveModelContextLimit(
       { providerID: "lpr_zhipu", modelID: "glm-5.2" },
       [{ id: "lpr_zhipu", models: { "glm-5.2": {} } }],
-      [{
-        id: "lpr_zhipu",
-        providerId: "zhipuai-coding-plan",
-        models: [{
-          id: "glm-5.2",
-          config: { limit: { context: 1_000_000, output: 131_072 } },
-        }],
-      }],
+      [{ id: "lpr_zhipu", providerId: "zhipuai-coding-plan", models: [{ id: "glm-5.2", config: { limit: { context: 1_000_000, output: 131_072 } } }] }],
     )).toBe(1_000_000);
   });
 
   test("keeps the engine route limit ahead of the server's stored limit", () => {
     expect(resolveModelContextLimit(
       { providerID: "lpr_codex", modelID: "gpt-5.6-sol" },
-      [{
-        id: "lpr_codex",
-        models: { "gpt-5.6-sol": { limit: { context: 372_000 } } },
-      }],
-      [{
-        id: "lpr_codex",
-        providerId: "codex",
-        models: [{
-          id: "gpt-5.6-sol",
-          config: { limit: { context: 1_050_000 } },
-        }],
-      }],
+      [{ id: "lpr_codex", models: { "gpt-5.6-sol": { limit: { context: 372_000 } } } }],
+      [{ id: "lpr_codex", providerId: "codex", models: [{ id: "gpt-5.6-sol", config: { limit: { context: 1_050_000 } } }] }],
     )).toBe(372_000);
   });
 
-  test("uses the latest provider call for the selected model and keeps session totals", () => {
-    const usage = deriveContextUsage([
-      assistantMessage({
-        id: "assistant-1",
-        cost: 0.01,
-        steps: [
-          { input: 1_000, output: 100, cacheRead: 2_000 },
-          { input: 500, output: 50, reasoning: 25, cacheRead: 3_000, cacheWrite: 100 },
-        ],
-      }),
-      assistantMessage({
-        id: "assistant-2",
-        cost: 0.02,
-        steps: [{ input: 800, output: 80, reasoning: 10, cacheRead: 4_000, cacheWrite: 120 }],
-      }),
-    ], { providerID: "openai", modelID: "gpt-5" }, 100_000);
+  test("estimates multilingual text without requiring a provider call", () => {
+    expect(estimateTextTokens("abcd")).toBe(1);
+    expect(estimateTextTokens("你好")).toBe(2);
 
-    expect(usage.current).toEqual({
-      input: 800,
-      output: 80,
-      reasoning: 10,
-      cacheRead: 4_000,
-      cacheWrite: 120,
-    });
-    expect(usage.currentUsed).toBe(5_000);
-    expect(usage.percentage).toBe(5);
-    expect(usage.sessionCalls).toBe(3);
-    expect(usage.session.input).toBe(2_300);
-    expect(usage.session.cacheRead).toBe(9_000);
-    expect(usage.sessionCost).toBeCloseTo(0.03);
+    const usage = deriveContextUsage([], [
+      uiMessage("user-1", "user", "Please summarize 这段内容"),
+    ], OPENAI_MODEL, 100_000);
+
+    expect(usage.currentSource).toBe("estimated");
+    expect(usage.currentUsed).toBeGreaterThan(0);
+    expect(usage.percentage).toBeGreaterThan(0);
   });
 
-  test("does not present another model's usage as the current model context", () => {
+  test("uses the provider report when it is the current selected-model boundary", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", cost: 0.02, steps: [{ input: 800, output: 80, reasoning: 10, cacheRead: 4_000, cacheWrite: 120 }] }),
+    ], [
+      uiMessage("user-1", "user", "Hello"),
+      uiMessage("assistant-1", "assistant", "Hi"),
+    ], OPENAI_MODEL, 100_000);
+
+    expect(usage.currentSource).toBe("provider-reported");
+    expect(usage.currentUsed).toBe(5_000);
+    expect(usage.currentTokens?.reasoning).toBe(10);
+    expect(usage.percentage).toBe(5);
+    expect(usage.sessionCalls).toBe(1);
+    expect(usage.optionalFields).toEqual({ reasoning: true, cacheRead: true, cacheWrite: true });
+  });
+
+  test("extends the latest report with content that arrived after it", () => {
     const usage = deriveContextUsage([
       assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100 }] }),
-    ], { providerID: "anthropic", modelID: "claude" }, 200_000);
+    ], [
+      uiMessage("assistant-1", "assistant", "Previous response"),
+      uiMessage("user-2", "user", "A new prompt that has not completed yet"),
+    ], OPENAI_MODEL, 100_000, true);
 
-    expect(usage.current).toBeNull();
-    expect(usage.percentage).toBeNull();
+    expect(usage.currentSource).toBe("streaming-estimate");
+    expect(usage.currentUsed).toBeGreaterThan(1_100);
+  });
+
+  test("re-estimates the whole active transcript while a tool loop streams in the same assistant message", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", steps: [{ input: 20_000, output: 100 }] }),
+    ], [{
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "read",
+          toolCallId: "call-1",
+          state: "output-available",
+          input: { filePath: "/tmp/report.txt" },
+          output: "new tool output",
+        },
+      ],
+    }], OPENAI_MODEL, 100_000, true);
+
+    expect(usage.currentSource).toBe("streaming-estimate");
+    expect(usage.currentUsed).toBeGreaterThan(20_100);
+  });
+
+  test("re-estimates when the selected model differs from the latest report", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100 }] }),
+    ], [uiMessage("assistant-1", "assistant", "Previous response")], { providerID: "anthropic", modelID: "claude" }, 200_000);
+
+    expect(usage.currentSource).toBe("estimated");
+    expect(usage.currentUsed).toBeGreaterThanOrEqual(1_100);
+    expect(usage.latestCall?.providerID).toBe("openai");
+  });
+
+  test("estimates from the latest completed compaction summary", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "summary", steps: [{ input: 90_000, output: 500 }] }),
+    ], [
+      uiMessage("user-old", "user", "x".repeat(4_000)),
+      uiMessage("summary", "assistant", "Compact summary", { opencode: { summary: true, completed: 20 } }),
+      uiMessage("user-new", "user", "New prompt"),
+    ], OPENAI_MODEL, 100_000);
+
+    expect(usage.currentSource).toBe("post-compaction-estimate");
+    expect(usage.currentUsed).toBeLessThan(100);
+  });
+
+  test("ignores unfinished zero-token provider snapshots", () => {
+    const complete = assistantMessage({ id: "assistant-complete", steps: [{ input: 1_000, output: 100 }] });
+    const running = assistantMessage({ id: "assistant-running", steps: [] });
+    const usage = deriveContextUsage([complete, running], [
+      uiMessage("assistant-complete", "assistant", "Done"),
+      uiMessage("assistant-running", "assistant", "Streaming"),
+    ], OPENAI_MODEL, 100_000, true);
+
+    expect(usage.latestCall?.messageID).toBe("assistant-complete");
     expect(usage.sessionCalls).toBe(1);
   });
 
-  test("does not reuse an older matching model after the latest call used another model", () => {
-    const usage = deriveContextUsage([
-      assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100 }] }),
-      assistantMessage({
-        id: "assistant-2",
-        providerID: "anthropic",
-        modelID: "claude",
-        steps: [{ input: 2_000, output: 200 }],
-      }),
-    ], { providerID: "openai", modelID: "gpt-5" }, 100_000);
+  test("ignores completed zero-token samples that do not contain usable provider accounting", () => {
+    const zero = assistantMessage({ id: "assistant-zero", steps: [{ input: 0, output: 0 }] });
+    const usage = deriveContextUsage([zero], [
+      uiMessage("assistant-zero", "assistant", "A real response without provider usage"),
+    ], OPENAI_MODEL, 100_000);
 
-    expect(usage.current).toBeNull();
-    expect(usage.sessionCalls).toBe(2);
+    expect(usage.latestCall).toBeNull();
+    expect(usage.currentSource).toBe("estimated");
+    expect(usage.currentUsed).toBeGreaterThan(0);
+  });
+
+  test("does not establish a compaction boundary before completion", () => {
+    const usage = deriveContextUsage([], [
+      uiMessage("user-old", "user", "x".repeat(4_000)),
+      uiMessage("summary", "assistant", "", { opencode: { summary: true, created: 10 } }),
+    ], OPENAI_MODEL, 100_000, true);
+
+    expect(usage.currentSource).toBe("streaming-estimate");
+    expect(usage.currentUsed).toBeGreaterThan(1_000);
   });
 
   test("keeps the latest valid usage when an unknown zero-token step terminates the run", () => {
-    const valid = assistantMessage({
-      id: "assistant-valid",
-      steps: [{ input: 2_000, output: 100, cacheRead: 30_000 }],
-    });
-    const interrupted = assistantMessage({
-      id: "assistant-interrupted",
-      steps: [{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }],
-    });
+    const valid = assistantMessage({ id: "assistant-valid", steps: [{ input: 2_000, output: 100, cacheRead: 30_000 }] });
+    const interrupted = assistantMessage({ id: "assistant-interrupted", steps: [{ input: 0, output: 0 }] });
     interrupted.info.finish = "unknown";
     const finish = interrupted.parts.find((part) => part.type === "step-finish");
     if (finish?.type === "step-finish") finish.reason = "unknown";
 
-    const usage = deriveContextUsage([
-      valid,
-      interrupted,
-    ], { providerID: "openai", modelID: "gpt-5" }, 100_000);
+    const usage = deriveContextUsage([valid, interrupted], [
+      uiMessage("assistant-valid", "assistant", "Done"),
+      uiMessage("assistant-interrupted", "assistant", ""),
+    ], OPENAI_MODEL, 100_000);
 
     expect(usage.currentUsed).toBe(32_100);
-    expect(usage.percentage).toBeCloseTo(32.1);
+    expect(usage.currentSource).toBe("provider-reported");
     expect(usage.sessionCalls).toBe(1);
+  });
+
+  test("does not present an interrupted same-message step as a settled provider report", () => {
+    const interrupted = assistantMessage({ id: "assistant-1", steps: [{ input: 20_000, output: 100 }] });
+    interrupted.info.finish = "unknown";
+    const usage = deriveContextUsage([interrupted], [{
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "Partial output after the measured tool step", state: "done" }],
+    }], OPENAI_MODEL, 100_000, false);
+
+    expect(usage.currentSource).toBe("estimated");
+    expect(usage.currentUsed).toBeGreaterThan(20_100);
+  });
+
+  test("treats zero-only optional provider fields as unavailable", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100 }] }),
+    ], [uiMessage("assistant-1", "assistant", "Done")], OPENAI_MODEL, 100_000);
+
+    expect(usage.optionalFields).toEqual({ reasoning: false, cacheRead: false, cacheWrite: false });
+  });
+
+  test("does not borrow optional-field availability from an older provider call", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100, reasoning: 20, cacheRead: 500 }] }),
+      assistantMessage({ id: "assistant-2", providerID: "anthropic", modelID: "claude", steps: [{ input: 2_000, output: 200 }] }),
+    ], [
+      uiMessage("assistant-1", "assistant", "First"),
+      uiMessage("assistant-2", "assistant", "Second"),
+    ], { providerID: "anthropic", modelID: "claude" }, 200_000);
+
+    expect(usage.optionalFields).toEqual({ reasoning: false, cacheRead: false, cacheWrite: false });
+  });
+
+  test("keeps optional-field capability established by the same model", () => {
+    const usage = deriveContextUsage([
+      assistantMessage({ id: "assistant-1", steps: [{ input: 1_000, output: 100, reasoning: 20, cacheRead: 500 }] }),
+      assistantMessage({ id: "assistant-2", steps: [{ input: 2_000, output: 200 }] }),
+    ], [
+      uiMessage("assistant-1", "assistant", "First"),
+      uiMessage("assistant-2", "assistant", "Second"),
+    ], OPENAI_MODEL, 100_000);
+
+    expect(usage.optionalFields).toEqual({ reasoning: true, cacheRead: true, cacheWrite: false });
+    expect(usage.sessionOptionalFields.reasoning).toBe(true);
   });
 
   test("formats compact token counts for the toolbar", () => {

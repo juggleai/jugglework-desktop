@@ -28,6 +28,19 @@ export function deriveRenderedSessionMessages(input: {
   transcriptState: UIMessage[] | null | undefined;
   snapshot: JuggleWorkSessionSnapshot | null | undefined;
 }) {
+  return deriveContextEstimationMessages(input).map(toCompactionPresentationMessage);
+}
+
+/**
+ * 合并快照与实时 Transcript，同时保留压缩摘要正文供上下文估算使用。
+ * @param input.transcriptState 当前会话的实时消息缓存
+ * @param input.snapshot 当前会话快照
+ * @returns 已应用回退边界但尚未做展示层压缩脱敏的消息
+ */
+export function deriveContextEstimationMessages(input: {
+  transcriptState: UIMessage[] | null | undefined;
+  snapshot: JuggleWorkSessionSnapshot | null | undefined;
+}) {
   const revertMessageId = (input.snapshot?.session as any)?.revert?.messageID ?? null;
   const liveMessages = input.transcriptState ?? [];
 
@@ -47,8 +60,7 @@ export function deriveRenderedSessionMessages(input: {
   // would otherwise displace the real final summary during message grouping.
   return applyRevertCursor(
     messages
-      .filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX))
-      .map(toCompactionPresentationMessage),
+      .filter((message) => !message.id.startsWith(SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX)),
     revertMessageId,
   );
 }

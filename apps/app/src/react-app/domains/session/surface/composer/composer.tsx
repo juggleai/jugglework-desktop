@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
+import type { UIMessage } from "ai";
 import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, ListPlus, LoaderCircle, Paperclip, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
@@ -79,6 +80,8 @@ type ComposerProps = {
   selectedModel: ModelRef;
   /** 当前会话的原始消息，用于读取引擎返回的真实 token 计量。 */
   contextUsageMessages: JuggleWorkSessionMessage[];
+  /** 当前会话合并实时事件后的 Transcript，用于会话打开和流式阶段的上下文估算。 */
+  contextUsageTranscript: UIMessage[];
   /** 当前模型声明的上下文窗口上限；0 表示模型目录未提供。 */
   contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
@@ -1882,8 +1885,10 @@ export function ReactSessionComposer(props: ComposerProps) {
 
                   <ContextUsage
                     messages={props.contextUsageMessages}
+                    transcript={props.contextUsageTranscript}
                     model={props.selectedModel}
                     contextLimit={props.contextWindowTokens}
+                    streaming={props.busy}
                   />
                 </div>
                 {props.modelUnavailable ? (
