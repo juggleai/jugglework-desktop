@@ -27,6 +27,7 @@ export function getReactQueryClient(): QueryClient {
     ["react-session-permissions"],
     ["react-session-questions"],
     ["react-session-todos"],
+    ["react-workspace-interactions"],
   ] as const) {
     queryClient.setQueryDefaults(queryKey, { gcTime: Infinity });
   }

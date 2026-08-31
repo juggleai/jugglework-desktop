@@ -47,7 +47,7 @@ import { createManagedRuntimeClient } from "./managed-runtime-client.mjs";
 import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
 import { createRemoteControlInteractionStore } from "./remote-control-interaction-store.mjs";
-import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
+import { createRemoteControlReadRegistrations, createRemoteSessionRootVerifier } from "./remote-control-read-adapters.mjs";
 import { createRemoteControlCommandJournal } from "./remote-control-command-journal.mjs";
 import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./remote-control-agent.mjs";
 import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
@@ -1066,6 +1066,7 @@ const remoteControlPendingPolicy = createRemoteControlPendingPolicySynchronizer(
   },
 });
 let remoteControlReadRegistrations = [];
+let remoteControlSessionRootVerifier = null;
 let remoteControlMutationRegistrations = [];
 const sessionMutationCoordinator = createSessionMutationCoordinator({
   onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
@@ -1170,6 +1171,7 @@ function createMainRemoteControlAgent() {
     },
     allowInsecureLoopback: isDevMode,
     getActiveRuns: () => sessionMutationCoordinator.activeRuns(),
+    verifySessionBinding: (binding) => remoteControlSessionRootVerifier?.(binding) ?? false,
     onSessionBinding: (binding) => remoteSessionEventBridge?.bind(binding),
     onSessionUnbound: ({ controlSessionId }) => remoteSessionEventBridge?.unbind(controlSessionId),
     onTransportReset: ({ hadActiveControl, transition }) => {
@@ -1449,6 +1451,13 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
   }),
   interactions: remoteControlInteractionStore,
 });
+remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
+  workspaceStore,
+  managedRuntimeClient: createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  }),
+});
 remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
   workspaceStore,
   managedRuntimeClient: createManagedRuntimeClient({
@@ -1456,6 +1465,7 @@ remoteControlMutationRegistrations = createRemoteControlMutationRegistrations({
     fetcher: electronNet.fetch,
   }),
   coordinator: sessionMutationCoordinator,
+  interactions: remoteControlInteractionStore,
 });
 
 function createMainRemoteSessionEventBridge() {
@@ -1490,6 +1500,7 @@ function createMainRemoteSessionEventBridge() {
     },
     onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
     onStop: () => remoteControlSleepController.setAuthorized(false),
+    interactions: remoteControlInteractionStore,
   });
 }
 

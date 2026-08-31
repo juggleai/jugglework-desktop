@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 
 export type QuestionPanelProps = {
+  interactionIdentity?: string;
   questions: QuestionInfo[];
   busy: boolean;
   onReply: (answers: string[][]) => void;
+  fromSubagent?: boolean;
 };
 
 type QuestionState = {
@@ -91,10 +93,11 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
 
 export function QuestionPanel(props: QuestionPanelProps) {
   const [state, dispatch] = useReducer(questionReducer, initialQuestionState);
+  const resetKey = questionPanelResetKey(props.interactionIdentity, props.questions);
 
   useEffect(() => {
     dispatch({ type: "reset", questionCount: props.questions.length });
-  }, [props.questions]);
+  }, [resetKey, props.questions.length]);
 
   const currentQuestion = props.questions[state.currentIndex];
   const options = currentQuestion?.options ?? [];
@@ -164,6 +167,11 @@ export function QuestionPanel(props: QuestionPanelProps) {
                   total: props.questions.length,
                 })}
               </div>
+              {props.fromSubagent ? (
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-dls-accent">
+                  Subagent request
+                </div>
+              ) : null}
             </div>
             <div className="mt-1 text-sm leading-6 text-gray-11">
               {currentQuestion.question}
@@ -276,4 +284,22 @@ export function QuestionPanel(props: QuestionPanelProps) {
       </div>
     </div>
   );
+}
+
+export function questionPanelSchemaKey(questions: QuestionInfo[]): string {
+  return JSON.stringify(questions.map((question) => ({
+    id: (question as QuestionInfo & { id?: string }).id ?? null,
+    header: question.header,
+    question: question.question,
+    multiple: question.multiple ?? false,
+    custom: question.custom ?? true,
+    options: question.options.map((option) => ({
+      label: option.label,
+      description: option.description,
+    })),
+  })));
+}
+
+export function questionPanelResetKey(identity: string | undefined, questions: QuestionInfo[]): string {
+  return `${identity ?? ""}\u0000${questionPanelSchemaKey(questions)}`;
 }

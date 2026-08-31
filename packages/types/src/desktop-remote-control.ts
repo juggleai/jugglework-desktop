@@ -3,13 +3,20 @@ import { z } from "zod"
 export const DESKTOP_REMOTE_SCHEMA_VERSION = 1 as const
 export const DESKTOP_REMOTE_PROTOCOL_VERSION = 1 as const
 export const DESKTOP_REMOTE_PAYLOAD_VERSION = 1 as const
+export const DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION = 2 as const
 
 export const DESKTOP_REMOTE_SUPPORTED_PROTOCOL_VERSIONS = [
   DESKTOP_REMOTE_PROTOCOL_VERSION,
 ] as const
 export const DESKTOP_REMOTE_SUPPORTED_PAYLOAD_VERSIONS = [
   DESKTOP_REMOTE_PAYLOAD_VERSION,
+  DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION,
 ] as const
+
+const desktopRemotePayloadVersionSchema = z.union([
+  z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+  z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+])
 
 const dateTimeSchema = z.iso.datetime({ offset: true })
 const identifierSchema = z
@@ -95,6 +102,12 @@ export const desktopRemoteMutationOperationValues = [
   "interaction.question.reply",
 ] as const satisfies readonly DesktopRemoteOperation[]
 
+export const desktopRemoteDescendantOperationValues = [
+  "session.snapshot",
+  "interaction.permission.reply",
+  "interaction.question.reply",
+] as const satisfies readonly DesktopRemoteOperation[]
+
 export const desktopRemoteFeatureCapabilityValues = [
   "controller.event-resume",
   "payload.e2ee-v1",
@@ -115,12 +128,24 @@ export const desktopRemoteOperationCapabilitySchema = z
   .object({
     operation: desktopRemoteOperationSchema,
     payloadVersions: z
-      .array(z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION))
+      .array(desktopRemotePayloadVersionSchema)
       .min(1)
       .max(DESKTOP_REMOTE_SUPPORTED_PAYLOAD_VERSIONS.length)
       .refine((versions) => new Set(versions).size === versions.length, "payload versions must be unique"),
   })
   .strict()
+  .superRefine((capability, context) => {
+    const supportsDescendants = desktopRemoteDescendantOperationValues.some(
+      (operation) => operation === capability.operation,
+    )
+    if (!supportsDescendants && capability.payloadVersions.includes(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION)) {
+      context.addIssue({
+        code: "custom",
+        message: "operation supports only payload version 1",
+        path: ["payloadVersions"],
+      })
+    }
+  })
 export type DesktopRemoteOperationCapability = z.infer<
   typeof desktopRemoteOperationCapabilitySchema
 >
@@ -245,7 +270,11 @@ export function createDesktopRemoteCapabilityAdvertisement(
     .filter((operation) => isDesktopRemoteOperationEnabled(operation, gates))
     .map((operation) => ({
       operation,
-      payloadVersions: [...DESKTOP_REMOTE_SUPPORTED_PAYLOAD_VERSIONS],
+      payloadVersions: desktopRemoteDescendantOperationValues.some(
+        (descendantOperation) => descendantOperation === operation,
+      )
+        ? [...DESKTOP_REMOTE_SUPPORTED_PAYLOAD_VERSIONS]
+        : [DESKTOP_REMOTE_PAYLOAD_VERSION],
     }))
 
   const features: DesktopRemoteFeatureCapability[] = []
@@ -546,7 +575,7 @@ const interactionBaseShape = {
   expiresAt: dateTimeSchema.nullable(),
 } as const
 
-export const desktopRemotePermissionInteractionSchema = z
+export const desktopRemotePermissionInteractionV1Schema = z
   .object({
     ...interactionBaseShape,
     type: z.literal("permission"),
@@ -560,7 +589,7 @@ export const desktopRemotePermissionInteractionSchema = z
   })
   .strict()
 
-export const desktopRemoteQuestionInteractionSchema = z
+export const desktopRemoteQuestionInteractionV1Schema = z
   .object({
     ...interactionBaseShape,
     type: z.literal("question"),
@@ -591,40 +620,97 @@ export const desktopRemoteQuestionInteractionSchema = z
   })
   .strict()
 
-export const desktopRemoteInteractionSchema = z.discriminatedUnion("type", [
-  desktopRemotePermissionInteractionSchema,
-  desktopRemoteQuestionInteractionSchema,
+export const desktopRemoteInteractionV1Schema = z.discriminatedUnion("type", [
+  desktopRemotePermissionInteractionV1Schema,
+  desktopRemoteQuestionInteractionV1Schema,
+])
+
+const descendantInteractionOwnershipShape = {
+  rootSessionId: identifierSchema,
+  targetSessionId: identifierSchema,
+  parentSessionId: identifierSchema.nullable(),
+} as const
+
+export const desktopRemotePermissionInteractionV2Schema = desktopRemotePermissionInteractionV1Schema
+  .extend(descendantInteractionOwnershipShape)
+  .strict()
+export const desktopRemoteQuestionInteractionV2Schema = desktopRemoteQuestionInteractionV1Schema
+  .extend(descendantInteractionOwnershipShape)
+  .strict()
+export const desktopRemoteInteractionV2Schema = z.discriminatedUnion("type", [
+  desktopRemotePermissionInteractionV2Schema,
+  desktopRemoteQuestionInteractionV2Schema,
+]).superRefine((interaction, context) => {
+  if (interaction.sessionId !== interaction.targetSessionId) {
+    context.addIssue({
+      code: "custom",
+      message: "sessionId must match targetSessionId",
+      path: ["sessionId"],
+    })
+  }
+})
+export const desktopRemotePermissionInteractionSchema = z.union([
+  desktopRemotePermissionInteractionV1Schema,
+  desktopRemotePermissionInteractionV2Schema,
+])
+export const desktopRemoteQuestionInteractionSchema = z.union([
+  desktopRemoteQuestionInteractionV1Schema,
+  desktopRemoteQuestionInteractionV2Schema,
+])
+export const desktopRemoteInteractionSchema = z.union([
+  desktopRemoteInteractionV1Schema,
+  desktopRemoteInteractionV2Schema,
 ])
 export type DesktopRemoteInteraction = z.infer<
   typeof desktopRemoteInteractionSchema
 >
 
-export const desktopRemoteSessionSnapshotSchema = z
+const sessionSnapshotBaseShape = {
+  schemaVersion: z.literal(DESKTOP_REMOTE_SCHEMA_VERSION),
+  workspace: desktopRemoteWorkspaceSummarySchema,
+  session: desktopRemoteSessionSummarySchema,
+  messages: z.array(desktopRemoteMessageSchema).max(100_000),
+  todos: z.array(desktopRemoteTodoSchema).max(10_000),
+  pendingOperations: z.array(z.object({
+    id: identifierSchema,
+    mode: z.enum(["steer", "enqueue"]),
+    position: z.number().int().positive(),
+    status: z.literal("pending"),
+  }).strict()).max(1_000),
+  capturedAt: dateTimeSchema,
+} as const
+
+function refineSnapshotWorkspace(
+  snapshot: { workspace: { id: string }, session: { workspaceId: string } },
+  context: z.core.$RefinementCtx,
+) {
+  if (snapshot.session.workspaceId !== snapshot.workspace.id) {
+    context.addIssue({
+      code: "custom",
+      message: "session must belong to the snapshot workspace",
+      path: ["session", "workspaceId"],
+    })
+  }
+}
+
+export const desktopRemoteSessionSnapshotV1Schema = z
   .object({
-    schemaVersion: z.literal(DESKTOP_REMOTE_SCHEMA_VERSION),
-    workspace: desktopRemoteWorkspaceSummarySchema,
-    session: desktopRemoteSessionSummarySchema,
-    messages: z.array(desktopRemoteMessageSchema).max(100_000),
-    todos: z.array(desktopRemoteTodoSchema).max(10_000),
-    interactions: z.array(desktopRemoteInteractionSchema).max(1_000),
-    pendingOperations: z.array(z.object({
-      id: identifierSchema,
-      mode: z.enum(["steer", "enqueue"]),
-      position: z.number().int().positive(),
-      status: z.literal("pending"),
-    }).strict()).max(1_000),
-    capturedAt: dateTimeSchema,
+    ...sessionSnapshotBaseShape,
+    interactions: z.array(desktopRemoteInteractionV1Schema).max(1_000),
   })
   .strict()
-  .superRefine((snapshot, context) => {
-    if (snapshot.session.workspaceId !== snapshot.workspace.id) {
-      context.addIssue({
-        code: "custom",
-        message: "session must belong to the snapshot workspace",
-        path: ["session", "workspaceId"],
-      })
-    }
+  .superRefine(refineSnapshotWorkspace)
+export const desktopRemoteSessionSnapshotV2Schema = z
+  .object({
+    ...sessionSnapshotBaseShape,
+    interactions: z.array(desktopRemoteInteractionV2Schema).max(1_000),
   })
+  .strict()
+  .superRefine(refineSnapshotWorkspace)
+export const desktopRemoteSessionSnapshotSchema = z.union([
+  desktopRemoteSessionSnapshotV1Schema,
+  desktopRemoteSessionSnapshotV2Schema,
+])
 export type DesktopRemoteSessionSnapshot = z.infer<
   typeof desktopRemoteSessionSnapshotSchema
 >
@@ -650,6 +736,13 @@ const sessionSnapshotRequestSchema = z
     arguments: z
       .object({ workspaceId: identifierSchema, sessionId: identifierSchema })
       .strict(),
+  })
+  .strict()
+const sessionSnapshotV2RequestSchema = z
+  .object({
+    operation: z.literal("session.snapshot"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+    arguments: z.object({ workspaceId: identifierSchema, rootSessionId: identifierSchema }).strict(),
   })
   .strict()
 const sessionPromptRequestSchema = z
@@ -723,6 +816,20 @@ const permissionReplyRequestSchema = z
       .strict(),
   })
   .strict()
+const permissionReplyV2RequestSchema = z
+  .object({
+    operation: z.literal("interaction.permission.reply"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+    arguments: z.object({
+      workspaceId: identifierSchema,
+      rootSessionId: identifierSchema,
+      targetSessionId: identifierSchema,
+      parentSessionId: identifierSchema.nullable(),
+      interactionId: identifierSchema,
+      response: z.enum(["allow_once", "reject"]),
+    }).strict(),
+  })
+  .strict()
 const questionReplyRequestSchema = z
   .object({
     operation: z.literal("interaction.question.reply"),
@@ -751,10 +858,29 @@ const questionReplyRequestSchema = z
       .strict(),
   })
   .strict()
+const questionReplyV2RequestSchema = z
+  .object({
+    operation: z.literal("interaction.question.reply"),
+    payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+    arguments: z.object({
+      workspaceId: identifierSchema,
+      rootSessionId: identifierSchema,
+      targetSessionId: identifierSchema,
+      parentSessionId: identifierSchema.nullable(),
+      interactionId: identifierSchema,
+      answers: z.array(z.object({
+        questionId: identifierSchema,
+        values: z.array(z.string().max(10_000)).min(1).max(100),
+      }).strict()).min(1).max(100).refine(
+        (answers) => new Set(answers.map((answer) => answer.questionId)).size === answers.length,
+        "questions must be answered at most once",
+      ),
+    }).strict(),
+  })
+  .strict()
 
-export const desktopRemoteOperationRequestSchema = z.discriminatedUnion(
-  "operation",
-  [
+export const desktopRemoteOperationRequestSchema = z.union([
+  z.discriminatedUnion("operation", [
     workspaceListRequestSchema,
     sessionListRequestSchema,
     sessionSnapshotRequestSchema,
@@ -764,8 +890,13 @@ export const desktopRemoteOperationRequestSchema = z.discriminatedUnion(
     sessionPendingCancelRequestSchema,
     permissionReplyRequestSchema,
     questionReplyRequestSchema,
-  ],
-)
+  ]),
+  z.union([
+    sessionSnapshotV2RequestSchema,
+    permissionReplyV2RequestSchema,
+    questionReplyV2RequestSchema,
+  ]),
+])
 export type DesktopRemoteOperationRequest = z.infer<
   typeof desktopRemoteOperationRequestSchema
 >
@@ -777,9 +908,7 @@ const interactionResolutionResultSchema = z
   })
   .strict()
 
-export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
-  "operation",
-  [
+export const desktopRemoteOperationResultSchema = z.union([
     z
       .object({
         operation: z.literal("session.create"),
@@ -801,13 +930,16 @@ export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
         result: z.object({ sessions: z.array(desktopRemoteSessionSummarySchema).max(100_000) }).strict(),
       })
       .strict(),
-    z
-      .object({
-        operation: z.literal("session.snapshot"),
-        payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
-        result: desktopRemoteSessionSnapshotSchema,
-      })
-      .strict(),
+    z.object({
+      operation: z.literal("session.snapshot"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+      result: desktopRemoteSessionSnapshotV1Schema,
+    }).strict(),
+    z.object({
+      operation: z.literal("session.snapshot"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+      result: desktopRemoteSessionSnapshotV2Schema,
+    }).strict(),
     z
       .object({
         operation: z.literal("session.prompt"),
@@ -843,6 +975,11 @@ export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
         result: interactionResolutionResultSchema,
       })
       .strict(),
+    z.object({
+      operation: z.literal("interaction.permission.reply"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+      result: interactionResolutionResultSchema,
+    }).strict(),
     z
       .object({
         operation: z.literal("interaction.question.reply"),
@@ -850,8 +987,12 @@ export const desktopRemoteOperationResultSchema = z.discriminatedUnion(
         result: interactionResolutionResultSchema,
       })
       .strict(),
-  ],
-)
+    z.object({
+      operation: z.literal("interaction.question.reply"),
+      payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+      result: interactionResolutionResultSchema,
+    }).strict(),
+])
 export type DesktopRemoteOperationResult = z.infer<
   typeof desktopRemoteOperationResultSchema
 >
@@ -1012,8 +1153,8 @@ export type DesktopRemoteCommandLifecycle = z.infer<
   typeof desktopRemoteCommandLifecycleSchema
 >
 
-const normalizedSessionEventDataSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("snapshot"), snapshot: desktopRemoteSessionSnapshotSchema }).strict(),
+const normalizedSessionEventDataV1Schema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("snapshot"), snapshot: desktopRemoteSessionSnapshotV1Schema }).strict(),
   z.object({ type: z.literal("message.upsert"), message: desktopRemoteMessageSchema }).strict(),
   z.object({ type: z.literal("message.remove"), messageId: identifierSchema }).strict(),
   z
@@ -1024,7 +1165,7 @@ const normalizedSessionEventDataSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
-  z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionSchema }).strict(),
+  z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV1Schema }).strict(),
   z.object({ type: z.literal("interaction.remove"), interactionId: identifierSchema }).strict(),
   z
     .object({
@@ -1049,10 +1190,26 @@ const normalizedSessionEventDataSchema = z.discriminatedUnion("type", [
     .strict(),
 ])
 
-export const desktopRemoteSessionEventSchema = z
-  .object({
+const normalizedSessionEventDataV2Schema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("snapshot"), snapshot: desktopRemoteSessionSnapshotV2Schema }).strict(),
+  z.object({ type: z.literal("message.upsert"), message: desktopRemoteMessageSchema }).strict(),
+  z.object({ type: z.literal("message.remove"), messageId: identifierSchema }).strict(),
+  z.object({ type: z.literal("message.part.upsert"), messageId: identifierSchema, part: desktopRemoteMessagePartSchema }).strict(),
+  z.object({ type: z.literal("todos.replace"), todos: z.array(desktopRemoteTodoSchema).max(10_000) }).strict(),
+  z.object({ type: z.literal("interaction.upsert"), interaction: desktopRemoteInteractionV2Schema }).strict(),
+  z.object({
+    type: z.literal("interaction.remove"),
+    interactionId: identifierSchema,
+    rootSessionId: identifierSchema,
+    targetSessionId: identifierSchema,
+  }).strict(),
+  z.object({ type: z.literal("session.status"), status: desktopRemoteSessionStatusSchema, run: desktopRemoteActiveRunSchema.nullable() }).strict(),
+  z.object({ type: z.literal("run.status"), runId: identifierSchema, status: desktopRemoteRunStatusSchema, error: desktopRemoteErrorSchema.nullable() }).strict(),
+  z.object({ type: z.literal("snapshot_required"), reason: z.enum(["cursor_missing", "cursor_expired", "sequence_gap"]) }).strict(),
+])
+
+const sessionEventBaseShape = {
     schemaVersion: z.literal(DESKTOP_REMOTE_SCHEMA_VERSION),
-    payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
     eventId: z.string().uuid(),
     controlSessionId: z.string().uuid(),
     deviceId: z.string().uuid(),
@@ -1060,9 +1217,21 @@ export const desktopRemoteSessionEventSchema = z
     sessionId: identifierSchema,
     sequence: z.number().int().positive(),
     occurredAt: dateTimeSchema,
-    data: normalizedSessionEventDataSchema,
-  })
-  .strict()
+} as const
+export const desktopRemoteSessionEventV1Schema = z.object({
+  ...sessionEventBaseShape,
+  payloadVersion: z.literal(DESKTOP_REMOTE_PAYLOAD_VERSION),
+  data: normalizedSessionEventDataV1Schema,
+}).strict()
+export const desktopRemoteSessionEventV2Schema = z.object({
+  ...sessionEventBaseShape,
+  payloadVersion: z.literal(DESKTOP_REMOTE_DESCENDANT_PAYLOAD_VERSION),
+  data: normalizedSessionEventDataV2Schema,
+}).strict()
+export const desktopRemoteSessionEventSchema = z.union([
+  desktopRemoteSessionEventV1Schema,
+  desktopRemoteSessionEventV2Schema,
+])
 export type DesktopRemoteSessionEvent = z.infer<
   typeof desktopRemoteSessionEventSchema
 >

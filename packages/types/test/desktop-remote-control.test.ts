@@ -7,8 +7,12 @@ import {
   createDesktopRemoteWssEnvelopeSchema,
   desktopRemoteCapabilityAdvertisementSchema,
   desktopRemoteDisabledFeatureGates,
+  desktopRemoteDescendantOperationValues,
   desktopRemoteOperationRequestSchema,
   desktopRemoteOperationResultSchema,
+  desktopRemoteInteractionSchema,
+  desktopRemoteInteractionV1Schema,
+  desktopRemoteInteractionV2Schema,
   desktopRemoteCommandDeliverySchema,
   desktopRemoteControlSessionSchema,
   desktopRemoteDeviceSchema,
@@ -178,6 +182,47 @@ describe("desktop remote-control contracts", () => {
     )
   })
 
+  test("negotiates descendant v2 only for snapshot and interaction replies", () => {
+    const gates = {
+      ...desktopRemoteDisabledFeatureGates,
+      enrollment: true,
+      readOnlyControl: true,
+      sessionMutation: true,
+      interactions: true,
+    }
+    const advertised = createDesktopRemoteCapabilityAdvertisement(gates)
+    assert.deepEqual(
+      advertised.operations.find(({ operation }) => operation === "session.snapshot")?.payloadVersions,
+      [1, 2],
+    )
+    assert.deepEqual(
+      advertised.operations.find(({ operation }) => operation === "workspace.list")?.payloadVersions,
+      [1],
+    )
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      operation: "session.snapshot",
+      payloadVersion: 2,
+      arguments: { workspaceId: "workspace-1", rootSessionId: "session-root" },
+    }).success, true)
+    assert.equal(desktopRemoteOperationRequestSchema.safeParse({
+      operation: "session.snapshot",
+      payloadVersion: 2,
+      arguments: { workspaceId: "workspace-1", sessionId: "session-root" },
+    }).success, false)
+    assert.deepEqual(desktopRemoteDescendantOperationValues, [
+      "session.snapshot",
+      "interaction.permission.reply",
+      "interaction.question.reply",
+    ])
+    for (const operation of ["workspace.list", "session.list", "session.prompt"] as const) {
+      assert.equal(desktopRemoteCapabilityAdvertisementSchema.safeParse({
+        schemaVersion: 1,
+        operations: [{ operation, payloadVersions: [1, 2] }],
+        features: [],
+      }).success, false)
+    }
+  })
+
   test("rejects unsupported WSS protocol versions", () => {
     assert.equal(
       desktopRemoteWssEnvelopeSchema.safeParse({
@@ -331,6 +376,35 @@ describe("desktop remote-control contracts", () => {
       operation: "session.prompt",
       payloadVersion: 1,
       arguments: { workspaceId: "workspace-1", sessionId: "session-1", prompt: "界".repeat(66_667), whenBusy: "reject" },
+    }).success, false)
+  })
+
+  test("retains root ownership and exact target ownership for remote interactions", () => {
+    const interaction = {
+      id: "permission-1",
+      type: "permission",
+      rootSessionId: "session-root",
+      targetSessionId: "session-child",
+      parentSessionId: "session-root",
+      sessionId: "session-child",
+      runId: null,
+      status: "pending",
+      title: "External directory",
+      description: "/outside",
+      permittedResponses: ["allow_once", "reject"],
+      resolution: null,
+      createdAt: "2026-08-08T12:00:00.000Z",
+      expiresAt: null,
+    } as const
+    assert.equal(desktopRemoteInteractionSchema.safeParse(interaction).success, true)
+    assert.equal(desktopRemoteInteractionV2Schema.safeParse(interaction).success, true)
+    assert.equal(desktopRemoteInteractionV1Schema.safeParse(interaction).success, false)
+    const v1 = Object.fromEntries(Object.entries(interaction).filter(([key]) =>
+      !["rootSessionId", "targetSessionId", "parentSessionId"].includes(key)))
+    assert.equal(desktopRemoteInteractionV1Schema.safeParse(v1).success, true)
+    assert.equal(desktopRemoteInteractionSchema.safeParse({
+      ...interaction,
+      sessionId: "session-root",
     }).success, false)
   })
 

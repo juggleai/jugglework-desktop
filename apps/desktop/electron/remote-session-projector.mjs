@@ -25,7 +25,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteMessagePart} DesktopRemoteMessagePart */
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteInteraction} DesktopRemoteInteraction */
 /** @typedef {{ setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void }} ProjectorTimers */
-/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, sequence: number }} Binding */
+/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, sequence: number }} Binding */
 /** @typedef {{ info: Record<string, any> | null, parts: Map<string, { raw: Record<string, any>, normalized: DesktopRemoteMessagePart }>, pending: Map<string, string>, fullEmitted: boolean }} MessageState */
 /** @typedef {{ messages: Map<string, MessageState>, todos: unknown[], interactions: Map<string, DesktopRemoteInteraction>, durableSequence: number | null }} SessionState */
 /** @typedef {{ key: string, workspaceId: string, sessionId: string, messageId: string, partId: string, occurredAt: string, timer: unknown }} PendingPartEmission */
@@ -141,9 +141,12 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
   /** @param {Binding} binding @param {unknown} data @param {string} occurredAt */
   function emitToBinding(binding, data, occurredAt) {
     if (stopped) return;
+    if (binding.payloadVersion === 1 && isRecord(data) &&
+        ((data.type === "interaction.upsert" && isRecord(data.interaction) && data.interaction.targetSessionId !== binding.sessionId) ||
+         (data.type === "interaction.remove" && data.targetSessionId !== binding.sessionId))) return;
     const candidate = {
       schemaVersion: 1,
-      payloadVersion: 1,
+      payloadVersion: binding.payloadVersion,
       eventId: randomUUID(),
       controlSessionId: binding.controlSessionId,
       deviceId: binding.deviceId,
@@ -153,6 +156,15 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       occurredAt,
       data,
     };
+    const wireData = binding.payloadVersion === 1 && isRecord(data)
+      ? data.type === "interaction.upsert" && isRecord(data.interaction)
+        ? { ...data, interaction: Object.fromEntries(Object.entries(data.interaction).filter(([key]) =>
+            !["rootSessionId", "targetSessionId", "parentSessionId"].includes(key))) }
+        : data.type === "interaction.remove"
+          ? { type: "interaction.remove", interactionId: data.interactionId }
+          : data
+      : data;
+    candidate.data = wireData;
     const parsed = desktopRemoteSessionEventSchema.safeParse(candidate);
     if (!parsed.success) return;
     if (Buffer.byteLength(JSON.stringify(parsed.data), "utf8") > MAX_EVENT_BYTES) {
@@ -276,10 +288,11 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     }
   }
 
-  /** @param {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string }} input */
+  /** @param {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion?: 1 | 2 }} input */
   function bind(input) {
+    if (isRecord(input) && input.payloadVersion === undefined) input = { ...input, payloadVersion: 1 };
     if (stopped || !isRecord(input) || !UUID_PATTERN.test(input.controlSessionId) || !UUID_PATTERN.test(input.deviceId) ||
-        !isIdentifier(input.workspaceId) || !isIdentifier(input.sessionId)) {
+         !isIdentifier(input.workspaceId) || !isIdentifier(input.sessionId) || ![1, 2].includes(input.payloadVersion)) {
       throw new TypeError("Remote session binding is invalid.");
     }
     const existing = bindings.get(input.controlSessionId);
@@ -287,10 +300,11 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       if (existing.deviceId !== input.deviceId || existing.workspaceId !== input.workspaceId || existing.sessionId !== input.sessionId) {
         return false;
       }
+      if (input.payloadVersion === 2) existing.payloadVersion = 2;
       return true;
     }
     if (bindings.size >= MAX_BINDINGS) throw new RangeError("Remote session binding limit exceeded.");
-    bindings.set(input.controlSessionId, { ...input, sequence: 0 });
+    bindings.set(input.controlSessionId, { ...input, payloadVersion: input.payloadVersion ?? 1, sequence: 0 });
     return true;
   }
 
@@ -314,12 +328,29 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
   }
 
   /** @param {string} workspaceId @param {unknown} raw */
-  function accept(workspaceId, raw) {
+  function accept(workspaceId, raw, suppliedInteractionOwnership = null) {
     if (stopped || !isIdentifier(workspaceId)) return;
     const event = unwrapEvent(raw);
     if (!event) return;
-    const sessionId = sessionIdOf(event.data);
-    if (!sessionId || ![...bindings.values()].some((binding) => binding.workspaceId === workspaceId && binding.sessionId === sessionId)) return;
+    const targetSessionId = sessionIdOf(event.data);
+    if (!targetSessionId) return;
+    const interactionEvent = [
+      "permission.asked", "permission.v2.asked", "question.asked", "question.v2.asked",
+      "permission.replied", "permission.rejected", "permission.v2.replied", "permission.v2.rejected",
+      "question.replied", "question.rejected", "question.v2.replied", "question.v2.rejected",
+    ].includes(event.type);
+    if (interactionEvent && !isRecord(suppliedInteractionOwnership)) return;
+    const ownershipSource = suppliedInteractionOwnership;
+    const interactionOwnership = interactionEvent ? {
+      rootSessionId: isIdentifier(ownershipSource.rootSessionId) ? ownershipSource.rootSessionId : null,
+      targetSessionId: isIdentifier(ownershipSource.targetSessionId) ? ownershipSource.targetSessionId : null,
+      parentSessionId: ownershipSource.parentSessionId === null || isIdentifier(ownershipSource.parentSessionId)
+        ? ownershipSource.parentSessionId : undefined,
+    } : null;
+    if (interactionOwnership && (!interactionOwnership.rootSessionId || !interactionOwnership.targetSessionId || interactionOwnership.parentSessionId === undefined)) return;
+    if (interactionOwnership && interactionOwnership.targetSessionId !== targetSessionId) return;
+    const sessionId = interactionOwnership?.rootSessionId ?? targetSessionId;
+    if (![...bindings.values()].some((binding) => binding.workspaceId === workspaceId && binding.sessionId === sessionId)) return;
     const occurredAtMs = timestampMs(now());
     const occurredAt = new Date(occurredAtMs).toISOString();
     const state = stateFor(workspaceId, sessionId);
@@ -379,20 +410,27 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     }
     if (["permission.asked", "permission.v2.asked", "question.asked", "question.v2.asked"].includes(event.type)) {
       const interaction = event.type.startsWith("permission")
-        ? normalizeRemotePermissionInteraction(data, sessionId, occurredAtMs)
-        : normalizeRemoteQuestionInteraction(data, sessionId, occurredAtMs);
+        ? normalizeRemotePermissionInteraction(data, targetSessionId, occurredAtMs, interactionOwnership, 2)
+        : normalizeRemoteQuestionInteraction(data, targetSessionId, occurredAtMs, interactionOwnership, 2);
       if (!interaction) return;
       const runId = getActiveRunId({ workspaceId, sessionId });
       interaction.runId = isIdentifier(runId) ? runId : null;
-      state.interactions.set(interaction.id, interaction);
+      const identity = `${interaction.type}\u0000${targetSessionId}\u0000${interaction.id}`;
+      state.interactions.set(identity, interaction);
       emitForSession(workspaceId, sessionId, { type: "interaction.upsert", interaction }, occurredAt);
       return;
     }
     if (["permission.replied", "permission.rejected", "permission.v2.replied", "permission.v2.rejected", "question.replied", "question.rejected", "question.v2.replied", "question.v2.rejected"].includes(event.type)) {
       const interactionId = isIdentifier(data.requestID) ? data.requestID : isIdentifier(data.id) ? data.id : null;
-      if (data.sessionID !== sessionId || !interactionId) return;
-      state.interactions.delete(interactionId);
-      emitForSession(workspaceId, sessionId, { type: "interaction.remove", interactionId }, occurredAt);
+      if (data.sessionID !== targetSessionId || !interactionId) return;
+      const kind = event.type.startsWith("permission") ? "permission" : "question";
+      state.interactions.delete(`${kind}\u0000${targetSessionId}\u0000${interactionId}`);
+      emitForSession(workspaceId, sessionId, {
+        type: "interaction.remove",
+        interactionId,
+        rootSessionId: sessionId,
+        targetSessionId,
+      }, occurredAt);
       return;
     }
     if (event.type === "session.status") return projectStatus(workspaceId, sessionId, data, occurredAt);

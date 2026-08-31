@@ -205,6 +205,12 @@ describe("remote-control operation registry", () => {
       }),
       /required gates/,
     );
+    assert.throws(
+      () => createRemoteControlOperationRegistry({
+        registrations: [readRegistration({ payloadVersions: [1, 2] })],
+      }),
+      /does not support payload version 2/,
+    );
   });
 
   it("rejects unknown operations, unsupported versions, disabled gates, denied policy, and unadvertised calls before execute", async () => {

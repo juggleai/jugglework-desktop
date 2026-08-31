@@ -10,11 +10,13 @@ import {
   __disposeWorkspaceSessionSyncForTest,
   __hasWorkspaceSessionSyncForTest,
   coalescePendingDeltas,
+  captureLegacyInteractionSnapshotRevision,
   captureTodoSnapshotRevision,
   clearSessionTodos,
   ensureWorkspaceSessionSync,
   permissionKey,
   questionKey,
+  reconcileWorkspaceInteractionRoots,
   seedPermissionState,
   seedQuestionState,
   seedSessionState,
@@ -22,6 +24,11 @@ import {
   transcriptKey,
   todoKey,
 } from "../src/react-app/domains/session/sync/session-sync";
+import {
+  getWorkspaceInteractionState,
+  pendingInteractionsForRoot,
+  seedWorkspaceSessionAncestry,
+} from "../src/react-app/domains/session/sync/workspace-interactions";
 
 function permission(id: string, sessionID: string): PermissionRequest {
   return {
@@ -133,14 +140,16 @@ describe("session permission sync", () => {
   });
 
   test("keeps live permissions that arrive after a snapshot starts", () => {
+    const snapshotRevision = captureLegacyInteractionSnapshotRevision();
     getReactQueryClient().setQueryData(permissionKey("workspace-a", "session-a"), [
       {
         ...permission("perm-live", "session-a"),
         receivedAt: 200,
+        interactionRevision: snapshotRevision + 1,
       },
     ]);
 
-    seedPermissionState("workspace-a", "session-a", [], { snapshotStartedAt: 100 });
+    seedPermissionState("workspace-a", "session-a", [], { snapshotRevision });
 
     expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([
       { id: "perm-live", sessionID: "session-a", permission: "bash" },
@@ -148,14 +157,16 @@ describe("session permission sync", () => {
   });
 
   test("drops stale permissions that predate a fresh snapshot", () => {
+    const snapshotRevision = captureLegacyInteractionSnapshotRevision();
     getReactQueryClient().setQueryData(permissionKey("workspace-a", "session-a"), [
       {
         ...permission("perm-stale", "session-a"),
         receivedAt: 100,
+        interactionRevision: snapshotRevision,
       },
     ]);
 
-    seedPermissionState("workspace-a", "session-a", [], { snapshotStartedAt: 200 });
+    seedPermissionState("workspace-a", "session-a", [], { snapshotRevision });
 
     expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
   });
@@ -180,7 +191,7 @@ describe("session permission sync", () => {
   test("adds and removes live v2 permission events", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
-    const releaseSession = trackWorkspaceSessionSync(syncInput, "session-a");
+    seedWorkspaceSessionAncestry("workspace-a", [{ id: "session-a", parentID: undefined }]);
 
     try {
       __applySessionSyncEventForTest(syncInput, {
@@ -188,7 +199,7 @@ describe("session permission sync", () => {
         properties: v2Permission("perm-v2-live", "session-a"),
       });
 
-      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([
+      expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").permissions).toMatchObject([
         { id: "perm-v2-live", sessionID: "session-a", permission: "read", protocol: "v2" },
       ]);
 
@@ -197,9 +208,8 @@ describe("session permission sync", () => {
         properties: { sessionID: "session-a", requestID: "perm-v2-live", reply: "once" },
       });
 
-      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
+      expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").permissions).toEqual([]);
     } finally {
-      releaseSession();
       cleanup();
     }
   });
@@ -220,7 +230,7 @@ describe("session question sync", () => {
   test("adds and removes live question events", () => {
     const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
-    const releaseSession = trackWorkspaceSessionSync(syncInput, "session-a");
+    seedWorkspaceSessionAncestry("workspace-a", [{ id: "session-a", parentID: undefined }]);
 
     try {
       __applySessionSyncEventForTest(syncInput, {
@@ -228,7 +238,7 @@ describe("session question sync", () => {
         properties: question("question-live", "session-a"),
       } as any);
 
-      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-a"))).toMatchObject([
+      expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").questions).toMatchObject([
         { id: "question-live", sessionID: "session-a" },
       ]);
 
@@ -237,9 +247,79 @@ describe("session question sync", () => {
         properties: { sessionID: "session-a", requestID: "question-live", answers: [["Yes"]] },
       } as any);
 
-      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-a"))).toEqual([]);
+      expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").questions).toEqual([]);
     } finally {
-      releaseSession();
+      cleanup();
+    }
+  });
+
+  test("supports question.v2 asked, replied, and rejected events", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    seedWorkspaceSessionAncestry("workspace-a", [{ id: "session-a", parentID: undefined }]);
+    try {
+      for (const terminalType of ["question.v2.replied", "question.v2.rejected"]) {
+        __applySessionSyncEventForTest(syncInput, {
+          type: "question.v2.asked",
+          properties: question(`question-${terminalType}`, "session-a"),
+        } as any);
+        expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").questions[0])
+          .toMatchObject({ protocol: "v2" });
+
+        __applySessionSyncEventForTest(syncInput, {
+          type: terminalType,
+          properties: { sessionID: "session-a", requestID: `question-${terminalType}` },
+        } as any);
+        expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").questions).toEqual([]);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("reconciles every distinct tracked root after a successful stream connection", async () => {
+    seedWorkspaceSessionAncestry("workspace-a", [
+      { id: "root-a", parentID: undefined },
+      { id: "child-a", parentID: "root-a" },
+      { id: "root-b", parentID: undefined },
+    ]);
+    const requested: string[] = [];
+    await reconcileWorkspaceInteractionRoots({
+      getInteractionSnapshot: async (_workspaceId: string, rootSessionId: string) => {
+        requested.push(rootSessionId);
+        return {
+          item: {
+            snapshotStartedAt: Date.now(),
+            rootSessionId,
+            permissions: [],
+            questions: [],
+          },
+        };
+      },
+    } as any, "workspace-a", ["child-a", "root-b", "child-a"]);
+
+    expect(requested.sort()).toEqual(["root-a", "root-b"]);
+  });
+
+  test("preserves live interactions when authoritative snapshot recovery fails", async () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    seedWorkspaceSessionAncestry("workspace-a", [{ id: "session-a", parentID: undefined }]);
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "permission.asked",
+        properties: permission("permission-live", "session-a"),
+      } as any);
+
+      await reconcileWorkspaceInteractionRoots({
+        getInteractionSnapshot: async () => {
+          throw Object.assign(new Error("Bad Gateway"), { status: 502 });
+        },
+      } as any, "workspace-a", ["session-a"]);
+
+      expect(pendingInteractionsForRoot(getWorkspaceInteractionState("workspace-a"), "session-a").permissions)
+        .toMatchObject([{ id: "permission-live", sessionID: "session-a" }]);
+    } finally {
       cleanup();
     }
   });

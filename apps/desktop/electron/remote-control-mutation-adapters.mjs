@@ -4,6 +4,7 @@ import { z } from "zod";
 import { desktopRemoteOperationResultSchema } from "../dist/runtime/desktop-remote-control.js";
 
 import {
+  REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION,
   REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION,
   REMOTE_CONTROL_REQUIRED_GATES,
   RemoteControlOperationExecutionError,
@@ -199,17 +200,18 @@ async function readSession(client, workspaceId, sessionId) {
  *   workspaceStore: { readWorkspaceState(): Promise<unknown> },
  *   managedRuntimeClient: ManagedRuntimeClient,
  *   coordinator: Coordinator,
+ *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
  *   now?: () => number,
  * }} options
  */
-export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, now = Date.now }) {
+export function createRemoteControlMutationRegistrations({ workspaceStore, managedRuntimeClient, coordinator, interactions = null, now = Date.now }) {
   if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof managedRuntimeClient.postJson !== "function" || !coordinator || typeof coordinator.recordServerRun !== "function") {
     throw new TypeError("Remote mutation adapter dependencies are invalid.");
   }
 
-  const registration = (operation, validateArguments, execute) => ({
+  const registration = (operation, validateArguments, execute, payloadVersions = [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION]) => ({
     operation,
-    payloadVersions: [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION],
+    payloadVersions,
     requiredGates: [...REMOTE_CONTROL_REQUIRED_GATES[operation]],
     validateArguments,
     execute,
@@ -317,11 +319,15 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         mapClientError(error, "session_not_found");
       }
     }),
-    registration("interaction.permission.reply", (value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 4) {
+    registration("interaction.permission.reply", (value, payloadVersion) => {
+      const keys = payloadVersion === 2
+        ? ["workspaceId", "rootSessionId", "targetSessionId", "parentSessionId", "interactionId", "response"]
+        : ["workspaceId", "sessionId", "interactionId", "response"];
+      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length ||
+          keys.some((key) => !Object.hasOwn(value, key))) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
-      for (const key of ["workspaceId", "sessionId", "interactionId"]) {
+      for (const key of payloadVersion === 2 ? ["workspaceId", "rootSessionId", "targetSessionId", "interactionId"] : ["workspaceId", "sessionId", "interactionId"]) {
         if (!Object.hasOwn(value, key) || !identifierSchema.safeParse(value[key]).success) {
           throw new TypeError("Remote mutation arguments are invalid.");
         }
@@ -329,24 +335,50 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       if (value.response !== "allow_once" && value.response !== "reject") {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
-      return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), interactionId: String(value.interactionId), response: /** @type {"allow_once" | "reject"} */ (value.response) });
-    }, async ({ arguments: args, correlationId }) => {
+      if (payloadVersion === 2 && !(value.parentSessionId === null || identifierSchema.safeParse(value.parentSessionId).success)) {
+        throw new TypeError("Remote mutation arguments are invalid.");
+      }
+      return Object.freeze(payloadVersion === 2
+        ? { workspaceId: String(value.workspaceId), rootSessionId: String(value.rootSessionId), targetSessionId: String(value.targetSessionId), parentSessionId: value.parentSessionId, interactionId: String(value.interactionId), response: value.response }
+        : { workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), interactionId: String(value.interactionId), response: value.response });
+    }, async ({ arguments: args, correlationId, payloadVersion = 1, context }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
+        const expectedRootSessionId = payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+        const targetSessionId = payloadVersion === 2 ? args.targetSessionId : args.sessionId;
+        if (!identifierSchema.safeParse(boundRootSessionId).success || boundRootSessionId !== expectedRootSessionId ||
+            !interactions || typeof interactions.resolveOwnership !== "function") {
+          throw new RemoteControlOperationExecutionError("interaction_not_found");
+        }
+        const ownership = await interactions.resolveOwnership({ workspaceId: workspace.id, targetSessionId });
+        const owner = ownership && typeof ownership === "object" ? /** @type {Record<string, unknown>} */ (ownership) : null;
+        if (!owner || owner.rootSessionId !== boundRootSessionId || owner.targetSessionId !== targetSessionId ||
+            (payloadVersion === 2 && owner.parentSessionId !== args.parentSessionId)) {
+          throw new RemoteControlOperationExecutionError("interaction_not_found");
+        }
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/permission/reply`,
-          { origin: "remote-control", commandCorrelationId: correlationId, response: args.response },
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(targetSessionId)}/interactions/${encodeURIComponent(args.interactionId)}/permission/reply`,
+          { origin: "remote-control", commandCorrelationId: correlationId, rootSessionId: boundRootSessionId, response: args.response },
         );
-        return resolvedInteractionResult(response, args.interactionId, "interaction.permission.reply");
+        return desktopRemoteOperationResultSchema.parse({
+          operation: "interaction.permission.reply",
+          payloadVersion,
+          result: resolvedInteractionResult(response, args.interactionId, "interaction.permission.reply"),
+        }).result;
       } catch (error) {
         mapInteractionClientError(error);
       }
-    }),
-    registration("interaction.question.reply", (value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 4) {
+    }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
+    registration("interaction.question.reply", (value, payloadVersion) => {
+      const keys = payloadVersion === 2
+        ? ["workspaceId", "rootSessionId", "targetSessionId", "parentSessionId", "interactionId", "answers"]
+        : ["workspaceId", "sessionId", "interactionId", "answers"];
+      if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== keys.length ||
+          keys.some((key) => !Object.hasOwn(value, key))) {
         throw new TypeError("Remote mutation arguments are invalid.");
       }
-      for (const key of ["workspaceId", "sessionId", "interactionId"]) {
+      for (const key of payloadVersion === 2 ? ["workspaceId", "rootSessionId", "targetSessionId", "interactionId"] : ["workspaceId", "sessionId", "interactionId"]) {
         if (!Object.hasOwn(value, key) || !identifierSchema.safeParse(value[key]).success) {
           throw new TypeError("Remote mutation arguments are invalid.");
         }
@@ -362,23 +394,45 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
           throw new TypeError("Remote mutation arguments are invalid.");
         }
       }
+      if (payloadVersion === 2 && !(value.parentSessionId === null || identifierSchema.safeParse(value.parentSessionId).success)) {
+        throw new TypeError("Remote mutation arguments are invalid.");
+      }
       return Object.freeze({
         workspaceId: String(value.workspaceId),
-        sessionId: String(value.sessionId),
+        ...(payloadVersion === 2
+          ? { rootSessionId: String(value.rootSessionId), targetSessionId: String(value.targetSessionId), parentSessionId: value.parentSessionId }
+          : { sessionId: String(value.sessionId) }),
         interactionId: String(value.interactionId),
         answers: value.answers.map((/** @type {Record<string, unknown>} */ a) => ({ questionId: String(a.questionId), values: /** @type {string[]} */ (a.values) })),
       });
-    }, async ({ arguments: args, correlationId }) => {
+    }, async ({ arguments: args, correlationId, payloadVersion = 1, context }) => {
       try {
         const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
+        const expectedRootSessionId = payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+        const targetSessionId = payloadVersion === 2 ? args.targetSessionId : args.sessionId;
+        if (!identifierSchema.safeParse(boundRootSessionId).success || boundRootSessionId !== expectedRootSessionId ||
+            !interactions || typeof interactions.resolveOwnership !== "function") {
+          throw new RemoteControlOperationExecutionError("interaction_not_found");
+        }
+        const ownership = await interactions.resolveOwnership({ workspaceId: workspace.id, targetSessionId });
+        const owner = ownership && typeof ownership === "object" ? /** @type {Record<string, unknown>} */ (ownership) : null;
+        if (!owner || owner.rootSessionId !== boundRootSessionId || owner.targetSessionId !== targetSessionId ||
+            (payloadVersion === 2 && owner.parentSessionId !== args.parentSessionId)) {
+          throw new RemoteControlOperationExecutionError("interaction_not_found");
+        }
         const response = await managedRuntimeClient.postJson(
-          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/interactions/${encodeURIComponent(args.interactionId)}/question/reply`,
-          { origin: "remote-control", commandCorrelationId: correlationId, answers: args.answers },
+          `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(targetSessionId)}/interactions/${encodeURIComponent(args.interactionId)}/question/reply`,
+          { origin: "remote-control", commandCorrelationId: correlationId, rootSessionId: boundRootSessionId, answers: args.answers },
         );
-        return resolvedInteractionResult(response, args.interactionId, "interaction.question.reply");
+        return desktopRemoteOperationResultSchema.parse({
+          operation: "interaction.question.reply",
+          payloadVersion,
+          result: resolvedInteractionResult(response, args.interactionId, "interaction.question.reply"),
+        }).result;
       } catch (error) {
         mapInteractionClientError(error);
       }
-    }),
+    }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
   ];
 }

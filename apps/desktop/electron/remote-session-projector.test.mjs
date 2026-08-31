@@ -12,7 +12,8 @@ const WORKSPACE = "ws_1";
 const SESSION = "ses_1";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
-function harness() {
+/** @param {1 | 2} [payloadVersion] */
+function harness(payloadVersion = 1) {
   const emitted = [];
   const scheduled = new Map();
   let timerId = 0;
@@ -28,7 +29,7 @@ function harness() {
     getActiveRunId: () => runId,
     emit: (payload) => { emitted.push(payload); return true; },
   });
-  projector.bind({ controlSessionId: CONTROL_1, deviceId: DEVICE, workspaceId: WORKSPACE, sessionId: SESSION });
+  projector.bind({ controlSessionId: CONTROL_1, deviceId: DEVICE, workspaceId: WORKSPACE, sessionId: SESSION, payloadVersion });
   return {
     projector,
     emitted,
@@ -91,6 +92,15 @@ describe("remote session projector", () => {
     assert.equal(h.emitted.at(-1).sequence, 3);
   });
 
+  it("upgrades an immutable root binding from v1 to v2 without resetting sequence", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [] } });
+    assert.equal(h.projector.bind({ controlSessionId: CONTROL_1, deviceId: DEVICE, workspaceId: WORKSPACE, sessionId: SESSION, payloadVersion: 2 }), true);
+    h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [] } });
+    assert.equal(h.emitted.at(-1).payloadVersion, 2);
+    assert.equal(h.emitted.at(-1).sequence, 2);
+  });
+
   it("buffers deltas until declaration and reconciles only prefix-compatible cumulative text", () => {
     const h = harness();
     h.projector.accept(WORKSPACE, { type: "message.part.delta", properties: { sessionID: SESSION, messageID: "msg_1", partID: "prt_1", delta: "hel" } });
@@ -132,15 +142,83 @@ describe("remote session projector", () => {
     const firstId = h.emitted.at(-1).data.todos[0].id;
     h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [todo] } });
     assert.equal(h.emitted.at(-1).data.todos[0].id, firstId);
-    h.projector.accept(WORKSPACE, { type: "permission.v2.asked", data: { id: "perm_1", sessionID: SESSION, permission: "bash", patterns: ["pwd"] } });
+    const ownership = { rootSessionId: SESSION, targetSessionId: SESSION, parentSessionId: null };
+    h.projector.accept(WORKSPACE, { type: "permission.v2.asked", data: { id: "perm_1", sessionID: SESSION, permission: "bash", patterns: ["pwd"] } }, ownership);
     assert.equal(h.emitted.at(-1).data.interaction.runId, "run_1");
     assert.equal(h.emitted.at(-1).data.interaction.createdAt, new Date(NOW).toISOString());
-    h.projector.accept(WORKSPACE, { type: "permission.v2.replied", data: { sessionID: SESSION, requestID: "perm_1" } });
-    assert.deepEqual(h.emitted.at(-1).data, { type: "interaction.remove", interactionId: "perm_1" });
-    h.projector.accept(WORKSPACE, { type: "question.asked", properties: { id: "question_1", sessionID: SESSION, questions: [{ id: "q_1", question: "Continue?", options: ["Yes"] }] } });
+    h.projector.accept(WORKSPACE, { type: "permission.v2.replied", data: { sessionID: SESSION, requestID: "perm_1" } }, ownership);
+    assert.deepEqual(h.emitted.at(-1).data, {
+      type: "interaction.remove",
+      interactionId: "perm_1",
+    });
+    h.projector.accept(WORKSPACE, { type: "question.asked", properties: { id: "question_1", sessionID: SESSION, questions: [{ id: "q_1", question: "Continue?", options: ["Yes"] }] } }, ownership);
     assert.equal(h.emitted.at(-1).data.interaction.type, "question");
-    h.projector.accept(WORKSPACE, { type: "question.rejected", properties: { sessionID: SESSION, requestID: "question_1" } });
+    h.projector.accept(WORKSPACE, { type: "question.rejected", properties: { sessionID: SESSION, requestID: "question_1" } }, ownership);
     assert.equal(h.emitted.at(-1).data.type, "interaction.remove");
+  });
+
+  it("projects descendant interactions to the bound root with the exact child mutation target", () => {
+    const h = harness(2);
+    const ownership = {
+      rootSessionId: SESSION,
+      targetSessionId: "ses_child",
+      parentSessionId: SESSION,
+    };
+    h.projector.accept(WORKSPACE, {
+      type: "permission.asked",
+      properties: { id: "perm_child", sessionID: "ses_child", permission: "external_directory", patterns: ["/outside"] },
+    }, ownership);
+
+    assert.equal(h.emitted.length, 1);
+    assert.equal(h.emitted[0].sessionId, SESSION);
+    assert.deepEqual({
+      rootSessionId: h.emitted[0].data.interaction.rootSessionId,
+      targetSessionId: h.emitted[0].data.interaction.targetSessionId,
+      parentSessionId: h.emitted[0].data.interaction.parentSessionId,
+      sessionId: h.emitted[0].data.interaction.sessionId,
+    }, {
+      rootSessionId: SESSION,
+      targetSessionId: "ses_child",
+      parentSessionId: SESSION,
+      sessionId: "ses_child",
+    });
+    h.projector.accept(WORKSPACE, {
+      type: "permission.replied",
+      properties: { sessionID: "ses_child", requestID: "perm_child" },
+    }, ownership);
+    assert.deepEqual(h.emitted.at(-1).data, {
+      type: "interaction.remove",
+      interactionId: "perm_child",
+      rootSessionId: SESSION,
+      targetSessionId: "ses_child",
+    });
+  });
+
+  it("does not project an interaction owned by an unrelated root", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, {
+      type: "question.asked",
+      properties: { id: "question_other", sessionID: "ses_other_child", questions: [{ question: "Continue?", options: ["Yes"] }] },
+    }, {
+      rootSessionId: "ses_other_root",
+      targetSessionId: "ses_other_child",
+      parentSessionId: "ses_other_root",
+    });
+    assert.equal(h.emitted.length, 0);
+  });
+
+  it("keeps v1 root-only and emits descendant shape only to a v2 binding", () => {
+    const h = harness();
+    h.projector.bind({ controlSessionId: CONTROL_2, deviceId: DEVICE, workspaceId: WORKSPACE, sessionId: SESSION, payloadVersion: 2 });
+    const ownership = { rootSessionId: SESSION, targetSessionId: "ses_child", parentSessionId: SESSION };
+    h.projector.accept(WORKSPACE, {
+      type: "permission.asked",
+      properties: { id: "permission_child", sessionID: "ses_child", permission: "bash" },
+    }, ownership);
+    assert.equal(h.emitted.filter((event) => event.controlSessionId === CONTROL_1).length, 0);
+    const v2 = h.emitted.find((event) => event.controlSessionId === CONTROL_2);
+    assert.equal(v2.payloadVersion, 2);
+    assert.equal(v2.data.interaction.targetSessionId, "ses_child");
   });
 
   it("projects session and coordinator run status without mutating the coordinator", () => {

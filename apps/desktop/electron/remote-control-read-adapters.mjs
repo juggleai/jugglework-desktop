@@ -7,6 +7,7 @@ import {
 } from "../dist/runtime/desktop-remote-control.js";
 
 import {
+  REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION,
   REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION,
   REMOTE_CONTROL_REQUIRED_GATES,
   RemoteControlOperationExecutionError,
@@ -304,6 +305,65 @@ async function readSession(client, workspaceId, sessionId) {
   }
 }
 
+/** @param {ManagedRuntimeClient} client @param {LocalWorkspace} workspace @param {string} sessionId */
+async function verifyRemoteSessionRoot(client, workspace, sessionId) {
+  let response;
+  try {
+    response = await client.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions?limit=${MAX_SESSION_LIST_ITEMS}`);
+  } catch {
+    throw new RemoteControlOperationExecutionError("snapshot_required");
+  }
+  if (!response || typeof response !== "object") throw new RemoteControlOperationExecutionError("snapshot_required");
+  const record = /** @type {Record<string, unknown>} */ (response);
+  if (!Array.isArray(record.items) || record.incomplete === true || record.truncated === true ||
+      record.nextCursor !== undefined || record.items.length >= MAX_SESSION_LIST_ITEMS) {
+    throw new RemoteControlOperationExecutionError("snapshot_required");
+  }
+  /** @type {Map<string, string | null>} */
+  const parents = new Map();
+  for (const raw of record.items) {
+    const parsed = sessionSchema.safeParse(raw);
+    if (!parsed.success || parents.has(parsed.data.id) ||
+        !(parsed.data.parentID === undefined || parsed.data.parentID === null || identifierSchema.safeParse(parsed.data.parentID).success)) {
+      throw new RemoteControlOperationExecutionError("snapshot_required");
+    }
+    parents.set(parsed.data.id, typeof parsed.data.parentID === "string" ? parsed.data.parentID : null);
+  }
+  if (!parents.has(sessionId)) throw new RemoteControlOperationExecutionError("snapshot_required");
+  const visited = new Set();
+  let current = sessionId;
+  while (true) {
+    if (visited.has(current)) throw new RemoteControlOperationExecutionError("snapshot_required");
+    visited.add(current);
+    const parent = parents.get(current);
+    if (parent === undefined) throw new RemoteControlOperationExecutionError("snapshot_required");
+    if (parent === null) break;
+    current = parent;
+  }
+  if (current !== sessionId) throw new RemoteControlOperationExecutionError("snapshot_required");
+}
+
+/**
+ * Creates the authority check used before the agent establishes an immutable
+ * remote-session binding.
+ * @param {{ workspaceStore: { readWorkspaceState(): Promise<unknown> }, managedRuntimeClient: ManagedRuntimeClient }} options
+ */
+export function createRemoteSessionRootVerifier({ workspaceStore, managedRuntimeClient }) {
+  if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" ||
+      !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function") {
+    throw new TypeError("Remote session root verifier dependencies are invalid.");
+  }
+  return async ({ workspaceId, rootSessionId }) => {
+    try {
+      const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, workspaceId);
+      await verifyRemoteSessionRoot(managedRuntimeClient, workspace, rootSessionId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
 /**
  * Builds concrete read registrations. Local registry membership and exact
  * canonical directory equality are checked before transcript content is read.
@@ -312,7 +372,7 @@ async function readSession(client, workspaceId, sessionId) {
  *   workspaceStore: { readWorkspaceState(): Promise<unknown> },
  *   managedRuntimeClient: ManagedRuntimeClient,
  *   now?: () => number,
- *   interactions?: { listPending(input: { workspaceId: string, sessionId: string }): unknown | Promise<unknown> } | null,
+ *   interactions?: { listPending(input: { workspaceId: string, sessionId: string, payloadVersion: 1 | 2 }): unknown | Promise<unknown> } | null,
  * }} options
  */
 export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null }) {
@@ -320,9 +380,9 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
     throw new TypeError("Remote read adapter dependencies are invalid.");
   }
 
-  const registration = (operation, validateArguments, execute) => ({
+  const registration = (operation, validateArguments, execute, payloadVersions = [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION]) => ({
     operation,
-    payloadVersions: [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION],
+    payloadVersions,
     requiredGates: [...REMOTE_CONTROL_REQUIRED_GATES[operation]],
     validateArguments,
     execute,
@@ -374,8 +434,21 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       const result = { sessions: response.items.filter((session) => !session.parentID).map((session) => sessionSummary(session, workspace, statuses[session.id])) };
       return desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result }).result;
     }),
-    registration("session.snapshot", (value) => parseArguments(value, ["workspaceId", "sessionId"]), async ({ arguments: args, context }) => {
+    registration("session.snapshot", (value, payloadVersion) => {
+      const keys = payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION
+        ? ["workspaceId", "rootSessionId"]
+        : ["workspaceId", "sessionId"];
+      const parsed = parseArguments(value, keys);
+      return Object.freeze({ workspaceId: parsed.workspaceId, sessionId: payloadVersion === 2 ? parsed.rootSessionId : parsed.sessionId });
+    }, async ({ arguments: args, context, payloadVersion }) => {
+      const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
+      if (!identifierSchema.safeParse(boundRootSessionId).success || boundRootSessionId !== args.sessionId) {
+        throw new RemoteControlOperationExecutionError("snapshot_required");
+      }
       const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+      if (context?.remoteSessionBinding?.rootVerified !== true) {
+        await verifyRemoteSessionRoot(managedRuntimeClient, workspace, args.sessionId);
+      }
       const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId);
       if (session.id !== args.sessionId) throw new RemoteControlOperationExecutionError("session_not_found");
       const summary = sessionSummary(session, workspace);
@@ -396,8 +469,19 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       let pendingInteractions = [];
       let pendingOperations = [];
       if (interactions && contextGates.interactions === true) {
-        const rawInteractions = await interactions.listPending({ workspaceId: workspace.id, sessionId: args.sessionId });
-        pendingInteractions = Array.isArray(rawInteractions) ? rawInteractions : [];
+        try {
+          const rawInteractions = await interactions.listPending({
+            workspaceId: workspace.id,
+            sessionId: args.sessionId,
+            payloadVersion,
+          });
+          pendingInteractions = Array.isArray(rawInteractions) ? rawInteractions : [];
+        } catch (error) {
+          if (error && typeof error === "object" && error.code === "snapshot_required") {
+            throw new RemoteControlOperationExecutionError("snapshot_required");
+          }
+          throw error;
+        }
       }
       const pending = await managedRuntimeClient.getJson(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/pending`);
       const pendingRecord = /** @type {Record<string, unknown>} */ (pending);
@@ -421,7 +505,7 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         pendingOperations,
         capturedAt: captured.toISOString(),
       };
-      return desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result }).result;
-    }),
+      return desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion, result }).result;
+    }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
   ];
 }

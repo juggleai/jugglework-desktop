@@ -70,6 +70,7 @@ import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { shouldDrainQueuedTask } from "./queued-draft-policy";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -483,6 +484,17 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
+  const interactions = useSessionInteractions({
+    client: props.client,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+  });
+  const activePermission = props.activePermission ?? interactions.activePermission;
+  const permissionReplyBusy = props.permissionReplyBusy ?? interactions.permissionReplyBusy;
+  const respondPermission = props.respondPermission ?? interactions.respondPermission;
+  const activeQuestion = props.activeQuestion ?? interactions.activeQuestion;
+  const questionReplyBusy = props.questionReplyBusy ?? interactions.questionReplyBusy;
+  const respondQuestion = props.respondQuestion ?? interactions.respondQuestion;
   const local = useLocal();
   const todos = useSessionTodos(props.workspaceId, props.sessionId);
   const taskProgressKind = classifyTaskProgress(todos);
@@ -2210,7 +2222,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
           topAccessory={
-            props.activeQuestion || showTaskProgress || props.activePermission || queuedDrafts.length > 0 ? (
+            activeQuestion || showTaskProgress || activePermission || queuedDrafts.length > 0 ? (
               <div>
                 {queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
@@ -2220,24 +2232,29 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sending={drainingQueueRef.current}
                   />
                 ) : null}
-                {props.activeQuestion ? (
+                {activeQuestion ? (
                   <QuestionPanel
-                    questions={props.activeQuestion.questions}
-                    busy={props.questionReplyBusy ?? false}
+                    interactionIdentity={`${activeQuestion.targetSessionId}\u0000${activeQuestion.id}`}
+                    questions={activeQuestion.questions}
+                    busy={questionReplyBusy}
+                    fromSubagent={Boolean(
+                      activeQuestion.rootSessionId &&
+                      activeQuestion.targetSessionId !== activeQuestion.rootSessionId
+                    )}
                     onReply={(answers) => {
-                      if (props.activeQuestion) {
-                        props.respondQuestion?.(props.activeQuestion.id, answers);
+                      if (activeQuestion) {
+                        respondQuestion(activeQuestion.id, answers);
                       }
                     }}
                   />
                 ) : showTaskProgress ? (
                   <TodoPanel todos={todos} />
                 ) : null}
-                {props.activePermission ? (
+                {activePermission ? (
                   <PermissionApprovalPanel
-                    permission={props.activePermission}
-                    busy={props.permissionReplyBusy}
-                    respondPermission={props.respondPermission}
+                    permission={activePermission}
+                    busy={permissionReplyBusy}
+                    respondPermission={respondPermission}
                     safeStringify={props.safeStringify}
                   />
                 ) : null}

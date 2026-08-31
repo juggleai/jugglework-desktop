@@ -207,6 +207,9 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
   const iconClass = presentation.isDoomLoop
     ? "bg-amber-3/30 text-amber-11"
     : "bg-[rgba(var(--dls-accent-rgb),0.1)] text-dls-accent";
+  const fromSubagent = Boolean(
+    props.permission.rootSessionId && props.permission.targetSessionId !== props.permission.rootSessionId,
+  );
 
   useEffect(() => {
     previousActiveElementRef.current =
@@ -266,6 +269,11 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
               <AlertDialogTitle>
                 {presentation.title}
               </AlertDialogTitle>
+              {fromSubagent ? (
+                <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-dls-accent">
+                  Subagent request
+                </div>
+              ) : null}
               <AlertDialogDescription>
                 {presentation.message}
               </AlertDialogDescription>
@@ -377,6 +385,9 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
       : {};
   const hasMetadata = Object.keys(metadata).length > 0;
   const Icon = presentation.isDoomLoop ? RefreshCcw : ShieldCheck;
+  const fromSubagent = Boolean(
+    props.permission.rootSessionId && props.permission.targetSessionId !== props.permission.rootSessionId,
+  );
 
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent">
@@ -387,6 +398,11 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
             </div>
             <div className="min-w-0">
               <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation.title}</div>
+              {fromSubagent ? (
+                <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-dls-accent">
+                  Subagent request
+                </div>
+              ) : null}
               <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation.message}</div>
               {presentation.note ? (
                 <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>

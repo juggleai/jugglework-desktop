@@ -87,6 +87,12 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import { useQueryCacheState } from "@/react-app/infra/query-cache-state"
+import {
+  taskHasPendingInteraction,
+  type WorkspaceInteractionState,
+  workspaceInteractionsKey,
+} from "@/react-app/domains/session/sync/workspace-interactions"
 import type { ThreadStatus } from "@/lib/messages"
 import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
@@ -106,6 +112,15 @@ import {
 } from "@/app/lib/session-compaction"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
+const EMPTY_WORKSPACE_INTERACTIONS: WorkspaceInteractionState = {
+  permissions: [],
+  questions: [],
+  sessions: {},
+  revision: 0,
+  appliedSnapshotFences: {},
+  invalidSnapshotBeforeRevision: 0,
+  tombstones: {},
+}
 
 /**
  * 消息操作条（时间 + 复制/分支/回退图标）的显隐样式。
@@ -386,12 +401,34 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   )
 }
 
+export function taskStatusTitle(
+  description: string,
+  status: string,
+  waitingForApproval: boolean,
+  inFlight: boolean,
+): string | undefined {
+  if (waitingForApproval && inFlight) return `Agent: ${description} · Waiting for approval`
+  if (status === "stalled") return `Agent: ${description} · Possibly stuck — stop and retry`
+  return undefined
+}
+
 function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
-  const { workspaceId } = useMessageList()
+  const { workspaceId, sessionId } = useMessageList()
   const metadata = part.type === "dynamic-tool"
-    ? (part.callProviderMetadata?.opencode as { toolMetadata?: { sessionId?: unknown } } | undefined)?.toolMetadata
+    ? (part.callProviderMetadata?.opencode as {
+        toolMetadata?: { parentSessionId?: unknown; sessionId?: unknown }
+      } | undefined)?.toolMetadata
     : undefined
   const childSessionId = typeof metadata?.sessionId === "string" ? metadata.sessionId : ""
+  const parentSessionId = typeof metadata?.parentSessionId === "string" ? metadata.parentSessionId : ""
+  const interactions = useQueryCacheState<WorkspaceInteractionState>(
+    workspaceInteractionsKey(workspaceId),
+    EMPTY_WORKSPACE_INTERACTIONS,
+  )
+  const waitingForApproval = Boolean(childSessionId) && (!parentSessionId || parentSessionId === sessionId)
+    ? taskHasPendingInteraction(interactions, sessionId, childSessionId)
+    : false
+  const inFlight = isToolPartInFlight(part)
   const status = useSessionActivityStore((state) => (
     childSessionId ? state.getStatus(workspaceId, childSessionId) : "idle"
   ))
@@ -401,11 +438,13 @@ function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
   const description = typeof input?.description === "string" && input.description.trim()
     ? input.description.trim()
     : "Subagent task"
-  const title = status === "stalled"
-    ? `Agent: ${description} · Possibly stuck — stop and retry`
-    : undefined
+  const title = taskStatusTitle(description, status, waitingForApproval, inFlight)
 
-  return <Tool title={title} toolPart={part} />
+  return (
+    <div data-task-waiting-for-approval={waitingForApproval && inFlight ? "true" : undefined}>
+      <Tool title={title} toolPart={part} />
+    </div>
+  )
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0

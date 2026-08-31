@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 
 import { desktopRemoteOperationResultSchema } from "../dist/runtime/desktop-remote-control.js";
 
-import { createRemoteControlReadRegistrations } from "./remote-control-read-adapters.mjs";
+import {
+  createRemoteControlReadRegistrations,
+  createRemoteSessionRootVerifier,
+} from "./remote-control-read-adapters.mjs";
 import {
   createRemoteControlOperationRegistry,
 } from "./remote-control-operations.mjs";
@@ -93,17 +96,47 @@ function harness(overrides = {}) {
 }
 
 function advertisement(operations = ["workspace.list", "session.list", "session.snapshot"]) {
-  return { schemaVersion: 1, operations: operations.map((operation) => ({ operation, payloadVersions: [1] })), features: [] };
+  return { schemaVersion: 1, operations: operations.map((operation) => ({
+    operation,
+    payloadVersions: operation === "session.snapshot" ? [1, 2] : [1],
+  })), features: [] };
 }
 
 async function dispatch(registry, operation, argumentsValue, correlationId = "corr-1") {
+  const sessionId = argumentsValue.rootSessionId ?? argumentsValue.sessionId;
   return registry.dispatch(
     { operation, payloadVersion: 1, arguments: argumentsValue },
-    { advertisedCapabilities: advertisement(), correlationId },
+    {
+      advertisedCapabilities: advertisement(),
+      correlationId,
+      context: sessionId ? { remoteSessionBinding: { rootSessionId: sessionId } } : undefined,
+    },
   );
 }
 
 describe("remote-control read adapters", () => {
+  it("rejects a hidden child as a remote root binding", async () => {
+    const responses = {
+      "/workspaces": { items: [{ id: "ws_local", name: "Local", path: WORKSPACE_PATH, workspaceType: "local" }] },
+      "/workspace/ws_local/sessions?limit=10000": {
+        items: [session("root"), { ...session("child"), parentID: "root" }],
+      },
+    };
+    const verifier = createRemoteSessionRootVerifier({
+      workspaceStore: { readWorkspaceState: async () => workspaceState() },
+      managedRuntimeClient: {
+        async getJson(pathname) {
+          const value = responses[pathname];
+          if (value === undefined) throw new Error("unexpected path");
+          return value;
+        },
+      },
+    });
+
+    assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "root" }), true);
+    assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "child" }), false);
+  });
+
   it("advertises exactly concrete read handlers when gates allow", async () => {
     const { registry } = harness();
     assert.deepEqual(await registry.advertise(), advertisement());
@@ -190,7 +223,11 @@ describe("remote-control read adapters", () => {
       },
     });
     assert.equal((await dispatch(snapshotHarness.registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" })).error.code, "session_not_found");
-    assert.deepEqual(snapshotHarness.calls, ["/workspaces", "/workspace/ws_local/sessions/ses_1"]);
+    assert.deepEqual(snapshotHarness.calls, [
+      "/workspaces",
+      "/workspace/ws_local/sessions?limit=10000",
+      "/workspace/ws_local/sessions/ses_1",
+    ]);
     assert.equal(snapshotHarness.calls.some((value) => value.includes("snapshot")), false);
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { DynamicToolUIPart, UIMessage } from "ai"
 
-import { toolRunPreviewLabel } from "../src/components/chat/message-list"
+import { taskStatusTitle, toolRunPreviewLabel } from "../src/components/chat/message-list"
 import {
   formatTaskDuration,
   getAssistantRenderGroups,
@@ -278,5 +278,17 @@ describe("task message presentation", () => {
     } as DynamicToolUIPart
 
     expect(toolRunPreviewLabel(partialTool)).toBe("Running a command")
+  })
+
+  test("presents a blocked subagent Task as waiting for approval", () => {
+    expect(taskStatusTitle("Inspect workspace", "thinking", true, true)).toBe(
+      "Agent: Inspect workspace · Waiting for approval",
+    )
+    expect(taskStatusTitle("Inspect workspace", "thinking", false, true)).toBeUndefined()
+  })
+
+  test("does not decorate a terminal Task as waiting for approval", () => {
+    expect(taskStatusTitle("Inspect workspace", "idle", true, false)).toBeUndefined()
+    expect(taskStatusTitle("Inspect workspace", "error", true, false)).toBeUndefined()
   })
 })

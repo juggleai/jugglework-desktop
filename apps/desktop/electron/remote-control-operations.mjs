@@ -1,7 +1,10 @@
+import { desktopRemoteDescendantOperationValues } from "../dist/runtime/desktop-remote-control.js";
+
 export const REMOTE_CONTROL_OPERATION_SCHEMA_VERSION = 1;
 export const REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION = 1;
+export const REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION = 2;
 
-/** @typedef {"invalid_request" | "feature_disabled" | "policy_unavailable" | "forbidden" | "operation_unsupported" | "payload_version_unsupported" | "capability_not_advertised" | "workspace_not_found" | "session_not_found" | "session_busy" | "run_mismatch" | "interaction_not_found" | "interaction_expired" | "already_resolved" | "internal_error"} RemoteControlOperationErrorCode */
+/** @typedef {"invalid_request" | "feature_disabled" | "policy_unavailable" | "forbidden" | "operation_unsupported" | "payload_version_unsupported" | "capability_not_advertised" | "workspace_not_found" | "session_not_found" | "session_busy" | "run_mismatch" | "interaction_not_found" | "interaction_expired" | "already_resolved" | "snapshot_required" | "internal_error"} RemoteControlOperationErrorCode */
 /** @typedef {{ operation: string, payloadVersions: number[] }} RemoteControlOperationCapability */
 /** @typedef {{ schemaVersion: number, operations: RemoteControlOperationCapability[], features: string[] }} RemoteControlCapabilityAdvertisement */
 /** @typedef {{ schemaVersion: number, code: RemoteControlOperationErrorCode, message: string, retryable: boolean, correlationId: string | null, currentRunId?: string | null }} RemoteControlOperationError */
@@ -12,7 +15,7 @@ export const REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION = 1;
  *   operation: string,
  *   payloadVersions: readonly number[],
  *   requiredGates: readonly string[],
- *   validateArguments(argumentsValue: unknown): unknown | Promise<unknown>,
+ *   validateArguments(argumentsValue: unknown, payloadVersion: number): unknown | Promise<unknown>,
  *   execute(input: RemoteControlOperationExecutionInput): unknown | Promise<unknown>
  * }} RemoteControlOperationRegistration
  */
@@ -69,6 +72,7 @@ const ERROR_DETAILS = Object.freeze({
   interaction_not_found: ["The interaction was not found.", false],
   interaction_expired: ["The interaction has expired.", false],
   already_resolved: ["The interaction was already resolved.", false],
+  snapshot_required: ["A fresh complete session snapshot is required.", true],
   internal_error: ["The remote operation failed.", false],
 });
 
@@ -137,10 +141,17 @@ function normalizeRegistration(registration) {
 
   if (
     !Array.isArray(registration.payloadVersions) ||
-    registration.payloadVersions.length !== 1 ||
-    registration.payloadVersions[0] !== REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION
+    registration.payloadVersions.length < 1 || registration.payloadVersions.length > 2 ||
+    registration.payloadVersions[0] !== REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION ||
+    registration.payloadVersions.some((version, index) =>
+      ![REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION].includes(version) ||
+      registration.payloadVersions.indexOf(version) !== index)
   ) {
-    throw new TypeError(`Remote operation ${registration.operation} must explicitly support payload version 1.`);
+    throw new TypeError(`Remote operation ${registration.operation} must explicitly support unique payload versions starting with version 1.`);
+  }
+  if (registration.payloadVersions.includes(REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION) &&
+      !desktopRemoteDescendantOperationValues.includes(registration.operation)) {
+    throw new TypeError(`Remote operation ${registration.operation} does not support payload version 2.`);
   }
   if (typeof registration.validateArguments !== "function" || typeof registration.execute !== "function") {
     throw new TypeError(`Remote operation ${registration.operation} requires validation and execution handlers.`);
@@ -293,7 +304,7 @@ export function createRemoteControlOperationRegistry({
 
     let validatedArguments;
     try {
-      validatedArguments = await registration.validateArguments(request.arguments);
+      validatedArguments = await registration.validateArguments(request.arguments, request.payloadVersion);
     } catch {
       return rejected("invalid_request", correlationId);
     }

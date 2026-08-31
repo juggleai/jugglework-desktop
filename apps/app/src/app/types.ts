@@ -409,12 +409,23 @@ export type ReloadTrigger = {
 export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
   always: unknown;
   receivedAt: number;
+  interactionRevision: number;
   protocol: "legacy" | "v2";
   v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
+  targetSessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string | null;
+  ancestryPath: string[];
 };
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  interactionRevision: number;
+  protocol: "legacy" | "v2";
+  targetSessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string | null;
+  ancestryPath: string[];
 };
 
 export type TodoItem = {

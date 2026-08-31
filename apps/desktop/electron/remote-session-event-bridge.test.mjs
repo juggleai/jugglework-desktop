@@ -7,8 +7,8 @@ const CONTROL = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown> }} [input] */
-function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }) } = {}) {
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown> }} [input] */
+function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }) } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -44,6 +44,7 @@ function harness({ publish = () => true, observeRun, listActiveRuns = async () =
     now: () => NOW,
     timers: { setTimeout: (callback) => { callback(); return 1; }, clearTimeout() {} },
     onNotificationEvent: (event) => notificationEvents.push(event),
+    interactions: { resolveOwnership },
   });
   const binding = { controlSessionId: CONTROL, deviceId: DEVICE, workspaceId: "ws_1", sessionId: "ses_1", connectionGeneration: 7 };
   return {
@@ -88,7 +89,7 @@ describe("remote session event bridge", () => {
   it("hydrates server-owned active runs when a workspace subscription starts", async () => {
     const serverRun = { runId: "run_local", origin: "local-renderer" };
     const h = harness({ listActiveRuns: async () => ({ items: [serverRun] }) });
-    h.bridge.bind(h.binding);
+    h.bridge.bind({ ...h.binding, payloadVersion: 2, rootSessionId: h.binding.sessionId });
     await Promise.resolve();
     assert.deepEqual(h.mirroredRuns, [serverRun]);
     assert.deepEqual(h.notificationEvents, []);
@@ -157,6 +158,50 @@ describe("remote session event bridge", () => {
       properties: { id: "permission_1", sessionID: "ses_1", permission: "bash", patterns: ["resource-secret"] },
     });
     assert.deepEqual(h.notificationEvents, []);
+  });
+
+  it("resolves descendant ownership before projecting to a root binding", async () => {
+    const ownershipCalls = [];
+    const h = harness({
+      resolveOwnership: async (input) => {
+        ownershipCalls.push(input);
+        return { rootSessionId: "ses_1", targetSessionId: "ses_child", parentSessionId: "ses_1" };
+      },
+    });
+    h.bridge.bind({ ...h.binding, payloadVersion: 2, rootSessionId: h.binding.sessionId });
+    await h.subscriptions[0].onEvent({
+      type: "permission.asked",
+      properties: { id: "perm_child", sessionID: "ses_child", permission: "bash" },
+    });
+
+    assert.deepEqual(ownershipCalls, [{ workspaceId: "ws_1", targetSessionId: "ses_child" }]);
+    assert.equal(h.published.length, 1);
+    assert.equal(h.published[0].event.sessionId, "ses_1");
+    assert.equal(h.published[0].event.data.interaction.targetSessionId, "ses_child");
+    assert.equal(h.published[0].event.data.interaction.sessionId, "ses_child");
+  });
+
+  it("does not publish a descendant interaction resolved to an unrelated root", async () => {
+    const h = harness({
+      resolveOwnership: async () => ({ rootSessionId: "ses_other", targetSessionId: "ses_child", parentSessionId: "ses_other" }),
+    });
+    h.bridge.bind(h.binding);
+    await h.subscriptions[0].onEvent({
+      type: "permission.asked",
+      properties: { id: "perm_other", sessionID: "ses_child", permission: "bash" },
+    });
+    assert.equal(h.published.length, 0);
+  });
+
+  it("requires a snapshot when terminal interaction ownership cannot be resolved", async () => {
+    const h = harness({ resolveOwnership: async () => null });
+    h.bridge.bind(h.binding);
+    await h.subscriptions[0].onEvent({
+      type: "question.replied",
+      properties: { sessionID: "ses_1", requestID: "question_1" },
+    });
+    assert.equal(h.published.length, 1);
+    assert.deepEqual(h.published[0].event.data, { type: "snapshot_required", reason: "sequence_gap" });
   });
 
   it("cannot clear a replacement when a stale terminal observation completes", async () => {

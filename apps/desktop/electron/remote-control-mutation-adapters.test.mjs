@@ -89,8 +89,17 @@ function harness(options = {}) {
     workspaceStore: fakeWorkspaceStore(),
     managedRuntimeClient: client,
     coordinator,
+    interactions: {
+      resolveOwnership: async ({ targetSessionId }) => targetSessionId === "ses_child"
+        ? { rootSessionId: SESSION_ID, targetSessionId, parentSessionId: SESSION_ID }
+        : { rootSessionId: targetSessionId, targetSessionId, parentSessionId: null },
+    },
   });
   return { coordinator, client, registrations };
+}
+
+function bindingContext(rootSessionId = SESSION_ID) {
+  return { remoteSessionBinding: { rootSessionId } };
 }
 
 function interactionRegistration(registrations, operation) {
@@ -326,7 +335,7 @@ test("permission reply uses the authoritative endpoint and forwards response and
   const permission = interactionRegistration(harness({ client }).registrations, "interaction.permission.reply");
   const result = await permission.execute({
     arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, interactionId: "perm_1", response: "allow_once" },
-    context: {},
+    context: bindingContext(),
     correlationId: "cmd-permission",
   });
 
@@ -334,7 +343,7 @@ test("permission reply uses the authoritative endpoint and forwards response and
   assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
     method: "POST",
     pathname: "/workspace/ws_test/sessions/ses_test/interactions/perm_1/permission/reply",
-    body: { origin: "remote-control", commandCorrelationId: "cmd-permission", response: "allow_once" },
+    body: { origin: "remote-control", commandCorrelationId: "cmd-permission", rootSessionId: SESSION_ID, response: "allow_once" },
   });
   assert.equal(client.calls.some((call) => call.pathname.includes("/opencode/")), false);
 });
@@ -352,7 +361,7 @@ test("question reply preserves answer IDs and values on the authoritative endpoi
   ];
   const result = await question.execute({
     arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, interactionId: "question_1", answers },
-    context: {},
+    context: bindingContext(),
     correlationId: "cmd-question",
   });
 
@@ -360,9 +369,40 @@ test("question reply preserves answer IDs and values on the authoritative endpoi
   assert.deepEqual(client.calls.find((call) => call.method === "POST"), {
     method: "POST",
     pathname: "/workspace/ws_test/sessions/ses_test/interactions/question_1/question/reply",
-    body: { origin: "remote-control", commandCorrelationId: "cmd-question", answers },
+    body: { origin: "remote-control", commandCorrelationId: "cmd-question", rootSessionId: SESSION_ID, answers },
   });
   assert.equal(client.calls.some((call) => call.pathname.includes("/opencode/")), false);
+});
+
+test("a descendant local/remote resolution race preserves exact child targeting and already-resolved semantics", async () => {
+  const client = fakeManagedClient({
+    getStatus: 200,
+    workspaces: [{ id: WORKSPACE_ID, path: WORKSPACE_PATH }],
+  });
+  let replies = 0;
+  client.postJson = async (pathname, body) => {
+    client.calls.push({ method: "POST", pathname, body });
+    replies += 1;
+    if (replies === 1) return { interactionId: "perm_race", status: "resolved" };
+    throw managedHttpError(409, "already_resolved");
+  };
+  const permission = interactionRegistration(harness({ client }).registrations, "interaction.permission.reply");
+  const input = {
+    payloadVersion: 2,
+    arguments: { workspaceId: WORKSPACE_ID, rootSessionId: SESSION_ID, targetSessionId: "ses_child", parentSessionId: SESSION_ID, interactionId: "perm_race", response: "reject" },
+    context: bindingContext(),
+    correlationId: "cmd-remote-race",
+  };
+
+  assert.deepEqual(await permission.execute(input), { interactionId: "perm_race", status: "resolved" });
+  await assert.rejects(
+    permission.execute(input),
+    (error) => error instanceof RemoteControlOperationExecutionError && error.code === "already_resolved",
+  );
+  assert.deepEqual(client.calls.filter((call) => call.method === "POST").map((call) => call.pathname), [
+    "/workspace/ws_test/sessions/ses_child/interactions/perm_race/permission/reply",
+    "/workspace/ws_test/sessions/ses_child/interactions/perm_race/permission/reply",
+  ]);
 });
 
 for (const [serverCode, status] of [
@@ -378,7 +418,7 @@ for (const [serverCode, status] of [
     await assert.rejects(
       permission.execute({
         arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, interactionId: "perm_error", response: "reject" },
-        context: {},
+        context: bindingContext(),
         correlationId: "cmd-error",
       }),
       (error) => error instanceof RemoteControlOperationExecutionError && error.code === serverCode,
@@ -401,7 +441,7 @@ test("invalid question answers reported as server 400 map to invalid_request wit
         interactionId: "question_invalid",
         answers: [{ questionId: "unknown", values: ["secret"] }],
       },
-      context: {},
+      context: bindingContext(),
       correlationId: "cmd-invalid",
     }),
     (error) => error instanceof RemoteControlOperationExecutionError && error.code === "invalid_request" &&
@@ -426,7 +466,7 @@ for (const response of [
     await assert.rejects(
       permission.execute({
         arguments: { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, interactionId: "perm_schema", response: "reject" },
-        context: {},
+        context: bindingContext(),
         correlationId: "cmd-schema",
       }),
       (error) => error instanceof RemoteControlOperationExecutionError && error.code === "internal_error",

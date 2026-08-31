@@ -1,7 +1,10 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
-import { desktopRemoteSessionEventSchema } from "../dist/runtime/desktop-remote-control.js";
+import {
+  desktopRemoteCapabilityAdvertisementSchema,
+  desktopRemoteSessionEventSchema,
+} from "../dist/runtime/desktop-remote-control.js";
 import { RemoteControlCloudError } from "./remote-control-cloud-client.mjs";
 import {
   canonicalRemoteControlAAD,
@@ -51,14 +54,6 @@ const OPERATION_NAMES = new Set([
   "session.pending.cancel",
   "interaction.permission.reply",
   "interaction.question.reply",
-]);
-const FEATURE_NAMES = new Set([
-  "controller.event-resume",
-  "payload.e2ee-v1",
-  "background.lifecycle",
-  "session.steer",
-  "session.enqueue",
-  "native-mobile",
 ]);
 const MUTATION_OPERATIONS = new Set([
   "session.create",
@@ -154,7 +149,8 @@ const ERROR_MESSAGES = Object.freeze({
  *   policyMaxAgeMs?: number,
  *   localStopAckTimeoutMs?: number,
  *   getActiveRuns?: () => unknown,
- *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, connectionGeneration: number }) => boolean | void,
+ *   verifySessionBinding?: (binding: { workspaceId: string, rootSessionId: string }) => boolean | Promise<boolean>,
+ *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, rootSessionId: string, rootVerified: true, payloadVersion: 1 | 2, connectionGeneration: number }) => boolean | void,
  *   onSessionUnbound?: (input: { controlSessionId: string, reason: "closed" | "expired" | "not_found" | "snapshot_required" }) => void,
  *   onTransportReset?: (input: { hadActiveControl: boolean, transition: number | null }) => void,
  *   onControlRevoked?: (input: { source: "local" | "cloud", transition: number }) => void,
@@ -352,23 +348,7 @@ function isJsonValue(value, seen = new Set()) {
 
 /** @param {unknown} value */
 function validCapabilities(value) {
-  if (!hasExactKeys(value, ["schemaVersion", "operations", "features"]) || value.schemaVersion !== 1 ||
-    !Array.isArray(value.operations) || value.operations.length > OPERATION_NAMES.size ||
-    !Array.isArray(value.features) || value.features.length > FEATURE_NAMES.size) return false;
-  const seen = new Set();
-  const validOperations = value.operations.every((capability) => {
-    if (!hasExactKeys(capability, ["operation", "payloadVersions"]) ||
-      !OPERATION_NAMES.has(capability.operation) || seen.has(capability.operation) ||
-      !Array.isArray(capability.payloadVersions) || capability.payloadVersions.length !== 1 || capability.payloadVersions[0] !== 1) return false;
-    seen.add(capability.operation);
-    return true;
-  });
-  const seenFeatures = new Set();
-  return validOperations && value.features.every((feature) => {
-    if (!FEATURE_NAMES.has(feature) || seenFeatures.has(feature)) return false;
-    seenFeatures.add(feature);
-    return true;
-  });
+  return desktopRemoteCapabilityAdvertisementSchema.safeParse(value).success;
 }
 
 /** @param {unknown} value */
@@ -407,8 +387,32 @@ function safeDispatchError(error, correlationId) {
 /** @param {unknown} value */
 function validRequest(value) {
   if (!isRecord(value) || !hasExactKeys(value, ["operation", "payloadVersion", "arguments"]) ||
-    !OPERATION_NAMES.has(value.operation) || value.payloadVersion !== 1 || !isRecord(value.arguments)) return false;
+    !OPERATION_NAMES.has(value.operation) || ![1, 2].includes(value.payloadVersion) || !isRecord(value.arguments)) return false;
   const args = value.arguments;
+  if (value.payloadVersion === 2) {
+    if (value.operation === "session.snapshot") {
+      return hasExactKeys(args, ["workspaceId", "rootSessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.rootSessionId);
+    }
+    const ownershipKeys = ["workspaceId", "rootSessionId", "targetSessionId", "parentSessionId", "interactionId"];
+    if (!ownershipKeys.every((key) => Object.hasOwn(args, key)) || !isIdentifier(args.workspaceId) ||
+        !isIdentifier(args.rootSessionId) || !isIdentifier(args.targetSessionId) ||
+        !(args.parentSessionId === null || isIdentifier(args.parentSessionId)) || !isIdentifier(args.interactionId)) return false;
+    if (value.operation === "interaction.permission.reply") {
+      return hasExactKeys(args, [...ownershipKeys, "response"]) && (args.response === "allow_once" || args.response === "reject");
+    }
+    if (value.operation === "interaction.question.reply") {
+      if (!hasExactKeys(args, [...ownershipKeys, "answers"]) || !Array.isArray(args.answers) || args.answers.length < 1 || args.answers.length > 100) return false;
+      const questionIds = new Set();
+      return args.answers.every((answer) => {
+        if (!hasExactKeys(answer, ["questionId", "values"]) || !isIdentifier(answer.questionId) || questionIds.has(answer.questionId) ||
+            !Array.isArray(answer.values) || answer.values.length < 1 || answer.values.length > 100 ||
+            !answer.values.every((item) => typeof item === "string" && item.length <= 10_000)) return false;
+        questionIds.add(answer.questionId);
+        return true;
+      });
+    }
+    return false;
+  }
   switch (value.operation) {
     case "workspace.list": return hasExactKeys(args, []);
     case "session.list": return hasExactKeys(args, ["workspaceId"]) && isIdentifier(args.workspaceId);
@@ -484,7 +488,7 @@ function rejectedCommandEnvelope(value, deviceId) {
   const request = envelope.payload.request;
   const code = typeof request.operation !== "string" || !OPERATION_NAMES.has(request.operation)
     ? "operation_unsupported"
-    : request.payloadVersion !== 1
+    : ![1, 2].includes(request.payloadVersion)
       ? "payload_version_unsupported"
       : "invalid_request";
   return { commandId: envelope.payload.commandId, code };
@@ -558,6 +562,7 @@ export function createRemoteControlAgent(options) {
     policyMaxAgeMs = DEFAULT_POLICY_MAX_AGE_MS,
     localStopAckTimeoutMs = DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS,
     getActiveRuns = () => [],
+    verifySessionBinding = null,
     onSessionBinding = null,
     onSessionUnbound = null,
     onTransportReset = null,
@@ -578,6 +583,7 @@ export function createRemoteControlAgent(options) {
     !Number.isSafeInteger(policyMaxAgeMs) || policyMaxAgeMs < 1_000 ||
     !Number.isSafeInteger(localStopAckTimeoutMs) || localStopAckTimeoutMs < 1 || localStopAckTimeoutMs > 10_000 ||
     typeof getActiveRuns !== "function" ||
+    !(verifySessionBinding === null || typeof verifySessionBinding === "function") ||
     !(onSessionBinding === null || typeof onSessionBinding === "function") ||
     !(onSessionUnbound === null || typeof onSessionUnbound === "function") ||
     !(onTransportReset === null || typeof onTransportReset === "function") ||
@@ -630,6 +636,7 @@ export function createRemoteControlAgent(options) {
   const inFlightCommands = new Map();
   /** @type {Map<string, string>} */
   const activeControlSessions = new Map();
+  const remoteSessionBindings = new Map();
   const encryptedControlSessions = new Map();
   let advertisedE2EEKey = null;
   let transportTransition = 0;
@@ -747,6 +754,7 @@ export function createRemoteControlAgent(options) {
   function notifyTransportReset() {
     const hadActiveControl = activeControlSessions.size > 0;
     activeControlSessions.clear();
+    remoteSessionBindings.clear();
     const transition = hadActiveControl ? ++transportTransition : null;
     try { onTransportReset?.({ hadActiveControl, transition }); } catch {}
   }
@@ -1163,6 +1171,7 @@ export function createRemoteControlAgent(options) {
       clearAuthorizations();
       lastErrorCode = "device_revoked";
       activeControlSessions.clear();
+      remoteSessionBindings.clear();
       encryptedControlSessions.clear();
       invalidateTransport();
       if (changed) notifyControlRevoked("cloud");
@@ -1204,6 +1213,7 @@ export function createRemoteControlAgent(options) {
         });
       } catch {}
       activeControlSessions.delete(envelope.payload.controlSessionId);
+      remoteSessionBindings.delete(envelope.payload.controlSessionId);
       encryptedControlSessions.delete(envelope.payload.controlSessionId);
       return;
     }
@@ -1219,6 +1229,7 @@ export function createRemoteControlAgent(options) {
           localDisabledLatch = true;
           clearAuthorizations();
           activeControlSessions.clear();
+          remoteSessionBindings.clear();
           encryptedControlSessions.clear();
           invalidateTransport();
           if (changed) notifyControlRevoked("cloud");
@@ -1278,30 +1289,50 @@ export function createRemoteControlAgent(options) {
 
   async function acceptCommand(command, generation, activeGeneration) {
     const args = command.request.arguments;
-    if (isIdentifier(args.workspaceId) && isIdentifier(args.sessionId)) {
+    const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+    let bindingFailed = false;
+    if (isIdentifier(args.workspaceId) && isIdentifier(rootSessionId)) {
       try {
-        const accepted = onSessionBinding?.({
+        const candidate = {
           controlSessionId: command.controlSessionId, deviceId: command.deviceId,
-          workspaceId: args.workspaceId, sessionId: args.sessionId, connectionGeneration: activeGeneration,
-        });
-        if (accepted !== false) activeControlSessions.set(command.controlSessionId, boundedControllerDisplayName(command.actor.displayName));
-      } catch {}
+          workspaceId: args.workspaceId, sessionId: rootSessionId, rootSessionId,
+          rootVerified: await verifySessionBinding?.({ workspaceId: args.workspaceId, rootSessionId }) === true,
+          payloadVersion: command.request.payloadVersion, connectionGeneration: activeGeneration,
+        };
+        const existing = remoteSessionBindings.get(command.controlSessionId);
+        const immutable = !existing || (existing.deviceId === candidate.deviceId && existing.workspaceId === candidate.workspaceId &&
+          existing.rootSessionId === candidate.rootSessionId && existing.connectionGeneration === candidate.connectionGeneration);
+        const accepted = candidate.rootVerified && immutable;
+        if (accepted) {
+          const binding = Object.freeze({
+            ...candidate,
+            rootVerified: /** @type {true} */ (true),
+            payloadVersion: existing?.payloadVersion === 2 || candidate.payloadVersion === 2 ? 2 : 1,
+          });
+          if (onSessionBinding?.(binding) === false) {
+            bindingFailed = true;
+          } else {
+            remoteSessionBindings.set(command.controlSessionId, binding);
+            activeControlSessions.set(command.controlSessionId, boundedControllerDisplayName(command.actor.displayName));
+          }
+        } else bindingFailed = true;
+      } catch { bindingFailed = true; }
     }
-    await handleCommand(command, generation);
+    await handleCommand(command, generation, bindingFailed);
   }
 
-  /** @param {Record<string, any>} command @param {number} generation */
-  async function handleCommand(command, generation) {
+  /** @param {Record<string, any>} command @param {number} generation @param {boolean} [bindingFailed] */
+  async function handleCommand(command, generation, bindingFailed = false) {
     const key = command.idempotencyKey === null
       ? `command:${command.commandId}`
       : `idempotency:${command.deviceId}:${command.idempotencyKey}`;
     const prior = inFlightCommands.get(key);
     if (prior) {
       await prior;
-      if (generation === lifecycleGeneration) await handleCommandOnce(command, generation);
+      if (generation === lifecycleGeneration) await handleCommandOnce(command, generation, bindingFailed);
       return;
     }
-    const work = handleCommandOnce(command, generation);
+    const work = handleCommandOnce(command, generation, bindingFailed);
     inFlightCommands.set(key, work);
     try {
       await work;
@@ -1310,8 +1341,8 @@ export function createRemoteControlAgent(options) {
     }
   }
 
-  /** @param {Record<string, any>} command @param {number} generation */
-  async function handleCommandOnce(command, generation) {
+  /** @param {Record<string, any>} command @param {number} generation @param {boolean} bindingFailed */
+  async function handleCommandOnce(command, generation, bindingFailed) {
     const metadata = {
       commandId: command.commandId,
       deviceId: command.deviceId,
@@ -1335,6 +1366,35 @@ export function createRemoteControlAgent(options) {
       return;
     }
     if (generation !== lifecycleGeneration || !contextAllowsConnection()) return;
+    if (bindingFailed) {
+      const terminal = {
+        status: "failed",
+        occurredAt: timestamp().toISOString(),
+        result: null,
+        error: safeError("snapshot_required", command.commandId, true),
+      };
+      try {
+        const completed = await commandJournal.complete(command.commandId, terminal);
+        const persisted = isRecord(completed) && completed.action === "replay" && validJournalLifecycle(completed.lifecycle)
+          ? completed.lifecycle
+          : terminal;
+        if (generation === lifecycleGeneration) sendLifecycle(persisted, command.commandId);
+      } catch {
+        const failed = {
+          status: "failed",
+          occurredAt: timestamp().toISOString(),
+          result: null,
+          error: safeError("delivery_failed", command.commandId),
+        };
+        let persisted = false;
+        try {
+          await commandJournal.complete(command.commandId, failed);
+          persisted = true;
+        } catch {}
+        if (persisted && generation === lifecycleGeneration) sendLifecycle(failed, command.commandId);
+      }
+      return;
+    }
     if (prepared.action === "replay") {
       if (validJournalLifecycle(prepared.lifecycle)) sendLifecycle(prepared.lifecycle, prepared.commandId);
       return;
@@ -1359,7 +1419,10 @@ export function createRemoteControlAgent(options) {
     try {
       const dispatched = await operationRegistry.dispatch(command.request, {
         advertisedCapabilities,
-        context,
+        context: Object.freeze({
+          ...context,
+          remoteSessionBinding: remoteSessionBindings.get(command.controlSessionId) ?? null,
+        }),
         correlationId: command.commandId,
       });
       if (dispatched.ok === true) {
@@ -1510,6 +1573,7 @@ export function createRemoteControlAgent(options) {
           clearAuthorizations();
           lastErrorCode = "device_deleted";
           activeControlSessions.clear();
+          remoteSessionBindings.clear();
           encryptedControlSessions.clear();
           invalidateTransport();
           if (changed) notifyControlRevoked("cloud");
@@ -1679,6 +1743,7 @@ export function createRemoteControlAgent(options) {
     localDisabledLatch = true;
     clearAuthorizations();
     activeControlSessions.clear();
+    remoteSessionBindings.clear();
     encryptedControlSessions.clear();
     notifyTransportReset();
     lifecycleGeneration += 1;
@@ -1732,6 +1797,7 @@ export function createRemoteControlAgent(options) {
     started = false;
     clearAuthorizations();
     activeControlSessions.clear();
+    remoteSessionBindings.clear();
     encryptedControlSessions.clear();
     invalidateTransport();
     state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;

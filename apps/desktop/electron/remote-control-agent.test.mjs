@@ -228,7 +228,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -241,6 +241,7 @@ function harness({
   tokenLifetime = 120_000,
   localStopAckTimeoutMs = 1_500,
   getActiveRuns = () => [],
+  verifySessionBinding = async () => true,
   onSessionBinding = () => {},
   onSessionUnbound = () => {},
   onTransportReset = () => {},
@@ -265,7 +266,7 @@ function harness({
   const completeCalls = [];
   /** @type {Array<Record<string, any>>} */
   const dispatchCalls = [];
-  /** @type {unknown[]} */
+  /** @type {Array<Record<string, any>>} */
   const webSocketInputs = [];
   const credentialStore = {
     read: async () => credential,
@@ -337,6 +338,7 @@ function harness({
     logger: {},
     localStopAckTimeoutMs,
     getActiveRuns,
+    verifySessionBinding,
     onSessionBinding,
     onSessionUnbound,
     onTransportReset,
@@ -1159,10 +1161,39 @@ describe("remote-control agent command handling", () => {
       deviceId: DEVICE_ID,
       workspaceId: "ws_1",
       sessionId: "ses_1",
+      rootSessionId: "ses_1",
+      rootVerified: true,
+      payloadVersion: 1,
       connectionGeneration: 77,
     }]);
     socket.receive(delivery({ request: { operation: "workspace.list", payloadVersion: 1, arguments: {} } }));
     assert.equal(bindings.length, 1);
+  });
+
+  it("does not dispatch or read another root when immutable session binding fails", async () => {
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities, onSessionBinding: () => false });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    await settle();
+
+    assert.deepEqual(fixture.dispatchCalls, []);
+    const terminal = frames(socket, "command.lifecycle").at(-1).payload;
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.error.code, "snapshot_required");
+    assert.equal(terminal.error.retryable, true);
+    assert.equal(fixture.completeCalls.length, 1);
+    assert.equal(fixture.completeCalls[0].commandId, COMMAND_ID);
+    assert.equal(fixture.completeCalls[0].lifecycle.error.code, "snapshot_required");
+    assert.equal(fixture.agent.status().activeControlSessionCount, 0);
   });
 
   it("publishes a validated session event only on the welcomed current generation", async () => {

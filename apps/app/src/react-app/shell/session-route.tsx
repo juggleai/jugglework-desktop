@@ -115,7 +115,6 @@ import {
 } from "@/react-app/domains/session/sync/session-sync";
 import { firstLineLocalFileParts, joinWorkspaceRelativePath, toFileUrl } from "@/react-app/domains/session/sync/prompt-file-parts";
 import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
-import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
@@ -989,19 +988,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     !reloadCoordinator.reloadError,
   );
 
-  const {
-    activePermission,
-    permissionReplyBusy,
-    respondPermission,
-    activeQuestion,
-    questionReplyBusy,
-    respondQuestion,
-  } = useSessionInteractions({
-    client: opencodeClient,
-    workspaceId: selectedWorkspaceId,
-    sessionId: selectedSessionId,
-    workspaceRoot: selectedWorkspaceRoot,
-  });
   const showPreparingStatus =
     effectiveLoading ||
     Boolean(activatingWorkspaceId) ||
@@ -2371,8 +2357,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
         activeSessionIds={trackedSelectedWorkspaceSessionIds}
+        sessions={sessionsByWorkspaceId[selectedWorkspaceId] ?? []}
         opencodeBaseUrl={opencodeBaseUrl}
         juggleworkToken={selectedWorkspaceServerToken}
+        interactionClient={selectedWorkspaceEndpoint.client}
         onSessionCreated={handleRuntimeSessionCreated}
         onSessionUpdated={handleRuntimeSessionUpdated}
         onSessionDeleted={handleRuntimeSessionDeleted}
@@ -2665,12 +2653,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             }
           : null
       }
-      activePermission={activePermission}
-      permissionReplyBusy={permissionReplyBusy}
-      respondPermission={respondPermission}
-      activeQuestion={activeQuestion}
-      questionReplyBusy={questionReplyBusy}
-      respondQuestion={respondQuestion}
       safeStringify={safeStringify}
       onRenameSession={
         opencodeClient

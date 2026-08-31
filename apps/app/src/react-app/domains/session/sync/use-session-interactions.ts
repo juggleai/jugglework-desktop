@@ -1,184 +1,173 @@
-// Pending permissions, questions, and todos for the selected session:
-// query-cache subscriptions, snapshot seeding, and reply handlers.
-// Extracted verbatim from session-route.tsx (cluster had no readers of its
-// internals besides the JSX).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { unwrap } from "@/app/lib/opencode";
-import type { Client, PendingPermission, PendingQuestion } from "@/app/types";
+import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import type { PendingPermission, PendingQuestion } from "@/app/types";
 import { t } from "@/i18n";
-import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
 import {
-  permissionKey,
-  questionKey,
-  seedPermissionState,
-  seedQuestionState,
-} from "./session-sync";
+  captureInteractionSnapshotFence,
+  pendingInteractionsForRoot,
+  reconcileInteractionSnapshot,
+  resolveLiveInteraction,
+  type WorkspaceInteractionState,
+  workspaceInteractionsKey,
+} from "./workspace-interactions";
 
-const emptyPendingPermissions: PendingPermission[] = [];
-const emptyPendingQuestions: PendingQuestion[] = [];
-
-export type UseSessionInteractionsInput = {
-  client: Client | null;
-  workspaceId: string;
-  sessionId: string | null;
-  workspaceRoot: string;
+const emptyWorkspaceInteractions: WorkspaceInteractionState = {
+  permissions: [],
+  questions: [],
+  sessions: {},
+  revision: 0,
+  appliedSnapshotFences: {},
+  invalidSnapshotBeforeRevision: 0,
+  tombstones: {},
 };
 
+export type UseSessionInteractionsInput = {
+  client: JuggleWorkServerClient | null;
+  workspaceId: string;
+  sessionId: string | null;
+};
+
+function normalizedQuestionId(question: { question: string; id?: string }): string {
+  return question.id || `q_${question.question.slice(0, 32)}`;
+}
+
+export function permissionInteractionReply(
+  pending: PendingPermission,
+  reply: "once" | "always" | "reject",
+) {
+  return {
+    targetSessionId: pending.targetSessionId,
+    interactionId: pending.id,
+    input: {
+      origin: "local-renderer" as const,
+      commandCorrelationId: null,
+      response: reply === "once" ? "allow_once" as const : reply,
+    },
+  };
+}
+
+export function questionInteractionReply(pending: PendingQuestion, answers: string[][]) {
+  return {
+    targetSessionId: pending.targetSessionId,
+    interactionId: pending.id,
+    input: {
+      origin: "local-renderer" as const,
+      commandCorrelationId: null,
+      answers: answers.map((values, index) => ({
+        questionId: normalizedQuestionId(pending.questions[index]!),
+        values,
+      })),
+    },
+  };
+}
+
+export function isTerminalInteractionReplyError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return ["already_resolved", "interaction_expired", "interaction_not_found"]
+    .includes(String(error.code));
+}
+
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId } = input;
+  const canonical = useQueryCacheState<WorkspaceInteractionState>(
+    workspaceId ? workspaceInteractionsKey(workspaceId) : null,
+    emptyWorkspaceInteractions,
+  );
+  const selected = useMemo(
+    () => sessionId ? pendingInteractionsForRoot(canonical, sessionId) : { permissions: [], questions: [] },
+    [canonical, sessionId],
+  );
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
   const [questionReplyBusy, setQuestionReplyBusy] = useState(false);
   const questionReplyBusyRef = useRef(false);
 
-  const permissionQueryKey = useMemo(
-    () => (workspaceId && sessionId ? permissionKey(workspaceId, sessionId) : null),
-    [sessionId, workspaceId],
-  );
-  const pendingPermissions = useQueryCacheState<PendingPermission[]>(
-    permissionQueryKey,
-    emptyPendingPermissions,
-  );
-  const questionQueryKey = useMemo(
-    () => (workspaceId && sessionId ? questionKey(workspaceId, sessionId) : null),
-    [sessionId, workspaceId],
-  );
-  const pendingQuestions = useQueryCacheState<PendingQuestion[]>(
-    questionQueryKey,
-    emptyPendingQuestions,
-  );
-
   useEffect(() => {
     if (!client || !workspaceId || !sessionId) return;
     let cancelled = false;
-    const directory = workspaceRoot || undefined;
-    void (async () => {
-      const snapshotStartedAt = Date.now();
-      try {
-        const list: Parameters<typeof seedPermissionState>[2] = [];
-        let readSucceeded = false;
-        try {
-          list.push(...unwrap(await client.permission.list({ directory })));
-          readSucceeded = true;
-        } catch {
-          // Older/newer OpenCode permission APIs can fail independently.
-        }
-        try {
-          list.push(...unwrap(await client.v2.session.permission.list({ sessionID: sessionId })).data);
-          readSucceeded = true;
-        } catch {
-          // Keep the legacy snapshot if the v2 endpoint is unavailable.
-        }
-        if (!readSucceeded) return;
-        if (!cancelled) {
-          seedPermissionState(workspaceId, sessionId, list, { snapshotStartedAt });
-        }
-      } catch {
-        // Keep event-synced permission state if the snapshot read fails.
-        // Hiding a pending approval can block the running task.
-      }
-    })();
+    const snapshotFence = captureInteractionSnapshotFence(workspaceId);
+    void client.getInteractionSnapshot(workspaceId, sessionId).then(
+      ({ item }) => {
+        if (!cancelled) reconcileInteractionSnapshot(workspaceId, item, snapshotFence);
+      },
+      () => {
+        // Live canonical state remains actionable when snapshot recovery fails.
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [client, sessionId, workspaceId, workspaceRoot]);
+  }, [client, sessionId, workspaceId]);
 
-  useEffect(() => {
-    if (!client || !workspaceId || !sessionId) return;
-    let cancelled = false;
-    const directory = workspaceRoot || undefined;
-    void (async () => {
-      const snapshotStartedAt = Date.now();
-      try {
-        const list = unwrap(await client.question.list({ directory }));
-        if (!cancelled) {
-          seedQuestionState(workspaceId, sessionId, list, { snapshotStartedAt });
-        }
-      } catch {
-        // Keep event-synced question state if the snapshot read fails.
-        // Hiding a pending question can block the running task.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, sessionId, workspaceId, workspaceRoot]);
-
-  const activePermission = pendingPermissions[0] ?? null;
+  const activePermission = selected.permissions[0] ?? null;
   const respondPermission = useCallback(
     async (requestID: string, reply: "once" | "always" | "reject") => {
-      if (!client || !workspaceId || !sessionId) return;
-      if (permissionReplyBusyRef.current) return;
+      if (!client || !workspaceId || permissionReplyBusyRef.current) return;
+      const pending = selected.permissions.find((permission) => permission.id === requestID);
+      if (!pending) return;
+      const request = permissionInteractionReply(pending, reply);
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
-        const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
-        if (pendingPermission?.protocol === "v2") {
-          const result = await client.v2.session.permission.reply({
-            sessionID: pendingPermission.sessionID,
-            requestID,
-            reply,
-          });
-          if (result.error !== undefined) unwrap(result);
-        } else {
-          unwrap(
-            await client.permission.reply({
-              requestID,
-              reply,
-              directory: workspaceRoot || undefined,
-            }),
-          );
-        }
-        getReactQueryClient().setQueryData<PendingPermission[]>(
-          permissionKey(workspaceId, sessionId),
-          (current = []) => current.filter((permission) => permission.id !== requestID),
+        await client.replyPermissionInteraction(
+          workspaceId,
+          request.targetSessionId,
+          request.interactionId,
+          request.input,
         );
+        resolveLiveInteraction(workspaceId, "permission", pending.targetSessionId, requestID);
       } catch (error) {
-        toast.error(t("app.error_request_failed"), {
-          description: describeRouteError(error),
-        });
+        if (isTerminalInteractionReplyError(error)) {
+          resolveLiveInteraction(workspaceId, "permission", pending.targetSessionId, requestID);
+        } else {
+          toast.error(t("app.error_request_failed"), {
+            description: describeRouteError(error),
+          });
+        }
       } finally {
         permissionReplyBusyRef.current = false;
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, sessionId, workspaceId, workspaceRoot],
+    [client, selected.permissions, workspaceId],
   );
 
-  const activeQuestion = pendingQuestions[0] ?? null;
+  const activeQuestion = selected.questions[0] ?? null;
   const respondQuestion = useCallback(
     async (requestID: string, answers: string[][]) => {
-      if (!client || !workspaceId || !sessionId) return;
-      if (questionReplyBusyRef.current) return;
+      if (!client || !workspaceId || questionReplyBusyRef.current) return;
+      const pending = selected.questions.find((question) => question.id === requestID);
+      if (!pending) return;
+      const request = questionInteractionReply(pending, answers);
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        unwrap(
-          await client.question.reply({
-            requestID,
-            answers,
-            directory: workspaceRoot || undefined,
-          }),
+        await client.replyQuestionInteraction(
+          workspaceId,
+          request.targetSessionId,
+          request.interactionId,
+          request.input,
         );
-        getReactQueryClient().setQueryData<PendingQuestion[]>(
-          questionKey(workspaceId, sessionId),
-          (current = []) => current.filter((question) => question.id !== requestID),
-        );
+        resolveLiveInteraction(workspaceId, "question", pending.targetSessionId, requestID);
       } catch (error) {
-        toast.error(t("app.error_request_failed"), {
-          description: describeRouteError(error),
-        });
+        if (isTerminalInteractionReplyError(error)) {
+          resolveLiveInteraction(workspaceId, "question", pending.targetSessionId, requestID);
+        } else {
+          toast.error(t("app.error_request_failed"), {
+            description: describeRouteError(error),
+          });
+        }
       } finally {
         questionReplyBusyRef.current = false;
         setQuestionReplyBusy(false);
       }
     },
-    [client, sessionId, workspaceId, workspaceRoot],
+    [client, selected.questions, workspaceId],
   );
 
   return {

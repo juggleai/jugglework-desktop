@@ -3,7 +3,10 @@ import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { QuestionPanel } from "../src/react-app/domains/session/modals/question-modal";
+import {
+  QuestionPanel,
+  questionPanelResetKey,
+} from "../src/react-app/domains/session/modals/question-modal";
 
 function renderQuestion(question: QuestionInfo) {
   return renderToStaticMarkup(
@@ -37,5 +40,21 @@ describe("QuestionPanel", () => {
 
     expect(html).not.toContain("Or type a custom answer");
     expect(html).not.toContain("Type your answer here...");
+  });
+
+  test("resets only when the active interaction identity or question schema changes", () => {
+    const questions: QuestionInfo[] = [{
+      header: "Choice",
+      question: "Pick one",
+      options: [{ label: "Yes", description: "Proceed" }],
+    }];
+    const initial = questionPanelResetKey("child\u0000question-a", questions);
+
+    expect(questionPanelResetKey("child\u0000question-a", [...questions])).toBe(initial);
+    expect(questionPanelResetKey("child\u0000question-b", [...questions])).not.toBe(initial);
+    expect(questionPanelResetKey("child\u0000question-a", [{
+      ...questions[0]!,
+      question: "Pick another",
+    }])).not.toBe(initial);
   });
 });

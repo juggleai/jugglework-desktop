@@ -20,7 +20,12 @@ function pendingPermission(overrides: Partial<PendingPermission> = {}): PendingP
       project: false,
     },
     receivedAt: 1,
+    interactionRevision: 1,
     protocol: "legacy",
+    targetSessionId: "session-1",
+    parentSessionId: null,
+    rootSessionId: "session-1",
+    ancestryPath: ["session-1"],
     ...overrides,
   };
 }
@@ -93,5 +98,20 @@ describe("permission approval modal helpers", () => {
 
     expect(html).toContain("Approve Todo write?");
     expect(html).not.toContain("Approve todowrite?");
+  });
+
+  test("identifies descendant approvals as subagent requests", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalPanel, {
+        permission: pendingPermission({
+          sessionID: "child-session",
+          targetSessionId: "child-session",
+          parentSessionId: "root-session",
+          rootSessionId: "root-session",
+        }),
+      }),
+    );
+
+    expect(html).toContain("Subagent request");
   });
 });

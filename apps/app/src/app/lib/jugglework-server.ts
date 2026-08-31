@@ -159,6 +159,22 @@ export type JuggleWorkInteractionOrigin = "local-renderer" | "remote-control";
 export type JuggleWorkPermissionResponse = "allow_once" | "always" | "reject";
 export type JuggleWorkQuestionAnswer = { questionId: string; values: string[] };
 export type JuggleWorkInteractionResolution = { interactionId: string; status: "resolved" };
+export type JuggleWorkOwnedInteraction = {
+  id: string;
+  sessionID: string;
+  protocol: "legacy" | "v2";
+  targetSessionId: string;
+  parentSessionId: string | null;
+  rootSessionId: string;
+  ancestryPath: string[];
+} & Record<string, unknown>;
+export type JuggleWorkInteractionSnapshot = {
+  snapshotStartedAt: number;
+  rootSessionId: string;
+  includeDescendants: boolean;
+  permissions: JuggleWorkOwnedInteraction[];
+  questions: JuggleWorkOwnedInteraction[];
+};
 export type JuggleWorkPermissionReplyInput =
   | {
       origin: "local-renderer";
@@ -168,7 +184,20 @@ export type JuggleWorkPermissionReplyInput =
   | {
       origin: "remote-control";
       commandCorrelationId: string | null;
+      rootSessionId: string;
       response: Exclude<JuggleWorkPermissionResponse, "always">;
+    };
+export type JuggleWorkQuestionReplyInput =
+  | {
+      origin: "local-renderer";
+      commandCorrelationId: string | null;
+      answers: JuggleWorkQuestionAnswer[];
+    }
+  | {
+      origin: "remote-control";
+      commandCorrelationId: string | null;
+      rootSessionId: string;
+      answers: JuggleWorkQuestionAnswer[];
     };
 
 export type JuggleWorkPluginItem = {
@@ -1854,6 +1883,12 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       hostToken,
       timeoutMs: timeouts.sessionRead,
     }),
+    getInteractionSnapshot: (workspaceId: string, rootSessionId: string) =>
+      requestJson<{ item: JuggleWorkInteractionSnapshot }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(rootSessionId)}/interactions/snapshot?includeDescendants=true`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
     replyPermissionInteraction: (
       workspaceId: string,
       sessionId: string,
@@ -1868,11 +1903,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       workspaceId: string,
       sessionId: string,
       interactionId: string,
-      input: {
-        origin: JuggleWorkInteractionOrigin;
-        commandCorrelationId: string | null;
-        answers: JuggleWorkQuestionAnswer[];
-      },
+       input: JuggleWorkQuestionReplyInput,
     ) => requestJson<JuggleWorkInteractionResolution>(
       baseUrl,
       `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/question/reply`,

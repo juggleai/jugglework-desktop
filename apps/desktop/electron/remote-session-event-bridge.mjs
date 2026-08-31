@@ -37,18 +37,20 @@ function observationStatus(type, data) {
  *   coalesceMs?: number,
  *   onNotificationEvent?: (event: unknown) => void,
  *   onStop?: () => void,
+ *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, onNotificationEvent = null, onStop = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, onNotificationEvent = null, onStop = null, interactions = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
        typeof publish !== "function" || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
-       !(onStop === null || typeof onStop === "function")) {
+       !(onStop === null || typeof onStop === "function") ||
+       !(interactions === null || typeof interactions?.resolveOwnership === "function")) {
     throw new TypeError("Remote session event bridge dependencies are invalid.");
   }
 
-  /** @type {Map<string, Readonly<{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, connectionGeneration: number }>>} */
+  /** @type {Map<string, Readonly<{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, rootSessionId: string, payloadVersion: 1 | 2, connectionGeneration: number }>>} */
   const bindings = new Map();
   /** @type {Map<string, { identity: object, controller: AbortController }>} */
   const subscriptions = new Map();
@@ -156,7 +158,17 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
             runId = coordinator.getActiveRunId({ workspaceId, sessionId });
           } catch {}
         }
-        projector.accept(workspaceId, raw);
+        let interactionOwnership = null;
+        if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && interactions) {
+          try {
+            interactionOwnership = await interactions.resolveOwnership({ workspaceId, targetSessionId: sessionId });
+          } catch {}
+        }
+        if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && !interactionOwnership) {
+          projector.reconnectGap(workspaceId, "sequence_gap");
+          return;
+        }
+        projector.accept(workspaceId, raw, interactionOwnership);
         if (!current() || !sessionId || !status || !runId) return;
         try {
           let response;
@@ -211,20 +223,29 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
 
   /** @param {unknown} input */
   function bind(input) {
+    if (isRecord(input) && input.payloadVersion === undefined) input = { ...input, payloadVersion: 1, rootSessionId: input.sessionId };
     if (stopped || !isRecord(input) || !UUID_PATTERN.test(input.controlSessionId) || !UUID_PATTERN.test(input.deviceId) ||
-        !identifier(input.workspaceId) || !identifier(input.sessionId) ||
+        !identifier(input.workspaceId) || !identifier(input.sessionId) || input.rootSessionId !== input.sessionId ||
+        ![1, 2].includes(input.payloadVersion) ||
         !Number.isSafeInteger(input.connectionGeneration) || input.connectionGeneration <= 0) return false;
     const binding = Object.freeze({
       controlSessionId: input.controlSessionId,
       deviceId: input.deviceId,
       workspaceId: input.workspaceId,
       sessionId: input.sessionId,
+      rootSessionId: input.rootSessionId,
+      payloadVersion: input.payloadVersion,
       connectionGeneration: input.connectionGeneration,
     });
     const existing = bindings.get(binding.controlSessionId);
     if (existing) {
       if (existing.deviceId !== binding.deviceId || existing.workspaceId !== binding.workspaceId ||
-          existing.sessionId !== binding.sessionId || existing.connectionGeneration !== binding.connectionGeneration) return false;
+          existing.sessionId !== binding.sessionId ||
+          existing.connectionGeneration !== binding.connectionGeneration) return false;
+      if (binding.payloadVersion === 2 && existing.payloadVersion === 1) {
+        if (!projector.bind(binding)) return false;
+        bindings.set(binding.controlSessionId, Object.freeze({ ...existing, payloadVersion: 2 }));
+      }
       ensureSubscription(binding.workspaceId);
       return true;
     }
