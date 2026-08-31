@@ -271,6 +271,12 @@ function AgentAccessCard(props: {
         context: { ...context, trigger: "desktop-connect-repair" },
         mintToken: mintCloudControlMcpToken,
         force: true,
+        isScopeCurrent: () => {
+          const current = readDenSettings();
+          return current.baseUrl === context.denBaseUrl
+            && current.authToken === context.denAuthToken
+            && current.activeOrgId === context.orgId;
+        },
         refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
       });
       updateHealth(result.health);
@@ -325,6 +331,7 @@ function AgentAccessCard(props: {
         context: { ...context, trigger: "desktop-connect-online-retry" },
         mintToken: mintCloudControlMcpToken,
         refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
+        isScopeCurrent: () => !cancelled,
       })
         .then((result) => {
           if (cancelled || !result.health) return;

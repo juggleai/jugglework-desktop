@@ -19,9 +19,12 @@ import {
   isCloudMcpSyncMarkerFresh,
   normalizeCloudMcpScope,
   readCloudMcpCatalogMarker,
+  readCloudMcpUnhealthyRemintAttempt,
   readCloudMcpSyncMarker,
   readCloudMcpUserState,
   writeCloudMcpCatalogMarker,
+  writeCloudMcpUnhealthyRemintAttempt,
+  clearCloudMcpUnhealthyRemintAttempt,
   writeCloudMcpSyncMarker,
   writeCloudMcpUserState,
   type CloudMcpScope,
@@ -106,6 +109,8 @@ type CloudMcpReconcilerInput = {
    * mode "health"; repair reconciles always probe on the server.
    */
   probe?: boolean;
+  /** 在 Mint 与持久化边界确认账号、组织和工作区仍属于本次操作。 */
+  isScopeCurrent?: () => boolean;
 };
 
 type OpenCodeDisconnectClient = {
@@ -120,6 +125,7 @@ type CleanupClient = {
 };
 
 const repairInFlight = new Map<string, Promise<CloudMcpOperationResult>>();
+const repairMutationTail = new Map<string, Promise<void>>();
 
 const APP_VERSION = String(import.meta.env.VITE_JUGGLEWORK_APP_VERSION ?? "").trim();
 const APP_BUILD_SHA = String(import.meta.env.VITE_JUGGLEWORK_BUILD_SHA ?? import.meta.env.VITE_JUGGLEWORK_GIT_SHA ?? "").trim();
@@ -286,9 +292,10 @@ function writeUsableMarker(input: {
   scope: CloudMcpScope;
   expiresAt: string | null;
 }): boolean {
-  if (!input.health?.usable || !input.expiresAt) return false;
-  writeCloudMcpSyncMarker({ ...input.scope, expiresAt: input.expiresAt });
-  return true;
+  if (!input.health?.usable) return false;
+  if (input.expiresAt) writeCloudMcpSyncMarker({ ...input.scope, expiresAt: input.expiresAt });
+  clearCloudMcpUnhealthyRemintAttempt(input.scope);
+  return Boolean(input.expiresAt);
 }
 
 async function probeHealth(input: CloudMcpReconcilerInput, scope: CloudMcpScope, options?: { writeFreshnessMarker?: boolean }): Promise<CloudMcpOperationResult> {
@@ -332,6 +339,8 @@ function needsCatalogToken(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
 }
 
 async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<{ health: JuggleWorkCloudMcpHealth | null; token: DenMcpToken | null }> {
+  const scopeIsCurrent = input.isScopeCurrent ?? (() => true);
+  if (!scopeIsCurrent()) return { health: null, token: null };
   const workspaceKey = input.context.workspaceKey?.trim() ?? "";
   const token = await input.mintToken({
     baseUrl: scope.denBaseUrl,
@@ -340,9 +349,12 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
     workspaceKey: workspaceKey || null,
   });
   if (!token) return { health: null, token: null };
+  // Mint 已消耗本次事故唯一的自动恢复额度；持久化超时或抛错也不能让下一触发器再 Mint。
+  if (input.probe) writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: input.now ?? Date.now() });
+  if (!scopeIsCurrent()) return { health: null, token: null };
   // 目录令牌只在带 workspaceKey 的部署上才有意义：不带工作区键时执行令牌本身
   // 就是账号级的，服务端沿用它做目录即可，不必多铸一枚。
-  const catalogToken = workspaceKey && needsCatalogToken(input, scope)
+  const catalogToken = workspaceKey && !input.probe && needsCatalogToken(input, scope)
     ? await input.mintToken({
         baseUrl: scope.denBaseUrl,
         authToken: input.context.denAuthToken,
@@ -356,6 +368,7 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
     catalogToken,
   });
   if (!payload) return { health: null, token };
+  if (!scopeIsCurrent()) return { health: null, token: null };
   const health = await input.client.reconcileJuggleWorkCloudMcp(scope.workspaceId, payload);
   if (catalogToken && payload.catalog) {
     writeCloudMcpCatalogMarker({
@@ -369,13 +382,30 @@ async function mintAndPost(input: CloudMcpReconcilerInput, scope: CloudMcpScope)
 }
 
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
+  let probedUnusable = false;
+  let probeTriggeredAuthRepair = false;
   if (!input.force) {
     const healthResult = await probeHealth(input, scope, { writeFreshnessMarker: true });
     if (healthResult.health?.usable) return { ...healthResult, status: "unchanged" };
+    // TIPS：direct probe 已证明当前 Bearer 不可用时，不能再让历史 freshness marker
+    // 或 OpenCode 的陈旧 connected 状态覆盖结论；必须进入一次受控 re-mint。
+    probedUnusable = input.probe === true;
+    probeTriggeredAuthRepair = probedUnusable && isCloudMcpAuthTokenFailure(healthResult.health?.firstFailure);
+    if (probeTriggeredAuthRepair && readCloudMcpUnhealthyRemintAttempt(scope)) return { ...healthResult, status: "failed" };
+    const configuredExists = input.configuredEnabled !== null && input.configuredEnabled !== undefined;
+    const failureCode = normalizeCode(healthResult.health?.firstFailure?.code);
+    const terminalNonAuthFailure = failureCode.includes("membership")
+      || failureCode.includes("scope")
+      || failureCode.includes("policy")
+      || failureCode.includes("forbidden")
+      || failureCode.includes("resource")
+      || failureCode.includes("network")
+      || failureCode.includes("timeout");
+    if (probedUnusable && configuredExists && !probeTriggeredAuthRepair && terminalNonAuthFailure) return { ...healthResult, status: "checked" };
   }
 
   const marker = readCloudMcpSyncMarker(scope);
-  if (!input.force && marker && isCloudMcpSyncMarkerFresh({
+  if (!input.force && !probedUnusable && marker && isCloudMcpSyncMarkerFresh({
     expiresAt: marker.expiresAt,
     now: input.now ?? Date.now(),
     refreshMarginMs: input.refreshMarginMs,
@@ -393,7 +423,9 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
   let health = first.health;
   let token = first.token;
   let reminted = false;
-  if (isCloudMcpAuthTokenFailure(health?.firstFailure)) {
+  // direct probe 的 401 已经触发了上面这一次 Mint；新 Token 仍失败时必须停止，
+  // 不能在同一事故里继续旋转 Token。非 probe 的旧流程仍允许一次 bounded retry。
+  if (!probeTriggeredAuthRepair && isCloudMcpAuthTokenFailure(health?.firstFailure)) {
     const second = await mintAndPost(input, scope);
     attempts += 1;
     reminted = true;
@@ -421,6 +453,8 @@ export async function runJuggleWorkCloudMcpReconciler(input: CloudMcpReconcilerI
 
   const scopeKey = getCloudMcpScopeKey(scope);
   if (!scopeKey) return { status: "skipped", health: null, skippedReason: "missing_workspace", attempts: 0, markerWritten: false, reminted: false };
+  // 同一 workspace/server 的组织切换不能并发写入；组织仍由 isScopeCurrent 在写前确认。
+  const mutationKey = JSON.stringify([scope.denBaseUrl, scope.serverBaseUrl, scope.workspaceId]);
   const existing = repairInFlight.get(scopeKey);
   if (existing) return existing;
   // 工作区键在这里统一解析，所有调用点（会话维护、Settings › Connect 的测试与修复）
@@ -431,10 +465,15 @@ export async function runJuggleWorkCloudMcpReconciler(input: CloudMcpReconcilerI
         ...input,
         context: { ...input.context, workspaceKey: await resolveWorkspaceMcpKey(input.client, scope.workspaceId) },
       };
-  const task = repairCloudMcp(resolved, scope).finally(() => {
+  const previousMutation = repairMutationTail.get(mutationKey) ?? Promise.resolve();
+  const task = previousMutation.catch(() => undefined).then(() => repairCloudMcp(resolved, scope)).finally(() => {
     repairInFlight.delete(scopeKey);
   });
+  const mutationTail = task.then(() => undefined, () => undefined).finally(() => {
+    if (repairMutationTail.get(mutationKey) === mutationTail) repairMutationTail.delete(mutationKey);
+  });
   repairInFlight.set(scopeKey, task);
+  repairMutationTail.set(mutationKey, mutationTail);
   return task;
 }
 

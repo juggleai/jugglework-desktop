@@ -162,6 +162,29 @@ describe("session MCP maintenance", () => {
     });
   });
 
+  test("uses a direct probe before trusting an existing Cloud MCP connection", async () => {
+    const probeOptions: Array<{ probe?: boolean } | undefined> = [];
+    const client = {
+      baseUrl: "https://worker.jugglework.test",
+      listMcp: async () => ({ items: [{ name: "jugglework-cloud", config: { type: "remote" as const, enabled: true, url: "https://api.jugglework.test/mcp/agent" } }] }),
+      getJuggleWorkCloudMcpHealth: async (_workspaceId: string, _providerModel?: unknown, options?: { probe?: boolean }) => {
+        probeOptions.push(options);
+        return cloudHealth(true);
+      },
+      reconcileJuggleWorkCloudMcp: async () => cloudHealth(true),
+    };
+
+    await expect(syncCloudControlMcpInBackground({
+      client,
+      workspaceId: WORKSPACE_ID,
+      settings: SETTINGS,
+      now: NOW,
+      mintToken: async () => MINTED,
+    })).resolves.toMatchObject({ outcome: "ready", status: "unchanged" });
+
+    expect(probeOptions).toEqual([{ probe: true }]);
+  });
+
   test("keeps a retryable injection failure visible until a bounded retry restores the tools", async () => {
     let reconcileCount = 0;
     const waits: number[] = [];

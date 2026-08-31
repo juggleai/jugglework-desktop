@@ -205,6 +205,45 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
+  test("a non-retryable token 401 still repairs exactly once", async () => {
+    let checks = 0;
+    let repairs = 0;
+    const result = await ensureCloudMcpSubmissionReadiness({
+      providerModel: PROVIDER_MODEL,
+      check: async () => {
+        checks += 1;
+        return health({ usable: false, firstFailure: failure({ code: "invalid_mcp_token", retryable: false }) });
+      },
+      repair: async () => {
+        repairs += 1;
+        return health();
+      },
+      retryDelaysMs: [0, 0],
+      attemptTimeoutMs: 0,
+    });
+
+    expect(result.outcome).toBe("ready");
+    expect({ checks, repairs }).toEqual({ checks: 1, repairs: 1 });
+  });
+
+  test("a replacement token rejection does not enter a repair loop", async () => {
+    let repairs = 0;
+    const rejected = health({ usable: false, firstFailure: failure({ code: "invalid_mcp_token", retryable: false }) });
+    const result = await ensureCloudMcpSubmissionReadiness({
+      providerModel: PROVIDER_MODEL,
+      check: async () => rejected,
+      repair: async () => {
+        repairs += 1;
+        return rejected;
+      },
+      retryDelaysMs: [0, 0],
+      attemptTimeoutMs: 0,
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(repairs).toBe(1);
+  });
+
   test("a cached Cloud session waits for auth restoration and sends exactly once", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const checking = requiredDecision({ authStatus: "checking", hasSessionToken: true });

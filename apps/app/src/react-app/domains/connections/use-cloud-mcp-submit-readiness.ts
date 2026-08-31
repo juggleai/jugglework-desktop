@@ -42,6 +42,8 @@ type UseCloudMcpSubmitReadinessInput = {
 
 type CloudMcpSubmitInput = {
   skipGate?: boolean;
+  sessionId?: string;
+  providerModel?: JuggleWorkCloudMcpProviderModelContext;
   send: () => Promise<void>;
 };
 
@@ -102,7 +104,7 @@ export function useCloudMcpSubmitReadiness(
   const [state, setState] = useState<CloudMcpSubmissionGateState>(
     IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   );
-  const coordinatorRef = useRef(createCloudMcpSubmissionCoordinator());
+  const coordinatorsRef = useRef(new Map<string, ReturnType<typeof createCloudMcpSubmissionCoordinator>>());
   const authStatusRef = useRef(input.cloudAuthStatus);
   const authWaitersRef = useRef(new Set<() => void>());
   authStatusRef.current = input.cloudAuthStatus;
@@ -168,7 +170,9 @@ export function useCloudMcpSubmitReadiness(
   useEffect(() => {
     if (previousScopeKeyRef.current === decision.scopeKey) return;
     previousScopeKeyRef.current = decision.scopeKey;
-    const cancelled = coordinatorRef.current.cancel("context_changed");
+    let cancelled = false;
+    for (const coordinator of coordinatorsRef.current.values()) cancelled = coordinator.cancel("context_changed") || cancelled;
+    coordinatorsRef.current.clear();
     setState(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
     if (cancelled) {
       recordInspectorEvent("cloud_mcp.submission_cancelled", {
@@ -179,7 +183,8 @@ export function useCloudMcpSubmitReadiness(
   }, [decision.scopeKey, workspaceId]);
 
   useEffect(() => () => {
-    coordinatorRef.current.cancel("unmounted");
+    for (const coordinator of coordinatorsRef.current.values()) coordinator.cancel("unmounted");
+    coordinatorsRef.current.clear();
     const waiters = [...authWaitersRef.current];
     authWaitersRef.current.clear();
     for (const resolve of waiters) resolve();
@@ -223,7 +228,17 @@ export function useCloudMcpSubmitReadiness(
       return result;
     }
     const initialSnapshot = gateSnapshotRef.current;
-    const capturedScopeKey = initialSnapshot.decision.scopeKey;
+    const submittedProviderModel = submission.providerModel ?? initialSnapshot.providerModel;
+    const baseScopeKey = initialSnapshot.decision.scopeKey;
+    const capturedScopeKey = `${baseScopeKey}:${submission.sessionId?.trim() ?? ""}:${submittedProviderModel?.provider ?? ""}:${submittedProviderModel?.model ?? ""}`;
+    const scopeIsCurrent = () => currentScopeKeyRef.current === baseScopeKey;
+    const accountIsCurrent = () => {
+      const current = readDenSettings();
+      return scopeIsCurrent()
+        && current.baseUrl === initialSnapshot.settings.baseUrl
+        && current.authToken === initialSnapshot.settings.authToken
+        && current.activeOrgId === initialSnapshot.settings.activeOrgId;
+    };
     const gateRequired = initialSnapshot.decision.mode !== "bypass";
     let prepare: (() => Promise<CloudMcpSubmissionPreparationResult>) | undefined;
 
@@ -244,7 +259,7 @@ export function useCloudMcpSubmitReadiness(
               return gateSnapshotRef.current.decision;
             },
           });
-          if (currentScopeKeyRef.current !== capturedScopeKey) {
+          if (!accountIsCurrent()) {
             return { outcome: "cancelled", reason: "context_changed" };
           }
           if (authResolution.outcome === "failed") {
@@ -276,7 +291,8 @@ export function useCloudMcpSubmitReadiness(
           return { outcome: "cancelled", reason: "context_changed" };
         }
 
-        const { client, providerModel, settings, workspaceId: activeWorkspaceId } = activeSnapshot;
+        const { client, settings, workspaceId: activeWorkspaceId } = activeSnapshot;
+        const providerModel = submittedProviderModel;
         if (!client || !activeWorkspaceId || !providerModel) {
           return {
             outcome: "failed",
@@ -289,19 +305,21 @@ export function useCloudMcpSubmitReadiness(
         }
         const result = await ensureCloudMcpSubmissionReadiness({
           providerModel,
-          check: () => client.getJuggleWorkCloudMcpHealth(activeWorkspaceId, providerModel),
+          // 发送前必须验证 Cloud endpoint，而不是仅信任 OpenCode 的历史 connected 状态。
+          // 明确的 401 会进入下面唯一一次 repair/re-mint。
+          check: () => client.getJuggleWorkCloudMcpHealth(activeWorkspaceId, providerModel, { probe: true }),
           repair: async () => {
             const repaired = await syncCloudControlMcpInBackground({
               client,
               workspaceId: activeWorkspaceId,
               providerModel,
               settings,
-              force: true,
+              isScopeCurrent: accountIsCurrent,
             });
             return repaired.health;
           },
           onAttempt: (attempt) => {
-            if (currentScopeKeyRef.current !== capturedScopeKey) return;
+            if (!accountIsCurrent()) return;
             const issue = attempt.assessment.ready ? null : attempt.assessment.issue;
             setState({
               status: attempt.phase === "readiness" ? "checking" : "repairing",
@@ -336,7 +354,7 @@ export function useCloudMcpSubmitReadiness(
             }
           },
         });
-        if (currentScopeKeyRef.current !== capturedScopeKey) {
+        if (!accountIsCurrent()) {
           return { outcome: "cancelled", reason: "context_changed" };
         }
         if (result.outcome === "ready") return { outcome: "ready" };
@@ -345,12 +363,14 @@ export function useCloudMcpSubmitReadiness(
       };
     }
 
-    return coordinatorRef.current.submit({
+    const coordinator = coordinatorsRef.current.get(capturedScopeKey) ?? createCloudMcpSubmissionCoordinator();
+    coordinatorsRef.current.set(capturedScopeKey, coordinator);
+    return coordinator.submit({
       scopeKey: capturedScopeKey,
       ...(prepare ? { prepare } : {}),
       send: submission.send,
       onState: (nextState) => {
-        if (currentScopeKeyRef.current !== capturedScopeKey) return;
+        if (!scopeIsCurrent()) return;
         if (nextState.status === "checking") {
           setState({ ...IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE, status: "checking" });
           return;

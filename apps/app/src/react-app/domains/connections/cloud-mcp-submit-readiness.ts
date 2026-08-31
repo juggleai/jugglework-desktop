@@ -4,6 +4,7 @@ import type {
   JuggleWorkCloudMcpProviderModelContext,
 } from "../../../app/lib/jugglework-server";
 import type { CloudMcpUserState } from "./cloud-mcp-user-state";
+import { isCloudMcpAuthTokenFailureCode } from "./cloud-mcp-reconciler";
 
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
 export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
@@ -337,6 +338,7 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
     health: null,
     issue: genericSubmissionIssue(),
   };
+  let authRepairAttempted = false;
 
   for (let index = 0; index < maxAttempts; index += 1) {
     const phase = index === 0 ? "readiness" : "repair";
@@ -354,7 +356,12 @@ export async function ensureCloudMcpSubmissionReadiness(input: {
     if (lastAssessment.ready) {
       return { outcome: "ready", health: lastAssessment.health, attempts: index + 1 };
     }
-    if (!lastAssessment.issue.retryable || index === maxAttempts - 1) {
+    const tokenAuthFailure = isCloudMcpAuthTokenFailureCode(lastAssessment.issue.code);
+    if (tokenAuthFailure && !authRepairAttempted && index < maxAttempts - 1) {
+      authRepairAttempted = true;
+      continue;
+    }
+    if (!lastAssessment.issue.retryable || tokenAuthFailure || index === maxAttempts - 1) {
       return {
         outcome: "failed",
         health: lastAssessment.health,

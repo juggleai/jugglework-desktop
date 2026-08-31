@@ -665,12 +665,19 @@ export function createConnectionsStore(options: {
           throw new Error("Sign in to JuggleWork Cloud and choose an organization first.");
         }
         clearCloudMcpDisabledIntent(context);
+        const capturedSettings = readDenSettings();
         const result = await runJuggleWorkCloudMcpReconciler({
           mode: "repair",
           client: juggleworkClient,
           context: { ...context, trigger: "desktop-explicit-connect" },
           mintToken: mintCloudControlMcpToken,
           force: true,
+          isScopeCurrent: () => {
+            const current = readDenSettings();
+            return current.baseUrl === capturedSettings.baseUrl
+              && current.authToken === capturedSettings.authToken
+              && current.activeOrgId === capturedSettings.activeOrgId;
+          },
           refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
         });
         await refreshMcpServers();
@@ -949,6 +956,12 @@ export function createConnectionsStore(options: {
       },
       mintToken: mintCloudControlMcpToken,
       force: options?.force,
+      isScopeCurrent: () => {
+        const current = readDenSettings();
+        return current.baseUrl === settings.baseUrl
+          && current.authToken === settings.authToken
+          && current.activeOrgId === settings.activeOrgId;
+      },
       refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
     });
     if (result.status === "unchanged" || result.status === "ready") return "unchanged";

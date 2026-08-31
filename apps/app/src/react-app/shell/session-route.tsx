@@ -1333,9 +1333,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
 
         return submitWithCloudMcpReadiness({
-          // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
-          // message, including tasks that do not use connected services.
-          skipGate: true,
+          sessionId: targetSessionId,
+          providerModel: targetModel ? { provider: targetModel.providerID, model: targetModel.modelID } : undefined,
           send: async () => {
             captureAnalyticsEvent("task_message_sent", {
               mode: draft.mode ?? "prompt",

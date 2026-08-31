@@ -56,6 +56,8 @@ vendor/opencode/
 .opencode/agents/jugglework.md
 .opencode/jugglework.json
 opencode.jsonc
+# Local OpenCode runtime configuration may contain account-scoped Bearer tokens.
+/config.json
 .vercel
 .env*.local
 .security

@@ -340,6 +340,114 @@ describe("JuggleWork Cloud MCP reconciler", () => {
     expect(posts).toHaveLength(2);
   });
 
+  test("a failed direct probe bypasses a fresh marker and remints once", async () => {
+    writeCloudMcpSyncMarker({ ...scope, expiresAt: token.expiresAt });
+    let mintCount = 0;
+    let postCount = 0;
+    const probeOptions: Array<{ probe?: boolean } | undefined> = [];
+    const result = await runJuggleWorkCloudMcpReconciler({
+      mode: "repair",
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getJuggleWorkCloudMcpHealth: async (_workspaceId, _providerModel, options) => {
+          probeOptions.push(options);
+          return health({ usable: false, failure: failure("invalid_mcp_token") });
+        },
+        reconcileJuggleWorkCloudMcp: async () => {
+          postCount += 1;
+          return health({ usable: true });
+        },
+      },
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      probe: true,
+      refreshMarginMs: 24 * 60 * 60 * 1000,
+    });
+
+    expect(result.health?.usable).toBe(true);
+    expect(probeOptions).toEqual([{ probe: true }]);
+    expect(mintCount).toBe(1);
+    expect(postCount).toBe(1);
+  });
+
+  test("a direct-probe auth repair stops after the replacement token is rejected", async () => {
+    let mintCount = 0;
+    let postCount = 0;
+    const result = await runJuggleWorkCloudMcpReconciler({
+      mode: "repair",
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false, failure: failure("invalid_mcp_token") }),
+        reconcileJuggleWorkCloudMcp: async () => {
+          postCount += 1;
+          return health({ usable: false, failure: failure("invalid_mcp_token") });
+        },
+      },
+      context,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      probe: true,
+      refreshMarginMs: 1,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(mintCount).toBe(1);
+    expect(postCount).toBe(1);
+  });
+
+  test("a thrown reconcile still consumes the unhealthy episode remint allowance", async () => {
+    const input = {
+      mode: "repair" as const,
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false, failure: failure("invalid_mcp_token") }),
+        reconcileJuggleWorkCloudMcp: async () => { throw new Error("timed out"); },
+      },
+      context,
+      mintToken: async () => token,
+      probe: true,
+      refreshMarginMs: 1,
+    };
+
+    await expect(runJuggleWorkCloudMcpReconciler(input)).rejects.toThrow("timed out");
+    const second = await runJuggleWorkCloudMcpReconciler(input);
+    expect(second.status).toBe("failed");
+    expect(second.attempts).toBe(0);
+  });
+
+  test("an existing connection does not remint for non-auth probe failures", async () => {
+    let mintCount = 0;
+    let postCount = 0;
+    const result = await runJuggleWorkCloudMcpReconciler({
+      mode: "repair",
+      client: {
+        baseUrl: scope.serverBaseUrl,
+        getJuggleWorkCloudMcpHealth: async () => health({ usable: false, failure: failure("jugglework_cloud_membership_required") }),
+        reconcileJuggleWorkCloudMcp: async () => {
+          postCount += 1;
+          return health({ usable: true });
+        },
+      },
+      context,
+      configuredEnabled: true,
+      mintToken: async () => {
+        mintCount += 1;
+        return token;
+      },
+      probe: true,
+      refreshMarginMs: 1,
+    });
+
+    expect(result.status).toBe("checked");
+    expect(mintCount).toBe(0);
+    expect(postCount).toBe(0);
+  });
+
   test("membership and scope failures do not retry", async () => {
     for (const code of ["jugglework_cloud_membership_required", "jugglework_cloud_scope_missing", "jugglework_cloud_resource_forbidden"]) {
       expect(isCloudMcpAuthTokenFailureCode(code)).toBe(false);

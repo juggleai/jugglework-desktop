@@ -35,3 +35,10 @@
 
 - [ ] 6.1 设计取值时机与失败语义（依赖第 2 节）
 - [ ] 6.2 `mcp_delivery.go` 的 desktop 组件补上凭据就绪度
+
+## 7. 第一方 Cloud MCP 一次性鉴权恢复
+
+- [x] 7.1 会话维护和发送前使用 direct probe，避免陈旧 Engine `connected` 掩盖 401
+- [x] 7.2 direct probe 失败后绕过 freshness marker，按 workspace/org/server scope 自动 re-mint、重注册并复验一次
+- [x] 7.3 非 Token 鉴权错误不 re-mint，新 Token 仍失败时停止循环并保留可操作错误
+- [x] 7.4 根目录 `config.json` 退出 Git 跟踪并加入忽略，本机文件与当前账户运行时保持不变

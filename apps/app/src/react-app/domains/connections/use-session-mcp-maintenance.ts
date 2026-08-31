@@ -23,6 +23,7 @@ import {
   readCloudMcpUserState,
 } from "./cloud-mcp-user-state";
 import {
+  isCloudMcpAuthTokenFailureCode,
   runJuggleWorkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
@@ -215,6 +216,7 @@ export async function syncCloudControlMcpInBackground(input: {
   settings?: DenSettings;
   mintToken?: () => Promise<DenMcpToken | null>;
   providerModel?: JuggleWorkCloudMcpProviderModelContext;
+  isScopeCurrent?: () => boolean;
 }): Promise<CloudMcpBackgroundSyncResult> {
   const workspaceId = input.workspaceId.trim();
   const settings = input.settings ?? readDenSettings();
@@ -268,6 +270,10 @@ export async function syncCloudControlMcpInBackground(input: {
     force: input.force,
     refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
     now: input.now,
+    // Engine 的 connected 是历史状态；direct probe 才能在请求前发现服务端 401，
+    // 从而自动 re-mint，而不是等能力工具真正失败后仍误报可用。
+    probe: true,
+    isScopeCurrent: input.isScopeCurrent,
     configuredEnabled: configured === undefined ? null : configured.config.enabled !== false,
   });
   if (result.health?.usable) {
@@ -329,6 +335,7 @@ export async function runCloudMcpMaintenanceWithRetry(input: {
     }
     const willRetry = lastResult.outcome === "failed"
       && lastResult.issue.retryable
+      && !isCloudMcpAuthTokenFailureCode(lastResult.issue.code)
       && index < maxAttempts - 1;
     input.onAttempt?.({ result: lastResult, attempt: index + 1, maxAttempts, willRetry });
     if (!willRetry) return lastResult;
@@ -493,6 +500,7 @@ export function useSessionMcpMaintenance(input: {
                 client,
                 workspaceId,
                 providerModel: reason === "resume" ? undefined : input.providerModel,
+                isScopeCurrent: () => !cancelled && targetKeyRef.current === targetKey,
               }),
               onAttempt: recordCloudAttempt,
             });
