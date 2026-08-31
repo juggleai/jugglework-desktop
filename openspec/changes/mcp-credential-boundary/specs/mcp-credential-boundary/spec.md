@@ -38,6 +38,10 @@
 - **WHEN** probe 返回 membership、scope、policy 或网络错误
 - **THEN** 桌面保留原错误并且不重新 Mint
 
+#### Scenario: 当前 Engine 不枚举 MCP 投影
+- **WHEN** direct `tools/list` 已确认两个 Cloud 工具、Engine 状态为 `connected`、目标 provider/model 存在且支持 tool calling，但当前 OpenCode 版本只能返回 `provider_capability` 而不能枚举 MCP 工具投影
+- **THEN** 桌面允许发送；只有真正未检查、模型不支持工具调用或 `experimental_tool` 明确缺少 Cloud 工具时才阻止发送
+
 ### Requirement: 仓库不跟踪运行时 OpenCode 凭据配置
 仓库根目录的本地 `config.json` SHALL 被 Git 忽略，MUST NOT 提交 `jwmcp_*` Bearer 或其他账户运行时凭据。取消跟踪 SHALL 保留开发者本机文件，当前 Desktop 账户与工作区继续使用 Runtime SQLite 和派生的 `runtime-opencode-config.json`。
 

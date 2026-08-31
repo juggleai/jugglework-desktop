@@ -7,6 +7,7 @@ import type {
 import {
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
+  assessCloudMcpSubmissionReadiness,
   ensureCloudMcpSubmissionReadiness,
   resolveCloudMcpSubmissionAuth,
   type CloudMcpSubmissionGateDecision,
@@ -83,8 +84,10 @@ function health(input?: {
               toolCalling: true,
             }
           : {}),
-        present: projected,
-        missing: usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
+        present: projectionSource === "provider_capability" ? [] : projected,
+        missing: projectionSource === "provider_capability"
+          ? ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"]
+          : usable ? [] : ["jugglework-cloud_search_capabilities", "jugglework-cloud_execute_capability"],
       },
     },
     pluginCanaries: { expected: ["jugglework_docs_search"], present: usable ? ["jugglework_docs_search"] : [], missing: usable ? [] : ["jugglework_docs_search"] },
@@ -359,7 +362,7 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(storedDraft).toEqual(originalDraft);
   });
 
-  test("generic model tool-calling support is never accepted as projection proof", async () => {
+  test("corroborated provider capability fallback is accepted on engines that cannot enumerate MCP tools", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();
     let runs = 0;
@@ -374,8 +377,16 @@ describe("Cloud MCP pre-send readiness", () => {
       },
     });
 
-    expect(result).toMatchObject({ outcome: "blocked", issue: { code: "provider_tool_projection_unverified" } });
-    expect(runs).toBe(0);
+    expect(result).toEqual({ outcome: "sent", bypassed: false });
+    expect(runs).toBe(1);
+  });
+
+  test("an explicitly incomplete experimental projection still blocks the send", () => {
+    const snapshot = health();
+    snapshot.tools.providerProjection.present = ["jugglework-cloud_search_capabilities"];
+    snapshot.tools.providerProjection.missing = ["jugglework-cloud_execute_capability"];
+    const assessment = assessCloudMcpSubmissionReadiness({ health: snapshot, providerModel: PROVIDER_MODEL });
+    expect(assessment).toMatchObject({ ready: false, issue: { code: "provider_tool_projection_missing" } });
   });
 
   test("repeated clicks share one queued submission and cannot duplicate the send", async () => {

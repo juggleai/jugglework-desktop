@@ -253,6 +253,12 @@ export function assessCloudMcpSubmissionReadiness(input: {
       }),
     };
   }
+  const providerCapabilityFallbackReady = projection.checked
+    && projection.source === "provider_capability"
+    && projection.modelExists === true
+    && projection.toolCalling === true
+    && health.usableByCurrentModel === true;
+  if (providerCapabilityFallbackReady) return { ready: true, health };
   if (!projection.checked || projection.source !== "experimental_tool") {
     return {
       ready: false,

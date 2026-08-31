@@ -393,15 +393,11 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     probeTriggeredAuthRepair = probedUnusable && isCloudMcpAuthTokenFailure(healthResult.health?.firstFailure);
     if (probeTriggeredAuthRepair && readCloudMcpUnhealthyRemintAttempt(scope)) return { ...healthResult, status: "failed" };
     const configuredExists = input.configuredEnabled !== null && input.configuredEnabled !== undefined;
-    const failureCode = normalizeCode(healthResult.health?.firstFailure?.code);
-    const terminalNonAuthFailure = failureCode.includes("membership")
-      || failureCode.includes("scope")
-      || failureCode.includes("policy")
-      || failureCode.includes("forbidden")
-      || failureCode.includes("resource")
-      || failureCode.includes("network")
-      || failureCode.includes("timeout");
-    if (probedUnusable && configuredExists && !probeTriggeredAuthRepair && terminalNonAuthFailure) return { ...healthResult, status: "checked" };
+    // 已存在配置时，只有明确的 Bearer 鉴权失败才有资格自动 Mint。插件缺失、工具
+    // 投影、网络、权限等任何其他失败都保留原诊断，避免用新 Token 掩盖真实问题。
+    if (probedUnusable && configuredExists && healthResult.health?.desired.present && !probeTriggeredAuthRepair) {
+      return { ...healthResult, status: "checked" };
+    }
   }
 
   const marker = readCloudMcpSyncMarker(scope);
