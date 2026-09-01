@@ -20,12 +20,17 @@ import { createRemoteControlMutationRegistrations } from "./remote-control-mutat
 import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
 
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
+const NEW_DEVICE_ID = "99999999-9999-4999-8999-999999999999";
 const COMMAND_ID = "22222222-2222-4222-8222-222222222222";
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
 const CONTROL_ID = SESSION_ID;
 const MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 const URL = "https://cloud.example.test/jwork/api";
+const REPLACEMENT_INPUT = Object.freeze({
+  grant: "renderer-one-time-grant",
+  scope: { controlPlaneBaseUrl: URL, userId: "user-1", organizationId: "org-1" },
+});
 
 const disabledGates = Object.freeze({
   schemaVersion: 1,
@@ -228,18 +233,23 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
+  initialCredential = undefined,
+  credentialReadError = null,
+  credentialDeleteError = null,
   capabilities = readCapabilities,
   operationRegistry: operationRegistryOverride = null,
   e2eeKeyStore = null,
   signingCredential = {},
   prepare = async () => ({ action: "execute", commandId: COMMAND_ID }),
   dispatch = async () => ({ ok: true, value: { workspaces: [] } }),
+  enrollDevice: enrollDeviceOverride = null,
   tokenLifetime = 120_000,
   localStopAckTimeoutMs = 1_500,
+  oldOperationDrainTimeoutMs = 2_000,
   getActiveRuns = () => [],
   verifySessionBinding = async () => true,
   onSessionBinding = () => {},
@@ -252,12 +262,14 @@ function harness({
 } = {}) {
   const clock = new FakeClock();
   let settings = { schemaVersion: 1, enabled, preventSleepWhileWaiting: enabled, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
-  let credential = enrolled ? enrolledCredential() : null;
+  let credential = initialCredential === undefined ? (enrolled ? enrolledCredential() : null) : initialCredential;
   let uuid = 10;
   let tokenCalls = 0;
   let enrollmentCalls = 0;
   let deleteCalls = 0;
   let disableSettingsCalls = 0;
+  let e2eeActiveCalls = 0;
+  let e2eeRevokeCalls = 0;
   /** @type {FakeSocket[]} */
   const sockets = [];
   /** @type {Array<Record<string, any>>} */
@@ -269,11 +281,18 @@ function harness({
   /** @type {Array<Record<string, any>>} */
   const webSocketInputs = [];
   const credentialStore = {
-    read: async () => credential,
+    inspect: async () => {
+      if (credentialReadError) return { state: "corrupt" };
+      return { state: credential?.state ?? "absent" };
+    },
+    read: async () => {
+      if (credentialReadError) throw credentialReadError;
+      return credential;
+    },
     prepareEnrollment: async () => ({}),
     completeEnrollment: async () => ({}),
     getSigningCredential: async () => signingCredential,
-    delete: async () => { deleteCalls += 1; credential = null; },
+    delete: async () => { deleteCalls += 1; if (credentialDeleteError) throw credentialDeleteError; credential = null; },
   };
   const operationRegistry = operationRegistryOverride ?? {
     advertise: async () => JSON.parse(JSON.stringify(capabilities)),
@@ -296,6 +315,10 @@ function harness({
       assert.equal(grant, "renderer-one-time-grant");
       assert.equal(displayName, "Test Mac");
       assert.equal(platform, "darwin");
+      if (enrollDeviceOverride) {
+        credential = await enrollDeviceOverride({ context, grant, displayName, platform });
+        return credential;
+      }
       credential = enrolledCredential();
       return credential;
     },
@@ -319,7 +342,12 @@ function harness({
       },
     },
     credentialStore,
-    e2eeKeyStore,
+    e2eeKeyStore: e2eeKeyStore ?? {
+      active: async () => { e2eeActiveCalls += 1; return {}; },
+      advertisement: async () => ({}),
+      privateKey: async () => ({}),
+      revokeAll: async () => { e2eeRevokeCalls += 1; },
+    },
     operationRegistry,
     commandJournal,
     createCloudClient,
@@ -337,6 +365,7 @@ function harness({
     timers: clock.timers,
     logger: {},
     localStopAckTimeoutMs,
+    oldOperationDrainTimeoutMs,
     getActiveRuns,
     verifySessionBinding,
     onSessionBinding,
@@ -358,6 +387,9 @@ function harness({
     get enrollmentCalls() { return enrollmentCalls; },
     get deleteCalls() { return deleteCalls; },
     get disableSettingsCalls() { return disableSettingsCalls; },
+    get credential() { return credential; },
+    get e2eeActiveCalls() { return e2eeActiveCalls; },
+    get e2eeRevokeCalls() { return e2eeRevokeCalls; },
     setSettings(next) { settings = { ...next }; },
   };
 }
@@ -392,7 +424,10 @@ describe("remote-control agent context and lifecycle", () => {
   });
 
   it("does not connect without started, fresh signed-in policy, both base gates, and local enablement", async () => {
-    const fixture = harness({ enabled: false });
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => enrolledCredential({ deviceId: NEW_DEVICE_ID }),
+    });
     await fixture.agent.syncContext(signedInContext());
     assert.equal(fixture.sockets.length, 0);
     await fixture.agent.start();
@@ -410,20 +445,201 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT);
   });
 
-  it("waits for explicit enrollment, consumes the renderer grant, then connects", async () => {
+  it("repairs enabled-without-credential to disabled before fresh replacement", async () => {
     const fixture = harness({ enrolled: false });
     await fixture.agent.start();
-    await fixture.agent.syncContext(signedInContext());
-    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.UNENROLLED);
+    assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.disableSettingsCalls, 1);
     assert.equal(fixture.sockets.length, 0);
+    await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.e2eeRevokeCalls, 1);
+    assert.equal(fixture.sockets.length, 0);
+  });
 
-    await fixture.agent.enroll({ grant: "renderer-one-time-grant" });
-    assert.equal(fixture.enrollmentCalls, 1);
-    assert.equal(fixture.sockets.length, 1);
-    assert.deepEqual(fixture.webSocketInputs[0], {
-      url: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
-      accessToken: "short-lived-token-1",
+  it("removes pending credentials and E2EE material during enabled startup repair", async () => {
+    const fixture = harness({
+      initialCredential: {
+        schemaVersion: 1,
+        state: "pending",
+        context: { controlPlaneBaseUrl: URL, userId: "user-1", organizationId: "org-1" },
+      },
     });
+    await fixture.agent.start();
+    assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.e2eeRevokeCalls, 1);
+  });
+
+  it("removes corrupt credentials and fails closed during enabled startup repair", async () => {
+    const fixture = harness({ credentialReadError: Object.assign(new Error("corrupt private material"), { code: "credentials_corrupt" }) });
+    await fixture.agent.start();
+    assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.e2eeRevokeCalls, 1);
+    assert.doesNotMatch(JSON.stringify(fixture.agent.status()), /private material/);
+  });
+
+  it("retains an enrolled credential when startup settings are locally disabled", async () => {
+    const fixture = harness({ enabled: false });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.e2eeRevokeCalls, 0);
+    assert.equal(fixture.credential.deviceId, DEVICE_ID);
+    assert.equal(fixture.sockets.length, 0);
+  });
+
+  it("keeps an enabled complete credential awaiting renderer context without disabling it", async () => {
+    const fixture = harness();
+    const started = await fixture.agent.start();
+    assert.equal(started.state, REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT);
+    assert.equal(started.locallyDisabled, false);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.sockets.length, 0);
+  });
+
+  it("projects interrupted replacement credentials as disabled and not enrolled after restart", async () => {
+    const fixture = harness({
+      enabled: false,
+      initialCredential: {
+        schemaVersion: 1,
+        state: "pending",
+        context: { controlPlaneBaseUrl: URL, userId: "user-1", organizationId: "org-1" },
+      },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.agent.status().enrolled, false);
+    assert.equal(fixture.agent.status().locallyDisabled, true);
+    assert.equal(fixture.sockets.length, 0);
+  });
+
+  it("replaces identity only while locally disabled and remains disconnected until enabled", async () => {
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => enrolledCredential({ deviceId: NEW_DEVICE_ID }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    const beforeGeneration = fixture.agent.status().lifecycleGeneration;
+    const replaced = await fixture.agent.replaceIdentity(REPLACEMENT_INPUT);
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.e2eeRevokeCalls, 1);
+    assert.equal(fixture.e2eeActiveCalls, 1);
+    assert.equal(fixture.enrollmentCalls, 1);
+    assert.equal(replaced.enrolled, true);
+    assert.equal(fixture.credential.deviceId, NEW_DEVICE_ID);
+    assert.equal(replaced.connected, false);
+    assert.equal(replaced.state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.ok(replaced.lifecycleGeneration > beforeGeneration);
+    assert.equal(fixture.sockets.length, 0);
+  });
+
+  it("rejects a grant captured for another exact scope before destructive replacement", async () => {
+    const fixture = harness({ enabled: false });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    for (const scope of [
+      { ...REPLACEMENT_INPUT.scope, controlPlaneBaseUrl: "https://other.example.test" },
+      { ...REPLACEMENT_INPUT.scope, userId: "user-2" },
+      { ...REPLACEMENT_INPUT.scope, organizationId: "org-2" },
+    ]) {
+      await assert.rejects(fixture.agent.replaceIdentity({ ...REPLACEMENT_INPUT, scope }), /scope changed/);
+    }
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.enrollmentCalls, 0);
+  });
+
+  it("cleans replacement credentials when authorization context changes during enrollment", async () => {
+    /** @type {() => void} */
+    let releaseEnrollment = () => {};
+    // A context switch advances lifecycle generation while the enrollment
+    // promise is awaiting Cloud, so the late result must be deleted.
+    const gate = new Promise((resolve) => { releaseEnrollment = () => resolve(); });
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => {
+        await gate;
+        return enrolledCredential({ deviceId: NEW_DEVICE_ID });
+      },
+    });
+    const realAgent = fixture.agent;
+    await realAgent.start();
+    await realAgent.syncContext(signedInContext());
+    const replacement = realAgent.replaceIdentity(REPLACEMENT_INPUT);
+    await Promise.resolve();
+    await Promise.resolve();
+    await realAgent.syncContext(signedInContext({ userId: "user-2" }));
+    releaseEnrollment();
+    await assert.rejects(replacement);
+    assert.equal(realAgent.status().enrolled, false);
+    assert.ok(fixture.deleteCalls >= 2);
+  });
+
+  it("cleans a newly enrolled identity when replacement is aborted during deferred enrollment", async () => {
+    let releaseEnrollment = () => {};
+    let enrollmentStarted = () => {};
+    const started = new Promise((resolve) => { enrollmentStarted = () => resolve(); });
+    const gate = new Promise((resolve) => { releaseEnrollment = () => resolve(); });
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => {
+        enrollmentStarted();
+        await gate;
+        return enrolledCredential({ deviceId: NEW_DEVICE_ID });
+      },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    const controller = new AbortController();
+    const replacement = fixture.agent.replaceIdentity(REPLACEMENT_INPUT, { signal: controller.signal });
+    await started;
+    controller.abort();
+    releaseEnrollment();
+    await assert.rejects(replacement);
+    assert.equal(fixture.agent.status().enrolled, false);
+    assert.equal(fixture.deleteCalls, 2);
+    assert.equal(fixture.e2eeRevokeCalls, 2);
+  });
+
+  it("independently attempts credential and E2EE cleanup and returns only a stable diagnostic", async () => {
+    for (const [credentialFails, e2eeFails] of [[true, false], [false, true], [true, true]]) {
+      let revokeCalls = 0;
+      const fixture = harness({
+        enabled: false,
+        credentialDeleteError: credentialFails ? new Error("credential secret path") : null,
+        e2eeKeyStore: {
+          active: async () => ({}),
+          advertisement: async () => ({}),
+          privateKey: async () => ({}),
+          revokeAll: async () => { revokeCalls += 1; if (e2eeFails) throw new Error("e2ee secret path"); },
+        },
+      });
+      await fixture.agent.start();
+      await assert.rejects(fixture.agent.deleteCredential(), (error) => {
+        assert.equal(/** @type {any} */ (error).code, "credentials_delete_failed");
+        assert.equal(/** @type {any} */ (error).message, "Device credential cleanup failed.");
+        assert.doesNotMatch(JSON.stringify(error), /secret path/i);
+        return true;
+      });
+      assert.equal(fixture.deleteCalls, 1);
+      assert.equal(revokeCalls, 1);
+      assert.equal(fixture.agent.status().lastErrorCode, "credentials_delete_failed");
+    }
   });
 
   it("sends a strict hello and advertises only registry-provided registered operations", async () => {
@@ -532,6 +748,25 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.agent.status().localControlEnabled, false);
     assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
+  });
+
+  it("re-arms retained policy expiry after replacement and closes before reconnect or publish", async () => {
+    const expired = [];
+    const fixture = harness({
+      enabled: false,
+      enrollDevice: async () => enrolledCredential({ deviceId: NEW_DEVICE_ID }),
+      onPolicyExpired: () => { expired.push(true); },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await fixture.agent.replaceIdentity(REPLACEMENT_INPUT);
+    await fixture.clock.advance(6 * 60_000);
+    fixture.setSettings({ schemaVersion: 1, enabled: true, backgroundMode: false, launchAtLogin: false });
+    await fixture.agent.refreshLocalSettings();
+    assert.equal(fixture.sockets.length, 0);
+    assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
+    assert.equal(expired.length, 1);
+    assert.equal(fixture.agent.publishSessionEvent({}, { connectionGeneration: 1 }), false);
   });
 
   it("suspend reports offline, fences transport and timers, and resume waits for fresh policy and token", async () => {
@@ -1194,6 +1429,160 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.completeCalls[0].commandId, COMMAND_ID);
     assert.equal(fixture.completeCalls[0].lifecycle.error.code, "snapshot_required");
     assert.equal(fixture.agent.status().activeControlSessionCount, 0);
+  });
+
+  it("fences deferred session verification before old-generation dispatch during replacement", async () => {
+    let releaseVerification = () => {};
+    let verificationStarted = () => {};
+    const started = new Promise((resolve) => { verificationStarted = () => resolve(); });
+    const gate = new Promise((resolve) => { releaseVerification = () => resolve(); });
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.snapshot", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({
+      enabled: false,
+      capabilities,
+      verifySessionBinding: async (_binding, { signal } = {}) => {
+        verificationStarted();
+        await gate;
+        return signal?.aborted !== true;
+      },
+      enrollDevice: async () => enrolledCredential({ deviceId: NEW_DEVICE_ID }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    fixture.setSettings({ schemaVersion: 1, enabled: true, backgroundMode: false, launchAtLogin: false });
+    await fixture.agent.refreshLocalSettings();
+    const socket = fixture.sockets[0];
+    socket.open();
+    await settle();
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.snapshot", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1" } },
+    }));
+    await started;
+    fixture.setSettings({ schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false });
+    const stopping = fixture.agent.stopAll();
+    const stopFrame = frames(socket, "device.local_stop")[0];
+    socket.receive(envelope("device.local_stop_ack", {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 41,
+      correlationId: stopFrame.payload.correlationId,
+      closedControlSessions: 1,
+    }));
+    await stopping;
+    await fixture.agent.refreshLocalSettings();
+    const replacement = fixture.agent.replaceIdentity(REPLACEMENT_INPUT);
+    releaseVerification();
+    await replacement;
+    assert.equal(fixture.dispatchCalls.length, 0);
+  });
+
+  it("awaits a production mutation POST outcome after lifecycle abort before replacement deletes credentials", async () => {
+    let postStarted = () => {};
+    const started = new Promise((resolve) => { postStarted = () => resolve(); });
+    let releasePost = () => {};
+    const gate = new Promise((resolve) => { releasePost = () => resolve(); });
+    const postCalls = [];
+    const mutationGates = { ...readGates, sessionMutation: true };
+    const registrations = createRemoteControlMutationRegistrations({
+      workspaceStore: { readWorkspaceState: async () => ({ workspaces: [{ id: "ws_1", path: "/tmp/ws_1" }] }) },
+      managedRuntimeClient: {
+        getJson: async () => ({ items: [{ id: "ws_1", path: "/tmp/ws_1", workspaceType: "local" }] }),
+        postJson: async (pathname, body, options) => {
+          postCalls.push({ pathname, body, options });
+          postStarted();
+          await gate;
+          return { item: { id: "ses_created", directory: "/tmp/ws_1" }, started: false };
+        },
+      },
+      coordinator: { recordServerRun: () => true, activeRuns: () => [] },
+    });
+    const registry = createRemoteControlOperationRegistry({
+      registrations,
+      getFeatureGates: (context) => /** @type {any} */ (context).featureGates,
+      isOperationAllowed: ({ context }) => /** @type {any} */ (context).policyFresh === true,
+    });
+    const fixture = harness({
+      enabled: false,
+      oldOperationDrainTimeoutMs: 100,
+      operationRegistry: registry,
+      enrollDevice: async () => enrolledCredential({ deviceId: NEW_DEVICE_ID }),
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext({ featureGates: mutationGates }));
+    fixture.setSettings({ schemaVersion: 1, enabled: true, backgroundMode: false, launchAtLogin: false });
+    await fixture.agent.refreshLocalSettings();
+    const socket = fixture.sockets[0];
+    socket.open();
+    await settle();
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery({
+      idempotencyKey: "create-before-replacement",
+      request: { operation: "session.create", payloadVersion: 1, arguments: { workspaceId: "ws_1", title: "Old generation" } },
+    }));
+    await started;
+    assert.equal(postCalls.length, 1);
+    assert.equal(postCalls[0].options, undefined);
+    fixture.setSettings({ schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false });
+    const stopping = fixture.agent.stopAll();
+    const stopFrame = frames(socket, "device.local_stop")[0];
+    socket.receive(envelope("device.local_stop_ack", {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 41,
+      correlationId: stopFrame.payload.correlationId,
+      closedControlSessions: 1,
+    }));
+    await stopping;
+    await fixture.agent.refreshLocalSettings();
+    const replacement = fixture.agent.replaceIdentity(REPLACEMENT_INPUT);
+    await settle();
+    assert.equal(fixture.deleteCalls, 0);
+    releasePost();
+    await replacement;
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.completeCalls.length, 0);
+  });
+
+  it("fails before credential deletion when an old operation cannot drain within the bound", async () => {
+    let dispatchStarted = () => {};
+    const started = new Promise((resolve) => { dispatchStarted = () => resolve(); });
+    const fixture = harness({
+      enabled: false,
+      oldOperationDrainTimeoutMs: 10,
+      dispatch: async () => { dispatchStarted(); return new Promise(() => {}); },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    fixture.setSettings({ schemaVersion: 1, enabled: true, backgroundMode: false, launchAtLogin: false });
+    await fixture.agent.refreshLocalSettings();
+    const socket = fixture.sockets[0];
+    socket.open();
+    await settle();
+    socket.receive(welcome());
+    await settle();
+    socket.receive(delivery());
+    await started;
+    fixture.setSettings({ schemaVersion: 1, enabled: false, backgroundMode: false, launchAtLogin: false });
+    const stopping = fixture.agent.stopAll();
+    const stopFrame = frames(socket, "device.local_stop")[0];
+    socket.receive(envelope("device.local_stop_ack", {
+      deviceId: DEVICE_ID,
+      connectionGeneration: 41,
+      correlationId: stopFrame.payload.correlationId,
+      closedControlSessions: 1,
+    }));
+    await stopping;
+    await fixture.agent.refreshLocalSettings();
+    await assert.rejects(fixture.agent.replaceIdentity(REPLACEMENT_INPUT), (error) => {
+      assert.equal(/** @type {any} */ (error).code, "operation_drain_failed");
+      return true;
+    });
+    assert.equal(fixture.deleteCalls, 0);
   });
 
   it("publishes a validated session event only on the welcomed current generation", async () => {

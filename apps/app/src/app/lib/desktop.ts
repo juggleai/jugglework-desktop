@@ -587,6 +587,7 @@ const {
   desktopRemoteControlStopAll,
   desktopRemoteControlContextSync,
   desktopRemoteControlEnroll,
+  desktopRemoteControlReregisterAndEnable,
   desktopRemoteControlCredentialDelete,
   desktopRemoteControlStatusRead,
 } = desktopBridge;
@@ -663,6 +664,7 @@ export {
   desktopRemoteControlStopAll,
   desktopRemoteControlContextSync,
   desktopRemoteControlEnroll,
+  desktopRemoteControlReregisterAndEnable,
   desktopRemoteControlCredentialDelete,
   desktopRemoteControlStatusRead,
 };

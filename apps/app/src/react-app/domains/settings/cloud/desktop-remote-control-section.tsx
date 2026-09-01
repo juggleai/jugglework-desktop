@@ -3,6 +3,8 @@ import * as React from "react";
 
 import type {
   DesktopRemoteControlAgentStatus,
+  DesktopRemoteControlReregisterResult,
+  DesktopRemoteControlPolicyScope,
   DesktopRemoteControlSettings,
 } from "@jugglework/types/desktop-ipc";
 import { Button } from "@/components/ui/button";
@@ -10,7 +12,7 @@ import { t } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import {
-  desktopRemoteControlEnroll,
+  desktopRemoteControlReregisterAndEnable,
   desktopRemoteControlSettingsRead,
   desktopRemoteControlSettingsUpdate,
   desktopRemoteControlStatusRead,
@@ -53,13 +55,50 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
   connected: false,
   enrolled: false,
   revoked: false,
+  locallyDisabled: true,
   localControlEnabled: false,
   activeControlSessionCount: 0,
   controllerDisplayNames: [],
   lifecycleGeneration: 0,
   connectionGeneration: null,
   lastErrorCode: null,
+  enrollmentAuthorized: false,
+  replacementPending: false,
+  replacementStatus: "idle",
+  replacementErrorCode: null,
 };
+
+export function shouldShowRemoteControlReregister(input: {
+  signedIn: boolean;
+  policyAllowsRemote: boolean;
+  settings: DesktopRemoteControlSettings;
+  status: DesktopRemoteControlAgentStatus;
+}) {
+  return input.signedIn && input.policyAllowsRemote && !input.settings.enabled && input.status.locallyDisabled &&
+    input.status.enrollmentAuthorized && !input.status.replacementPending;
+}
+
+export async function requestRemoteControlReregistration(input: {
+  refreshFresh: () => Promise<{ config: { desktopRemoteFeatureGates?: { schemaVersion: number; enrollment: boolean; readOnlyControl: boolean } }; scope: DesktopRemoteControlPolicyScope }>;
+  currentScope: () => DesktopRemoteControlPolicyScope | null;
+  createEnrollmentGrant: () => Promise<{ grant: string }>;
+  reregisterAndEnable: (input: { grant: string; scope: DesktopRemoteControlPolicyScope }) => Promise<DesktopRemoteControlReregisterResult>;
+}) {
+  const fresh = await input.refreshFresh();
+  const gates = fresh.config.desktopRemoteFeatureGates;
+  if (gates?.schemaVersion !== 1 || !gates.enrollment || !gates.readOnlyControl) {
+    throw new Error("当前组织尚未启用 Desktop 注册和只读远程控制。");
+  }
+  const matchesScope = () => {
+    const current = input.currentScope();
+    return current?.controlPlaneBaseUrl === fresh.scope.controlPlaneBaseUrl && current.userId === fresh.scope.userId &&
+      current.organizationId === fresh.scope.organizationId;
+  };
+  if (!matchesScope()) throw new Error("Remote-control account or organization changed.");
+  const enrollmentGrant = await input.createEnrollmentGrant();
+  if (!matchesScope()) throw new Error("Remote-control account or organization changed.");
+  return input.reregisterAndEnable({ grant: enrollmentGrant.grant, scope: fresh.scope });
+}
 
 function statusPresentation(status: DesktopRemoteControlAgentStatus) {
   if (status.connected) return { label: t("settings.remote_control.status_connected"), tone: "ready" as const };
@@ -128,7 +167,9 @@ export function DesktopRemoteControlSection() {
   const [settings, setSettings] = React.useState<DesktopRemoteControlSettings>(disabledSettings);
   const [status, setStatus] = React.useState<DesktopRemoteControlAgentStatus>(stoppedStatus);
   const [busy, setBusy] = React.useState(false);
+  const [reregisterPending, setReregisterPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [success, setSuccess] = React.useState<string | null>(null);
   const desktopRuntime = isDesktopRuntime();
   const gates = desktopConfig.config.desktopRemoteFeatureGates;
   const policyAllowsRemote = gates?.schemaVersion === 1 && gates.enrollment === true && gates.readOnlyControl === true;
@@ -183,39 +224,45 @@ export function DesktopRemoteControlSection() {
     }
   };
 
-  const enroll = async () => {
-    if (!cloud.user?.id || !cloud.activeOrganization?.id) {
+  const reregisterAndEnable = async () => {
+    const organizationId = cloud.activeOrganization?.id;
+    if (!cloud.user?.id || !organizationId) {
       setError("请先登录 Cloud 并选择一个组织。");
       return;
     }
     setBusy(true);
+    setReregisterPending(true);
     setError(null);
+    setSuccess(null);
     try {
-      const fresh = await desktopConfig.refreshFresh();
-      const freshGates = fresh.desktopRemoteFeatureGates;
-      if (freshGates?.schemaVersion !== 1 || !freshGates.enrollment || !freshGates.readOnlyControl) {
-        throw new Error("当前组织尚未启用 Desktop 注册和只读远程控制。");
-      }
-      await desktopRemoteControlSettingsUpdate({ enabled: true });
-      // DesktopConfigProvider publishes this same fresh context to Main. The
-      // grant is requested only after that refresh succeeds, so cached policy
-      // can never authorize enrollment.
-      const enrollmentGrant = await cloud.client.createDesktopRemoteEnrollmentGrant(
-        cloud.activeOrganization.id,
-      );
-      const nextStatus = await desktopRemoteControlEnroll({ grant: enrollmentGrant.grant });
-      setStatus(nextStatus);
+      // refreshFresh resolves only after Main has accepted the same fresh
+      // policy context, so the one-time grant cannot race context sync.
+      const result = await requestRemoteControlReregistration({
+        refreshFresh: desktopConfig.refreshFresh,
+        currentScope: cloud.getCurrentScope,
+        createEnrollmentGrant: () => cloud.client.createDesktopRemoteEnrollmentGrant(organizationId),
+        reregisterAndEnable: desktopRemoteControlReregisterAndEnable,
+      });
+      setStatus(result.status);
       setSettings(await desktopRemoteControlSettingsRead());
+      if (!result.ok) throw new Error(result.error.message);
+      setSuccess(t("settings.remote_control.reregister_success"));
     } catch (cause) {
-      await desktopRemoteControlStopAll().catch(() => undefined);
-      setError(cause instanceof Error ? cause.message : "Desktop 注册失败。");
+      setError(cause instanceof Error ? cause.message : t("settings.remote_control.reregister_failed"));
       await refresh().catch(() => undefined);
     } finally {
+      setReregisterPending(false);
       setBusy(false);
     }
   };
 
   if (!desktopRuntime) return null;
+  const showReregister = !reregisterPending && shouldShowRemoteControlReregister({
+    signedIn: cloud.isSignedIn,
+    policyAllowsRemote,
+    settings,
+    status,
+  });
 
   return (
     <SettingsSection>
@@ -239,9 +286,9 @@ export function DesktopRemoteControlSection() {
               这是 Main 进程持久化的本机安全开关。关闭时会立即断开远程连接。
             </LayoutSectionItemDescription>
             <LayoutSectionItemHeaderActions>
-              <Switch
-                checked={settings.enabled}
-                disabled={busy || (!settings.enabled && !policyAllowsRemote)}
+               <Switch
+                 checked={settings.enabled}
+                 disabled={busy || !settings.enabled}
                 onCheckedChange={(checked) => void setEnabled(checked)}
                 aria-label="允许本机远程控制"
               />
@@ -253,20 +300,25 @@ export function DesktopRemoteControlSection() {
         <SettingsNotice tone="error">当前 Cloud 策略未同时启用设备注册和只读远程控制。</SettingsNotice>
       ) : null}
       {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      {success ? <SettingsNotice>{success}</SettingsNotice> : null}
+      {reregisterPending || status.replacementPending ? (
+        <SettingsNotice>{t("settings.remote_control.reregister_pending")}</SettingsNotice>
+      ) : null}
       {status.lastErrorCode ? (
         <SettingsNotice tone="error">最近错误：{status.lastErrorCode}</SettingsNotice>
       ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          {!status.enrolled ? (
+          {showReregister ? (
             <Button
-              onClick={() => void enroll()}
-              disabled={busy || !policyAllowsRemote || !cloud.isSignedIn || !cloud.activeOrganization}
+              data-testid="remote-control-reregister"
+              onClick={() => void reregisterAndEnable()}
+              disabled={busy || !cloud.activeOrganization}
             >
-              {busy ? "正在注册…" : "启用并注册此 Desktop"}
+              {t("settings.remote_control.reregister")}
             </Button>
           ) : null}
-          {status.enrolled && !status.connected ? (
+          {settings.enabled && status.enrolled && !status.connected ? (
             <Button variant="outline" onClick={() => void setEnabled(true)} disabled={busy || !policyAllowsRemote}>
               重新连接
             </Button>

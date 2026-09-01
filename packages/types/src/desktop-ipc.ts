@@ -499,12 +499,50 @@ export type DesktopRemoteControlAgentStatus = {
   connected: boolean;
   enrolled: boolean;
   revoked: boolean;
+  locallyDisabled: boolean;
   localControlEnabled: boolean;
   activeControlSessionCount: number;
   controllerDisplayNames: string[];
   lifecycleGeneration: number;
   connectionGeneration: number | null;
   lastErrorCode: string | null;
+  enrollmentAuthorized: boolean;
+  replacementPending: boolean;
+  replacementStatus: "idle" | "succeeded" | "failed";
+  replacementErrorCode: DesktopRemoteControlReregisterErrorCode | null;
+};
+
+export type DesktopRemoteControlReregisterErrorCode =
+  | "replacement_in_progress"
+  | "not_eligible"
+  | "stop_failed"
+  | "enrollment_failed"
+  | "enable_failed"
+  | "startup_failed"
+  | "cancelled";
+
+export type DesktopRemoteControlReregisterError = {
+  code: DesktopRemoteControlReregisterErrorCode;
+  message: string;
+  retryable: boolean;
+};
+
+export type DesktopRemoteControlReregisterResult =
+  | {
+      ok: true;
+      status: DesktopRemoteControlAgentStatus;
+      error: null;
+    }
+  | {
+      ok: false;
+      status: DesktopRemoteControlAgentStatus;
+      error: DesktopRemoteControlReregisterError;
+    };
+
+export type DesktopRemoteControlPolicyScope = {
+  controlPlaneBaseUrl: string;
+  userId: string;
+  organizationId: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -601,6 +639,10 @@ export type DesktopCommandMap = {
   desktopRemoteControlEnroll: {
     args: [input: { grant: string }];
     result: DesktopRemoteControlAgentStatus;
+  };
+  desktopRemoteControlReregisterAndEnable: {
+    args: [input: { grant: string; scope: DesktopRemoteControlPolicyScope }];
+    result: DesktopRemoteControlReregisterResult;
   };
   desktopRemoteControlCredentialDelete: { args: []; result: DesktopRemoteControlAgentStatus };
   desktopRemoteControlStatusRead: { args: []; result: DesktopRemoteControlAgentStatus };

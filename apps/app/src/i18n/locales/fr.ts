@@ -1191,4 +1191,8 @@ export default {
   "settings.runtime_config_no_removed_keys": "No JuggleWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "settings.remote_control.reregister": "Réinscrire et activer",
+  "settings.remote_control.reregister_pending": "Réinscription...",
+  "settings.remote_control.reregister_success": "Le contrôle à distance a été réinscrit et activé.",
+  "settings.remote_control.reregister_failed": "Le contrôle à distance n'a pas pu être réinscrit. Demandez une nouvelle autorisation et réessayez.",
 } as const;

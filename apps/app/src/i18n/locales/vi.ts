@@ -1175,4 +1175,8 @@ export default {
   "settings.runtime_config_no_removed_keys": "No JuggleWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "settings.remote_control.reregister": "Đăng ký lại và bật",
+  "settings.remote_control.reregister_pending": "Đang đăng ký lại...",
+  "settings.remote_control.reregister_success": "Điều khiển từ xa đã được đăng ký lại và bật.",
+  "settings.remote_control.reregister_failed": "Không thể đăng ký lại điều khiển từ xa. Hãy yêu cầu quyền mới và thử lại.",
 } as const;

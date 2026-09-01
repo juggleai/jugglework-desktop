@@ -16,5 +16,7 @@ describe("Cloud account actions", () => {
     expect(account).not.toContain("den.sign_out");
     expect(remoteControl).not.toContain("删除本机设备凭据");
     expect(remoteControl).not.toContain("desktopRemoteControlCredentialDelete");
+    expect(remoteControl).toContain("desktopRemoteControlReregisterAndEnable");
+    expect(remoteControl).not.toContain("desktopRemoteControlEnroll(");
   });
 });

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
-import { ManagedRuntimeClientError } from "./managed-runtime-client.mjs";
+import { ManagedRuntimeClientError, createManagedRuntimeClient } from "./managed-runtime-client.mjs";
 import { createRemoteControlOperationRegistry, RemoteControlOperationExecutionError } from "./remote-control-operations.mjs";
 import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 
@@ -161,6 +161,44 @@ test("session.create posts only title and returns only the authoritative session
     pathname: "/workspace/ws_test/sessions",
     body: { title: "New session" },
   });
+});
+
+test("a mutation POST remains pending after external abort and settles only from the bounded server outcome", async () => {
+  let postStarted = () => {};
+  let releasePost = () => {};
+  const started = new Promise((resolve) => { postStarted = () => resolve(); });
+  const gate = new Promise((resolve) => { releasePost = () => resolve(); });
+  const requests = [];
+  const client = createManagedRuntimeClient({
+    getAccess: () => ({ baseUrl: "http://127.0.0.1:48123", clientToken: "collaborator-secret" }),
+    timeoutMs: 1_000,
+    fetcher: async (url, init) => {
+      requests.push({ url: String(url), init });
+      if (init.method === "GET") {
+        return Response.json({ items: [{ id: WORKSPACE_ID, name: "Test", path: WORKSPACE_PATH, workspaceType: "local" }] });
+      }
+      postStarted();
+      await gate;
+      return Response.json({ item: { id: "ses_created", directory: WORKSPACE_PATH }, started: false });
+    },
+  });
+  const create = harness({ client }).registrations.find((r) => r.operation === "session.create");
+  const controller = new AbortController();
+  let settled = false;
+  const dispatch = create.execute({
+    arguments: { workspaceId: WORKSPACE_ID, title: "New session" },
+    context: {},
+    signal: controller.signal,
+  }).finally(() => { settled = true; });
+  await started;
+  controller.abort();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].init.signal.aborted, false);
+  releasePost();
+  await assert.rejects(dispatch, (error) => error instanceof RemoteControlOperationExecutionError && error.code === "internal_error");
+  assert.equal(settled, true);
 });
 
 test("session.create rejects remote or server-only workspaces before creation", async () => {

@@ -9,7 +9,7 @@ export const REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION = 2;
 /** @typedef {{ schemaVersion: number, operations: RemoteControlOperationCapability[], features: string[] }} RemoteControlCapabilityAdvertisement */
 /** @typedef {{ schemaVersion: number, code: RemoteControlOperationErrorCode, message: string, retryable: boolean, correlationId: string | null, currentRunId?: string | null }} RemoteControlOperationError */
 /** @typedef {{ ok: boolean, value?: unknown, error?: RemoteControlOperationError }} RemoteControlOperationDispatchResult */
-/** @typedef {{ operation: string, payloadVersion: number, arguments: unknown, context: unknown, correlationId: string | null }} RemoteControlOperationExecutionInput */
+/** @typedef {{ operation: string, payloadVersion: number, arguments: unknown, context: unknown, correlationId: string | null, signal?: AbortSignal }} RemoteControlOperationExecutionInput */
 /**
  * @typedef {{
  *   operation: string,
@@ -20,7 +20,7 @@ export const REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION = 2;
  * }} RemoteControlOperationRegistration
  */
 /** @typedef {{ registrations?: RemoteControlOperationRegistration[], getFeatureGates?: (context: unknown) => unknown | Promise<unknown>, isOperationAllowed?: (input: { operation: string, context: unknown }) => boolean | Promise<boolean>, isPayloadEncryptionReady?: (context: unknown) => boolean | Promise<boolean>, getBusySessionPolicy?: (context: unknown) => { steer: boolean, enqueue: boolean } | Promise<{ steer: boolean, enqueue: boolean }> }} RemoteControlOperationRegistryOptions */
-/** @typedef {{ advertisedCapabilities?: unknown, context?: unknown, correlationId?: unknown }} RemoteControlOperationDispatchOptions */
+/** @typedef {{ advertisedCapabilities?: unknown, context?: unknown, correlationId?: unknown, signal?: AbortSignal }} RemoteControlOperationDispatchOptions */
 /** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilityAdvertisement>, dispatch(request: unknown, options?: RemoteControlOperationDispatchOptions): Promise<RemoteControlOperationDispatchResult> }} RemoteControlOperationRegistry */
 
 /** @type {Array<readonly [string, readonly string[]]>} */
@@ -259,8 +259,9 @@ export function createRemoteControlOperationRegistry({
    */
   async function dispatch(
     request,
-    { advertisedCapabilities, context, correlationId = null } = {},
+    { advertisedCapabilities, context, correlationId = null, signal } = {},
   ) {
+    if (signal?.aborted) return rejected("internal_error", correlationId);
     if (!isRecord(request) || typeof request.operation !== "string") {
       return rejected("invalid_request", correlationId);
     }
@@ -281,6 +282,7 @@ export function createRemoteControlOperationRegistry({
     } catch {
       return rejected("policy_unavailable", correlationId);
     }
+    if (signal?.aborted) return rejected("internal_error", correlationId);
     if (!gatesEnable(registration, gates)) return rejected("feature_disabled", correlationId);
 
     let allowed;
@@ -289,6 +291,7 @@ export function createRemoteControlOperationRegistry({
     } catch {
       return rejected("policy_unavailable", correlationId);
     }
+    if (signal?.aborted) return rejected("internal_error", correlationId);
     if (allowed !== true) return rejected("forbidden", correlationId);
 
     if (!advertisedIncludes(advertisedCapabilities, request.operation, request.payloadVersion)) {
@@ -308,6 +311,7 @@ export function createRemoteControlOperationRegistry({
     } catch {
       return rejected("invalid_request", correlationId);
     }
+    if (signal?.aborted) return rejected("internal_error", correlationId);
 
     if (request.operation === "session.prompt" && isRecord(validatedArguments)) {
       const whenBusy = validatedArguments.whenBusy ?? "reject";
@@ -327,6 +331,7 @@ export function createRemoteControlOperationRegistry({
         }
       }
     }
+    if (signal?.aborted) return rejected("internal_error", correlationId);
 
     try {
       const value = await registration.execute({
@@ -335,6 +340,7 @@ export function createRemoteControlOperationRegistry({
         arguments: validatedArguments,
         context,
         correlationId: safeCorrelationId(correlationId),
+        ...(signal ? { signal } : {}),
       });
       return { ok: true, value };
     } catch (error) {

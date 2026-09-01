@@ -1174,4 +1174,8 @@ export default {
   "settings.runtime_config_no_removed_keys": "No JuggleWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "settings.remote_control.reregister": "再登録して有効化",
+  "settings.remote_control.reregister_pending": "再登録中...",
+  "settings.remote_control.reregister_success": "リモートコントロールを再登録して有効にしました。",
+  "settings.remote_control.reregister_failed": "リモートコントロールを再登録できませんでした。新しい認証を取得して再試行してください。",
 } as const;

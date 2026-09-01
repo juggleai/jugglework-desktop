@@ -68,6 +68,7 @@ const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 /**
  * @typedef {{
  *   filePath: string,
+ *   inspect(): Promise<Readonly<{ state: "absent" | "pending" | "enrolled" | "corrupt" }>>,
  *   read(context: RemoteControlCredentialContextInput): Promise<RemoteControlCredentialView | null>,
  *   prepareEnrollment(context: RemoteControlCredentialContextInput): Promise<RemoteControlCredentialView>,
  *   completeEnrollment(context: RemoteControlCredentialContextInput, binding: RemoteControlEnrollmentBinding): Promise<RemoteControlCredentialView>,
@@ -362,7 +363,7 @@ export function createRemoteControlCredentialStore({
     }
   }
 
-  /** @param {any} value @param {RemoteControlCredentialContext} expectedContext @returns {RemoteControlCredentialRecord} */
+  /** @param {any} value @param {RemoteControlCredentialContext | null} expectedContext @returns {RemoteControlCredentialRecord} */
   function validateRecord(value, expectedContext) {
     const common = [
       "schemaVersion", "state", "context", "algorithm", "publicKey",
@@ -376,7 +377,7 @@ export function createRemoteControlCredentialStore({
     exactObject(value.context, ["controlPlaneBaseUrl", "userId", "organizationId"], "credential context");
     const normalizedStoredContext = normalizeContext(value.context);
     if (!contextsEqual(normalizedStoredContext, value.context)) fail("credentials_corrupt", "The stored credential context is not canonical.");
-    if (!contextsEqual(value.context, expectedContext)) fail("credentials_context_mismatch", "The credential belongs to another account, organization, or control plane.");
+    if (expectedContext !== null && !contextsEqual(value.context, expectedContext)) fail("credentials_context_mismatch", "The credential belongs to another account, organization, or control plane.");
     if (value.algorithm !== "Ed25519") fail("credentials_corrupt", "The credential algorithm is unsupported.");
     const rawPublicKey = canonicalBase64Url(value.publicKey, 32, "publicKey");
     if (!FINGERPRINT_PATTERN.test(value.publicKeyFingerprint) || createHash("sha256").update(rawPublicKey).digest("hex") !== value.publicKeyFingerprint) {
@@ -392,7 +393,7 @@ export function createRemoteControlCredentialStore({
     return value;
   }
 
-  /** @param {RemoteControlCredentialContext} expectedContext @returns {Promise<RemoteControlCredentialRecord | null>} */
+  /** @param {RemoteControlCredentialContext | null} expectedContext @returns {Promise<RemoteControlCredentialRecord | null>} */
   async function loadRecord(expectedContext) {
     secureStorage();
     let raw;
@@ -502,6 +503,14 @@ export function createRemoteControlCredentialStore({
 
   return Object.freeze({
     filePath: targetPath,
+    inspect: () => serialize(async () => {
+      try {
+        const record = await loadRecord(null);
+        return Object.freeze({ state: record?.state ?? "absent" });
+      } catch {
+        return Object.freeze({ state: "corrupt" });
+      }
+    }),
     read: (context) => serialize(async () => {
       const expectedContext = normalizeContext(context);
       const record = await loadRecord(expectedContext);

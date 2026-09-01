@@ -1288,4 +1288,8 @@ export default {
   "extensions.plugins_opencode_header": "Плагины (OpenCode)",
   "extensions.subtitle": "Приложения (MCP) и плагины OpenCode собраны в одном месте.",
   "extensions.title": "Расширения",
+  "settings.remote_control.reregister": "Повторно зарегистрировать и включить",
+  "settings.remote_control.reregister_pending": "Повторная регистрация...",
+  "settings.remote_control.reregister_success": "Удалённое управление повторно зарегистрировано и включено.",
+  "settings.remote_control.reregister_failed": "Не удалось повторно зарегистрировать удалённое управление. Получите новую авторизацию и повторите попытку.",
 } as const;

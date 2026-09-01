@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import type { DesktopRemoteControlPolicyScope } from "@jugglework/types/desktop-ipc";
 
 import {
   createDenClient,
@@ -29,6 +30,7 @@ type CloudSessionContextValue = {
   setActiveOrganization: React.Dispatch<React.SetStateAction<CloudActiveOrganization | null>>;
   activeOrgName: string;
   hasActiveOrg: boolean;
+  getCurrentScope: () => DesktopRemoteControlPolicyScope | null;
 };
 
 const CloudSessionContext = React.createContext<CloudSessionContextValue | null>(null);
@@ -59,6 +61,11 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
     });
   const activeOrgName = activeOrganization?.name ?? "";
   const hasActiveOrg = Boolean(activeOrganization);
+  const currentScopeRef = React.useRef<DesktopRemoteControlPolicyScope | null>(null);
+  currentScopeRef.current = isSignedIn && user?.id?.trim() && activeOrganization?.id?.trim() && baseUrl.trim()
+    ? { controlPlaneBaseUrl: baseUrl.trim(), userId: user.id.trim(), organizationId: activeOrganization.id.trim() }
+    : null;
+  const getCurrentScope = React.useCallback(() => currentScopeRef.current, []);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -93,8 +100,9 @@ export function CloudSessionProvider({ children }: CloudSessionProviderProps) {
       setActiveOrganization,
       activeOrgName,
       hasActiveOrg,
+      getCurrentScope,
     }),
-    [activeOrgName, activeOrganization, authToken, baseUrl, client, hasActiveOrg, isSignedIn, statusMessage, user],
+    [activeOrgName, activeOrganization, authToken, baseUrl, client, getCurrentScope, hasActiveOrg, isSignedIn, statusMessage, user],
   );
 
   return <CloudSessionContext.Provider value={value}>{children}</CloudSessionContext.Provider>;

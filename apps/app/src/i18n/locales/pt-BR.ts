@@ -1182,4 +1182,8 @@ export default {
   "settings.runtime_config_no_removed_keys": "No JuggleWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "settings.remote_control.reregister": "Registrar novamente e ativar",
+  "settings.remote_control.reregister_pending": "Registrando novamente...",
+  "settings.remote_control.reregister_success": "O controle remoto foi registrado novamente e ativado.",
+  "settings.remote_control.reregister_failed": "Não foi possível registrar o controle remoto novamente. Solicite uma nova autorização e tente de novo.",
 } as const;

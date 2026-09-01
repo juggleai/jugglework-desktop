@@ -244,3 +244,18 @@ test("failed atomic writes remove the temp file and do not expose credentials", 
   assert.match(removed[0].target, /\.tmp$/);
   assert.deepEqual(removed[0].options, { force: true });
 });
+
+test("inspects credential completeness without returning credential material or requiring context", async () => {
+  const { filePath, store } = await isolatedStore();
+  assert.deepEqual(await store.inspect(), { state: "absent" });
+  await store.prepareEnrollment(CONTEXT);
+  assert.deepEqual(await store.inspect(), { state: "pending" });
+  assert.deepEqual(Object.keys(await store.inspect()), ["state"]);
+
+  const { binding } = await pendingAndBinding(store);
+  await store.completeEnrollment(CONTEXT, binding);
+  assert.deepEqual(await store.inspect(), { state: "enrolled" });
+
+  await writeFile(filePath, "credential secret is corrupt", "utf8");
+  assert.deepEqual(await store.inspect(), { state: "corrupt" });
+});

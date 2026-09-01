@@ -121,10 +121,10 @@ const ERROR_MESSAGES = Object.freeze({
 /** @typedef {{ status: string, occurredAt: string, result: unknown, error: unknown }} JournalLifecycle */
 /** @typedef {{ action: "execute", commandId: string } | { action: "replay", commandId: string, lifecycle: JournalLifecycle } | { action: "reject", commandId: string | null, error: { code: string, message: string, retryable: false } }} JournalPrepareResult */
 /** @typedef {{ accessToken: string, expiresAt: string, webSocketUrl: string }} AgentToken */
-/** @typedef {{ enrollDevice(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, grant: string, displayName: string, platform: string }): Promise<RemoteControlCredentialView>, issueAgentToken(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string } }): Promise<AgentToken> }} RemoteControlCloudClient */
-/** @typedef {{ read(context: object): Promise<RemoteControlCredentialView | null>, prepareEnrollment(context: object): Promise<unknown>, completeEnrollment(context: object, binding: object): Promise<unknown>, getSigningCredential(context: object): Promise<unknown>, delete(): Promise<void> }} RemoteControlCredentialStore */
+/** @typedef {{ enrollDevice(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string }, grant: string, displayName: string, platform: string, signal?: AbortSignal }): Promise<RemoteControlCredentialView>, issueAgentToken(input: { credentials: RemoteControlCredentialStore, context: { controlPlaneBaseUrl: string, userId: string, organizationId: string } }): Promise<AgentToken> }} RemoteControlCloudClient */
+/** @typedef {{ inspect(): Promise<{ state: "absent" | "pending" | "enrolled" | "corrupt" }>, read(context: object): Promise<RemoteControlCredentialView | null>, prepareEnrollment(context: object): Promise<unknown>, completeEnrollment(context: object, binding: object): Promise<unknown>, getSigningCredential(context: object): Promise<unknown>, delete(): Promise<void> }} RemoteControlCredentialStore */
 /** @typedef {{ read(): Promise<RemoteControlSettings>, disable(): Promise<RemoteControlSettings> }} RemoteControlSettingsStore */
-/** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilities>, dispatch(request: unknown, options: { advertisedCapabilities: RemoteControlCapabilities, context: RemoteControlAgentContext, correlationId: string }): Promise<{ ok: boolean, value?: unknown, error?: unknown }> }} RemoteControlOperationRegistry */
+/** @typedef {{ advertise(context?: unknown): Promise<RemoteControlCapabilities>, dispatch(request: unknown, options: { advertisedCapabilities: RemoteControlCapabilities, context: RemoteControlAgentContext, correlationId: string, signal?: AbortSignal }): Promise<{ ok: boolean, value?: unknown, error?: unknown }> }} RemoteControlOperationRegistry */
 /** @typedef {{ prepare(command: unknown): Promise<JournalPrepareResult>, complete(commandId: unknown, lifecycle: unknown): Promise<unknown> }} RemoteControlCommandJournal */
 /** @typedef {{ on(event: string, listener: (...args: any[]) => void): unknown, send(data: string): unknown, close(...args: any[]): unknown, terminate?: () => unknown, __remoteHeartbeatSeconds?: number, __remoteSilenceSeconds?: number }} RemoteControlSocket */
 /** @typedef {{ setTimeout(callback: (...args: any[]) => void, delay?: number): unknown, clearTimeout(handle: unknown): void }} RemoteControlTimers */
@@ -148,8 +148,9 @@ const ERROR_MESSAGES = Object.freeze({
  *   allowInsecureLoopback?: boolean,
  *   policyMaxAgeMs?: number,
  *   localStopAckTimeoutMs?: number,
+ *   oldOperationDrainTimeoutMs?: number,
  *   getActiveRuns?: () => unknown,
- *   verifySessionBinding?: (binding: { workspaceId: string, rootSessionId: string }) => boolean | Promise<boolean>,
+ *   verifySessionBinding?: (binding: { workspaceId: string, rootSessionId: string }, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>,
  *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, rootSessionId: string, rootVerified: true, payloadVersion: 1 | 2, connectionGeneration: number }) => boolean | void,
  *   onSessionUnbound?: (input: { controlSessionId: string, reason: "closed" | "expired" | "not_found" | "snapshot_required" }) => void,
  *   onTransportReset?: (input: { hadActiveControl: boolean, transition: number | null }) => void,
@@ -561,6 +562,7 @@ export function createRemoteControlAgent(options) {
     allowInsecureLoopback = false,
     policyMaxAgeMs = DEFAULT_POLICY_MAX_AGE_MS,
     localStopAckTimeoutMs = DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS,
+    oldOperationDrainTimeoutMs = 2_000,
     getActiveRuns = () => [],
     verifySessionBinding = null,
     onSessionBinding = null,
@@ -572,7 +574,7 @@ export function createRemoteControlAgent(options) {
     onMutationAuthorizationChanged = null,
   } = options;
   if (!settingsStore || typeof settingsStore.read !== "function" || typeof settingsStore.disable !== "function" || !credentialStore ||
-    typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
+    typeof credentialStore.inspect !== "function" || typeof credentialStore.read !== "function" || typeof credentialStore.delete !== "function" ||
     !(e2eeKeyStore === null || (typeof e2eeKeyStore.active === "function" && typeof e2eeKeyStore.advertisement === "function" && typeof e2eeKeyStore.privateKey === "function" && typeof e2eeKeyStore.revokeAll === "function")) ||
     !operationRegistry || typeof operationRegistry.advertise !== "function" || typeof operationRegistry.dispatch !== "function" ||
     !commandJournal || typeof commandJournal.prepare !== "function" || typeof commandJournal.complete !== "function" ||
@@ -582,6 +584,7 @@ export function createRemoteControlAgent(options) {
     !new Set(["darwin", "windows", "linux"]).has(platform) ||
     !Number.isSafeInteger(policyMaxAgeMs) || policyMaxAgeMs < 1_000 ||
     !Number.isSafeInteger(localStopAckTimeoutMs) || localStopAckTimeoutMs < 1 || localStopAckTimeoutMs > 10_000 ||
+    !Number.isSafeInteger(oldOperationDrainTimeoutMs) || oldOperationDrainTimeoutMs < 1 || oldOperationDrainTimeoutMs > 10_000 ||
     typeof getActiveRuns !== "function" ||
     !(verifySessionBinding === null || typeof verifySessionBinding === "function") ||
     !(onSessionBinding === null || typeof onSessionBinding === "function") ||
@@ -633,6 +636,7 @@ export function createRemoteControlAgent(options) {
   let pendingLocalStop = null;
   const intentionalSockets = new WeakSet();
   const failedSockets = new WeakSet();
+  /** @type {Map<string, { generation: number, controller: AbortController, promise: Promise<void> }>} */
   const inFlightCommands = new Map();
   /** @type {Map<string, string>} */
   const activeControlSessions = new Map();
@@ -794,6 +798,7 @@ export function createRemoteControlAgent(options) {
   function invalidateTransport() {
     notifyTransportReset();
     lifecycleGeneration += 1;
+    for (const operation of inFlightCommands.values()) operation.controller.abort();
     connectionAttempt += 1;
     clearTimers();
     const prior = socket;
@@ -807,6 +812,15 @@ export function createRemoteControlAgent(options) {
     const policyAge = timestamp().getTime() - validatedAt;
     return started && !suspended && !revoked && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
       context.policyFresh === true && context.featureGates.schemaVersion === 1 &&
+      Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
+      (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
+      context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
+  }
+
+  function contextAllowsEnrollment() {
+    const validatedAt = context?.validatedAt === null ? Number.NaN : Date.parse(context?.validatedAt ?? "");
+    const policyAge = timestamp().getTime() - validatedAt;
+    return started && !suspended && context?.signedIn === true && context.policyFresh === true &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
       (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
       context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true;
@@ -1288,6 +1302,24 @@ export function createRemoteControlAgent(options) {
   }
 
   async function acceptCommand(command, generation, activeGeneration) {
+    const key = command.idempotencyKey === null
+      ? `command:${command.commandId}`
+      : `idempotency:${command.deviceId}:${command.idempotencyKey}`;
+    const prior = inFlightCommands.get(key);
+    if (prior) {
+      await prior.promise;
+      if (generation === lifecycleGeneration) await acceptCommand(command, generation, activeGeneration);
+      return;
+    }
+    const controller = new AbortController();
+    const promise = acceptCommandOnce(command, generation, activeGeneration, controller.signal);
+    const operation = { generation, controller, promise };
+    inFlightCommands.set(key, operation);
+    try { await promise; }
+    finally { if (inFlightCommands.get(key) === operation) inFlightCommands.delete(key); }
+  }
+
+  async function acceptCommandOnce(command, generation, activeGeneration, signal) {
     const args = command.request.arguments;
     const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
     let bindingFailed = false;
@@ -1296,13 +1328,13 @@ export function createRemoteControlAgent(options) {
         const candidate = {
           controlSessionId: command.controlSessionId, deviceId: command.deviceId,
           workspaceId: args.workspaceId, sessionId: rootSessionId, rootSessionId,
-          rootVerified: await verifySessionBinding?.({ workspaceId: args.workspaceId, rootSessionId }) === true,
+          rootVerified: await verifySessionBinding?.({ workspaceId: args.workspaceId, rootSessionId }, { signal }) === true,
           payloadVersion: command.request.payloadVersion, connectionGeneration: activeGeneration,
         };
         const existing = remoteSessionBindings.get(command.controlSessionId);
         const immutable = !existing || (existing.deviceId === candidate.deviceId && existing.workspaceId === candidate.workspaceId &&
           existing.rootSessionId === candidate.rootSessionId && existing.connectionGeneration === candidate.connectionGeneration);
-        const accepted = candidate.rootVerified && immutable;
+        const accepted = !signal.aborted && generation === lifecycleGeneration && candidate.rootVerified && immutable;
         if (accepted) {
           const binding = Object.freeze({
             ...candidate,
@@ -1318,31 +1350,12 @@ export function createRemoteControlAgent(options) {
         } else bindingFailed = true;
       } catch { bindingFailed = true; }
     }
-    await handleCommand(command, generation, bindingFailed);
+    if (signal.aborted || generation !== lifecycleGeneration) return;
+    await handleCommandOnce(command, generation, bindingFailed, signal);
   }
 
-  /** @param {Record<string, any>} command @param {number} generation @param {boolean} [bindingFailed] */
-  async function handleCommand(command, generation, bindingFailed = false) {
-    const key = command.idempotencyKey === null
-      ? `command:${command.commandId}`
-      : `idempotency:${command.deviceId}:${command.idempotencyKey}`;
-    const prior = inFlightCommands.get(key);
-    if (prior) {
-      await prior;
-      if (generation === lifecycleGeneration) await handleCommandOnce(command, generation, bindingFailed);
-      return;
-    }
-    const work = handleCommandOnce(command, generation, bindingFailed);
-    inFlightCommands.set(key, work);
-    try {
-      await work;
-    } finally {
-      if (inFlightCommands.get(key) === work) inFlightCommands.delete(key);
-    }
-  }
-
-  /** @param {Record<string, any>} command @param {number} generation @param {boolean} bindingFailed */
-  async function handleCommandOnce(command, generation, bindingFailed) {
+  /** @param {Record<string, any>} command @param {number} generation @param {boolean} bindingFailed @param {AbortSignal} signal */
+  async function handleCommandOnce(command, generation, bindingFailed, signal) {
     const metadata = {
       commandId: command.commandId,
       deviceId: command.deviceId,
@@ -1365,7 +1378,7 @@ export function createRemoteControlAgent(options) {
       }, command.commandId);
       return;
     }
-    if (generation !== lifecycleGeneration || !contextAllowsConnection()) return;
+    if (signal.aborted || generation !== lifecycleGeneration || !contextAllowsConnection()) return;
     if (bindingFailed) {
       const terminal = {
         status: "failed",
@@ -1412,6 +1425,7 @@ export function createRemoteControlAgent(options) {
       }, prepared.commandId ?? command.commandId);
       return;
     }
+    if (signal.aborted || generation !== lifecycleGeneration || !contextAllowsConnection()) return;
     sendLifecycle({ status: "accepted", occurredAt: timestamp().toISOString(), result: null, error: null }, command.commandId);
     sendLifecycle({ status: "running", occurredAt: timestamp().toISOString(), result: null, error: null }, command.commandId);
 
@@ -1424,6 +1438,7 @@ export function createRemoteControlAgent(options) {
           remoteSessionBinding: remoteSessionBindings.get(command.controlSessionId) ?? null,
         }),
         correlationId: command.commandId,
+        signal,
       });
       if (dispatched.ok === true) {
         const value = dispatched.value;
@@ -1450,6 +1465,7 @@ export function createRemoteControlAgent(options) {
       };
     }
 
+    if (signal.aborted || generation !== lifecycleGeneration) return;
     try {
       const completed = await commandJournal.complete(command.commandId, terminal);
       const persisted = isRecord(completed) && completed.action === "replay" && validJournalLifecycle(completed.lifecycle)
@@ -1539,11 +1555,16 @@ export function createRemoteControlAgent(options) {
     let credential;
     try {
       credential = await credentialStore.read(credentialContext(activeContext));
-    } catch {
+    } catch (error) {
       if (generation === lifecycleGeneration && attempt === connectionAttempt) {
         enrollment = null;
         lastErrorCode = "credentials_unavailable";
-        state = REMOTE_CONTROL_AGENT_STATUS.UNENROLLED;
+        try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+        if (error?.code !== "credentials_context_mismatch") {
+          try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+          try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+        }
+        state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       }
       return;
     }
@@ -1551,7 +1572,12 @@ export function createRemoteControlAgent(options) {
     if (!validEnrollment(credential, activeContext)) {
       enrollment = null;
       lastErrorCode = credential === null ? null : "credentials_context_mismatch";
-      state = REMOTE_CONTROL_AGENT_STATUS.UNENROLLED;
+      try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+      if (credential === null || credential?.state === "pending") {
+        try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+        try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+      }
+      state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       return;
     }
     enrollment = credential;
@@ -1628,6 +1654,7 @@ export function createRemoteControlAgent(options) {
     if (!contextAllowsConnection()) {
       invalidateTransport();
       if (!started) state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
+      else if (!settings.enabled) state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       else if (!context?.signedIn) state = REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT;
       else state = revoked ? REMOTE_CONTROL_AGENT_STATUS.REVOKED : REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       return;
@@ -1663,6 +1690,7 @@ export function createRemoteControlAgent(options) {
       clearAuthorizations();
       invalidateTransport();
     }
+    schedulePolicyExpiry();
     await reconcile();
     reconcileAuthorizations();
     return status();
@@ -1675,6 +1703,16 @@ export function createRemoteControlAgent(options) {
     protocolBlocked = false;
     state = REMOTE_CONTROL_AGENT_STATUS.WAITING_FOR_CONTEXT;
     await refreshLocalSettings();
+    if (settings.enabled) {
+      let inspection;
+      try { inspection = await credentialStore.inspect(); }
+      catch { inspection = { state: "corrupt" }; }
+      if (inspection.state !== "enrolled") {
+        try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+        try { await deleteDeviceMaterial(); } catch {}
+        await refreshLocalSettings();
+      }
+    }
     return status();
   }
 
@@ -1736,6 +1774,106 @@ export function createRemoteControlAgent(options) {
     return status();
   }
 
+  /** Replaces all device-bound identity while settings remain durably disabled. */
+  /** @param {{ grant?: string, scope?: { controlPlaneBaseUrl?: string, userId?: string, organizationId?: string } }} [input] @param {{ signal?: AbortSignal }} [options] */
+  async function replaceIdentity({ grant, scope } = {}, { signal } = {}) {
+    if (!contextAllowsEnrollment() || settings.enabled || !e2eeKeyStore || typeof grant !== "string" || !grant || grant.length > 16_384) {
+      throw new TypeError("Remote control is not eligible for identity replacement.");
+    }
+    const activeContext = context;
+    if (!isRecord(scope) || canonicalControlPlaneUrl(scope.controlPlaneBaseUrl, allowInsecureLoopback) !== activeContext.controlPlaneBaseUrl ||
+        scope.userId !== activeContext.userId || scope.organizationId !== activeContext.organizationId) {
+      throw new TypeError("Remote-control authorization scope changed during identity replacement.");
+    }
+    let replacedDeviceId = enrollment?.state === "enrolled" ? enrollment.deviceId : null;
+    clearAuthorizations();
+    invalidateTransport();
+    encryptedControlSessions.clear();
+    enrollment = null;
+    revoked = false;
+    protocolBlocked = false;
+    const generation = lifecycleGeneration;
+    let destructiveBoundaryCrossed = false;
+    try {
+      await drainOldOperations(oldOperationDrainTimeoutMs);
+      if (signal?.aborted) throw Object.assign(new Error("Remote-control identity replacement was cancelled."), { code: "replacement_cancelled" });
+      if (replacedDeviceId === null) {
+        try {
+          const existing = await credentialStore.read(credentialContext(activeContext));
+          if (validEnrollment(existing, activeContext)) replacedDeviceId = existing.deviceId;
+        } catch {}
+      }
+      destructiveBoundaryCrossed = true;
+      await deleteDeviceMaterial();
+      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+        throw new TypeError("Remote-control authorization changed during identity replacement.");
+      }
+      const displayName = await getDisplayName();
+      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+        throw new TypeError("Remote-control authorization changed during identity replacement.");
+      }
+      const credential = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).enrollDevice({
+        credentials: credentialStore,
+        context: credentialContext(activeContext),
+        grant,
+        displayName,
+        platform,
+        signal,
+      });
+      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled ||
+          !validEnrollment(credential, activeContext) || credential.deviceId === replacedDeviceId) {
+        throw new TypeError("Enrollment returned an invalid device binding.");
+      }
+      await e2eeKeyStore?.active();
+      if (signal?.aborted || generation !== lifecycleGeneration || activeContext !== context || !contextAllowsEnrollment() || settings.enabled) {
+        throw new TypeError("Remote-control authorization changed during identity replacement.");
+      }
+      enrollment = credential;
+      lastErrorCode = null;
+      state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
+      schedulePolicyExpiry();
+      return status();
+    } catch (error) {
+      enrollment = null;
+      lastErrorCode = "identity_replacement_failed";
+      if (destructiveBoundaryCrossed) {
+        try { await deleteDeviceMaterial(); } catch {}
+      }
+      state = started ? REMOTE_CONTROL_AGENT_STATUS.DISABLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
+      throw error;
+    }
+  }
+
+  async function drainOldOperations(timeoutMs = 2_000) {
+    const old = [...inFlightCommands.values()].filter((operation) => operation.generation !== lifecycleGeneration);
+    for (const operation of old) operation.controller.abort();
+    if (old.length === 0) return status();
+    let timer;
+    const drained = Promise.allSettled(old.map((operation) => operation.promise)).then(() => true);
+    const completed = await Promise.race([
+      drained,
+      new Promise((resolve) => { timer = globalThis.setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+    if (timer) globalThis.clearTimeout(timer);
+    if (!completed) {
+      const error = Object.assign(new Error("Old remote operations could not be stopped safely."), { code: "operation_drain_failed" });
+      throw error;
+    }
+    return status();
+  }
+
+  async function deleteDeviceMaterial() {
+    let credentialError = false;
+    let e2eeError = false;
+    try { await credentialStore.delete(); } catch { credentialError = true; }
+    try { await e2eeKeyStore?.revokeAll(); } catch { e2eeError = true; }
+    if (credentialError || e2eeError) {
+      lastErrorCode = "credentials_delete_failed";
+      const error = Object.assign(new Error("Device credential cleanup failed."), { code: "credentials_delete_failed" });
+      throw error;
+    }
+  }
+
   /** Immediately rejects operations, then gives Cloud a bounded opportunity to acknowledge device-wide closure. */
   function stopAll() {
     if (pendingLocalStop) return pendingLocalStop.promise;
@@ -1785,8 +1923,7 @@ export function createRemoteControlAgent(options) {
     encryptedControlSessions.clear();
     enrollment = null;
     revoked = false;
-    await credentialStore.delete();
-    await e2eeKeyStore?.revokeAll();
+    await deleteDeviceMaterial();
     state = started ? REMOTE_CONTROL_AGENT_STATUS.UNENROLLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
     return status();
   }
@@ -1862,14 +1999,16 @@ export function createRemoteControlAgent(options) {
       connected: state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED,
       enrolled: enrollment?.state === "enrolled",
       revoked,
+      locallyDisabled: settings.enabled !== true,
       localControlEnabled: contextAllowsConnection(),
       activeControlSessionCount: activeControlSessions.size,
       controllerDisplayNames: controllerDisplayNames(),
       lifecycleGeneration,
       connectionGeneration,
       lastErrorCode,
+      enrollmentAuthorized: contextAllowsEnrollment(),
     });
   }
 
-  return Object.freeze({ start, syncContext, enroll, refreshLocalSettings, stopAll, deleteCredential, publishSessionEvent, suspend, resume, stop, status });
+  return Object.freeze({ start, syncContext, enroll, replaceIdentity, refreshLocalSettings, stopAll, drainOldOperations, deleteCredential, publishSessionEvent, suspend, resume, stop, status });
 }

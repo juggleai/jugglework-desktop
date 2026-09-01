@@ -1175,4 +1175,8 @@ export default {
   "settings.runtime_config_no_removed_keys": "No JuggleWork-managed keys removed.",
   "settings.runtime_config_backup_path": "Backup: {path}",
   "settings.runtime_config_no_backup": "No backup needed.",
+  "settings.remote_control.reregister": "ลงทะเบียนใหม่และเปิดใช้งาน",
+  "settings.remote_control.reregister_pending": "กำลังลงทะเบียนใหม่...",
+  "settings.remote_control.reregister_success": "ลงทะเบียนและเปิดใช้งานการควบคุมระยะไกลใหม่แล้ว",
+  "settings.remote_control.reregister_failed": "ไม่สามารถลงทะเบียนการควบคุมระยะไกลใหม่ได้ โปรดขอสิทธิ์ใหม่แล้วลองอีกครั้ง",
 } as const;

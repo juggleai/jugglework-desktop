@@ -110,27 +110,29 @@ export function createManagedRuntimeClient({
     throw new TypeError("Managed runtime client options are invalid.");
   }
 
-  /** @param {string} pathname */
-  async function getJson(pathname) {
-    return requestJson("GET", pathname, null);
+  /** @param {string} pathname @param {{ signal?: AbortSignal }} [options] */
+  async function getJson(pathname, options = {}) {
+    return requestJson("GET", pathname, null, options);
   }
 
   /**
    * @param {string} pathname
    * @param {unknown} body
+   * @param {{ signal?: AbortSignal }} [options]
    * @returns {Promise<unknown>} Parsed JSON, or null for 204 No Content.
    */
-  async function postJson(pathname, body) {
-    return requestJson("POST", pathname, body);
+  async function postJson(pathname, body, options = {}) {
+    return requestJson("POST", pathname, body, options);
   }
 
   /**
    * @param {"GET" | "POST"} method
    * @param {string} pathname
    * @param {unknown} body
+   * @param {{ signal?: AbortSignal }} [options]
    * @returns {Promise<unknown>}
    */
-  async function requestJson(method, pathname, body) {
+  async function requestJson(method, pathname, body, { signal } = {}) {
     const access = runtimeAccess(await getAccess());
     const path = String(pathname ?? "");
     if (!path.startsWith("/") || path.startsWith("//") || path.includes("#")) {
@@ -140,6 +142,9 @@ export function createManagedRuntimeClient({
     if (url.origin !== new URL(access.baseUrl).origin) throw new TypeError("Managed runtime path escaped its origin.");
 
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       /** @type {Response} */
@@ -214,6 +219,7 @@ export function createManagedRuntimeClient({
       return parsed;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
     }
   }
 

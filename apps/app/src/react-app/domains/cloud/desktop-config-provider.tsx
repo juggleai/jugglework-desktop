@@ -12,6 +12,7 @@ import {
 } from "react";
 import { desktopPolicyKeys } from "@jugglework/types/den/desktop-policies";
 import { desktopRemoteDisabledFeatureGates } from "@jugglework/types/desktop-remote-control";
+import type { DesktopRemoteControlPolicyScope } from "@jugglework/types/desktop-ipc";
 
 import {
   checkDesktopAppRestriction,
@@ -50,7 +51,7 @@ export type DesktopConfigStore = {
   config: DenDesktopConfig;
   loading: boolean;
   refresh: () => Promise<void>;
-  refreshFresh: () => Promise<DenDesktopConfig>;
+  refreshFresh: () => Promise<{ config: DenDesktopConfig; scope: DesktopRemoteControlPolicyScope }>;
   /**
    * Stable checker function that matches the `DesktopAppRestrictionChecker`
    * shape Solid passes to its stores. Useful when wiring restriction gates
@@ -211,6 +212,18 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
   const devRefreshDesktopConfigRef = useRef<DenDesktopConfig | null>(null);
   const isSignedIn = denAuth.isSignedIn;
+  const currentAuthRef = useRef({ status: denAuth.status, userId: denAuth.user?.id?.trim() ?? "" });
+  currentAuthRef.current = { status: denAuth.status, userId: denAuth.user?.id?.trim() ?? "" };
+
+  const currentPolicyScope = useCallback((): DesktopRemoteControlPolicyScope | null => {
+    const settings = readDenSettings();
+    const scope = {
+      controlPlaneBaseUrl: settings.baseUrl.trim(),
+      userId: currentAuthRef.current.status === "signed_in" ? currentAuthRef.current.userId : "",
+      organizationId: settings.activeOrgId?.trim() ?? "",
+    };
+    return scope.controlPlaneBaseUrl && scope.userId && scope.organizationId ? scope : null;
+  }, []);
 
   const applyDesktopConfigActions = useCallback((latestConfig: DenDesktopConfig) => {
     const normalizedConfig = normalizeDenDesktopConfig(latestConfig);
@@ -283,6 +296,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const activeOrgId = settings.activeOrgId?.trim() ?? "";
     const cacheKey = getDesktopConfigCacheKey();
     const policyContextKey = currentRemotePolicyContextKey(denAuth.user?.id);
+    const requestedScope = currentPolicyScope();
 
     if (!isSignedIn || !token || !activeOrgId) {
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
@@ -306,6 +320,12 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       }).getDesktopConfig(activeOrgId);
 
       if (currentRun !== refreshRunRef.current) return nextConfig;
+      const liveScope = currentPolicyScope();
+      if (!requestedScope || !liveScope || requestedScope.controlPlaneBaseUrl !== liveScope.controlPlaneBaseUrl ||
+          requestedScope.userId !== liveScope.userId || requestedScope.organizationId !== liveScope.organizationId) {
+        if (requireFresh) throw new Error("Desktop policy scope changed during refresh.");
+        return cached ?? DEFAULT_DESKTOP_CONFIG;
+      }
 
       writeCachedDesktopConfig(cacheKey, nextConfig);
       applyDesktopConfigActions(nextConfig);
@@ -344,7 +364,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
         setDesktopConfigState((current) => ({ ...current, loading: false }));
       }
     }
-  }, [applyDesktopConfigActions, denAuth.user?.id, isSignedIn]);
+  }, [applyDesktopConfigActions, currentPolicyScope, denAuth.user?.id, isSignedIn]);
 
   const refresh = useCallback(
     async () => {
@@ -352,10 +372,34 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     },
     [desktopConfigHandler],
   );
-  const refreshFresh = useCallback(
-    () => desktopConfigHandler(true),
-    [desktopConfigHandler],
-  );
+  const refreshFresh = useCallback(async () => {
+    const capturedScope = currentPolicyScope();
+    if (!capturedScope) {
+      throw new Error("Remote-control policy scope is unavailable.");
+    }
+    const nextConfig = await desktopConfigHandler(true);
+    const liveScope = currentPolicyScope();
+    if (!liveScope || liveScope.controlPlaneBaseUrl !== capturedScope.controlPlaneBaseUrl || liveScope.userId !== capturedScope.userId ||
+        liveScope.organizationId !== capturedScope.organizationId) {
+      throw new Error("Remote-control policy scope changed during refresh.");
+    }
+    if (!isDesktopRuntime()) return { config: nextConfig, scope: capturedScope };
+    await desktopRemoteControlContextSync({
+      schemaVersion: 1,
+      signedIn: true,
+      ...capturedScope,
+      policyFresh: true,
+      featureGates: nextConfig.desktopRemoteFeatureGates ?? desktopRemoteDisabledFeatureGates,
+      policyVersion: nextConfig.desktopRemotePolicyVersion ?? null,
+      validatedAt: new Date().toISOString(),
+    });
+    const afterSyncScope = currentPolicyScope();
+    if (!afterSyncScope || afterSyncScope.controlPlaneBaseUrl !== capturedScope.controlPlaneBaseUrl ||
+        afterSyncScope.organizationId !== capturedScope.organizationId || afterSyncScope.userId !== capturedScope.userId) {
+      throw new Error("Remote-control policy scope changed during synchronization.");
+    }
+    return { config: nextConfig, scope: capturedScope };
+  }, [currentPolicyScope, desktopConfigHandler]);
 
   const recoverRemotePolicy = useCallback(() => {
     if (!isSignedIn) return Promise.resolve();

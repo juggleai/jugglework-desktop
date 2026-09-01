@@ -938,7 +938,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     updateAutoCheck,
     updateAutoDownload,
     desktopConfig: desktopConfig.config,
-    refreshDesktopConfig: desktopConfig.refreshFresh,
+    refreshDesktopConfig: async () => (await desktopConfig.refreshFresh()).config,
     setError: (message) => {
       if (message) {
         // Auto-checks can fail without any user action; alert + log to the

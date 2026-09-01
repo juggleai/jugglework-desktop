@@ -29,7 +29,7 @@ const sessionCreateTitleSchema = z.string().refine(isSessionCreateTitle);
 const ISO_EPOCH = new Date(0).toISOString();
 
 /** @typedef {{ id: string, name?: unknown, displayName?: unknown, path: string, workspaceType?: unknown }} LocalWorkspace */
-/** @typedef {{ getJson(pathname: string): Promise<unknown>, postJson(pathname: string, body: unknown): Promise<unknown> }} ManagedRuntimeClient */
+/** @typedef {{ getJson(pathname: string, options?: { signal?: AbortSignal }): Promise<unknown>, postJson(pathname: string, body: unknown, options?: { signal?: AbortSignal }): Promise<unknown> }} ManagedRuntimeClient */
 /** @typedef {{ recordServerRun(input: unknown): boolean, activeRuns(): unknown[] }} Coordinator */
 
 /** @param {unknown} value */
@@ -64,6 +64,11 @@ function boundedText(value, max) {
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+/** A mutation response is authoritative, but an old generation must not apply it locally. */
+function assertMutationGeneration(signal) {
+  if (signal?.aborted) throw new RemoteControlOperationExecutionError("internal_error");
 }
 
 /** @param {unknown} error @param {string} notFoundCode */
@@ -126,10 +131,10 @@ async function localWorkspaces(workspaceStore) {
  * @param {ManagedRuntimeClient} client
  * @param {string} workspaceId
  */
-async function authorizedWorkspace(workspaceStore, client, workspaceId) {
+async function authorizedWorkspace(workspaceStore, client, workspaceId, signal) {
   // Try managed server first (authoritative), fall back to local store.
   try {
-    const response = await client.getJson("/workspaces");
+    const response = await client.getJson("/workspaces", { signal });
     if (response && typeof response === "object" && Array.isArray(/** @type {Record<string, unknown>} */ (response).items)) {
       const found = /** @type {Record<string, unknown>[]} */ (/** @type {Record<string, unknown>} */ (response).items).find(
         (/** @type {Record<string, unknown>} */ entry) =>
@@ -180,9 +185,9 @@ function createdSessionResult(response, workspace) {
  * @param {string} workspaceId
  * @param {string} sessionId
  */
-async function readSession(client, workspaceId, sessionId) {
+async function readSession(client, workspaceId, sessionId, signal) {
   try {
-    const response = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`);
+    const response = await client.getJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`, { signal });
     if (!response || typeof response !== "object" || !("item" in response)) {
       throw new RemoteControlOperationExecutionError("session_not_found");
     }
@@ -221,18 +226,20 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
     registration("session.create", (value) => {
       const parsed = z.object({ workspaceId: identifierSchema, title: sessionCreateTitleSchema }).strict().parse(value);
       return Object.freeze(parsed);
-    }, async ({ arguments: args }) => {
+    }, async ({ arguments: args, signal }) => {
       try {
         const locallyAuthorized = (await localWorkspaces(workspaceStore)).find((entry) => entry.id === args.workspaceId);
         if (!locallyAuthorized) throw new RemoteControlOperationExecutionError("workspace_not_found");
-        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
         if (workspace.workspaceType === "remote" || workspace.path !== locallyAuthorized.path) {
           throw new RemoteControlOperationExecutionError("workspace_not_found");
         }
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
           { title: args.title },
         );
+        assertMutationGeneration(signal);
         return createdSessionResult(response, workspace);
       } catch (error) {
         mapClientError(error, "workspace_not_found");
@@ -253,17 +260,19 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       const whenBusy = Object.hasOwn(value, "whenBusy") ? value.whenBusy : "reject";
       if (!["reject", "steer", "enqueue"].includes(whenBusy)) throw new TypeError("Remote mutation arguments are invalid.");
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), prompt: value.prompt, whenBusy });
-    }, async ({ arguments: args, correlationId }) => {
+    }, async ({ arguments: args, correlationId, signal }) => {
       try {
-        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
-        const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId);
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        const session = await readSession(managedRuntimeClient, workspace.id, args.sessionId, signal);
         if (canonicalPath(session.directory) !== workspace.path) {
           throw new RemoteControlOperationExecutionError("session_not_found");
         }
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/start`,
           { origin: "remote-control", startCommandCorrelationId: correlationId, whenBusy: args.whenBusy, prompt: { parts: [{ type: "text", text: args.prompt }] } },
         );
+        assertMutationGeneration(signal);
         if (!response || typeof response !== "object") throw new TypeError("Invalid start response.");
         const responseRecord = /** @type {Record<string, any>} */ (response);
         let result;
@@ -285,13 +294,15 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
     registration("session.pending.cancel", (value) => {
       parseArguments(value, ["workspaceId", "sessionId", "pendingOperationId"]);
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), pendingOperationId: String(value.pendingOperationId) });
-    }, async ({ arguments: args, correlationId }) => {
+    }, async ({ arguments: args, correlationId, signal }) => {
       try {
-        await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(args.workspaceId)}/sessions/${encodeURIComponent(args.sessionId)}/pending/${encodeURIComponent(args.pendingOperationId)}/cancel`,
           { commandCorrelationId: correlationId },
         );
+        assertMutationGeneration(signal);
         const responseRecord = /** @type {Record<string, any>} */ (response);
         if (!response || typeof response !== "object" || responseRecord.pendingOperationId !== args.pendingOperationId ||
           !["cancelled", "already_cancelled", "not_cancellable"].includes(responseRecord.status)) throw new TypeError("Invalid cancel response.");
@@ -303,13 +314,15 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
     registration("session.abort", (value) => {
       parseArguments(value, ["workspaceId", "sessionId", "expectedRunId"]);
       return Object.freeze({ workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), expectedRunId: String(value.expectedRunId) });
-    }, async ({ arguments: args, correlationId }) => {
+    }, async ({ arguments: args, correlationId, signal }) => {
       try {
-        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(args.sessionId)}/runs/${encodeURIComponent(args.expectedRunId)}/abort`,
           { abortCommandCorrelationId: correlationId },
         );
+        assertMutationGeneration(signal);
         if (!response || typeof response !== "object" || !("run" in response) || !("abortRequested" in response) || response.abortRequested !== true ||
             !coordinator.recordServerRun(response.run)) throw new TypeError("Invalid abort response.");
         const recordedRun = /** @type {{ runId: string }} */ (response.run);
@@ -341,9 +354,9 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
       return Object.freeze(payloadVersion === 2
         ? { workspaceId: String(value.workspaceId), rootSessionId: String(value.rootSessionId), targetSessionId: String(value.targetSessionId), parentSessionId: value.parentSessionId, interactionId: String(value.interactionId), response: value.response }
         : { workspaceId: String(value.workspaceId), sessionId: String(value.sessionId), interactionId: String(value.interactionId), response: value.response });
-    }, async ({ arguments: args, correlationId, payloadVersion = 1, context }) => {
+    }, async ({ arguments: args, correlationId, payloadVersion = 1, context, signal }) => {
       try {
-        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
         const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
         const expectedRootSessionId = payloadVersion === 2 ? args.rootSessionId : args.sessionId;
         const targetSessionId = payloadVersion === 2 ? args.targetSessionId : args.sessionId;
@@ -357,10 +370,12 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
             (payloadVersion === 2 && owner.parentSessionId !== args.parentSessionId)) {
           throw new RemoteControlOperationExecutionError("interaction_not_found");
         }
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(targetSessionId)}/interactions/${encodeURIComponent(args.interactionId)}/permission/reply`,
           { origin: "remote-control", commandCorrelationId: correlationId, rootSessionId: boundRootSessionId, response: args.response },
         );
+        assertMutationGeneration(signal);
         return desktopRemoteOperationResultSchema.parse({
           operation: "interaction.permission.reply",
           payloadVersion,
@@ -405,9 +420,9 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
         interactionId: String(value.interactionId),
         answers: value.answers.map((/** @type {Record<string, unknown>} */ a) => ({ questionId: String(a.questionId), values: /** @type {string[]} */ (a.values) })),
       });
-    }, async ({ arguments: args, correlationId, payloadVersion = 1, context }) => {
+    }, async ({ arguments: args, correlationId, payloadVersion = 1, context, signal }) => {
       try {
-        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId);
+        const workspace = await authorizedWorkspace(workspaceStore, managedRuntimeClient, args.workspaceId, signal);
         const boundRootSessionId = context?.remoteSessionBinding?.rootSessionId;
         const expectedRootSessionId = payloadVersion === 2 ? args.rootSessionId : args.sessionId;
         const targetSessionId = payloadVersion === 2 ? args.targetSessionId : args.sessionId;
@@ -421,10 +436,12 @@ export function createRemoteControlMutationRegistrations({ workspaceStore, manag
             (payloadVersion === 2 && owner.parentSessionId !== args.parentSessionId)) {
           throw new RemoteControlOperationExecutionError("interaction_not_found");
         }
+        assertMutationGeneration(signal);
         const response = await managedRuntimeClient.postJson(
           `/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(targetSessionId)}/interactions/${encodeURIComponent(args.interactionId)}/question/reply`,
           { origin: "remote-control", commandCorrelationId: correlationId, rootSessionId: boundRootSessionId, answers: args.answers },
         );
+        assertMutationGeneration(signal);
         return desktopRemoteOperationResultSchema.parse({
           operation: "interaction.question.reply",
           payloadVersion,

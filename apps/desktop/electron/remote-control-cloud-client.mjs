@@ -10,7 +10,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 /** @typedef {{ controlPlaneBaseUrl: string, userId: string, organizationId: string }} RemoteControlCloudContext */
 /** @typedef {{ controlPlaneBaseUrl: string, apiBaseUrl: string, resourceUrl: string, webSocketUrl: string, enrollmentExchangeUrl: string }} RemoteControlCloudUrls */
-/** @typedef {(url: string, init: { method: string, redirect: RequestRedirect, headers: Record<string, string>, body: string }) => Promise<Response>} RemoteControlFetcher */
+/** @typedef {(url: string, init: { method: string, redirect: RequestRedirect, headers: Record<string, string>, body: string, signal?: AbortSignal }) => Promise<Response>} RemoteControlFetcher */
 /** @typedef {(algorithm: null, data: NodeJS.ArrayBufferView, key: import("node:crypto").KeyLike) => Buffer} RemoteControlSigner */
 /** @typedef {{ deviceId: string, keyId: string, publicKeyFingerprint: string, enrolledAt: string }} RemoteControlEnrollmentBinding */
 /** @typedef {{ publicKey: string }} RemoteControlPendingCredential */
@@ -26,6 +26,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  *   grant: string,
  *   displayName: string,
  *   platform: string,
+ *   signal?: AbortSignal,
  * }} RemoteControlEnrollDeviceOptions
  */
 /** @typedef {{ credentials: { getSigningCredential(context: RemoteControlCloudContext): Promise<RemoteControlSigningCredential> }, context: RemoteControlCloudContext }} RemoteControlIssueTokenOptions */
@@ -299,8 +300,8 @@ export function createRemoteControlCloudClient({
   if (typeof now !== "function" || typeof signer !== "function") fail("invalid_client", "Cloud client dependencies are invalid.");
   const urls = deriveRemoteControlCloudUrls(controlPlaneBaseUrl, { allowInsecureLoopback });
 
-  /** @param {string} url @param {unknown} body @param {number} expectedStatus @returns {Promise<any>} */
-  async function post(url, body, expectedStatus) {
+  /** @param {string} url @param {unknown} body @param {number} expectedStatus @param {AbortSignal | undefined} [signal] @returns {Promise<any>} */
+  async function post(url, body, expectedStatus, signal) {
     let response;
     try {
       response = await fetcher(url, {
@@ -308,6 +309,7 @@ export function createRemoteControlCloudClient({
         redirect: "error",
         headers: { accept: "application/json", "content-type": "application/json" },
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
       });
     } catch {
       // Fetch implementations can include request bodies in their errors. Do
@@ -318,7 +320,7 @@ export function createRemoteControlCloudClient({
   }
 
   /**
-   * @param {{ grant: string, displayName: string, platform: string, publicKey: string, expectedUserId: string, expectedOrganizationId: string }} input
+   * @param {{ grant: string, displayName: string, platform: string, publicKey: string, expectedUserId: string, expectedOrganizationId: string, signal?: AbortSignal }} input
    * @returns {Promise<RemoteControlEnrollmentBinding>}
    */
   async function exchangeEnrollmentGrant(input) {
@@ -328,7 +330,7 @@ export function createRemoteControlCloudClient({
       grant: input.grant,
       device: { displayName: input.displayName, platform: input.platform },
       credential: { algorithm: "Ed25519", publicKey: input.publicKey },
-    }, 201);
+    }, 201, input.signal);
     exactObject(payload, ["schemaVersion", "device", "credential"], "enrollment response");
     if (payload.schemaVersion !== REMOTE_CONTROL_CLOUD_SCHEMA_VERSION) fail("invalid_response", "The enrollment schema version is unsupported.");
     const device = exactObject(payload.device, [
@@ -363,7 +365,7 @@ export function createRemoteControlCloudClient({
   }
 
   /** @template T @param {RemoteControlEnrollDeviceOptions<T>} input @returns {Promise<T>} */
-  async function enrollDevice({ credentials, context, grant, displayName, platform }) {
+  async function enrollDevice({ credentials, context, grant, displayName, platform, signal }) {
     if (
       !credentials ||
       typeof credentials.prepareEnrollment !== "function" ||
@@ -387,6 +389,7 @@ export function createRemoteControlCloudClient({
       publicKey: pending.publicKey,
       expectedUserId: context.userId,
       expectedOrganizationId: context.organizationId,
+      signal,
     });
     return credentials.completeEnrollment(context, binding);
   }

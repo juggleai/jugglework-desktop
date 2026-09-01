@@ -58,7 +58,8 @@ import { createRemoteControlSleepController, createRemoteControlPowerMonitorCont
 import { createAppTrayIndicator } from "./app-tray.mjs";
 import { applyLaunchAtLogin as applyLaunchAtLoginSetting, shouldStartHidden } from "./launch-at-login.mjs";
 import { createRemoteControlPendingPolicySynchronizer } from "./remote-control-pending-policy.mjs";
-import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings, stopAllRemoteControl } from "./remote-control-settings-lifecycle.mjs";
+import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings } from "./remote-control-settings-lifecycle.mjs";
+import { createRemoteControlLifecycleManager } from "./remote-control-lifecycle-manager.mjs";
 import {
   buildNukeManifest,
   executeNukeFreshStart,
@@ -1110,12 +1111,17 @@ function stoppedRemoteControlAgentStatus() {
     connected: false,
     enrolled: false,
     revoked: false,
+    locallyDisabled: true,
     localControlEnabled: false,
     activeControlSessionCount: 0,
     controllerDisplayNames: [],
     lifecycleGeneration: 0,
     connectionGeneration: null,
     lastErrorCode: null,
+    enrollmentAuthorized: false,
+    replacementPending: false,
+    replacementStatus: "idle",
+    replacementErrorCode: null,
   };
 }
 
@@ -2146,36 +2152,30 @@ function applyNativeTheme(mode) {
 async function executeRemoteControlStopAll() {
   remoteControlSleepController.setAuthorized(false);
   remoteControlSleepController.setPreventSleepWhileWaiting(false);
-  return stopAllRemoteControl({
-    disableSettings: () => remoteControlSettingsStore.disable(),
-    applyLocalEffects: applyRemoteControlLocalEffects,
-    stopRemote: async () => {
-      let stopping;
-      let stopError;
-      try {
-        stopping = remoteControlAgent?.stopAll();
-      } catch (error) {
-        stopError = error;
-      }
-      let queueStopError;
-      try {
-        const managedRuntimeClient = createManagedRuntimeClient({
-          getAccess: () => runtimeManager.managedServerAccess(),
-          fetcher: electronNet.fetch,
-        });
-        await managedRuntimeClient.postJson("/remote-control/pending/cancel-all", {
-          commandCorrelationId: randomUUID(),
-        });
-      } catch (error) {
-        queueStopError = error;
-      }
-      await stopping;
-      await remoteControlAgent?.refreshLocalSettings();
-      if (stopError) throw stopError;
-      if (queueStopError) throw queueStopError;
-    },
+  return remoteControlLifecycleManager.disable();
+}
+
+async function cancelRemoteControlPendingWork() {
+  const managedRuntimeClient = createManagedRuntimeClient({
+    getAccess: () => runtimeManager.managedServerAccess(),
+    fetcher: electronNet.fetch,
+  });
+  await managedRuntimeClient.postJson("/remote-control/pending/cancel-all", {
+    commandCorrelationId: randomUUID(),
   });
 }
+
+const remoteControlLifecycleManager = createRemoteControlLifecycleManager({
+  getAgent: () => remoteControlAgent ?? { status: stoppedRemoteControlAgentStatus },
+  disableSettings: () => remoteControlSettingsStore.disable(),
+  enableSettings: () => remoteControlSettingsStore.update({ enabled: true }),
+  applyLocalEffects: (settings) => {
+    remoteControlSleepController.setPreventSleepWhileWaiting(settings.enabled && settings.preventSleepWhileWaiting);
+    applyRemoteControlLocalEffects(settings);
+  },
+  cancelPendingWork: cancelRemoteControlPendingWork,
+  synchronizePendingPolicy: () => remoteControlPendingPolicy.synchronize(),
+});
 
 // Desktop IPC command registry. Every command invokable from the renderer's
 // desktopBridge Proxy (apps/app/src/app/lib/desktop.ts) has exactly one
@@ -2191,6 +2191,8 @@ const desktopCommandHandlers = {
       return remoteControlSettingsStore.read();
   },
   "desktopRemoteControlSettingsUpdate": async (event, ...args) => {
+      if (args[0]?.enabled === false) return remoteControlLifecycleManager.disable();
+      if (args[0]?.enabled === true) remoteControlLifecycleManager.assertMutationAvailable();
       const settings = await remoteControlSettingsStore.update(args[0] ?? {});
       remoteControlSleepController.setPreventSleepWhileWaiting(settings.enabled && settings.preventSleepWhileWaiting);
       return reconcilePersistedRemoteControlSettings({
@@ -2207,20 +2209,34 @@ const desktopCommandHandlers = {
   },
   "desktopRemoteControlContextSync": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
-      return remoteControlPendingPolicy.syncContext(args[0], (input) => remoteControlAgent.syncContext(input));
+      const status = await remoteControlPendingPolicy.syncContext(args[0], (input) => remoteControlAgent.syncContext(input));
+      return remoteControlLifecycleManager.project(status);
   },
   "desktopRemoteControlEnroll": async (event, ...args) => {
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
-      return remoteControlAgent.enroll(args[0]);
+      remoteControlLifecycleManager.assertMutationAvailable();
+      return remoteControlLifecycleManager.project(await remoteControlAgent.enroll(args[0]));
+  },
+  "desktopRemoteControlReregisterAndEnable": async (event, ...args) => {
+      void event;
+      if (!remoteControlAgent) {
+        return {
+          ok: false,
+          status: stoppedRemoteControlAgentStatus(),
+          error: { code: "startup_failed", message: "Remote control is unavailable. Try again.", retryable: true },
+        };
+      }
+      return remoteControlLifecycleManager.reregisterAndEnable(args[0]);
   },
   "desktopRemoteControlCredentialDelete": async (event) => {
       void event;
       if (!remoteControlAgent) return stoppedRemoteControlAgentStatus();
-      return remoteControlAgent.deleteCredential();
+      remoteControlLifecycleManager.assertMutationAvailable();
+      return remoteControlLifecycleManager.project(await remoteControlAgent.deleteCredential());
   },
   "desktopRemoteControlStatusRead": async (event) => {
       void event;
-      return remoteControlAgent?.status() ?? stoppedRemoteControlAgentStatus();
+      return remoteControlAgent ? remoteControlLifecycleManager.status() : stoppedRemoteControlAgentStatus();
   },
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();

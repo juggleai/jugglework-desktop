@@ -576,7 +576,7 @@ export function ResourceSelectionPage() {
 
     setPreparingBranding(true);
     try {
-      const desktopConfig = await refreshFresh();
+      const { config: desktopConfig } = await refreshFresh();
       if (!hasWorkspaceBranding(desktopConfig)) {
         finishOnboarding();
         return;
