@@ -6,6 +6,7 @@ import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
+  seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
@@ -385,5 +386,108 @@ describe("tool part mapper", () => {
       cleanup();
       useSessionActivityStore.getState().removeSession("workspace-abort", "session-abort");
     }
+  });
+
+  test("retry parts remain presentation state and do not count as meaningful progress", () => {
+    const workspaceId = "workspace-retry-part";
+    const sessionId = "session-retry-part";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+    const activity = useSessionActivityStore.getState();
+
+    try {
+      activity.setRunStatus(workspaceId, sessionId, { type: "busy" });
+      const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt!;
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "retry-part-1",
+            sessionID: sessionId,
+            messageID: "assistant-retry",
+            type: "retry",
+            attempt: 2,
+            error: { name: "APIError", data: { message: "Provider stream failed" } },
+            time: { created: startedAt + 5_000 },
+          },
+        },
+      } as any);
+
+      const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!;
+      expect(record.providerRetry?.attempt).toBe(2);
+      expect(record.lastMeaningfulProgressAt).toBe(startedAt);
+      expect(record.lastRuntimeEventAt).toBe(startedAt + 5_000);
+      const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(transcript.flatMap((message) => message.parts)).toEqual([]);
+    } finally {
+      release();
+      cleanup();
+      activity.removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("session.next.retried records provider degradation while the session stays busy", () => {
+    const workspaceId = "workspace-retry-event";
+    const sessionId = "session-retry-event";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.retried",
+        properties: {
+          timestamp: 1_700_000_005_000,
+          sessionID: sessionId,
+          attempt: 4,
+          error: { name: "APIError", data: { message: "Upstream unavailable" } },
+        },
+      } as any);
+
+      const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!;
+      expect(record.runActive).toBeTrue();
+      expect(record.status).toBe("retrying");
+      expect(record.providerRetry?.attempt).toBe(4);
+      expect(record.providerRetry?.observedAt).toBe(1_700_000_005_000);
+      expect(record.lastRuntimeEventAt).toBeGreaterThanOrEqual(1_700_000_005_000);
+    } finally {
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("active snapshots restore retry activity without creating transcript text", () => {
+    const workspaceId = "workspace-retry-snapshot";
+    const sessionId = "session-retry-snapshot";
+    seedSessionState(workspaceId, {
+      session: { id: sessionId },
+      status: { type: "busy" },
+      todos: [],
+      messages: [
+        {
+          info: { id: "user-retry", role: "user", sessionID: sessionId, time: { created: 100 } },
+          parts: [{ id: "user-text", sessionID: sessionId, messageID: "user-retry", type: "text", text: "Continue" }],
+        },
+        {
+          info: { id: "assistant-retry", role: "assistant", sessionID: sessionId, time: { created: 200 } },
+          parts: [{
+            id: "retry-part",
+            sessionID: sessionId,
+            messageID: "assistant-retry",
+            type: "retry",
+            attempt: 3,
+            error: { name: "APIError", data: { message: "Provider timeout" } },
+            time: { created: 300 },
+          }],
+        },
+      ],
+    } as any);
+
+    const record = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!;
+    expect(record.providerRetry?.attempt).toBe(3);
+    expect(record.status).toBe("retrying");
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+    expect(transcript.flatMap((message) => message.parts).some((part) => part.type === "text" && part.text.includes("Provider"))).toBeFalse();
+    useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
   });
 });

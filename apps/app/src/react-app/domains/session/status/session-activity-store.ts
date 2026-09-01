@@ -3,7 +3,20 @@ import { create } from "zustand";
 
 import { t } from "../../../../i18n";
 
-export type SessionActivityStatus = "idle" | "thinking" | "responding" | "stalled" | "error" | "compacting" | "waiting" | "incomplete";
+export type SessionActivityStatus = "idle" | "thinking" | "responding" | "retrying" | "stalled" | "error" | "compacting" | "waiting" | "incomplete";
+
+export type ProviderRetryActivity = {
+  attempt: number;
+  message: string;
+  next: number | null;
+  observedAt: number;
+  action?: {
+    title: string;
+    message: string;
+    label: string;
+    link?: string;
+  };
+};
 
 export const SESSION_STALLED_AFTER_MS = 5 * 60_000;
 
@@ -31,6 +44,8 @@ export type SessionActivityRecord = {
   waitingQuestionIds: string[];
   messageRoles: Record<string, SessionMessageRole>;
   lastMeaningfulProgressAt: number | null;
+  lastRuntimeEventAt: number | null;
+  providerRetry: ProviderRetryActivity | null;
   stalledAt: number | null;
   updatedAt: number;
 };
@@ -48,12 +63,16 @@ type SessionActivityStore = {
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
   getFinishReason: (workspaceId: string, sessionId: string) => string | null;
+  getProviderRetry: (workspaceId: string, sessionId: string) => ProviderRetryActivity | null;
   seedWorkspaceSessions: (workspaceId: string, sessions: SessionLike[]) => void;
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
   markProgress: (workspaceId: string, sessionId: string, at?: number) => void;
+  markRuntimeEvent: (workspaceId: string, sessionId: string, at?: number) => void;
+  setProviderRetry: (workspaceId: string, sessionId: string, retry: Omit<ProviderRetryActivity, "observedAt"> & { observedAt?: number }) => void;
+  clearProviderRetry: (workspaceId: string, sessionId: string) => void;
   refreshStalledStatuses: (now?: number) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
@@ -81,6 +100,8 @@ const createRecord = (): SessionActivityRecord => ({
   waitingQuestionIds: [],
   messageRoles: {},
   lastMeaningfulProgressAt: null,
+  lastRuntimeEventAt: null,
+  providerRetry: null,
   stalledAt: null,
   updatedAt: 0,
 });
@@ -110,6 +131,7 @@ function statusForRecord(record: SessionActivityRecord): SessionActivityStatus {
   if (record.completionBlocked) return "incomplete";
   if (!record.runActive) return "idle";
   if (record.stalledAt !== null) return "stalled";
+  if (record.providerRetry !== null) return "retrying";
   return record.assistantOutput ? "responding" : "thinking";
 }
 
@@ -185,6 +207,9 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
   getFinishReason: (workspaceId, sessionId) => (
     get().recordsByWorkspaceId[workspaceId.trim()]?.[sessionId.trim()]?.finishReason ?? null
   ),
+  getProviderRetry: (workspaceId, sessionId) => (
+    get().recordsByWorkspaceId[workspaceId.trim()]?.[sessionId.trim()]?.providerRetry ?? null
+  ),
   seedWorkspaceSessions: (workspaceId, sessions) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -221,6 +246,10 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
               lastMeaningfulProgressAt: runActive
                 ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
                 : null,
+              lastRuntimeEventAt: runActive
+                ? (starting ? Date.now() : record.lastRuntimeEventAt)
+                : null,
+              providerRetry: runActive && !starting ? record.providerRetry : null,
               stalledAt: runActive ? record.stalledAt : null,
             };
           }),
@@ -256,6 +285,20 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         lastMeaningfulProgressAt: runActive
           ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
           : null,
+        lastRuntimeEventAt: runActive
+          ? (starting ? Date.now() : record.lastRuntimeEventAt)
+          : null,
+        providerRetry: normalized === "retry" && typeof status === "object" && status
+          ? {
+              attempt: "attempt" in status && typeof status.attempt === "number" ? status.attempt : 1,
+              message: "message" in status && typeof status.message === "string" ? status.message : "Provider request failed",
+              next: "next" in status && typeof status.next === "number" ? status.next : null,
+              observedAt: Date.now(),
+              ...("action" in status && status.action && typeof status.action === "object"
+                ? { action: status.action as ProviderRetryActivity["action"] }
+                : {}),
+            }
+          : (runActive && !starting ? record.providerRetry : null),
         stalledAt: runActive ? record.stalledAt : null,
       };
     }));
@@ -286,6 +329,18 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         lastMeaningfulProgressAt: runActive
           ? (starting ? Date.now() : record.lastMeaningfulProgressAt)
           : null,
+        lastRuntimeEventAt: runActive ? Date.now() : null,
+        providerRetry: normalized === "retry" && typeof status === "object" && status
+          ? {
+              attempt: "attempt" in status && typeof status.attempt === "number" ? status.attempt : 1,
+              message: "message" in status && typeof status.message === "string" ? status.message : "Provider request failed",
+              next: "next" in status && typeof status.next === "number" ? status.next : null,
+              observedAt: Date.now(),
+              ...("action" in status && status.action && typeof status.action === "object"
+                ? { action: status.action as ProviderRetryActivity["action"] }
+                : {}),
+            }
+          : (runActive && !starting ? record.providerRetry : null),
         stalledAt: runActive ? record.stalledAt : null,
       };
     }));
@@ -316,6 +371,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         ...record,
         assistantOutput: true,
         lastMeaningfulProgressAt: Date.now(),
+        lastRuntimeEventAt: Date.now(),
+        providerRetry: null,
         stalledAt: null,
       };
     }));
@@ -329,9 +386,59 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       return {
         ...record,
         lastMeaningfulProgressAt: at,
+        lastRuntimeEventAt: at,
+        providerRetry: null,
         stalledAt: null,
       };
     }));
+  },
+  markRuntimeEvent: (workspaceId, sessionId, at = Date.now()) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    if (!workspace || !session || !Number.isFinite(at)) return;
+    set((state) => updateRecord(state, workspace, session, (record) => (
+      record.runActive ? { ...record, lastRuntimeEventAt: at } : record
+    )));
+  },
+  setProviderRetry: (workspaceId, sessionId, retry) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    const rawObservedAt = retry.observedAt ?? Date.now();
+    const observedAt = rawObservedAt < 1e12 ? rawObservedAt * 1000 : rawObservedAt;
+    if (!workspace || !session || !Number.isFinite(observedAt)) return;
+    set((state) => updateRecord(state, workspace, session, (record) => {
+      if (!record.runActive) return record;
+      const attempt = Math.max(1, Math.floor(retry.attempt));
+      if (
+        record.providerRetry &&
+        (record.providerRetry.attempt > attempt ||
+          record.providerRetry.attempt === attempt && record.providerRetry.observedAt >= observedAt)
+      ) {
+        return {
+          ...record,
+          lastRuntimeEventAt: Math.max(record.lastRuntimeEventAt ?? 0, observedAt),
+        };
+      }
+      return {
+        ...record,
+        lastRuntimeEventAt: Math.max(record.lastRuntimeEventAt ?? 0, observedAt),
+        providerRetry: {
+          attempt,
+          message: retry.message.trim() || "Provider request failed",
+          next: typeof retry.next === "number" && Number.isFinite(retry.next) ? retry.next : null,
+          observedAt,
+          ...(retry.action ? { action: retry.action } : {}),
+        },
+      };
+    }));
+  },
+  clearProviderRetry: (workspaceId, sessionId) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    if (!workspace || !session) return;
+    set((state) => updateRecord(state, workspace, session, (record) => (
+      record.providerRetry ? { ...record, providerRetry: null } : record
+    )));
   },
   refreshStalledStatuses: (now = Date.now()) => {
     if (!Number.isFinite(now)) return;
@@ -390,6 +497,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       assistantOutput: false,
       compacting: false,
       lastMeaningfulProgressAt: null,
+      lastRuntimeEventAt: null,
+      providerRetry: null,
       stalledAt: null,
     })));
   },
@@ -409,6 +518,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       waitingPermissionIds: blocked ? [] : record.waitingPermissionIds,
       waitingQuestionIds: blocked ? [] : record.waitingQuestionIds,
       lastMeaningfulProgressAt: blocked ? null : record.lastMeaningfulProgressAt,
+      lastRuntimeEventAt: blocked ? null : record.lastRuntimeEventAt,
+      providerRetry: blocked ? null : record.providerRetry,
       stalledAt: blocked ? null : record.stalledAt,
     })));
   },
@@ -454,6 +565,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
     set((state) => updateRecord(state, workspace, session, (record) => ({
       ...record,
       compacting,
+      providerRetry: compacting ? null : record.providerRetry,
       errorActive: compacting ? false : record.errorActive,
       errorMessage: compacting ? null : record.errorMessage,
     })));
@@ -488,6 +600,7 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
 export function getSessionActivityStatusLabel(status: SessionActivityStatus) {
   if (status === "thinking") return t("session.assistant_thinking");
   if (status === "responding") return t("session.assistant_responding");
+  if (status === "retrying") return t("common.retry");
   if (status === "stalled") return t("session.assistant_stalled");
   if (status === "waiting") return t("session.assistant_waiting");
   if (status === "compacting") return t("session.assistant_compacting");

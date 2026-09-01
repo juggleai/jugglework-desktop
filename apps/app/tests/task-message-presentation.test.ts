@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { DynamicToolUIPart, UIMessage } from "ai"
 
-import { taskStatusTitle, toolRunPreviewLabel } from "../src/components/chat/message-list"
+import { formatToolProgressSummary, taskStatusTitle, toolRunPreviewLabel } from "../src/components/chat/message-list"
+import { getToolActivitySummary } from "../src/lib/tool-activity"
 import {
   formatTaskDuration,
   getAssistantRenderGroups,
@@ -318,6 +319,47 @@ describe("task message presentation", () => {
       "Agent: Inspect workspace · Waiting for approval",
     )
     expect(taskStatusTitle("Inspect workspace", "thinking", false, true)).toBeUndefined()
+  })
+
+  test("presents retrying and stalled subagent activity", () => {
+    expect(taskStatusTitle("Inspect workspace", "retrying", false, true, 3)).toBe(
+      "Agent: Inspect workspace · Retrying provider · attempt 3",
+    )
+    expect(taskStatusTitle("Inspect workspace", "stalled", false, true, 3)).toBe(
+      "Agent: Inspect workspace · Possibly stuck — stop and retry",
+    )
+  })
+
+  test("summarizes deduplicated tool-only progress without creating message parts", () => {
+    const completed: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "read",
+      toolCallId: "call-read",
+      state: "output-available",
+      input: { filePath: "src/index.ts" },
+      output: "ok",
+    }
+    const running: DynamicToolUIPart = {
+      type: "dynamic-tool",
+      toolName: "bash",
+      toolCallId: "call-test",
+      state: "input-available",
+      input: { command: "pnpm test", description: "Run tests" },
+    }
+    const messages = [
+      message("assistant-tools-1", "assistant", 1, [completed, running]),
+      message("assistant-tools-2", "assistant", 2, [{ ...running, state: "input-streaming" }]),
+    ]
+
+    const summary = getToolActivitySummary(messages)
+    expect(summary).toEqual({ total: 2, completed: 1, running: 1 })
+    expect(formatToolProgressSummary("Running a command", summary!, "en")).toBe(
+      "Running a command · 1/2 tool steps completed",
+    )
+    expect(formatToolProgressSummary("正在执行命令", summary!, "zh")).toBe(
+      "正在执行命令 · 已完成 1/2 个工具步骤",
+    )
+    expect(messages.flatMap((entry) => entry.parts)).toHaveLength(3)
   })
 
   test("does not decorate a terminal Task as waiting for approval", () => {

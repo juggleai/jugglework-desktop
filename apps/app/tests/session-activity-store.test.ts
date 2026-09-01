@@ -73,6 +73,45 @@ describe("session activity reconciliation", () => {
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
   });
 
+  test("provider retry updates runtime liveness without resetting meaningful progress", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    const startedAt = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!.lastMeaningfulProgressAt!;
+
+    store.setProviderRetry(workspaceId, sessionId, {
+      attempt: 2,
+      message: "Provider stream failed",
+      next: startedAt + 10_000,
+      observedAt: startedAt + 5_000,
+    });
+
+    const retrying = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]![sessionId]!;
+    expect(retrying.status).toBe("retrying");
+    expect(retrying.lastMeaningfulProgressAt).toBe(startedAt);
+    expect(retrying.lastRuntimeEventAt).toBe(startedAt + 5_000);
+    expect(retrying.providerRetry).toMatchObject({ attempt: 2, message: "Provider stream failed" });
+
+    store.refreshStalledStatuses(startedAt + SESSION_STALLED_AFTER_MS + 1);
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("stalled");
+    expect(useSessionActivityStore.getState().getProviderRetry(workspaceId, sessionId)?.attempt).toBe(2);
+  });
+
+  test("meaningful progress clears provider retry activity", () => {
+    const store = useSessionActivityStore.getState();
+    store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setProviderRetry(workspaceId, sessionId, {
+      attempt: 3,
+      message: "Temporary provider error",
+      next: null,
+    });
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("retrying");
+
+    store.markProgress(workspaceId, sessionId);
+
+    expect(useSessionActivityStore.getState().getProviderRetry(workspaceId, sessionId)).toBeNull();
+    expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("thinking");
+  });
+
   test("replayed busy status is not treated as progress", () => {
     const store = useSessionActivityStore.getState();
     store.setRunStatus(workspaceId, sessionId, { type: "busy" });

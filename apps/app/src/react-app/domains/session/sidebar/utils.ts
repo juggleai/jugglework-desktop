@@ -27,6 +27,7 @@ export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "streaming" ||
   status === "thinking" ||
   status === "responding" ||
+  status === "retrying" ||
   status === "stalled" ||
   status === "compacting";
 

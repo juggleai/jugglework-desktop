@@ -283,6 +283,37 @@ function partHasVisibleAssistantOutput(part: Part) {
   return partType === "tool" || partType === "file" || partType === "agent";
 }
 
+function retryMessage(error: unknown) {
+  return describeOpencodeSessionError(error, "Provider request failed")
+    .split("\n")
+    .find((line) => line.trim())
+    ?.trim()
+    .slice(0, 300) || "Provider request failed";
+}
+
+function partMarksMeaningfulProgress(part: Part) {
+  if (part.type === "retry") return false;
+  if (part.type === "text" || part.type === "reasoning") return part.text.trim().length > 0;
+  return part.type === "tool" || part.type === "file" || part.type === "agent";
+}
+
+function latestActiveSnapshotRetry(snapshot: JuggleWorkSessionSnapshot) {
+  if (snapshot.status.type === "idle") return null;
+  const lastUserIndex = snapshot.messages.findLastIndex((message) => message.info.role === "user");
+  for (let messageIndex = snapshot.messages.length - 1; messageIndex > lastUserIndex; messageIndex -= 1) {
+    const message = snapshot.messages[messageIndex];
+    const retry = message?.parts.findLast((part) => part.type === "retry");
+    if (!retry || retry.type !== "retry") continue;
+    return {
+      attempt: retry.attempt,
+      message: retryMessage(retry.error),
+      next: null,
+      observedAt: retry.time.created,
+    };
+  }
+  return null;
+}
+
 function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
   entry.trackedSessionRefs.delete(sessionId);
   const retainedTimer = entry.retainedSessionTimers.get(sessionId);
@@ -952,6 +983,27 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
+  if (event.type === "session.next.retried") {
+    const props = (event.properties ?? {}) as {
+      timestamp?: number;
+      sessionID?: string;
+      attempt?: number;
+      error?: unknown;
+    };
+    if (!props.sessionID || typeof props.attempt !== "number") return;
+    const activityStore = useSessionActivityStore.getState();
+    if (!activityStore.recordsByWorkspaceId[workspaceId]?.[props.sessionID]?.runActive) {
+      activityStore.setRunStatus(workspaceId, props.sessionID, { type: "busy" });
+    }
+    activityStore.setProviderRetry(workspaceId, props.sessionID, {
+      attempt: props.attempt,
+      message: retryMessage(props.error),
+      next: null,
+      observedAt: typeof props.timestamp === "number" ? props.timestamp : Date.now(),
+    });
+    return;
+  }
+
   if (event.type === "todo.updated") {
     const props = (event.properties ?? {}) as { sessionID?: string; todos?: Todo[] };
     if (!props.sessionID || !props.todos) return;
@@ -1039,7 +1091,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // 引擎不一定再发 session.error，session.idle 也可能因为 SSE 重连而丢；不在这里收口，
       // 侧栏（尤其工作区折叠后行尾的 loading）会一直转。
       if (info.error) messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
-      else messageActivityStore.markProgress(workspaceId, info.sessionID);
+      else messageActivityStore.markRuntimeEvent(workspaceId, info.sessionID);
     }
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
@@ -1086,9 +1138,23 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
-    useSessionActivityStore.getState().markProgress(workspaceId, part.sessionID);
+    const activityStore = useSessionActivityStore.getState();
+    activityStore.markRuntimeEvent(workspaceId, part.sessionID);
+    if (part.type === "retry") {
+      if (!activityStore.recordsByWorkspaceId[workspaceId]?.[part.sessionID]?.runActive) {
+        activityStore.setRunStatus(workspaceId, part.sessionID, { type: "busy" });
+      }
+      activityStore.setProviderRetry(workspaceId, part.sessionID, {
+        attempt: part.attempt,
+        message: retryMessage(part.error),
+        next: null,
+        observedAt: part.time.created,
+      });
+    } else if (partMarksMeaningfulProgress(part)) {
+      activityStore.markProgress(workspaceId, part.sessionID);
+    }
     if (partHasVisibleAssistantOutput(part)) {
-      useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
+      activityStore.markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
     if (!isTrackedSession(entry, part.sessionID)) return;
     const [mapped, ...attachments] = toUIParts(part);
@@ -1481,6 +1547,10 @@ export function seedSessionState(
     snapshot.status,
     assistantOutputAfterLatestUser(incoming),
   );
+  const snapshotRetry = latestActiveSnapshotRetry(snapshot);
+  if (snapshotRetry && snapshot.status.type !== "retry") {
+    activityStore.setProviderRetry(workspaceId, snapshot.session.id, snapshotRetry);
+  }
   activityStore.setCompletionDiagnostic(
     workspaceId,
     snapshot.session.id,

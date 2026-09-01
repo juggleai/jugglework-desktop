@@ -36,6 +36,32 @@ export function collectToolParts(messages: UIMessage[]): DynamicToolUIPart[] {
   )
 }
 
+export type ToolActivitySummary = {
+  total: number
+  completed: number
+  running: number
+}
+
+/**
+ * Count observable tool steps without turning the derived summary into
+ * transcript content. Repeated live snapshots of the same call are collapsed
+ * by toolCallId and the latest state wins.
+ */
+export function getToolActivitySummary(messages: UIMessage[]): ToolActivitySummary | null {
+  const byCallId = new Map<string, DynamicToolUIPart>()
+  for (const part of collectToolParts(messages)) {
+    byCallId.set(part.toolCallId, part)
+  }
+  const parts = [...byCallId.values()]
+  if (parts.length === 0) return null
+  const running = parts.filter(isToolPartInFlight).length
+  return {
+    total: parts.length,
+    completed: parts.length - running,
+    running,
+  }
+}
+
 function hostnameOf(url: string | undefined): string | undefined {
   if (!url) {
     return undefined

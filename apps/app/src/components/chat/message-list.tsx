@@ -21,7 +21,6 @@ import {
   type FileUIPart,
   type UIMessage,
 } from "ai"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
@@ -86,7 +85,12 @@ import {
   isWebSearchToolPart,
   isWriteToolPart,
 } from "@/lib/build-in-tools"
-import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import {
+  getSessionActivityStatusLabel,
+  useSessionActivityStore,
+  type ProviderRetryActivity,
+  type SessionActivityStatus,
+} from "@/react-app/domains/session/status/session-activity-store"
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state"
 import {
   taskHasPendingInteraction,
@@ -94,7 +98,7 @@ import {
   workspaceInteractionsKey,
 } from "@/react-app/domains/session/sync/workspace-interactions"
 import type { ThreadStatus } from "@/lib/messages"
-import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
+import { getToolActivityLabel, getToolActivitySummary, isToolPartInFlight, type ToolActivitySummary } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import { getLiveActivityKind, liveActivityLabel } from "@/lib/live-activity"
 import {
@@ -424,9 +428,11 @@ export function taskStatusTitle(
   status: string,
   waitingForApproval: boolean,
   inFlight: boolean,
+  retryAttempt?: number,
 ): string | undefined {
   if (waitingForApproval && inFlight) return `Agent: ${description} · Waiting for approval`
   if (status === "stalled") return `Agent: ${description} · Possibly stuck — stop and retry`
+  if (status === "retrying" && retryAttempt) return `Agent: ${description} · Retrying provider · attempt ${retryAttempt}`
   return undefined
 }
 
@@ -450,13 +456,16 @@ function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
   const status = useSessionActivityStore((state) => (
     childSessionId ? state.getStatus(workspaceId, childSessionId) : "idle"
   ))
+  const providerRetry = useSessionActivityStore((state) => (
+    childSessionId ? state.getProviderRetry(workspaceId, childSessionId) : null
+  ))
   const input = part.input && typeof part.input === "object"
     ? part.input as { description?: unknown }
     : null
   const description = typeof input?.description === "string" && input.description.trim()
     ? input.description.trim()
     : "Subagent task"
-  const title = taskStatusTitle(description, status, waitingForApproval, inFlight)
+  const title = taskStatusTitle(description, status, waitingForApproval, inFlight, providerRetry?.attempt)
 
   return (
     <div data-task-waiting-for-approval={waitingForApproval && inFlight ? "true" : undefined}>
@@ -467,14 +476,12 @@ function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
 
-type RetryStatus = Extract<SessionStatus, { type: "retry" }>
-
 function isSessionErrorMessage(message: UIMessage) {
   return message.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)
 }
 
-function retryDelaySeconds(status: RetryStatus) {
-  return Math.max(0, Math.round((status.next - Date.now()) / 1000))
+function retryDelaySeconds(status: ProviderRetryActivity) {
+  return status.next === null ? 0 : Math.max(0, Math.round((status.next - Date.now()) / 1000))
 }
 
 interface FileMessageProps {
@@ -949,7 +956,7 @@ function ErrorMessage({ error }: ErrorMessageProps) {
 }
 
 interface RetryMessageProps {
-  status: RetryStatus
+  status: ProviderRetryActivity
 }
 
 function RetryActionButton(props: { link: string; label: string }) {
@@ -975,9 +982,13 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     return () => window.clearInterval(timer)
   }, [status])
 
-  const info = seconds > 0
-    ? `Retrying in ${seconds}s · attempt ${status.attempt}`
-    : `Retrying · attempt ${status.attempt}`
+  const info = currentLocale() === "zh"
+    ? (seconds > 0
+        ? `${seconds}秒后重试 · 第 ${status.attempt} 次尝试`
+        : `正在重试 · 第 ${status.attempt} 次尝试`)
+    : (seconds > 0
+        ? `Retrying in ${seconds}s · attempt ${status.attempt}`
+        : `Retrying · attempt ${status.attempt}`)
   const action = status.action
 
   return (
@@ -1034,6 +1045,16 @@ interface AssistantMessageGroupProps {
   isStreaming: boolean
 }
 
+export function formatToolProgressSummary(
+  action: string,
+  summary: ToolActivitySummary,
+  locale: ReturnType<typeof currentLocale> = currentLocale(),
+) {
+  return locale === "zh"
+    ? `${action} · 已完成 ${summary.completed}/${summary.total} 个工具步骤`
+    : `${action} · ${summary.completed}/${summary.total} tool steps completed`
+}
+
 function MessageGroup({
   items,
   messages,
@@ -1065,6 +1086,17 @@ function MessageGroup({
 
   const { processItems, summaryItems } = splitAssistantTaskMessages(items, isLiveGroup)
   const processDisplayItem = mergeAssistantProcessItems(processItems)
+  const processMessages = processItems.map((item) => item.message)
+  const hasAuthoredProcessText = processMessages.some((message) =>
+    message.parts.some((part) => part.type === "text" && part.text.trim().length > 0),
+  )
+  const toolActivitySummary = !hasAuthoredProcessText ? getToolActivitySummary(processMessages) : null
+  const toolProgressLabel = toolActivitySummary
+    ? formatToolProgressSummary(
+        liveActivityLabel(getLiveActivityKind(processMessages)),
+        toolActivitySummary,
+      )
+    : null
   const renderableItems = getRenderableMessages(summaryItems)
   const summaryItem = summaryItems.at(-1)
   const lastTextMessage = summaryItem ? getLastTextPart(summaryItem.message) : null
@@ -1124,6 +1156,11 @@ function MessageGroup({
           </CollapsibleTrigger>
           <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
             <div className={cn("pt-4", isLiveGroup ? "pb-1" : "pb-5")}>
+              {isLiveGroup && toolProgressLabel ? (
+                <div className="mb-2 text-sm font-medium text-muted-foreground" role="status" aria-live="polite">
+                  {toolProgressLabel}
+                </div>
+              ) : null}
               {processDisplayItem ? (
                 <MessageComponent
                   message={processDisplayItem.message}
@@ -1200,11 +1237,12 @@ function MessageGroup({
 interface MessageListProps {
   messages: UIMessage[]
   status: ThreadStatus
-  retryStatus?: RetryStatus | null
+  activityStatus?: SessionActivityStatus
+  retryActivity?: ProviderRetryActivity | null
   compactionRunning?: boolean
 }
 
-export function MessageList({ messages, status, retryStatus, compactionRunning = false }: MessageListProps) {
+export function MessageList({ messages, status, activityStatus = "idle", retryActivity, compactionRunning = false }: MessageListProps) {
   const isStreaming = status === "streaming" || status === "retrying"
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
@@ -1214,6 +1252,9 @@ export function MessageList({ messages, status, retryStatus, compactionRunning =
   const liveActionLabel = isStreaming
     ? liveActivityLabel(getLiveActivityKind(messages))
     : null
+  const activityLabel = activityStatus === "stalled" || activityStatus === "retrying"
+    ? getSessionActivityStatusLabel(activityStatus)
+    : liveActionLabel
 
   return (
     <div className={cn("flex flex-col gap-2 @container/message-list")}>
@@ -1248,8 +1289,10 @@ export function MessageList({ messages, status, retryStatus, compactionRunning =
         )
       })}
 
-      {status === "streaming" && !compactionRunning && <LoadingMessage label={liveActionLabel ?? undefined} />}
-      {retryStatus ? <RetryMessage status={retryStatus} /> : null}
+      {status === "streaming" && !compactionRunning && (!retryActivity || activityStatus === "stalled") ? (
+        <LoadingMessage label={activityLabel ?? undefined} />
+      ) : null}
+      {retryActivity ? <RetryMessage status={retryActivity} /> : null}
       {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
     </div>
   )

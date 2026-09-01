@@ -516,6 +516,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const sessionActivityRunActive = useSessionActivityStore(
     (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.runActive ?? false,
   );
+  const providerRetryActivity = useSessionActivityStore(
+    (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.providerRetry ?? null,
+  );
   const draft = useComposerStateStore((state) => getComposerDraft(state, props.sessionId));
   const attachments = useComposerStateStore((state) => getComposerAttachments(state, props.sessionId));
   const mentions = useComposerStateStore((state) => getComposerMentions(state, props.sessionId));
@@ -2101,7 +2104,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       <MessageList
                         messages={renderedMessages}
                         status={status}
-                        retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                        activityStatus={effectiveActivityStatus}
+                        retryActivity={providerRetryActivity}
                         compactionRunning={effectiveActivityStatus === "compacting"}
                       />
                     </MessageListProvider>
