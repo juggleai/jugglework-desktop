@@ -33,10 +33,10 @@ export function applyLaunchAtLogin({ app, platform, enabled, logger = {} }) {
 /**
  * Hidden startup is honored only while all three durable local opt-ins remain
  * enabled. A stale login-manager invocation therefore cannot hide a disabled app.
- * @param {{ argv: unknown, settings: unknown, wasOpenedAsHidden?: unknown }} input
+ * @param {{ argv: unknown, settings: unknown }} input
  */
-export function shouldStartHidden({ argv, settings, wasOpenedAsHidden = false }) {
-  const hiddenRequest = (Array.isArray(argv) && argv.some((value) => value === "--hidden")) || wasOpenedAsHidden === true;
+export function shouldStartHidden({ argv, settings }) {
+  const hiddenRequest = Array.isArray(argv) && argv.some((value) => value === "--hidden");
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
   return hiddenRequest && Reflect.get(settings, "enabled") === true && Reflect.get(settings, "backgroundMode") === true && Reflect.get(settings, "launchAtLogin") === true;
 }

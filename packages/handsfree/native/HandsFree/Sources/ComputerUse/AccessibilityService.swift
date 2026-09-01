@@ -371,23 +371,10 @@ final class AccessibilityService: @unchecked Sendable {
     }
 
     private func captureScreenshot(target: WindowTarget) async throws -> (Data, ScreenshotMetadata) {
-        let cgImage = await screenCaptureKitImage(target: target) ?? legacyCaptureImage(target: target)
+        let cgImage = await screenCaptureKitImage(target: target)
         guard let cgImage else { throw ComputerUseError.screenshotFailed }
 
         return try encodeScreenshot(cgImage, capturedBounds: target.bounds)
-    }
-
-    private func legacyCaptureImage(target: WindowTarget) -> CGImage? {
-        if let windowNumber = target.windowNumber {
-            return CGWindowListCreateImage(
-                CGRect.null,
-                .optionIncludingWindow,
-                CGWindowID(windowNumber),
-                [.bestResolution, .boundsIgnoreFraming]
-            )
-        }
-
-        return CGWindowListCreateImage(target.bounds, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
     }
 
     private func screenCaptureKitImage(target: WindowTarget) async -> CGImage? {

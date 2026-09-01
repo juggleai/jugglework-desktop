@@ -27,6 +27,16 @@ const outDir = resolve(readArg("--outdir") ?? join(desktopRoot, "resources", "he
 const force = hasFlag("--force") || process.env.JUGGLEWORK_COMPUTER_USE_FORCE_BUILD === "1";
 const appPath = join(outDir, helperAppName);
 
+function swiftTargetTriple() {
+  const requested = process.env.TARGET?.trim()
+    || process.env.TAURI_ENV_TARGET_TRIPLE?.trim()
+    || process.env.CARGO_CFG_TARGET_TRIPLE?.trim();
+  if (!requested) return process.arch === "arm64" ? "arm64-apple-macosx" : "x86_64-apple-macosx";
+  if (requested === "aarch64-apple-darwin") return "arm64-apple-macosx";
+  if (requested === "x86_64-apple-darwin") return "x86_64-apple-macosx";
+  return requested;
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -123,8 +133,10 @@ if (!force && existsSync(join(appPath, "Contents", "MacOS", helperExecutableName
   process.exit(0);
 }
 
-run("swift", ["build", "--package-path", packagePath, "-c", "release", "--product", productName], { stdio: "inherit" });
-const binPathResult = run("swift", ["build", "--package-path", packagePath, "-c", "release", "--show-bin-path"]);
+const targetTriple = swiftTargetTriple();
+const swiftBuildArgs = ["build", "--package-path", packagePath, "--triple", targetTriple, "-c", "release"];
+run("swift", [...swiftBuildArgs, "--product", productName], { stdio: "inherit" });
+const binPathResult = run("swift", [...swiftBuildArgs, "--show-bin-path"]);
 const binDir = binPathResult.stdout.trim();
 const builtExecutable = join(binDir, productName);
 if (!existsSync(builtExecutable)) {
@@ -143,4 +155,4 @@ if (existsSync(iconPath)) {
 chmodSync(join(appPath, "Contents", "MacOS", helperExecutableName), 0o755);
 signHelperApp();
 
-process.stdout.write(JSON.stringify({ ok: true, appPath, executable: join(appPath, "Contents", "MacOS", helperExecutableName) }, null, 2) + "\n");
+process.stdout.write(JSON.stringify({ ok: true, appPath, executable: join(appPath, "Contents", "MacOS", helperExecutableName), targetTriple }, null, 2) + "\n");

@@ -401,7 +401,7 @@ actor MCPServer {
     private func cuaScreenshotResult() async throws -> [[String: Any]] {
         guard let screen = NSScreen.main else { throw ComputerUseError.screenshotFailed }
         cuaSnapshotFrontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let cgImage = await screenCaptureKitDisplayImage() ?? CGWindowListCreateImage(CGRect.null, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
+        let cgImage = await screenCaptureKitDisplayImage()
         guard let cgImage else {
             throw ComputerUseError.screenshotFailed
         }
@@ -468,9 +468,6 @@ actor MCPServer {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId(for: trimmed)) {
             return url
-        }
-        if let path = NSWorkspace.shared.fullPath(forApplication: trimmed) {
-            return URL(fileURLWithPath: path)
         }
         let candidates = [
             "/Applications/\(trimmed).app",

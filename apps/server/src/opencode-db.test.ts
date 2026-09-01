@@ -41,22 +41,7 @@ async function createDb(): Promise<{ path: string; dispose: () => void }> {
   };
 }
 
-// seedOpencodeSessionMessages requires better-sqlite3, whose native binding
-// does not load under bun (oven-sh/bun#4290). Skip gracefully instead of
-// failing the suite in bun-driven environments like CI.
-const betterSqliteAvailable = await import("better-sqlite3").then(
-  (mod) => {
-    try {
-      new mod.default(":memory:").close();
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  () => false,
-);
-
-describe.skipIf(!betterSqliteAvailable)("seedOpencodeSessionMessages", () => {
+describe("seedOpencodeSessionMessages", () => {
   test("writes seeded transcript messages into the OpenCode db", async () => {
     const fixture = await createDb();
     const result = seedOpencodeSessionMessages({

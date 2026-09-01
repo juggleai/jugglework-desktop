@@ -88,6 +88,8 @@ JuggleWork is more than the desktop app:
 
 Get the latest release for macOS and Linux at **[juggle.im/download](https://juggle.im/download)** or from [GitHub Releases](https://github.com/juggleai/jugglework-desktop/releases).
 
+The desktop application supports macOS 14 or later on Apple Silicon and Intel Macs.
+
 Windows access is available through a paid support plan at [juggle.im/pricing#windows-support](https://juggle.im/pricing#windows-support).
 
 Hosted JuggleWork Cloud workers launch from the web app after sign-in and connect from the desktop via **Add a worker → Connect remote**.
@@ -99,7 +101,7 @@ Hosted JuggleWork Cloud workers launch from the web app after sign-in and connec
 - **Rust toolchain** (for Tauri): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Tauri CLI**: `cargo install tauri-cli`
 - **OpenCode CLI** on PATH: `opencode`
-- **macOS**: Xcode Command Line Tools
+- **macOS 14+**: Xcode Command Line Tools
 - **Linux**: WebKitGTK 4.1 dev packages (`webkit2gtk-4.1`, `javascriptcoregtk-4.1`)
 
 ### Quick smoke test
@@ -152,7 +154,7 @@ curl -fsSL https://opencode.ai/install | bash -s -- \
 
 ## Architecture
 
-JuggleWork is an Electron (Tauri) desktop shell wrapping a web UI that connects to a local or remote OpenCode runtime.
+JuggleWork is an Electron desktop shell wrapping a web UI that connects to a local or remote OpenCode runtime.
 
 ### Host mode (default)
 

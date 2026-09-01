@@ -3,7 +3,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import Database from "better-sqlite3";
+import type BetterSqliteDatabase from "better-sqlite3";
+
+const Database = (typeof Bun !== "undefined"
+  ? (await import("bun:sqlite")).Database
+  : (await import("better-sqlite3")).default) as unknown as typeof BetterSqliteDatabase;
 
 type SeedMessage = {
   role: "assistant" | "user";

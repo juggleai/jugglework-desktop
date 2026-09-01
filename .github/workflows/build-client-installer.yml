@@ -77,11 +77,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-26
             os_type: macos
             artifact: installer-macos-arm64
             bun_target: bun-darwin-arm64
-          - platform: macos-14
+          - platform: macos-15-intel
             os_type: macos
             artifact: installer-macos-x64
             bun_target: bun-darwin-x64
@@ -175,8 +175,7 @@ jobs:
             --outfile "dist/jugglework-installer"
 
       - name: Smoke test (headless dry run against the client deployment)
-        # Cross-compiled mac x64 output cannot run on the arm64 runner.
-        if: github.event.inputs.smoke_check_deployment == 'true' && matrix.bun_target != 'bun-darwin-x64'
+        if: github.event.inputs.smoke_check_deployment == 'true'
         shell: bash
         env:
           JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH: ${{ runner.temp }}/smoke/desktop-bootstrap.json
@@ -209,7 +208,7 @@ jobs:
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict>
           </plist>

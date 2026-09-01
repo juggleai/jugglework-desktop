@@ -395,7 +395,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
     switch (payload.itemId) {
       case "copy-url":
-        if (request.url) clipboard.writeText(request.url);
+        if (request.url) {
+          void Promise.resolve(clipboard.writeText(request.url)).catch((error) => {
+            console.warn("[menu-overlay] failed to copy URL", error);
+          });
+        }
         break;
       case "open-external":
         if (request.url && isHttpUrl(request.url)) void shell.openExternal(request.url);

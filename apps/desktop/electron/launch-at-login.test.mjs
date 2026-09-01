@@ -35,7 +35,7 @@ describe("launch-at-login policy helpers (mocked, not native OS proof)", () => {
   it("starts hidden only for a durable fully-enabled background opt-in", () => {
     const enabled = { enabled: true, backgroundMode: true, launchAtLogin: true };
     assert.equal(shouldStartHidden({ argv: ["app", "--hidden"], settings: enabled }), true);
-    assert.equal(shouldStartHidden({ argv: ["app"], settings: enabled, wasOpenedAsHidden: true }), true);
+    assert.equal(shouldStartHidden({ argv: ["app"], settings: enabled }), false);
     assert.equal(shouldStartHidden({ argv: ["app", "--hidden"], settings: { ...enabled, backgroundMode: false } }), false);
     assert.equal(shouldStartHidden({ argv: ["app", "--hidden"], settings: { ...enabled, enabled: false } }), false);
     assert.equal(shouldStartHidden({ argv: ["app"], settings: enabled }), false);

@@ -3242,9 +3242,7 @@ if (!app.requestSingleInstanceLock()) {
     remoteControlSleepController.setPreventSleepWhileWaiting(
       remoteSettings.enabled === true && remoteSettings.preventSleepWhileWaiting === true,
     );
-    let wasOpenedAsHidden = false;
-    try { wasOpenedAsHidden = app.getLoginItemSettings().wasOpenedAsHidden === true; } catch {}
-    startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings, wasOpenedAsHidden });
+    startMainWindowHidden = shouldStartHidden({ argv: process.argv, settings: remoteSettings });
     updateRemoteControlBackgroundIndicator(remoteSettings);
     // TIPS: fail-closed —— 托盘创建失败时禁止隐藏启动，否则会得到一个
     // 没有任何可见入口的后台进程。

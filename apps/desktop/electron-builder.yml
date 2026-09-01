@@ -38,7 +38,7 @@ asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
-npmRebuild: false
+npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
 # electron-updater feed for JuggleWork desktop releases.
@@ -50,6 +50,7 @@ publish:
 mac:
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
+  minimumSystemVersion: "14.0"
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
@@ -57,6 +58,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     NSMicrophoneUsageDescription: JuggleWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
+    NSScreenCaptureUsageDescription: JuggleWork uses screen recording only when you ask Computer Use to inspect or interact with your screen.
   extraResources:
     - from: resources/sidecars
       to: sidecars

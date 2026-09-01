@@ -78,8 +78,8 @@ jobs:
           fi
 
           ALL='[
-            {"platform_id":"mac-arm64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"JuggleWork-Installer-mac-arm64.dmg"},
-            {"platform_id":"mac-x64","runner":"macos-14","os_type":"macos","bun_target":"bun-darwin-x64","asset":"JuggleWork-Installer-mac-x64.dmg"},
+            {"platform_id":"mac-arm64","runner":"macos-26","os_type":"macos","bun_target":"bun-darwin-arm64","asset":"JuggleWork-Installer-mac-arm64.dmg"},
+            {"platform_id":"mac-x64","runner":"macos-15-intel","os_type":"macos","bun_target":"bun-darwin-x64","asset":"JuggleWork-Installer-mac-x64.dmg"},
             {"platform_id":"win-x64","runner":"windows-2022","os_type":"windows","bun_target":"bun-windows-x64","asset":"JuggleWork-Installer-win-x64.exe"}
           ]'
           MATRIX=$(jq -cn --arg csv "$PLATFORMS" --argjson all "$ALL" \
@@ -169,8 +169,6 @@ jobs:
             --outfile "dist/jugglework-installer"
 
       - name: Smoke test (generic build refuses to run unconfigured)
-        # Cross-compiled mac x64 output cannot run on the arm64 runner.
-        if: matrix.bun_target != 'bun-darwin-x64'
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +212,7 @@ jobs:
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>1.0.0</string>
             <key>CFBundleVersion</key><string>1</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict>
           </plist>

@@ -5,23 +5,35 @@ const asar = require("@electron/asar");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
-const sidecarBases = [
-  "opencode",
-  "chrome-devtools-mcp",
-];
+const sidecarBases = ["opencode"];
+
+function normalizeArch(arch) {
+  if (typeof arch === "number") {
+    // electron-builder's Arch enum: x64 = 1, arm64 = 3.
+    if (arch === 1) return "x64";
+    if (arch === 3) return "arm64";
+    return null;
+  }
+
+  const value = String(arch ?? "").trim().toLowerCase();
+  if (["x64", "x86_64", "amd64"].includes(value)) return "x64";
+  if (["arm64", "aarch64"].includes(value)) return "arm64";
+  return null;
+}
 
 function targetTriple(platformName, arch) {
+  const normalizedArch = normalizeArch(arch);
   if (platformName === "darwin") {
-    if (arch === "arm64") return "aarch64-apple-darwin";
-    if (arch === "x64") return "x86_64-apple-darwin";
+    if (normalizedArch === "arm64") return "aarch64-apple-darwin";
+    if (normalizedArch === "x64") return "x86_64-apple-darwin";
   }
   if (platformName === "linux") {
-    if (arch === "arm64") return "aarch64-unknown-linux-gnu";
-    if (arch === "x64") return "x86_64-unknown-linux-gnu";
+    if (normalizedArch === "arm64") return "aarch64-unknown-linux-gnu";
+    if (normalizedArch === "x64") return "x86_64-unknown-linux-gnu";
   }
   if (platformName === "win32") {
-    if (arch === "arm64") return "aarch64-pc-windows-msvc";
-    if (arch === "x64") return "x86_64-pc-windows-msvc";
+    if (normalizedArch === "arm64") return "aarch64-pc-windows-msvc";
+    if (normalizedArch === "x64") return "x86_64-pc-windows-msvc";
   }
   return null;
 }
@@ -81,6 +93,32 @@ function verifyCompiledRuntimeContracts(context) {
   }
 }
 
+function pruneBetterSqlitePrebuilds(context, arch) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const prebuildsDir = resourcesPath
+    ? path.join(resourcesPath, "app.asar.unpacked", "node_modules", "better-sqlite3", "prebuilds")
+    : null;
+  if (!prebuildsDir || !fs.existsSync(prebuildsDir)) return;
+
+  const platformPrefix = context.electronPlatformName === "darwin"
+    ? "darwin"
+    : context.electronPlatformName === "linux"
+      ? "linux"
+      : context.electronPlatformName === "win32"
+        ? "win32"
+        : null;
+  const normalizedArch = normalizeArch(arch);
+  if (!platformPrefix || !normalizedArch) return;
+  const keep = `${platformPrefix}-${normalizedArch}.node`;
+
+  for (const entry of fs.readdirSync(prebuildsDir)) {
+    if (entry !== keep) fs.rmSync(path.join(prebuildsDir, entry), { force: true });
+  }
+  if (!fs.existsSync(path.join(prebuildsDir, keep))) {
+    throw new Error(`Missing packaged better-sqlite3 prebuild for target: ${keep}`);
+  }
+}
+
 function signComputerUseHelper(context) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
@@ -120,11 +158,14 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
   }
 }
 
-async function afterPack(context) {
-  verifyCompiledRuntimeContracts(context);
+async function runAfterPack(context, dependencies = {}) {
+  const verifyContracts = dependencies.verifyContracts ?? verifyCompiledRuntimeContracts;
+  const signHelper = dependencies.signHelper ?? signComputerUseHelper;
+  verifyContracts(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
+  pruneBetterSqlitePrebuilds(context, context.arch);
 
   const sidecarsDir = resolveSidecarsDir(context);
   if (!sidecarsDir || !fs.existsSync(sidecarsDir)) return;
@@ -157,8 +198,16 @@ async function afterPack(context) {
     }
   }
 
-  signComputerUseHelper(context);
+  signHelper(context);
+}
+
+async function afterPack(context) {
+  await runAfterPack(context);
 }
 
 module.exports = afterPack;
 module.exports.default = afterPack;
+module.exports.normalizeArch = normalizeArch;
+module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
+module.exports.runAfterPack = runAfterPack;
+module.exports.targetTriple = targetTriple;
