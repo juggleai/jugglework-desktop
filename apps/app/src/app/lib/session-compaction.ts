@@ -32,7 +32,11 @@ function normalizeMode(value: unknown): SessionCompactionMode {
 }
 
 function normalizeTimestamp(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  // OpenCode message snapshots use epoch milliseconds, while some event
+  // transports expose epoch seconds. Keep compaction timing on one unit so a
+  // fresh `/compact` cannot accidentally look hours or years old.
+  return value < 1e12 ? value * 1000 : value;
 }
 
 export function createSessionCompactionUIPart(input: {

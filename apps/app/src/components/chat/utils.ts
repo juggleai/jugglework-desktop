@@ -307,10 +307,10 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
       // `/compact` does not create a visible user message, so without an
       // explicit boundary its output would be absorbed into the preceding
       // assistant run. A manual compaction is intentionally its own task.
-      if (compaction?.mode === "manual" && assistantMessages.length > 0) break
+      if (compaction && compaction.mode !== "auto" && assistantMessages.length > 0) break
       assistantMessages.push({ message: nextAssistantMessage, index });
       index++
-      if (compaction?.mode === "manual") break
+      if (compaction && compaction.mode !== "auto") break
     }
 
     items.push({ messages: assistantMessages });

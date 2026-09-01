@@ -193,8 +193,10 @@ function CompactionStatusRow({ state }: { state: SessionCompactionPresentation }
   )
 }
 
-function StandaloneManualCompactionTask({ state }: { state: SessionCompactionPresentation }) {
+export function StandaloneManualCompactionTask({ state }: { state: SessionCompactionPresentation }) {
+  const fallbackStartedAt = React.useRef(Date.now())
   const [now, setNow] = React.useState(() => Date.now())
+  const [open, setOpen] = React.useState(true)
 
   React.useEffect(() => {
     if (!state.running) return
@@ -203,20 +205,36 @@ function StandaloneManualCompactionTask({ state }: { state: SessionCompactionPre
     return () => window.clearInterval(timer)
   }, [state.running, state.startedAt])
 
-  const startedAt = state.startedAt ?? now
-  const finishedAt = state.finishedAt ?? now
+  const startedAt = state.startedAt ?? fallbackStartedAt.current
   const locale = currentLocale() === "zh" ? "zh" : "en"
-  const duration = formatTaskDuration(Math.max(0, finishedAt - startedAt), locale)
-  const processed = locale === "zh" ? `已处理 ${duration}` : `Processed for ${duration}`
+  const duration = formatTaskDuration(Math.max(0, now - startedAt), locale)
+  const elapsed = locale === "zh" ? `耗时 ${duration}` : `Elapsed ${duration}`
 
   return (
     <div className="group/message-group mt-5 mx-auto w-full max-w-5xl px-3 md:px-8" data-testid="manual-compaction-task">
       {state.running ? (
-        <div className="mb-5 border-b border-border/65 pb-3 text-sm font-medium tabular-nums text-muted-foreground">
-          {processed}
-        </div>
-      ) : null}
-      <CompactionStatusRow state={state} />
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <CollapsibleTrigger
+            className="group/compaction flex w-full cursor-pointer items-center gap-1.5 border-b border-border/65 pb-3 text-left text-muted-foreground transition-colors duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-4"
+            data-testid="manual-compaction-toggle"
+          >
+            <span
+              className="text-sm font-medium tracking-[-0.01em] tabular-nums"
+              data-testid="manual-compaction-duration"
+            >
+              {elapsed}
+            </span>
+            <ChevronRight className="size-4 shrink-0 transition-transform duration-200 group-data-panel-open/compaction:rotate-90" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-starting-style:h-0 data-starting-style:opacity-0 data-ending-style:h-0 data-ending-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+            <div className="pt-4 pb-1">
+              <CompactionStatusRow state={state} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : (
+        <CompactionStatusRow state={state} />
+      )}
     </div>
   )
 }
@@ -1041,7 +1059,7 @@ function MessageGroup({
   const manualCompaction = items.length === 1
     ? getSessionCompactionFromMessage(items[0]!.message)
     : null
-  if (manualCompaction?.mode === "manual") {
+  if (manualCompaction && manualCompaction.mode !== "auto") {
     return <StandaloneManualCompactionTask state={manualCompaction} />
   }
 

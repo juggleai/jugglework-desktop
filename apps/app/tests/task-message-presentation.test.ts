@@ -44,6 +44,19 @@ describe("task message presentation", () => {
     expect(formatTaskDuration(265_000, "zh")).toBe("4分钟 25秒")
   })
 
+  test("normalizes compaction event timestamps expressed in epoch seconds", () => {
+    const compacting = message("assistant-compact", "assistant", 1_700_000_000_000, [
+      createSessionCompactionUIPart({
+        partId: "part-compact-seconds",
+        mode: "manual",
+        running: true,
+        startedAt: 1_700_000_000,
+      }),
+    ])
+
+    expect(getSessionCompactionFromMessage(compacting)?.startedAt).toBe(1_700_000_000_000)
+  })
+
   test("updates a running task from the user message start", () => {
     const startedAt = 1_700_000_000_000
     const messages = [message("user-1", "user", startedAt, [{ type: "text", text: "Do it" }])]
@@ -197,6 +210,26 @@ describe("task message presentation", () => {
       mode: "manual",
       running: true,
     })
+  })
+
+  test("keeps a manual compact event standalone when an older engine omits its reason", () => {
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-final", "assistant", 1_700_000_001_000, [{ type: "text", text: "Done" }]),
+      message("assistant-compact", "assistant", 1_700_000_002_000, [
+        createSessionCompactionUIPart({
+          partId: "part-unknown-compaction",
+          mode: "unknown",
+          running: true,
+          startedAt: 1_700_000_002_000,
+        }),
+      ]),
+    ], "streaming")
+
+    expect(grouped).toHaveLength(3)
+    expect(isMessageGroup(grouped[2]!)).toBe(true)
+    if (!isMessageGroup(grouped[2]!)) throw new Error("expected standalone compaction group")
+    expect(grouped[2].messages).toHaveLength(1)
   })
 
   test("keeps the real summary outside process when completion is incomplete", () => {
