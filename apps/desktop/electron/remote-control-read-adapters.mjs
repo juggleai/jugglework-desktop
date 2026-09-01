@@ -4,6 +4,8 @@ import path from "node:path";
 import { z } from "zod";
 import {
   desktopRemoteOperationResultSchema,
+  desktopRemoteSessionSnapshotV1Schema,
+  desktopRemoteSessionSnapshotV2Schema,
 } from "../dist/runtime/desktop-remote-control.js";
 
 import {
@@ -107,12 +109,41 @@ function boundedText(value, max) {
  * @param {number} max
  */
 function safeRemoteText(value, max) {
-  return boundedText(value, max)
+  const sanitized = boundedText(value, max)
     .replace(/\bBearer\b(?:\s+(?!\[REDACTED\])[^\s"'`,;\]}]+){1,4}/gi, "Bearer [REDACTED]")
-    .replace(/(["']?(?:authorization|token|access[_-]?token|client[_-]?token|api[_-]?key|password|secret)["']?\s*:\s*)["'][^"']*["']/gi, "$1\"[REDACTED]\"")
+    // Accept end-of-input as the closing delimiter because the defensive
+    // pre-bound may cut through a quoted credential. Match the same opening
+    // quote, allow escaped characters and preserve opposite quotes as content.
+    .replace(/(["']?(?:authorization|token|access[_-]?token|client[_-]?token|api[_-]?key|password|secret)["']?\s*:\s*)(["'])(?:\\.|(?!\2)[\s\S])*(?:\2|$)/gi, "$1\"[REDACTED]\"")
     .replace(/((?:authorization|token|access[_-]?token|client[_-]?token|api[_-]?key|password|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[REDACTED]")
-    .replace(/(?:\/Users\/|\/home\/)[^\s"'`<>]+/g, "[LOCAL_PATH]")
-    .replace(/[A-Za-z]:\\Users\\[^\s"'`<>]+/g, "[LOCAL_PATH]");
+    // Paths can legally contain spaces. Prefer over-redacting adjacent prose
+    // up to a structural delimiter instead of exposing a sensitive path tail.
+    .replace(/(?:\/Users\/|\/home\/)[^\n\r"'`<>,;)\]}]+/g, "[LOCAL_PATH]")
+    .replace(/[A-Za-z]:\\Users\\[^\n\r"'`<>,;)\]}]+/g, "[LOCAL_PATH]");
+  // Redaction markers can be longer than the source material. Re-apply the
+  // protocol bound after sanitization so safe output cannot exceed its schema.
+  return boundedText(sanitized, max);
+}
+
+/** @param {unknown} pathValue */
+function safeIssuePath(pathValue) {
+  if (!Array.isArray(pathValue)) return [];
+  /** @type {(string | number)[]} */
+  const safe = [];
+  for (const segment of pathValue.slice(0, 32)) {
+    if (typeof segment === "number" && Number.isSafeInteger(segment)) safe.push(segment);
+    else if (typeof segment === "string" && /^[A-Za-z][A-Za-z0-9_]*$/.test(segment)) safe.push(segment);
+  }
+  return safe;
+}
+
+/** @param {unknown} error */
+function safeValidationIssues(error) {
+  if (!(error instanceof z.ZodError)) return [];
+  return error.issues.slice(0, 20).map((issue) => ({
+    path: safeIssuePath(issue.path),
+    code: typeof issue.code === "string" ? issue.code : "invalid_value",
+  }));
 }
 
 /** @param {unknown} value */
@@ -373,9 +404,10 @@ export function createRemoteSessionRootVerifier({ workspaceStore, managedRuntime
  *   managedRuntimeClient: ManagedRuntimeClient,
  *   now?: () => number,
  *   interactions?: { listPending(input: { workspaceId: string, sessionId: string, payloadVersion: 1 | 2 }): unknown | Promise<unknown> } | null,
+ *   logger?: { warn?: (message: string, metadata: Record<string, unknown>) => void },
  * }} options
  */
-export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null }) {
+export function createRemoteControlReadRegistrations({ workspaceStore, managedRuntimeClient, now = Date.now, interactions = null, logger = {} }) {
   if (!workspaceStore || typeof workspaceStore.readWorkspaceState !== "function" || !managedRuntimeClient || typeof managedRuntimeClient.getJson !== "function" || typeof now !== "function") {
     throw new TypeError("Remote read adapter dependencies are invalid.");
   }
@@ -505,7 +537,23 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
         pendingOperations,
         capturedAt: captured.toISOString(),
       };
-      return desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion, result }).result;
+      const snapshotSchema = payloadVersion === REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION
+        ? desktopRemoteSessionSnapshotV2Schema
+        : desktopRemoteSessionSnapshotV1Schema;
+      const parsed = snapshotSchema.safeParse(result);
+      if (!parsed.success) {
+        try {
+          logger.warn?.("Remote operation result validation failed.", {
+            operation: "session.snapshot",
+            stage: "result_schema_validation",
+            issues: safeValidationIssues(parsed.error),
+          });
+        } catch {
+          // Diagnostics must never alter the fail-closed command outcome.
+        }
+        throw parsed.error;
+      }
+      return parsed.data;
     }, [REMOTE_CONTROL_OPERATION_PAYLOAD_VERSION, REMOTE_CONTROL_DESCENDANT_PAYLOAD_VERSION]),
   ];
 }

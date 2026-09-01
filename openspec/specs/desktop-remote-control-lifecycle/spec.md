@@ -110,6 +110,17 @@ Cloud policy SHALL gate enabling and remote execution, but it MUST NOT prevent t
 - **WHEN** remote control is locally enabled but current cloud policy is unavailable
 - **THEN** the Settings page still permits Disable and Stop All while refusing any new Enable or enrollment action
 
+### Requirement: Remote snapshot projection remains schema-bounded and diagnosable
+The desktop application SHALL sanitize remotely projected snapshot text before applying the final protocol field limit. Sanitization MUST NOT expand a field beyond its declared schema bound. If outbound snapshot validation still fails, Desktop SHALL fail closed and emit only content-free diagnostic metadata identifying the operation, validation stage, issue paths, and issue codes.
+
+#### Scenario: Redaction expands a tool title
+- **WHEN** replacing a credential or local path with a redaction marker makes a projected tool title longer
+- **THEN** Desktop applies the protocol limit after redaction and emits a schema-valid title without the original sensitive value
+
+#### Scenario: Snapshot result violates the protocol schema
+- **WHEN** the normalized `session.snapshot` result fails its exact payload-version schema
+- **THEN** Desktop returns the normal sanitized `internal_error` and logs only bounded issue paths and codes without the rejected value, message content, command arguments, stack, workspace identifier, or session identifier
+
 ### Requirement: Re-registration replaces the remote device identity
 The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. Private key material MUST NOT be exposed to the renderer.
 

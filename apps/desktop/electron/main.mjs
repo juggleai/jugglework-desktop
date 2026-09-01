@@ -1456,6 +1456,10 @@ remoteControlReadRegistrations = createRemoteControlReadRegistrations({
     fetcher: electronNet.fetch,
   }),
   interactions: remoteControlInteractionStore,
+  logger: {
+    warn: (_message, metadata) =>
+      console.warn("[desktop-remote] operation validation warning", metadata),
+  },
 });
 remoteControlSessionRootVerifier = createRemoteSessionRootVerifier({
   workspaceStore,

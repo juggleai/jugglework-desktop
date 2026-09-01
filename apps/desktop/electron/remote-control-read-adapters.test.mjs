@@ -6,6 +6,7 @@ import { desktopRemoteOperationResultSchema } from "../dist/runtime/desktop-remo
 import {
   createRemoteControlReadRegistrations,
   createRemoteSessionRootVerifier,
+  normalizeRemoteMessagePart,
 } from "./remote-control-read-adapters.mjs";
 import {
   createRemoteControlOperationRegistry,
@@ -86,10 +87,12 @@ function harness(overrides = {}) {
       },
     },
     now: () => NOW,
+    interactions: overrides.interactions,
+    logger: overrides.logger,
   });
   const registry = createRemoteControlOperationRegistry({
     registrations,
-    getFeatureGates: () => enabledGates,
+    getFeatureGates: () => overrides.gates ?? enabledGates,
     isOperationAllowed: () => true,
   });
   return { calls, registrations, registry };
@@ -102,14 +105,14 @@ function advertisement(operations = ["workspace.list", "session.list", "session.
   })), features: [] };
 }
 
-async function dispatch(registry, operation, argumentsValue, correlationId = "corr-1") {
+async function dispatch(registry, operation, argumentsValue, correlationId = "corr-1", payloadVersion = 1, featureGates = enabledGates) {
   const sessionId = argumentsValue.rootSessionId ?? argumentsValue.sessionId;
   return registry.dispatch(
-    { operation, payloadVersion: 1, arguments: argumentsValue },
+    { operation, payloadVersion, arguments: argumentsValue },
     {
       advertisedCapabilities: advertisement(),
       correlationId,
-      context: sessionId ? { remoteSessionBinding: { rootSessionId: sessionId } } : undefined,
+      context: sessionId ? { remoteSessionBinding: { rootSessionId: sessionId }, featureGates } : undefined,
     },
   );
 }
@@ -253,9 +256,184 @@ describe("remote-control read adapters", () => {
     assert.deepEqual(firstResult.value.interactions, []);
     const serialized = JSON.stringify(firstResult);
     assert.match(serialized, /\[LOCAL_PATH\]/);
-    assert.match(serialized, /\[REDACTED\]/);
     assert.doesNotMatch(serialized, /file:\/\/|secret\.txt|hidden|ignored|\/Users\/|Bearer abc|token=secret|collaborator/);
     desktopRemoteOperationResultSchema.parse({ operation: "session.snapshot", payloadVersion: 1, result: firstResult.value });
+  });
+
+  it("keeps sanitized tool titles within the protocol limit when redaction expands", () => {
+    const normalized = normalizeRemoteMessagePart({
+      id: "prt_expanding_title",
+      messageID: "msg_1",
+      sessionID: "ses_1",
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        title: `${"x".repeat(480)} token=a ${"y".repeat(40)}`,
+      },
+    });
+
+    assert.equal(normalized.type, "tool");
+    assert.equal(normalized.title.length, 500);
+    assert.match(normalized.title, /token=\[REDACTED\]/);
+    assert.doesNotMatch(normalized.title, /token=a/);
+    desktopRemoteOperationResultSchema.parse({
+      operation: "session.snapshot",
+      payloadVersion: 1,
+      result: {
+        schemaVersion: 1,
+        workspace: { id: "ws_local", name: "Local" },
+        session: {
+          id: "ses_1",
+          workspaceId: "ws_local",
+          title: "Session",
+          status: "idle",
+          createdAt: "1970-01-01T00:00:01.000Z",
+          updatedAt: "1970-01-01T00:00:02.000Z",
+          activeRunId: null,
+        },
+        messages: [{
+          id: "msg_1",
+          role: "assistant",
+          createdAt: "1970-01-01T00:00:03.000Z",
+          completedAt: null,
+          parts: [normalized],
+        }],
+        todos: [],
+        interactions: [],
+        pendingOperations: [],
+        capturedAt: "2026-08-09T00:00:00.000Z",
+      },
+    });
+  });
+
+  it("redacts a complete quoted credential before truncating its tool title", () => {
+    const secretTail = "alpha beta gamma delta";
+    const normalized = normalizeRemoteMessagePart({
+      id: "prt_quoted_secret",
+      messageID: "msg_1",
+      sessionID: "ses_1",
+      type: "tool",
+      tool: "bash",
+      state: {
+        status: "completed",
+        title: `${"x".repeat(480)} token: \"${secretTail}\"`,
+      },
+    });
+
+    assert.equal(normalized.type, "tool");
+    assert.ok(normalized.title.length <= 500);
+    assert.match(normalized.title, /token: \[REDACTED\]/);
+    assert.doesNotMatch(normalized.title, /alpha|beta|gamma|delta/);
+  });
+
+  it("does not leak quoted credential or spaced local-path suffixes", () => {
+    /** @type {[string, RegExp][]} */
+    const cases = [
+      [`password: "abc'def sensitive-tail"`, /abc|def|sensitive-tail/],
+      [`token: "alpha beta secret-tail\\\" delta"`, /alpha|beta|secret-tail|delta/],
+      [`cat /Users/alice/My Documents/private.txt`, /alice|Documents|private\.txt/],
+    ];
+    for (const [title, forbidden] of cases) {
+      const normalized = normalizeRemoteMessagePart({
+        id: `prt_${title.length}`,
+        messageID: "msg_1",
+        sessionID: "ses_1",
+        type: "tool",
+        tool: "bash",
+        state: { status: "completed", title },
+      });
+      assert.doesNotMatch(normalized.title, forbidden);
+      assert.match(normalized.title, /\[REDACTED\]|\[LOCAL_PATH\]/);
+    }
+  });
+
+  it("logs only safe issue paths and codes when snapshot result validation fails", async () => {
+    const entries = [];
+    const secret = "secret-invalid-pending-status";
+    const { registry } = harness({
+      responses: {
+        "/workspace/ws_local/sessions/ses_1/pending": {
+          items: [{
+            id: "pending_1",
+            mode: "enqueue",
+            status: secret,
+            position: 1,
+            createdAt: "2026-08-09T00:00:00.000Z",
+          }],
+        },
+      },
+      logger: { warn: (message, metadata) => entries.push({ message, metadata }) },
+    });
+    const dispatched = await dispatch(registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+
+    assert.equal(dispatched.error.code, "internal_error");
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].message, "Remote operation result validation failed.");
+    assert.equal(entries[0].metadata.operation, "session.snapshot");
+    assert.equal(entries[0].metadata.stage, "result_schema_validation");
+    assert.deepEqual(Object.keys(entries[0].metadata).sort(), ["issues", "operation", "stage"]);
+    assert.deepEqual(entries[0].metadata.issues[0], {
+      path: ["pendingOperations", 0, "status"],
+      code: "invalid_value",
+    });
+    for (const issue of entries[0].metadata.issues) {
+      assert.deepEqual(Object.keys(issue).sort(), ["code", "path"]);
+    }
+    const serialized = JSON.stringify(entries);
+    assert.doesNotMatch(serialized, new RegExp(secret));
+    assert.doesNotMatch(serialized, /"input"|"expected"|"values"|"stack"|"arguments"/i);
+  });
+
+  it("uses the exact payload-v2 snapshot schema", async () => {
+    const entries = [];
+    const { registry } = harness({
+      gates: { ...enabledGates, interactions: true },
+      interactions: {
+        listPending: async () => [{
+          id: "permission_1",
+          sessionId: "ses_1",
+          runId: null,
+          status: "pending",
+          title: "Approve access",
+          createdAt: "2026-08-09T00:00:00.000Z",
+          expiresAt: null,
+          type: "permission",
+          description: "Access is required",
+          permittedResponses: ["allow_once", "reject"],
+          resolution: null,
+          rootSessionId: "ses_1",
+          targetSessionId: "ses_1",
+          parentSessionId: null,
+        }],
+      },
+      logger: { warn: (message, metadata) => entries.push({ message, metadata }) },
+    });
+    const dispatched = await dispatch(
+      registry,
+      "session.snapshot",
+      { workspaceId: "ws_local", rootSessionId: "ses_1" },
+      "corr-v2",
+      2,
+      { ...enabledGates, interactions: true },
+    );
+
+    assert.equal(dispatched.ok, true);
+    assert.equal(dispatched.value.interactions[0].rootSessionId, "ses_1");
+    assert.equal(dispatched.value.interactions[0].targetSessionId, "ses_1");
+    assert.deepEqual(entries, []);
+  });
+
+  it("keeps snapshot failures sanitized when the diagnostics logger throws", async () => {
+    const { registry } = harness({
+      responses: {
+        "/workspace/ws_local/sessions/ses_1/pending": { items: [{ status: "invalid" }] },
+      },
+      logger: { warn: () => { throw new Error("logger secret"); } },
+    });
+    const dispatched = await dispatch(registry, "session.snapshot", { workspaceId: "ws_local", sessionId: "ses_1" });
+    assert.equal(dispatched.error.code, "internal_error");
+    assert.doesNotMatch(JSON.stringify(dispatched), /logger secret/);
   });
 
   it("maps malformed responses and raw failures to sanitized internal errors", async () => {
