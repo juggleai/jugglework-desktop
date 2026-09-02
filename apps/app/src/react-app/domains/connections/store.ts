@@ -26,7 +26,10 @@ import {
   removeMcpFromConfig,
   validateMcpServerName,
 } from "../../../app/mcp";
-import { buildJuggleWorkWorkspaceBaseUrl } from "../../../app/lib/jugglework-server";
+import {
+  buildJuggleWorkWorkspaceBaseUrl,
+  normalizeJuggleWorkServerUrl,
+} from "../../../app/lib/jugglework-server";
 import type {
   Client,
   McpServerEntry,
@@ -38,6 +41,13 @@ import { isDesktopRuntime, normalizeDirectoryPath, safeStringify } from "../../.
 
 import type { JuggleWorkServerStore } from "./jugglework-server-store";
 import { sanitizeKeyValueMap } from "./mcp-kv-entries";
+import {
+  bundledUiControlMcpMigrationPatch,
+  canAttemptBundledUiControlMcpRepair,
+  mergeBundledUiControlMcpEnvironment,
+  needsBundledUiControlMcpRepair,
+  UI_CONTROL_MCP_SERVER_NAME,
+} from "./ui-control-mcp-repair";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
 import {
   CLOUD_MCP_SERVER_NAME,
@@ -95,6 +105,7 @@ export function createConnectionsStore(options: {
   let disposed = false;
   let lastWorkspaceContextKey = "";
   let lastProjectDir = "";
+  const attemptedUiControlRepairKeys = new Set<string>();
   let snapshot: ConnectionsStoreSnapshot;
 
   let state: MutableState = {
@@ -365,7 +376,7 @@ export function createConnectionsStore(options: {
       return command ?? entry.command;
     }
     if (mcpResource?.localCommandRef === "jugglework.uiMcp" || entry.serverName === "jugglework-ui") {
-      const command = await resolveDesktopCommand("getJuggleWorkUiMcpCommand");
+      const command = await resolveDesktopCommand("getJuggleWorkUiMcpCommand", false);
       return command ?? entry.command;
     }
     return entry.command;
@@ -381,19 +392,20 @@ export function createConnectionsStore(options: {
   const resolveLocalMcpEnvironment = async (entry: McpDirectoryInfo) => {
     const builtIn: Record<string, string> = {};
     if (entry.serverName === "jugglework-ui") {
-      try {
-        const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
-        if (environment && typeof environment === "object" && !Array.isArray(environment)) {
-          for (const [key, value] of Object.entries(environment)) {
-            if (typeof key === "string" && typeof value === "string") builtIn[key] = value;
-          }
+      const environment = await window.__JUGGLEWORK_ELECTRON__?.invokeDesktop?.("getJuggleWorkUiMcpEnvironment");
+      if (environment && typeof environment === "object" && !Array.isArray(environment)) {
+        for (const [key, value] of Object.entries(environment)) {
+          if (typeof key === "string" && typeof value === "string") builtIn[key] = value;
         }
-      } catch {
-        // Discovery fallback in jugglework-ui-mcp still handles normal launches.
+      }
+      if (builtIn.ELECTRON_RUN_AS_NODE !== "1" || !builtIn.JUGGLEWORK_UI_CONTROL_DISCOVERY?.trim()) {
+        throw new Error("JuggleWork UI control MCP runtime environment is unavailable. Restart or reinstall JuggleWork.");
       }
     }
 
-    const merged = { ...builtIn, ...sanitizeKeyValueMap(entry.environment) };
+    const merged = entry.serverName === "jugglework-ui"
+      ? mergeBundledUiControlMcpEnvironment(sanitizeKeyValueMap(entry.environment), builtIn)
+      : sanitizeKeyValueMap(entry.environment);
     return Object.keys(merged).length > 0 ? merged : undefined;
   };
 
@@ -428,6 +440,89 @@ export function createConnectionsStore(options: {
     }
   }
 
+  async function repairBundledUiControlMcp(servers: McpServerEntry[]) {
+    if (disposed || snapshot.mcpConnectingName) return;
+    const initialContextKey = getWorkspaceContextKey();
+    const initialRuntimeWorkspaceId = options.runtimeWorkspaceId()?.trim() ?? "";
+    const initialServer = getJuggleWorkSnapshot();
+    const activeBaseUrl = normalizeJuggleWorkServerUrl(initialServer.juggleworkServerBaseUrl) ?? "";
+    const embeddedBaseUrl = normalizeJuggleWorkServerUrl(initialServer.juggleworkServerHostInfo?.baseUrl ?? "") ?? "";
+    const embeddedClientToken = initialServer.juggleworkServerHostInfo?.clientToken?.trim() ?? "";
+    const activeClientToken = initialServer.juggleworkServerAuth.token?.trim() ?? "";
+    if (!canAttemptBundledUiControlMcpRepair({
+      desktopRuntime: isDesktopRuntime(),
+      workspaceType: options.workspaceType(),
+      embeddedServer: initialServer.juggleworkServerHostInfo?.running === true
+        && Boolean(activeBaseUrl)
+        && activeBaseUrl === embeddedBaseUrl
+        && Boolean(embeddedClientToken)
+        && activeClientToken === embeddedClientToken,
+    })) return;
+    if (!initialRuntimeWorkspaceId || !initialServer.juggleworkServerClient) return;
+    const server = servers.find((candidate) => candidate.name === UI_CONTROL_MCP_SERVER_NAME);
+    if (!server || server.source !== "config.remote" || server.config.type !== "local" || server.config.enabled === false) return;
+    const entry = MCP_QUICK_CONNECT.find((candidate) => candidate.serverName === UI_CONTROL_MCP_SERVER_NAME);
+    if (!entry) return;
+
+    let repairKey = "";
+    let repaired = false;
+    try {
+      const command = await resolveLocalMcpCommand(entry);
+      if (!command?.length) return;
+      const environment = (await resolveLocalMcpEnvironment(entry)) ?? {};
+      const scopeIsCurrent = () => {
+        const currentServer = getJuggleWorkSnapshot();
+        return !disposed
+          && getWorkspaceContextKey() === initialContextKey
+          && options.runtimeWorkspaceId()?.trim() === initialRuntimeWorkspaceId
+          && currentServer.juggleworkServerClient === initialServer.juggleworkServerClient
+          && (normalizeJuggleWorkServerUrl(currentServer.juggleworkServerBaseUrl) ?? "") === activeBaseUrl
+          && currentServer.juggleworkServerAuth.token?.trim() === activeClientToken;
+      };
+      if (!scopeIsCurrent()) return;
+      if (!needsBundledUiControlMcpRepair(server, command, environment)) return;
+      repairKey = `${getWorkspaceContextKey()}:${JSON.stringify(server.config.command)}:${JSON.stringify(command)}:${JSON.stringify(environment)}`;
+      if (attemptedUiControlRepairKeys.has(repairKey)) return;
+      attemptedUiControlRepairKeys.add(repairKey);
+      const target = await resolveWritableJuggleWorkTarget();
+      if (!target.canUseJuggleWorkServer || !target.juggleworkClient || !target.juggleworkWorkspaceId) {
+        attemptedUiControlRepairKeys.delete(repairKey);
+        return;
+      }
+      if (!scopeIsCurrent()
+        || target.juggleworkClient !== initialServer.juggleworkServerClient
+        || target.juggleworkWorkspaceId !== initialRuntimeWorkspaceId) return;
+      const authoritative = await target.juggleworkClient.listMcp(target.juggleworkWorkspaceId);
+      if (!scopeIsCurrent()) return;
+      const current = authoritative.items.find((candidate) => candidate.name === UI_CONTROL_MCP_SERVER_NAME);
+      const currentServer = current
+        && current.source === "config.remote"
+        ? { name: current.name, config: current.config as McpServerEntry["config"] }
+        : undefined;
+      const migrationPatch = currentServer
+        ? bundledUiControlMcpMigrationPatch(currentServer, command, environment)
+        : null;
+      if (!currentServer || !migrationPatch || currentServer.config.enabled === false) return;
+      await target.juggleworkClient.addMcp(target.juggleworkWorkspaceId, {
+        name: UI_CONTROL_MCP_SERVER_NAME,
+        config: migrationPatch,
+        preserveEnabled: true,
+        mergeExisting: true,
+        expectedCommand: currentServer.config.command,
+        expectedEnabled: true,
+        expectedType: "local",
+      });
+      repaired = true;
+      options.markReloadRequired?.("mcp", { type: "mcp", name: UI_CONTROL_MCP_SERVER_NAME, action: "updated" });
+    } catch (error) {
+      recordPerfLog(options.developerMode(), "mcp.ui-control-repair", "error", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (repairKey && !repaired) attemptedUiControlRepairKeys.delete(repairKey);
+    }
+  }
+
   async function refreshMcpServers() {
     if (disposed) return;
 
@@ -453,6 +548,7 @@ export function createConnectionsStore(options: {
             : serverResult.next.length ? null : t("mcp.no_servers_configured"),
         }));
         void healUnhealthyMcpEntries(serverResult.next, serverResult.nextStatuses);
+        void repairBundledUiControlMcp(serverResult.next);
         return;
       }
     } catch (error) {
@@ -571,6 +667,7 @@ export function createConnectionsStore(options: {
         mcpStatus: next.length ? null : t("mcp.no_servers_configured"),
       }));
       void healUnhealthyMcpEntries(next, nextStatuses);
+      void repairBundledUiControlMcp(next);
     } catch (error) {
       mutateState((current) => ({
         ...current,
@@ -747,10 +844,11 @@ export function createConnectionsStore(options: {
       }
 
       if (entryType === "local") {
-        if (!entry.command?.length) {
+        const localCommand = await resolveLocalMcpCommand(entry);
+        if (!localCommand?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        mcpEntryConfig["command"] = localCommand;
         const environment = await resolveLocalMcpEnvironment(entry);
         if (environment) {
           mcpEntryConfig["environment"] = environment;

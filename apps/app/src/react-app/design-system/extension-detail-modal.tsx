@@ -116,14 +116,17 @@ const kindDesc: Record<ExtensionKind, string> = {
   extension: "A JuggleWork extension that adds tools, providers, or integrations to your workspace.",
 };
 
-const uiControlClientConfig = `{
-  "mcpServers": {
-    "jugglework-ui": {
-      "command": "npx",
-      "args": ["-y", "jugglework-ui-mcp"]
-    }
-  }
-}`;
+function uiControlClientConfig(command: string[], environment?: Record<string, string>) {
+  return JSON.stringify({
+    mcpServers: {
+      "jugglework-ui": {
+        command: command[0],
+        args: command.slice(1),
+        ...(environment ? { env: environment } : {}),
+      },
+    },
+  }, null, 2);
+}
 
 function uiControlOpencodeConfig(command: string[], environment?: Record<string, string>) {
   return JSON.stringify({
@@ -137,18 +140,6 @@ function uiControlOpencodeConfig(command: string[], environment?: Record<string,
     },
   }, null, 2);
 }
-
-const fallbackUiControlCommand = ["npx", "-y", "jugglework-ui-mcp"];
-
-const fallbackUiControlOpencodeConfig = `{
-  "mcp": {
-    "jugglework-ui": {
-      "type": "local",
-      "command": ["npx", "-y", "jugglework-ui-mcp"],
-      "enabled": true
-    }
-  }
-}`;
 
 /**
  * Strip YAML-like frontmatter from the beginning of a skill content string.
@@ -401,7 +392,9 @@ export function ExtensionDetailModal({
                   {kind === "ui-control" ? (
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Launch</span>
-                      <span className="max-w-[300px] truncate font-mono text-xs text-card-foreground">{(launchCommand ?? fallbackUiControlCommand).join(" ")}</span>
+                      <span className="max-w-[300px] truncate font-mono text-xs text-card-foreground">
+                        {launchCommand?.length ? launchCommand.join(" ") : "Unavailable in this runtime"}
+                      </span>
                     </div>
                   ) : null}
 
@@ -611,7 +604,9 @@ interface UiControlConnectionDetailsProps {
 function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
   "use memo";
 
-  const opencodeConfig = props.launchCommand ? uiControlOpencodeConfig(props.launchCommand, props.environment) : fallbackUiControlOpencodeConfig;
+  const command = props.launchCommand?.length ? props.launchCommand : null;
+  const clientConfig = command ? uiControlClientConfig(command, props.environment) : null;
+  const opencodeConfig = command ? uiControlOpencodeConfig(command, props.environment) : null;
 
   return (
     <div className="space-y-4">
@@ -624,6 +619,7 @@ function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
             <div>JuggleWork desktop starts a private localhost bridge automatically.</div>
             <div>Your MCP client starts <span className="font-mono text-card-foreground">jugglework-ui-mcp</span> over stdio; the wrapper discovers the bridge and proxies UI tools to it.</div>
             <div>Do not point clients at the random localhost bridge URL directly.</div>
+            {!command ? <div>The bundled launch command is unavailable. Restart or reinstall JuggleWork before copying a client configuration.</div> : null}
           </div>
         </CardContent>
       </Card>
@@ -634,7 +630,7 @@ function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
         </CardHeader>
         <CardContent>
           <pre className="max-h-[180px] overflow-x-auto rounded-xl border border-border p-3 text-xs leading-relaxed text-card-foreground">
-            <code>{uiControlClientConfig}</code>
+            <code>{clientConfig ?? "Bundled launch command unavailable."}</code>
           </pre>
         </CardContent>
       </Card>
@@ -645,7 +641,7 @@ function UiControlConnectionDetails(props: UiControlConnectionDetailsProps) {
         </CardHeader>
         <CardContent>
           <pre className="max-h-[180px] overflow-x-auto rounded-xl border border-border p-3 text-xs leading-relaxed text-card-foreground">
-            <code>{opencodeConfig}</code>
+            <code>{opencodeConfig ?? "Bundled launch command unavailable."}</code>
           </pre>
         </CardContent>
       </Card>

@@ -10,6 +10,7 @@ import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import {
   addMcp,
   listMcp,
+  McpConfigChangedError,
   removeMcp,
   resolveGlobalOpenCodeConfigPath,
   setMcpEnabled,
@@ -2986,6 +2987,21 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     const name = String(body.name ?? "");
     const configPayload = body.config as Record<string, unknown> | undefined;
+    const preserveEnabled = body.preserveEnabled === true;
+    const mergeExisting = body.mergeExisting === true;
+    if (body.expectedCommand !== undefined
+      && (!Array.isArray(body.expectedCommand) || !body.expectedCommand.every((part) => typeof part === "string"))) {
+      throw new ApiError(400, "invalid_payload", "expectedCommand must be an array of strings");
+    }
+    const expectedCommand = body.expectedCommand as string[] | undefined;
+    if (body.expectedEnabled !== undefined && typeof body.expectedEnabled !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "expectedEnabled must be a boolean");
+    }
+    const expectedEnabled = body.expectedEnabled as boolean | undefined;
+    if (body.expectedType !== undefined && typeof body.expectedType !== "string") {
+      throw new ApiError(400, "invalid_payload", "expectedType must be a string");
+    }
+    const expectedType = body.expectedType as string | undefined;
     if (!configPayload) {
       throw new ApiError(400, "invalid_payload", "MCP config is required");
     }
@@ -2995,7 +3011,21 @@ function createRoutes(
       summary: `Add MCP ${name}`,
       paths: [juggleworkConfigPath(workspace.path)],
     });
-    const result = await addMcp(config, workspace.id, name, configPayload);
+    let result;
+    try {
+      result = await addMcp(config, workspace.id, name, configPayload, {
+        preserveEnabled,
+        mergeExisting,
+        expectedCommand,
+        expectedEnabled,
+        expectedType,
+      });
+    } catch (error) {
+      if (error instanceof McpConfigChangedError) {
+        throw new ApiError(409, "mcp_config_changed", error.message);
+      }
+      throw error;
+    }
     // Hot-add into the running engine so connect/auth works immediately,
     // without waiting for an engine instance rebuild.
     await syncRuntimeMcpToOpencodeEngine(

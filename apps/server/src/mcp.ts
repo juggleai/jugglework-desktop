@@ -23,6 +23,13 @@ export type McpToolDeny = {
   matched: string;
 };
 
+export class McpConfigChangedError extends Error {
+  constructor() {
+    super("MCP config changed before the requested update could be applied");
+    this.name = "McpConfigChangedError";
+  }
+}
+
 type McpToolAllow = McpToolDeny;
 
 const JUGGLEWORK_CLOUD_DIAGNOSTIC_TOOL_IDS = [
@@ -691,21 +698,58 @@ export async function addMcp(
   workspaceId: string,
   name: string,
   config: Record<string, unknown>,
-  options?: { preserveEnabled?: boolean },
+  options?: {
+    preserveEnabled?: boolean;
+    mergeExisting?: boolean;
+    expectedCommand?: string[];
+    expectedEnabled?: boolean;
+    expectedType?: string;
+  },
 ): Promise<{ action: "added" | "updated" }> {
   validateMcpName(name);
-  validateMcpConfig(config);
-  const runtimeConfig = await readRuntimeOpencodeConfig(serverConfig, workspaceId);
-  const mcpMap = { ...runtimeMcpMap(runtimeConfig) };
-  const existing = mcpMap[name];
-  const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
-  const memberEnabled = options?.preserveEnabled
-    && isRecord(existing)
-    && typeof existing.enabled === "boolean"
-    ? existing.enabled
-    : undefined;
-  mcpMap[name] = memberEnabled === undefined ? config : { ...config, enabled: memberEnabled };
-  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => ({ ...current, mcp: mcpMap }));
+  let existed = false;
+  await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => {
+    const mcpMap = { ...runtimeMcpMap(current) };
+    const existing = mcpMap[name];
+    existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
+    if (options?.expectedCommand) {
+      const currentCommand = isRecord(existing) ? existing.command : undefined;
+      const matches = Array.isArray(currentCommand)
+        && currentCommand.length === options.expectedCommand.length
+        && currentCommand.every((part, index) => part === options.expectedCommand?.[index]);
+      if (!matches) throw new McpConfigChangedError();
+    }
+    if (options?.expectedEnabled !== undefined) {
+      const currentEnabled = isRecord(existing) && existing.enabled !== false;
+      if (currentEnabled !== options.expectedEnabled) throw new McpConfigChangedError();
+    }
+    if (options?.expectedType !== undefined) {
+      const currentType = isRecord(existing) ? existing.type : undefined;
+      if (currentType !== options.expectedType) throw new McpConfigChangedError();
+    }
+    const mergedConfig = options?.mergeExisting && isRecord(existing)
+      ? {
+          ...existing,
+          ...config,
+          ...(isRecord(existing.environment) || isRecord(config.environment)
+            ? {
+                environment: {
+                  ...(isRecord(existing.environment) ? existing.environment : {}),
+                  ...(isRecord(config.environment) ? config.environment : {}),
+                },
+              }
+            : {}),
+        }
+      : config;
+    validateMcpConfig(mergedConfig);
+    const memberEnabled = options?.preserveEnabled
+      && isRecord(existing)
+      && typeof existing.enabled === "boolean"
+      ? existing.enabled
+      : undefined;
+    mcpMap[name] = memberEnabled === undefined ? mergedConfig : { ...mergedConfig, enabled: memberEnabled };
+    return { ...current, mcp: mcpMap };
+  });
   return { action: existed ? "updated" : "added" };
 }
 

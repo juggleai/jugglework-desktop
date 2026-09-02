@@ -8,6 +8,7 @@ on:
     paths:
       - apps/app/**
       - apps/desktop/**
+      - packages/jugglework-ui-mcp/**
       - packages/ui/**
       - constants.json
       - pnpm-lock.yaml

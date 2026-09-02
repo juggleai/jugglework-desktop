@@ -93,6 +93,52 @@ function verifyCompiledRuntimeContracts(context) {
   }
 }
 
+function verifyBundledUiControlMcp(context) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const entryPath = resourcesPath
+    ? path.join(resourcesPath, "jugglework-ui-mcp", "index.mjs")
+    : null;
+  if (!entryPath || !fs.existsSync(entryPath)) {
+    throw new Error(`Missing packaged JuggleWork UI control MCP at ${entryPath ?? "unknown path"}`);
+  }
+  const source = fs.readFileSync(entryPath, "utf8");
+  if (!source.includes("jugglework-ui")) {
+    throw new Error(`Packaged JuggleWork UI control MCP has an unexpected payload: ${entryPath}`);
+  }
+}
+
+function resolvePackagedExecutable(context) {
+  if (context.electronPlatformName === "darwin") {
+    const appPath = resolveMacAppPath(context);
+    return appPath
+      ? path.join(appPath, "Contents", "MacOS", context.packager.appInfo.productFilename)
+      : null;
+  }
+  const suffix = context.electronPlatformName === "win32" ? ".exe" : "";
+  const candidates = [
+    context.packager.appInfo.productFilename,
+    context.packager.appInfo.sanitizedProductName,
+    "jugglework",
+  ].filter(Boolean).map((name) => path.join(context.appOutDir, `${name}${suffix}`));
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+async function verifyBundledUiControlMcpRuntime(context) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const entry = resourcesPath ? path.join(resourcesPath, "jugglework-ui-mcp", "index.mjs") : null;
+  const runtime = resolvePackagedExecutable(context);
+  if (!entry || !runtime || !fs.existsSync(entry) || !fs.existsSync(runtime)) {
+    throw new Error(`Cannot run packaged JuggleWork UI control MCP verification (runtime=${runtime ?? "missing"}, entry=${entry ?? "missing"})`);
+  }
+  const { verifyJuggleWorkUiMcp } = await import("./verify-jugglework-ui-mcp.mjs");
+  await verifyJuggleWorkUiMcp({
+    runtime,
+    entry,
+    environment: { ELECTRON_RUN_AS_NODE: "1" },
+    timeoutMs: 10_000,
+  });
+}
+
 function pruneBetterSqlitePrebuilds(context, arch) {
   const resourcesPath = resolvePackagedResourcesPath(context);
   const prebuildsDir = resourcesPath
@@ -160,8 +206,12 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
 
 async function runAfterPack(context, dependencies = {}) {
   const verifyContracts = dependencies.verifyContracts ?? verifyCompiledRuntimeContracts;
+  const verifyUiControlMcp = dependencies.verifyUiControlMcp ?? verifyBundledUiControlMcp;
+  const verifyUiControlMcpRuntime = dependencies.verifyUiControlMcpRuntime ?? verifyBundledUiControlMcpRuntime;
   const signHelper = dependencies.signHelper ?? signComputerUseHelper;
   verifyContracts(context);
+  verifyUiControlMcp(context);
+  await verifyUiControlMcpRuntime(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
@@ -211,3 +261,5 @@ module.exports.normalizeArch = normalizeArch;
 module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
 module.exports.runAfterPack = runAfterPack;
 module.exports.targetTriple = targetTriple;
+module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
+module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;

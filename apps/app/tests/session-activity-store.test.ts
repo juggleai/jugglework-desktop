@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import {
+  getSessionActivityStatusLabel,
   SESSION_STALLED_AFTER_MS,
   useSessionActivityStore,
 } from "../src/react-app/domains/session/status/session-activity-store";
@@ -17,6 +18,10 @@ function resetStore() {
 
 describe("session activity reconciliation", () => {
   beforeEach(resetStore);
+
+  test("presents a stalled session with the neutral thinking label", () => {
+    expect(getSessionActivityStatusLabel("stalled")).toBe(getSessionActivityStatusLabel("thinking"));
+  });
 
   test("authoritative workspace snapshots clear a stale running indicator", () => {
     const store = useSessionActivityStore.getState();

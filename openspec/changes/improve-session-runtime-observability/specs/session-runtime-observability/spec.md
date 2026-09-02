@@ -20,21 +20,21 @@ The system SHALL track provider retry liveness separately from user-meaningful p
 
 #### Scenario: Repeated retries without output
 - **WHEN** provider retries continue without new assistant text, reasoning output, tool execution progress, or a completed tool result
-- **THEN** the session remains visibly degraded and elapsed silence continues from the last meaningful progress
+- **THEN** the runtime retains stalled evidence and elapsed silence continues from the last meaningful progress without adding a speculative stuck warning to the UI
 
 #### Scenario: Work resumes after retry
 - **WHEN** assistant output or tool execution makes new progress after a retry
 - **THEN** retry or stalled presentation clears and the session returns to the corresponding active state
 
-### Requirement: Stalled activity is visible in the conversation
-The system SHALL present stalled activity inside an active conversation even when that conversation already contains transcript messages.
+### Requirement: Stalled detection preserves neutral presentation
+The system SHALL retain stalled activity as internal runtime evidence while preserving the existing neutral in-progress presentation in conversations and sidebars.
 
 #### Scenario: Existing transcript becomes stalled
 - **WHEN** an active session with existing messages exceeds the meaningful-progress deadline
-- **THEN** the conversation shows an explicit possibly-stuck status instead of continuing to show a generic generating label
+- **THEN** the conversation continues to show the current live action or generic generating label without a possibly-stuck instruction
 
-### Requirement: Child-session degradation propagates to its task
-The system SHALL project a child session's retrying or stalled state onto the parent task activity without fabricating child completion or failure.
+### Requirement: Child-session retry propagates to its task
+The system SHALL project a child session's retrying state onto the parent task activity without fabricating child completion or failure, while stalled state remains undecorated.
 
 #### Scenario: Subagent provider retry
 - **WHEN** a child session reports a provider retry while its parent task call remains in flight
@@ -42,5 +42,4 @@ The system SHALL project a child session's retrying or stalled state onto the pa
 
 #### Scenario: Subagent stalls
 - **WHEN** a child session becomes stalled while its parent task call remains in flight
-- **THEN** the parent task presentation identifies the delegated work as possibly stuck
-
+- **THEN** the parent task remains in its original in-flight presentation without a possibly-stuck instruction

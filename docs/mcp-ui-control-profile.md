@@ -53,17 +53,15 @@ Inside JuggleWork, agents control the app through the semantic tools (`jugglewor
 
 ## Install
 
-```bash
-npm install -g jugglework-ui-mcp
-```
+JuggleWork Desktop bundles this MCP and its runtime dependencies. The built-in **JuggleWork UI Control** connector starts the verified bundle with the application's own runtime, so it does not require npm, `npx`, a separately installed Node.js, or network access. In the installed app, copy the exact command and environment shown under **Settings → Extensions → JuggleWork UI Control**; those values are profile- and platform-specific.
 
-Or run without installing:
+The examples below are **repository-development examples only**. A source checkout can run the entry point after workspace dependencies are installed:
 
 ```bash
-npx jugglework-ui-mcp
+node packages/jugglework-ui-mcp/index.mjs
 ```
 
-> The package is [`jugglework-ui-mcp` on npm](https://www.npmjs.com/package/jugglework-ui-mcp).
+The npm publication workflow is optional distribution for external MCP clients and is not part of the Desktop production startup path.
 
 ## Add to OpenCode
 
@@ -74,7 +72,7 @@ Add the MCP server to your workspace or global `opencode.json`:
   "mcp": {
     "jugglework-ui": {
       "type": "local",
-      "command": ["npx", "-y", "jugglework-ui-mcp"],
+      "command": ["node", "/path/to/jugglework-desktop/packages/jugglework-ui-mcp/index.mjs"],
       "enabled": true
     }
   }
@@ -95,8 +93,8 @@ Both use the same MCP config shape. Add to your `claude_desktop_config.json` or 
 {
   "mcpServers": {
     "jugglework-ui": {
-      "command": "npx",
-      "args": ["-y", "jugglework-ui-mcp"]
+      "command": "node",
+      "args": ["/path/to/jugglework-desktop/packages/jugglework-ui-mcp/index.mjs"]
     }
   }
 }
@@ -113,8 +111,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const transport = new StdioClientTransport({
-  command: "npx",
-  args: ["-y", "jugglework-ui-mcp"],
+  command: "node",
+  args: ["/path/to/jugglework-desktop/packages/jugglework-ui-mcp/index.mjs"],
 });
 const client = new Client({ name: "my-app", version: "1.0.0" });
 await client.connect(transport);

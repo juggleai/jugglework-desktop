@@ -185,7 +185,7 @@ jobs:
             echo "Packaged JuggleWork.app not found" >&2
             exit 1
           fi
-          pnpm --dir apps/desktop verify:mac-package --app "$app_bundle" --arch arm64
+          pnpm --dir apps/desktop verify:mac-package --app "$PWD/$app_bundle" --arch arm64
 
       - name: Create immutable alpha prerelease
         if: env.MACOS_NOTARIZE == 'true'

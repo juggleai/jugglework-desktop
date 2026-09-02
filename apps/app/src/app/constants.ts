@@ -188,8 +188,8 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "jugglework-ui",
     get description() { return t("mcp.quick_connect_jugglework_ui_desc"); },
     type: "local",
-    // Dev builds replace this with the local checkout path before writing config.
-    command: ["npx", "-y", "jugglework-ui-mcp"],
+    // Desktop resolves this managed command at runtime; there is deliberately no
+    // PATH or package-registry fallback when that resolver is unavailable.
     oauth: false,
     kind: "ui-control",
     iconSrc: "/jugglework-logo.png",

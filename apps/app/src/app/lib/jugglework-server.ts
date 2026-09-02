@@ -2240,7 +2240,15 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       );
       return agentContextDiagnosticsReportSchema.parse(payload);
     },
-    addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
+    addMcp: (workspaceId: string, payload: {
+      name: string;
+      config: Record<string, unknown>;
+      preserveEnabled?: boolean;
+      mergeExisting?: boolean;
+      expectedCommand?: string[];
+      expectedEnabled?: boolean;
+      expectedType?: string;
+    }) =>
       requestJson<{ items: JuggleWorkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
         token,
         hostToken,

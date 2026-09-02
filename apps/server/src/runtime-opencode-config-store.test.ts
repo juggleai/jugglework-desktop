@@ -139,6 +139,69 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
+  test("conditionally migrates an enabled MCP command while preserving user-owned fields", async () => {
+    await withWorkspace(async ({ config }) => {
+      const legacyCommand = ["npx", "-y", "jugglework-ui-mcp"];
+      await addMcp(config, WORKSPACE_ID, "jugglework-ui", {
+        type: "local",
+        enabled: true,
+        command: legacyCommand,
+        environment: { CUSTOM: "keep", OLD_DISCOVERY: "old" },
+        cwd: "/keep/cwd",
+        timeout: 9_000,
+      });
+
+      await addMcp(config, WORKSPACE_ID, "jugglework-ui", {
+        command: ["/Applications/JuggleWork.app/Contents/MacOS/JuggleWork", "/resources/jugglework-ui-mcp/index.mjs"],
+        environment: { ELECTRON_RUN_AS_NODE: "1", JUGGLEWORK_UI_CONTROL_DISCOVERY: "/runtime/discovery.json" },
+      }, {
+        preserveEnabled: true,
+        mergeExisting: true,
+        expectedCommand: legacyCommand,
+        expectedEnabled: true,
+        expectedType: "local",
+      });
+
+      const migrated = (await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["jugglework-ui"];
+      expect(migrated).toMatchObject({
+        type: "local",
+        enabled: true,
+        cwd: "/keep/cwd",
+        timeout: 9_000,
+        environment: {
+          CUSTOM: "keep",
+          OLD_DISCOVERY: "old",
+          ELECTRON_RUN_AS_NODE: "1",
+          JUGGLEWORK_UI_CONTROL_DISCOVERY: "/runtime/discovery.json",
+        },
+      });
+
+      await expect(addMcp(config, WORKSPACE_ID, "jugglework-ui", {
+        command: ["replacement"],
+      }, {
+        preserveEnabled: true,
+        mergeExisting: true,
+        expectedCommand: legacyCommand,
+        expectedEnabled: true,
+        expectedType: "local",
+      })).rejects.toThrow("MCP config changed");
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["jugglework-ui"]?.command)
+        .toEqual(["/Applications/JuggleWork.app/Contents/MacOS/JuggleWork", "/resources/jugglework-ui-mcp/index.mjs"]);
+
+      await setMcpEnabled(config, WORKSPACE_ID, "jugglework-ui", false);
+      await expect(addMcp(config, WORKSPACE_ID, "jugglework-ui", {
+        command: ["replacement-after-disable"],
+      }, {
+        preserveEnabled: true,
+        mergeExisting: true,
+        expectedCommand: ["/Applications/JuggleWork.app/Contents/MacOS/JuggleWork", "/resources/jugglework-ui-mcp/index.mjs"],
+        expectedEnabled: true,
+        expectedType: "local",
+      })).rejects.toThrow("MCP config changed");
+      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).mcp?.["jugglework-ui"]?.enabled).toBe(false);
+    });
+  });
+
   test("stores plugin changes in the JuggleWork runtime DB without rewriting workspace files", async () => {
     await withWorkspace(async ({ root, config }) => {
       const opencodePath = join(root, "opencode.jsonc");

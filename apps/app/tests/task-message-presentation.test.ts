@@ -321,13 +321,11 @@ describe("task message presentation", () => {
     expect(taskStatusTitle("Inspect workspace", "thinking", false, true)).toBeUndefined()
   })
 
-  test("presents retrying and stalled subagent activity", () => {
+  test("presents retrying subagent activity without decorating stalled work", () => {
     expect(taskStatusTitle("Inspect workspace", "retrying", false, true, 3)).toBe(
       "Agent: Inspect workspace · Retrying provider · attempt 3",
     )
-    expect(taskStatusTitle("Inspect workspace", "stalled", false, true, 3)).toBe(
-      "Agent: Inspect workspace · Possibly stuck — stop and retry",
-    )
+    expect(taskStatusTitle("Inspect workspace", "stalled", false, true, 3)).toBeUndefined()
   })
 
   test("summarizes deduplicated tool-only progress without creating message parts", () => {

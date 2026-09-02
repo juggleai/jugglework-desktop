@@ -31,6 +31,11 @@ import {
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
+import {
+  getJuggleWorkUiMcpCommand,
+  getJuggleWorkUiMcpEnvironment,
+  installBundledUiControlMcp,
+} from "./ui-control-mcp.mjs";
 import { installBundledJuggleChatSkills } from "./bundled-jugglechat-skills.mjs";
 import { createJuggleChatSkillBridge } from "./jugglechat-skill-bridge.mjs";
 import { startRouterServer, stopRouterServer } from "./router-server.mjs";
@@ -2356,10 +2361,19 @@ const desktopCommandHandlers = {
       }
   },
   "getJuggleWorkUiMcpCommand": async (event, ...args) => {
-      if (process.env.JUGGLEWORK_DEV_MODE === "1") {
-        return ["node", path.resolve(__dirname, "../../..", "packages/jugglework-ui-mcp/index.mjs")];
-      }
-      return ["npx", "-y", "jugglework-ui-mcp"];
+      const bundledPath = app.isPackaged
+        ? await installBundledUiControlMcp({
+            resourcesPath: process.resourcesPath,
+            userDataPath: app.getPath("userData"),
+            version: app.getVersion(),
+          })
+        : undefined;
+      return getJuggleWorkUiMcpCommand({
+        packaged: app.isPackaged,
+        executablePath: process.execPath,
+        resourcesPath: process.resourcesPath,
+        bundledPath,
+      });
   },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();
@@ -2384,9 +2398,7 @@ const desktopCommandHandlers = {
       return checkComputerUsePermissions();
   },
   "getJuggleWorkUiMcpEnvironment": async (event, ...args) => {
-      return {
-        JUGGLEWORK_UI_CONTROL_DISCOVERY: path.join(app.getPath("userData"), "jugglework-ui-control.json"),
-      };
+      return getJuggleWorkUiMcpEnvironment(app.getPath("userData"));
   },
   "getDesktopBootstrapConfig": async (event, ...args) => {
       return workspaceStore.getDesktopBootstrapConfig();

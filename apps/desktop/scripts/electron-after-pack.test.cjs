@@ -30,6 +30,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
 
   const appOutDir = path.join(root, "output");
   const sidecarsDir = path.join(appOutDir, "JuggleWork.app", "Contents", "Resources", "sidecars");
+  const uiControlMcpDir = path.join(appOutDir, "JuggleWork.app", "Contents", "Resources", "jugglework-ui-mcp");
   const sqlitePrebuildsDir = path.join(
     appOutDir,
     "JuggleWork.app",
@@ -41,6 +42,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
     "prebuilds",
   );
   fs.mkdirSync(sidecarsDir, { recursive: true });
+  fs.mkdirSync(uiControlMcpDir, { recursive: true });
   fs.mkdirSync(sqlitePrebuildsDir, { recursive: true });
   fs.writeFileSync(path.join(sidecarsDir, "opencode-aarch64-apple-darwin"), "arm64");
   fs.writeFileSync(path.join(sidecarsDir, "opencode-x86_64-apple-darwin"), "x64");
@@ -49,6 +51,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "darwin-arm64.node"), "arm64 native module");
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "darwin-x64.node"), "x64 native module");
   fs.writeFileSync(path.join(sqlitePrebuildsDir, "linux-arm64.node"), "linux native module");
+  fs.writeFileSync(path.join(uiControlMcpDir, "index.mjs"), 'const name = "jugglework-ui";');
 
   const context = {
     appOutDir,
@@ -60,6 +63,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
 
   await runAfterPack(context, {
     verifyContracts() {},
+    verifyUiControlMcpRuntime() {},
     signHelper(receivedContext) {
       helperContext = receivedContext;
     },
@@ -83,10 +87,32 @@ test("skips architecture processing for unsupported targets", async () => {
     { appOutDir: "/unused", arch: 0, electronPlatformName: "darwin" },
     {
       verifyContracts() {},
+      verifyUiControlMcp() {},
+      verifyUiControlMcpRuntime() {},
       signHelper() {
         signed = true;
       },
     },
   );
   assert.equal(signed, false);
+});
+
+test("rejects packages missing the bundled UI control MCP", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-after-pack-ui-mcp-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const appOutDir = path.join(root, "output");
+  fs.mkdirSync(path.join(appOutDir, "JuggleWork.app", "Contents", "Resources"), { recursive: true });
+
+  await assert.rejects(
+    runAfterPack(
+      {
+        appOutDir,
+        arch: 0,
+        electronPlatformName: "darwin",
+        packager: { appInfo: { productFilename: "JuggleWork" } },
+      },
+      { verifyContracts() {}, verifyUiControlMcpRuntime() {}, signHelper() {} },
+    ),
+    /Missing packaged JuggleWork UI control MCP/,
+  );
 });

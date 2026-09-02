@@ -10,9 +10,12 @@
  * Requires JuggleWork desktop running with the local UI control bridge active.
  *
  * Usage:
+ * Optional npm distribution (only when the package has been published):
  *   npx jugglework-ui-mcp
  *
- * MCP config (OpenCode / Claude Desktop / Cursor / etc.):
+ * Optional npm-package MCP config (OpenCode / Claude Desktop / Cursor / etc.,
+ * only when the package has been published). Installed JuggleWork Desktop users
+ * should copy the bundled command and environment shown by the app:
  *   {
  *     "mcpServers": {
  *       "jugglework-ui": {

@@ -8,6 +8,7 @@ const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const electronSidecarDir = resolve(desktopRoot, "resources", "sidecars");
 const electronHelperDir = resolve(desktopRoot, "resources", "helpers");
+const uiControlMcpDir = resolve(desktopRoot, "resources", "jugglework-ui-mcp");
 const electronRoot = resolve(desktopRoot, "electron");
 const packagedServerRoot = resolve(desktopRoot, "server");
 
@@ -32,6 +33,8 @@ function run(command, args, cwd, env) {
 
 run(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], desktopRoot);
 run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "prepare-jugglework-ui-mcp.mjs")], desktopRoot);
+run(nodeCmd, [resolve(__dirname, "verify-jugglework-ui-mcp.mjs"), "--entry", resolve(uiControlMcpDir, "index.mjs")], desktopRoot);
 // Electron's embedded Node runtime cannot execute workspace TypeScript source.
 // Build shared runtime contracts first, then verify Electron resolves their JS output.
 run(pnpmCmd, ["--filter", "@jugglework/types", "build"], repoRoot);
@@ -76,6 +79,7 @@ process.stdout.write(
       renderer: "apps/app/dist",
       electronMain: "apps/desktop/electron/main.mjs",
       electronPreload: "apps/desktop/electron/preload.mjs",
+      uiControlMcp: "apps/desktop/resources/jugglework-ui-mcp/index.mjs",
     },
     null,
     2,

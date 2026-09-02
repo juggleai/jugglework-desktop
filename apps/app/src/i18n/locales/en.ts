@@ -1458,7 +1458,6 @@ export default {
   "session.assistant_error": "Error",
   "session.assistant_idle": "Idle",
   "session.assistant_responding": "Responding",
-  "session.assistant_stalled": "Possibly stuck — stop and retry",
   "session.assistant_thinking": "Thinking",
   "session.assistant_waiting": "Waiting",
   "session.support_docs": "Open documentation",

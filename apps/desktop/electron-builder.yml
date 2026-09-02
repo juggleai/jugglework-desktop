@@ -34,6 +34,10 @@ extraResources:
       - "**/*.md"
       - "**/*.mdx"
       - "docs.json"
+  - from: resources/jugglework-ui-mcp
+    to: jugglework-ui-mcp
+    filter:
+      - index.mjs
 asar: true
 asarUnpack:
   - node_modules/.pnpm/@lydell+node-pty*/**

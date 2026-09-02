@@ -601,7 +601,7 @@ export function getSessionActivityStatusLabel(status: SessionActivityStatus) {
   if (status === "thinking") return t("session.assistant_thinking");
   if (status === "responding") return t("session.assistant_responding");
   if (status === "retrying") return t("common.retry");
-  if (status === "stalled") return t("session.assistant_stalled");
+  if (status === "stalled") return t("session.assistant_thinking");
   if (status === "waiting") return t("session.assistant_waiting");
   if (status === "compacting") return t("session.assistant_compacting");
   if (status === "error") return t("session.assistant_error");

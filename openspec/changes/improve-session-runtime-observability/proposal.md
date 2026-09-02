@@ -6,9 +6,9 @@ Long-running sessions can appear indefinitely busy even while the model provider
 
 - Preserve provider retry events as structured session activity, including attempt, error summary, and retry timing, instead of dropping them from the renderer.
 - Separate transport/event liveness from user-meaningful progress so retry heartbeats cannot indefinitely suppress stalled detection.
-- Present retrying and stalled activity inside the active conversation even when the transcript already contains messages.
+- Present provider retry activity inside the active conversation while keeping stalled detection internal and preserving the existing neutral in-progress presentation.
 - Derive a concise, local-only progress summary from tool activity, including the current action and completed tool-step count, while keeping raw tool calls expandable.
-- Propagate child-session retry and stalled activity through existing subagent task presentation.
+- Propagate child-session retry activity through existing subagent task presentation without adding a speculative stuck warning.
 - Add focused synchronization, state, and presentation tests for retry, stalled, and tool-only runs.
 
 ## Capabilities

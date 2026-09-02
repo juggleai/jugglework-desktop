@@ -431,7 +431,6 @@ export function taskStatusTitle(
   retryAttempt?: number,
 ): string | undefined {
   if (waitingForApproval && inFlight) return `Agent: ${description} · Waiting for approval`
-  if (status === "stalled") return `Agent: ${description} · Possibly stuck — stop and retry`
   if (status === "retrying" && retryAttempt) return `Agent: ${description} · Retrying provider · attempt ${retryAttempt}`
   return undefined
 }
@@ -1252,7 +1251,7 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
   const liveActionLabel = isStreaming
     ? liveActivityLabel(getLiveActivityKind(messages))
     : null
-  const activityLabel = activityStatus === "stalled" || activityStatus === "retrying"
+  const activityLabel = activityStatus === "retrying" || (activityStatus === "stalled" && !liveActionLabel)
     ? getSessionActivityStatusLabel(activityStatus)
     : liveActionLabel
 

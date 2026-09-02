@@ -444,7 +444,7 @@ jobs:
             echo "Packaged JuggleWork.app not found" >&2
             exit 1
           fi
-          pnpm --dir apps/desktop verify:mac-package --app "$app_bundle" --arch "${{ matrix.expected_arch }}"
+          pnpm --dir apps/desktop verify:mac-package --app "$PWD/$app_bundle" --arch "${{ matrix.expected_arch }}"
 
       - name: Validate SignPath configuration (Windows)
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'

@@ -10,7 +10,7 @@ The renderer already maintains session-scoped activity in Zustand, transcript st
 
 - Normalize all runtime retry signals into one session-scoped activity record.
 - Keep event liveness and user-meaningful progress as separate concepts.
-- Render retry, stalled, and tool-only progress in the existing process presentation.
+- Render retry and tool-only progress in the existing process presentation while stalled detection remains internal.
 - Preserve child-session activity visibility through parent task tools.
 - Keep derived summaries deterministic, local, and content-free enough for safe presentation.
 
@@ -37,7 +37,7 @@ Alternative considered: keep all events as progress and increase the stalled tim
 
 ### Pass canonical activity into the conversation renderer
 
-`SessionSurface` passes the current activity status and retry detail to `MessageList`. The message list gives stalled state precedence, keeps structured retry detail visible alongside it, and otherwise falls back to retry or the normal live action. This makes the active conversation accurate even when transcript messages already exist and keeps the sidebar and conversation consistent.
+`SessionSurface` passes the current activity status and retry detail to `MessageList`. The message list keeps structured retry detail visible and otherwise preserves the normal live-action presentation. Stalled detection remains available to runtime coordination, but the conversation and sidebar use their prior neutral in-progress labels instead of speculating that work is stuck.
 
 ### Derive tool progress without creating messages
 
@@ -47,11 +47,11 @@ Alternative considered: ask the model to emit periodic commentary. Model guidanc
 
 ### Project retry through child task status
 
-Task presentation reads the child's structured retry detail in addition to its coarse status. A retry label takes precedence over generic in-flight wording; stalled continues to take precedence over normal activity. The parent tool state remains owned by OpenCode.
+Task presentation reads the child's structured retry detail in addition to its coarse status. A retry label takes precedence over generic in-flight wording; stalled work keeps the original undecorated in-flight task presentation. The parent tool state remains owned by OpenCode.
 
 ## Risks / Trade-offs
 
-- [A long-running tool with no updates can be marked stalled even though it is healthy] → Keep the wording probabilistic, retain the tool name and elapsed activity, and do not auto-abort.
+- [A long-running tool with no updates can be marked stalled even though it is healthy] → Keep stalled detection internal, retain the prior neutral in-progress UI, and do not auto-abort.
 - [Provider error messages can contain sensitive details] → Reuse sanitized runtime summaries and avoid rendering serialized raw error objects.
 - [Retry signals can arrive through multiple event shapes] → Deduplicate by session, attempt, and observation time in the canonical activity record.
 - [A tool count can include setup calls that are not semantic milestones] → Label the metric as completed steps, not percent complete, and preserve raw details.

@@ -1461,7 +1461,6 @@ export default {
   "session.assistant_error": "出错",
   "session.assistant_idle": "空闲",
   "session.assistant_responding": "正在回复",
-  "session.assistant_stalled": "可能卡住 — 可停止后重试",
   "session.assistant_thinking": "正在思考",
   "session.assistant_waiting": "等待中",
   "session.support_docs": "打开文档",

@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
+
 function fail(message) {
   throw new Error(`[verify-packaged-macos] ${message}`);
 }
@@ -192,7 +194,23 @@ export function verifyPackagedNativeModules(appPath) {
   return { sqliteOutput, ptyOutput };
 }
 
-export function main() {
+export async function verifyPackagedUiControlMcp(appPath) {
+  const executable = packagedExecutable(appPath);
+  const entry = path.join(appPath, "Contents", "Resources", "jugglework-ui-mcp", "index.mjs");
+  if (!existsSync(entry)) fail(`Packaged UI control MCP not found: ${entry}`);
+  try {
+    return await verifyJuggleWorkUiMcp({
+      runtime: executable,
+      entry,
+      environment: { ELECTRON_RUN_AS_NODE: "1" },
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    fail(`Packaged UI control MCP smoke test failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function main() {
   if (process.platform !== "darwin") fail("Packaged macOS verification must run on macOS");
   const appInput = readArg("--app") || process.argv[2];
   if (!appInput) fail("Pass --app /path/to/JuggleWork.app");
@@ -201,12 +219,13 @@ export function main() {
   const architecture = verifyMachOArchitectures(appPath, requestedArch);
   const metadata = verifyBundleMetadata(appPath);
   const nativeModules = verifyPackagedNativeModules(appPath);
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, nativeModules }, null, 2)}\n`);
+  const uiControlMcp = await verifyPackagedUiControlMcp(appPath);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    main();
+    await main();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
