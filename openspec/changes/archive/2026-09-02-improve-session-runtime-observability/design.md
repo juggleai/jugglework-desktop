@@ -49,6 +49,10 @@ Alternative considered: ask the model to emit periodic commentary. Model guidanc
 
 Task presentation reads the child's structured retry detail in addition to its coarse status. A retry label takes precedence over generic in-flight wording; stalled work keeps the original undecorated in-flight task presentation. The parent tool state remains owned by OpenCode.
 
+### Separate compaction boundaries from completion receipts
+
+OpenCode `CompactionPart` records are persisted context-boundary markers. They do not carry completion timing and therefore remain invisible in both live and snapshot transcript mapping. The visible manual-compaction task is driven by `session.next.compaction.started` / `session.next.compaction.ended` events and summary-message timing metadata, preventing a boundary marker from producing an early or duplicate “Context compacted” receipt.
+
 ## Risks / Trade-offs
 
 - [A long-running tool with no updates can be marked stalled even though it is healthy] → Keep stalled detection internal, retain the prior neutral in-progress UI, and do not auto-abort.

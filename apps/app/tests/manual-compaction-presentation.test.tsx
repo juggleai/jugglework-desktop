@@ -24,6 +24,7 @@ describe("manual compaction presentation", () => {
     expect(html).toContain('data-testid="manual-compaction-toggle"')
     expect(html).toContain("耗时 4秒")
     expect(html).toContain("正在压缩上下文")
+    expect(html).not.toContain("上下文已压缩")
     expect(html).not.toContain("已处理")
   })
 

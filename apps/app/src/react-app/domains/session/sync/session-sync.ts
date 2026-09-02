@@ -22,7 +22,6 @@ import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 import {
   completeRunningSessionCompactions,
-  createSessionCompactionUIPart,
   getSessionCompactionFromPart,
   upsertSessionCompactionMessage,
   type SessionCompactionMode,
@@ -596,11 +595,10 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
   }
   if (part.type === "step-start") return { type: "step-start" };
   if (part.type === "compaction") {
-    return createSessionCompactionUIPart({
-      partId: part.id,
-      mode: part.auto ? "auto" : "manual",
-      running: false,
-    });
+    // A CompactionPart marks the context boundary that the engine will use;
+    // it is not proof that summarization has finished. Completion is rendered
+    // from session.next.compaction.ended or completed summary-message metadata.
+    return null;
   }
   return null;
 }
@@ -1091,7 +1089,9 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // 引擎不一定再发 session.error，session.idle 也可能因为 SSE 重连而丢；不在这里收口，
       // 侧栏（尤其工作区折叠后行尾的 loading）会一直转。
       if (info.error) messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
-      else messageActivityStore.markRuntimeEvent(workspaceId, info.sessionID);
+      else if (info.summary === true && typeof info.time?.completed === "number") {
+        messageActivityStore.setCompacting(workspaceId, info.sessionID, false);
+      } else messageActivityStore.markRuntimeEvent(workspaceId, info.sessionID);
     }
     if (!isTrackedSession(entry, info.sessionID)) return;
     const created = info.time?.created;
@@ -1108,9 +1108,20 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
       parts: [],
     } satisfies UIMessage;
-    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
-      upsertMessage(current, next),
-    );
+    const messageId = info.id;
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) => {
+      const updated = upsertMessage(current, next);
+      if (info.role !== "assistant" || info.summary !== true || typeof completed !== "number") {
+        return updated;
+      }
+      return upsertSessionCompactionMessage(updated, {
+        messageId,
+        mode: "unknown",
+        running: false,
+        startedAt: created,
+        finishedAt: completed,
+      });
+    });
     return;
   }
 

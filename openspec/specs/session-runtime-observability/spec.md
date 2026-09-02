@@ -1,8 +1,10 @@
+# session-runtime-observability Specification
+
 ## Purpose
 
 Make long-running session activity understandable and recoverable by distinguishing provider retries, meaningful progress, stalled work, and child-session activity without exposing hidden reasoning.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Provider retries are visible
 The system SHALL present provider retry activity for the active session with the retry attempt and a safe error summary whenever the runtime reports a retry part, retry event, or retry status.
@@ -43,3 +45,14 @@ The system SHALL project a child session's retrying state onto the parent task a
 #### Scenario: Subagent stalls
 - **WHEN** a child session becomes stalled while its parent task call remains in flight
 - **THEN** the parent task remains in its original in-flight presentation without a possibly-stuck instruction
+
+### Requirement: Manual compaction completion is event-backed
+The system SHALL treat raw compaction parts as invisible context-boundary metadata and SHALL present a completed manual-compaction receipt only after authoritative completion evidence is available.
+
+#### Scenario: Compaction boundary arrives while compression is running
+- **WHEN** a raw compaction part arrives after manual compaction has started but before a completion event or completed summary message
+- **THEN** the conversation continues to show elapsed time and the collapsible in-progress compaction state without showing “Context compacted”
+
+#### Scenario: Manual compaction completes
+- **WHEN** the runtime emits the compaction-ended event or a summary message contains a completion timestamp
+- **THEN** the in-progress presentation is replaced by one completed compaction receipt

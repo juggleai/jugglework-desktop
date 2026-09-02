@@ -232,6 +232,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
 }
 
 export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMessage[] {
+  let pendingCompactionMode: "auto" | "manual" | null = null;
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
     const completed = message.info.time && "completed" in message.info.time
@@ -247,11 +248,19 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
         ? { summary: true }
         : {}),
     };
+    const boundary = message.parts.findLast((part) => part.type === "compaction");
+    if (boundary?.type === "compaction") {
+      pendingCompactionMode = boundary.auto ? "auto" : "manual";
+    }
+    const isSummary = message.info.role === "assistant" && message.info.summary === true;
+    const summaryMode = isSummary ? pendingCompactionMode : null;
+    if (isSummary) pendingCompactionMode = null;
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
       ...(Object.keys(timingMetadata).length > 0 ? { metadata: { opencode: timingMetadata } } : {}),
-      parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
+      parts: [
+        ...message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           if (part.synthetic || part.ignored) return [];
           return [{
@@ -287,16 +296,21 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
           return [{ type: "step-start", providerMetadata: { opencode: { partId: part.id } } }];
         }
         if (part.type === "compaction") {
-          return [createSessionCompactionUIPart({
-            partId: part.id,
-            mode: part.auto ? "auto" : "manual",
-            running: false,
-            startedAt: typeof created === "number" ? created : null,
-            finishedAt: typeof completed === "number" ? completed : created ?? null,
-          })];
+          // This is a persisted context-boundary marker, not a completion
+          // receipt. The associated summary message carries authoritative
+          // in-progress/completed timing for presentation.
+          return [];
         }
         return [];
-      }),
+        }),
+        ...(isSummary ? [createSessionCompactionUIPart({
+          partId: `${message.info.id}:compaction`,
+          mode: summaryMode ?? "unknown",
+          running: typeof completed !== "number",
+          startedAt: typeof created === "number" ? created : null,
+          finishedAt: typeof completed === "number" ? completed : null,
+        })] : []),
+      ],
     };
 
     // Surface a failed turn as its own synthetic error message keyed by the

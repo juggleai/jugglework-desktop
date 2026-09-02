@@ -9,6 +9,7 @@ Long-running sessions can appear indefinitely busy even while the model provider
 - Present provider retry activity inside the active conversation while keeping stalled detection internal and preserving the existing neutral in-progress presentation.
 - Derive a concise, local-only progress summary from tool activity, including the current action and completed tool-step count, while keeping raw tool calls expandable.
 - Propagate child-session retry activity through existing subagent task presentation without adding a speculative stuck warning.
+- Keep raw compaction-boundary parts invisible so manual compaction cannot show a completed receipt before the runtime reports completion.
 - Add focused synchronization, state, and presentation tests for retry, stalled, and tool-only runs.
 
 ## Capabilities

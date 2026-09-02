@@ -17,6 +17,7 @@ import {
 import { parseJuggleWorkSessionCreateResult } from "../src/components/tools/jugglework-session-create";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import { getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
+import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -261,6 +262,28 @@ describe("tool part mapper", () => {
       expect(useSessionActivityStore.getState().getStatus("workspace-compact", "session-compact")).toBe("compacting");
 
       __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-boundary",
+            sessionID: "session-compact",
+            messageID: "message-before-compaction",
+            type: "compaction",
+            auto: false,
+          },
+        },
+      } as any);
+
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey("workspace-compact", "session-compact"),
+      ) ?? [];
+      expect(transcript).toHaveLength(1);
+      expect(getSessionCompactionFromMessage(transcript[0]!)).toMatchObject({
+        mode: "manual",
+        running: true,
+      });
+
+      __applySessionSyncEventForTest(syncInput, {
         type: "message.updated",
         properties: {
           info: {
@@ -315,6 +338,174 @@ describe("tool part mapper", () => {
       cleanup();
       useSessionActivityStore.getState().removeSession("workspace-compact", "session-compact");
     }
+  });
+
+  test("completed summary metadata finishes compaction when the ended event is missed", () => {
+    const syncInput = { workspaceId: "workspace-compact-summary", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-compact-summary");
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.started",
+        properties: {
+          sessionID: "session-compact-summary",
+          messageID: "message-compact-summary",
+          reason: "manual",
+          timestamp: 1_700_000_000_000,
+        },
+      });
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-compact-summary",
+            role: "assistant",
+            sessionID: "session-compact-summary",
+            summary: true,
+            time: { created: 1_700_000_000_000, completed: 1_700_000_004_000 },
+          },
+        },
+      });
+
+      const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey("workspace-compact-summary", "session-compact-summary"),
+      ) ?? [];
+      expect(getSessionCompactionFromMessage(transcript[0]!)).toEqual({
+        mode: "manual",
+        running: false,
+        startedAt: 1_700_000_000_000,
+        finishedAt: 1_700_000_004_000,
+      });
+      expect(useSessionActivityStore.getState().getStatus(
+        "workspace-compact-summary",
+        "session-compact-summary",
+      )).not.toBe("compacting");
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession("workspace-compact-summary", "session-compact-summary");
+    }
+  });
+
+  test("snapshot compaction boundaries stay invisible until the summary completes", () => {
+    const workspaceId = "workspace-compact-snapshot";
+    const sessionId = "session-compact-snapshot";
+    const snapshot = {
+      session: { id: sessionId },
+      status: { type: "busy" },
+      todos: [],
+      messages: [
+        {
+          info: {
+            id: "message-before-compaction",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_000_000 },
+          },
+          parts: [{
+            id: "compaction-boundary",
+            sessionID: sessionId,
+            messageID: "message-before-compaction",
+            type: "compaction",
+            auto: false,
+          }],
+        },
+        {
+          info: {
+            id: "message-compaction-summary",
+            role: "assistant",
+            sessionID: sessionId,
+            summary: true,
+            time: { created: 1_700_000_001_000 },
+          },
+          parts: [{
+            id: "summary-text",
+            sessionID: sessionId,
+            messageID: "message-compaction-summary",
+            type: "text",
+            text: "internal summary in progress",
+          }],
+        },
+      ],
+    } as any;
+
+    seedSessionState(workspaceId, snapshot);
+
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+      transcriptKey(workspaceId, sessionId),
+    ) ?? [];
+    expect(transcript.find((message) => message.id === "message-before-compaction")?.parts).toEqual([]);
+
+    const rendered = deriveRenderedSessionMessages({ transcriptState: transcript, snapshot: null });
+    expect(rendered.some((message) => (
+      getSessionCompactionFromMessage(message)?.running === false
+    ))).toBeFalse();
+    expect(getSessionCompactionFromMessage(
+      rendered.find((message) => message.id === "message-compaction-summary")!,
+    )).toMatchObject({ running: true });
+
+    useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+  });
+
+  test("snapshot preserves automatic compaction mode on its completed summary", () => {
+    const workspaceId = "workspace-auto-compact-snapshot";
+    const sessionId = "session-auto-compact-snapshot";
+    const snapshot = {
+      session: { id: sessionId },
+      status: { type: "idle" },
+      todos: [],
+      messages: [
+        {
+          info: {
+            id: "message-before-auto-compaction",
+            role: "assistant",
+            sessionID: sessionId,
+            time: { created: 1_700_000_000_000, completed: 1_700_000_000_500 },
+          },
+          parts: [{
+            id: "auto-compaction-boundary",
+            sessionID: sessionId,
+            messageID: "message-before-auto-compaction",
+            type: "compaction",
+            auto: true,
+          }],
+        },
+        {
+          info: {
+            id: "message-auto-compaction-summary",
+            role: "assistant",
+            sessionID: sessionId,
+            summary: true,
+            time: { created: 1_700_000_001_000, completed: 1_700_000_002_000 },
+          },
+          parts: [{
+            id: "auto-summary-text",
+            sessionID: sessionId,
+            messageID: "message-auto-compaction-summary",
+            type: "text",
+            text: "internal automatic summary",
+          }],
+        },
+      ],
+    } as any;
+
+    seedSessionState(workspaceId, snapshot);
+
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+      transcriptKey(workspaceId, sessionId),
+    ) ?? [];
+    expect(transcript.find((message) => message.id === "message-before-auto-compaction")?.parts).toEqual([]);
+    expect(getSessionCompactionFromMessage(
+      transcript.find((message) => message.id === "message-auto-compaction-summary")!,
+    )).toEqual({
+      mode: "auto",
+      running: false,
+      startedAt: 1_700_000_001_000,
+      finishedAt: 1_700_000_002_000,
+    });
+
+    useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
   });
 
   test("delivers untracked session lifecycle events for sidebar synchronization", () => {

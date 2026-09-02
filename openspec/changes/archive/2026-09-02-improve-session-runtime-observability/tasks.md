@@ -10,9 +10,11 @@
 - [x] 2.2 Derive and display a local-only tool activity summary with current action and completed-step count
 - [x] 2.3 Project child-session retry detail into parent task tool presentation
 - [x] 2.4 Add localized activity labels for retry and tool-step summaries
+- [x] 2.5 Keep raw compaction-boundary parts invisible until authoritative compaction completion
 
 ## 3. Verification
 
 - [x] 3.1 Add state and synchronization tests proving retry events do not reset meaningful-progress stalled detection
 - [x] 3.2 Add presentation/helper tests for visible retry, neutral stalled presentation, tool-only progress, and child-session activity
 - [x] 3.3 Run focused app tests, type checking, and strict OpenSpec validation
+- [x] 3.4 Add regression coverage for boundary parts arriving before manual compaction completes
