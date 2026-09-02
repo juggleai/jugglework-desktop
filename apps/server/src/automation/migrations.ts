@@ -125,6 +125,88 @@ const migrations: AutomationMigration[] = [
       "UPDATE automation_runs SET sync_state = 'synced', sync_error_code = NULL",
     ],
   },
+  {
+    version: 3,
+    statements: [
+      // TIPS: v1 的 automation_runs 有一条 CHECK (trigger_source IN ('scheduled','catchup','manual'))，
+      // 不包含 'event'。SQLite 不支持直接改 CHECK 约束，只能整表重建——新建同构表（换成放开的
+      // CHECK、补上 entity_ref/event_metadata_json 两列）、搬数据、删旧表、改名，最后重建全部索引。
+      `CREATE TABLE automation_runs_rebuild (
+        id TEXT PRIMARY KEY NOT NULL,
+        automation_id TEXT NOT NULL,
+        automation_name TEXT NOT NULL,
+        definition_revision INTEGER NOT NULL,
+        trigger_source TEXT NOT NULL,
+        state TEXT NOT NULL,
+        scheduled_for INTEGER NOT NULL,
+        workspace_id TEXT NOT NULL,
+        workspace_name TEXT NOT NULL,
+        session_id TEXT,
+        snapshot_json TEXT NOT NULL,
+        concrete_selection_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        queued_at INTEGER NOT NULL,
+        started_at INTEGER,
+        ended_at INTEGER,
+        revision INTEGER NOT NULL,
+        sync_state TEXT NOT NULL DEFAULT 'pending',
+        sync_error_code TEXT,
+        entity_ref TEXT,
+        event_metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (automation_id) REFERENCES automation_tasks(id) ON DELETE RESTRICT,
+        CHECK (definition_revision > 0 AND revision > 0),
+        CHECK (trigger_source IN ('scheduled', 'catchup', 'manual', 'event')),
+        CHECK (state IN ('queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled')),
+        CHECK (sync_state IN ('pending', 'synced', 'error', 'incompatible-read-only'))
+      )`,
+      `INSERT INTO automation_runs_rebuild (
+        id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
+        workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
+        queued_at, started_at, ended_at, revision, sync_state, sync_error_code, created_at, updated_at
+      ) SELECT
+        id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
+        workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
+        queued_at, started_at, ended_at, revision, sync_state, sync_error_code, created_at, updated_at
+      FROM automation_runs`,
+      "DROP TABLE automation_runs",
+      "ALTER TABLE automation_runs_rebuild RENAME TO automation_runs",
+      // TIPS: 事件触发的非重叠约束粒度是按 (automation_id, entity_ref)，不是按 automation_id
+      // 全局唯一——不同 PR 允许并行，只有同一 PR 才互斥。定时/手动触发继续用原来的全局唯一约束，
+      // 两条约束分别是"trigger_source != 'event'"和"= 'event'"两个不相交的部分索引，互不影响。
+      `CREATE UNIQUE INDEX IF NOT EXISTS uk_automation_runs_scheduled_occurrence
+        ON automation_runs(automation_id, scheduled_for)
+        WHERE trigger_source IN ('scheduled', 'catchup')`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uk_automation_runs_nonterminal_scheduled
+        ON automation_runs(automation_id)
+        WHERE state IN ('queued', 'running') AND trigger_source != 'event'`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uk_automation_runs_nonterminal_event
+        ON automation_runs(automation_id, entity_ref)
+        WHERE state IN ('queued', 'running') AND trigger_source = 'event'`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_runs_history
+        ON automation_runs(scheduled_for DESC, id DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_runs_task_history
+        ON automation_runs(automation_id, scheduled_for DESC, id DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_runs_entity
+        ON automation_runs(automation_id, entity_ref, scheduled_for DESC)`,
+      // TIPS: 会话归属映射，见桌面 PRD 4.8——一个 (automation_id, entity_ref) 最多绑定一个当前会话；
+      // `status = 'closed'` 表示已结束生命周期（合并/关闭/上游失效），不会被下一次触发命中复用。
+      `CREATE TABLE IF NOT EXISTS automation_entity_sessions (
+        automation_id TEXT NOT NULL,
+        entity_ref TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        invalid_reason TEXT,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER NOT NULL,
+        PRIMARY KEY (automation_id, entity_ref),
+        CHECK (status IN ('active', 'closed', 'invalid'))
+      )`,
+    ],
+  },
 ];
 
 /** 按版本顺序执行自动化模块的前向 SQLite 迁移。 */

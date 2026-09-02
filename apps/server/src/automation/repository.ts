@@ -46,6 +46,23 @@ type AutomationRunRow = {
   ended_at: number | null;
   revision: number;
   sync_state: AutomationSyncState;
+  entity_ref: string | null;
+  event_metadata_json: string | null;
+};
+
+const RUN_COLUMNS = `id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
+        workspace_id, workspace_name, session_id, concrete_selection_json, error_code, error_message,
+        queued_at, started_at, ended_at, revision, sync_state, entity_ref, event_metadata_json`;
+
+export type EntitySessionMapping = {
+  automationId: string;
+  entityRef: string;
+  workspaceId: string;
+  sessionId: string;
+  status: "active" | "closed" | "invalid";
+  invalidReason?: string;
+  createdAt: number;
+  lastUsedAt: number;
 };
 
 export type AutomationDefinitionPage = {
@@ -308,9 +325,7 @@ export class AutomationRepository {
     }
     values.push(limit + 1);
     const rows = this.database.all<AutomationRunRow>(
-      `SELECT id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
-        workspace_id, workspace_name, session_id, concrete_selection_json, error_code, error_message,
-        queued_at, started_at, ended_at, revision, sync_state
+      `SELECT ${RUN_COLUMNS}
        FROM automation_runs WHERE ${conditions.join(" AND ")}
        ORDER BY scheduled_for DESC, id DESC LIMIT ?`,
       values,
@@ -327,9 +342,7 @@ export class AutomationRepository {
   /** 按 ID 读取单条运行记录。 */
   getRun(id: string): AutomationRun | null {
     const row = this.database.get<AutomationRunRow>(
-      `SELECT id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
-        workspace_id, workspace_name, session_id, concrete_selection_json, error_code, error_message,
-        queued_at, started_at, ended_at, revision, sync_state FROM automation_runs WHERE id = ?`,
+      `SELECT ${RUN_COLUMNS} FROM automation_runs WHERE id = ?`,
       [id],
     );
     return row ? runFromRow(row) : null;
@@ -338,9 +351,7 @@ export class AutomationRepository {
   /** 读取运行记录及认领时冻结的完整任务定义。 */
   getRunSnapshot(id: string): AutomationRunSnapshot | null {
     const row = this.database.get<AutomationRunRow & { snapshot_json: string }>(
-      `SELECT id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
-        workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
-        queued_at, started_at, ended_at, revision, sync_state FROM automation_runs WHERE id = ?`,
+      `SELECT ${RUN_COLUMNS}, snapshot_json FROM automation_runs WHERE id = ?`,
       [id],
     );
     return row ? { run: runFromRow(row), definition: parseStoredAutomationDefinition(row.snapshot_json) } : null;
@@ -349,11 +360,131 @@ export class AutomationRepository {
   /** 返回等待执行或需要启动恢复的非终态运行，按入队顺序排列。 */
   listActiveRunSnapshots(): AutomationRunSnapshot[] {
     return this.database.all<AutomationRunRow & { snapshot_json: string }>(
-      `SELECT id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
-        workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
-        queued_at, started_at, ended_at, revision, sync_state FROM automation_runs
+      `SELECT ${RUN_COLUMNS}, snapshot_json FROM automation_runs
        WHERE state IN ('queued', 'running') ORDER BY queued_at ASC, id ASC`,
     ).map((row) => ({ run: runFromRow(row), definition: parseStoredAutomationDefinition(row.snapshot_json) }));
+  }
+
+  /**
+   * 返回同一实体（如某个 PR）当前的非终态运行，用于设备端的防抖合并判断。
+   * TIPS: 这是事件触发专属的非重叠检查，粒度是 (automation_id, entity_ref)，不是
+   * `hasActiveRun` 那种按 automation_id 全局的检查——不同 PR 之间允许并行。
+   */
+  getActiveEntityRun(automationId: string, entityRef: string): AutomationRun | null {
+    const row = this.database.get<AutomationRunRow>(
+      `SELECT ${RUN_COLUMNS} FROM automation_runs
+       WHERE automation_id = ? AND entity_ref = ? AND state IN ('queued', 'running') LIMIT 1`,
+      [automationId, entityRef],
+    );
+    return row ? runFromRow(row) : null;
+  }
+
+  /**
+   * 认领一次事件触发的执行，或者在同一实体已有非终态运行时合并进去（防抖）。
+   * TIPS: 合并只增加 `mergedEventCount`，不新建行、不重新分发——真正决定"要不要发一轮新
+   * prompt"的是执行侧（见 executor 的会话复用逻辑），这里只负责数据库层面的去重与计数。
+   */
+  claimEventRun(input: {
+    automationId: string;
+    definitionRevision: number;
+    runId: string;
+    entityRef: string;
+    sourceDeliveryId: string;
+    now: number;
+  }): { run: AutomationRun; merged: boolean } {
+    return this.database.transaction(() => {
+      const record = ensureRunnableRecord(this.getDefinition(input.automationId, true), input.definitionRevision);
+      const definition = record.definition;
+      const existing = this.getActiveEntityRun(definition.id, input.entityRef);
+      if (existing) {
+        const mergedEventCount = (existing.eventMetadata?.mergedEventCount ?? 0) + 1;
+        const nextMeta = { ...existing.eventMetadata, entityRef: input.entityRef, mergedEventCount };
+        this.database.run(
+          "UPDATE automation_runs SET event_metadata_json = ?, updated_at = ? WHERE id = ?",
+          [JSON.stringify(nextMeta), input.now, existing.id],
+        );
+        return { run: { ...existing, eventMetadata: nextMeta }, merged: true };
+      }
+      const run = newRun(definition, input.runId, "event", input.now, input.now, undefined, {
+        entityRef: input.entityRef,
+        eventMetadata: { entityRef: input.entityRef, sourceDeliveryId: input.sourceDeliveryId },
+      });
+      this.insertRun(run, definition);
+      return { run, merged: false };
+    });
+  }
+
+  /** 记录一条不产生真实运行的事件跳过记录（限流或离线补投丢弃），见桌面 PRD 4.5/4.7。 */
+  recordSkippedEventRun(input: {
+    automationId: string;
+    definitionRevision: number;
+    runId: string;
+    entityRef?: string;
+    errorCode: "rate_limited" | "event_backlog_dropped";
+    eventMetadata?: AutomationRun["eventMetadata"];
+    now: number;
+  }): AutomationRun {
+    return this.database.transaction(() => {
+      const record = ensureRunnableRecord(this.getDefinition(input.automationId, true), input.definitionRevision);
+      const definition = record.definition;
+      const run = newRun(definition, input.runId, "event", input.now, input.now, {
+        state: "skipped",
+        errorCode: input.errorCode,
+        endedAt: input.now,
+      }, { entityRef: input.entityRef, eventMetadata: input.eventMetadata });
+      this.insertRun(run, definition);
+      return run;
+    });
+  }
+
+  /** 读取某个 (automation_id, entity_ref) 的当前会话归属记录；不存在或未曾建立时返回 null。 */
+  getEntitySessionMapping(automationId: string, entityRef: string): EntitySessionMapping | null {
+    const row = this.database.get<{
+      automation_id: string; entity_ref: string; workspace_id: string; session_id: string;
+      status: "active" | "closed" | "invalid"; invalid_reason: string | null; created_at: number; last_used_at: number;
+    }>(
+      "SELECT automation_id, entity_ref, workspace_id, session_id, status, invalid_reason, created_at, last_used_at FROM automation_entity_sessions WHERE automation_id = ? AND entity_ref = ?",
+      [automationId, entityRef],
+    );
+    if (!row) return null;
+    return {
+      automationId: row.automation_id,
+      entityRef: row.entity_ref,
+      workspaceId: row.workspace_id,
+      sessionId: row.session_id,
+      status: row.status,
+      ...(row.invalid_reason ? { invalidReason: row.invalid_reason } : {}),
+      createdAt: row.created_at,
+      lastUsedAt: row.last_used_at,
+    };
+  }
+
+  /** 创建或更新一个 (automation_id, entity_ref) 的会话归属记录，标记为 active。 */
+  upsertEntitySessionMapping(automationId: string, entityRef: string, workspaceId: string, sessionId: string, now: number): void {
+    this.database.run(
+      `INSERT INTO automation_entity_sessions(automation_id, entity_ref, workspace_id, session_id, status, invalid_reason, created_at, last_used_at)
+       VALUES (?, ?, ?, ?, 'active', NULL, ?, ?)
+       ON CONFLICT(automation_id, entity_ref) DO UPDATE SET
+         workspace_id = excluded.workspace_id, session_id = excluded.session_id,
+         status = 'active', invalid_reason = NULL, last_used_at = excluded.last_used_at`,
+      [automationId, entityRef, workspaceId, sessionId, now, now],
+    );
+  }
+
+  /** 标记归属记录为已结束生命周期（合并/关闭），后续重新打开该实体会建立新的归属记录。 */
+  closeEntitySessionMapping(automationId: string, entityRef: string, now: number): void {
+    this.database.run(
+      "UPDATE automation_entity_sessions SET status = 'closed', last_used_at = ? WHERE automation_id = ? AND entity_ref = ?",
+      [now, automationId, entityRef],
+    );
+  }
+
+  /** 标记归属记录因上游连接器/仓库被收回而失效，区别于"已正常结束"。 */
+  invalidateEntitySessionMapping(automationId: string, entityRef: string, reason: string, now: number): void {
+    this.database.run(
+      "UPDATE automation_entity_sessions SET status = 'invalid', invalid_reason = ?, last_used_at = ? WHERE automation_id = ? AND entity_ref = ?",
+      [reason, now, automationId, entityRef],
+    );
   }
 
   /** 更新运行状态并在同一事务写入同步 outbox。 */
@@ -489,8 +620,8 @@ export class AutomationRepository {
         `INSERT INTO automation_runs(
           id, automation_id, automation_name, definition_revision, trigger_source, state, scheduled_for,
           workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
-          queued_at, started_at, ended_at, revision, sync_state, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?)`,
+          queued_at, started_at, ended_at, revision, sync_state, entity_ref, event_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?, ?)`,
         [
           run.id,
           run.automationId,
@@ -510,6 +641,8 @@ export class AutomationRepository {
           run.startedAt ?? null,
           run.endedAt ?? null,
           run.revision,
+          run.eventMetadata?.entityRef ?? null,
+          run.eventMetadata ? JSON.stringify(run.eventMetadata) : null,
           run.queuedAt,
           run.queuedAt,
         ],
@@ -602,6 +735,7 @@ function runFromRow(row: AutomationRunRow): AutomationRun {
     ...(row.error_message ? { errorMessage: row.error_message } : {}),
     revision: row.revision,
     syncState: row.sync_state,
+    ...(row.event_metadata_json ? { eventMetadata: JSON.parse(row.event_metadata_json) as AutomationRun["eventMetadata"] } : {}),
   };
 }
 
@@ -611,7 +745,8 @@ function newRun(
   triggerSource: AutomationRun["triggerSource"],
   scheduledFor: number,
   now: number,
-  terminal?: { state: "skipped"; errorCode: "overlap_blocked" | "missed_deadline"; endedAt: number },
+  terminal?: { state: "skipped"; errorCode: "overlap_blocked" | "missed_deadline" | "rate_limited" | "event_backlog_dropped"; endedAt: number },
+  event?: { entityRef?: string; eventMetadata?: AutomationRun["eventMetadata"] },
 ): AutomationRun {
   return {
     schema: AUTOMATION_RUN_SCHEMA,
@@ -629,6 +764,9 @@ function newRun(
     connectorIds: definition.connectors.map((connector) => connector.id),
     revision: 1,
     syncState: "synced",
+    ...(event?.eventMetadata || event?.entityRef
+      ? { eventMetadata: { ...event.eventMetadata, ...(event.entityRef ? { entityRef: event.entityRef } : {}) } }
+      : {}),
   };
 }
 

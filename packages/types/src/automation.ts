@@ -276,6 +276,20 @@ export type AutomationRun = {
   errorMessage?: string;
   revision: number;
   syncState: AutomationSyncState;
+  /**
+   * 事件触发运行的展示态元数据；只有 `triggerSource === "event"` 时才有意义。
+   * TIPS: `entityRef` 命名空间约定为 `${provider}:${resourceType}:${id}`（如 `github:pull_request:482`）。
+   */
+  eventMetadata?: {
+    entityRef?: string;
+    sourceDeliveryId?: string;
+    /** 防抖窗口内被合并掉的事件数量，见桌面 PRD 4.4。 */
+    mergedEventCount?: number;
+    /** 归属会话不可解析、已回退新建会话时置真，见桌面 PRD 4.8 exception。 */
+    previousSessionUnavailable?: boolean;
+    /** 离线补投丢弃的事件数量与覆盖时间范围，见桌面 PRD 4.5。 */
+    backlogDropped?: { count: number; sinceAt: number; untilAt: number };
+  };
 };
 
 export type AutomationProjection = {
