@@ -80,7 +80,7 @@ test("automation migrations preserve an existing populated runtime database and 
   const reopenedDatabase = automationSqliteAdapter(reopenedRuntime);
   try {
     migrateAutomationDatabase(reopenedDatabase, NOW + 1);
-    assert.equal(automationDatabaseVersion(reopenedDatabase), 3);
+    assert.equal(automationDatabaseVersion(reopenedDatabase), 4);
     assert.equal(reopenedDatabase.get<{ value: string }>("SELECT value FROM existing_runtime_records WHERE id = ?", ["legacy-1"])?.value, "preserved");
   } finally {
     reopenedDatabase.close();
@@ -95,7 +95,7 @@ test("migration replay, revisions, pagination and local-only persistence are ato
   try {
     migrateAutomationDatabase(database, NOW);
     migrateAutomationDatabase(database, NOW + 1);
-    assert.equal(automationDatabaseVersion(database), 3);
+    assert.equal(automationDatabaseVersion(database), 4);
     const repository = AutomationRepository.fromDatabase(database);
     const first = definition("task-1", "任务一", 1, NOW);
     const second = definition("task-2", "任务二", 1, NOW + 1);

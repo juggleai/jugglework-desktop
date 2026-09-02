@@ -282,7 +282,9 @@ describe("Event-trigger editor (add-event-triggered-automation tasks 2.1-2.6)", 
     expect(page).toMatch(/<TriggerKindSelector[\s\S]{0,400}onRequestChange=/);
     expect(page).toMatch(/hasEventDraft = eventTrigger\.repository\.owner \|\| eventTrigger\.matches\.length/);
     expect(page).toMatch(/setPendingTriggerKind\(next\)/);
-    expect(page).toMatch(/triggerKind === "event" \? \(\s*<EventTriggerEditor/);
+    expect(page).toMatch(/triggerKind === "event" \? \(\s*<>\s*<EventTriggerEditor/);
+    // TIPS:影子模式（任务 5.3）只在事件触发分支里出现，跟 EventTriggerEditor 包在同一个 fragment 里。
+    expect(page).toMatch(/checked={lifecycle === "shadow"}/);
     // TIPS:公开仓库权限升级需要一次独立确认，不能一步选中——这里断言升级动作被路由到
     // EventTriggerEditor 自己的确认弹窗，而不是编辑器顶层已有的「完整访问权限」弹窗。
     expect(page).toMatch(/onPermissionEscalationConfirmed=\{\(\) => setPermission\(AUTOMATION_PERMISSION_PROFILE\)\}/);

@@ -488,6 +488,83 @@ test("event-triggered execution fails preflight with connector_unavailable when 
   }
 });
 
+test("shadow lifecycle runs preflight but never creates a session or dispatches a prompt", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), lifecycle: "shadow" as const };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-shadow",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  let createCalls = 0;
+  let promptCalls = 0;
+  const opencode = {
+    session: {
+      create: async () => { createCalls += 1; return { data: { id: "session-should-not-exist" } }; },
+      promptAsync: async () => { promptCalls += 1; return { data: true, error: undefined }; },
+      get: async () => ({ data: undefined }),
+      status: async () => ({ data: {} }),
+      messages: async () => ({ data: [] }),
+    },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:482", extraPromptParts: [{ type: "text", text: "delta" }] });
+    const completed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(completed.state, "skipped");
+    assert.equal(completed.sessionId, undefined);
+    assert.equal(createCalls, 0);
+    assert.equal(promptCalls, 0);
+    assert.equal(completed.eventMetadata?.shadowPreview?.promptPartCount, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("shadow lifecycle still fails preflight normally when a dependency is unavailable", async () => {
+  const fixture = await repositoryFixture();
+  const definition = {
+    ...eventAutomationDefinition(),
+    lifecycle: "shadow" as const,
+    agentId: "missing-agent",
+  };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-shadow-fail",
+    entityRef: "github:pull_request:1", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const opencode = {
+    session: { create: async () => ({ data: { id: "unused" } }), promptAsync: async () => ({ data: true, error: undefined }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:1", extraPromptParts: [] });
+    const failed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.errorCode, "agent_unavailable");
+  } finally {
+    await fixture.close();
+  }
+});
+
 function eventAutomationDefinition(): AutomationDefinition {
   return {
     ...automationDefinition(),

@@ -675,6 +675,7 @@ function TaskRow({ record, busy, selecting, selected, onToggleSelected, onOpen, 
 function taskTimingLabel(record: AutomationDefinitionRecord, now: number): string {
   const task = record.definition;
   if (task.lifecycle === "paused") return t("automation.state_paused");
+  if (task.lifecycle === "shadow") return t("automation.state_shadow");
   if (task.lifecycle === "completed") return t("automation.state_completed");
   if (!task.nextRunAt) return t("automation.no_next_run");
   if (task.nextRunAt - now < 60_000) return t("automation.runs_soon");
@@ -907,7 +908,7 @@ function AutomationEditor(props: {
   const [model, setModel] = useState<AutomationModelSelection>({ mode: "auto" });
   const [modelTouched, setModelTouched] = useState(false);
   const [agentId, setAgentId] = useState("");
-  const [lifecycle, setLifecycle] = useState<"enabled" | "paused">("enabled");
+  const [lifecycle, setLifecycle] = useState<"enabled" | "paused" | "shadow">("enabled");
   const [permission, setPermission] = useState<AutomationPermissionProfile>(AUTOMATION_PERMISSION_PROFILE);
   const [permissionOpen, setPermissionOpen] = useState(false);
   const [riskAccepted, setRiskAccepted] = useState(false);
@@ -946,7 +947,7 @@ function AutomationEditor(props: {
       setModel(definition.model);
       setAgentId(definition.agentId ?? "");
       setPermission(isAutomationPermissionProfile(definition.permission.profile) ? definition.permission.profile : AUTOMATION_PERMISSION_PROFILE);
-      setLifecycle(definition.lifecycle === "paused" ? "paused" : "enabled");
+      setLifecycle(definition.lifecycle === "paused" ? "paused" : definition.lifecycle === "shadow" ? "shadow" : "enabled");
     }).catch((loadError) => setError(describeError(loadError))).finally(() => setLoading(false));
   }, [props.automationId, props.client]);
 
@@ -1254,13 +1255,26 @@ function AutomationEditor(props: {
               />
             ) : null}
             {triggerKind === "event" ? (
-              <EventTriggerEditor
-                value={eventTrigger}
-                onChange={setEventTrigger}
-                client={githubEventClient}
-                permission={permission}
-                onPermissionEscalationConfirmed={() => setPermission(AUTOMATION_PERMISSION_PROFILE)}
-              />
+              <>
+                <EventTriggerEditor
+                  value={eventTrigger}
+                  onChange={setEventTrigger}
+                  client={githubEventClient}
+                  permission={permission}
+                  onPermissionEscalationConfirmed={() => setPermission(AUTOMATION_PERMISSION_PROFILE)}
+                />
+                {/* TIPS:影子模式（任务 5.3）只对事件触发有意义——上线前先观察"会不会触发、
+                    触发了会做什么"，不真正创建会话或写回 GitHub，见 executor.ts executeShadow()。 */}
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={lifecycle === "shadow"}
+                    onChange={(event) => setLifecycle(event.target.checked ? "shadow" : "enabled")}
+                  />
+                  {t("automation.shadow_mode")}
+                  <span className="text-xs text-dls-secondary">{t("automation.shadow_mode_hint")}</span>
+                </label>
+              </>
             ) : (
               <>
                 <ScheduleEditor
@@ -2530,7 +2544,7 @@ function editorFingerprint(value: {
   model: AutomationModelSelection;
   agentId: string;
   skillIds: string[];
-  lifecycle: "enabled" | "paused";
+  lifecycle: "enabled" | "paused" | "shadow";
   permission: AutomationPermissionProfile;
 }): string {
   return JSON.stringify(value);

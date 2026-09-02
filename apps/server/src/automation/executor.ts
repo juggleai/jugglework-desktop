@@ -61,6 +61,15 @@ export class AutomationExecutor {
       const definition = snapshot.definition;
       const unattended = definition.permission.profile === AUTOMATION_PERMISSION_PROFILE;
 
+      // TIPS:影子模式（任务 5.3）走完 preflight（model/agent/skill/写回授权校验都照常执行，
+      // 好让用户在真正上线前就能看到会不会因为依赖不可用而失败），但绝不创建会话、绝不分发
+      // prompt——`resolveConnectorToolAllowlist` 里的 MCP 状态检查除外，那需要一个真实会话
+      // 才能查，影子模式下跳过，不把"还没有会话"误判成"连接器不可用"。
+      if (definition.lifecycle === "shadow") {
+        await this.executeShadow(snapshot, workspace, opencode, eventContext);
+        return;
+      }
+
       const resolved = await this.resolveSessionId(definition, workspace, opencode, current, eventContext);
       current = this.options.repository.updateRun(current.id, current.revision, {
         sessionId: resolved.sessionId,
@@ -108,6 +117,45 @@ export class AutomationExecutor {
       await this.waitForTerminalEvent(opencode, current.sessionId!);
       if (this.disposed) throw failure("session_lost", "客户端退出，自动化会话已停止跟踪");
       await this.completeFromSession(opencode, current);
+    } catch (error) {
+      const latest = this.options.repository.getRun(current.id);
+      if (!latest || isTerminal(latest.state)) return;
+      const normalized = normalizeFailure(error);
+      this.options.repository.updateRun(latest.id, latest.revision, {
+        state: "failed",
+        endedAt: this.now(),
+        errorCode: normalized.code,
+        errorMessage: normalized.message,
+      }, this.now());
+    }
+  }
+
+  /**
+   * 影子模式的执行路径：preflight 照常跑（校验依赖是否可用），但不创建会话、不分发 prompt，
+   * 只记录"这一轮本来会做什么"。
+   * TIPS: 用 `skipped` 终态而不是 `succeeded`——影子运行不是"成功执行了"，是"没有真的执行"，
+   * 两者语义不同，不能让影子运行在运行记录里跟真实成功的运行混在一起看不出区别。
+   */
+  private async executeShadow(
+    snapshot: AutomationRunSnapshot,
+    workspace: WorkspaceInfo,
+    opencode: WorkspaceOpencodeClient,
+    eventContext?: AutomationEventExecutionContext,
+  ): Promise<void> {
+    let current = snapshot.run;
+    try {
+      await this.preflight(snapshot, workspace, opencode);
+      const wouldReuseSessionId = eventContext
+        ? this.options.repository.getEntitySessionMapping(snapshot.definition.id, eventContext.entityRef)?.sessionId
+        : undefined;
+      const promptPartCount = snapshot.definition.prompt.parts.length + (eventContext?.extraPromptParts.length ?? 0);
+      const latest = this.options.repository.getRun(current.id);
+      if (!latest || isTerminal(latest.state)) return;
+      this.options.repository.updateRun(latest.id, latest.revision, {
+        state: "skipped",
+        endedAt: this.now(),
+        eventMetadata: { shadowPreview: { ...(wouldReuseSessionId ? { wouldReuseSessionId } : {}), promptPartCount } },
+      }, this.now());
     } catch (error) {
       const latest = this.options.repository.getRun(current.id);
       if (!latest || isTerminal(latest.state)) return;

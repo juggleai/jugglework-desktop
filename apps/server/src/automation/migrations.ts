@@ -207,6 +207,50 @@ const migrations: AutomationMigration[] = [
       )`,
     ],
   },
+  {
+    version: 4,
+    statements: [
+      // TIPS: 同样的 CHECK 约束改不了的问题，这次在 automation_tasks 上——v1 的
+      // CHECK (lifecycle IN ('enabled','paused','completed','tombstoned')) 没有 'shadow'。
+      // 跟 v3 处理 automation_runs 一样，整表重建，其余列/索引原样保留。
+      `CREATE TABLE automation_tasks_rebuild (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        workspace_name TEXT NOT NULL,
+        definition_schema TEXT NOT NULL,
+        definition_json TEXT NOT NULL,
+        raw_document_json TEXT NOT NULL,
+        compatibility_state TEXT NOT NULL DEFAULT 'compatible',
+        lifecycle TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        executor_device_id TEXT NOT NULL,
+        next_run_at INTEGER,
+        timezone TEXT NOT NULL,
+        active_start_date TEXT,
+        active_end_date TEXT,
+        permission_profile_version TEXT NOT NULL,
+        permission_acknowledged_at INTEGER NOT NULL,
+        sync_state TEXT NOT NULL DEFAULT 'pending',
+        sync_error_code TEXT,
+        deleted_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (revision > 0),
+        CHECK (lifecycle IN ('enabled', 'paused', 'shadow', 'completed', 'tombstoned')),
+        CHECK (compatibility_state IN ('compatible', 'incompatible-read-only')),
+        CHECK (sync_state IN ('pending', 'synced', 'error', 'incompatible-read-only')),
+        CHECK ((active_start_date IS NULL AND active_end_date IS NULL) OR (active_start_date IS NOT NULL AND active_end_date IS NOT NULL))
+      )`,
+      `INSERT INTO automation_tasks_rebuild SELECT * FROM automation_tasks`,
+      "DROP TABLE automation_tasks",
+      "ALTER TABLE automation_tasks_rebuild RENAME TO automation_tasks",
+      `CREATE INDEX IF NOT EXISTS idx_automation_tasks_list
+        ON automation_tasks(deleted_at, lifecycle, next_run_at, updated_at DESC, id DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_tasks_workspace
+        ON automation_tasks(workspace_id, deleted_at, updated_at DESC)`,
+    ],
+  },
 ];
 
 /** 按版本顺序执行自动化模块的前向 SQLite 迁移。 */

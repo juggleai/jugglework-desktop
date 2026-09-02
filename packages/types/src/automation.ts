@@ -26,7 +26,11 @@ export function isAutomationPermissionProfile(value: unknown): value is Automati
 
 export type AutomationCompatibility = "compatible" | "incompatible-read-only";
 export type AutomationSyncState = "pending" | "synced" | "error" | "incompatible-read-only";
-export type AutomationLifecycle = "enabled" | "paused" | "completed" | "tombstoned";
+/**
+ * `shadow` 只对事件触发有意义：完整跑通防抖/过滤/preflight 校验，但不真正创建会话或分发 prompt，
+ * 只记录"这一次本来会做什么"，用于上线前观察（见桌面 PRD 任务 5.3）。
+ */
+export type AutomationLifecycle = "enabled" | "paused" | "shadow" | "completed" | "tombstoned";
 export type AutomationTriggerSource = "scheduled" | "catchup" | "manual" | "event";
 export type AutomationRunState = "queued" | "running" | "succeeded" | "failed" | "skipped" | "cancelled";
 
@@ -240,7 +244,7 @@ export type AutomationDraft = {
   skillIds: string[];
   connectors: AutomationConnectorSelection[];
   permission?: AutomationPermissionAcknowledgement;
-  lifecycle: "enabled" | "paused";
+  lifecycle: "enabled" | "paused" | "shadow";
   executorDeviceId: string;
   extensions?: Record<string, unknown>;
 };
@@ -297,6 +301,8 @@ export type AutomationRun = {
      * "会话现在 idle" 解读成"这一轮正常跑完"，否则必须当成"崩溃在分发前"处理。
      */
     dispatched?: boolean;
+    /** `lifecycle === "shadow"` 时，本该分发但被跳过的 prompt 摘要，见桌面 PRD 任务 5.3。 */
+    shadowPreview?: { wouldReuseSessionId?: string; promptPartCount: number };
   };
 };
 

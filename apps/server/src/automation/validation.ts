@@ -78,7 +78,7 @@ export function automationDraftFromUnknown(value: unknown, executorDeviceId: str
     skillIds: Array.isArray(value.skillIds) ? value.skillIds as string[] : defaults.skillIds,
     connectors: Array.isArray(value.connectors) ? value.connectors as AutomationDraft["connectors"] : defaults.connectors,
     ...(isRecord(value.permission) ? { permission: value.permission as AutomationDraft["permission"] } : {}),
-    lifecycle: value.lifecycle === "paused" ? "paused" : "enabled",
+    lifecycle: value.lifecycle === "paused" ? "paused" : value.lifecycle === "shadow" ? "shadow" : "enabled",
     executorDeviceId: typeof value.executorDeviceId === "string" ? value.executorDeviceId : executorDeviceId,
     ...(isRecord(value.extensions) ? { extensions: value.extensions } : {}),
   };
@@ -165,7 +165,7 @@ export function validateAutomationDraft(
     skillIds,
     connectors,
     permission: draft.permission,
-    lifecycle: draft.lifecycle === "paused" ? "paused" : "enabled",
+    lifecycle: normalizeLifecycle(draft.lifecycle, trigger),
     executorDeviceId: draft.executorDeviceId.trim(),
     revision: identity.revision,
     nextRunAt: draft.lifecycle === "paused" ? null : nextRunAt,
@@ -499,6 +499,18 @@ function preserveUnknownObject(raw: unknown, current: object, known: Set<string>
     ? Object.fromEntries(Object.entries(raw).filter(([key]) => !known.has(key)))
     : {};
   return { ...unknown, ...current };
+}
+
+/**
+ * 归一化生命周期状态。
+ * TIPS: `shadow` 只对事件触发有意义（见 AutomationLifecycle 的类型注释）——定时触发选了
+ * `shadow` 直接按 `enabled` 处理，不单独报错，因为"影子模式"这个概念对定时任务没有实际
+ * 含义（没有外部输入可以拿来"预演"），静默降级比强行报错更符合这个字段本来的定位。
+ */
+function normalizeLifecycle(lifecycle: AutomationDraft["lifecycle"], trigger: AutomationDefinition["trigger"]): AutomationDefinition["lifecycle"] {
+  if (lifecycle === "paused") return "paused";
+  if (lifecycle === "shadow" && trigger.kind === "event") return "shadow";
+  return "enabled";
 }
 
 function isPositiveInteger(value: unknown): value is number {
