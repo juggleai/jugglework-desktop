@@ -2843,6 +2843,7 @@ export default {
   "automation.event_type.pr_review_comment": "收到 PR 行级评论",
   "automation.event_type.issue_opened": "Issue 打开",
   "automation.event_type.issue_new_comment": "Issue 有新评论",
+  "automation.event_type.release_published": "发布新版本",
   "automation.event_advanced_filters": "高级筛选",
   "automation.event_filters_common": "通用过滤",
   "automation.event_filters_github": "GitHub 专属过滤",

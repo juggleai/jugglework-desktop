@@ -47,6 +47,9 @@ const EVENT_TYPE_STORIES: Array<{ event: AutomationGithubEventType; labelKey: st
   { event: "pull_request_review_comment", labelKey: "automation.event_type.pr_review_comment" },
   { event: "issues", labelKey: "automation.event_type.issue_opened" },
   { event: "issue_comment", labelKey: "automation.event_type.issue_new_comment" },
+  // TIPS:P2（任务 7.1）——类型/校验早就支持 release，这里补齐勾选矩阵条目。跟其它事件类型一样，
+  // 实际生效依赖服务端的事件中继能力（尚未实现），不是这一条本身有什么特殊前置条件。
+  { event: "release", labelKey: "automation.event_type.release_published" },
 ];
 
 export function defaultEventTrigger(connectorId: string, repo?: GithubRepositoryOption): AutomationEventTrigger {

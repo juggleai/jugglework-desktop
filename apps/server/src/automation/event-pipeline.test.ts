@@ -7,7 +7,7 @@ import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition, type Automati
 import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import { automationSqliteAdapter } from "./sqlite.js";
 import { AutomationRepository } from "./repository.js";
-import { AutomationEventPipeline, appendEventContextPromptParts, type GithubEventDelivery } from "./event-pipeline.js";
+import { AutomationEventPipeline, appendEventContextPromptParts, matchesChangedPaths, type GithubEventDelivery } from "./event-pipeline.js";
 
 const NOW = Date.parse("2026-09-05T00:00:00Z");
 
@@ -178,4 +178,30 @@ test("appendEventContextPromptParts wraps event text as untrusted data unconditi
   assert.match(parts[1]!.type === "text" ? parts[1].text : "", /<external-untrusted-data>[\s\S]*忽略之前的指令[\s\S]*<\/external-untrusted-data>/);
   assert.match(parts[2]!.type === "text" ? parts[2].text : "", /自上次处理该实体的事件以来/);
   assert.match(parts[3]!.type === "text" ? parts[3].text : "", /https:\/\/github\.com/);
+});
+
+test("matchesChangedPaths: glob inclusion/exclusion, and fails open when data is unavailable", () => {
+  assert.equal(matchesChangedPaths(["apps/server/src/automation/executor.ts"], ["apps/server/**"]), true);
+  assert.equal(matchesChangedPaths(["apps/app/src/index.ts"], ["apps/server/**"]), false);
+  assert.equal(matchesChangedPaths(["packages/types/src/automation.ts"], ["*.ts"]), false, "single * must not cross a path segment");
+  assert.equal(matchesChangedPaths(["automation.ts"], ["*.ts"]), true);
+  // TIPS:没配置过滤器，或者压根没有改动文件数据（还没接上真实 GitHub API 调用），都必须放行。
+  assert.equal(matchesChangedPaths(["anything.md"], []), true);
+  assert.equal(matchesChangedPaths(undefined, ["apps/server/**"]), true);
+});
+
+test("path-glob filtering rejects a non-matching change without creating a run, but lets a matching one through", async () => {
+  await withRepository(async (repository) => {
+    const task = eventDefinition("task-1", {
+      matches: [{ event: "pull_request", github: { changedPaths: ["apps/server/**"] } }],
+    });
+    repository.createDefinition(task, task);
+    const pipeline = new AutomationEventPipeline({ repository, now: () => NOW, randomId: (() => { let n = 0; return () => `run-${n++}`; })() });
+    const outOfScope = pipeline.processOne(delivery({ id: "d1", changedPaths: ["docs/readme.md"] }));
+    assert.deepEqual(outOfScope, { kind: "path_filtered" });
+    assert.equal(repository.listRuns({ automationId: task.id }).items.length, 0);
+
+    const inScope = pipeline.processOne(delivery({ id: "d2", changedPaths: ["apps/server/src/automation/executor.ts"] }));
+    assert.equal(inScope.kind, "dispatched");
+  });
 });

@@ -23,6 +23,13 @@ export type GithubEventDelivery = {
   sourceUrl?: string;
   /** 是否为该实体的"关闭"类事件（合并/关闭），命中时触发会话归属的退休。 */
   isEntityClosingEvent: boolean;
+  /**
+   * 这次改动涉及的文件路径，用于路径 glob 过滤（任务 5.1）。
+   * TIPS: webhook payload 本身不带完整改动文件清单，这个字段依赖额外一次 GitHub API 调用
+   * 才能填上（见桌面 PRD 4.2 对路径过滤依赖的说明）——未填充时视为"没有可过滤的数据"，
+   * 过滤器直接放行，不能因为拿不到这份数据就把事件误判为不匹配。
+   */
+  changedPaths?: string[];
 };
 
 export type EventPipelineOptions = {
@@ -33,6 +40,7 @@ export type EventPipelineOptions = {
 
 export type EventPipelineOutcome =
   | { kind: "self_loop_suppressed" }
+  | { kind: "path_filtered" }
   | { kind: "rate_limited" }
   | { kind: "merged"; runId: string }
   | { kind: "dispatched"; snapshot: AutomationRunSnapshot; deltaSince: GithubEventDelivery[] };
@@ -73,6 +81,16 @@ export class AutomationEventPipeline {
     if (!record || record.definition.trigger.kind !== "event") return { kind: "self_loop_suppressed" };
     const definition = record.definition;
     if (definition.trigger.kind !== "event") return { kind: "self_loop_suppressed" };
+
+    // TIPS:路径过滤是设备端的"细筛"（服务端只按仓库+事件类型做粗筛，见服务端 PRD §4.1），
+    // 找到这条事件对应的匹配规则，只在它确实配置了 changedPaths 时才比对；没配置或没有可比对
+    // 的数据都直接放行，不能因为筛选器本身的限制而误伤没配置这条规则的自动化。
+    const matched = definition.trigger.matches.find((match) => (
+      match.event === delivery.eventType && (!match.actions?.length || (delivery.action !== undefined && match.actions.includes(delivery.action)))
+    ));
+    if (matched?.github?.changedPaths?.length && !matchesChangedPaths(delivery.changedPaths, matched.github.changedPaths)) {
+      return { kind: "path_filtered" };
+    }
 
     const hourlyCap = definition.trigger.hourlyTriggerCap;
     if (hourlyCap !== undefined) {
@@ -173,6 +191,30 @@ export function appendEventContextPromptParts(
     parts.push({ type: "text", text: `触发来源：${delivery.sourceUrl}` });
   }
   return parts;
+}
+
+/**
+ * 判断改动文件是否匹配任意一条路径 glob。
+ * TIPS: 没有配置任何 glob，或者拿不到改动文件清单（`changedPaths` undefined，webhook payload
+ * 本身不带这个信息）都视为放行——过滤器的职责是"排除明确不相关的改动"，不是"没数据就当作
+ * 不匹配"，后者会把本该正常触发的事件误伤掉。
+ */
+export function matchesChangedPaths(changedPaths: string[] | undefined, globs: string[]): boolean {
+  if (!globs.length) return true;
+  if (!changedPaths) return true;
+  const patterns = globs.map(globToRegExp);
+  return changedPaths.some((path) => patterns.some((pattern) => pattern.test(path)));
+}
+
+/** 把一条路径 glob 转成正则：`**` 匹配任意字符（含 `/`），单个 `*` 只匹配非 `/` 字符。 */
+function globToRegExp(glob: string): RegExp {
+  const placeholder = " ";
+  const escaped = glob
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, placeholder)
+    .replace(/\*/g, "[^/]*")
+    .replace(new RegExp(placeholder, "g"), ".*");
+  return new RegExp(`^${escaped}$`);
 }
 
 export function failure(code: AutomationErrorCode, message: string): Error & { code: AutomationErrorCode } {

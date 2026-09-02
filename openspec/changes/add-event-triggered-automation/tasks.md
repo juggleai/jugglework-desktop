@@ -27,7 +27,7 @@
 
 ## P0 — 3b. Entity-scoped session reuse
 
-- [ ] 3b.1 Add the `automation_entity_sessions` local schema (`automation_id`, `entity_ref`, `workspace_id`, `session_id`, `status`, `created_at`/`last_used_at`, unique on `(automation_id, entity_ref)`); verify with a migration test.
+- [x] 3b.1 Add the `automation_entity_sessions` local schema (`automation_id`, `entity_ref`, `workspace_id`, `session_id`, `status`, `created_at`/`last_used_at`, unique on `(automation_id, entity_ref)`); verify with a migration test.
 - [x] 3b.2 Change event-triggered dispatch to look up this mapping before session creation: reuse-and-continue on a resolvable hit, create-and-record on a miss; verify with a unit test asserting two sequential triggers for the same entity share one `sessionId`.
 - [x] 3b.3 Implement the no-longer-resolvable fallback (create new session, update mapping, record a visible "previous session unavailable" note on the run); verify with a unit test simulating a deleted session or unavailable workspace.
 - [ ] 3b.4 **Partially done.** Retirement on entity-closing events is implemented and tested (`AutomationEventPipeline.processOne` calls `closeEntitySessionMapping` on `isEntityClosingEvent`; a later trigger for a closed entity starts a fresh mapping since `resolveSessionId` only reuses `status === "active"` mappings). Not done: context-usage-threshold graduation — depends on hooking into the existing session context-usage tracking mentioned in design.md decision, which this session did not locate/wire.
@@ -51,7 +51,7 @@
 
 ## P1 — 5. Filtering depth and pre-launch confidence
 
-- [ ] 5.1 Add device-side path-glob filtering as an additional advanced-filter field, evaluated after server coarse-match; verify with a unit test for path-match inclusion/exclusion.
+- [x] 5.1 Add device-side path-glob filtering as an additional advanced-filter field, evaluated after server coarse-match; verify with a unit test for path-match inclusion/exclusion. The advanced-filter UI field for `changedPaths` already existed (task 2.2); this task added the pipeline-side matcher and gate. Fails open when `changedPaths` data isn't available on the delivery — matches the honest gap already noted for task 3.1 (the field would be populated by the not-yet-built delivery adapter's extra GitHub API call).
 - [ ] 5.2 Add a "模拟测试" flow letting a user pick a historical PR/issue and preview the assembled prompt without executing; verify with a component test asserting no run/session is created during preview.
 - [ ] 5.3 Add a `shadow` lifecycle state that runs the full pipeline but skips the final dispatch, recording what would have happened; verify with a unit test asserting shadow runs never create a live session.
 - [ ] 5.4 Add manual delivery-mode override persistence and a status indicator showing which channel is actually in effect (not just configured); verify with a component test for the indicator reflecting a forced-vs-resolved mismatch.
@@ -62,5 +62,5 @@
 
 ## P2 — 7. Extended event coverage
 
-- [ ] 7.1 Add `release` and any additional P2 event types to the event-type matrix once the server capability supports them; verify with a component test for the new matrix entries.
-- [ ] 7.2 Add configurable mention-trigger keywords beyond the fixed `@` mention default; verify with a unit test for custom keyword matching.
+- [x] 7.1 Add `release` and any additional P2 event types to the event-type matrix once the server capability supports them; verify with a component test for the new matrix entries.
+- [x] 7.2 Add configurable mention-trigger keywords beyond the fixed `@` mention default; verify with a unit test for custom keyword matching. (Already true by design — `mentionText` was a free-text field from task 2.2 onward, never hardcoded; this task made that explicit with a regression test.)

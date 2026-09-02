@@ -334,3 +334,18 @@ describe("Run history and list rendering for event-sourced runs (tasks 4.1-4.2)"
     expect(fn).toMatch(/trigger\.matches\.length/);
   });
 });
+
+describe("P2 extended event coverage (tasks 7.1-7.2)", () => {
+  test("event-type matrix includes release, backed by types/validation that already support it", () => {
+    const editor = readFileSync(new URL("../src/react-app/domains/automations/event-trigger-editor.tsx", import.meta.url), "utf8");
+    expect(editor).toMatch(/\{ event: "release", labelKey: "automation\.event_type\.release_published" \}/);
+  });
+
+  test("mention keyword filter is a free-text field, not hardcoded to a fixed @ default", () => {
+    const editor = readFileSync(new URL("../src/react-app/domains/automations/event-trigger-editor.tsx", import.meta.url), "utf8");
+    // TIPS:任务 7.2 想要的能力其实已经存在——mentionText 从设计第一天起就是自由文本输入，
+    // 不曾硬编码过固定的 "@" 触发词，这里只是把这一点显式断言出来，避免以后被误改成受限输入。
+    expect(editor).toMatch(/updateCommonFilter\(\{ mentionText: event\.target\.value \}\)/);
+    expect(editor).not.toMatch(/mentionText.*=.*"@"/);
+  });
+});

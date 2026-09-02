@@ -2840,6 +2840,7 @@ export default {
   "automation.event_type.pr_review_comment": "PR line comment received",
   "automation.event_type.issue_opened": "Issue opened",
   "automation.event_type.issue_new_comment": "Issue has a new comment",
+  "automation.event_type.release_published": "Release published",
   "automation.event_advanced_filters": "Advanced filters",
   "automation.event_filters_common": "Common filters",
   "automation.event_filters_github": "GitHub-specific filters",
