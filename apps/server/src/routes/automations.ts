@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { AutomationDefinition, AutomationDraft, AutomationRun } from "@jugglework/types/automation";
+import type { AutomationDefinition, AutomationDraft, AutomationRun, AutomationSchedule } from "@jugglework/types/automation";
 import type { AutomationRepository } from "../automation/repository.js";
 import {
   automationDraftFromUnknown,
   mergeAutomationRawDocument,
+  systemAutomationTimezone,
   validateAutomationDraft,
   validateAutomationSchedule,
   validateAutomationActiveRange,
@@ -44,7 +45,7 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
 
   addRoute(routes, "POST", "/automations/preview", "client", async (ctx) => {
     const body = await readJsonBody(ctx.request);
-    const schedule = validateAutomationSchedule(body.schedule as AutomationDraft["schedule"]);
+    const schedule = validateAutomationSchedule(body.schedule as AutomationSchedule | undefined);
     const activeRange = validateAutomationActiveRange(body.activeRange as AutomationDraft["activeRange"]);
     return jsonResponse(previewAutomationSchedule(schedule, activeRange, Date.now(), typeof body.locale === "string" ? body.locale : "zh-CN"));
   });
@@ -255,8 +256,8 @@ function definitionToDraft(definition: AutomationDefinition, patch: Partial<Auto
     name: definition.name,
     workspace: definition.workspace,
     prompt: definition.prompt,
-    timezone: definition.schedule.timezone,
-    schedule: definition.schedule,
+    timezone: definition.trigger.kind === "event" ? systemAutomationTimezone() : definition.trigger.timezone,
+    trigger: definition.trigger,
     ...(definition.activeRange ? { activeRange: definition.activeRange } : {}),
     model: definition.model,
     ...(definition.agentId ? { agentId: definition.agentId } : {}),

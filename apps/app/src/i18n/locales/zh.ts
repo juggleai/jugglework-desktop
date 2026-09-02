@@ -2827,6 +2827,7 @@ export default {
   "automation.period": "周期",
   "automation.interval": "按间隔",
   "automation.once": "单次",
+  "automation.event_trigger_summary_placeholder": "事件触发",
   "automation.schedule_daily": "每天",
   "automation.schedule_weekly": "每周",
   "automation.schedule_monthly": "每月",

@@ -2824,6 +2824,7 @@ export default {
   "automation.period": "Recurring",
   "automation.interval": "Interval",
   "automation.once": "Once",
+  "automation.event_trigger_summary_placeholder": "Event trigger",
   "automation.schedule_daily": "Daily",
   "automation.schedule_weekly": "Weekly",
   "automation.schedule_monthly": "Monthly",

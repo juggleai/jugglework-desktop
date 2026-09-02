@@ -19,17 +19,20 @@ test("validation applies defaults, rejects secrets and preserves unknown fields"
     name: "  每日任务  ",
     workspace: workspace(),
     prompt: { version: 1, parts: [{ type: "text", text: "检查项目" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai", futureRule: true },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai", futureRule: true },
     permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: NOW },
     executorDeviceId: "device-1",
   }, "device-1");
   const definition = validateAutomationDraft(draft, context(), { id: "task-1", revision: 1, createdAt: NOW });
+  // TIPS: 用旧版本只写过 `schedule` 顶层键的 rawDocument 触发一次性迁移路径，
+  // 验证输出统一收敛到 `trigger`，且未知字段（futureRule）在迁移中不丢失。
   const raw = mergeAutomationRawDocument({ futureTopLevel: { enabled: true }, schedule: { futureRule: true } }, definition);
   assert.equal(definition.name, "每日任务");
   assert.deepEqual(definition.model, { mode: "auto" });
   assert.equal(definition.nextRunAt, Date.parse("2026-08-11T01:00:00Z"));
   assert.deepEqual(raw.futureTopLevel, { enabled: true });
-  assert.equal((raw.schedule as Record<string, unknown>).futureRule, true);
+  assert.equal(raw.schedule, undefined);
+  assert.equal((raw.trigger as Record<string, unknown>).futureRule, true);
 
   assert.throws(
     () => automationDraftFromUnknown({ ...draft, accessToken: "secret" }, "device-1"),
@@ -177,7 +180,7 @@ function definition(id: string, name: string, revision: number, updatedAt: numbe
     name,
     workspace: workspace(),
     prompt: { version: 1, parts: [{ type: "text", text: "执行任务" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
     model: { mode: "auto" },
     skillIds: [],
     connectors: [],

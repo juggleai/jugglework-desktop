@@ -14,6 +14,7 @@ import { openRuntimeSqliteDatabase, runtimeDbPath } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
 import { migrateAutomationDatabase } from "./migrations.js";
 import { automationSqliteAdapter, type AutomationSqlite } from "./sqlite.js";
+import { systemAutomationTimezone } from "./validation.js";
 
 type AutomationTaskRow = {
   id: string;
@@ -342,7 +343,7 @@ export class AutomationRepository {
         queued_at, started_at, ended_at, revision, sync_state FROM automation_runs WHERE id = ?`,
       [id],
     );
-    return row ? { run: runFromRow(row), definition: JSON.parse(row.snapshot_json) as AutomationDefinition } : null;
+    return row ? { run: runFromRow(row), definition: parseStoredAutomationDefinition(row.snapshot_json) } : null;
   }
 
   /** 返回等待执行或需要启动恢复的非终态运行，按入队顺序排列。 */
@@ -352,7 +353,7 @@ export class AutomationRepository {
         workspace_id, workspace_name, session_id, snapshot_json, concrete_selection_json, error_code, error_message,
         queued_at, started_at, ended_at, revision, sync_state FROM automation_runs
        WHERE state IN ('queued', 'running') ORDER BY queued_at ASC, id ASC`,
-    ).map((row) => ({ run: runFromRow(row), definition: JSON.parse(row.snapshot_json) as AutomationDefinition }));
+    ).map((row) => ({ run: runFromRow(row), definition: parseStoredAutomationDefinition(row.snapshot_json) }));
   }
 
   /** 更新运行状态并在同一事务写入同步 outbox。 */
@@ -533,7 +534,9 @@ function taskValues(definition: AutomationDefinition, rawDocument: Record<string
     definition.revision,
     definition.executorDeviceId,
     definition.nextRunAt,
-    definition.schedule.timezone,
+    // TIPS: 事件触发没有"时钟时区"概念，这个列目前只是展示用的冗余存储（不参与调度计算，
+    // 真正的定时时区来自 definition.trigger 本身），事件触发落一个系统默认时区占位即可。
+    definition.trigger.kind === "event" ? systemAutomationTimezone() : definition.trigger.timezone,
     definition.activeRange?.startDate ?? null,
     definition.activeRange?.endDate ?? null,
     definition.permission.profile,
@@ -547,9 +550,24 @@ function taskUpdateValues(definition: AutomationDefinition, rawDocument: Record<
   return taskValues(definition, rawDocument).slice(1, -2).concat(definition.updatedAt);
 }
 
+/**
+ * 反序列化已持久化的自动化定义，兼容旧版本只写过 `schedule` 字段的行。
+ * TIPS: 早于 `add-event-triggered-automation` 落库的记录没有 `trigger` 字段，
+ * 这里做一次性、只读的字段名归一化，不改写库里的原始数据；写回时统一走
+ * `mergeAutomationRawDocument`/`validateAutomationDraft`，落盘的一定是 `trigger`。
+ */
+function parseStoredAutomationDefinition(json: string): AutomationDefinition {
+  const parsed = JSON.parse(json) as AutomationDefinition & { schedule?: AutomationDefinition["trigger"] };
+  if (!parsed.trigger && parsed.schedule) {
+    const { schedule, ...rest } = parsed;
+    return { ...rest, trigger: schedule } as AutomationDefinition;
+  }
+  return parsed;
+}
+
 function definitionRecordFromRow(row: AutomationTaskRow): AutomationDefinitionRecord {
   return {
-    definition: JSON.parse(row.definition_json) as AutomationDefinition,
+    definition: parseStoredAutomationDefinition(row.definition_json),
     compatibility: row.compatibility_state,
     syncState: row.sync_state,
     ...(row.sync_error_code ? { syncErrorCode: row.sync_error_code } : {}),

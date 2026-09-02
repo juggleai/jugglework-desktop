@@ -90,9 +90,15 @@ export class AutomationScheduler {
 
   private claimLatest(record: AutomationDefinitionRecord, now: number): void {
     const definition = record.definition;
-    const latest = latestAutomationOccurrenceAtOrBefore(definition.schedule, definition.activeRange, now);
+    // TIPS: `listDueDefinitions` 只按 `next_run_at IS NOT NULL` 过滤，事件触发的
+    // `nextRunAt` 永远是 null（到期由事件投递驱动，不是时钟算出来的），所以这里
+    // 理论上永远收不到事件触发的定义；这个显式判断只是让类型系统和这条不变量对齐，
+    // 不是一条真实会命中的运行路径。
+    if (definition.trigger.kind === "event") return;
+    const schedule = definition.trigger;
+    const latest = latestAutomationOccurrenceAtOrBefore(schedule, definition.activeRange, now);
     const scheduledFor = Math.max(definition.nextRunAt ?? now, latest ?? definition.nextRunAt ?? now);
-    const nextRunAt = nextAutomationOccurrence(definition.schedule, definition.activeRange, now);
+    const nextRunAt = nextAutomationOccurrence(schedule, definition.activeRange, now);
     const age = now - scheduledFor;
     const terminalReason = age > MISFIRE_GRACE_MS ? "missed_deadline" as const : undefined;
     const triggerSource = age > 1_000 ? "catchup" as const : "scheduled" as const;

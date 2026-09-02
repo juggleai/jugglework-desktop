@@ -40,6 +40,9 @@ test("automation routes support local-first CRUD, manual run and history", async
   const now = Date.now();
   const localDate = new Date(now + 86_400_000).toISOString().slice(0, 10);
   try {
+    // TIPS:/automations/preview 是独立的"预览调度下一次执行时间"端点，只服务定时触发，
+    // 请求体字段名仍是 schedule，不随 AutomationDraft.trigger 的改名而改——事件触发没有
+    // "下一次执行时间"的概念，不适用这个端点。
     const preview = await invoke("POST", "/automations/preview", {
       schedule: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
       locale: "zh-CN",
@@ -52,7 +55,7 @@ test("automation routes support local-first CRUD, manual run and history", async
         workspace: { id: "workspace-1", name: "工作空间", path: workspacePath, workspaceType: "local" },
         prompt: { version: 1, parts: [{ type: "text", text: "执行测试" }] },
         timezone: "UTC",
-        schedule: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
+        trigger: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
         model: { mode: "auto" },
         skillIds: [],
         connectors: [],
@@ -233,7 +236,7 @@ test("interactive default permission profile is accepted and preserved", async (
       workspace: { id: "workspace-1", name: "工作空间", path: workspacePath, workspaceType: "local" },
       prompt: { version: 1, parts: [{ type: "text", text: "执行测试" }] },
       timezone: "UTC",
-      schedule: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
+      trigger: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
       model: { mode: "auto" },
       skillIds: [],
       connectors: [],

@@ -297,7 +297,7 @@ function automationDefinition(): AutomationDefinition {
     name: "Task",
     workspace: { id: "workspace", name: "Workspace", path: "/tmp/workspace", workspaceType: "local" },
     prompt: { version: 1, parts: [{ type: "text", text: "run" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "UTC" },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "UTC" },
     model: { mode: "auto" },
     skillIds: [],
     connectors: [],

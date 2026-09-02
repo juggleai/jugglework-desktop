@@ -146,7 +146,7 @@ test("finite active range and one-time schedules become completed after their fi
     const ranged = { ...dailyDefinition("task-range", now), activeRange: { startDate: "2026-08-11", endDate: "2026-08-11" } };
     const once: AutomationDefinition = {
       ...dailyDefinition("task-once", now),
-      schedule: { version: 1, kind: "once", localDate: "2026-08-11", localTime: "09:00", timezone: "Asia/Shanghai" },
+      trigger: { version: 1, kind: "once", localDate: "2026-08-11", localTime: "09:00", timezone: "Asia/Shanghai" },
     };
     fixture.repository.createDefinition(ranged, ranged);
     fixture.repository.createDefinition(once, once);
@@ -235,7 +235,7 @@ function dailyDefinition(id: string, nextRunAt: number): AutomationDefinition {
     name: id,
     workspace: { id: "workspace", name: "Workspace", path: "/tmp/workspace", workspaceType: "local" },
     prompt: { version: 1, parts: [{ type: "text", text: "run" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
     model: { mode: "auto" },
     skillIds: [],
     connectors: [],

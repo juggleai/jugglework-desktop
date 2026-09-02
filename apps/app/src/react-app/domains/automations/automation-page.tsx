@@ -583,7 +583,7 @@ function TaskRow({ record, busy, selecting, selected, onToggleSelected, onOpen, 
       <button type="button" onClick={selecting ? onToggleSelected : onOpen} className="min-w-0 flex-1 truncate text-left">
         <span className="font-medium">{task.name}</span>
         <span className="ml-3 text-sm text-dls-secondary">{task.workspace.name}</span>
-        <span className="ml-3 text-sm text-dls-secondary">{summaryWithoutTimezone(scheduleLabel(task.schedule), task.schedule.timezone)}</span>
+        <span className="ml-3 text-sm text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span>
         {task.activeRange ? (
           <span className="ml-3 text-sm text-dls-secondary">
             {t("automation.active_range_prefix")} {displayDate(task.activeRange.startDate)} – {displayDate(task.activeRange.endDate)}
@@ -888,7 +888,9 @@ function AutomationEditor(props: {
       setName(definition.name);
       setWorkspaceId(definition.workspace.id);
       setPrompt(serializeAutomationPrompt(definition.prompt));
-      setSchedule(definition.schedule);
+      // TIPS:事件触发的编辑态属于 2.1 任务组的触发方式选择器；这里先只回填定时分支，
+      // 避免把事件触发的 trigger 当成 AutomationSchedule 强行塞进 setSchedule。
+      if (definition.trigger.kind !== "event") setSchedule(definition.trigger);
       setStartDate(definition.activeRange?.startDate ?? "");
       setEndDate(definition.activeRange?.endDate ?? "");
       setConnectors(definition.connectors);
@@ -906,7 +908,7 @@ function AutomationEditor(props: {
       setName(draft.name);
       setWorkspaceId(draft.workspace?.id ?? "");
       setPrompt(serializeAutomationPrompt(draft.prompt));
-      if (draft.schedule) setSchedule(draft.schedule);
+      if (draft.trigger && draft.trigger.kind !== "event") setSchedule(draft.trigger);
       setStartDate(draft.activeRange?.startDate ?? "");
       setEndDate(draft.activeRange?.endDate ?? "");
       setConnectors(draft.connectors);
@@ -1062,7 +1064,9 @@ function AutomationEditor(props: {
       },
       prompt: parseAutomationPrompt(prompt),
       timezone: schedule.timezone,
-      schedule,
+      // TIPS:这个编辑器目前只产出定时触发草稿；事件触发走 2.x 任务组新增的独立配置面板，
+      // 提交时会构造一个 AutomationEventTrigger 赋给 trigger，不复用这里的本地 schedule 状态。
+      trigger: schedule,
       ...(startDate && endDate ? { activeRange: { startDate, endDate } } : {}),
       model,
       ...(agentId ? { agentId } : {}),
@@ -2365,6 +2369,13 @@ function editorFingerprint(value: {
   permission: AutomationPermissionProfile;
 }): string {
   return JSON.stringify(value);
+}
+
+// TIPS:事件触发的仓库/事件类型摘要属于 4.2 任务组的正式列表行 UI；这里先给出一个
+// 不崩溃的占位摘要，保证类型收敛，事件触发的定义不会被当成定时任务去读 schedule 字段。
+function triggerSummaryLabel(trigger: AutomationDefinition["trigger"]): string {
+  if (trigger.kind === "event") return t("automation.event_trigger_summary_placeholder");
+  return summaryWithoutTimezone(scheduleLabel(trigger), trigger.timezone);
 }
 
 function scheduleLabel(schedule: AutomationSchedule): string {

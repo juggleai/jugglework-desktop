@@ -2,8 +2,12 @@ import { isAbsolute, normalize, sep } from "node:path";
 import {
   AUTOMATION_DEFINITION_SCHEMA,
   isAutomationPermissionProfile,
+  type AutomationActiveRange,
   type AutomationDefinition,
   type AutomationDraft,
+  type AutomationEventTrigger,
+  type AutomationGithubEventMatch,
+  type AutomationGithubEventType,
   type AutomationPromptPart,
   type AutomationSchedule,
   type AutomationWorkspaceSnapshot,
@@ -18,6 +22,12 @@ const SCHEDULE_KEYS = new Set([
   "version", "kind", "timezone", "localDate", "localTime", "every", "unit",
   "anchorLocalDate", "anchorLocalTime", "frequency", "weekdays", "dayOfMonth", "dayOfMonths", "month", "months",
 ]);
+const GITHUB_EVENT_TYPES = new Set<AutomationGithubEventType>([
+  "pull_request", "pull_request_review", "pull_request_review_comment",
+  "issues", "issue_comment", "issue_comment_on_pull_request", "push", "release",
+]);
+const MAX_HOURLY_TRIGGER_CAP = 1000;
+const MAX_DEBOUNCE_SECONDS = 3600;
 
 export type AutomationValidationContext = {
   now: number;
@@ -51,10 +61,17 @@ export function automationDraftFromUnknown(value: unknown, executorDeviceId: str
       : defaults.prompt,
     timezone: typeof value.timezone === "string"
       ? value.timezone
-      : isRecord(value.schedule) && typeof value.schedule.timezone === "string"
-        ? value.schedule.timezone
-        : defaults.timezone,
-    ...(isRecord(value.schedule) ? { schedule: value.schedule as AutomationSchedule } : {}),
+      : isRecord(value.trigger) && typeof value.trigger.timezone === "string"
+        ? value.trigger.timezone
+        : isRecord(value.schedule) && typeof value.schedule.timezone === "string"
+          ? value.schedule.timezone
+          : defaults.timezone,
+    // TIPS: 兼容旧客户端仍然提交 `schedule` 字段的请求体，优先读取新字段 `trigger`。
+    ...(isRecord(value.trigger)
+      ? { trigger: value.trigger as AutomationDraft["trigger"] }
+      : isRecord(value.schedule)
+        ? { trigger: value.schedule as AutomationDraft["trigger"] }
+        : {}),
     ...(isRecord(value.activeRange) ? { activeRange: value.activeRange as AutomationDraft["activeRange"] } : {}),
     model: isRecord(value.model) ? value.model as AutomationDraft["model"] : defaults.model,
     ...(typeof value.agentId === "string" ? { agentId: value.agentId } : {}),
@@ -94,19 +111,32 @@ export function validateAutomationDraft(
   const workspace = validateWorkspace(draft.workspace, context.workspaces);
   const prompt = validatePrompt(draft.prompt);
   if (!isIanaTimezone(draft.timezone)) invalid("timezone", "请选择有效的 IANA 时区");
-  const schedule = validateAutomationSchedule(draft.schedule ? { ...draft.schedule, timezone: draft.timezone } : undefined);
-  const activeRange = validateAutomationActiveRange(draft.activeRange);
+
+  // TIPS: 事件触发和定时触发是互斥的两种 trigger.kind，nextRunAt/activeRange 只对定时触发有意义——
+  // 事件触发的"到期"由事件投递驱动，不是时钟计算出来的，这里显式分两条路径而不是硬凑一套通用逻辑。
+  let trigger: AutomationDefinition["trigger"];
+  let activeRange: AutomationActiveRange | undefined;
   let nextRunAt: number | null;
-  try {
-    nextRunAt = nextAutomationOccurrence(schedule, activeRange, context.now);
-  } catch {
-    invalid("schedule", "无法计算下一次执行时间");
-  }
-  if (schedule.kind === "once" && nextRunAt === null) {
-    invalid("schedule.localDate", "单次任务的执行时间必须晚于保存时间并处于生效区间内");
-  }
-  if (activeRange && nextRunAt === null) {
-    invalid("activeRange", "当前频率在生效日期区间内没有可执行时间");
+  if (draft.trigger?.kind === "event") {
+    if (draft.activeRange) invalid("activeRange", "事件触发不支持生效日期区间");
+    trigger = validateAutomationEventTrigger(draft.trigger);
+    activeRange = undefined;
+    nextRunAt = null;
+  } else {
+    const schedule = validateAutomationSchedule(draft.trigger ? { ...draft.trigger, timezone: draft.timezone } : undefined);
+    activeRange = validateAutomationActiveRange(draft.activeRange);
+    try {
+      nextRunAt = nextAutomationOccurrence(schedule, activeRange, context.now);
+    } catch {
+      invalid("schedule", "无法计算下一次执行时间");
+    }
+    if (schedule.kind === "once" && nextRunAt === null) {
+      invalid("schedule.localDate", "单次任务的执行时间必须晚于保存时间并处于生效区间内");
+    }
+    if (activeRange && nextRunAt === null) {
+      invalid("activeRange", "当前频率在生效日期区间内没有可执行时间");
+    }
+    trigger = schedule;
   }
   if (!draft.executorDeviceId.trim()) invalid("executorDeviceId", "执行设备不能为空");
 
@@ -128,7 +158,7 @@ export function validateAutomationDraft(
     name,
     workspace,
     prompt,
-    schedule,
+    trigger,
     ...(activeRange ? { activeRange } : {}),
     model,
     ...(agentId ? { agentId } : {}),
@@ -151,14 +181,19 @@ export function mergeAutomationRawDocument(
   definition: AutomationDefinition,
 ): Record<string, unknown> {
   const raw = rawDocument ?? {};
-  const rawSchedule = isRecord(raw.schedule) ? raw.schedule : {};
-  const unknownSchedule = Object.fromEntries(Object.entries(rawSchedule).filter(([key]) => !SCHEDULE_KEYS.has(key)));
+  // TIPS: 旧版本 raw document 用 `schedule` 作为顶层字段名；这里兼容读取 `trigger`（新字段）
+  // 和 `schedule`（旧字段，仅当 trigger 缺失时用于一次性迁移），输出统一写回 `trigger`，
+  // 不再向下游暴露已废弃的 `schedule` 键名。
+  const legacyTrigger = isRecord(raw.trigger) ? raw.trigger : isRecord(raw.schedule) ? raw.schedule : {};
+  const unknownTriggerKeys = definition.trigger.kind === "event" ? new Set<string>() : SCHEDULE_KEYS;
+  const unknownTrigger = Object.fromEntries(Object.entries(legacyTrigger).filter(([key]) => !unknownTriggerKeys.has(key)));
+  const { schedule: _legacySchedule, ...restRaw } = raw;
   return {
-    ...raw,
+    ...restRaw,
     ...definition,
     workspace: preserveUnknownObject(raw.workspace, definition.workspace, new Set(["id", "name", "path", "workspaceType"])),
     prompt: preserveUnknownObject(raw.prompt, definition.prompt, new Set(["version", "parts"])),
-    schedule: { ...unknownSchedule, ...definition.schedule },
+    trigger: { ...unknownTrigger, ...definition.trigger },
     model: preserveUnknownObject(raw.model, definition.model, new Set(["mode", "providerId", "modelId", "variant"])),
     permission: preserveUnknownObject(raw.permission, definition.permission, new Set(["profile", "acknowledgedAt"])),
   };
@@ -246,6 +281,108 @@ export function validateAutomationSchedule(schedule: AutomationSchedule | undefi
   invalid("schedule.frequency", "周期频率无效");
 }
 
+/**
+ * 校验事件触发配置。
+ * TIPS: 这里只做设备本地能独立判断的结构校验（至少一个事件类型、debounce/上限范围、
+ * 枚举取值），不校验 connectorId/repository 在服务端是否真的已绑定、已就绪——
+ * 那部分依赖服务端在保存时或运行前的 preflight（见 automation-event-trigger-config
+ * 能力的"仓库未绑定"分支），不是这层的职责。
+ */
+export function validateAutomationEventTrigger(trigger: AutomationEventTrigger): AutomationEventTrigger {
+  if (trigger.version !== 1 || trigger.kind !== "event") invalid("trigger", "事件触发配置版本无效");
+  if (trigger.provider !== "github") invalid("trigger.provider", "暂只支持 GitHub 事件源");
+  const connectorId = requiredIdentifier(trigger.connectorId, "trigger.connectorId");
+  const repository = validateGithubRepository(trigger.repository);
+  const matches = validateGithubEventMatches(trigger.matches);
+  const concurrencyKey = trigger.concurrencyKey;
+  if (!(["entity", "repository", "none"] as const).includes(concurrencyKey)) {
+    invalid("trigger.concurrencyKey", "并发粒度无效");
+  }
+  const deliveryMode = trigger.deliveryMode;
+  if (!(["auto", "im", "poll"] as const).includes(deliveryMode)) {
+    invalid("trigger.deliveryMode", "投递方式无效");
+  }
+  let debounceSeconds: number | undefined;
+  if (trigger.debounceSeconds !== undefined) {
+    if (!Number.isInteger(trigger.debounceSeconds) || trigger.debounceSeconds < 0 || trigger.debounceSeconds > MAX_DEBOUNCE_SECONDS) {
+      invalid("trigger.debounceSeconds", `防抖窗口必须为 0–${MAX_DEBOUNCE_SECONDS} 的整数秒`);
+    }
+    debounceSeconds = trigger.debounceSeconds;
+  }
+  let hourlyTriggerCap: number | undefined;
+  if (trigger.hourlyTriggerCap !== undefined) {
+    if (!isPositiveInteger(trigger.hourlyTriggerCap) || trigger.hourlyTriggerCap > MAX_HOURLY_TRIGGER_CAP) {
+      invalid("trigger.hourlyTriggerCap", `每小时触发上限必须为 1–${MAX_HOURLY_TRIGGER_CAP} 的整数`);
+    }
+    hourlyTriggerCap = trigger.hourlyTriggerCap;
+  }
+  const permissionTier = trigger.permissionTier === "auto" || isAutomationPermissionProfile(trigger.permissionTier)
+    ? trigger.permissionTier
+    : invalid("trigger.permissionTier", "权限档位无效");
+  return {
+    version: 1,
+    kind: "event",
+    provider: "github",
+    connectorId,
+    repository,
+    matches,
+    concurrencyKey,
+    deliveryMode,
+    permissionTier,
+    ...(debounceSeconds !== undefined ? { debounceSeconds } : {}),
+    ...(hourlyTriggerCap !== undefined ? { hourlyTriggerCap } : {}),
+  };
+}
+
+function validateGithubRepository(repository: AutomationEventTrigger["repository"]): AutomationEventTrigger["repository"] {
+  const owner = requiredIdentifier(repository?.owner, "trigger.repository.owner");
+  const name = requiredIdentifier(repository?.name, "trigger.repository.name");
+  return { owner, name };
+}
+
+function validateGithubEventMatches(matches: AutomationGithubEventMatch[]): AutomationGithubEventMatch[] {
+  if (!Array.isArray(matches) || matches.length === 0) {
+    invalid("trigger.matches", "至少选择一种关心的事件类型");
+  }
+  return matches.map((match) => {
+    if (!GITHUB_EVENT_TYPES.has(match.event)) invalid("trigger.matches.event", "事件类型无效");
+    return {
+      event: match.event,
+      ...(match.actions?.length ? { actions: [...new Set(match.actions)] } : {}),
+      ...(match.common ? { common: validateGithubEventCommonFilter(match.common) } : {}),
+      ...(match.github ? { github: validateGithubEventGithubFilter(match.github) } : {}),
+    };
+  });
+}
+
+function validateGithubEventCommonFilter(
+  filter: NonNullable<AutomationGithubEventMatch["common"]>,
+): NonNullable<AutomationGithubEventMatch["common"]> {
+  if (filter.authorFilter && !(["allow", "deny"] as const).includes(filter.authorFilter.mode)) {
+    invalid("trigger.matches.common.authorFilter.mode", "作者过滤模式无效");
+  }
+  return {
+    ...(filter.labels?.length ? { labels: [...new Set(filter.labels)] } : {}),
+    ...(filter.authorFilter ? { authorFilter: { mode: filter.authorFilter.mode, logins: [...new Set(filter.authorFilter.logins ?? [])] } } : {}),
+    ...(filter.mentionText?.trim() ? { mentionText: filter.mentionText.trim() } : {}),
+    ...(filter.keyword?.trim() ? { keyword: filter.keyword.trim() } : {}),
+  };
+}
+
+function validateGithubEventGithubFilter(
+  filter: NonNullable<AutomationGithubEventMatch["github"]>,
+): NonNullable<AutomationGithubEventMatch["github"]> {
+  return {
+    ...(filter.branches ? {
+      branches: {
+        ...(filter.branches.base?.length ? { base: [...new Set(filter.branches.base)] } : {}),
+        ...(filter.branches.head?.length ? { head: [...new Set(filter.branches.head)] } : {}),
+      },
+    } : {}),
+    ...(filter.changedPaths?.length ? { changedPaths: [...new Set(filter.changedPaths)] } : {}),
+  };
+}
+
 /** 校验、去重并排序调度中的多选整数。 */
 function normalizeIntegerChoices(values: unknown, min: number, max: number, field: string, message: string): number[] {
   if (!Array.isArray(values)) invalid(field, message);
@@ -281,7 +418,7 @@ function normalizeConnectors(connectors: AutomationDraft["connectors"]): Automat
     const id = requiredIdentifier(connector.id, "connectors.id");
     if (seen.has(id)) invalid("connectors", "连接器不能重复选择");
     seen.add(id);
-    if (!(["local-mcp", "cloud", "directory"] as const).includes(connector.source)) {
+    if (!(["local-mcp", "cloud", "directory", "github-app"] as const).includes(connector.source)) {
       invalid("connectors.source", "连接器来源无效");
     }
     return { id, source: connector.source, label: connector.label.trim() || id };
