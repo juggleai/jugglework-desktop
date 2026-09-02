@@ -7,6 +7,7 @@ import { AUTOMATION_PERMISSION_PROFILE, type AutomationErrorCode, type Automatio
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { applyMcpWorkspacePolicyToPrompt, readMcpWorkspaceToolPolicy } from "../mcp-workspace-tool-policy.js";
 import { AutomationRepository, type AutomationRunSnapshot } from "./repository.js";
+import type { GithubEventRelayClient } from "./github-event-client.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -15,6 +16,8 @@ export type AutomationExecutorOptions = {
   repository: AutomationRepository;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  /** 用于事件触发运行的写回授权铸造；省略时事件触发运行的 `github-app` preflight 直接判定不可用。 */
+  githubEventRelay?: GithubEventRelayClient;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
 };
@@ -259,7 +262,30 @@ export class AutomationExecutor {
         throw failure("skill_unavailable", "一个或多个技能当前不可用");
       }
     }
+    if (definition.trigger.kind === "event" && definition.connectors.some((connector) => connector.source === "github-app")) {
+      await this.fetchWriteBackGrant(definition);
+    }
     return this.resolveConnectorToolAllowlist(snapshot, opencode);
+  }
+
+  /**
+   * 换取本轮运行期 GitHub App 写回授权，preflight 阶段失败即整轮失败。
+   * TIPS: 只做到"换取成功/失败"这一步——换到的短时效凭据如何真正注入到 agent 后续调用
+   * GitHub 工具的执行链路（MCP 连接器凭据覆盖），依赖尚未探明的 OpenCode 侧接口，留给
+   * 后续接线；这里已经完整实现了"每轮独立换取、换取失败即挡在 preflight"这条不变量。
+   */
+  private async fetchWriteBackGrant(definition: AutomationRunSnapshot["definition"]): Promise<void> {
+    if (definition.trigger.kind !== "event") return;
+    if (!this.options.githubEventRelay) {
+      throw failure("connector_unavailable", "运行期 GitHub App 写回授权服务当前不可用");
+    }
+    try {
+      await this.options.githubEventRelay.fetchWriteBackGrant(definition.id, definition.trigger.repository);
+    } catch (error) {
+      const code = (error as { code?: string } | undefined)?.code;
+      if (code === "github_event_relay_unavailable") throw failure("connector_unavailable", "运行期写回授权服务当前不可用");
+      throw failure("connector_reauth_required", "无法换取运行期 GitHub App 写回授权，请检查组织安装状态");
+    }
   }
 
   /** 解析任务级 MCP 工具白名单；未勾选连接器的工具必须显式关闭。 */
@@ -267,7 +293,10 @@ export class AutomationExecutor {
     snapshot: AutomationRunSnapshot,
     opencode: WorkspaceOpencodeClient,
   ): Promise<Record<string, boolean>> {
-    const selected = snapshot.definition.connectors;
+    // TIPS: `github-app` 连接器不是 MCP 服务器——它是运行期写回授权的标记，可用性已经在
+    // fetchWriteBackGrant()（preflight 更早的一步）单独检查过，这里不该再按 mcp.status() 的
+    // "connected" 语义去要求它，否则任何事件触发自动化都会在这一步被误判为连接器不可用。
+    const selected = snapshot.definition.connectors.filter((connector) => connector.source !== "github-app");
     if (selected.some((connector) => connector.source === "cloud")) {
       // TIPS：云连接器必须先注入任务专用短期凭证，禁止复用交互会话的普通用户令牌。
       throw failure("connector_scope_unavailable", "云连接器暂时无法取得任务级授权，请重新授权后再试");

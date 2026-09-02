@@ -40,9 +40,9 @@
 
 ## P0 — 3c. Write-back authorization
 
-- [ ] 3c.1 Implement the preflight fetch of a fresh run-bound GitHub App write-back grant for every event-triggered run, including every continuation turn into a reused session (never reusing a prior turn's grant); verify with a unit test asserting two sequential turns in the same session each perform an independent fetch.
-- [ ] 3c.2 Implement the single silent re-fetch-and-retry on mid-run grant expiry, marking only that write-back action failed (not the whole run) if the retry also fails; verify with a unit test simulating an expired-grant write-back call.
-- [ ] 3c.3 Map grant-acquisition failure onto the existing `connector_unavailable`/`connector_reauth_required`/`connector_scope_unavailable` error codes; verify with unit tests for each failure mode.
+- [x] 3c.1 Implement the preflight fetch of a fresh run-bound GitHub App write-back grant for every event-triggered run, including every continuation turn into a reused session (never reusing a prior turn's grant); verify with a unit test asserting two sequential turns in the same session each perform an independent fetch. **Scope note**: the grant fetch itself is fully implemented and preflight-gated (fails the run fast if it can't be obtained); how the fetched short-lived credential actually reaches the agent's own GitHub tool calls (MCP connector credential override at the OpenCode layer) is not wired — this session did not locate/explore that interface. This is why 3c.2 is not done.
+- [ ] 3c.2 Not done. Depends on the OpenCode-layer credential injection this session didn't explore (see 3c.1's scope note) — there is no code path in this module that observes an individual write-back tool call failing mid-run to retry, since those calls happen inside OpenCode's own tool execution, not in this repository's code.
+- [x] 3c.3 Map grant-acquisition failure onto the existing `connector_unavailable`/`connector_reauth_required`/`connector_scope_unavailable` error codes; verify with unit tests for each failure mode.
 
 ## P0 — 4. Run history and list surfaces
 

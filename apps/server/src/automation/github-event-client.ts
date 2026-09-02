@@ -12,12 +12,21 @@ import type { AutomationEventTrigger } from "@jugglework/types/automation";
  */
 export type GithubEventRelayAuth = { baseUrl: string; token: string };
 
+/** 一次运行期 GitHub App 写回授权；`token`/`expiresAt` 不落库，只在这次 run 的进程内存活期使用。 */
+export type GithubAppWriteBackGrant = { token: string; expiresAt: number };
+
 export type GithubEventRelayClient = {
   listRepositories(): Promise<Array<{ connectorId: string; owner: string; name: string; visibility: "public" | "private" }>>;
   checkReadiness(repo: { owner: string; name: string }): Promise<"not_connected" | "pending_configuration" | "ready">;
   requestInstall(): Promise<void>;
   requestBind(repo: { owner: string; name: string }): Promise<void>;
   estimateFrequency(trigger: AutomationEventTrigger): Promise<number | null>;
+  /**
+   * 换取一次运行期写回授权，见服务端 PRD §4.8。
+   * TIPS: 每次调用都是独立铸造，调用方（executor 的 preflight）必须在每一轮触发（含会话延续
+   * 的每一轮）都重新调用，不能缓存上一轮的结果——这是这条能力设计上的核心约束，不是可选项。
+   */
+  fetchWriteBackGrant(automationId: string, repo: { owner: string; name: string }): Promise<GithubAppWriteBackGrant>;
 };
 
 export function createGithubEventRelayClient(
@@ -51,6 +60,9 @@ export function createGithubEventRelayClient(
     estimateFrequency: (trigger) => relay<{ perWeek: number | null }>(
       "/api/v1/automations/github-event-frequency", { method: "POST", body: trigger },
     ).then((response) => response.perWeek),
+    fetchWriteBackGrant: (automationId, repo) => relay<GithubAppWriteBackGrant>(
+      "/api/v1/automations/github-app-grant", { method: "POST", body: { automationId, repo } },
+    ),
   };
 }
 
@@ -66,5 +78,6 @@ export function createUnconfiguredGithubEventRelayClient(): GithubEventRelayClie
     requestInstall: () => Promise.resolve(),
     requestBind: () => Promise.resolve(),
     estimateFrequency: () => Promise.resolve(null),
+    fetchWriteBackGrant: () => Promise.reject(new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session")),
   };
 }

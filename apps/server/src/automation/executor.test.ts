@@ -8,6 +8,7 @@ import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
 import { AutomationExecutor } from "./executor.js";
 import { AutomationRepository } from "./repository.js";
+import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "./github-event-client.js";
 import { automationSqliteAdapter } from "./sqlite.js";
 
 test("executor creates an auditable full-access session and completes only after idle", async () => {
@@ -407,6 +408,81 @@ test("event-triggered execution falls back to a new session when the mapped one 
     // TIPS:回退新建会话必须显式标注"上一轮会话不可用"，不能悄悄换了会话却不作说明。
     assert.equal(completed.eventMetadata?.previousSessionUnavailable, true);
     assert.equal(fixture.repository.getEntitySessionMapping(definition.id, "github:pull_request:482")?.sessionId, "session-new");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("event-triggered execution with a github-app connector fetches a fresh write-back grant per run", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), connectors: [{ id: "github-app", source: "github-app" as const, label: "GitHub App" }] };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-grant",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const grantCalls: Array<{ automationId: string; repo: unknown }> = [];
+  const relay: GithubEventRelayClient = {
+    ...createUnconfiguredGithubEventRelayClient(),
+    fetchWriteBackGrant: async (automationId, repo) => { grantCalls.push({ automationId, repo }); return { token: "tok", expiresAt: 999 }; },
+  };
+  const opencode = {
+    session: {
+      create: async () => ({ data: { id: "session-1" } }),
+      promptAsync: async () => ({ data: true, error: undefined }),
+      status: async () => ({ data: { "session-1": { type: "idle" } } }),
+      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
+    },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      githubEventRelay: relay,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:482", extraPromptParts: [] });
+    assert.equal(fixture.repository.getRun(claim.run.id)?.state, "succeeded");
+    assert.equal(grantCalls.length, 1);
+    assert.equal(grantCalls[0]?.automationId, definition.id);
+    assert.deepEqual(grantCalls[0]?.repo, { owner: "juggleai", name: "jugglework-desktop" });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("event-triggered execution fails preflight with connector_unavailable when no relay is configured", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), connectors: [{ id: "github-app", source: "github-app" as const, label: "GitHub App" }] };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-no-relay",
+    entityRef: "github:pull_request:483", sourceDeliveryId: "delivery-2", now: 100,
+  });
+  const opencode = {
+    session: { create: async () => ({ data: { id: "session-1" } }), promptAsync: async () => ({ data: true, error: undefined }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      // TIPS:故意不传 githubEventRelay，模拟"relay 没有接线"这个已知缺口。
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:483", extraPromptParts: [] });
+    const failed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.errorCode, "connector_unavailable");
   } finally {
     await fixture.close();
   }
