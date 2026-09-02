@@ -282,6 +282,8 @@ export type AutomationRun = {
    */
   eventMetadata?: {
     entityRef?: string;
+    /** 触发实体的直达链接（PR/Issue 页面），供运行记录展示，见桌面 PRD 4.1。 */
+    entityUrl?: string;
     sourceDeliveryId?: string;
     /** 防抖窗口内被合并掉的事件数量，见桌面 PRD 4.4。 */
     mergedEventCount?: number;

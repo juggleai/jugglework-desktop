@@ -98,6 +98,7 @@ export class AutomationEventPipeline {
       runId: this.randomId(),
       entityRef: delivery.entityRef,
       sourceDeliveryId: delivery.id,
+      ...(delivery.sourceUrl ? { entityUrl: delivery.sourceUrl } : {}),
       now: this.now(),
     });
 

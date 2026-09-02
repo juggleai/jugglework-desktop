@@ -805,15 +805,51 @@ function RunHistory({ runs }: { runs: AutomationRun[] }) {
   );
   return (
     <div className="mt-10 divide-y divide-dls-border overflow-hidden rounded-2xl border border-dls-border bg-background">
-      {runs.map((run) => (
-        <article key={run.id} role={run.sessionId ? "link" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`); } }} onClick={() => run.sessionId && navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
-          <div><div className="font-medium">{run.automationName}</div><div className="text-xs text-dls-secondary">{run.workspaceName} · {triggerLabel(run.triggerSource)}</div></div>
-          <div className="text-sm"><div className="text-dls-secondary">计划时间</div>{formatDateTime(run.scheduledFor)}</div>
-          <div className="text-sm"><div className="text-dls-secondary">实际时间</div>{run.startedAt ? formatDateTime(run.startedAt) : "—"}<div className="text-xs text-dls-secondary">耗时 {runDuration(run)}</div></div>
-          <div className={cn("text-sm font-medium", run.state === "failed" && "text-red-9", run.state === "succeeded" && "text-green-9")}>{runStateLabel(run.state)}
-            {run.errorCode ? <div className="mt-1 max-w-xs text-xs font-normal text-red-9">{automationFailureAdvice(run.errorCode)}</div> : run.errorMessage ? <div className="mt-1 max-w-xs text-xs font-normal text-red-9">{run.errorMessage}</div> : null}</div>
-        </article>
-      ))}
+      {runs.map((run) => {
+        // TIPS:补投丢弃/限流跳过是"没有真实运行"的汇总记录，样式和交互都跟正常运行区分开——
+        // 不可点开会话（本来就没有会话），用醒目的提示行呈现，不能让它看起来像是随便一次失败。
+        if (run.errorCode === "event_backlog_dropped" && run.eventMetadata?.backlogDropped) {
+          const { count, sinceAt, untilAt } = run.eventMetadata.backlogDropped;
+          return (
+            <article key={run.id} className="flex items-center gap-2 bg-amber-2 px-5 py-3 text-sm text-amber-11">
+              <TriangleAlert className="size-4 shrink-0" />
+              <span>{run.automationName} · 离线期间有 {count} 条事件未处理（{formatDateTime(sinceAt)} ~ {formatDateTime(untilAt)}）</span>
+            </article>
+          );
+        }
+        return (
+          <article key={run.id} role={run.sessionId ? "link" : undefined} tabIndex={run.sessionId ? 0 : undefined} onKeyDown={(event) => { if (run.sessionId && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`); } }} onClick={() => run.sessionId && navigate(`/workspace/${encodeURIComponent(run.workspaceId)}/session/${encodeURIComponent(run.sessionId)}`)} className={cn("grid gap-2 px-5 py-4 md:grid-cols-[minmax(180px,1fr)_160px_160px_120px]", run.sessionId && "cursor-pointer hover:bg-dls-hover/50 focus-visible:outline-2 focus-visible:outline-dls-accent")}>
+            <div>
+              <div className="font-medium">{run.automationName}</div>
+              <div className="text-xs text-dls-secondary">
+                {run.workspaceName} · {triggerLabel(run.triggerSource)}
+                {run.eventMetadata?.mergedEventCount ? <span> · 合并了 {run.eventMetadata.mergedEventCount} 次事件</span> : null}
+              </div>
+              {run.triggerSource === "event" && run.eventMetadata?.entityUrl ? (
+                <a
+                  href={run.eventMetadata.entityUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="mt-1 inline-flex items-center gap-1 text-xs text-dls-accent hover:underline"
+                >
+                  <ExternalLink className="size-3" />查看触发的 PR/Issue
+                </a>
+              ) : null}
+              {run.eventMetadata?.previousSessionUnavailable ? (
+                <div className="mt-1 text-xs text-amber-11">上一轮会话不可用，已开启新会话</div>
+              ) : null}
+              {run.eventMetadata?.sourceDeliveryId ? (
+                <div className="mt-1 text-xs text-dls-secondary">投递 ID：{run.eventMetadata.sourceDeliveryId}</div>
+              ) : null}
+            </div>
+            <div className="text-sm"><div className="text-dls-secondary">计划时间</div>{formatDateTime(run.scheduledFor)}</div>
+            <div className="text-sm"><div className="text-dls-secondary">实际时间</div>{run.startedAt ? formatDateTime(run.startedAt) : "—"}<div className="text-xs text-dls-secondary">耗时 {runDuration(run)}</div></div>
+            <div className={cn("text-sm font-medium", run.state === "failed" && "text-red-9", run.state === "succeeded" && "text-green-9")}>{runStateLabel(run.state)}
+              {run.errorCode ? <div className="mt-1 max-w-xs text-xs font-normal text-red-9">{automationFailureAdvice(run.errorCode)}</div> : run.errorMessage ? <div className="mt-1 max-w-xs text-xs font-normal text-red-9">{run.errorMessage}</div> : null}</div>
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -2502,8 +2538,13 @@ function editorFingerprint(value: {
 
 // TIPS:事件触发的仓库/事件类型摘要属于 4.2 任务组的正式列表行 UI；这里先给出一个
 // 不崩溃的占位摘要，保证类型收敛，事件触发的定义不会被当成定时任务去读 schedule 字段。
+/** 任务 4.2：列表行按 trigger.kind 展示事件触发摘要（仓库 + 事件类型数）而不是定时摘要。 */
 function triggerSummaryLabel(trigger: AutomationDefinition["trigger"]): string {
-  if (trigger.kind === "event") return t("automation.event_trigger_summary_placeholder");
+  if (trigger.kind === "event") {
+    const repo = trigger.repository.owner && trigger.repository.name ? `${trigger.repository.owner}/${trigger.repository.name}` : t("automation.event_repository_placeholder");
+    const count = trigger.matches.length;
+    return count ? `${repo} · ${count} 种事件` : repo;
+  }
   return summaryWithoutTimezone(scheduleLabel(trigger), trigger.timezone);
 }
 
@@ -2573,6 +2614,10 @@ function automationFailureAdvice(code: string): string {
     missed_deadline: "电脑休眠或客户端退出时间过长，本次已跳过",
     overlap_blocked: "上一次运行尚未结束，本次已跳过",
     session_lost: "运行会话已丢失，请手动重新运行",
+    event_backlog_dropped: "设备离线超过补投窗口，期间事件已被丢弃",
+    rate_limited: "已超过每小时触发上限，本次事件已跳过",
+    upstream_connector_revoked: "仓库绑定/连接器已被收回，请重新绑定后再试",
+    invalid_event_trigger: "事件触发配置无效，请重新编辑",
   };
   return advice[code] ?? "执行失败，请打开运行会话查看可见详情";
 }

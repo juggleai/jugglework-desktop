@@ -399,6 +399,7 @@ export class AutomationRepository {
     runId: string;
     entityRef: string;
     sourceDeliveryId: string;
+    entityUrl?: string;
     now: number;
   }): { run: AutomationRun; merged: boolean } {
     return this.database.transaction(() => {
@@ -416,7 +417,11 @@ export class AutomationRepository {
       }
       const run = newRun(definition, input.runId, "event", input.now, input.now, undefined, {
         entityRef: input.entityRef,
-        eventMetadata: { entityRef: input.entityRef, sourceDeliveryId: input.sourceDeliveryId },
+        eventMetadata: {
+          entityRef: input.entityRef,
+          sourceDeliveryId: input.sourceDeliveryId,
+          ...(input.entityUrl ? { entityUrl: input.entityUrl } : {}),
+        },
       });
       this.insertRun(run, definition);
       return { run, merged: false };

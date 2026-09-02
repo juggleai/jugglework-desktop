@@ -304,3 +304,33 @@ describe("Event-trigger editor (add-event-triggered-automation tasks 2.1-2.6)", 
     expect(fn).not.toMatch(/readiness/i);
   });
 });
+
+describe("Run history and list rendering for event-sourced runs (tasks 4.1-4.2)", () => {
+  test("run history renders the entity link, merged-event count, and previous-session-unavailable note", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function RunHistory");
+    const fn = page.slice(fnStart, page.indexOf("\nfunction ", fnStart + 1));
+    expect(fn).toMatch(/eventMetadata\?\.entityUrl/);
+    expect(fn).toMatch(/查看触发的 PR\/Issue/);
+    expect(fn).toMatch(/eventMetadata\?\.mergedEventCount/);
+    expect(fn).toMatch(/eventMetadata\?\.previousSessionUnavailable/);
+    expect(fn).toMatch(/event_backlog_dropped/);
+  });
+
+  test("automationFailureAdvice covers the new event-trigger error codes with distinct copy", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function automationFailureAdvice");
+    const fn = page.slice(fnStart, page.indexOf("\n}", fnStart));
+    expect(fn).toMatch(/event_backlog_dropped/);
+    expect(fn).toMatch(/rate_limited/);
+    expect(fn).toMatch(/upstream_connector_revoked/);
+  });
+
+  test("scheduled-task list row shows repository and event-type count for event-kind triggers, not a schedule summary", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function triggerSummaryLabel");
+    const fn = page.slice(fnStart, page.indexOf("\nfunction ", fnStart + 1));
+    expect(fn).toMatch(/trigger\.repository\.owner/);
+    expect(fn).toMatch(/trigger\.matches\.length/);
+  });
+});

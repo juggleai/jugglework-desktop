@@ -46,8 +46,8 @@
 
 ## P0 — 4. Run history and list surfaces
 
-- [ ] 4.1 Extend the run-history detail view to render event-sourced runs (triggering PR/issue link, delivery id, and the shared "查看会话" link when a run reused a prior session per §4.8) and the `event_backlog_dropped` / `rate_limited` summary rows described in the PRD; verify with component tests for each new row type.
-- [ ] 4.2 Extend the scheduled-task list row to show event-trigger summaries (repository, event types) in place of a schedule summary when `trigger.kind === "event"`; verify with a component test for the event-trigger row rendering.
+- [x] 4.1 Extend the run-history detail view to render event-sourced runs (triggering PR/issue link, delivery id, and the shared "查看会话" link when a run reused a prior session per §4.8) and the `event_backlog_dropped` / `rate_limited` summary rows described in the PRD; verify with component tests for each new row type.
+- [x] 4.2 Extend the scheduled-task list row to show event-trigger summaries (repository, event types) in place of a schedule summary when `trigger.kind === "event"`; verify with a component test for the event-trigger row rendering.
 
 ## P1 — 5. Filtering depth and pre-launch confidence
 
