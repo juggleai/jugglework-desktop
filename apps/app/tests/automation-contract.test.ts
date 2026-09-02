@@ -253,3 +253,54 @@ describe("Desktop automation catalog and routes", () => {
     expect(dashboard).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
   });
 });
+
+describe("Event-trigger editor (add-event-triggered-automation tasks 2.1-2.6)", () => {
+  test("defaultEventTrigger produces a structurally valid AutomationEventTrigger", async () => {
+    const { defaultEventTrigger } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    const trigger = defaultEventTrigger("connector-1");
+    expect(trigger).toEqual({
+      version: 1,
+      kind: "event",
+      provider: "github",
+      connectorId: "connector-1",
+      repository: { owner: "", name: "" },
+      matches: [],
+      concurrencyKey: "entity",
+      deliveryMode: "auto",
+      permissionTier: "auto",
+    });
+  });
+
+  test("defaultEventTrigger fills in the selected repository when provided", async () => {
+    const { defaultEventTrigger } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    const trigger = defaultEventTrigger("connector-1", { connectorId: "connector-1", owner: "juggleai", name: "jugglework-desktop", visibility: "public" });
+    expect(trigger.repository).toEqual({ owner: "juggleai", name: "jugglework-desktop" });
+  });
+
+  test("editor wires the trigger-kind selector, discard confirmation, and event editor branch", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/<TriggerKindSelector[\s\S]{0,400}onRequestChange=/);
+    expect(page).toMatch(/hasEventDraft = eventTrigger\.repository\.owner \|\| eventTrigger\.matches\.length/);
+    expect(page).toMatch(/setPendingTriggerKind\(next\)/);
+    expect(page).toMatch(/triggerKind === "event" \? \(\s*<EventTriggerEditor/);
+    // TIPS:公开仓库权限升级需要一次独立确认，不能一步选中——这里断言升级动作被路由到
+    // EventTriggerEditor 自己的确认弹窗，而不是编辑器顶层已有的「完整访问权限」弹窗。
+    expect(page).toMatch(/onPermissionEscalationConfirmed=\{\(\) => setPermission\(AUTOMATION_PERMISSION_PROFILE\)\}/);
+  });
+
+  test("save path assigns an event trigger definition and auto-adds a github-app connector entry", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/trigger: triggerKind === "event" \? eventTrigger : schedule/);
+    expect(page).toMatch(/source: "github-app" as const/);
+  });
+
+  test("event trigger validation rejects an empty repository or empty event-type selection, independent of server readiness", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const start = page.indexOf("function validateEventEditor");
+    const fn = page.slice(start, page.indexOf("\nfunction ", start + 1));
+    expect(fn).toMatch(/请选择一个仓库/);
+    expect(fn).toMatch(/至少选择一种关心的事件类型/);
+    // TIPS:这条断言是这次简化的关键——本地校验故意不检查服务端就绪态，保存不该被"仓库还没绑定"卡住。
+    expect(fn).not.toMatch(/readiness/i);
+  });
+});

@@ -31,16 +31,19 @@ import {
 import {
   AUTOMATION_DEFAULT_PERMISSION_PROFILE,
   AUTOMATION_PERMISSION_PROFILE,
+  isAutomationEventTrigger,
   isAutomationPermissionProfile,
   type AutomationConnectorSelection,
   type AutomationDefinition,
   type AutomationDefinitionRecord,
   type AutomationDraft,
+  type AutomationEventTrigger,
   type AutomationModelSelection,
   type AutomationPermissionProfile,
   type AutomationRun,
   type AutomationSchedule,
 } from "@jugglework/types/automation";
+import { defaultEventTrigger, EventTriggerEditor, type GithubEventTriggerClient } from "./event-trigger-editor";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
@@ -852,6 +855,11 @@ function AutomationEditor(props: {
   const [workspaceId, setWorkspaceId] = useState("");
   const [prompt, setPrompt] = useState(template?.prompt ?? "");
   const [schedule, setSchedule] = useState<AutomationSchedule>(() => templateSchedule(template, timezone));
+  // TIPS:`triggerKind` 独立于 `schedule`/`eventTrigger` 两份草稿状态存在——切换 tab 只换展示，
+  // 不清空另一侧已填的内容，真正丢弃只发生在用户确认离开时（见下方 requestTriggerKindChange）。
+  const [triggerKind, setTriggerKind] = useState<"schedule" | "event">("schedule");
+  const [eventTrigger, setEventTrigger] = useState<AutomationEventTrigger>(() => defaultEventTrigger(""));
+  const [pendingTriggerKind, setPendingTriggerKind] = useState<"schedule" | "event" | null>(null);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [connectors, setConnectors] = useState<AutomationConnectorSelection[]>([]);
@@ -875,6 +883,7 @@ function AutomationEditor(props: {
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const allowedModels = useDesktopAllowedModels();
   const orgConnectors = useOrgMcpConnections();
+  const githubEventClient = useMemo<GithubEventTriggerClient>(() => createGithubEventTriggerClient(props.client), [props.client]);
   const promptEditorRef = useRef<LexicalPromptEditorHandle>(null);
   const local = useLocal();
 
@@ -888,9 +897,13 @@ function AutomationEditor(props: {
       setName(definition.name);
       setWorkspaceId(definition.workspace.id);
       setPrompt(serializeAutomationPrompt(definition.prompt));
-      // TIPS:事件触发的编辑态属于 2.1 任务组的触发方式选择器；这里先只回填定时分支，
-      // 避免把事件触发的 trigger 当成 AutomationSchedule 强行塞进 setSchedule。
-      if (definition.trigger.kind !== "event") setSchedule(definition.trigger);
+      if (isAutomationEventTrigger(definition.trigger)) {
+        setTriggerKind("event");
+        setEventTrigger(definition.trigger);
+      } else {
+        setTriggerKind("schedule");
+        setSchedule(definition.trigger);
+      }
       setStartDate(definition.activeRange?.startDate ?? "");
       setEndDate(definition.activeRange?.endDate ?? "");
       setConnectors(definition.connectors);
@@ -908,7 +921,13 @@ function AutomationEditor(props: {
       setName(draft.name);
       setWorkspaceId(draft.workspace?.id ?? "");
       setPrompt(serializeAutomationPrompt(draft.prompt));
-      if (draft.trigger && draft.trigger.kind !== "event") setSchedule(draft.trigger);
+      if (draft.trigger && isAutomationEventTrigger(draft.trigger)) {
+        setTriggerKind("event");
+        setEventTrigger(draft.trigger);
+      } else if (draft.trigger) {
+        setTriggerKind("schedule");
+        setSchedule(draft.trigger);
+      }
       setStartDate(draft.activeRange?.startDate ?? "");
       setEndDate(draft.activeRange?.endDate ?? "");
       setConnectors(draft.connectors);
@@ -1013,7 +1032,7 @@ function AutomationEditor(props: {
   }, []);
   // TIPS:技能以 tag 形式内嵌在提示词里，skillIds 从草稿反推，避免出现「输入框里没有但仍被当作依赖」的幽灵技能。
   const skillIds = useMemo(() => { try { return readAutomationSkillIds(prompt); } catch { return []; } }, [prompt]);
-  const fingerprint = editorFingerprint({ name, workspaceId, prompt, schedule, startDate, endDate, connectors, model, agentId, skillIds, lifecycle, permission });
+  const fingerprint = editorFingerprint({ name, workspaceId, prompt, triggerKind, schedule, eventTrigger, startDate, endDate, connectors, model, agentId, skillIds, lifecycle, permission });
 
   useEffect(() => {
     if (!loading && baseline === null) setBaseline(fingerprint);
@@ -1035,7 +1054,9 @@ function AutomationEditor(props: {
     }
   }, []);
   const requestSave = () => {
-    const validationError = validateEditor({ name, workspaceId, prompt, schedule, startDate, endDate })
+    const validationError = (triggerKind === "event"
+        ? validateEventEditor({ name, workspaceId, prompt, eventTrigger })
+        : validateEditor({ name, workspaceId, prompt, schedule, startDate, endDate }))
       ?? dependencyReadinessError(model, agentId, skillIds, dependencies)
       ?? connectorReadinessError(connectors, connectorOptions);
     setError(validationError);
@@ -1063,15 +1084,19 @@ function AutomationEditor(props: {
         workspaceType: "local",
       },
       prompt: parseAutomationPrompt(prompt),
-      timezone: schedule.timezone,
-      // TIPS:这个编辑器目前只产出定时触发草稿；事件触发走 2.x 任务组新增的独立配置面板，
-      // 提交时会构造一个 AutomationEventTrigger 赋给 trigger，不复用这里的本地 schedule 状态。
-      trigger: schedule,
-      ...(startDate && endDate ? { activeRange: { startDate, endDate } } : {}),
+      timezone: triggerKind === "event" ? timezone : schedule.timezone,
+      trigger: triggerKind === "event" ? eventTrigger : schedule,
+      // TIPS:事件触发不支持生效日期区间（见桌面 PRD 4.3 权限分级说明附近对 activeRange 的约束），
+      // 只有定时触发才带上 startDate/endDate。
+      ...(triggerKind === "schedule" && startDate && endDate ? { activeRange: { startDate, endDate } } : {}),
       model,
       ...(agentId ? { agentId } : {}),
       skillIds,
-      connectors,
+      // TIPS:事件触发自动生成一个 `github-app` 连接器条目，代表运行期写回授权（见 4.9），
+      // 不需要用户在连接器多选里手动勾选；用户仍可以额外选择其他连接器供 agent 读取/分析使用。
+      connectors: triggerKind === "event" && !connectors.some((connector) => connector.source === "github-app")
+        ? [...connectors, { id: eventTrigger.connectorId || "github-app", source: "github-app" as const, label: t("automation.event_github_app_connector_label") }]
+        : connectors,
       permission: { profile: permission, acknowledgedAt: now },
       lifecycle,
       executorDeviceId: readAutomationDeviceId(),
@@ -1174,14 +1199,42 @@ function AutomationEditor(props: {
               {orgConnectors.error ? <p className="mt-2 text-xs text-red-9">{t("automation.connectors_load_failed")}{orgConnectors.error}</p> : null}
               {template?.recommendedConnectorIds.length ? <p className="mt-2 text-xs text-dls-secondary">{t("automation.connectors_recommended")}{template.recommendedConnectorIds.join("、")}</p> : null}
             </Field>
-            <ScheduleEditor
-              value={schedule}
-              onChange={applySchedule}
-              client={props.client}
-              activeRange={startDate && endDate ? { startDate, endDate } : undefined}
-            />
-            {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
-            {schedule.kind !== "once" ? (
+            <Field label={t("automation.trigger_kind")}>
+              <TriggerKindSelector
+                value={triggerKind}
+                onRequestChange={(next) => {
+                  // TIPS:切换到有内容的另一侧才需要二次确认；从空白事件草稿切回定时（或反过来）
+                  // 不算真的丢东西，直接切换，避免无意义的确认弹窗。
+                  const hasEventDraft = eventTrigger.repository.owner || eventTrigger.matches.length;
+                  if (next !== triggerKind && hasEventDraft) { setPendingTriggerKind(next); return; }
+                  setTriggerKind(next);
+                }}
+              />
+            </Field>
+            {pendingTriggerKind ? (
+              <DiscardTriggerConfirm
+                onCancel={() => setPendingTriggerKind(null)}
+                onConfirm={() => { setTriggerKind(pendingTriggerKind); setEventTrigger(defaultEventTrigger("")); setPendingTriggerKind(null); }}
+              />
+            ) : null}
+            {triggerKind === "event" ? (
+              <EventTriggerEditor
+                value={eventTrigger}
+                onChange={setEventTrigger}
+                client={githubEventClient}
+                permission={permission}
+                onPermissionEscalationConfirmed={() => setPermission(AUTOMATION_PERMISSION_PROFILE)}
+              />
+            ) : (
+              <>
+                <ScheduleEditor
+                  value={schedule}
+                  onChange={applySchedule}
+                  client={props.client}
+                  activeRange={startDate && endDate ? { startDate, endDate } : undefined}
+                />
+                {/* TIPS:单次任务的执行日期本身就是唯一一次触发，再叠加生效区间只会互相矛盾，因此不展示。 */}
+                {schedule.kind !== "once" ? (
               <Field label={t("automation.active_range")} hint={t("automation.active_range_hint")}>
                 <DateRangeField
                   startDate={startDate}
@@ -1189,7 +1242,9 @@ function AutomationEditor(props: {
                   onChange={(range) => { setStartDate(range.startDate); setEndDate(range.endDate); }}
                 />
               </Field>
-            ) : null}
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1197,6 +1252,66 @@ function AutomationEditor(props: {
       {permissionOpen ? <PermissionDialog accepted={riskAccepted} saving={saving} onAccepted={setRiskAccepted} onCancel={() => setPermissionOpen(false)} onConfirm={() => void save()} /> : null}
     </div>
   );
+}
+
+/**
+ * 定时/事件触发方式选择器。
+ * TIPS: 只负责渲染和请求切换，真正的丢弃确认逻辑在调用方（AutomationEditor）里，
+ * 这里不直接持有草稿状态，保持这个组件本身无副作用、好测试。
+ */
+function TriggerKindSelector(props: { value: "schedule" | "event"; onRequestChange: (next: "schedule" | "event") => void }) {
+  const options: Array<{ value: "schedule" | "event"; labelKey: string }> = [
+    { value: "schedule", labelKey: "automation.trigger_kind_schedule" },
+    { value: "event", labelKey: "automation.trigger_kind_event" },
+  ];
+  return (
+    <div className="flex gap-2">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => props.onRequestChange(option.value)}
+          aria-pressed={props.value === option.value}
+          className={cn(
+            "rounded-xl border px-4 py-2.5 text-sm font-medium transition-colors",
+            props.value === option.value ? "border-dls-text bg-dls-hover" : "border-dls-border hover:bg-dls-hover",
+          )}
+        >
+          {t(option.labelKey)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DiscardTriggerConfirm(props: { onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true">
+      <div className="w-full max-w-md rounded-2xl bg-background p-6">
+        <p className="text-sm">{t("automation.trigger_kind_discard_confirm")}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={props.onCancel} className="rounded-full border border-dls-border px-4 py-2 text-sm">{t("automation.cancel")}</button>
+          <button type="button" onClick={props.onConfirm} className="rounded-full bg-red-9 px-4 py-2 text-sm text-white">{t("automation.trigger_kind_discard_confirm_action")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 把 `JuggleWorkServerClient` 适配成事件触发面板需要的窄接口。
+ * TIPS: 这几个方法对应的本机路由（见 routes/automations.ts 的 registerGithubEventProxyRoutes）
+ * 目前是到 jugglework-server 新增端点（add-github-event-trigger-relay）的直通代理——服务端那一侧
+ * 还没实现，调用会失败并被 UI 优雅降级（空仓库列表/就绪态 unknown），不是本地这一层的缺陷。
+ */
+function createGithubEventTriggerClient(client: JuggleWorkServerClient | null): GithubEventTriggerClient {
+  return {
+    listRepositories: () => client ? client.listGithubEventRepositories() : Promise.resolve([]),
+    checkReadiness: (repo) => client ? client.checkGithubEventReadiness(repo) : Promise.resolve("unknown" as const),
+    requestInstall: () => client ? client.requestGithubAppInstall() : Promise.resolve(),
+    requestBind: (repo) => client ? client.requestGithubRepositoryBind(repo) : Promise.resolve(),
+    estimateFrequency: (trigger) => client ? client.estimateGithubEventFrequency(trigger) : Promise.resolve(null),
+  };
 }
 
 type ConnectorOption = AutomationConnectorSelection & { ready: boolean };
@@ -2326,6 +2441,18 @@ function validateEditor(value: { name: string; workspaceId: string; prompt: stri
   return null;
 }
 
+// TIPS:仓库/连接器是否已在服务端就绪不在这里校验（见 validateAutomationEventTrigger 的注释），
+// 保存不因就绪态卡住；这里只挡明显打不开的本地态（未选事件类型、仓库字段为空）。
+function validateEventEditor(value: { name: string; workspaceId: string; prompt: string; eventTrigger: AutomationEventTrigger }): string | null {
+  const nameLength = [...value.name.trim()].length;
+  if (nameLength < 1 || nameLength > 100) return "名称必须为 1–100 个字符";
+  if (!value.workspaceId) return "请选择一个本机工作空间";
+  try { parseAutomationPrompt(value.prompt); } catch (error) { return describeError(error); }
+  if (!value.eventTrigger.repository.owner || !value.eventTrigger.repository.name) return "请选择一个仓库";
+  if (!value.eventTrigger.matches.length) return "至少选择一种关心的事件类型";
+  return null;
+}
+
 function connectorReadinessError(
   selected: AutomationConnectorSelection[],
   available: Array<AutomationConnectorSelection & { ready: boolean }>,
@@ -2358,7 +2485,9 @@ function editorFingerprint(value: {
   name: string;
   workspaceId: string;
   prompt: string;
+  triggerKind: "schedule" | "event";
   schedule: AutomationSchedule;
+  eventTrigger: AutomationEventTrigger;
   startDate: string;
   endDate: string;
   connectors: AutomationConnectorSelection[];

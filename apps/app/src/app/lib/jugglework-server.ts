@@ -34,6 +34,7 @@ import {
 import type {
   AutomationDefinitionRecord,
   AutomationDraft,
+  AutomationEventTrigger,
   AutomationListResponse,
   AutomationRun,
   AutomationRunListResponse,
@@ -1630,6 +1631,31 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       requestJson<{ summary: string; nextRunAt: number | null }>(baseUrl, "/automations/preview", {
         token, hostToken, method: "POST", body: { schedule, activeRange, locale: "zh-CN" }, timeoutMs: timeouts.config,
       }),
+    /**
+     * 列出可用于事件触发的已绑定 GitHub 仓库。
+     * TIPS: 本机路由把这个请求代理到 jugglework-server（add-github-event-trigger-relay）；
+     * 那一侧的端点还没实现前，请求会失败，调用方（EventTriggerEditor）据此展示空列表而不是崩溃。
+     */
+    listGithubEventRepositories: () => requestJson<{ items: Array<{ connectorId: string; owner: string; name: string; visibility: "public" | "private" }> }>(
+      baseUrl, "/automations/github-repositories", { token, hostToken, timeoutMs: timeouts.config },
+    ).then((response) => response.items),
+    /** 探测某个仓库的事件触发就绪态（未连接/待配置/已连接），见服务端 PRD §4.4。 */
+    checkGithubEventReadiness: (repo: { owner: string; name: string }) => requestJson<{ state: "not_connected" | "pending_configuration" | "ready" }>(
+      baseUrl, `/automations/github-readiness?owner=${encodeURIComponent(repo.owner)}&name=${encodeURIComponent(repo.name)}`,
+      { token, hostToken, timeoutMs: timeouts.config },
+    ).then((response) => response.state).catch(() => "unknown" as const),
+    /** 生成一条 GitHub App 安装请求，通知组织管理员，见服务端 PRD §2.3。 */
+    requestGithubAppInstall: () => requestJson<{ ok: true }>(baseUrl, "/automations/github-install-request", {
+      token, hostToken, method: "POST", timeoutMs: timeouts.config,
+    }).then(() => undefined),
+    /** 请求把目标仓库绑定为事件触发可用的连接器实例。 */
+    requestGithubRepositoryBind: (repo: { owner: string; name: string }) => requestJson<{ ok: true }>(baseUrl, "/automations/github-repository-bind", {
+      token, hostToken, method: "POST", body: repo, timeoutMs: timeouts.config,
+    }).then(() => undefined),
+    /** 基于仓库近期活动量估算事件触发的预计每周触发次数，见桌面 PRD 4.7。 */
+    estimateGithubEventFrequency: (trigger: AutomationEventTrigger) => requestJson<{ perWeek: number | null }>(baseUrl, "/automations/github-event-frequency", {
+      token, hostToken, method: "POST", body: trigger, timeoutMs: timeouts.config,
+    }).then((response) => response.perWeek).catch(() => null),
     /** 按 ID 读取本机自动化任务。 */
     getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(
       baseUrl, `/automations/${encodeURIComponent(automationId)}`, { token, hostToken, timeoutMs: timeouts.config },

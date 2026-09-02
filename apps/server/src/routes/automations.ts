@@ -10,6 +10,7 @@ import {
   validateAutomationActiveRange,
 } from "../automation/validation.js";
 import { previewAutomationSchedule } from "../automation/schedule.js";
+import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "../automation/github-event-client.js";
 import { ApiError } from "../errors.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
@@ -35,6 +36,8 @@ export interface RegisterAutomationRoutesOptions {
   resolveWorkspace?: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient?: (config: ServerConfig, workspace: WorkspaceInfo) => ReturnType<typeof createOpencodeClient>;
   listWorkspaceMcp?: (config: ServerConfig, workspaceId: string, workspaceRoot: string) => Promise<McpItem[]>;
+  /** 到 jugglework-server 事件中继 API 的客户端；未提供时回落到"未配置"兜底实现。 */
+  githubEventRelay?: GithubEventRelayClient;
   enabled?: boolean;
 }
 
@@ -48,6 +51,35 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const schedule = validateAutomationSchedule(body.schedule as AutomationSchedule | undefined);
     const activeRange = validateAutomationActiveRange(body.activeRange as AutomationDraft["activeRange"]);
     return jsonResponse(previewAutomationSchedule(schedule, activeRange, Date.now(), typeof body.locale === "string" ? body.locale : "zh-CN"));
+  });
+
+  // TIPS:以下五个路由都是到 jugglework-server 事件中继 API 的直通代理，没有本地状态、
+  // 没有本地校验（校验在 jugglework-server 那一侧做）——本地只负责转发和把 relay 的失败
+  // 转成对桌面 UI 友好的响应形状，见 github-event-client.ts 顶部注释里的边界说明。
+  const relay = options.githubEventRelay ?? createUnconfiguredGithubEventRelayClient();
+  addRoute(routes, "GET", "/automations/github-repositories", "client", async () => jsonResponse({ items: await relay.listRepositories() }));
+  addRoute(routes, "GET", "/automations/github-readiness", "client", async (ctx) => {
+    const owner = ctx.url.searchParams.get("owner")?.trim() ?? "";
+    const name = ctx.url.searchParams.get("name")?.trim() ?? "";
+    if (!owner || !name) throw new ApiError(400, "invalid_request", "owner and name are required");
+    return jsonResponse({ state: await relay.checkReadiness({ owner, name }) });
+  });
+  addRoute(routes, "POST", "/automations/github-install-request", "client", async () => {
+    await relay.requestInstall();
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "POST", "/automations/github-repository-bind", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const owner = typeof body.owner === "string" ? body.owner.trim() : "";
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!owner || !name) throw new ApiError(400, "invalid_request", "owner and name are required");
+    await relay.requestBind({ owner, name });
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "POST", "/automations/github-event-frequency", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const perWeek = await relay.estimateFrequency(body as unknown as Parameters<GithubEventRelayClient["estimateFrequency"]>[0]);
+    return jsonResponse({ perWeek });
   });
 
   // TIPS:workspaceId 是可选的。创建页在选工作空间之前就要能看到模型、智能体、技能和连接器，
