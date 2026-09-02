@@ -54,7 +54,7 @@
 - [x] 5.1 Add device-side path-glob filtering as an additional advanced-filter field, evaluated after server coarse-match; verify with a unit test for path-match inclusion/exclusion. The advanced-filter UI field for `changedPaths` already existed (task 2.2); this task added the pipeline-side matcher and gate. Fails open when `changedPaths` data isn't available on the delivery — matches the honest gap already noted for task 3.1 (the field would be populated by the not-yet-built delivery adapter's extra GitHub API call).
 - [ ] 5.2 Add a "模拟测试" flow letting a user pick a historical PR/issue and preview the assembled prompt without executing; verify with a component test asserting no run/session is created during preview.
 - [x] 5.3 Add a `shadow` lifecycle state that runs the full pipeline but skips the final dispatch, recording what would have happened; verify with a unit test asserting shadow runs never create a live session.
-- [ ] 5.4 Add manual delivery-mode override persistence and a status indicator showing which channel is actually in effect (not just configured); verify with a component test for the indicator reflecting a forced-vs-resolved mismatch.
+- [x] 5.4 Add manual delivery-mode override persistence and a status indicator showing which channel is actually in effect (not just configured); verify with a component test for the indicator reflecting a forced-vs-resolved mismatch.
 
 ## P1 — 6. Account/device lifecycle edge cases
 

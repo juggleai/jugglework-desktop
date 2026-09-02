@@ -2872,6 +2872,8 @@ export default {
   "automation.shadow_mode": "影子模式",
   "automation.shadow_mode_hint": "只跑校验、记录会怎么处理，不真正创建会话或写回 GitHub",
   "automation.state_shadow": "影子模式",
+  "automation.event_delivery_effective_prefix": "当前实际生效：",
+  "automation.event_delivery_effective_degraded_suffix": "（就绪态未达标，已降级为轮询）",
   "automation.schedule_daily": "每天",
   "automation.schedule_weekly": "每周",
   "automation.schedule_monthly": "每月",

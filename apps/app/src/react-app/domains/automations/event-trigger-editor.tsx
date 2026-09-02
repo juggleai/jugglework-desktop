@@ -206,7 +206,7 @@ export function EventTriggerEditor(props: {
       </details>
 
       <FieldRow label={t("automation.event_delivery_mode")}>
-        <DeliveryModeControl value={props.value.deliveryMode} onChange={(mode) => props.onChange({ ...props.value, deliveryMode: mode })} />
+        <DeliveryModeControl value={props.value.deliveryMode} onChange={(mode) => props.onChange({ ...props.value, deliveryMode: mode })} readiness={readiness} />
       </FieldRow>
 
       <FieldRow label={t("automation.event_permission_tier")}>
@@ -251,22 +251,41 @@ function ReadinessBanner(props: { message: string; actionLabel: string; onAction
   );
 }
 
-function DeliveryModeControl(props: { value: AutomationEventDeliveryMode; onChange: (mode: AutomationEventDeliveryMode) => void }) {
+/**
+ * 任务 5.4：投递方式除了手动覆盖（radio 本身），还要展示"实际生效的是哪一条"——
+ * 配置的是 `自动`，不代表用户能一眼看出这会解析成 IM 推送还是轮询。
+ */
+function DeliveryModeControl(props: { value: AutomationEventDeliveryMode; onChange: (mode: AutomationEventDeliveryMode) => void; readiness: GithubReadinessState }) {
   const options: Array<{ value: AutomationEventDeliveryMode; labelKey: string }> = [
     { value: "auto", labelKey: "automation.event_delivery_auto" },
     { value: "im", labelKey: "automation.event_delivery_im" },
     { value: "poll", labelKey: "automation.event_delivery_poll" },
   ];
+  const effective = resolveEffectiveDeliveryChannel(props.value, props.readiness);
   return (
-    <div className="flex gap-4">
-      {options.map((option) => (
-        <label key={option.value} className="flex items-center gap-1.5 text-sm">
-          <input type="radio" name="event-delivery-mode" checked={props.value === option.value} onChange={() => props.onChange(option.value)} />
-          {t(option.labelKey)}
-        </label>
-      ))}
+    <div>
+      <div className="flex gap-4">
+        {options.map((option) => (
+          <label key={option.value} className="flex items-center gap-1.5 text-sm">
+            <input type="radio" name="event-delivery-mode" checked={props.value === option.value} onChange={() => props.onChange(option.value)} />
+            {t(option.labelKey)}
+          </label>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-dls-secondary">
+        {t("automation.event_delivery_effective_prefix")}
+        {effective === "im" ? t("automation.event_delivery_im") : t("automation.event_delivery_poll")}
+        {props.value !== "poll" && effective === "poll" ? t("automation.event_delivery_effective_degraded_suffix") : ""}
+      </p>
     </div>
   );
+}
+
+/** 解析"配置的投递方式 + 当前就绪态"实际会生效成哪一条，供状态指示条使用。 */
+export function resolveEffectiveDeliveryChannel(configured: AutomationEventDeliveryMode, readiness: GithubReadinessState): "im" | "poll" {
+  if (readiness !== "ready") return "poll";
+  if (configured === "poll") return "poll";
+  return "im";
 }
 
 function PermissionTierSummary(props: { inputTrustLevel: "open" | "restricted" | "unknown"; permission: AutomationPermissionProfile; onEscalate: () => void }) {

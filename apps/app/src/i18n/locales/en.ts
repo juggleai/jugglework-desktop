@@ -2869,6 +2869,8 @@ export default {
   "automation.shadow_mode": "Shadow mode",
   "automation.shadow_mode_hint": "Runs preflight and records what would happen, without creating a session or writing back to GitHub",
   "automation.state_shadow": "Shadow mode",
+  "automation.event_delivery_effective_prefix": "Currently in effect: ",
+  "automation.event_delivery_effective_degraded_suffix": " (readiness not met, degraded to polling)",
   "automation.schedule_daily": "Daily",
   "automation.schedule_weekly": "Weekly",
   "automation.schedule_monthly": "Monthly",

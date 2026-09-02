@@ -337,6 +337,19 @@ describe("Run history and list rendering for event-sourced runs (tasks 4.1-4.2)"
   });
 });
 
+describe("Delivery-mode status indicator (task 5.4)", () => {
+  test("resolveEffectiveDeliveryChannel reflects forced-vs-resolved mismatches", async () => {
+    const { resolveEffectiveDeliveryChannel } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    // 就绪时：auto/im 都解析成 im，poll 强制维持 poll。
+    expect(resolveEffectiveDeliveryChannel("auto", "ready")).toBe("im");
+    expect(resolveEffectiveDeliveryChannel("im", "ready")).toBe("im");
+    expect(resolveEffectiveDeliveryChannel("poll", "ready")).toBe("poll");
+    // 未就绪时：不管配置成什么，一律降级为轮询——这正是"强制 vs 实际生效"最该被看见的落差。
+    expect(resolveEffectiveDeliveryChannel("im", "not_connected")).toBe("poll");
+    expect(resolveEffectiveDeliveryChannel("auto", "pending_configuration")).toBe("poll");
+  });
+});
+
 describe("P2 extended event coverage (tasks 7.1-7.2)", () => {
   test("event-type matrix includes release, backed by types/validation that already support it", () => {
     const editor = readFileSync(new URL("../src/react-app/domains/automations/event-trigger-editor.tsx", import.meta.url), "utf8");
