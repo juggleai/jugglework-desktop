@@ -320,7 +320,14 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     // error still gets its own message. An empty assistant carcass for the
     // errored turn is dropped so the error reads as that turn's outcome.
     const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
-    if (!error) return [uiMessage];
+    if (!error) {
+      // OpenCode persists compaction boundaries as otherwise-empty user
+      // messages. Their mode has already been transferred to the following
+      // summary above; retaining the empty message here would split one
+      // automatic run into separate assistant groups.
+      if (boundary && uiMessage.parts.length === 0) return [];
+      return [uiMessage];
+    }
 
     const errorMessage = createSessionErrorUIMessage(message.info.id, describeOpencodeSessionError(error), { created });
     return uiMessage.parts.length > 0 ? [uiMessage, errorMessage] : [errorMessage];

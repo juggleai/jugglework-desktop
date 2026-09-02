@@ -18,6 +18,8 @@ import { parseJuggleWorkSessionCreateResult } from "../src/components/tools/jugg
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import { getSessionCompactionFromMessage } from "../src/app/lib/session-compaction";
 import { deriveRenderedSessionMessages } from "../src/react-app/domains/session/surface/session-render-state";
+import { groupMessages, isMessageGroup } from "../src/components/chat/utils";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -435,7 +437,7 @@ describe("tool part mapper", () => {
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
       transcriptKey(workspaceId, sessionId),
     ) ?? [];
-    expect(transcript.find((message) => message.id === "message-before-compaction")?.parts).toEqual([]);
+    expect(transcript.find((message) => message.id === "message-before-compaction")).toBeUndefined();
 
     const rendered = deriveRenderedSessionMessages({ transcriptState: transcript, snapshot: null });
     expect(rendered.some((message) => (
@@ -448,7 +450,7 @@ describe("tool part mapper", () => {
     useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
   });
 
-  test("snapshot preserves automatic compaction mode on its completed summary", () => {
+  test("snapshot keeps output around automatic compaction in one task group", () => {
     const workspaceId = "workspace-auto-compact-snapshot";
     const sessionId = "session-auto-compact-snapshot";
     const snapshot = {
@@ -458,10 +460,40 @@ describe("tool part mapper", () => {
       messages: [
         {
           info: {
-            id: "message-before-auto-compaction",
+            id: "task-prompt",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_000_000 },
+          },
+          parts: [{
+            id: "task-prompt-text",
+            sessionID: sessionId,
+            messageID: "task-prompt",
+            type: "text",
+            text: "Complete the task",
+          }],
+        },
+        {
+          info: {
+            id: "assistant-before-auto-compaction",
             role: "assistant",
             sessionID: sessionId,
-            time: { created: 1_700_000_000_000, completed: 1_700_000_000_500 },
+            time: { created: 1_700_000_000_500, completed: 1_700_000_001_000 },
+          },
+          parts: [{
+            id: "assistant-before-text",
+            sessionID: sessionId,
+            messageID: "assistant-before-auto-compaction",
+            type: "text",
+            text: "Progress before compaction",
+          }],
+        },
+        {
+          info: {
+            id: "message-before-auto-compaction",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_001_500 },
           },
           parts: [{
             id: "auto-compaction-boundary",
@@ -477,7 +509,7 @@ describe("tool part mapper", () => {
             role: "assistant",
             sessionID: sessionId,
             summary: true,
-            time: { created: 1_700_000_001_000, completed: 1_700_000_002_000 },
+            time: { created: 1_700_000_002_000, completed: 1_700_000_003_000 },
           },
           parts: [{
             id: "auto-summary-text",
@@ -485,6 +517,21 @@ describe("tool part mapper", () => {
             messageID: "message-auto-compaction-summary",
             type: "text",
             text: "internal automatic summary",
+          }],
+        },
+        {
+          info: {
+            id: "assistant-after-auto-compaction",
+            role: "assistant",
+            sessionID: sessionId,
+            time: { created: 1_700_000_003_500, completed: 1_700_000_004_000 },
+          },
+          parts: [{
+            id: "assistant-after-text",
+            sessionID: sessionId,
+            messageID: "assistant-after-auto-compaction",
+            type: "text",
+            text: "Final output after compaction",
           }],
         },
       ],
@@ -495,17 +542,64 @@ describe("tool part mapper", () => {
     const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
       transcriptKey(workspaceId, sessionId),
     ) ?? [];
-    expect(transcript.find((message) => message.id === "message-before-auto-compaction")?.parts).toEqual([]);
+    expect(transcript.find((message) => message.id === "message-before-auto-compaction")).toBeUndefined();
     expect(getSessionCompactionFromMessage(
       transcript.find((message) => message.id === "message-auto-compaction-summary")!,
     )).toEqual({
       mode: "auto",
       running: false,
-      startedAt: 1_700_000_001_000,
-      finishedAt: 1_700_000_002_000,
+      startedAt: 1_700_000_002_000,
+      finishedAt: 1_700_000_003_000,
     });
 
+    const rendered = deriveRenderedSessionMessages({ transcriptState: transcript, snapshot: null });
+    const grouped = groupMessages(rendered, "ready");
+    expect(grouped).toHaveLength(2);
+    expect(isMessageGroup(grouped[1]!)).toBeTrue();
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected one assistant task group");
+    expect(grouped[1].messages.map((item) => item.message.id)).toEqual([
+      "assistant-before-auto-compaction",
+      "message-auto-compaction-summary",
+      "assistant-after-auto-compaction",
+    ]);
+
     useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+  });
+
+  test("snapshot keeps visible content attached to a compaction boundary", () => {
+    const sessionId = "session-visible-boundary";
+    const messages = snapshotToUIMessages({
+      session: { id: sessionId },
+      status: { type: "idle" },
+      todos: [],
+      messages: [{
+        info: {
+          id: "visible-boundary-message",
+          role: "user",
+          sessionID: sessionId,
+          time: { created: 1_700_000_000_000 },
+        },
+        parts: [
+          {
+            id: "visible-boundary-text",
+            sessionID: sessionId,
+            messageID: "visible-boundary-message",
+            type: "text",
+            text: "Keep this visible text",
+          },
+          {
+            id: "visible-boundary-part",
+            sessionID: sessionId,
+            messageID: "visible-boundary-message",
+            type: "compaction",
+            auto: true,
+          },
+        ],
+      }],
+    } as any);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.parts).toMatchObject([{ type: "text", text: "Keep this visible text" }]);
   });
 
   test("delivers untracked session lifecycle events for sidebar synchronization", () => {
