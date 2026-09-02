@@ -270,6 +270,28 @@ test("entity session mapping round-trips through upsert, close and invalidate", 
   }
 });
 
+test("entity session mapping is scoped per automation, not shared across automations on the same entity", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-entity-scope-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    // TIPS:两个不同的自动化（比如"自动评审" task-review 和"合并后通知群里" task-notify）
+    // 都配置在同一个 PR 上，各自的会话归属必须互不干扰。
+    repository.upsertEntitySessionMapping("task-review", "github:pull_request:482", "workspace-1", "session-review", NOW);
+    repository.upsertEntitySessionMapping("task-notify", "github:pull_request:482", "workspace-1", "session-notify", NOW);
+    assert.equal(repository.getEntitySessionMapping("task-review", "github:pull_request:482")?.sessionId, "session-review");
+    assert.equal(repository.getEntitySessionMapping("task-notify", "github:pull_request:482")?.sessionId, "session-notify");
+
+    repository.closeEntitySessionMapping("task-review", "github:pull_request:482", NOW + 1_000);
+    assert.equal(repository.getEntitySessionMapping("task-review", "github:pull_request:482")?.status, "closed");
+    // TIPS:关掉一个自动化的归属不能影响另一个——这才是"按 automation_id + entity_ref 隔离"真正要保证的事。
+    assert.equal(repository.getEntitySessionMapping("task-notify", "github:pull_request:482")?.status, "active");
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function definition(id: string, name: string, revision: number, updatedAt: number): AutomationDefinition {
   return {
     schema: "automation-definition/v1",

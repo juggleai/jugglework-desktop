@@ -289,6 +289,12 @@ export type AutomationRun = {
     previousSessionUnavailable?: boolean;
     /** 离线补投丢弃的事件数量与覆盖时间范围，见桌面 PRD 4.5。 */
     backlogDropped?: { count: number; sinceAt: number; untilAt: number };
+    /**
+     * prompt 是否已经确认成功分发到会话。TIPS: 这是重启重连修正（3b.10）的关键字段——
+     * `state = "running"` 不代表 prompt 真的发出去了，只有这个字段为真，重连时才能把
+     * "会话现在 idle" 解读成"这一轮正常跑完"，否则必须当成"崩溃在分发前"处理。
+     */
+    dispatched?: boolean;
   };
 };
 

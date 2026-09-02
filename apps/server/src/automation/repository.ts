@@ -365,6 +365,15 @@ export class AutomationRepository {
     ).map((row) => ({ run: runFromRow(row), definition: parseStoredAutomationDefinition(row.snapshot_json) }));
   }
 
+  /** 统计某自动化在 `since` 之后认领的事件触发运行数（含跳过的），用于每小时上限判断。 */
+  countEventRunsSince(automationId: string, since: number): number {
+    const row = this.database.get<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM automation_runs WHERE automation_id = ? AND trigger_source = 'event' AND queued_at >= ?",
+      [automationId, since],
+    );
+    return row?.count ?? 0;
+  }
+
   /**
    * 返回同一实体（如某个 PR）当前的非终态运行，用于设备端的防抖合并判断。
    * TIPS: 这是事件触发专属的非重叠检查，粒度是 (automation_id, entity_ref)，不是
@@ -487,11 +496,16 @@ export class AutomationRepository {
     );
   }
 
-  /** 更新运行状态并在同一事务写入同步 outbox。 */
+  /**
+   * 更新运行状态并在同一事务写入同步 outbox。
+   * TIPS: `eventMetadata` 是浅合并（不是整体替换），因为不同调用点会分别推进这个 JSON 袋子
+   * 里的不同字段（比如 `dispatched` 在分发成功时置真，`previousSessionUnavailable` 在回退新建
+   * 会话时置真），互不覆盖对方已经写入的部分。
+   */
   updateRun(
     id: string,
     expectedRevision: number,
-    patch: Partial<Pick<AutomationRun, "state" | "sessionId" | "startedAt" | "endedAt" | "concreteModel" | "agentId" | "connectorIds" | "errorCode" | "errorMessage">>,
+    patch: Partial<Pick<AutomationRun, "state" | "sessionId" | "startedAt" | "endedAt" | "concreteModel" | "agentId" | "connectorIds" | "errorCode" | "errorMessage" | "eventMetadata">>,
     now: number,
   ): AutomationRun {
     return this.database.transaction(() => {
@@ -506,10 +520,11 @@ export class AutomationRepository {
         state,
         revision: current.revision + 1,
         syncState: "synced",
+        ...(patch.eventMetadata ? { eventMetadata: { ...current.eventMetadata, ...patch.eventMetadata } } : {}),
       };
       const result = this.database.run(
         `UPDATE automation_runs SET state = ?, session_id = ?, concrete_selection_json = ?, error_code = ?, error_message = ?,
-          started_at = ?, ended_at = ?, revision = ?, sync_state = 'synced', sync_error_code = NULL, updated_at = ?
+          started_at = ?, ended_at = ?, revision = ?, sync_state = 'synced', sync_error_code = NULL, event_metadata_json = ?, updated_at = ?
          WHERE id = ? AND revision = ?`,
         [
           next.state,
@@ -520,6 +535,7 @@ export class AutomationRepository {
           next.startedAt ?? null,
           next.endedAt ?? null,
           next.revision,
+          next.eventMetadata ? JSON.stringify(next.eventMetadata) : null,
           now,
           id,
           expectedRevision,

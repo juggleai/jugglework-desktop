@@ -19,6 +19,17 @@ export type AutomationExecutorOptions = {
   wait?: (milliseconds: number) => Promise<void>;
 };
 
+/**
+ * 事件触发运行的会话延续上下文，由调用方（事件管道）在分发前算好传入。
+ * TIPS: `extraPromptParts` 已经是渲染好的、包含不可信数据边界和增量摘要的完整 parts
+ * （见 event-pipeline.ts 的 `appendEventContextPromptParts`）——executor 本身不理解
+ * GitHub 事件的具体形状，只负责把这些 parts 追加到既有 prompt 后面。
+ */
+export type AutomationEventExecutionContext = {
+  entityRef: string;
+  extraPromptParts: AutomationPromptPart[];
+};
+
 /** 在后台创建独立工作空间会话并以无人值守完整权限执行已认领的运行。 */
 export class AutomationExecutor {
   private disposed = false;
@@ -35,42 +46,23 @@ export class AutomationExecutor {
     this.disposed = true;
   }
 
-  /** 执行单个冻结版本的运行，并把所有状态变化持久化。 */
-  async execute(snapshot: AutomationRunSnapshot): Promise<void> {
+  /**
+   * 执行单个冻结版本的运行，并把所有状态变化持久化。
+   * @param eventContext 事件触发的会话延续上下文；省略时保持原有"每次触发都新建会话"的行为。
+   */
+  async execute(snapshot: AutomationRunSnapshot, eventContext?: AutomationEventExecutionContext): Promise<void> {
     let current = snapshot.run;
     try {
       const workspace = await this.resolveLocalWorkspace(snapshot);
       const opencode = this.options.createWorkspaceOpencodeClient(this.options.config, workspace);
       const definition = snapshot.definition;
       const unattended = definition.permission.profile === AUTOMATION_PERMISSION_PROFILE;
-      const created = await opencode.session.create({
-        title: `自动化 · ${definition.name} · ${new Date(current.scheduledFor).toLocaleString("zh-CN")}`,
-        ...(definition.agentId ? { agent: definition.agentId } : {}),
-        ...(definition.model.mode === "explicit" ? {
-          model: {
-            id: definition.model.modelId,
-            providerID: definition.model.providerId,
-            ...(definition.model.variant ? { variant: definition.model.variant } : {}),
-          },
-        } : {}),
-        metadata: {
-          automationId: definition.id,
-          automationRunId: current.id,
-          automationTrigger: current.triggerSource,
-          automationScheduledFor: current.scheduledFor,
-          automationDefinitionRevision: definition.revision,
-        },
-        // TIPS:只有「完全访问权限」才放开全部权限并屏蔽提问；选了「默认权限」的任务保留工作空间
-        // 原有的确认策略，敏感操作会停在等待用户确认的状态——这正是该模式向用户声明的行为。
-        ...(unattended ? {
-          permission: [
-            { permission: "*", pattern: "*", action: "allow" },
-            { permission: "question", pattern: "*", action: "deny" },
-          ],
-        } : {}),
-      });
-      if (!created.data) throw failure("execution_failed", "无法创建自动化会话");
-      current = this.options.repository.updateRun(current.id, current.revision, { sessionId: created.data.id }, this.now());
+
+      const resolved = await this.resolveSessionId(definition, workspace, opencode, current, eventContext);
+      current = this.options.repository.updateRun(current.id, current.revision, {
+        sessionId: resolved.sessionId,
+        ...(resolved.previousSessionUnavailable ? { eventMetadata: { previousSessionUnavailable: true } } : {}),
+      }, this.now());
 
       const toolAllowlist = await this.preflight(snapshot, workspace, opencode);
       current = this.options.repository.updateRun(current.id, current.revision, {
@@ -100,10 +92,16 @@ export class AutomationExecutor {
           ? { system: "这是无人值守自动化任务。不得询问用户或等待交互；信息不足时作出合理假设并继续，或明确失败。" }
           : { system: "这是自动化任务，但运行在默认权限下：敏感操作需要用户确认，请在需要时正常发起确认。" }),
         tools: toolAllowlist,
-        parts: promptParts(definition.prompt.parts, workspace.path),
+        parts: promptParts(
+          eventContext ? [...definition.prompt.parts, ...eventContext.extraPromptParts] : definition.prompt.parts,
+          workspace.path,
+        ),
       }, observedToolIds, policy.disabledServerNames);
       const dispatched = await opencode.session.promptAsync(prompt as Parameters<typeof opencode.session.promptAsync>[0]);
       if (dispatched.error !== undefined) throw failure("execution_failed", "OpenCode 未接受自动化提示词");
+      // TIPS:这一次 updateRun 只在 prompt 真正被 OpenCode 接受之后才发生——重连重连（reconcile）
+      // 就是靠这个标记分辨"崩溃发生在分发之前"还是"分发之后"，见 reconcile() 的注释。
+      current = this.options.repository.updateRun(current.id, current.revision, { eventMetadata: { dispatched: true } }, this.now());
       await this.waitForTerminalEvent(opencode, current.sessionId!);
       if (this.disposed) throw failure("session_lost", "客户端退出，自动化会话已停止跟踪");
       await this.completeFromSession(opencode, current);
@@ -136,10 +134,83 @@ export class AutomationExecutor {
         await this.waitForTerminalEvent(opencode, current.sessionId);
       }
       if (this.disposed) throw failure("session_lost", "客户端退出，自动化会话已停止跟踪");
-      await this.completeFromSession(opencode, this.options.repository.getRun(current.id) ?? current);
+      // TIPS: 会话延续场景下，一个 session 可能已经承载过多轮历史 run——重启后"session 现在
+      // idle"既可能是"上一轮正常结束的稳态"，也可能是"这一轮 prompt 还没来得及发出去就崩溃了"。
+      // `eventMetadata.dispatched` 是 execute() 在 promptAsync 确认成功之后才写入的标记，只有
+      // 它为真，才能把"idle"解读成"这一轮真的跑完了"；否则必须当失败处理，不能盲目判定成功——
+      // 见桌面 PRD 4.8 的"重启重连"分支和 design.md 决策 9。
+      const latestBeforeComplete = this.options.repository.getRun(current.id) ?? current;
+      if (!latestBeforeComplete.eventMetadata?.dispatched) {
+        throw failure("session_lost", "重启前未能确认这一轮提示词已成功分发，不判定为完成");
+      }
+      await this.completeFromSession(opencode, latestBeforeComplete);
     } catch (error) {
       this.failRun(current.id, error);
     }
+  }
+
+  /**
+   * 决定这一轮触发用新会话还是复用已有会话。
+   * TIPS: 只有事件触发（`eventContext` 有值）才会走复用路径；定时/手动触发的行为完全不变，
+   * 继续每次新建——这是 add-local-automation-tasks 决策 #6 对事件触发场景的一次例外，不是
+   * 全局改动，见 design.md 决策 8。
+   */
+  private async resolveSessionId(
+    definition: AutomationRunSnapshot["definition"],
+    workspace: WorkspaceInfo,
+    opencode: WorkspaceOpencodeClient,
+    current: AutomationRunSnapshot["run"],
+    eventContext?: AutomationEventExecutionContext,
+  ): Promise<{ sessionId: string; previousSessionUnavailable: boolean }> {
+    // TIPS: 先记下"进来的时候是不是有一条 active 的归属映射"，这是唯一能判断"要不要标注
+    // previousSessionUnavailable"的时机——新建分支里马上就会 upsert 覆盖掉这条记录，事后
+    // 再查就只能看到新状态了。
+    const hadActiveMapping = eventContext
+      ? this.options.repository.getEntitySessionMapping(definition.id, eventContext.entityRef)?.status === "active"
+      : false;
+    if (eventContext && hadActiveMapping) {
+      const mapping = this.options.repository.getEntitySessionMapping(definition.id, eventContext.entityRef)!;
+      try {
+        const existing = await opencode.session.get({ sessionID: mapping.sessionId });
+        if (existing.data) {
+          this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, mapping.sessionId, this.now());
+          return { sessionId: mapping.sessionId, previousSessionUnavailable: false };
+        }
+      } catch {
+        // 会话查询失败视同不可解析，走下面的新建分支，不在这里重试或抛出。
+      }
+    }
+    const created = await opencode.session.create({
+      title: `自动化 · ${definition.name} · ${new Date(current.scheduledFor).toLocaleString("zh-CN")}`,
+      ...(definition.agentId ? { agent: definition.agentId } : {}),
+      ...(definition.model.mode === "explicit" ? {
+        model: {
+          id: definition.model.modelId,
+          providerID: definition.model.providerId,
+          ...(definition.model.variant ? { variant: definition.model.variant } : {}),
+        },
+      } : {}),
+      metadata: {
+        automationId: definition.id,
+        automationRunId: current.id,
+        automationTrigger: current.triggerSource,
+        automationScheduledFor: current.scheduledFor,
+        automationDefinitionRevision: definition.revision,
+      },
+      // TIPS:只有「完全访问权限」才放开全部权限并屏蔽提问；选了「默认权限」的任务保留工作空间
+      // 原有的确认策略，敏感操作会停在等待用户确认的状态——这正是该模式向用户声明的行为。
+      ...(definition.permission.profile === AUTOMATION_PERMISSION_PROFILE ? {
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "question", pattern: "*", action: "deny" },
+        ],
+      } : {}),
+    });
+    if (!created.data) throw failure("execution_failed", "无法创建自动化会话");
+    if (eventContext) {
+      this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, created.data.id, this.now());
+    }
+    return { sessionId: created.data.id, previousSessionUnavailable: hadActiveMapping };
   }
 
   private async resolveLocalWorkspace(snapshot: AutomationRunSnapshot): Promise<WorkspaceInfo> {

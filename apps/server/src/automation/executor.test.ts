@@ -198,8 +198,10 @@ test("restart reconciliation completes an idle session without redispatch", asyn
   const definition = automationDefinition();
   fixture.repository.createDefinition(definition, definition);
   const queued = fixture.repository.createManualRun(definition, "run-reconcile", 100);
+  // TIPS:`eventMetadata.dispatched: true` 模拟"崩溃发生在 promptAsync 成功之后"——这是
+  // reconcile() 判定"idle = 正常结束"的前提条件，见 executor.ts reconcile() 的注释。
   const running = fixture.repository.updateRun(queued.id, queued.revision, {
-    state: "running", sessionId: "session-existing", startedAt: 101,
+    state: "running", sessionId: "session-existing", startedAt: 101, eventMetadata: { dispatched: true },
   }, 101);
   let prompts = 0;
   const opencode = {
@@ -223,6 +225,40 @@ test("restart reconciliation completes an idle session without redispatch", asyn
     await executor.reconcile({ run: running, definition });
     assert.equal(fixture.repository.getRun(running.id)?.revision, completed.revision);
     assert.equal(prompts, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("restart reconciliation does not mark a run succeeded when the crash happened before dispatch was confirmed", async () => {
+  const fixture = await repositoryFixture();
+  const definition = automationDefinition();
+  fixture.repository.createDefinition(definition, definition);
+  const queued = fixture.repository.createManualRun(definition, "run-undispatched", 100);
+  // TIPS:没有 `eventMetadata.dispatched` ——模拟"claim 了 run、写了 sessionId，但还没来得及
+  // 确认 promptAsync 成功就崩了"这个真实存在的窗口期。会话本身可能是 idle 的（比如这个
+  // session 是复用的、上一轮早就跑完了），不能因为 idle 就误判这一轮也跑完了。
+  const running = fixture.repository.updateRun(queued.id, queued.revision, {
+    state: "running", sessionId: "session-reused", startedAt: 101,
+  }, 101);
+  const opencode = {
+    session: {
+      get: async () => ({ data: { id: "session-reused" } }),
+      status: async () => ({ data: { "session-reused": { type: "idle" } } }),
+      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
+    },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: () => 200, wait: async () => undefined,
+    });
+    await executor.reconcile({ run: running, definition });
+    const reconciled = fixture.repository.getRun(running.id)!;
+    assert.equal(reconciled.state, "failed");
+    assert.equal(reconciled.errorCode, "session_lost");
   } finally {
     await fixture.close();
   }
@@ -289,6 +325,103 @@ test("executor reports stable model, agent, and skill dependency failures", asyn
     }
   }
 });
+
+test("event-triggered execution reuses the mapped session instead of creating a new one", async () => {
+  const fixture = await repositoryFixture();
+  const definition = eventAutomationDefinition();
+  fixture.repository.createDefinition(definition, definition);
+  fixture.repository.upsertEntitySessionMapping(definition.id, "github:pull_request:482", "workspace", "session-prior", 50);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-reuse",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const createInputs: unknown[] = [];
+  const promptInputs: Array<Record<string, unknown>> = [];
+  const opencode = {
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => sessionID === "session-prior" ? { data: { id: "session-prior" } } : { data: undefined },
+      create: async (input: unknown) => { createInputs.push(input); return { data: { id: "session-new" } }; },
+      promptAsync: async (input: Record<string, unknown>) => { promptInputs.push(input); return { data: true, error: undefined }; },
+      status: async () => ({ data: { "session-prior": { type: "idle" } } }),
+      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
+    },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(
+      fixture.repository.getRunSnapshot(claim.run.id)!,
+      { entityRef: "github:pull_request:482", extraPromptParts: [{ type: "text", text: "自上次以来新增了 1 次提交" }] },
+    );
+    const completed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(completed.state, "succeeded");
+    assert.equal(completed.sessionId, "session-prior");
+    assert.equal(createInputs.length, 0);
+    assert.match(String((promptInputs[0]!.parts as Array<{ text?: string }>).at(-1)?.text), /自上次以来新增了 1 次提交/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("event-triggered execution falls back to a new session when the mapped one is unresolvable", async () => {
+  const fixture = await repositoryFixture();
+  const definition = eventAutomationDefinition();
+  fixture.repository.createDefinition(definition, definition);
+  fixture.repository.upsertEntitySessionMapping(definition.id, "github:pull_request:482", "workspace", "session-gone", 50);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-fallback",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const opencode = {
+    session: {
+      get: async () => ({ data: undefined }),
+      create: async () => ({ data: { id: "session-new" } }),
+      promptAsync: async () => ({ data: true, error: undefined }),
+      status: async () => ({ data: { "session-new": { type: "idle" } } }),
+      messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
+    },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:482", extraPromptParts: [] });
+    const completed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(completed.state, "succeeded");
+    assert.equal(completed.sessionId, "session-new");
+    // TIPS:回退新建会话必须显式标注"上一轮会话不可用"，不能悄悄换了会话却不作说明。
+    assert.equal(completed.eventMetadata?.previousSessionUnavailable, true);
+    assert.equal(fixture.repository.getEntitySessionMapping(definition.id, "github:pull_request:482")?.sessionId, "session-new");
+  } finally {
+    await fixture.close();
+  }
+});
+
+function eventAutomationDefinition(): AutomationDefinition {
+  return {
+    ...automationDefinition(),
+    trigger: {
+      version: 1, kind: "event", provider: "github", connectorId: "connector-1",
+      repository: { owner: "juggleai", name: "jugglework-desktop" },
+      matches: [{ event: "pull_request" }], concurrencyKey: "entity", deliveryMode: "auto", permissionTier: "auto",
+    },
+  };
+}
 
 function automationDefinition(): AutomationDefinition {
   return {
