@@ -252,6 +252,19 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     if (boundary?.type === "compaction") {
       pendingCompactionMode = boundary.auto ? "auto" : "manual";
     }
+    // OpenCode's autocontinue injects a synthetic user prompt ("Continue if
+    // you have next steps…") right after an automatic compaction so the same
+    // task keeps running. The engine marks the part with
+    // metadata.compaction_continue — dropping the (otherwise empty) message
+    // here keeps the run in one assistant group instead of splitting it.
+    const isCompactionContinueUserMessage =
+      message.info.role === "user" &&
+      message.parts.some(
+        (part) =>
+          part.type === "text" &&
+          part.synthetic === true &&
+          (part.metadata as { compaction_continue?: unknown } | undefined)?.compaction_continue === true,
+      );
     const isSummary = message.info.role === "assistant" && message.info.summary === true;
     const summaryMode = isSummary ? pendingCompactionMode : null;
     if (isSummary) pendingCompactionMode = null;
@@ -326,6 +339,10 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       // summary above; retaining the empty message here would split one
       // automatic run into separate assistant groups.
       if (boundary && uiMessage.parts.length === 0) return [];
+      // Same for the synthetic continue prompt that follows an automatic
+      // compaction — its text part is dropped above (synthetic), and the
+      // leftover empty user message would split the still-running task.
+      if (isCompactionContinueUserMessage && uiMessage.parts.length === 0) return [];
       return [uiMessage];
     }
 

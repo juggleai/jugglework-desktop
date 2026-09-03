@@ -566,6 +566,133 @@ describe("tool part mapper", () => {
     useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
   });
 
+  test("snapshot drops the synthetic continue prompt after automatic compaction", () => {
+    const workspaceId = "workspace-auto-compact-continue";
+    const sessionId = "session-auto-compact-continue";
+    const snapshot = {
+      session: { id: sessionId },
+      status: { type: "idle" },
+      todos: [],
+      messages: [
+        {
+          info: {
+            id: "task-prompt",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_000_000 },
+          },
+          parts: [{
+            id: "task-prompt-text",
+            sessionID: sessionId,
+            messageID: "task-prompt",
+            type: "text",
+            text: "Complete the task",
+          }],
+        },
+        {
+          info: {
+            id: "assistant-before-auto-compaction",
+            role: "assistant",
+            sessionID: sessionId,
+            time: { created: 1_700_000_000_500, completed: 1_700_000_001_000 },
+          },
+          parts: [{
+            id: "assistant-before-text",
+            sessionID: sessionId,
+            messageID: "assistant-before-auto-compaction",
+            type: "text",
+            text: "Progress before compaction",
+          }],
+        },
+        {
+          info: {
+            id: "auto-compaction-boundary-message",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_001_500 },
+          },
+          parts: [{
+            id: "auto-compaction-boundary",
+            sessionID: sessionId,
+            messageID: "auto-compaction-boundary-message",
+            type: "compaction",
+            auto: true,
+          }],
+        },
+        {
+          info: {
+            id: "message-auto-compaction-summary",
+            role: "assistant",
+            sessionID: sessionId,
+            summary: true,
+            time: { created: 1_700_000_002_000, completed: 1_700_000_003_000 },
+          },
+          parts: [{
+            id: "auto-summary-text",
+            sessionID: sessionId,
+            messageID: "message-auto-compaction-summary",
+            type: "text",
+            text: "internal automatic summary",
+          }],
+        },
+        {
+          info: {
+            id: "compaction-continue-prompt",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_003_200 },
+          },
+          parts: [{
+            id: "compaction-continue-text",
+            sessionID: sessionId,
+            messageID: "compaction-continue-prompt",
+            type: "text",
+            text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: 1_700_000_003_200, end: 1_700_000_003_200 },
+          }],
+        },
+        {
+          info: {
+            id: "assistant-after-continue",
+            role: "assistant",
+            sessionID: sessionId,
+            time: { created: 1_700_000_003_500, completed: 1_700_000_004_000 },
+          },
+          parts: [{
+            id: "assistant-after-text",
+            sessionID: sessionId,
+            messageID: "assistant-after-continue",
+            type: "text",
+            text: "Final output after compaction",
+          }],
+        },
+      ],
+    } as any;
+
+    seedSessionState(workspaceId, snapshot);
+
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(
+      transcriptKey(workspaceId, sessionId),
+    ) ?? [];
+    expect(transcript.find((message) => message.id === "auto-compaction-boundary-message")).toBeUndefined();
+    expect(transcript.find((message) => message.id === "compaction-continue-prompt")).toBeUndefined();
+
+    const rendered = deriveRenderedSessionMessages({ transcriptState: transcript, snapshot: null });
+    const grouped = groupMessages(rendered, "ready");
+    expect(grouped).toHaveLength(2);
+    expect(isMessageGroup(grouped[1]!)).toBeTrue();
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected one assistant task group");
+    expect(grouped[1].messages.map((item) => item.message.id)).toEqual([
+      "assistant-before-auto-compaction",
+      "message-auto-compaction-summary",
+      "assistant-after-continue",
+    ]);
+
+    useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+  });
+
   test("snapshot keeps visible content attached to a compaction boundary", () => {
     const sessionId = "session-visible-boundary";
     const messages = snapshotToUIMessages({

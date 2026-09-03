@@ -284,6 +284,16 @@ function asAssistantPresentationMessage(message: UIMessage): UIMessage | null {
   return hasAssistantProcess ? { ...presentationMessage, role: "assistant" } : null
 }
 
+/**
+ * Empty user messages render nothing (MessageComponent drops them), but they
+ * arrive for engine-internal markers — e.g. the synthetic continue prompt
+ * OpenCode injects after auto compaction. Letting one act as a task boundary
+ * would split a still-running task into two assistant groups, so grouping
+ * skips them entirely; timing then anchors to the original user prompt.
+ */
+const isTransparentUserMessage = (message: UIMessage): boolean =>
+  message.role === "user" && message.parts.length === 0;
+
 export function groupMessages(messages: UIMessage[], status: ThreadStatus): MessageListItem[] {
   const items: MessageListItem[] = []
   let index = 0
@@ -293,6 +303,10 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
     const assistantMessage = asAssistantPresentationMessage(message)
 
     if (!assistantMessage) {
+      if (isTransparentUserMessage(message)) {
+        index++
+        continue
+      }
       items.push({ index, message })
       index++
       continue
@@ -302,7 +316,15 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
     while (index < messages.length) {
       const nextAssistantMessage = asAssistantPresentationMessage(messages[index])
-      if (!nextAssistantMessage) break
+      if (!nextAssistantMessage) {
+        // Transparent engine markers (autocontinue prompt) must not end the
+        // current assistant run either — skip and keep collecting.
+        if (isTransparentUserMessage(messages[index])) {
+          index++
+          continue
+        }
+        break
+      }
       const compaction = getSessionCompactionFromMessage(nextAssistantMessage)
       // `/compact` does not create a visible user message, so without an
       // explicit boundary its output would be absorbed into the preceding

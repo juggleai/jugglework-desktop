@@ -144,6 +144,45 @@ describe("task message presentation", () => {
     ])
   })
 
+  test("an empty synthetic continue prompt does not split the running task", () => {
+    // Live-path shape: the autocontinue prompt reaches the transcript as an
+    // empty user message (its synthetic text part was dropped at the sync
+    // layer). Grouping must skip it so the run stays one task.
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-before", "assistant", 1_700_000_001_000, [{ type: "text", text: "Working" }]),
+      {
+        ...message("compaction-summary", "assistant", 1_700_000_002_000, [
+          createSessionCompactionUIPart({
+            partId: "part-compaction",
+            mode: "auto",
+            running: false,
+            startedAt: 1_700_000_002_000,
+            finishedAt: 1_700_000_003_000,
+          }),
+        ], 1_700_000_003_000),
+        metadata: {
+          opencode: {
+            created: 1_700_000_002_000,
+            completed: 1_700_000_003_000,
+            summary: true,
+          },
+        },
+      },
+      message("compaction-continue", "user", 1_700_000_003_200, []),
+      message("assistant-final", "assistant", 1_700_000_004_000, [{ type: "text", text: "Done" }]),
+    ], "ready")
+
+    expect(grouped).toHaveLength(2)
+    expect(isMessageGroup(grouped[1]!)).toBe(true)
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected one assistant task group")
+    expect(grouped[1].messages.map((item) => item.message.id)).toEqual([
+      "assistant-before",
+      "compaction-summary",
+      "assistant-final",
+    ])
+  })
+
   test("keeps automatic compaction inside the current task and hides its summary details", () => {
     const grouped = groupMessages([
       message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
