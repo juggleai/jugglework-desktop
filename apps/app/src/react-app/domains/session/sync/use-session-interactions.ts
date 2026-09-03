@@ -137,6 +137,39 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     [client, selected.permissions, workspaceId],
   );
 
+  /** Session-scoped reusable grant: JuggleWork-owned, never OpenCode `always`. */
+  const respondPermissionGrant = useCallback(
+    async (requestID: string) => {
+      if (!client || !workspaceId || permissionReplyBusyRef.current) return false;
+      const pending = selected.permissions.find((permission) => permission.id === requestID);
+      if (!pending) return false;
+      permissionReplyBusyRef.current = true;
+      setPermissionReplyBusy(true);
+      try {
+        await client.replyPermissionSessionGrant(
+          workspaceId,
+          pending.targetSessionId,
+          requestID,
+        );
+        resolveLiveInteraction(workspaceId, "permission", pending.targetSessionId, requestID);
+        return true;
+      } catch (error) {
+        if (isTerminalInteractionReplyError(error)) {
+          resolveLiveInteraction(workspaceId, "permission", pending.targetSessionId, requestID);
+          return true;
+        }
+        toast.error(t("app.error_request_failed"), {
+          description: describeRouteError(error),
+        });
+        return false;
+      } finally {
+        permissionReplyBusyRef.current = false;
+        setPermissionReplyBusy(false);
+      }
+    },
+    [client, selected.permissions, workspaceId],
+  );
+
   const activeQuestion = selected.questions[0] ?? null;
   const respondQuestion = useCallback(
     async (requestID: string, answers: string[][]) => {
@@ -174,6 +207,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     activePermission,
     permissionReplyBusy,
     respondPermission,
+    respondPermissionGrant,
     activeQuestion,
     questionReplyBusy,
     respondQuestion,

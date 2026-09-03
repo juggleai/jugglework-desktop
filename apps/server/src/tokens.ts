@@ -146,4 +146,14 @@ export class TokenService {
     const found = this.byHash.get(hashToken(trimmed));
     return found?.scope ?? null;
   }
+
+  /** Resolve the current scope for a previously recorded token hash. */
+  async scopeForTokenHash(tokenHash: string): Promise<TokenScope | null> {
+    const trimmed = tokenHash.trim();
+    if (!trimmed) return null;
+    if (trimmed === hashToken(this.config.token)) return "collaborator";
+    if (trimmed === hashToken(this.config.hostToken)) return "owner";
+    await this.ensureLoaded();
+    return this.byHash.get(trimmed)?.scope ?? null;
+  }
 }

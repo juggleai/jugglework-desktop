@@ -35,8 +35,29 @@ type PermissionApprovalModalProps = {
   permission: PendingPermission;
   busy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  /** JuggleWork-owned session grant creation; undefined disables the action. */
+  respondPermissionGrant?: (requestID: string) => Promise<boolean> | void;
   safeStringify?: (value: unknown) => string;
 };
+
+/**
+ * Reusable scope the runtime offered for future approvals: legacy `always`
+ * patterns or v2 `save` resources. Empty means the request cannot produce a
+ * session grant — the reusable action must then stay hidden.
+ */
+export function reusableGrantScope(permission: PendingPermission): string[] {
+  if (permission.protocol === "v2") {
+    const v2 = (permission as { v2?: { save?: unknown } }).v2;
+    const save = Array.isArray(v2?.save)
+      ? v2.save.filter((item): item is string => typeof item === "string")
+      : [];
+    if (save.length > 0) return save;
+    const direct = (permission as { save?: unknown }).save;
+    return Array.isArray(direct) ? direct.filter((item): item is string => typeof item === "string") : [];
+  }
+  const always = permission.always;
+  return Array.isArray(always) ? always.filter((item): item is string => typeof item === "string") : [];
+}
 
 const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boolean }> = [
   { key: "command", labelKey: "session.permission_detail_command", multiline: true },
@@ -362,14 +383,18 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
               <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
             </AlertDialogAction>
-            <AlertDialogAction
-              variant="outline"
-              onClick={() => props.respondPermission?.(props.permission.id, "always")}
-              disabled={props.busy || !props.respondPermission}
-            >
-              <Check data-icon="inline-start" />
-              {t("session.allow_for_session")}
-            </AlertDialogAction>
+            {reusableGrantScope(props.permission).length > 0 && props.respondPermissionGrant ? (
+              <AlertDialogAction
+                variant="outline"
+                onClick={() => {
+                  void props.respondPermissionGrant?.(props.permission.id);
+                }}
+                disabled={props.busy}
+              >
+                <Check data-icon="inline-start" />
+                {t("session.allow_for_session")}
+              </AlertDialogAction>
+            ) : null}
           </div>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -388,6 +413,8 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
   const fromSubagent = Boolean(
     props.permission.rootSessionId && props.permission.targetSessionId !== props.permission.rootSessionId,
   );
+  const reusableScope = useMemo(() => reusableGrantScope(props.permission), [props.permission]);
+  const canGrantSession = reusableScope.length > 0 && Boolean(props.respondPermissionGrant);
 
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent">
@@ -431,16 +458,20 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => props.respondPermission?.(props.permission.id, "always")}
-              disabled={props.busy || !props.respondPermission}
-            >
-              <Check data-icon="inline-start" />
-              {t("session.allow_for_session")}
-            </Button>
+            {canGrantSession ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void props.respondPermissionGrant?.(props.permission.id);
+                }}
+                disabled={props.busy}
+              >
+                <Check data-icon="inline-start" />
+                {t("session.allow_for_session")}
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -463,6 +494,20 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               </div>
             </div>
           </div>
+
+          {reusableScope.length > 0 ? (
+            <div className="mt-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
+                {t("session.grant_scope_label")}
+              </div>
+              <div className="mt-1 rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
+                <span className="block break-all">{reusableScope.join(", ")}</span>
+              </div>
+              <div className="mt-1 text-[11px] leading-4 text-dls-secondary">
+                {t("session.grant_scope_hint")}
+              </div>
+            </div>
+          ) : null}
 
           {hasMetadata ? (
             <details className="group mt-3 rounded-xl border border-dls-border bg-dls-surface px-3 py-2">

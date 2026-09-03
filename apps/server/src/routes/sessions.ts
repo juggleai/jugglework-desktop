@@ -60,6 +60,8 @@ interface RegisterSessionRoutesOptions {
   sessionMutations: SessionMutationCoordinator;
   sessionPendingOperations: SessionPendingOperationStore;
   sessionPendingOperationPump: SessionPendingOperationPump;
+  /** Post-delete cleanup for session-scoped server-owned state. */
+  onSessionDeleted?: (workspaceId: string, sessionId: string) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -186,6 +188,7 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     sessionMutations,
     sessionPendingOperations,
     sessionPendingOperationPump,
+    onSessionDeleted,
   } = options;
   const sessionGroupEvents = new SessionGroupEventStore();
 
@@ -898,6 +901,12 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       await opencode.session.delete({ sessionID: sessionId }),
       `/session/${encodeURIComponent(sessionId)}`,
     );
+
+    try {
+      onSessionDeleted?.(workspace.id, sessionId);
+    } catch {
+      // Session-owned state cleanup must never fail the engine deletion.
+    }
 
     return jsonResponse({ ok: true });
   });

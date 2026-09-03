@@ -95,6 +95,11 @@ type ComposerProps = {
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
+  /**
+   * 会话权限模式选择器（请求审批 / 完全访问）。
+   * 由 SessionSurface 渲染后作为插槽传入，保持 composer 与权限状态解耦。
+   */
+  permissionModeSelector?: ReactNode;
   agentLabel: string;
   selectedAgent: string | null;
   listAgents: () => Promise<Agent[]>;
@@ -1904,6 +1909,8 @@ export function ReactSessionComposer(props: ComposerProps) {
                   }}
                   disabled={props.steering}
                 />
+
+                {props.permissionModeSelector}
               </div>
 
               {/*

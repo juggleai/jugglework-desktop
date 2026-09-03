@@ -13,6 +13,9 @@ import { t } from "@/i18n";
 import { readWorkspaceCloudImports, type CloudImportedPlugin } from "@/app/cloud/import-state";
 import { createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useSessionPermissionMode } from "@/react-app/domains/session/sync/use-session-permission-mode";
+import { PermissionModeSelect } from "@/react-app/domains/session/surface/composer/permission-mode-select";
 import type {
   JuggleWorkServerClient,
   JuggleWorkSessionSnapshot,
@@ -485,6 +488,12 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 
 export function SessionSurface(props: SessionSurfaceProps) {
   const interactions = useSessionInteractions({
+    client: props.client,
+    workspaceId: props.workspaceId,
+    sessionId: props.sessionId,
+  });
+  const orgRestrictions = useOrgRestrictions();
+  const sessionPermissionMode = useSessionPermissionMode({
     client: props.client,
     workspaceId: props.workspaceId,
     sessionId: props.sessionId,
@@ -2195,10 +2204,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
-        modelVariantLabel={props.modelVariantLabel}
-        modelVariant={props.modelVariant}
-        modelBehaviorOptions={props.modelBehaviorOptions}
-        onModelVariantChange={props.onModelVariantChange}
+         modelVariantLabel={props.modelVariantLabel}
+         modelVariant={props.modelVariant}
+         modelBehaviorOptions={props.modelBehaviorOptions}
+         onModelVariantChange={props.onModelVariantChange}
+         permissionModeSelector={
+           <PermissionModeSelect
+             requestedMode={sessionPermissionMode.state?.requestedMode ?? null}
+             effectiveMode={sessionPermissionMode.state?.effectiveMode ?? null}
+             grants={sessionPermissionMode.grants}
+             disabledReason={
+               !sessionPermissionMode.supported
+                 ? t("session.permission_mode_unsupported")
+                 : null
+             }
+             busy={sessionPermissionMode.updating}
+             running={chatStreaming}
+             desktopConfig={orgRestrictions}
+             onSelectRequestApproval={() => {
+               void sessionPermissionMode.requestApproval();
+             }}
+             onSelectFullAccess={() => {
+               void sessionPermissionMode.enableFullAccess();
+             }}
+           />
+         }
         agentLabel={props.agentLabel}
         selectedAgent={props.selectedAgent}
         listAgents={props.listAgents}
@@ -2255,13 +2285,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   <TodoPanel todos={todos} />
                 ) : null}
                 {activePermission ? (
-                  <PermissionApprovalPanel
-                    permission={activePermission}
-                    busy={permissionReplyBusy}
-                    respondPermission={respondPermission}
-                    safeStringify={props.safeStringify}
-                  />
-                ) : null}
+                   <PermissionApprovalPanel
+                     permission={activePermission}
+                     busy={permissionReplyBusy}
+                     respondPermission={respondPermission}
+                     respondPermissionGrant={interactions.respondPermissionGrant}
+                     safeStringify={props.safeStringify}
+                   />
+                 ) : null}
               </div>
             ) : null
           }

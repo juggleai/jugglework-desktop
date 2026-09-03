@@ -77,6 +77,7 @@ import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
+import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
@@ -91,6 +92,8 @@ import {
   writeMcpWorkspaceToolPolicy,
 } from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
+import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
+import { RootSerialization, SessionPermissionBroker, createInteractionPermissionCeiling } from "./session-permission-broker.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
 import {
@@ -889,6 +892,18 @@ export async function startServer(config: ServerConfig, options: {
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
+  const sessionPermissionStore = await SessionPermissionModeStore.open(config);
+  const sessionPermissionRootLocks = new RootSerialization();
+  const sessionPermissionBroker = new SessionPermissionBroker({
+    store: sessionPermissionStore,
+    config,
+    tokens,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    interactionResolutions,
+    rootLocks: sessionPermissionRootLocks,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
   const localAutomationEnabled = resolveLocalAutomationEnabled();
   const automationExecutor = new AutomationExecutor({
     config,
@@ -914,6 +929,9 @@ export async function startServer(config: ServerConfig, options: {
     interactionResolutions,
     automationRepository,
     automationScheduler,
+    sessionPermissionStore,
+    sessionPermissionRootLocks,
+    sessionPermissionBroker,
     (event, fields) => logger.log("info", event, fields),
   );
 
@@ -1100,6 +1118,7 @@ export async function startServer(config: ServerConfig, options: {
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
+    sessionPermissionStore.close();
     throw error;
   }
 
@@ -1136,6 +1155,9 @@ export async function startServer(config: ServerConfig, options: {
   if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
     automationScheduler.start();
   }
+  if (!config.readOnly) {
+    sessionPermissionBroker.start();
+  }
 
   return {
     ...server,
@@ -1145,6 +1167,7 @@ export async function startServer(config: ServerConfig, options: {
       internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
       automationExecutor.dispose();
+      sessionPermissionBroker.stop();
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
@@ -1160,6 +1183,7 @@ export async function startServer(config: ServerConfig, options: {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
+      try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
     },
@@ -1846,6 +1870,9 @@ function createRoutes(
   interactionResolutions: InteractionResolutionCoordinator,
   automationRepository: AutomationRepository,
   automationScheduler: AutomationScheduler,
+  sessionPermissionStore: SessionPermissionModeStore,
+  sessionPermissionRootLocks: RootSerialization,
+  sessionPermissionBroker: SessionPermissionBroker,
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
 ): Route[] {
   const routes: Route[] = [];
@@ -1912,11 +1939,30 @@ function createRoutes(
       close: () => getSessionPendingOperationPump()?.close() ?? Promise.resolve(),
       drained: () => getSessionPendingOperationPump()?.drained() ?? Promise.resolve(),
     },
+    onSessionDeleted: (workspaceId, sessionId) => {
+      // Remove server-owned permission-mode state for the deleted root tree.
+      sessionPermissionStore.deleteRootSessionRecords(workspaceId, sessionId);
+    },
   });
 
   registerInteractionRoutes({
     routes,
     config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
+    interactionResolutions,
+    evaluatePermissionCeiling: createInteractionPermissionCeiling(config),
+  });
+
+  registerSessionPermissionRoutes({
+    routes,
+    config,
+    store: sessionPermissionStore,
+    rootLocks: sessionPermissionRootLocks,
     jsonResponse,
     readJsonBody,
     ensureWritable,

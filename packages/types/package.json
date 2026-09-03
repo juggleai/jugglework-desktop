@@ -25,6 +25,11 @@
       "development": "./src/automation.ts",
       "default": "./dist/automation.js"
     },
+    "./session-permission-modes": {
+      "types": "./src/session-permission-modes.ts",
+      "development": "./src/session-permission-modes.ts",
+      "default": "./dist/session-permission-modes.js"
+    },
     "./jugglework-affordance": {
       "types": "./src/jugglework-affordance.ts",
       "development": "./src/jugglework-affordance.ts",

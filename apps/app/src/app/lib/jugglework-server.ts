@@ -41,6 +41,11 @@ import type {
   AutomationSchedule,
   AutomationActiveRange,
 } from "@jugglework/types/automation";
+import type {
+  SessionPermissionGrantRecord,
+  SessionPermissionModeState,
+  SessionPermissionModeUpdateRequest,
+} from "@jugglework/types/session-permission-modes";
 
 export type JuggleWorkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "jugglework" | "opencode" };
@@ -199,6 +204,22 @@ export type JuggleWorkQuestionReplyInput =
       rootSessionId: string;
       answers: JuggleWorkQuestionAnswer[];
     };
+
+export type JuggleWorkSessionPermissionModeRead = {
+  state: SessionPermissionModeState | null;
+  grants: SessionPermissionGrantRecord[];
+  supported: boolean;
+  profileVersion: number;
+};
+export type JuggleWorkSessionPermissionModeUpdateInput = SessionPermissionModeUpdateRequest;
+export type JuggleWorkSessionPermissionModeUpdate = {
+  state: SessionPermissionModeState;
+  clearedGrantIds: string[];
+};
+export type JuggleWorkSessionPermissionGrantReply = {
+  grant: SessionPermissionGrantRecord;
+  state: SessionPermissionModeState | null;
+};
 
 export type JuggleWorkPluginItem = {
   spec: string;
@@ -1908,6 +1929,36 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       baseUrl,
       `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/question/reply`,
       { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+    ),
+    getSessionPermissionMode: (workspaceId: string, rootSessionId: string) =>
+      requestJson<JuggleWorkSessionPermissionModeRead>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(rootSessionId)}/permission-mode`,
+        { token, hostToken, timeoutMs: timeouts.sessionRead },
+      ),
+    updateSessionPermissionMode: (
+      workspaceId: string,
+      rootSessionId: string,
+      input: JuggleWorkSessionPermissionModeUpdateInput,
+    ) => requestJson<JuggleWorkSessionPermissionModeUpdate>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(rootSessionId)}/permission-mode`,
+      { token, hostToken, method: "PUT", body: input, timeoutMs: timeouts.sessionRead },
+    ),
+    clearSessionPermissionGrants: (workspaceId: string, rootSessionId: string) =>
+      requestJson<JuggleWorkSessionPermissionModeUpdate>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(rootSessionId)}/permission-mode/grants/clear`,
+        { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.sessionRead },
+      ),
+    replyPermissionSessionGrant: (
+      workspaceId: string,
+      sessionId: string,
+      interactionId: string,
+    ) => requestJson<JuggleWorkSessionPermissionGrantReply>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}/permission/grant-reply`,
+      { token, hostToken, method: "POST", body: {}, timeoutMs: timeouts.sessionRead },
     ),
     exportWorkspace: (
       workspaceId: string,

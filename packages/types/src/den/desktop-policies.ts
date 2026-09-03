@@ -3,7 +3,7 @@ import {
   desktopRemoteDisabledFeatureGates,
   desktopRemoteFeatureGatesSchema,
   parseDesktopRemoteFeatureGatesOrDisabled,
-} from "../desktop-remote-control";
+} from "../desktop-remote-control.js";
 
 type DesktopPolicyDefinitionEntry = {
   id: string;
@@ -89,6 +89,15 @@ export const desktopPolicyDefinitions = [
     defaultValue: true,
   },
   {
+    id: "allowSessionFullAccess",
+    name: "Session Full access",
+    description:
+      "Allow users to enable per-session automatic approval of runtime permission requests (Full access mode).",
+    userNotice:
+      "Your organization administrator has disabled Full access permission mode for sessions.",
+    defaultValue: true,
+  },
+  {
     id: "showWelcomePage",
     name: "Welcome Page",
     description: "Show the Getting Started page to new users.",
@@ -159,6 +168,34 @@ export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
 export const desktopPolicyKeys = desktopPolicyDefinitions.map(
   (definition) => definition.id,
 ) as DesktopPolicyKey[];
+
+// ---------------------------------------------------------------------------
+// Session Full access policy gate.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail-closed evaluation of the `allowSessionFullAccess` policy.
+ *
+ * - explicit `true` → allowed
+ * - explicit `false` → disallowed
+ * - absent/undefined → the catalog default (allowed for unmanaged installs)
+ * - any other value (malformed) → disallowed; a policy surface that expects a
+ *   boolean must never widen authority from an unparseable value
+ */
+export function readSessionFullAccessPolicy(
+  value: unknown,
+): { allowed: boolean; source: "policy" | "default" } {
+  if (value === undefined || value === null) {
+    return {
+      allowed: desktopPolicyDefaults.allowSessionFullAccess,
+      source: "default",
+    };
+  }
+  if (typeof value === "boolean") {
+    return { allowed: value, source: "policy" };
+  }
+  return { allowed: false, source: "policy" };
+}
 
 export const desktopPolicyDefaults = Object.fromEntries(
   desktopPolicyDefinitions.map((definition) => [

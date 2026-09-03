@@ -526,7 +526,7 @@ describe("authoritative interaction reply APIs", () => {
     expect(engine.permissionReplies).toHaveLength(1);
   });
 
-  test("allows local always and rejects remote always before reading or dispatching upstream", async () => {
+  test("rejects protocol-native always for every origin before reading or dispatching upstream", async () => {
     const engine = startMockOpencode();
     engine.permissions.push(permission("local-persistent", "session-a"));
     engine.v2Failures.set("permission:session-a", 404);
@@ -536,9 +536,9 @@ describe("authoritative interaction reply APIs", () => {
       headers: harness.headers,
       body: JSON.stringify({ origin: "local-renderer", commandCorrelationId: "local-always", response: "always" }),
     });
-    expect(local.status).toBe(200);
-    expect(engine.permissionReplies).toEqual([{ id: "local-persistent", body: { reply: "always" } }]);
-    expect(engine.permissionReadCount()).toBe(1);
+    expect(local.status).toBe(400);
+    await expect(local.json()).resolves.toMatchObject({ code: "unsupported_permission_response" });
+    expect(engine.permissionReplies).toHaveLength(0);
 
     const remote = await fetch(replyUrl(harness.base, "session-a", "remote-persistent", "permission"), {
       method: "POST",
@@ -547,8 +547,7 @@ describe("authoritative interaction reply APIs", () => {
     });
     expect(remote.status).toBe(400);
     await expect(remote.json()).resolves.toMatchObject({ code: "unsupported_permission_response" });
-    expect(engine.permissionReplies).toHaveLength(1);
-    expect(engine.permissionReadCount()).toBe(1);
+    expect(engine.permissionReplies).toHaveLength(0);
   });
 
   test("dispatches v2 permission and question replies with their v2 payloads", async () => {
@@ -560,7 +559,7 @@ describe("authoritative interaction reply APIs", () => {
     const permissionResponse = await fetch(replyUrl(harness.base, "session-a", "permission-v2", "permission"), {
       method: "POST",
       headers: harness.headers,
-      body: JSON.stringify({ origin: "local-renderer", commandCorrelationId: "permission-v2", response: "always" }),
+      body: JSON.stringify({ origin: "local-renderer", commandCorrelationId: "permission-v2", response: "allow_once" }),
     });
     expect(permissionResponse.status).toBe(200);
 
@@ -577,7 +576,7 @@ describe("authoritative interaction reply APIs", () => {
       }),
     });
     expect(questionResponse.status).toBe(200);
-    expect(engine.permissionReplies).toEqual([{ id: "permission-v2", body: { reply: "always" } }]);
+    expect(engine.permissionReplies).toEqual([{ id: "permission-v2", body: { reply: "once" } }]);
     expect(engine.questionReplies).toEqual([{ id: "question-v2", body: { answers: [["No"], ["B"]] } }]);
   });
 

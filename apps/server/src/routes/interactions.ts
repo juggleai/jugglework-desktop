@@ -16,6 +16,9 @@ type JsonResponse = (data: unknown, status?: number) => Response;
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 type ReadJsonBody = (request: Request) => Promise<Record<string, unknown>>;
 
+export type { WorkspaceOpencodeClient as InteractionWorkspaceOpencodeClient };
+export type { PendingPermission, PendingQuestion, OwnedInteraction };
+
 interface RegisterInteractionRoutesOptions {
   routes: Route[];
   config: ServerConfig;
@@ -26,6 +29,11 @@ interface RegisterInteractionRoutesOptions {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   interactionResolutions: InteractionResolutionCoordinator;
+  /** Optional shared approval ceiling applied to manual one-time approvals. */
+  evaluatePermissionCeiling?: (
+    workspaceId: string,
+    pending: PendingPermission,
+  ) => Promise<{ allowed: boolean; reason?: string }>;
 }
 
 type PendingPermission = {
@@ -99,7 +107,7 @@ function parseIdentifier(value: unknown, field: string): string {
   return parsed.data;
 }
 
-function parsePermissionBody(body: Record<string, unknown>) {
+export function parsePermissionBody(body: Record<string, unknown>) {
   if (
     body.origin !== "local-renderer" &&
     (body.response === "always" || body.response === "allow_always" || body.response === "allow_persistent")
@@ -265,12 +273,11 @@ function mergeOwnedInteractions<T extends PendingPermission | PendingQuestion>(
   return [...merged.values()];
 }
 
-async function readInteractionSnapshot(
+export async function readInteractionSnapshot(
   client: WorkspaceOpencodeClient,
   requestedSessionId: string,
   includeDescendants: boolean,
-) {
-  const snapshotStartedAt = Date.now();
+) {  const snapshotStartedAt = Date.now();
   const [sessionResult, legacyPermissionResult, legacyQuestionResult] = await Promise.all([
     client.session.list(),
     client.permission.list(),
@@ -342,7 +349,7 @@ function parseIncludeDescendants(value: string | null): boolean {
   throw new ApiError(400, "invalid_query", "includeDescendants must be a boolean");
 }
 
-async function readPendingPermissions(client: WorkspaceOpencodeClient, sessionId: string): Promise<PendingPermission[]> {
+export async function readPendingPermissions(client: WorkspaceOpencodeClient, sessionId: string): Promise<PendingPermission[]> {
   const v2Result = await client.v2.session.permission.list({ sessionID: sessionId });
   const v2 = resultItems(v2Result, true);
   if (v2 === null && !isExplicitlyUnsupported(v2Result)) {
@@ -399,22 +406,27 @@ async function readPendingQuestions(client: WorkspaceOpencodeClient, sessionId: 
   return [...byId.values()];
 }
 
-async function verifyImmutableRootBinding(
+export async function verifyImmutableRootBinding(
   client: WorkspaceOpencodeClient,
   rootSessionId: string,
   targetSessionId: string,
 ): Promise<void> {
-  const sessionResult = await client.session.list();
-  const rawSessions = resultItems(sessionResult, false);
-  if (!rawSessions) throwUpstream(sessionResult, "/session");
-  const ancestry = buildSessionAncestry(rawSessions.flatMap((value) => {
-    const record = sessionAncestryRecord(value);
-    return record ? [record] : [];
-  }));
+  const ancestry = await resolveSessionAncestry(client);
   if (!ancestry.has(rootSessionId) || ancestry.rootOf(rootSessionId) !== rootSessionId ||
       ancestry.rootOf(targetSessionId) !== rootSessionId) {
     throw new ApiError(404, "interaction_not_found", "The interaction was not found");
   }
+}
+
+/** Read the live session list and build the authoritative ancestry index. */
+export async function resolveSessionAncestry(client: WorkspaceOpencodeClient) {
+  const sessionResult = await client.session.list();
+  const rawSessions = resultItems(sessionResult, false);
+  if (!rawSessions) throwUpstream(sessionResult, "/session");
+  return buildSessionAncestry(rawSessions.flatMap((value) => {
+    const record = sessionAncestryRecord(value);
+    return record ? [record] : [];
+  }));
 }
 
 function questionId(question: PendingQuestion["questions"][number]): string {
@@ -464,7 +476,7 @@ function requireUnresolved(interactionResolutions: InteractionResolutionCoordina
   if (status === "expired") remapResolutionError(new InteractionResolutionError("interaction_expired"));
 }
 
-async function dispatchPermissionReply(
+export async function dispatchPermissionReply(
   client: WorkspaceOpencodeClient,
   pending: PendingPermission,
   response: "allow_once" | "always" | "reject",
@@ -510,6 +522,7 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     interactionResolutions,
+    evaluatePermissionCeiling,
   } = options;
 
   async function prepare(
@@ -540,7 +553,12 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/interactions/:interactionId/permission/reply", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const body = parsePermissionBody(await readJsonBody(ctx.request));
-    const { client, scope } = await prepare(ctx, "permission");
+    if (body.response === "always") {
+      // Session-scoped persistence is JuggleWork-owned now: the reusable grant
+      // endpoint replaces protocol-native `always` replies.
+      throw new ApiError(400, "unsupported_permission_response", "Persistent permission responses must use session grants");
+    }
+    const { client, scope, workspace } = await prepare(ctx, "permission");
     if (body.origin === "remote-control") {
       await verifyImmutableRootBinding(client, body.rootSessionId, scope.sessionId);
     }
@@ -549,6 +567,13 @@ export function registerInteractionRoutes(options: RegisterInteractionRoutesOpti
     if (!pending) {
       requireUnresolved(interactionResolutions, scope);
       throw new ApiError(404, "interaction_not_found", "The interaction was not found");
+    }
+    // Shared approval ceiling applies to manual one-time approval too.
+    if (body.response === "allow_once" && evaluatePermissionCeiling) {
+      const verdict = await evaluatePermissionCeiling(workspace.id, pending);
+      if (!verdict.allowed) {
+        throw new ApiError(403, "permission_policy_blocked", `Blocked by server permission policy (${verdict.reason})`);
+      }
     }
     try {
       interactionResolutions.observePending(scope);
