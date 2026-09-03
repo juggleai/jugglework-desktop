@@ -160,6 +160,7 @@ function WorkspaceAppRouteContent() {
         <SessionRoute
           routeWorkspaceId={activeSession.workspaceId}
           routeSessionId={activeSession.sessionId}
+          surfaceVisible={!(settingsVisible || chatVisible || appsVisible || automationsVisible)}
         />
       </div>
 
@@ -211,6 +212,7 @@ function WorkspaceAppRouteContent() {
         >
           <AppsPage
             workspaceId={activeSession.workspaceId}
+            active={appsVisible}
             onOpenAccount={() => openSurfaceSettings("cloud-account", workspaceAppsRoute(activeSession.workspaceId))}
             onOpenHome={() => navigate(sessionPath)}
             onOpenChat={() => navigate(workspaceChatRoute(activeSession.workspaceId))}

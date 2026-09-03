@@ -27,10 +27,20 @@ export type UseModelPickerInput = {
   onOpen?: () => void;
   /** Optional: surface option-load failures (settings shows a toast; the session route stays silent). */
   onLoadError?: (error: unknown) => void;
+  /**
+   * 是否响应全局打开事件（openModelPickerEvent / localStorage 待打开标记）。
+   *
+   * TIPS: 会话页与设置页（含应用页内嵌的设置面）都是常驻挂载、靠 display:none
+   * 互切显隐的，它们的 useModelPicker 全都监听同一个 window 事件。若不门控，
+   * 点一次"All models"会有多个一模一样的 ModelPickerModal 叠着打开，用户要
+   * 关好几次。只有当前可见的挂载面才允许响应；默认 true（单独使用时行为不变）。
+   */
+  enabled?: boolean;
 };
 
 export function useModelPicker(input: UseModelPickerInput) {
   const { client, baseUrl, workspaceRoot, onOpen, onLoadError } = input;
+  const enabled = input.enabled ?? true;
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const allowedModels = useDesktopAllowedModels();
 
@@ -56,6 +66,7 @@ export function useModelPicker(input: UseModelPickerInput) {
 
   // Open model picker when the global toast's "Pick a new default?" is clicked
   useEffect(() => {
+    if (!enabled) return;
     const handler = (event: Event) => {
       try {
         window.localStorage.removeItem(pendingModelPickerProviderIdsKey);
@@ -69,9 +80,10 @@ export function useModelPicker(input: UseModelPickerInput) {
     };
     window.addEventListener(openModelPickerEvent, handler);
     return () => window.removeEventListener(openModelPickerEvent, handler);
-  }, []);
+  }, [enabled, setOpen]);
 
   useEffect(() => {
+    if (!enabled) return;
     try {
       const raw = window.localStorage.getItem(pendingModelPickerProviderIdsKey);
       if (!raw) return;
@@ -85,7 +97,7 @@ export function useModelPicker(input: UseModelPickerInput) {
     } catch {
       // Ignore malformed pending-picker state.
     }
-  }, []);
+  }, [enabled, setOpen]);
 
   // Surface option-load failures when requested. The provider query remains
   // subscribed while the picker is open, so a startup cloud import updates an

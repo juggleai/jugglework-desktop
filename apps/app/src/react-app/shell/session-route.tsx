@@ -460,6 +460,12 @@ async function draftToParts(
 export type SessionRouteProps = {
   routeWorkspaceId?: string;
   routeSessionId?: string | null;
+  /**
+   * 会话面当前是否可见。工作台外壳里会话页与设置/聊天/应用页同时常驻挂载、
+   * 靠 display:none 互切；隐藏时它内部的模型选择器不应响应全局打开事件，
+   * 否则会出现多个一模一样的弹窗叠开、要关多次的问题。默认 true。
+   */
+  surfaceVisible?: boolean;
 };
 
 export function SessionRoute(props: SessionRouteProps = {}) {
@@ -865,6 +871,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     baseUrl: opencodeBaseUrl,
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
+    // 会话面被设置/聊天/应用/自动化页盖住时常驻隐藏，此时不响应全局
+    // 模型选择器打开事件，避免多个 ModelPickerModal 叠着弹出。
+    enabled: props.surfaceVisible ?? true,
   });
   // 触发模型选择器的那个面板对应的会话；null 表示落到当前选中的会话。
   const [modelPickerSessionId, setModelPickerSessionId] = useState<string | null>(null);

@@ -1007,6 +1007,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
     onLoadError: handleModelPickerLoadError,
+    // 设置面常驻挂载，被会话/应用页盖住时（active=false）不响应全局模型
+    // 选择器打开事件，避免多个 ModelPickerModal 叠着弹出。应用页内嵌的
+    // 设置面（无 active）同样保持禁用。
+    enabled: props.active === true,
   });
   const currentCloudMcpModel = useMemo<JuggleWorkCloudMcpProviderModelContext | null>(() => {
     const provider = local.prefs.defaultModel?.providerID.trim() ?? "";

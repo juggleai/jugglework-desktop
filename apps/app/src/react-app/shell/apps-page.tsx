@@ -5,6 +5,8 @@ import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 
 export type AppsPageProps = {
   workspaceId?: string | null;
+  /** 应用页当前是否可见；隐藏时内嵌设置面的模型选择器不响应全局打开事件。 */
+  active?: boolean;
   onOpenAccount: () => void;
   onOpenHome: () => void;
   onOpenChat: () => void;
@@ -34,6 +36,7 @@ export function AppsPage(props: AppsPageProps) {
           contentOnly
           initialPath="extensions/mcp"
           workspaceId={props.workspaceId ?? undefined}
+          active={props.active}
         />
       </main>
     </div>
