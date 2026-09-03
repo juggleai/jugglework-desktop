@@ -1644,9 +1644,14 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       baseUrl, `/automations/github-readiness?owner=${encodeURIComponent(repo.owner)}&name=${encodeURIComponent(repo.name)}`,
       { token, hostToken, timeoutMs: timeouts.config },
     ).then((response) => response.state).catch(() => "unknown" as const),
-    /** 生成一条 GitHub App 安装请求，通知组织管理员，见服务端 PRD §2.3。 */
-    requestGithubAppInstall: () => requestJson<{ ok: true }>(baseUrl, "/automations/github-install-request", {
-      token, hostToken, method: "POST", timeoutMs: timeouts.config,
+    /**
+     * 生成一条 GitHub App 安装请求，通知组织管理员，见服务端 PRD §2.3。
+     * TIPS: 服务端只有一个"就绪请求"端点覆盖"未连接"和"待绑定"两种情况，都要求带上目标
+     * 仓库（见 jugglework-server `AutomationReadinessRequestService.RequestInstall`），
+     * 不存在"不针对具体仓库"的安装请求。
+     */
+    requestGithubAppInstall: (repo: { owner: string; name: string }) => requestJson<{ ok: true }>(baseUrl, "/automations/github-install-request", {
+      token, hostToken, method: "POST", body: repo, timeoutMs: timeouts.config,
     }).then(() => undefined),
     /** 请求把目标仓库绑定为事件触发可用的连接器实例。 */
     requestGithubRepositoryBind: (repo: { owner: string; name: string }) => requestJson<{ ok: true }>(baseUrl, "/automations/github-repository-bind", {

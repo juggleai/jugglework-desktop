@@ -35,7 +35,7 @@ export type GithubRepositoryOption = {
 export type GithubEventTriggerClient = {
   listRepositories: () => Promise<GithubRepositoryOption[]>;
   checkReadiness: (repo: { owner: string; name: string }) => Promise<GithubReadinessState>;
-  requestInstall: () => Promise<void>;
+  requestInstall: (repo: { owner: string; name: string }) => Promise<void>;
   requestBind: (repo: { owner: string; name: string }) => Promise<void>;
   estimateFrequency: (trigger: AutomationEventTrigger) => Promise<number | null>;
 };
@@ -149,7 +149,7 @@ export function EventTriggerEditor(props: {
         <ReadinessBanner
           message={t("automation.event_readiness_not_connected")}
           actionLabel={t("automation.event_request_install")}
-          onAction={() => void props.client.requestInstall()}
+          onAction={() => void props.client.requestInstall(props.value.repository)}
         />
       ) : null}
       {readiness === "pending_configuration" ? (

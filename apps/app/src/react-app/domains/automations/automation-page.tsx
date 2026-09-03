@@ -1351,14 +1351,16 @@ function DiscardTriggerConfirm(props: { onCancel: () => void; onConfirm: () => v
 /**
  * 把 `JuggleWorkServerClient` 适配成事件触发面板需要的窄接口。
  * TIPS: 这几个方法对应的本机路由（见 routes/automations.ts 的 registerGithubEventProxyRoutes）
- * 目前是到 jugglework-server 新增端点（add-github-event-trigger-relay）的直通代理——服务端那一侧
- * 还没实现，调用会失败并被 UI 优雅降级（空仓库列表/就绪态 unknown），不是本地这一层的缺陷。
+ * 是到 jugglework-server 事件中继端点（add-github-event-trigger-relay）的直通代理——契约已经
+ * 对齐服务端真实实现，但 `resolveAuth` 这条云端凭据接线本身还没打通（同一类缺口见
+ * github-event-client.ts 顶部注释），调用目前仍会失败并被 UI 优雅降级（空仓库列表/就绪态
+ * unknown），不是这几个方法本身的契约问题。
  */
 function createGithubEventTriggerClient(client: JuggleWorkServerClient | null): GithubEventTriggerClient {
   return {
     listRepositories: () => client ? client.listGithubEventRepositories() : Promise.resolve([]),
     checkReadiness: (repo) => client ? client.checkGithubEventReadiness(repo) : Promise.resolve("unknown" as const),
-    requestInstall: () => client ? client.requestGithubAppInstall() : Promise.resolve(),
+    requestInstall: (repo) => client ? client.requestGithubAppInstall(repo) : Promise.resolve(),
     requestBind: (repo) => client ? client.requestGithubRepositoryBind(repo) : Promise.resolve(),
     estimateFrequency: (trigger) => client ? client.estimateGithubEventFrequency(trigger) : Promise.resolve(null),
   };

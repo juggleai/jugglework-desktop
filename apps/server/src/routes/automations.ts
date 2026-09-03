@@ -64,8 +64,12 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     if (!owner || !name) throw new ApiError(400, "invalid_request", "owner and name are required");
     return jsonResponse({ state: await relay.checkReadiness({ owner, name }) });
   });
-  addRoute(routes, "POST", "/automations/github-install-request", "client", async () => {
-    await relay.requestInstall();
+  addRoute(routes, "POST", "/automations/github-install-request", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const owner = typeof body.owner === "string" ? body.owner.trim() : "";
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!owner || !name) throw new ApiError(400, "invalid_request", "owner and name are required");
+    await relay.requestInstall({ owner, name });
     return jsonResponse({ ok: true });
   });
   addRoute(routes, "POST", "/automations/github-repository-bind", "client", async (ctx) => {
