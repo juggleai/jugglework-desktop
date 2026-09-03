@@ -312,6 +312,16 @@ function workspaceSummary(workspace) {
   return { id: workspace.id, name: safeRemoteText(requestedName, 500) || "Workspace" };
 }
 
+/**
+ * Mirrors the local sidebar's archived semantics: a session counts as
+ * archived only when OpenCode recorded a positive archived timestamp.
+ * @param {z.infer<typeof sessionSchema>} session
+ */
+function isRemoteSessionArchived(session) {
+  const archived = session.time?.archived;
+  return typeof archived === "number" && Number.isFinite(archived) && archived > 0;
+}
+
 /** @param {z.infer<typeof sessionSchema>} session @param {LocalWorkspace} workspace @param {unknown} status */
 function sessionSummary(session, workspace, status = null) {
   if (canonicalPath(session.directory) !== workspace.path) throw new RemoteControlOperationExecutionError("session_not_found");
@@ -352,15 +362,20 @@ async function verifyRemoteSessionRoot(client, workspace, sessionId) {
   }
   /** @type {Map<string, string | null>} */
   const parents = new Map();
+  /** @type {Set<string>} */
+  const archivedIds = new Set();
   for (const raw of record.items) {
     const parsed = sessionSchema.safeParse(raw);
     if (!parsed.success || parents.has(parsed.data.id) ||
         !(parsed.data.parentID === undefined || parsed.data.parentID === null || identifierSchema.safeParse(parsed.data.parentID).success)) {
       throw new RemoteControlOperationExecutionError("snapshot_required");
     }
+    if (isRemoteSessionArchived(parsed.data)) archivedIds.add(parsed.data.id);
     parents.set(parsed.data.id, typeof parsed.data.parentID === "string" ? parsed.data.parentID : null);
   }
-  if (!parents.has(sessionId)) throw new RemoteControlOperationExecutionError("snapshot_required");
+  // Archived roots are outside the remote-visible session set: a controller
+  // must not establish a new binding to a session the local UI archives.
+  if (!parents.has(sessionId) || archivedIds.has(sessionId)) throw new RemoteControlOperationExecutionError("snapshot_required");
   const visited = new Set();
   let current = sessionId;
   while (true) {
@@ -463,7 +478,11 @@ export function createRemoteControlReadRegistrations({ workspaceStore, managedRu
       } catch (error) {
         mapClientError(error, "workspace_not_found");
       }
-      const result = { sessions: response.items.filter((session) => !session.parentID).map((session) => sessionSummary(session, workspace, statuses[session.id])) };
+      const result = {
+        sessions: response.items
+          .filter((session) => !session.parentID && !isRemoteSessionArchived(session))
+          .map((session) => sessionSummary(session, workspace, statuses[session.id])),
+      };
       return desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result }).result;
     }),
     registration("session.snapshot", (value, payloadVersion) => {

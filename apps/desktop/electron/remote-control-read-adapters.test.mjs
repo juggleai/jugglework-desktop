@@ -140,6 +140,54 @@ describe("remote-control read adapters", () => {
     assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "child" }), false);
   });
 
+  it("rejects an archived session as a remote root binding", async () => {
+    const responses = {
+      "/workspaces": { items: [{ id: "ws_local", name: "Local", path: WORKSPACE_PATH, workspaceType: "local" }] },
+      "/workspace/ws_local/sessions?limit=10000": {
+        items: [
+          session("active_root"),
+          { ...session("archived_root"), time: { created: 1_000, updated: 2_000, archived: 1_500 } },
+          { ...session("unarchived_root"), time: { created: 1_000, updated: 2_000, archived: 0 } },
+        ],
+      },
+    };
+    const verifier = createRemoteSessionRootVerifier({
+      workspaceStore: { readWorkspaceState: async () => workspaceState() },
+      managedRuntimeClient: {
+        async getJson(pathname) {
+          const value = responses[pathname];
+          if (value === undefined) throw new Error("unexpected path");
+          return value;
+        },
+      },
+    });
+
+    assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "active_root" }), true);
+    assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "archived_root" }), false);
+    assert.equal(await verifier({ workspaceId: "ws_local", rootSessionId: "unarchived_root" }), true);
+  });
+
+  it("excludes archived sessions from the remote session list", async () => {
+    const { registry } = harness({
+      responses: {
+        "/workspace/ws_local/sessions?limit=10000": {
+          items: [
+            session("ses_active"),
+            { ...session("ses_archived"), time: { created: 1_000, updated: 2_000, archived: 1_500 } },
+            { ...session("ses_unarchived"), time: { created: 1_000, updated: 2_000, archived: 0 } },
+            { ...session("ses_child"), parentID: "ses_active" },
+          ],
+        },
+        "/workspace/ws_local/opencode/session/status": { ses_active: { type: "busy" } },
+      },
+    });
+    const dispatched = await dispatch(registry, "session.list", { workspaceId: "ws_local" });
+
+    assert.equal(dispatched.ok, true);
+    assert.deepEqual(dispatched.value.sessions.map((session) => session.id), ["ses_active", "ses_unarchived"]);
+    desktopRemoteOperationResultSchema.parse({ operation: "session.list", payloadVersion: 1, result: dispatched.value });
+  });
+
   it("advertises exactly concrete read handlers when gates allow", async () => {
     const { registry } = harness();
     assert.deepEqual(await registry.advertise(), advertisement());

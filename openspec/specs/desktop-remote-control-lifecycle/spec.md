@@ -121,6 +121,17 @@ The desktop application SHALL sanitize remotely projected snapshot text before a
 - **WHEN** the normalized `session.snapshot` result fails its exact payload-version schema
 - **THEN** Desktop returns the normal sanitized `internal_error` and logs only bounded issue paths and codes without the rejected value, message content, command arguments, stack, workspace identifier, or session identifier
 
+### Requirement: Remote session visibility matches local archived semantics
+Desktop SHALL project only sessions the local user considers visible. The remote `session.list` result MUST exclude sessions whose OpenCode archived timestamp is positive, and the remote root verifier MUST reject a new immutable binding to such a session. Archiving a session that is already remotely bound MUST NOT tear down the existing binding.
+
+#### Scenario: Archived root session
+- **WHEN** a root session has `time.archived > 0`
+- **THEN** `session.list` omits it and the root verifier refuses a new binding, while sessions with `archived: 0` or no archived field remain visible
+
+#### Scenario: Session archived during an active remote view
+- **WHEN** a session is archived locally after a controller already holds a verified immutable binding
+- **THEN** the existing binding and its snapshots continue without forced teardown, and the session disappears from subsequent `session.list` results
+
 ### Requirement: Re-registration replaces the remote device identity
 The application SHALL perform re-registration as one serialized, Main-owned operation. It MUST fence and stop old remote execution before deleting the prior remote credential and device-bound encryption material, generate a new signing identity, use a fresh one-time enrollment authorization to obtain a new Cloud `deviceId`, persist the new credential, enable remote control, and start the normal authenticated connection. Private key material MUST NOT be exposed to the renderer.
 

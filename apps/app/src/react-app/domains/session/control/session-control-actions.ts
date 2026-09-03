@@ -16,6 +16,7 @@ type SessionLike = {
   time?: {
     updated?: number;
     created?: number;
+    archived?: number;
   };
 };
 
@@ -110,6 +111,9 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         const list = sessionsByWorkspaceId[workspace.id] ?? [];
         for (const session of list) {
           if (session.parentID?.trim()) continue;
+          // Match the sidebar: archived sessions are not offered as
+          // openable targets even though they remain in storage.
+          if (typeof session.time?.archived === "number" && session.time.archived > 0) continue;
           const sessionId = session.id?.trim() ?? "";
           if (!sessionId) continue;
           const title = getDisplaySessionTitle(session.title ?? "");
