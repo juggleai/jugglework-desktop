@@ -15,10 +15,8 @@ function pendingPermission(overrides: Partial<PendingPermission> = {}): PendingP
     permission: "bash",
     patterns: ["rm -rf dist"],
     metadata: {},
-    always: {
-      session: false,
-      project: false,
-    },
+    // Legacy runtime 提供的可复用授权范围（always patterns）。
+    always: ["rm -rf dist"],
     receivedAt: 1,
     interactionRevision: 1,
     protocol: "legacy",
@@ -78,6 +76,7 @@ describe("permission approval modal helpers", () => {
       React.createElement(PermissionApprovalPanel, {
         permission: pendingPermission(),
         respondPermission: () => {},
+        respondPermissionGrant: () => {},
       }),
     );
 
@@ -85,7 +84,30 @@ describe("permission approval modal helpers", () => {
       match[0].replace(/<[^>]*>/g, "").trim(),
     );
 
-    expect(buttonLabels).toEqual(["Deny", "Allow once", "Allow for session"]);
+    expect(buttonLabels).toEqual(["Deny", "Allow once", "Always allow in this session"]);
+  });
+
+  test("hides the session grant action when no grant responder is wired", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalPanel, {
+        permission: pendingPermission(),
+        respondPermission: () => {},
+      }),
+    );
+
+    expect(html).not.toContain("Always allow in this session");
+  });
+
+  test("hides the session grant action when the runtime offers no reusable scope", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalPanel, {
+        permission: pendingPermission({ always: [] }),
+        respondPermission: () => {},
+        respondPermissionGrant: () => {},
+      }),
+    );
+
+    expect(html).not.toContain("Always allow in this session");
   });
 
   test("uses readable labels for generic permission titles", () => {
