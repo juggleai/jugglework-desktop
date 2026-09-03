@@ -263,10 +263,24 @@ export function migrateAutomationDatabase(database: AutomationSqlite, now = Date
   const applied = new Set(database.all<{ version: number }>("SELECT version FROM automation_schema_migrations").map((row) => row.version));
   for (const migration of migrations) {
     if (applied.has(migration.version)) continue;
+    // TIPS: v4 对 automation_tasks 做整表重建（DROP+RENAME），而 automation_runs 有
+    // FOREIGN KEY REFERENCES automation_tasks(id)。foreign_keys=ON 时 SQLite 不允许 DROP
+    // 一个仍被其它表外键引用的父表——这是 SQLite 官方文档给"整表重建含外键父表"场景推荐的
+    // 处理方式：PRAGMA 不能在事务内切换，所以必须在事务外关闭，重建完成、事务提交后用
+    // foreign_key_check 校验数据没有留下孤儿引用，再重新打开。
+    const rebuildsForeignKeyParent = migration.statements.some((statement) => /DROP TABLE/i.test(statement));
+    if (rebuildsForeignKeyParent) database.exec("PRAGMA foreign_keys = OFF");
     database.transaction(() => {
       for (const statement of migration.statements) database.exec(statement);
       database.run("INSERT INTO automation_schema_migrations(version, applied_at) VALUES (?, ?)", [migration.version, now]);
     });
+    if (rebuildsForeignKeyParent) {
+      const orphans = database.all("PRAGMA foreign_key_check");
+      if (orphans.length > 0) {
+        throw new Error(`automation database migration v${migration.version} left ${orphans.length} foreign key violation(s)`);
+      }
+      database.exec("PRAGMA foreign_keys = ON");
+    }
   }
 }
 
