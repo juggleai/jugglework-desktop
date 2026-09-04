@@ -72,6 +72,7 @@ import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
 import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permission-approval-modal";
+import { useFullAccessPermissionPromptGate } from "./full-access-permission-prompt-gate";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
@@ -499,6 +500,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     sessionId: props.sessionId,
   });
   const activePermission = props.activePermission ?? interactions.activePermission;
+  // Full-access requests are auto-resolved by the server-side permission
+  // broker on its polling cadence; gate the panel's first reveal so an
+  // auto-approved request never flashes a confirmation (see
+  // full-access-permission-prompt-gate.ts).
+  const gatedActivePermission = useFullAccessPermissionPromptGate(
+    activePermission,
+    sessionPermissionMode.state?.effectiveMode ?? null,
+  );
   const permissionReplyBusy = props.permissionReplyBusy ?? interactions.permissionReplyBusy;
   const respondPermission = props.respondPermission ?? interactions.respondPermission;
   const activeQuestion = props.activeQuestion ?? interactions.activeQuestion;
@@ -2256,7 +2265,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isSandboxWorkspace={props.isSandboxWorkspace}
           onUploadInboxFiles={props.onUploadInboxFiles ?? handleUploadInboxFiles}
           topAccessory={
-            activeQuestion || showTaskProgress || activePermission || queuedDrafts.length > 0 ? (
+            activeQuestion || showTaskProgress || gatedActivePermission || queuedDrafts.length > 0 ? (
               <div>
                 {queuedDrafts.length > 0 ? (
                   <QueuedMessagesPanel
@@ -2284,9 +2293,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 ) : showTaskProgress ? (
                   <TodoPanel todos={todos} />
                 ) : null}
-                {activePermission ? (
+                {gatedActivePermission ? (
                    <PermissionApprovalPanel
-                     permission={activePermission}
+                      permission={gatedActivePermission}
                      busy={permissionReplyBusy}
                      respondPermission={respondPermission}
                      respondPermissionGrant={interactions.respondPermissionGrant}
