@@ -64,6 +64,8 @@ function relayStub(overrides: Partial<GithubEventRelayClient> = {}): GithubEvent
     fetchWriteBackGrant: async () => { throw new Error("not used"); },
     listPendingDeliveries: async () => ({ items: [], nextCursor: null }),
     claimDelivery: async () => { throw new Error("not used"); },
+    upsertEventSubscription: async () => { throw new Error("not used"); },
+    deleteEventSubscription: async () => { throw new Error("not used"); },
     ...overrides,
   };
 }

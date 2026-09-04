@@ -95,6 +95,7 @@ import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
 import { AutomationEventPipeline } from "./automation/event-pipeline.js";
 import { AutomationEventPoller } from "./automation/event-poller.js";
+import { AutomationSubscriptionSync } from "./automation/subscription-sync.js";
 import { createGithubEventRelayClient, type GithubEventRelayClient } from "./automation/github-event-client.js";
 import { resolveGithubEventAuthFromEnv } from "./automation/github-event-auth.js";
 import { GithubEventAuthStore } from "./automation/github-event-auth-store.js";
@@ -929,6 +930,14 @@ export async function startServer(config: ServerConfig, options: {
     onDispatched: () => automationScheduler.notifyChanged(),
     log: (event, fields) => logger.log("info", event, fields),
   });
+  // TIPS: 少了这个，本地"已启用"的事件触发自动化在服务端等于不存在——见
+  // subscription-sync.ts 顶部注释；轮询器/认领/解析全都建好了，但没有它，服务端
+  // routeAutomationEvent 找不到任何订阅，enqueuedCount 恒为 0。
+  const automationSubscriptionSync = new AutomationSubscriptionSync({
+    relay: githubEventRelayClient,
+    repository: automationRepository,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
   const routes = createRoutes(
     config,
     approvals,
@@ -1128,6 +1137,7 @@ export async function startServer(config: ServerConfig, options: {
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
     void automationEventPoller.dispose();
+    void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
@@ -1171,6 +1181,7 @@ export async function startServer(config: ServerConfig, options: {
     // 真实凭据就抛出未处理异常或者搞垮启动流程，所以不需要额外判断"有没有凭据"才决定
     // 启不启动。
     automationEventPoller.start();
+    automationSubscriptionSync.start();
   }
 
   return {
@@ -1182,6 +1193,7 @@ export async function startServer(config: ServerConfig, options: {
       const errors: unknown[] = [];
       automationExecutor.dispose();
       try { await automationEventPoller.dispose(); } catch (error) { errors.push(error); }
+      try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {

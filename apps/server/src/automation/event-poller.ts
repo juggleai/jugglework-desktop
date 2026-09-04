@@ -168,6 +168,6 @@ function systemClock(): AutomationEventPollerClock {
   };
 }
 
-function safeErrorCode(error: unknown): string {
+export function safeErrorCode(error: unknown): string {
   return error instanceof ApiError ? error.code : error instanceof Error ? error.name : "unknown";
 }

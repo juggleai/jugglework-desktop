@@ -9,9 +9,9 @@ import type { AutomationEventTrigger } from "@jugglework/types/automation";
  * 这个文件的每一次 HTTP 调用形状（路径/方法/请求体/响应体）都是对着那一侧真实源码核对过的，
  * 不是猜的契约。认证凭据的注入点是 `resolveAuth`——它读取的是当前登录会话已经持有的云端 token
  * 加上设备 agent token，具体接线依赖已有的登录/会话状态存取逻辑，不在这个模块内重复实现。
- * TIPS：`resolveAuth` 到目前为止在真实运行时从未被真正接线过（`apps/server/src/routes/automations.ts`
- * 里的 `githubEventRelay` 注入点一直是 `undefined`，退化成 `createUnconfiguredGithubEventRelayClient`）——
- * 这是跟 task 3c.1/3c.2 同一类"发现了但这次会话没解决"的缺口，不在这个文件的职责范围内。
+ * `resolveAuth` 的两半（session token / 设备 agent token）都已经在真实运行时接线并实测过，
+ * 见 `server.ts`（`githubEventAuthStore` + `resolveGithubEventAuthFromEnv`）和 openspec 变更
+ * `add-event-triggered-automation` 的 tasks.md 3.1。
  * 未配置（`resolveAuth` 返回 null，例如用户尚未登录云端账号）时，所有方法优雅返回"未就绪"结果，
  * 而不是抛出让调用方处理不完的错误。
  */
@@ -85,6 +85,25 @@ export type GithubEventRelayClient = {
    * backlog-dropped，而不是当成普通网络错误重试。
    */
   claimDelivery(deliveryId: string): Promise<GithubEventDeliveryDetail>;
+  /**
+   * 创建/更新这条自动化在服务端的事件订阅路由元数据——没有这一步，`routeAutomationEvent`
+   * 找不到任何订阅，事件永远不会变成一条待认领的投递，`listPendingDeliveries`/`claimDelivery`
+   * 再怎么轮询也是空的。见 `subscription-sync.ts`：这个方法本身只是网络边界，谁在什么时机调用
+   * 它是那个模块的职责。
+   */
+  upsertEventSubscription(automationId: string, input: GithubEventSubscriptionInput): Promise<void>;
+  /** 移除这条自动化在服务端的事件订阅——触发方式切走、任务被暂停/删除时用。 */
+  deleteEventSubscription(automationId: string): Promise<void>;
+};
+
+/** 推给服务端的订阅路由元数据——字段名和 jugglework-server `automationEventSubscriptionRequest` 一一对应。 */
+export type GithubEventSubscriptionInput = {
+  connectorInstanceId: string;
+  eventTypes: string[];
+  branchFilter: string[];
+  labelFilter: string[];
+  permissionTier: string;
+  enabled: boolean;
 };
 
 function splitRepositoryFullName(fullName: string): { owner: string; name: string } | null {
@@ -212,6 +231,14 @@ export function createGithubEventRelayClient(
         payload: response.payload,
         authorIsAppIdentity: response.authorIsAppIdentity,
       })),
+    upsertEventSubscription: (automationId, input) =>
+      relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, {
+        method: "PUT", body: input, requireAgentToken: true,
+      }).then(() => undefined),
+    deleteEventSubscription: (automationId) =>
+      relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, {
+        method: "DELETE", requireAgentToken: true,
+      }).then(() => undefined),
   };
 }
 
@@ -230,5 +257,7 @@ export function createUnconfiguredGithubEventRelayClient(): GithubEventRelayClie
     fetchWriteBackGrant: () => Promise.reject(new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session")),
     listPendingDeliveries: () => Promise.resolve({ items: [], nextCursor: null }),
     claimDelivery: () => Promise.reject(new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session")),
+    upsertEventSubscription: () => Promise.reject(new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session")),
+    deleteEventSubscription: () => Promise.reject(new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session")),
   };
 }
