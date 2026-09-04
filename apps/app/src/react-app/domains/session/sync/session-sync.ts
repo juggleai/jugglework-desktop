@@ -7,7 +7,12 @@ import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
 import { createClient } from "@/app/lib/opencode";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_RUN_DIAGNOSTIC_MESSAGE_PREFIX, SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
-import { createSessionErrorUIMessage, describeOpencodeSessionError, snapshotToUIMessages } from "./usechat-adapter";
+import {
+  createSessionErrorUIMessage,
+  describeOpencodeSessionError,
+  isCompactionContinuePart,
+  snapshotToUIMessages,
+} from "./usechat-adapter";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
@@ -86,6 +91,13 @@ type SyncEntry = {
   sessionDeletedListeners: Set<NonNullable<SyncOptions["onSessionDeleted"]>>;
   sessionStatusListeners: Set<NonNullable<SyncOptions["onSessionStatus"]>>;
   pendingDeltas: Map<string, { messageId: string; reasoning: boolean; text: string }>;
+  // OpenCode's synthetic automatic-compaction continuation messages are
+  // engine control flow, not user turns. Tombstone their ids per session
+  // (message ids are only guaranteed unique within one session) so neither
+  // a later message.updated, a late part event, nor a stale snapshot read
+  // can resurrect the empty user shell. Bounded per session and cleared
+  // when the session is deleted; entries disappear with the sync itself.
+  suppressedCompactionContinueMessages: Map<string, Set<string>>;
   // Coalesce rapid-fire delta events from the SSE stream into one cache
   // commit per animation frame. Without this, a long response produces a
   // setQueryData per token; each triggers a full transcript re-render
@@ -99,9 +111,77 @@ const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
 const retainedSessionTtlMs = 10 * 60_000;
 const idleRetainedSessionTtlMs = 10_000;
+const continuationSuppressionCapacityPerSession = 256;
 const liveTodoRevision = new Map<string, number>();
 let todoRevision = 0;
 let legacyInteractionRevision = 0;
+
+// Suppression state lives on sync entries, but snapshot seeding has no entry
+// in scope, so these helpers scan every sync bound to the same workspace.
+function isSuppressedContinuationMessage(workspaceId: string, sessionId: string, messageId: string) {
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    if (entry.suppressedCompactionContinueMessages.get(sessionId)?.has(messageId)) return true;
+  }
+  return false;
+}
+
+function suppressContinuationMessage(workspaceId: string, sessionId: string, messageId: string) {
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    let suppressed = entry.suppressedCompactionContinueMessages.get(sessionId);
+    if (!suppressed) {
+      suppressed = new Set();
+      entry.suppressedCompactionContinueMessages.set(sessionId, suppressed);
+    }
+    if (suppressed.has(messageId)) continue;
+    suppressed.add(messageId);
+    if (suppressed.size > continuationSuppressionCapacityPerSession) {
+      // Sets iterate in insertion order; evict the oldest tombstone.
+      const oldest = suppressed.values().next().value;
+      if (typeof oldest === "string") suppressed.delete(oldest);
+    }
+  }
+}
+
+function unsuppressContinuationMessage(workspaceId: string, sessionId: string, messageId: string) {
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    entry.suppressedCompactionContinueMessages.get(sessionId)?.delete(messageId);
+  }
+}
+
+function clearContinuationSuppression(workspaceId: string, sessionId: string) {
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId !== workspaceId) continue;
+    entry.suppressedCompactionContinueMessages.delete(sessionId);
+  }
+}
+
+function filterSuppressedContinuationMessages(workspaceId: string, sessionId: string, messages: UIMessage[]) {
+  let hasSuppression = false;
+  for (const entry of syncs.values()) {
+    if (entry.input.workspaceId === workspaceId && entry.suppressedCompactionContinueMessages.size > 0) {
+      hasSuppression = true;
+      break;
+    }
+  }
+  if (!hasSuppression) return messages;
+  return messages.filter((message) => !isSuppressedContinuationMessage(workspaceId, sessionId, message.id));
+}
+
+function dropContinuationRuntimeState(entry: SyncEntry, sessionId: string, messageId: string) {
+  if (entry.deltaFlushBuffer.length > 0) {
+    entry.deltaFlushBuffer = entry.deltaFlushBuffer.filter(
+      (item) => !(item.sessionId === sessionId && item.messageId === messageId),
+    );
+  }
+  if (entry.pendingDeltas.size > 0) {
+    for (const [partId, pending] of entry.pendingDeltas) {
+      if (pending.messageId === messageId) entry.pendingDeltas.delete(partId);
+    }
+  }
+}
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -871,7 +951,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.deleted") {
     const props = (event.properties ?? {}) as { sessionID?: string; info?: { id?: string } };
     const sessionId = props.sessionID ?? props.info?.id ?? "";
-    if (sessionId) removeWorkspaceSessionAncestry(workspaceId, sessionId);
+    if (sessionId) {
+      // The session is gone server-side; its continuation tombstones can no
+      // longer be observed by any snapshot and would only suppress a
+      // legitimately reused id in a future session lifecycle.
+      clearContinuationSuppression(workspaceId, sessionId);
+      removeWorkspaceSessionAncestry(workspaceId, sessionId);
+    }
     if (sessionId) {
       for (const listener of entry.sessionDeletedListeners) listener(sessionId);
     }
@@ -1082,6 +1168,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
+    if (isSuppressedContinuationMessage(workspaceId, info.sessionID, info.id)) return;
     const messageActivityStore = useSessionActivityStore.getState();
     messageActivityStore.markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (info.role === "assistant") {
@@ -1128,7 +1215,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "message.removed") {
     // Revert cleanup (and explicit message deletion) removes messages
     // server-side; drop them from both the live transcript cache and the
-    // cached snapshot so they can't be resurrected by later merges.
+    // cached snapshot so they can't be resurrected by later merges. The
+    // continuation tombstone is deliberately kept: a delayed or replayed
+    // message.updated for a suppressed continuation must not recreate the
+    // empty shell. Tombstones clear with session.deleted instead.
     const props = (event.properties ?? {}) as { sessionID?: string; messageID?: string };
     if (!props.sessionID || !props.messageID) return;
     if (!isTrackedSession(entry, props.sessionID)) return;
@@ -1151,6 +1241,39 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!part?.sessionID || !part.messageID) return;
     const activityStore = useSessionActivityStore.getState();
     activityStore.markRuntimeEvent(workspaceId, part.sessionID);
+    if (isCompactionContinuePart(part)) {
+      // OpenCode resumes an automatic compaction by injecting a synthetic
+      // user prompt. It is engine control flow, not a new user turn. Drop
+      // any buffered streaming state first so a late flush cannot resurrect
+      // the message, then remove a shell already inserted by
+      // message.updated.
+      dropContinuationRuntimeState(entry, part.sessionID, part.messageID);
+      const liveMessage = isTrackedSession(entry, part.sessionID)
+        ? queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, part.sessionID))
+            ?.find((message) => message.id === part.messageID)
+        : undefined;
+      if (liveMessage && liveMessage.parts.length > 0) {
+        // The marker shares a message with real visible content. Keep the
+        // message (mirroring the snapshot adapter) and leave its lifecycle
+        // unsuppressed; the synthetic part itself is never mapped, so this
+        // branch inserts nothing for it.
+        return;
+      }
+      // Tombstone the id so neither a later message.updated, a late part
+      // event, nor a stale snapshot can recreate the empty shell.
+      suppressContinuationMessage(workspaceId, part.sessionID, part.messageID);
+      if (liveMessage) {
+        queryClient.setQueryData<UIMessage[]>(
+          transcriptKey(workspaceId, part.sessionID),
+          (current = []) => current.filter((message) => message.id !== part.messageID),
+        );
+        // message.updated marked this shell as a user turn before the marker
+        // arrived; undo the role so it cannot pollute stub-role inference or
+        // assistant-output gating for reused ids.
+        useSessionActivityStore.getState().removeMessageRole(workspaceId, part.sessionID, part.messageID);
+      }
+      return;
+    }
     if (part.type === "retry") {
       if (!activityStore.recordsByWorkspaceId[workspaceId]?.[part.sessionID]?.runActive) {
         activityStore.setRunStatus(workspaceId, part.sessionID, { type: "busy" });
@@ -1168,6 +1291,18 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       activityStore.markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
     if (!isTrackedSession(entry, part.sessionID)) return;
+    if (isSuppressedContinuationMessage(workspaceId, part.sessionID, part.messageID)) {
+      // A tombstoned continuation message must not re-enter the transcript
+      // through part events. If real visible content shows up on it (the
+      // marker part arrived first), stop suppressing so the message and its
+      // content survive — mirroring the snapshot adapter's rule of keeping
+      // messages that carry visible parts.
+      if (toUIParts(part).length > 0) {
+        unsuppressContinuationMessage(workspaceId, part.sessionID, part.messageID);
+      } else {
+        return;
+      }
+    }
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
     const pending = entry.pendingDeltas.get(part.id);
@@ -1364,6 +1499,9 @@ function flushDeltas(entry: SyncEntry, workspaceId: string) {
             // Buffer it without creating a role-guessed message shell. The
             // authoritative message event or typed part event will create the
             // message later, avoiding false user rows between assistant steps.
+            // Suppressed continuation messages stay dead: never buffer
+            // streaming state that could resurrect them.
+            if (isSuppressedContinuationMessage(workspaceId, sessionId, item.messageId)) continue;
             const existing = entry.pendingDeltas.get(item.partId) ?? {
               messageId: item.messageId,
               reasoning: item.reasoning,
@@ -1512,6 +1650,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     sessionDeletedListeners: new Set(input.onSessionDeleted ? [input.onSessionDeleted] : []),
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     pendingDeltas: new Map(),
+    suppressedCompactionContinueMessages: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
   });
@@ -1549,6 +1688,11 @@ export function seedSessionState(
     ? reconcileRunCompletionDiagnostic(incomingSnapshotMessages, snapshot.todos)
     : { messages: incomingSnapshotMessages, diagnostic: null };
   const incoming = completion.messages;
+  // A snapshot captured between a continuation message's creation and the
+  // persistence of its synthetic marker contains only an empty user shell.
+  // Live suppression tombstoned that id; a stale snapshot read completing
+  // late must not resurrect the shell during reconciliation.
+  const incomingVisible = filterSuppressedContinuationMessages(workspaceId, snapshot.session.id, incoming);
   const existing = queryClient.getQueryData<UIMessage[]>(key);
 
   const activityStore = useSessionActivityStore.getState();
@@ -1556,7 +1700,7 @@ export function seedSessionState(
     workspaceId,
     snapshot.session.id,
     snapshot.status,
-    assistantOutputAfterLatestUser(incoming),
+    assistantOutputAfterLatestUser(incomingVisible),
   );
   const snapshotRetry = latestActiveSnapshotRetry(snapshot);
   if (snapshotRetry && snapshot.status.type !== "retry") {
@@ -1575,7 +1719,7 @@ export function seedSessionState(
   queryClient.setQueryData(key, applyRevertCursor(
     reconcileTranscriptMessages({
       currentMessages: existing ?? [],
-      snapshotMessages: incoming,
+      snapshotMessages: incomingVisible,
       reason: "snapshot",
     }),
     snapshot.session.revert?.messageID ?? null,
@@ -1669,6 +1813,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     sessionDeletedListeners: new Set(input.onSessionDeleted ? [input.onSessionDeleted] : []),
     sessionStatusListeners: new Set(),
     pendingDeltas: new Map(),
+    suppressedCompactionContinueMessages: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
   });

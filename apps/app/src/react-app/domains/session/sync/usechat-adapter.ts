@@ -175,6 +175,12 @@ function getTextPartValue(part: Part) {
   return "";
 }
 
+export function isCompactionContinuePart(part: Part): boolean {
+  return part.type === "text" &&
+    part.synthetic === true &&
+    (part.metadata as { compaction_continue?: unknown } | undefined)?.compaction_continue === true;
+}
+
 function mapFilePart(part: FilePart): UIMessage["parts"][number] {
   return {
     type: "file",
@@ -259,12 +265,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     // here keeps the run in one assistant group instead of splitting it.
     const isCompactionContinueUserMessage =
       message.info.role === "user" &&
-      message.parts.some(
-        (part) =>
-          part.type === "text" &&
-          part.synthetic === true &&
-          (part.metadata as { compaction_continue?: unknown } | undefined)?.compaction_continue === true,
-      );
+      message.parts.some(isCompactionContinuePart);
     const isSummary = message.info.role === "assistant" && message.info.summary === true;
     const summaryMode = isSummary ? pendingCompactionMode : null;
     if (isSummary) pendingCompactionMode = null;

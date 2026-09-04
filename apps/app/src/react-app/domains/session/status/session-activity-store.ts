@@ -68,6 +68,7 @@ type SessionActivityStore = {
   seedSessionRun: (workspaceId: string, sessionId: string, status: unknown, assistantOutput: boolean) => void;
   setRunStatus: (workspaceId: string, sessionId: string, status: unknown) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
+  removeMessageRole: (workspaceId: string, sessionId: string, messageId: string) => void;
   markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
   markProgress: (workspaceId: string, sessionId: string, at?: number) => void;
   markRuntimeEvent: (workspaceId: string, sessionId: string, at?: number) => void;
@@ -357,6 +358,18 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         [message]: role,
       },
     })));
+  },
+  removeMessageRole: (workspaceId, sessionId, messageId) => {
+    const workspace = workspaceId.trim();
+    const session = sessionId.trim();
+    const message = messageId.trim();
+    if (!workspace || !session || !message) return;
+    set((state) => updateRecord(state, workspace, session, (record) => {
+      if (!(message in record.messageRoles)) return record;
+      const messageRoles = { ...record.messageRoles };
+      delete messageRoles[message];
+      return { ...record, messageRoles };
+    }));
   },
   markAssistantOutput: (workspaceId, sessionId, messageId, options) => {
     const workspace = workspaceId.trim();

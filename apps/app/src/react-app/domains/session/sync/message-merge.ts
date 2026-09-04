@@ -1,5 +1,7 @@
 import type { UIMessage } from "ai";
 
+import { getSessionCompactionFromMessage, getSessionCompactionFromPart } from "../../../../app/lib/session-compaction";
+
 function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
   const parts = snapshotMessage.parts.map((part, index) => {
     const cachedPart = cachedMessage.parts[index];
@@ -25,11 +27,44 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
 
 function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessage: UIMessage): UIMessage {
   const metadata = snapshotMessage.metadata ?? cachedMessage.metadata;
+  let parts = mergeMessageParts(snapshotMessage, cachedMessage);
+
+  // A snapshot window that excludes the compaction boundary maps its summary
+  // receipt to mode "unknown", while the live stream already observed the
+  // real mode (from the boundary or the compaction lifecycle events). Live
+  // and snapshot part orderings also differ (the live marker is created
+  // before the summary streams, the snapshot marker is appended last), so
+  // index-paired merging cannot carry the mode across. Patch it at the
+  // message level: a known cached mode must not be downgraded to unknown, or
+  // grouping would split the run into a standalone compaction task.
+  const cachedCompaction = getSessionCompactionFromMessage(cachedMessage);
+  if (cachedCompaction && cachedCompaction.mode !== "unknown") {
+    const mergedCompaction = getSessionCompactionFromMessage({ ...snapshotMessage, parts });
+    if (!mergedCompaction || mergedCompaction.mode === "unknown") {
+      parts = parts.map((part) => {
+        const compaction = getSessionCompactionFromPart(part);
+        // Compaction markers are text parts by construction; other part
+        // kinds never carry a compaction presentation.
+        if (!compaction || compaction.mode !== "unknown" || part.type !== "text") return part;
+        const metadata = part.providerMetadata as { opencode?: Record<string, unknown> } | undefined;
+        return {
+          ...part,
+          providerMetadata: {
+            ...part.providerMetadata,
+            opencode: {
+              ...(metadata?.opencode),
+              compaction: { ...compaction, mode: cachedCompaction.mode },
+            },
+          },
+        };
+      });
+    }
+  }
 
   return {
     ...snapshotMessage,
     ...(metadata === undefined ? {} : { metadata }),
-    parts: mergeMessageParts(snapshotMessage, cachedMessage),
+    parts,
   };
 }
 

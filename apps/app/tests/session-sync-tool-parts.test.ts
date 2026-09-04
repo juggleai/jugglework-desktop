@@ -342,6 +342,454 @@ describe("tool part mapper", () => {
     }
   });
 
+  test("live sync removes synthetic compaction continuation messages under either event order", () => {
+    const workspaceId = "workspace-live-auto-continue";
+    const sessionId = "session-live-auto-continue";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    const continuationPart = (messageID: string, id: string) => ({
+      id,
+      sessionID: sessionId,
+      messageID,
+      type: "text" as const,
+      text: "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.",
+      synthetic: true,
+      metadata: { compaction_continue: true },
+      time: { start: 1_700_000_003_200, end: 1_700_000_003_200 },
+    });
+
+    try {
+      // message.updated first: remove the empty shell when the marked part arrives.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "continue-message-first",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_003_200 },
+          },
+        },
+      } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey(workspaceId, sessionId),
+      )?.find((message) => message.id === "continue-message-first")).toBeDefined();
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: continuationPart("continue-message-first", "continue-part-first") },
+      } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey(workspaceId, sessionId),
+      )?.find((message) => message.id === "continue-message-first")).toBeUndefined();
+
+      // part first: remember the implementation message so a later message
+      // event cannot recreate the empty user boundary.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: continuationPart("continue-part-first", "continue-part-second") },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "continue-part-first",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_004_000 },
+          },
+        },
+      } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey(workspaceId, sessionId),
+      )?.find((message) => message.id === "continue-part-first")).toBeUndefined();
+
+      // A real user message with similar wording remains a genuine boundary.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "real-user-continue",
+            role: "user",
+            sessionID: sessionId,
+            time: { created: 1_700_000_005_000 },
+          },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "real-user-continue-part",
+            sessionID: sessionId,
+            messageID: "real-user-continue",
+            type: "text",
+            text: "任务继续",
+          },
+        },
+      } as any);
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey(workspaceId, sessionId),
+      )?.find((message) => message.id === "real-user-continue")?.parts).toMatchObject([
+        { type: "text", text: "任务继续" },
+      ]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("continuation suppression is session-scoped and survives unrelated removals", () => {
+    const workspaceId = "workspace-continue-scope";
+    const sessionA = "session-continue-a";
+    const sessionB = "session-continue-b";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const releaseA = trackWorkspaceSessionSync(syncInput, sessionA);
+    const releaseB = trackWorkspaceSessionSync(syncInput, sessionB);
+    const sharedId = "shared-message-id";
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "continue-part-a",
+            sessionID: sessionA,
+            messageID: sharedId,
+            type: "text",
+            text: "Continue if you have next steps",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: 1, end: 1 },
+          },
+        },
+      } as any);
+
+      // The same message id in another session is a real user turn and must
+      // not be swallowed by session A's tombstone.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: sharedId, role: "user", sessionID: sessionB, time: { created: 2 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "b-part", sessionID: sessionB, messageID: sharedId, type: "text", text: "Real prompt" },
+        },
+      } as any);
+      const transcriptB = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionB)) ?? [];
+      expect(transcriptB.find((message) => message.id === sharedId)?.parts).toMatchObject([
+        { type: "text", text: "Real prompt" },
+      ]);
+
+      // Removing session B's message must not clear session A's tombstone.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.removed",
+        properties: { sessionID: sessionB, messageID: sharedId },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: sharedId, role: "user", sessionID: sessionA, time: { created: 3 } } },
+      } as any);
+      const transcriptA = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionA)) ?? [];
+      expect(transcriptA.find((message) => message.id === sharedId)).toBeUndefined();
+    } finally {
+      releaseA();
+      releaseB();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionA);
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionB);
+    }
+  });
+
+  test("keeps visible content that shares a message with the continuation marker", () => {
+    const workspaceId = "workspace-continue-mixed";
+    const sessionId = "session-continue-mixed";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "mixed-msg", role: "user", sessionID: sessionId, time: { created: 1 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: { id: "mixed-text", sessionID: sessionId, messageID: "mixed-msg", type: "text", text: "Keep this visible" },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "mixed-continue",
+            sessionID: sessionId,
+            messageID: "mixed-msg",
+            type: "text",
+            text: "Continue if you have next steps",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: 2, end: 2 },
+          },
+        },
+      } as any);
+
+      const read = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(read().find((message) => message.id === "mixed-msg")?.parts).toMatchObject([
+        { type: "text", text: "Keep this visible" },
+      ]);
+
+      // The real message keeps its lifecycle: a later message.updated still
+      // applies and must not wipe the visible part.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "mixed-msg", role: "user", sessionID: sessionId, time: { created: 1, completed: 3 } } },
+      } as any);
+      expect(read().find((message) => message.id === "mixed-msg")?.parts).toMatchObject([
+        { type: "text", text: "Keep this visible" },
+      ]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("drops buffered deltas for a suppressed continuation message", async () => {
+    const workspaceId = "workspace-continue-delta";
+    const sessionId = "session-continue-delta";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      // A delta can beat the part declaration; it buffers without a shell.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: { sessionID: sessionId, messageID: "cont-delta", partID: "cont-delta-part", delta: "Continue" },
+      } as any);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "cont-delta-part",
+            sessionID: sessionId,
+            messageID: "cont-delta",
+            type: "text",
+            text: "Continue if you have next steps",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: 1, end: 1 },
+          },
+        },
+      } as any);
+
+      // Deltas that arrive after suppression must neither buffer nor
+      // resurrect the implementation message.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.delta",
+        properties: { sessionID: sessionId, messageID: "cont-delta", partID: "cont-delta-part", delta: " more" },
+      } as any);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(transcript.find((message) => message.id === "cont-delta")).toBeUndefined();
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("session.deleted clears continuation suppression for that session", () => {
+    const workspaceId = "workspace-continue-deleted";
+    const sessionId = "session-continue-deleted";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "continue-part",
+            sessionID: sessionId,
+            messageID: "recycle-id",
+            type: "text",
+            text: "Continue if you have next steps",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: 1, end: 1 },
+          },
+        },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "recycle-id", role: "user", sessionID: sessionId, time: { created: 2 } } },
+      } as any);
+      expect((getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [])
+        .find((message) => message.id === "recycle-id")).toBeUndefined();
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.deleted",
+        properties: { sessionID: sessionId },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "recycle-id", role: "user", sessionID: sessionId, time: { created: 3 } } },
+      } as any);
+      expect((getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [])
+        .find((message) => message.id === "recycle-id")).toBeDefined();
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("live automatic compaction with a stale snapshot stays one task end to end", () => {
+    const workspaceId = "workspace-continue-e2e";
+    const sessionId = "session-continue-e2e";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+    const t0 = 1_700_000_000_000;
+    const t1 = t0 + 500;
+    const t1b = t0 + 1_000;
+    const t2 = t0 + 1_500;
+    const t3 = t0 + 2_500;
+    const t5 = t0 + 3_500;
+    const t5b = t0 + 4_000;
+
+    const userEvent = (id: string, role: "user" | "assistant", created: number, extra: Record<string, unknown> = {}) =>
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id, role, sessionID: sessionId, time: { created, ...(role === "assistant" ? { completed: created + 100 } : {}) }, ...extra } },
+      } as any);
+    const textPartEvent = (partId: string, messageID: string, text: string) =>
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: { id: partId, sessionID: sessionId, messageID, type: "text", text } },
+      } as any);
+
+    try {
+      userEvent("user-1", "user", t0);
+      textPartEvent("user-1-text", "user-1", "Do it");
+      userEvent("assistant-before", "assistant", t1);
+      textPartEvent("assistant-before-text", "assistant-before", "Progress before compaction");
+
+      // Automatic compaction lifecycle creates the receipt with mode auto.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.started",
+        properties: { sessionID: sessionId, messageID: "summary-live", reason: "auto", timestamp: t2 },
+      } as any);
+      textPartEvent("summary-live-text", "summary-live", "internal automatic summary");
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "summary-live", role: "assistant", sessionID: sessionId, summary: true, time: { created: t2, completed: t3 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.ended",
+        properties: { sessionID: sessionId, messageID: "summary-live", reason: "auto", timestamp: t3 },
+      } as any);
+
+      // The synthetic continuation is suppressed out of the transcript.
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "cont-live",
+            sessionID: sessionId,
+            messageID: "cont-live",
+            type: "text",
+            text: "Continue if you have next steps",
+            synthetic: true,
+            metadata: { compaction_continue: true },
+            time: { start: t5 - 300, end: t5 - 300 },
+          },
+        },
+      } as any);
+
+      userEvent("assistant-after", "assistant", t5);
+
+      const liveTranscript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(liveTranscript.find((message) => message.id === "cont-live")).toBeUndefined();
+      expect(getSessionCompactionFromMessage(liveTranscript.find((message) => message.id === "summary-live")!)).toMatchObject({
+        mode: "auto",
+        running: false,
+      });
+      const liveGrouped = groupMessages(deriveRenderedSessionMessages({ transcriptState: liveTranscript, snapshot: null }), "ready");
+      expect(liveGrouped).toHaveLength(2);
+      expect(isMessageGroup(liveGrouped[1]!)).toBeTrue();
+      if (!isMessageGroup(liveGrouped[1]!)) throw new Error("expected one assistant task group");
+      expect(liveGrouped[1].messages.map((item) => item.message.id)).toEqual([
+        "assistant-before",
+        "summary-live",
+        "assistant-after",
+      ]);
+
+      // A stale snapshot completes late: it carries a bare continuation
+      // shell (marker part not persisted yet) and the summary without its
+      // boundary, which alone would map to mode unknown.
+      seedSessionState(workspaceId, {
+        session: { id: sessionId },
+        status: { type: "idle" },
+        todos: [],
+        messages: [
+          {
+            info: { id: "user-1", role: "user", sessionID: sessionId, time: { created: t0 } },
+            parts: [{ id: "user-1-text", sessionID: sessionId, messageID: "user-1", type: "text", text: "Do it" }],
+          },
+          {
+            info: { id: "assistant-before", role: "assistant", sessionID: sessionId, time: { created: t1, completed: t1b } },
+            parts: [{ id: "assistant-before-text", sessionID: sessionId, messageID: "assistant-before", type: "text", text: "Progress before compaction" }],
+          },
+          {
+            info: { id: "cont-live", role: "user", sessionID: sessionId, time: { created: t5 - 300 } },
+            parts: [],
+          },
+          {
+            info: { id: "summary-live", role: "assistant", sessionID: sessionId, summary: true, time: { created: t2, completed: t3 } },
+            parts: [{ id: "summary-live-text", sessionID: sessionId, messageID: "summary-live", type: "text", text: "internal automatic summary" }],
+          },
+          {
+            info: { id: "assistant-after", role: "assistant", sessionID: sessionId, time: { created: t5, completed: t5b } },
+            parts: [{ id: "assistant-after-text", sessionID: sessionId, messageID: "assistant-after", type: "text", text: "Final output after compaction" }],
+          },
+        ],
+      } as any);
+
+      const mergedTranscript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(mergedTranscript.find((message) => message.id === "cont-live")).toBeUndefined();
+      expect(getSessionCompactionFromMessage(mergedTranscript.find((message) => message.id === "summary-live")!)).toMatchObject({
+        mode: "auto",
+        running: false,
+      });
+      const mergedGrouped = groupMessages(deriveRenderedSessionMessages({ transcriptState: mergedTranscript, snapshot: null }), "ready");
+      expect(mergedGrouped).toHaveLength(2);
+      expect(isMessageGroup(mergedGrouped[1]!)).toBeTrue();
+      if (!isMessageGroup(mergedGrouped[1]!)) throw new Error("expected one assistant task group after snapshot");
+      expect(mergedGrouped[1].messages.map((item) => item.message.id)).toEqual([
+        "assistant-before",
+        "summary-live",
+        "assistant-after",
+      ]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
   test("completed summary metadata finishes compaction when the ended event is missed", () => {
     const syncInput = { workspaceId: "workspace-compact-summary", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
