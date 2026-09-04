@@ -40,10 +40,12 @@ export interface RegisterAutomationRoutesOptions {
   /** 到 jugglework-server 事件中继 API 的客户端；未提供时回落到"未配置"兜底实现。 */
   githubEventRelay?: GithubEventRelayClient;
   /**
-   * resolveAuth 的真实生产落点——渲染进程登录后把云端 session token（可选带设备
-   * agent token）推给这个进程，见下面 `PUT /automations/github-event-auth`。未提供时
-   * 这两个端点直接 404（保持跟其它可选能力一致的降级方式），githubEventRelay 的
-   * resolveAuth 继续走它自己的兜底（当前是环境变量，见 github-event-auth.ts）。
+   * resolveAuth 的真实生产落点——渲染进程登录后把云端 session token 推给这个进程，
+   * 见下面 `PUT /automations/github-event-auth`。未提供时这两个端点直接 404（保持
+   * 跟其它可选能力一致的降级方式），githubEventRelay 的 resolveAuth 继续走它自己的
+   * 兜底（当前是环境变量，见 github-event-auth.ts）。设备身份（deviceId）不走这条
+   * 路径——那是本地生成、持久化在 apps/server 自己的数据目录里的路由 key，跟渲染进程
+   * 的登录态无关，见 device-identity.ts。
    */
   githubEventAuthStore?: GithubEventAuthStore;
   enabled?: boolean;
@@ -96,18 +98,16 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
   if (options.githubEventAuthStore) {
     const authStore = options.githubEventAuthStore;
     // TIPS: resolveAuth 的真实生产落点。渲染进程本来就持有真实的云端登录态，这里只是把
-    // 它转发进这个进程——不在这个进程里重新做一遍登录或者设备身份认证。baseUrl/token 是
-    // 必填的（没有它们轮询/写回这些能力就完全没法工作），agentToken 是可选的（只有设备已经
-    // 通过远程控制那套流程完成过 enrollment、渲染进程才拿得到，见桌面端设备身份基础设施——
-    // 缺了它只是"需要设备 agent token 的那几个方法"继续优雅拒绝，不影响其余方法）。
+    // 它转发进这个进程——不在这个进程里重新做一遍登录。jugglework-server 的事件中继/
+    // 写回授权几个端点已经不再要求设备 agent token 了（design.md 决策 12），只需要
+    // session + 一个自报的 deviceId（`device-identity.ts` 本地生成，不经过渲染进程）。
     addRoute(routes, "PUT", "/automations/github-event-auth", "client", async (ctx) => {
       requireMutation(ctx, options);
       const body = await readJsonBody(ctx.request);
       const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
       const token = typeof body.token === "string" ? body.token.trim() : "";
       if (!baseUrl || !token) throw new ApiError(400, "invalid_request", "baseUrl and token are required");
-      const agentToken = typeof body.agentToken === "string" ? body.agentToken.trim() : "";
-      authStore.set({ baseUrl, token, ...(agentToken ? { agentToken } : {}) });
+      authStore.set({ baseUrl, token });
       return jsonResponse({ ok: true });
     });
     // TIPS: 渲染进程登出时调用——清掉这份内存里的凭据，避免旧会话的 token 在用户切换账号

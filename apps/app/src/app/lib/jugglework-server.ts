@@ -1589,15 +1589,17 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
-    // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己从
-    // 从来没有登录态，渲染进程本来就持有真实的云端 session，登录/刷新后把它（连同设备
-    // agent token，如果这台设备已经完成过远程控制那套 enrollment）转发进 apps/server 的
-    // 内存，别的什么都不用做。cloudBaseUrl 是云端 API 根地址（不是这个 client 自己的
-    // baseUrl——那个指向本地 apps/server），cloudToken 是云端 session bearer。
-    pushGithubEventAuth: (input: { cloudBaseUrl: string; cloudToken: string; agentToken?: string | null }) =>
+    // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己
+    // 从来没有登录态，渲染进程本来就持有真实的云端 session，登录/刷新后把它转发进
+    // apps/server 的内存，别的什么都不用做。cloudBaseUrl 是云端 API 根地址（不是这个
+    // client 自己的 baseUrl——那个指向本地 apps/server），cloudToken 是云端 session
+    // bearer。设备身份（deviceId）不走这条路径——那是 apps/server 自己在本地生成、持久化
+    // 的路由 key，跟渲染进程的登录态、跟远程控制都无关，见 apps/server 的
+    // automation/device-identity.ts 和 jugglework-server design.md 决策 12。
+    pushGithubEventAuth: (input: { cloudBaseUrl: string; cloudToken: string }) =>
       requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", {
         token, hostToken, method: "PUT",
-        body: { baseUrl: input.cloudBaseUrl, token: input.cloudToken, ...(input.agentToken ? { agentToken: input.agentToken } : {}) },
+        body: { baseUrl: input.cloudBaseUrl, token: input.cloudToken },
         timeoutMs: timeouts.config,
       }),
     /** 渲染进程登出时调用，清掉 apps/server 内存里那份凭据。 */

@@ -545,11 +545,6 @@ export type DesktopRemoteControlPolicyScope = {
   organizationId: string;
 };
 
-export type AutomationAgentToken = {
-  accessToken: string;
-  expiresAt: string;
-};
-
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
@@ -651,17 +646,6 @@ export type DesktopCommandMap = {
   };
   desktopRemoteControlCredentialDelete: { args: []; result: DesktopRemoteControlAgentStatus };
   desktopRemoteControlStatusRead: { args: []; result: DesktopRemoteControlAgentStatus };
-
-  // Event-triggered automation reuses remote control's existing device
-  // identity (same server-side `desktop-agent:connect` scope) to mint a
-  // short-lived agent token for apps/server's GitHub event relay client.
-  // Returns null — not an error — when this device was never enrolled for
-  // remote control, or the mint could not complete; callers must degrade
-  // gracefully rather than treat that as a failure.
-  mintAutomationAgentToken: {
-    args: [scope: DesktopRemoteControlPolicyScope];
-    result: AutomationAgentToken | null;
-  };
 
   // Computer use
   checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };

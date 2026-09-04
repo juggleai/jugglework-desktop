@@ -7,23 +7,24 @@ import type { AutomationEventTrigger } from "@jugglework/types/automation";
  * TIPS: 这是桌面端到 `jugglework-server`（`add-github-event-trigger-relay` 变更）的网络边界。
  * 那一侧的 `/api/v1/automations/github-*` 端点已经在 jugglework-server 仓库实现并测试过——
  * 这个文件的每一次 HTTP 调用形状（路径/方法/请求体/响应体）都是对着那一侧真实源码核对过的，
- * 不是猜的契约。认证凭据的注入点是 `resolveAuth`——它读取的是当前登录会话已经持有的云端 token
- * 加上设备 agent token，具体接线依赖已有的登录/会话状态存取逻辑，不在这个模块内重复实现。
- * `resolveAuth` 的两半（session token / 设备 agent token）都已经在真实运行时接线并实测过，
- * 见 `server.ts`（`githubEventAuthStore` + `resolveGithubEventAuthFromEnv`）和 openspec 变更
- * `add-event-triggered-automation` 的 tasks.md 3.1。
+ * 不是猜的契约。认证凭据的注入点是 `resolveAuth`——它读取的是当前登录会话已经持有的云端 token，
+ * 具体接线依赖已有的登录/会话状态存取逻辑，不在这个模块内重复实现。`resolveAuth` 已经在真实
+ * 运行时接线并实测过，见 `server.ts`（`githubEventAuthStore` + `resolveGithubEventAuthFromEnv`）
+ * 和 openspec 变更 `add-event-triggered-automation` 的 tasks.md 3.1。
  * 未配置（`resolveAuth` 返回 null，例如用户尚未登录云端账号）时，所有方法优雅返回"未就绪"结果，
  * 而不是抛出让调用方处理不完的错误。
+ *
+ * TIPS：认证模型这次改了——`listPendingDeliveries`/`claimDelivery`/`upsertEventSubscription`/
+ * `deleteEventSubscription`/`fetchWriteBackGrant` 这几个方法原来还要求一个远程控制 enrollment
+ * 铸造出来的设备 agent token，服务端那侧的门槛（`agentAuthEnabled`）要求组织策略同时打开
+ * "设备注册"和"只读远程控制"两个开关——跟事件触发自动化毫不相干的一个功能却挡住了它。
+ * jugglework-server `add-github-event-trigger-relay` design.md 决策 12 把这几个端点的认证
+ * 降级成 session + 调用方自报的 `deviceId`（`device-identity.ts`，本地生成、持久化、跟渲染进程
+ * 的 `executorDeviceId` 无关，纯路由 key，不是安全边界），不再需要远程控制那一套。
  */
 export type GithubEventRelayAuth = {
   baseUrl: string;
   token: string;
-  /**
-   * 设备 agent token（`X-JuggleWork-Desktop-Agent-Token`）——jugglework-server 的投递
-   * 轮询/认领/写回授权铸造这几个"设备"接口都要求这个头，跟 `token`（session bearer）是
-   * 两个独立凭据。缺失时这几个方法直接拒绝，不悄悄发一个注定 401 的请求。
-   */
-  agentToken?: string;
 };
 
 /** 一次运行期 GitHub App 写回授权；`token`/`expiresAt` 不落库，只在这次 run 的进程内存活期使用。 */
@@ -123,22 +124,19 @@ function toEpochMs(value: unknown): number {
 
 export function createGithubEventRelayClient(
   resolveAuth: () => Promise<GithubEventRelayAuth | null>,
+  resolveDeviceId: () => Promise<string>,
   fetchImpl: typeof fetch = fetch,
 ): GithubEventRelayClient {
   async function relay<T>(
     path: string,
-    init?: { method?: string; body?: unknown; requireAgentToken?: boolean },
+    init?: { method?: string; body?: unknown },
   ): Promise<T> {
     const auth = await resolveAuth();
     if (!auth) throw new ApiError(503, "github_event_relay_unavailable", "GitHub event relay is not configured for this session");
-    if (init?.requireAgentToken && !auth.agentToken) {
-      throw new ApiError(503, "github_event_relay_agent_unavailable", "No desktop agent token is available for this session");
-    }
     const response = await fetchImpl(`${auth.baseUrl.replace(/\/+$/, "")}${path}`, {
       method: init?.method ?? "GET",
       headers: {
         Authorization: `Bearer ${auth.token}`,
-        ...(init?.requireAgentToken ? { "X-JuggleWork-Desktop-Agent-Token": auth.agentToken as string } : {}),
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
       },
       ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
@@ -196,16 +194,21 @@ export function createGithubEventRelayClient(
         `/api/v1/automations/github-event-frequency?repo=${encodeURIComponent(repo)}&eventTypes=${encodeURIComponent(eventTypes)}`,
       ).then((response) => (typeof response.eventsPerDay === "number" ? Math.round(response.eventsPerDay * 7) : null));
     },
-    fetchWriteBackGrant: (automationId, repo) =>
-      relay<{ token: string; expiresAt: string }>(
+    fetchWriteBackGrant: async (automationId, repo) => {
+      const deviceId = await resolveDeviceId();
+      const response = await relay<{ token: string; expiresAt: string }>(
         "/api/v1/automations/github-app-grant",
-        { method: "POST", body: { automationId, repository: `${repo.owner}/${repo.name}` }, requireAgentToken: true },
-      ).then((response) => ({ token: response.token, expiresAt: toEpochMs(response.expiresAt) })),
-    listPendingDeliveries: (cursor) =>
-      relay<{ items: Array<{ id: string; automationId: string; eventType: string; action?: string; entityRef: string; eventTimestamp: string; createdAt: string }>; nextCursor: string | null }>(
-        `/api/v1/automation-event-deliveries${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-        { requireAgentToken: true },
-      ).then((response) => ({
+        { method: "POST", body: { deviceId, automationId, repository: `${repo.owner}/${repo.name}` } },
+      );
+      return { token: response.token, expiresAt: toEpochMs(response.expiresAt) };
+    },
+    listPendingDeliveries: async (cursor) => {
+      const deviceId = await resolveDeviceId();
+      const params = new URLSearchParams({ deviceId, ...(cursor ? { cursor } : {}) });
+      const response = await relay<{ items: Array<{ id: string; automationId: string; eventType: string; action?: string; entityRef: string; eventTimestamp: string; createdAt: string }>; nextCursor: string | null }>(
+        `/api/v1/automation-event-deliveries?${params.toString()}`,
+      );
+      return {
         items: response.items.map((item) => ({
           id: item.id,
           automationId: item.automationId,
@@ -216,12 +219,14 @@ export function createGithubEventRelayClient(
           createdAtMs: toEpochMs(item.createdAt),
         })),
         nextCursor: response.nextCursor,
-      })),
-    claimDelivery: (deliveryId) =>
-      relay<{ id: string; automationId: string; eventType: string; action?: string; entityRef: string; eventTimestamp: string; payload: unknown; authorIsAppIdentity: boolean }>(
-        `/api/v1/automation-event-deliveries/${encodeURIComponent(deliveryId)}`,
-        { requireAgentToken: true },
-      ).then((response) => ({
+      };
+    },
+    claimDelivery: async (deliveryId) => {
+      const deviceId = await resolveDeviceId();
+      const response = await relay<{ id: string; automationId: string; eventType: string; action?: string; entityRef: string; eventTimestamp: string; payload: unknown; authorIsAppIdentity: boolean }>(
+        `/api/v1/automation-event-deliveries/${encodeURIComponent(deliveryId)}?deviceId=${encodeURIComponent(deviceId)}`,
+      );
+      return {
         id: response.id,
         automationId: response.automationId,
         eventType: response.eventType,
@@ -230,15 +235,17 @@ export function createGithubEventRelayClient(
         eventTimestampMs: toEpochMs(response.eventTimestamp),
         payload: response.payload,
         authorIsAppIdentity: response.authorIsAppIdentity,
-      })),
-    upsertEventSubscription: (automationId, input) =>
-      relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, {
-        method: "PUT", body: input, requireAgentToken: true,
-      }).then(() => undefined),
-    deleteEventSubscription: (automationId) =>
-      relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, {
-        method: "DELETE", requireAgentToken: true,
-      }).then(() => undefined),
+      };
+    },
+    upsertEventSubscription: async (automationId, input) => {
+      const deviceId = await resolveDeviceId();
+      await relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, {
+        method: "PUT", body: { deviceId, ...input },
+      });
+    },
+    deleteEventSubscription: async (automationId) => {
+      await relay(`/api/v1/automations/${encodeURIComponent(automationId)}/event-subscription`, { method: "DELETE" });
+    },
   };
 }
 

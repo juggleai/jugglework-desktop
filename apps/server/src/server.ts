@@ -98,6 +98,7 @@ import { AutomationEventPoller } from "./automation/event-poller.js";
 import { AutomationSubscriptionSync } from "./automation/subscription-sync.js";
 import { createGithubEventRelayClient, type GithubEventRelayClient } from "./automation/github-event-client.js";
 import { resolveGithubEventAuthFromEnv } from "./automation/github-event-auth.js";
+import { readAutomationDeviceId } from "./automation/device-identity.js";
 import { GithubEventAuthStore } from "./automation/github-event-auth-store.js";
 import {
   createSessionMutationCoordinator,
@@ -897,13 +898,17 @@ export async function startServer(config: ServerConfig, options: {
   const automationRepository = await AutomationRepository.open(config);
   const localAutomationEnabled = resolveLocalAutomationEnabled();
   // TIPS: resolveAuth 的真实生产落点是 githubEventAuthStore——渲染进程登录后通过
-  // PUT /automations/github-event-auth 把云端 session + 设备 agent token 推进来（见
-  // routes/automations.ts）。环境变量（github-event-auth.ts）是它的兜底，只在渲染进程还
-  // 没推送过、或者开发者手动覆盖时才会用到；resolveAuth 每次调用都重新读，凭据缺失时下游
-  // 的每个方法各自优雅降级，不需要在这里判断"要不要构造这个 client"。
+  // PUT /automations/github-event-auth 把云端 session 推进来（见 routes/automations.ts）。
+  // 环境变量（github-event-auth.ts）是它的兜底，只在渲染进程还没推送过、或者开发者手动
+  // 覆盖时才会用到；resolveAuth 每次调用都重新读，凭据缺失时下游的每个方法各自优雅降级，
+  // 不需要在这里判断"要不要构造这个 client"。设备身份（deviceId）是独立的一条——本地
+  // 生成、持久化在这个进程自己的数据目录里，不经过渲染进程，也不需要登录态（见
+  // device-identity.ts），jugglework-server 那边这几个端点已经不再要求远程控制那套
+  // agent token 了（design.md 决策 12）。
   const githubEventAuthStore = new GithubEventAuthStore();
   const githubEventRelayClient: GithubEventRelayClient = createGithubEventRelayClient(
     async () => githubEventAuthStore.get() ?? resolveGithubEventAuthFromEnv(),
+    () => readAutomationDeviceId(config),
   );
   const automationExecutor = new AutomationExecutor({
     config,

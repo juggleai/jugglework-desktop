@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveGithubEventAuthFromEnv } from "./github-event-auth.js";
 
-const ENV_KEYS = ["JUGGLEWORK_GITHUB_EVENT_BASE_URL", "JUGGLEWORK_GITHUB_EVENT_TOKEN", "JUGGLEWORK_GITHUB_EVENT_AGENT_TOKEN"] as const;
+const ENV_KEYS = ["JUGGLEWORK_GITHUB_EVENT_BASE_URL", "JUGGLEWORK_GITHUB_EVENT_TOKEN"] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run: () => void): void {
   const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -26,21 +26,10 @@ test("returns null when either baseUrl or token is missing", () => {
   withEnv({ JUGGLEWORK_GITHUB_EVENT_TOKEN: "tok" }, () => assert.equal(resolveGithubEventAuthFromEnv(), null));
 });
 
-test("returns baseUrl+token with no agentToken key at all when the agent token env var is unset", () => {
+test("returns baseUrl+token when both are set", () => {
   withEnv({ JUGGLEWORK_GITHUB_EVENT_BASE_URL: "https://cloud.example.com", JUGGLEWORK_GITHUB_EVENT_TOKEN: "tok" }, () => {
-    const auth = resolveGithubEventAuthFromEnv();
-    assert.deepEqual(auth, { baseUrl: "https://cloud.example.com", token: "tok" });
-    assert.equal("agentToken" in (auth ?? {}), false);
+    assert.deepEqual(resolveGithubEventAuthFromEnv(), { baseUrl: "https://cloud.example.com", token: "tok" });
   });
-});
-
-test("includes agentToken when set", () => {
-  withEnv(
-    { JUGGLEWORK_GITHUB_EVENT_BASE_URL: "https://cloud.example.com", JUGGLEWORK_GITHUB_EVENT_TOKEN: "tok", JUGGLEWORK_GITHUB_EVENT_AGENT_TOKEN: "agent-tok" },
-    () => {
-      assert.deepEqual(resolveGithubEventAuthFromEnv(), { baseUrl: "https://cloud.example.com", token: "tok", agentToken: "agent-tok" });
-    },
-  );
 });
 
 test("blank/whitespace-only values are treated the same as unset", () => {

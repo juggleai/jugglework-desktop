@@ -299,13 +299,14 @@ test("github-event-auth push/clear routes write through to the shared store, gat
     );
     assert.equal(authStore.get(), null);
 
-    const withoutAgentToken = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok" });
-    assert.equal(withoutAgentToken.status, 200);
+    const first = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok" });
+    assert.equal(first.status, 200);
     assert.deepEqual(authStore.get(), { baseUrl: "https://cloud.example.com", token: "tok" });
 
-    const withAgentToken = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok2", agentToken: "agent-tok" });
-    assert.equal(withAgentToken.status, 200);
-    assert.deepEqual(authStore.get(), { baseUrl: "https://cloud.example.com", token: "tok2", agentToken: "agent-tok" });
+    // A second push (e.g. account switch) must overwrite, not merge with, the first.
+    const second = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok2" });
+    assert.equal(second.status, 200);
+    assert.deepEqual(authStore.get(), { baseUrl: "https://cloud.example.com", token: "tok2" });
 
     const cleared = await invoke("DELETE", "/automations/github-event-auth");
     assert.equal(cleared.status, 200);
