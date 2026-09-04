@@ -2221,6 +2221,8 @@ export default {
   "settings.remote_control.status_connecting": "Connecting",
   "settings.remote_control.status_offline": "Enrolled, currently offline",
   "settings.remote_control.status_unenrolled": "Not enrolled",
+  "settings.remote_control.status_verifying_revocation": "Verifying revocation status",
+  "settings.remote_control.status_revoked": "Revoked",
   "settings.remote_control.active": "Remote control active",
   "settings.remote_control.stop_all": "Stop all remote control",
   "settings.remote_control.connected_idle": "Transport connected with no active remote control",

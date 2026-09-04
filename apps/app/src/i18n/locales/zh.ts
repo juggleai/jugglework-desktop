@@ -2224,6 +2224,8 @@ export default {
   "settings.remote_control.status_connecting": "连接中",
   "settings.remote_control.status_offline": "已注册，当前离线",
   "settings.remote_control.status_unenrolled": "未注册",
+  "settings.remote_control.status_verifying_revocation": "正在核验撤销状态",
+  "settings.remote_control.status_revoked": "已撤销",
   "settings.remote_control.active": "远程控制活跃中",
   "settings.remote_control.stop_all": "全部停止远程控制",
   "settings.remote_control.connected_idle": "传输已连接，当前没有活跃远程控制",

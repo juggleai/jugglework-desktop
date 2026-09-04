@@ -27,6 +27,7 @@ export const REMOTE_CONTROL_AGENT_STATUS = Object.freeze({
   AWAITING_WELCOME: "awaiting_welcome",
   CONNECTED: "connected",
   BACKOFF: "backoff",
+  VERIFYING_REVOCATION: "verifying_revocation",
   REVOKED: "revoked",
   ERROR: "error",
 });
@@ -71,6 +72,8 @@ const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_TIMER_DELAY = 24 * 60 * 60 * 1_000;
 const TOKEN_REFRESH_MARGIN = 60_000;
 const RECONNECT_MAX_DELAY = 30_000;
+const DEFAULT_REVOCATION_VERIFY_MAX_DELAY = 5 * 60_000;
+const REVOCATION_NOT_FOUND_MAX_ATTEMPTS = 3;
 const DEFAULT_POLICY_MAX_AGE_MS = 6 * 60_000;
 const DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS = 1_500;
 const MAX_ACTIVE_RUNS = 100;
@@ -147,6 +150,7 @@ const ERROR_MESSAGES = Object.freeze({
  *   logger?: RemoteControlLogger,
  *   allowInsecureLoopback?: boolean,
  *   policyMaxAgeMs?: number,
+ *   revocationVerifyMaxDelayMs?: number,
  *   localStopAckTimeoutMs?: number,
  *   oldOperationDrainTimeoutMs?: number,
  *   getActiveRuns?: () => unknown,
@@ -561,6 +565,7 @@ export function createRemoteControlAgent(options) {
     logger = {},
     allowInsecureLoopback = false,
     policyMaxAgeMs = DEFAULT_POLICY_MAX_AGE_MS,
+    revocationVerifyMaxDelayMs = DEFAULT_REVOCATION_VERIFY_MAX_DELAY,
     localStopAckTimeoutMs = DEFAULT_LOCAL_STOP_ACK_TIMEOUT_MS,
     oldOperationDrainTimeoutMs = 2_000,
     getActiveRuns = () => [],
@@ -583,6 +588,7 @@ export function createRemoteControlAgent(options) {
     typeof timers.clearTimeout !== "function" || typeof appVersion !== "string" || !SEMVER_PATTERN.test(appVersion) || appVersion.length > 64 ||
     !new Set(["darwin", "windows", "linux"]).has(platform) ||
     !Number.isSafeInteger(policyMaxAgeMs) || policyMaxAgeMs < 1_000 ||
+    !Number.isSafeInteger(revocationVerifyMaxDelayMs) || revocationVerifyMaxDelayMs < 1_000 || revocationVerifyMaxDelayMs > MAX_TIMER_DELAY ||
     !Number.isSafeInteger(localStopAckTimeoutMs) || localStopAckTimeoutMs < 1 || localStopAckTimeoutMs > 10_000 ||
     !Number.isSafeInteger(oldOperationDrainTimeoutMs) || oldOperationDrainTimeoutMs < 1 || oldOperationDrainTimeoutMs > 10_000 ||
     typeof getActiveRuns !== "function" ||
@@ -617,6 +623,11 @@ export function createRemoteControlAgent(options) {
   let connectionGeneration = null;
   let connectionAttempt = 0;
   let reconnectAttempt = 0;
+  let revocationVerifyAttempt = 0;
+  let revocationNotFoundAttempt = 0;
+  let spuriousRevocationSignalCount = 0;
+  /** @type {string | null} */
+  let revocationPendingSource = null;
   /** @type {string} */
   let state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
   let lastErrorCode = null;
@@ -661,10 +672,10 @@ export function createRemoteControlAgent(options) {
     return value;
   }
 
-  /** @param {"debug" | "info" | "warn" | "error"} level @param {string} code */
-  function log(level, code) {
+  /** @param {"debug" | "info" | "warn" | "error"} level @param {string} code @param {object} [metadata] */
+  function log(level, code, metadata = {}) {
     try {
-      logger[level]?.("Remote control agent state changed.", { code });
+      logger[level]?.("Remote control agent state changed.", { code, ...metadata });
     } catch {}
   }
 
@@ -810,7 +821,7 @@ export function createRemoteControlAgent(options) {
   function contextAllowsConnection() {
     const validatedAt = context?.validatedAt === null ? Number.NaN : Date.parse(context?.validatedAt ?? "");
     const policyAge = timestamp().getTime() - validatedAt;
-    return started && !suspended && !revoked && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
+    return started && !suspended && !revoked && revocationPendingSource === null && !protocolBlocked && !localDisabledLatch && settings.enabled === true && context?.signedIn === true &&
       context.policyFresh === true && context.featureGates.schemaVersion === 1 &&
       Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
       (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
@@ -986,6 +997,141 @@ export function createRemoteControlAgent(options) {
     reconnectAttempt += 1;
     const entropy = Number.parseInt(messageId().slice(-8), 16) / 0xffffffff;
     return Math.max(250, Math.min(RECONNECT_MAX_DELAY, Math.round(base * (0.8 + entropy * 0.4))));
+  }
+
+  function revocationVerifyDelay() {
+    const base = Math.min(1_000 * (2 ** Math.min(revocationVerifyAttempt, 12)), revocationVerifyMaxDelayMs);
+    revocationVerifyAttempt += 1;
+    const entropy = Number.parseInt(messageId().slice(-8), 16) / 0xffffffff;
+    return Math.max(250, Math.min(revocationVerifyMaxDelayMs, Math.round(base * (0.8 + entropy * 0.4))));
+  }
+
+  function canVerifyRevocation(generation) {
+    const validatedAt = context?.validatedAt === null ? Number.NaN : Date.parse(context?.validatedAt ?? "");
+    const policyAge = timestamp().getTime() - validatedAt;
+    return generation === lifecycleGeneration && revocationPendingSource !== null && started && !suspended && !revoked &&
+      settings.enabled === true && context?.signedIn === true && context.policyFresh === true &&
+      Number.isFinite(policyAge) && policyAge >= 0 && policyAge < policyMaxAgeMs &&
+      (resumePolicyFloor === null || validatedAt >= resumePolicyFloor) &&
+      context.featureGates.enrollment === true && context.featureGates.readOnlyControl === true && enrollment?.state === "enrolled";
+  }
+
+  /** @param {number} generation */
+  function scheduleRevocationVerification(generation) {
+    if (reconnectTimer !== null || !canVerifyRevocation(generation)) return;
+    state = REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION;
+    reconnectTimer = timers.setTimeout(() => {
+      reconnectTimer = null;
+      if (canVerifyRevocation(generation)) void verifyRevocation(generation);
+    }, revocationVerifyDelay());
+  }
+
+  /** @param {string} source @param {"device_revoked"} code */
+  async function applyConfirmedRevocation(source, code) {
+    if (revoked || revocationPendingSource === null) return;
+    const changed = !revoked;
+    revocationPendingSource = null;
+    revoked = true;
+    localDisabledLatch = true;
+    clearAuthorizations();
+    lastErrorCode = code;
+    activeControlSessions.clear();
+    remoteSessionBindings.clear();
+    encryptedControlSessions.clear();
+    invalidateTransport();
+    if (changed) notifyControlRevoked("cloud");
+    enrollment = null;
+    state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
+    log("warn", `revocation_confirmed_${source}_${code}`);
+    try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+    try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
+    try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+  }
+
+  async function requireReregistrationAfterAmbiguousNotFound(source) {
+    if (revoked || revocationPendingSource === null) return;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
+    revocationNotFoundAttempt = 0;
+    localDisabledLatch = true;
+    clearAuthorizations();
+    invalidateTransport();
+    lastErrorCode = "device_reregistration_required";
+    state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
+    log("warn", "revocation_not_found_requires_reregistration", { source });
+    try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
+  }
+
+  /** @param {number} generation */
+  async function verifyRevocation(generation) {
+    if (!canVerifyRevocation(generation)) return;
+    const activeContext = /** @type {RemoteControlAgentContext} */ (context);
+    const source = /** @type {string} */ (revocationPendingSource);
+    let token;
+    try {
+      token = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).issueAgentToken({
+        credentials: credentialStore,
+        context: credentialContext(activeContext),
+      });
+    } catch (error) {
+      if (!canVerifyRevocation(generation)) return;
+      if (error instanceof RemoteControlCloudError && error.code === "device_revoked") {
+        await applyConfirmedRevocation(source, error.code);
+        return;
+      }
+      if (error instanceof RemoteControlCloudError && error.code === "device_disabled") {
+        revocationPendingSource = null;
+        revocationVerifyAttempt = 0;
+        revocationNotFoundAttempt = 0;
+        lastErrorCode = "device_disabled";
+        state = REMOTE_CONTROL_AGENT_STATUS.BACKOFF;
+        log("info", `revocation_signal_resolved_disabled_${source}`);
+        scheduleReconnect(generation);
+        return;
+      }
+      if (error instanceof RemoteControlCloudError && error.status === 404) {
+        revocationNotFoundAttempt += 1;
+        if (revocationNotFoundAttempt >= REVOCATION_NOT_FOUND_MAX_ATTEMPTS) {
+          await requireReregistrationAfterAmbiguousNotFound(source);
+          return;
+        }
+      } else {
+        revocationNotFoundAttempt = 0;
+      }
+      lastErrorCode = "revocation_unconfirmed";
+      state = REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION;
+      scheduleRevocationVerification(generation);
+      return;
+    }
+    if (!canVerifyRevocation(generation)) return;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
+    revocationNotFoundAttempt = 0;
+    lastErrorCode = null;
+    spuriousRevocationSignalCount += 1;
+    log("warn", "spurious_revocation_signal", { source, count: spuriousRevocationSignalCount });
+    await connectNow(false, token);
+  }
+
+  /** @param {string} source */
+  async function confirmAndApplyRevocation(source, authoritative = false) {
+    if (revoked || revocationPendingSource !== null) return;
+    revocationPendingSource = source;
+    revocationVerifyAttempt = 0;
+    revocationNotFoundAttempt = 0;
+    clearAuthorizations();
+    activeControlSessions.clear();
+    remoteSessionBindings.clear();
+    encryptedControlSessions.clear();
+    lastErrorCode = "revocation_unconfirmed";
+    invalidateTransport();
+    state = REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION;
+    schedulePolicyExpiry();
+    if (authoritative) {
+      await applyConfirmedRevocation(source, "device_revoked");
+      return;
+    }
+    await verifyRevocation(lifecycleGeneration);
   }
 
   /** @param {number} generation */
@@ -1179,21 +1325,7 @@ export function createRemoteControlAgent(options) {
         transportFailed(target, "invalid_revocation");
         return;
       }
-      const changed = !revoked;
-      revoked = true;
-      localDisabledLatch = true;
-      clearAuthorizations();
-      lastErrorCode = "device_revoked";
-      activeControlSessions.clear();
-      remoteSessionBindings.clear();
-      encryptedControlSessions.clear();
-      invalidateTransport();
-      if (changed) notifyControlRevoked("cloud");
-      enrollment = null;
-      state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
-      try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
-      try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
-      try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+      await confirmAndApplyRevocation("device.revoked", true);
       return;
     }
     if (envelope.type === "device.disabled") {
@@ -1206,8 +1338,8 @@ export function createRemoteControlAgent(options) {
       // enrollment, credentials, and local settings, and retry with the
       // bounded exponential backoff. Token issuance keeps failing while the
       // device stays disabled, so the reconnect lands only after control
-      // access is restored from the Console; a permanent device deletion
-      // still stops the loop through the 404 token path.
+      // access is restored from the Console. Ambiguous authentication failures
+      // never delete local identity material.
       encryptedControlSessions.clear();
       clearAuthorizations();
       transportFailed(target, "device_disabled");
@@ -1238,20 +1370,7 @@ export function createRemoteControlAgent(options) {
       } else {
         lastErrorCode = envelope.payload.code;
         if (envelope.payload.code === "device_revoked") {
-          const changed = !revoked;
-          revoked = true;
-          localDisabledLatch = true;
-          clearAuthorizations();
-          activeControlSessions.clear();
-          remoteSessionBindings.clear();
-          encryptedControlSessions.clear();
-          invalidateTransport();
-          if (changed) notifyControlRevoked("cloud");
-          enrollment = null;
-          state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
-          try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
-          try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
-          try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+          await confirmAndApplyRevocation("protocol.error.device_revoked");
           return;
         }
         protocolBlocked = envelope.payload.retryable !== true;
@@ -1545,8 +1664,8 @@ export function createRemoteControlAgent(options) {
     });
   }
 
-  /** @param {boolean} replace */
-  async function connectNow(replace) {
+  /** @param {boolean} replace @param {AgentToken | null} [verifiedToken] */
+  async function connectNow(replace, verifiedToken = null) {
     if (!contextAllowsConnection() || (!replace && socket !== null)) return;
     const generation = lifecycleGeneration;
     const attempt = ++connectionAttempt;
@@ -1581,33 +1700,19 @@ export function createRemoteControlAgent(options) {
       return;
     }
     enrollment = credential;
-    let token;
+    let token = verifiedToken;
     try {
-      token = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).issueAgentToken({
-        credentials: credentialStore,
-        context: credentialContext(activeContext),
-      });
+      if (token === null) {
+        token = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).issueAgentToken({
+          credentials: credentialStore,
+          context: credentialContext(activeContext),
+        });
+      }
     } catch (error) {
       if (generation === lifecycleGeneration && attempt === connectionAttempt) {
-        if (error instanceof RemoteControlCloudError && error.status === 404) {
-          // The server no longer knows this device: it was permanently deleted.
-          // Distinguishable from retryable 401s so the Desktop can durably turn
-          // remote control off instead of reconnecting forever.
-          const changed = !revoked;
-          revoked = true;
-          localDisabledLatch = true;
-          clearAuthorizations();
-          lastErrorCode = "device_deleted";
-          activeControlSessions.clear();
-          remoteSessionBindings.clear();
-          encryptedControlSessions.clear();
-          invalidateTransport();
-          if (changed) notifyControlRevoked("cloud");
-          enrollment = null;
-          state = REMOTE_CONTROL_AGENT_STATUS.REVOKED;
-          try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
-          try { await credentialStore.delete(); } catch { lastErrorCode = "credentials_delete_failed"; }
-          try { await e2eeKeyStore?.revokeAll(); } catch { lastErrorCode = "credentials_delete_failed"; }
+        if (error instanceof RemoteControlCloudError &&
+            (error.status === 404 || error.code === "device_revoked")) {
+          await confirmAndApplyRevocation(`token_issue.${error.code}`);
           return;
         }
         lastErrorCode = "token_unavailable";
@@ -1651,6 +1756,11 @@ export function createRemoteControlAgent(options) {
   }
 
   async function reconcile() {
+    if (revocationPendingSource !== null) {
+      state = REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION;
+      scheduleRevocationVerification(lifecycleGeneration);
+      return;
+    }
     if (!contextAllowsConnection()) {
       invalidateTransport();
       if (!started) state = REMOTE_CONTROL_AGENT_STATUS.STOPPED;
@@ -1687,6 +1797,8 @@ export function createRemoteControlAgent(options) {
     } : { schemaVersion: 1, enabled: false, preventSleepWhileWaiting: false, backgroundMode: false, launchAtLogin: false, allowBusySessionSteer: false, allowBusySessionEnqueue: false };
     if (!settings.enabled) localDisabledLatch = false;
     if (!settings.enabled) {
+      revocationPendingSource = null;
+      revocationVerifyAttempt = 0;
       clearAuthorizations();
       invalidateTransport();
     }
@@ -1735,6 +1847,8 @@ export function createRemoteControlAgent(options) {
       encryptedControlSessions.clear();
       enrollment = null;
       revoked = false;
+      revocationPendingSource = null;
+      revocationVerifyAttempt = 0;
       protocolBlocked = false;
       lastErrorCode = null;
     }
@@ -1770,6 +1884,8 @@ export function createRemoteControlAgent(options) {
     if (!validEnrollment(credential, activeContext)) throw new TypeError("Enrollment returned an invalid device binding.");
     enrollment = credential;
     revoked = false;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
     await connectNow(false);
     return status();
   }
@@ -1791,6 +1907,8 @@ export function createRemoteControlAgent(options) {
     encryptedControlSessions.clear();
     enrollment = null;
     revoked = false;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
     protocolBlocked = false;
     const generation = lifecycleGeneration;
     let destructiveBoundaryCrossed = false;
@@ -1879,6 +1997,8 @@ export function createRemoteControlAgent(options) {
     if (pendingLocalStop) return pendingLocalStop.promise;
     const changed = !localDisabledLatch;
     localDisabledLatch = true;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
     clearAuthorizations();
     activeControlSessions.clear();
     remoteSessionBindings.clear();
@@ -1923,6 +2043,8 @@ export function createRemoteControlAgent(options) {
     encryptedControlSessions.clear();
     enrollment = null;
     revoked = false;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
     await deleteDeviceMaterial();
     state = started ? REMOTE_CONTROL_AGENT_STATUS.UNENROLLED : REMOTE_CONTROL_AGENT_STATUS.STOPPED;
     return status();
@@ -1932,6 +2054,8 @@ export function createRemoteControlAgent(options) {
   async function stop() {
     if (!started && socket === null && reconnectTimer === null && heartbeatTimer === null && tokenRefreshTimer === null) return status();
     started = false;
+    revocationPendingSource = null;
+    revocationVerifyAttempt = 0;
     clearAuthorizations();
     activeControlSessions.clear();
     remoteSessionBindings.clear();
@@ -1999,6 +2123,7 @@ export function createRemoteControlAgent(options) {
       connected: state === REMOTE_CONTROL_AGENT_STATUS.CONNECTED,
       enrolled: enrollment?.state === "enrolled",
       revoked,
+      revocationPending: revocationPendingSource !== null,
       locallyDisabled: settings.enabled !== true,
       localControlEnabled: contextAllowsConnection(),
       activeControlSessionCount: activeControlSessions.size,

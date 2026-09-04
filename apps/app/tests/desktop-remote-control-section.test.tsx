@@ -5,7 +5,7 @@ import TestRenderer, { act } from "react-test-renderer";
 
 import type { DesktopRemoteControlAgentStatus } from "@jugglework/types/desktop-ipc";
 import { setLocale } from "../src/i18n";
-import { RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlReregister } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
+import { RemoteControlActivityIndicator, requestRemoteControlReregistration, shouldShowRemoteControlReregister, statusPresentation } from "../src/react-app/domains/settings/cloud/desktop-remote-control-section";
 import { CloudSessionProvider, useCloudSession } from "../src/react-app/domains/settings/cloud/cloud-session-provider";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +18,7 @@ function status(overrides: Partial<DesktopRemoteControlAgentStatus> = {}): Deskt
     connected: true,
     enrolled: true,
     revoked: false,
+    revocationPending: false,
     locallyDisabled: false,
     localControlEnabled: true,
     activeControlSessionCount: 0,
@@ -42,6 +43,23 @@ describe("Desktop remote-control status presentation", () => {
     expect(html).toContain('data-testid="remote-control-transport-connected"');
     expect(html).toContain("传输已连接，当前没有活跃远程控制");
     expect(html).not.toContain("远程控制活跃中");
+  });
+
+  test("distinguishes pending verification from confirmed revocation in Chinese and English", () => {
+    for (const [locale, pending, revoked] of [
+      ["zh", "正在核验撤销状态", "已撤销"],
+      ["en", "Verifying revocation status", "Revoked"],
+    ] as const) {
+      setLocale(locale);
+      expect(statusPresentation(status({ connected: false, state: "verifying_revocation", revocationPending: true }))).toEqual({
+        label: pending,
+        tone: "warning",
+      });
+      expect(statusPresentation(status({ connected: false, state: "revoked", revoked: true }))).toEqual({
+        label: revoked,
+        tone: "error",
+      });
+    }
   });
 
   test("shows controller names and a direct Stop All action only for active control", () => {
@@ -69,6 +87,10 @@ describe("Desktop remote-control status presentation", () => {
     expect(shouldShowRemoteControlReregister({ ...input, policyAllowsRemote: false })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", replacementPending: true }) })).toBe(false);
     expect(shouldShowRemoteControlReregister({ ...input, status: status({ state: "disabled", enrollmentAuthorized: false }) })).toBe(false);
+    expect(shouldShowRemoteControlReregister({
+      ...input,
+      status: status({ connected: false, state: "disabled", locallyDisabled: true, localControlEnabled: false, lastErrorCode: "device_reregistration_required" }),
+    })).toBe(true);
   });
 
   test("excludes ordinary offline, backoff, and cloud-disabled transport while locally enabled", () => {

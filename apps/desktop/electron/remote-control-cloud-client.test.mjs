@@ -353,6 +353,70 @@ test("strict HTTP handling rejects status, content type, malformed JSON, unknown
   }
 });
 
+test("preserves explicit revoked/disabled codes from challenge or token and leaves deletion/not-found ambiguous", async () => {
+  const privateKey = generateKeyPairSync("ed25519").privateKey;
+  for (const [status, body, expectedCode] of [
+    [403, { error: "device_revoked", message: "revoked" }, "device_revoked"],
+    [403, { error: "device_disabled", message: "disabled" }, "device_disabled"],
+    [401, { error: "device_revoked", message: "wrong status" }, "unexpected_status"],
+    [404, { error: "device_deleted", message: "deleted" }, "unexpected_status"],
+    [401, { error: "unauthorized", message: "ambiguous" }, "unexpected_status"],
+    [404, { error: "not_found", message: "ambiguous" }, "unexpected_status"],
+    [500, { error: "device_revoked", message: "not authoritative" }, "unexpected_status"],
+  ]) {
+    const client = createRemoteControlCloudClient({
+      controlPlaneBaseUrl: CONTEXT.controlPlaneBaseUrl,
+      now: () => new Date(NOW),
+      fetcher: async (url) => url.endsWith("/auth-challenges")
+        ? jsonResponse({
+            schemaVersion: 1,
+            challengeId: CHALLENGE_ID,
+            challenge: CHALLENGE,
+            deviceId: DEVICE_ID,
+            keyId: KEY_ID,
+            audience: "jugglework-desktop-agent",
+            resource: "https://cloud.example.test/jwork/api/desktop-agent/v1",
+            scopes: ["desktop-agent:connect"],
+            expiresAt: FUTURE,
+          }, 201)
+        : jsonResponse(body, status),
+    });
+    await assert.rejects(client.issueAgentToken({
+      context: CONTEXT,
+      credentials: { getSigningCredential: async () => ({ deviceId: DEVICE_ID, keyId: KEY_ID, privateKey }) },
+    }), (error) => {
+      assert.ok(error instanceof RemoteControlCloudError);
+      assert.equal(error.code, expectedCode);
+      assert.equal(error.status, status);
+      return true;
+    });
+  }
+});
+
+test("accepts only the contracted matching-credential status codes at challenge stage", async () => {
+  const privateKey = generateKeyPairSync("ed25519").privateKey;
+  for (const [status, serverCode, expectedCode] of [
+    [403, "device_revoked", "device_revoked"],
+    [403, "device_disabled", "device_disabled"],
+    [404, "not_found", "unexpected_status"],
+    [404, "device_deleted", "unexpected_status"],
+  ]) {
+    const client = createRemoteControlCloudClient({
+      controlPlaneBaseUrl: CONTEXT.controlPlaneBaseUrl,
+      fetcher: async () => jsonResponse({ error: serverCode, message: "challenge rejected" }, status),
+    });
+    await assert.rejects(client.issueAgentToken({
+      context: CONTEXT,
+      credentials: { getSigningCredential: async () => ({ deviceId: DEVICE_ID, keyId: KEY_ID, privateKey }) },
+    }), (error) => {
+      assert.ok(error instanceof RemoteControlCloudError);
+      assert.equal(error.code, expectedCode);
+      assert.equal(error.status, status);
+      return true;
+    });
+  }
+});
+
 test("network errors are normalized without exposing grants or tokens in errors", async () => {
   const client = createRemoteControlCloudClient({
     controlPlaneBaseUrl: CONTEXT.controlPlaneBaseUrl,

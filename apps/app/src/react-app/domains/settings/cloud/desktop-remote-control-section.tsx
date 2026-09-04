@@ -55,6 +55,7 @@ const stoppedStatus: DesktopRemoteControlAgentStatus = {
   connected: false,
   enrolled: false,
   revoked: false,
+  revocationPending: false,
   locallyDisabled: true,
   localControlEnabled: false,
   activeControlSessionCount: 0,
@@ -100,12 +101,15 @@ export async function requestRemoteControlReregistration(input: {
   return input.reregisterAndEnable({ grant: enrollmentGrant.grant, scope: fresh.scope });
 }
 
-function statusPresentation(status: DesktopRemoteControlAgentStatus) {
+export function statusPresentation(status: DesktopRemoteControlAgentStatus) {
   if (status.connected) return { label: t("settings.remote_control.status_connected"), tone: "ready" as const };
+  if (status.revocationPending || status.state === "verifying_revocation") {
+    return { label: t("settings.remote_control.status_verifying_revocation"), tone: "warning" as const };
+  }
   if (status.state === "connecting" || status.state === "awaiting_welcome" || status.state === "backoff") {
     return { label: t("settings.remote_control.status_connecting"), tone: "warning" as const };
   }
-  if (status.revoked || status.state === "revoked") return { label: "已撤销", tone: "error" as const };
+  if (status.revoked || status.state === "revoked") return { label: t("settings.remote_control.status_revoked"), tone: "error" as const };
   if (status.enrolled) return { label: t("settings.remote_control.status_offline"), tone: "warning" as const };
   if (status.state === "error") return { label: "异常", tone: "error" as const };
   return { label: t("settings.remote_control.status_unenrolled"), tone: "neutral" as const };

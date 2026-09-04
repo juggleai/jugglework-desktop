@@ -1116,6 +1116,7 @@ function stoppedRemoteControlAgentStatus() {
     connected: false,
     enrolled: false,
     revoked: false,
+    revocationPending: false,
     locallyDisabled: true,
     localControlEnabled: false,
     activeControlSessionCount: 0,

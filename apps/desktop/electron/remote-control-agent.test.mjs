@@ -233,7 +233,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, issueAgentToken?: (call: number) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, revocationVerifyMaxDelayMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -247,9 +247,11 @@ function harness({
   prepare = async () => ({ action: "execute", commandId: COMMAND_ID }),
   dispatch = async () => ({ ok: true, value: { workspaces: [] } }),
   enrollDevice: enrollDeviceOverride = null,
+  issueAgentToken: issueAgentTokenOverride = null,
   tokenLifetime = 120_000,
   localStopAckTimeoutMs = 1_500,
   oldOperationDrainTimeoutMs = 2_000,
+  revocationVerifyMaxDelayMs = 5 * 60_000,
   getActiveRuns = () => [],
   verifySessionBinding = async () => true,
   onSessionBinding = () => {},
@@ -270,6 +272,7 @@ function harness({
   let disableSettingsCalls = 0;
   let e2eeActiveCalls = 0;
   let e2eeRevokeCalls = 0;
+  const logs = [];
   /** @type {FakeSocket[]} */
   const sockets = [];
   /** @type {Array<Record<string, any>>} */
@@ -324,6 +327,7 @@ function harness({
     },
     issueAgentToken: async () => {
       tokenCalls += 1;
+      if (issueAgentTokenOverride) return issueAgentTokenOverride(tokenCalls);
       if (issueTokenError) throw issueTokenError;
       return {
         accessToken: `short-lived-token-${tokenCalls}`,
@@ -363,9 +367,15 @@ function harness({
     now: clock.now,
     randomUUID: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(uuid++).padStart(12, "0")}`,
     timers: clock.timers,
-    logger: {},
+    logger: {
+      debug: (message, metadata) => logs.push({ level: "debug", message, metadata }),
+      info: (message, metadata) => logs.push({ level: "info", message, metadata }),
+      warn: (message, metadata) => logs.push({ level: "warn", message, metadata }),
+      error: (message, metadata) => logs.push({ level: "error", message, metadata }),
+    },
     localStopAckTimeoutMs,
     oldOperationDrainTimeoutMs,
+    revocationVerifyMaxDelayMs,
     getActiveRuns,
     verifySessionBinding,
     onSessionBinding,
@@ -383,6 +393,7 @@ function harness({
     completeCalls,
     dispatchCalls,
     webSocketInputs,
+    logs,
     get tokenCalls() { return tokenCalls; },
     get enrollmentCalls() { return enrollmentCalls; },
     get deleteCalls() { return deleteCalls; },
@@ -928,7 +939,7 @@ describe("remote-control agent context and lifecycle", () => {
     await stopping;
   });
 
-  it("revocation closes transport, deletes the key, and permanently disables reconnect", async () => {
+  it("an authenticated device.revoked envelope is terminal without another probe", async () => {
     const revocations = [];
     const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
     const socket = await connect(fixture);
@@ -938,9 +949,30 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.deleteCalls, 1);
     assert.equal(fixture.disableSettingsCalls, 1);
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
+    assert.equal(fixture.agent.status().revoked, true);
+    assert.equal(fixture.agent.status().revocationPending, false);
     assert.equal(fixture.agent.status().enrolled, false);
     assert.equal(fixture.clock.nextDelay(), null);
+    assert.equal(fixture.tokenCalls, 1, "authenticated WS revocation does not require a probe");
     assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+  });
+
+  it("converges protocol device_revoked through the same healthy verification path", async () => {
+    const fixture = harness();
+    const socket = await connect(fixture);
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1,
+      code: "device_revoked",
+      message: "The remote device was revoked.",
+      retryable: false,
+      correlationId: null,
+    }));
+    await settle();
+    assert.equal(fixture.agent.status().revoked, false);
+    assert.equal(fixture.agent.status().revocationPending, false);
+    assert.equal(fixture.sockets.length, 2);
+    assert.ok(fixture.logs.some((entry) => entry.metadata?.code === "spurious_revocation_signal" &&
+      entry.metadata?.source === "protocol.error.device_revoked" && entry.metadata?.count === 1));
   });
 
   it("a cloud-disabled device keeps credentials and reconnects until access is restored", async () => {
@@ -982,23 +1014,197 @@ describe("remote-control agent context and lifecycle", () => {
     assert.notEqual(fixture.clock.nextDelay(), null, "the normal retry path stays armed");
   });
 
-  it("a permanently deleted device (404 token issue) disables remote control durably", async () => {
+  it("durably revokes after an explicit matching-credential challenge/token result", async () => {
     const revocations = [];
     const fixture = harness({
       onControlRevoked: (input) => revocations.push(input),
+      issueAgentToken: async (call) => {
+        if (call === 1) return {
+          accessToken: "initial-token",
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+        throw new RemoteControlCloudError("device_revoked", "Explicit device_revoked.", { status: 403 });
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1,
+      code: "device_revoked",
+      message: "The remote device was revoked.",
+      retryable: false,
+      correlationId: null,
+    }));
+    await settle();
+    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.e2eeRevokeCalls, 1);
+    assert.equal(fixture.disableSettingsCalls, 1);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
+    assert.equal(fixture.agent.status().revoked, true);
+    assert.equal(fixture.agent.status().revocationPending, false);
+    assert.equal(fixture.agent.status().enrolled, false);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_revoked");
+    assert.equal(fixture.clock.nextDelay(), null, "confirmed revocation is terminal");
+    assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+    await fixture.clock.advance(10 * 60_000);
+    assert.equal(fixture.tokenCalls, 2, "confirmed revocation never probes or reconnects again");
+  });
+
+  it("never treats ambiguous 401 or 404 probe responses as confirmed revocation", async () => {
+    for (const status of [401, 404]) {
+      const fixture = harness({
+        issueAgentToken: async (call) => {
+          if (call === 1) return {
+            accessToken: "initial-token",
+            expiresAt: new Date(NOW + 120_000).toISOString(),
+            webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+          };
+          throw new RemoteControlCloudError("unexpected_status", `HTTP ${status}.`, { status });
+        },
+      });
+      const socket = await connect(fixture);
+      socket.receive(envelope("protocol.error", {
+        schemaVersion: 1, code: "device_revoked", message: "Unconfirmed", retryable: false, correlationId: null,
+      }));
+      await settle();
+      assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION);
+      assert.equal(fixture.agent.status().revocationPending, true);
+      assert.equal(fixture.agent.status().revoked, false);
+      assert.equal(fixture.agent.status().lastErrorCode, "revocation_unconfirmed");
+      assert.equal(fixture.deleteCalls, 0);
+      assert.equal(fixture.disableSettingsCalls, 0);
+      assert.equal(fixture.credential.deviceId, DEVICE_ID);
+      assert.notEqual(fixture.clock.nextDelay(), null);
+    }
+  });
+
+  it("routes a direct token 404 through verification without treating either 404 as deletion", async () => {
+    const fixture = harness({
       issueTokenError: new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 404.", { status: 404 }),
     });
     await fixture.agent.start();
     await fixture.agent.syncContext(signedInContext());
     await settle();
-    assert.equal(fixture.sockets.length, 0, "no transport is created for a deleted device");
-    assert.equal(fixture.deleteCalls, 1);
+    assert.equal(fixture.tokenCalls, 2, "the first 404 signal is followed by one verification probe");
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.VERIFYING_REVOCATION);
+    assert.equal(fixture.agent.status().revocationPending, true);
+    assert.equal(fixture.agent.status().revoked, false);
+    assert.equal(fixture.agent.status().enrolled, true);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.notEqual(fixture.clock.nextDelay(), null);
+  });
+
+  it("bounds repeated generic 404 verification and asks for re-registration without deleting credentials", async () => {
+    const fixture = harness({
+      issueAgentToken: async () => {
+        throw new RemoteControlCloudError("unexpected_status", "The control plane returned HTTP 404.", { status: 404 });
+      },
+    });
+    await fixture.agent.start();
+    await fixture.agent.syncContext(signedInContext());
+    await settle();
+    for (let attempt = 1; attempt < 3; attempt += 1) {
+      const delay = fixture.clock.nextDelay();
+      assert.notEqual(delay, null);
+      await fixture.clock.advance(delay);
+    }
+    assert.equal(fixture.tokenCalls, 4, "one initial failure plus three bounded verification probes");
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_reregistration_required");
+    assert.equal(fixture.agent.status().revocationPending, false);
+    assert.equal(fixture.agent.status().revoked, false);
+    assert.equal(fixture.agent.status().enrolled, true);
+    assert.equal(fixture.deleteCalls, 0);
     assert.equal(fixture.disableSettingsCalls, 1);
-    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.REVOKED);
-    assert.equal(fixture.agent.status().enrolled, false);
-    assert.equal(fixture.agent.status().lastErrorCode, "device_deleted");
-    assert.equal(fixture.clock.nextDelay(), null, "no reconnect is scheduled");
-    assert.deepEqual(revocations, [{ source: "cloud", transition: 1 }]);
+    assert.equal(fixture.credential.deviceId, DEVICE_ID);
+    assert.equal(fixture.clock.nextDelay(), null, "generic not-found probing terminates");
+  });
+
+  it("rate-limits unavailable verification with capped backoff while preserving credentials and settings", async () => {
+    const fixture = harness({
+      revocationVerifyMaxDelayMs: 5_000,
+      issueAgentToken: async (call) => {
+        if (call === 1) return {
+          accessToken: "initial-token",
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+        throw new RemoteControlCloudError("network_unavailable", "Offline.");
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1, code: "device_revoked", message: "Unconfirmed", retryable: false, correlationId: null,
+    }));
+    await settle();
+    const delays = [];
+    for (let index = 0; index < 6; index += 1) {
+      const delay = fixture.clock.nextDelay();
+      assert.notEqual(delay, null);
+      delays.push(delay);
+      await fixture.clock.advance(delay);
+    }
+    assert.ok(delays.every((delay) => delay >= 250 && delay <= 5_000));
+    assert.ok(delays.at(-1) >= 4_000 && delays.at(-1) <= 5_000, "the jittered delay remains within the configured cap");
+    assert.equal(fixture.agent.status().revocationPending, true);
+    assert.equal(fixture.agent.status().revoked, false);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    assert.equal(fixture.credential.deviceId, DEVICE_ID);
+  });
+
+  it("keeps the independent policy expiry armed while revocation verification is unavailable", async () => {
+    const fixture = harness({
+      issueAgentToken: async (call) => {
+        if (call === 1) return {
+          accessToken: "initial-token",
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+        throw new RemoteControlCloudError("network_unavailable", "Offline.");
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1, code: "device_revoked", message: "Unconfirmed", retryable: false, correlationId: null,
+    }));
+    await settle();
+    await fixture.clock.advance(6 * 60_000);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.DISABLED);
+    assert.equal(fixture.agent.status().lastErrorCode, "policy_unavailable");
+    assert.equal(fixture.agent.status().revocationPending, true);
+    assert.equal(fixture.agent.status().localControlEnabled, false);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.clock.nextDelay(), null);
+  });
+
+  it("maps an explicit disabled verification result to the reversible suspension path", async () => {
+    const fixture = harness({
+      issueAgentToken: async (call) => {
+        if (call === 2) throw new RemoteControlCloudError("device_disabled", "Device disabled.", { status: 403 });
+        return {
+          accessToken: `token-${call}`,
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(envelope("protocol.error", {
+      schemaVersion: 1, code: "device_revoked", message: "Unconfirmed", retryable: false, correlationId: null,
+    }));
+    await settle();
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_disabled");
+    assert.equal(fixture.agent.status().revocationPending, false);
+    assert.equal(fixture.agent.status().revoked, false);
+    assert.equal(fixture.deleteCalls, 0);
+    assert.equal(fixture.disableSettingsCalls, 0);
+    const delay = fixture.clock.nextDelay();
+    await fixture.clock.advance(delay);
+    assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.tokenCalls, 3);
   });
 
   it("a retryable token failure keeps reconnecting without disabling", async () => {

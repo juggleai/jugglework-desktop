@@ -493,12 +493,14 @@ export type DesktopRemoteControlAgentStatus = {
     | "awaiting_welcome"
     | "connected"
     | "backoff"
+    | "verifying_revocation"
     | "revoked"
     | "error";
   started: boolean;
   connected: boolean;
   enrolled: boolean;
   revoked: boolean;
+  revocationPending: boolean;
   locallyDisabled: boolean;
   localControlEnabled: boolean;
   activeControlSessionCount: number;

@@ -7,6 +7,7 @@ export const DESKTOP_AGENT_SCOPE = "desktop-agent:connect";
 
 const JSON_RESPONSE_LIMIT = 64 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const DEVICE_STATUS_ERROR_CODES = new Set(["device_revoked", "device_disabled"]);
 
 /** @typedef {{ controlPlaneBaseUrl: string, userId: string, organizationId: string }} RemoteControlCloudContext */
 /** @typedef {{ controlPlaneBaseUrl: string, apiBaseUrl: string, resourceUrl: string, webSocketUrl: string, enrollmentExchangeUrl: string }} RemoteControlCloudUrls */
@@ -240,12 +241,24 @@ function validateEnrollmentInput(input) {
   validatePublicKey(input.publicKey);
 }
 
-async function strictJsonResponse(response, expectedStatus) {
+async function strictJsonResponse(response, expectedStatus, { acceptedDeviceStatusCodes = null } = {}) {
   if (!response || typeof response.status !== "number" || typeof response.text !== "function") {
     fail("invalid_response", "The control plane returned an invalid HTTP response.");
   }
   if (response.status !== expectedStatus) {
-    fail("unexpected_status", `The control plane returned HTTP ${response.status}.`, { status: response.status });
+    let errorCode = "unexpected_status";
+    try {
+      const text = await response.text();
+      if (text && Buffer.byteLength(text, "utf8") <= JSON_RESPONSE_LIMIT) {
+        const payload = JSON.parse(text);
+        if (acceptedDeviceStatusCodes && response.status === 403 &&
+            payload && typeof payload === "object" && !Array.isArray(payload) &&
+            DEVICE_STATUS_ERROR_CODES.has(payload.error) && acceptedDeviceStatusCodes.has(payload.error)) {
+          errorCode = payload.error;
+        }
+      }
+    } catch {}
+    fail(errorCode, `The control plane returned HTTP ${response.status}.`, { status: response.status });
   }
   if (response.redirected === true) fail("invalid_response", "The control plane response was redirected.");
   const contentType = response.headers?.get?.("content-type") ?? "";
@@ -300,8 +313,8 @@ export function createRemoteControlCloudClient({
   if (typeof now !== "function" || typeof signer !== "function") fail("invalid_client", "Cloud client dependencies are invalid.");
   const urls = deriveRemoteControlCloudUrls(controlPlaneBaseUrl, { allowInsecureLoopback });
 
-  /** @param {string} url @param {unknown} body @param {number} expectedStatus @param {AbortSignal | undefined} [signal] @returns {Promise<any>} */
-  async function post(url, body, expectedStatus, signal) {
+  /** @param {string} url @param {unknown} body @param {number} expectedStatus @param {AbortSignal | undefined} [signal] @param {{ acceptedDeviceStatusCodes?: Set<string> | null }} [options] @returns {Promise<any>} */
+  async function post(url, body, expectedStatus, signal, options = {}) {
     let response;
     try {
       response = await fetcher(url, {
@@ -316,7 +329,7 @@ export function createRemoteControlCloudClient({
       // not retain a cause that could carry a one-time grant or proof value.
       fail("network_unavailable", "The remote-control control plane is unavailable.");
     }
-    return strictJsonResponse(response, expectedStatus);
+    return strictJsonResponse(response, expectedStatus, options);
   }
 
   /**
@@ -401,7 +414,7 @@ export function createRemoteControlCloudClient({
     const payload = await post(`${urls.apiBaseUrl}/v1/desktop-devices/${deviceId}/auth-challenges`, {
       schemaVersion: REMOTE_CONTROL_CLOUD_SCHEMA_VERSION,
       keyId,
-    }, 201);
+    }, 201, undefined, { acceptedDeviceStatusCodes: DEVICE_STATUS_ERROR_CODES });
     exactObject(payload, [
       "schemaVersion", "challengeId", "challenge", "deviceId", "keyId", "audience", "resource", "scopes", "expiresAt",
     ], "challenge response");
@@ -463,7 +476,7 @@ export function createRemoteControlCloudClient({
       challenge: challenge.challenge,
       keyId: credential.keyId,
       signature: canonicalSignature,
-    }, 200);
+    }, 200, undefined, { acceptedDeviceStatusCodes: DEVICE_STATUS_ERROR_CODES });
     exactObject(payload, [
       "schemaVersion", "tokenType", "accessToken", "deviceId", "audience", "resource", "scopes", "expiresAt",
     ], "agent token response");
