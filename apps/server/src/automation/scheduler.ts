@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { AutomationDefinitionRecord } from "@jugglework/types/automation";
+import type { AutomationDefinitionRecord, AutomationRun } from "@jugglework/types/automation";
 import { ApiError } from "../errors.js";
-import type { AutomationExecutor } from "./executor.js";
+import type { AutomationEventExecutionContext, AutomationExecutor } from "./executor.js";
 import type { AutomationRepository, AutomationRunSnapshot } from "./repository.js";
 import { latestAutomationOccurrenceAtOrBefore, nextAutomationOccurrence } from "./schedule.js";
 
@@ -150,7 +150,7 @@ export class AutomationScheduler {
 
   private async execute(snapshot: AutomationRunSnapshot): Promise<void> {
     this.log("automation_dispatch_started", { automationId: snapshot.run.automationId, runId: snapshot.run.id });
-    await this.options.executor.execute(snapshot);
+    await this.options.executor.execute(snapshot, eventContextFor(snapshot.run));
     const run = this.options.repository.getRun(snapshot.run.id);
     this.log("automation_dispatch_finished", {
       automationId: snapshot.run.automationId,
@@ -196,4 +196,22 @@ function systemClock(): AutomationSchedulerClock {
 
 function safeErrorCode(error: unknown): string {
   return error instanceof ApiError ? error.code : error instanceof Error ? error.name : "unknown";
+}
+
+/**
+ * 把一次已认领的运行还原成执行器需要的事件延续上下文。
+ * TIPS: `AutomationEventPipeline.processOne` 在 claim 的同一时刻其实算出过更丰富的
+ * 增量上下文（`deltaSince`，见 event-pipeline.ts 的 `appendEventContextPromptParts`），
+ * 但那个结果只活在轮询器那一次调用栈里——`onDispatched()` 只是个"唤醒调度器"的无参数
+ * 信号，`pump()` 之后是重新从数据库里按 `state === "queued"` 捞快照来发，这条 delta 早就
+ * 丢了。这里只能从运行记录自己持久化下来的 `eventMetadata.entityRef` 重建上下文，所以
+ * `extraPromptParts` 目前总是空的——会话复用（同一实体接力用同一个 OpenCode 会话）已经
+ * 生效，但"这一轮到底新增了什么事件"这种提示词层面的增量摘要还没有接上，是故意留白，不是
+ * 疏漏；要补上需要把 delta 或至少 untrustedText/sourceUrl 这类数据也落到 `eventMetadata`
+ * 里，跨过轮询器和调度器的这次调用边界才能读到。
+ */
+function eventContextFor(run: AutomationRun): AutomationEventExecutionContext | undefined {
+  const entityRef = run.triggerSource === "event" ? run.eventMetadata?.entityRef : undefined;
+  if (!entityRef) return undefined;
+  return { entityRef, extraPromptParts: [] };
 }

@@ -227,6 +227,81 @@ test("embedded scheduling is independent of renderer visibility and stops after 
   }
 });
 
+// TIPS: 这条覆盖的是之前真实漏掉的一环——AutomationEventPipeline.processOne 认领事件运行
+// 时只把 entityRef 落进 eventMetadata，之后完全靠 onDispatched()（一个无参数信号）唤醒
+// scheduler.pump()，pump() 再按 state === "queued" 重新捞快照发给 executor.execute()。
+// 之前这条私有 execute() 只传 snapshot，一个参数都不带——executor 里整套会话复用逻辑
+// （resolveSessionId 的 automation_entity_sessions 查表/回填）因此永远拿不到 eventContext，
+// 是完全接不到电的死代码，即便对应的自动化配置了 concurrencyKey: "entity" 也一样。这里断言
+// 从 eventMetadata.entityRef 重建出的 eventContext 真的递给了 executor。
+test("scheduler reconstructs the event execution context from the claimed run's entityRef", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:05:00Z");
+  try {
+    const definition = eventDefinition("task-event");
+    fixture.repository.createDefinition(definition, definition);
+    fixture.repository.claimEventRun({
+      automationId: definition.id,
+      definitionRevision: definition.revision,
+      runId: "run-event-1",
+      entityRef: "github:pull_request:7",
+      sourceDeliveryId: "delivery-1",
+      now,
+    });
+    const seenContexts: unknown[] = [];
+    const executor = {
+      execute: async (snapshot: AutomationRunSnapshot, eventContext?: unknown) => {
+        seenContexts.push(eventContext);
+        const running = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+        fixture.repository.updateRun(running.id, running.revision, { state: "succeeded", endedAt: now + 1 }, now + 1);
+      },
+    };
+    const scheduler = new AutomationScheduler({ repository: fixture.repository, executor, clock: fakeClock(now) });
+    scheduler.start();
+    await eventually(() => seenContexts.length === 1);
+    scheduler.dispose();
+    assert.deepEqual(seenContexts[0], { entityRef: "github:pull_request:7", extraPromptParts: [] });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("scheduler passes no event execution context for calendar/manual runs", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:05:00Z");
+  try {
+    const definition = dailyDefinition("task-non-event", Date.parse("2026-08-10T01:00:00Z"));
+    fixture.repository.createDefinition(definition, definition);
+    const seenContexts: unknown[] = [];
+    const executor = {
+      execute: async (snapshot: AutomationRunSnapshot, eventContext?: unknown) => {
+        seenContexts.push(eventContext);
+        const running = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+        fixture.repository.updateRun(running.id, running.revision, { state: "succeeded", endedAt: now + 1 }, now + 1);
+      },
+    };
+    const scheduler = new AutomationScheduler({ repository: fixture.repository, executor, clock: fakeClock(now) });
+    scheduler.start();
+    await eventually(() => seenContexts.length === 1);
+    scheduler.dispose();
+    assert.equal(seenContexts[0], undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+function eventDefinition(id: string): AutomationDefinition {
+  return {
+    ...dailyDefinition(id, Date.parse("2026-08-10T01:00:00Z")),
+    trigger: {
+      version: 1, kind: "event", provider: "github", connectorId: "connector-1",
+      repository: { owner: "juggleai", name: "jugglework-desktop" },
+      matches: [{ event: "pull_request" }], concurrencyKey: "entity", deliveryMode: "auto", permissionTier: "auto",
+    },
+    nextRunAt: null,
+  };
+}
+
 function dailyDefinition(id: string, nextRunAt: number): AutomationDefinition {
   const createdAt = Date.parse("2026-08-01T00:00:00Z");
   return {
