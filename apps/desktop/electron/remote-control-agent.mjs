@@ -71,6 +71,10 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
 const MAX_TIMER_DELAY = 24 * 60 * 60 * 1_000;
 const TOKEN_REFRESH_MARGIN = 60_000;
+// A cached agent token is reused for transport reconnects only while it stays
+// valid beyond this margin; proactive refreshes rotate earlier than this and
+// always mint a fresh token.
+const AGENT_TOKEN_REUSE_MARGIN_MS = 30_000;
 const RECONNECT_MAX_DELAY = 30_000;
 const DEFAULT_REVOCATION_VERIFY_MAX_DELAY = 5 * 60_000;
 const REVOCATION_NOT_FOUND_MAX_ATTEMPTS = 3;
@@ -616,6 +620,8 @@ export function createRemoteControlAgent(options) {
   let enrollment = null;
   /** @type {RemoteControlSocket | null} */
   let socket = null;
+  /** @type {{ token: AgentToken, deviceId: string } | null} */
+  let cachedAgentToken = null;
   /** @type {RemoteControlCapabilities} */
   let advertisedCapabilities = { schemaVersion: 1, operations: [], features: [] };
   let lifecycleGeneration = 1;
@@ -857,6 +863,7 @@ export function createRemoteControlAgent(options) {
       if (generation !== lifecycleGeneration || contextAllowsConnection()) return;
       lastErrorCode = "policy_unavailable";
       clearAuthorizations();
+      clearCachedAgentToken();
       invalidateTransport();
       state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
       try { onPolicyExpired?.(); } catch {}
@@ -992,6 +999,36 @@ export function createRemoteControlAgent(options) {
     }, Math.max(1, Math.min(remaining, MAX_TIMER_DELAY)));
   }
 
+  /**
+   * Reuses a still-valid agent token for reconnects so a transport drop does
+   * not re-run the full challenge and proof-of-possession handshake on every
+   * reconnect. Proactive rotations and near-expiry reconnects mint fresh
+   * tokens because the margin ordering keeps them outside the reuse window.
+   * @param {string} deviceId
+   * @returns {AgentToken | null}
+   */
+  function usableCachedAgentToken(deviceId) {
+    if (!cachedAgentToken || cachedAgentToken.deviceId !== deviceId) return null;
+    const token = cachedAgentToken.token;
+    const expiresAt = Date.parse(String(token?.expiresAt ?? ""));
+    if (!Number.isFinite(expiresAt) || expiresAt - timestamp().getTime() <= AGENT_TOKEN_REUSE_MARGIN_MS) {
+      cachedAgentToken = null;
+      return null;
+    }
+    return token;
+  }
+
+  /** @param {AgentToken} token @param {string} deviceId */
+  function cacheAgentToken(token, deviceId) {
+    cachedAgentToken = isRecord(token) && typeof token.accessToken === "string" && token.accessToken
+      ? { token, deviceId }
+      : null;
+  }
+
+  function clearCachedAgentToken() {
+    cachedAgentToken = null;
+  }
+
   function reconnectDelay() {
     const base = Math.min(1_000 * (2 ** Math.min(reconnectAttempt, 5)), RECONNECT_MAX_DELAY);
     reconnectAttempt += 1;
@@ -1034,6 +1071,7 @@ export function createRemoteControlAgent(options) {
     revoked = true;
     localDisabledLatch = true;
     clearAuthorizations();
+    clearCachedAgentToken();
     lastErrorCode = code;
     activeControlSessions.clear();
     remoteSessionBindings.clear();
@@ -1055,6 +1093,7 @@ export function createRemoteControlAgent(options) {
     revocationNotFoundAttempt = 0;
     localDisabledLatch = true;
     clearAuthorizations();
+    clearCachedAgentToken();
     invalidateTransport();
     lastErrorCode = "device_reregistration_required";
     state = REMOTE_CONTROL_AGENT_STATUS.DISABLED;
@@ -1120,6 +1159,7 @@ export function createRemoteControlAgent(options) {
     revocationVerifyAttempt = 0;
     revocationNotFoundAttempt = 0;
     clearAuthorizations();
+    clearCachedAgentToken();
     activeControlSessions.clear();
     remoteSessionBindings.clear();
     encryptedControlSessions.clear();
@@ -1157,6 +1197,12 @@ export function createRemoteControlAgent(options) {
   function transportFailed(target, code) {
     if (target !== socket || intentionalSockets.has(target) || failedSockets.has(target)) return;
     failedSockets.add(target);
+    // A socket that never reached welcome may have rejected the bearer token.
+    // Do not retry that token indefinitely; connected transport failures keep
+    // the cache so ordinary network reconnects avoid a new PoP exchange.
+    if (state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null) {
+      clearCachedAgentToken();
+    }
     notifyTransportReset();
     lastErrorCode = code;
     clearTimer("heartbeat");
@@ -1342,6 +1388,11 @@ export function createRemoteControlAgent(options) {
       // never delete local identity material.
       encryptedControlSessions.clear();
       clearAuthorizations();
+      clearCachedAgentToken();
+      // Fence any proactive refresh already awaiting a token before entering
+      // the ordinary backoff path. A pre-disable issuance must not repopulate
+      // the cache or install a replacement transport.
+      connectionAttempt += 1;
       transportFailed(target, "device_disabled");
       return;
     }
@@ -1376,6 +1427,9 @@ export function createRemoteControlAgent(options) {
         protocolBlocked = envelope.payload.retryable !== true;
       }
       const shouldRetry = !protocolBlocked;
+      // A retryable pre-welcome protocol rejection may be bearer-specific.
+      // Never loop on the same cached token after that rejection.
+      if (connectionGeneration === null) clearCachedAgentToken();
       invalidateTransport();
       state = shouldRetry ? REMOTE_CONTROL_AGENT_STATUS.BACKOFF : REMOTE_CONTROL_AGENT_STATUS.ERROR;
       if (shouldRetry) scheduleReconnect(lifecycleGeneration);
@@ -1676,6 +1730,7 @@ export function createRemoteControlAgent(options) {
       credential = await credentialStore.read(credentialContext(activeContext));
     } catch (error) {
       if (generation === lifecycleGeneration && attempt === connectionAttempt) {
+        clearCachedAgentToken();
         enrollment = null;
         lastErrorCode = "credentials_unavailable";
         try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
@@ -1689,6 +1744,7 @@ export function createRemoteControlAgent(options) {
     }
     if (generation !== lifecycleGeneration || attempt !== connectionAttempt || !contextAllowsConnection()) return;
     if (!validEnrollment(credential, activeContext)) {
+      clearCachedAgentToken();
       enrollment = null;
       lastErrorCode = credential === null ? null : "credentials_context_mismatch";
       try { settings = await settingsStore.disable(); } catch { lastErrorCode = "settings_disable_failed"; }
@@ -1702,6 +1758,9 @@ export function createRemoteControlAgent(options) {
     enrollment = credential;
     let token = verifiedToken;
     try {
+      if (token === null && !replace) {
+        token = usableCachedAgentToken(credential.deviceId);
+      }
       if (token === null) {
         token = await createCloudClient(/** @type {string} */ (activeContext.controlPlaneBaseUrl)).issueAgentToken({
           credentials: credentialStore,
@@ -1713,6 +1772,13 @@ export function createRemoteControlAgent(options) {
         if (error instanceof RemoteControlCloudError &&
             (error.status === 404 || error.code === "device_revoked")) {
           await confirmAndApplyRevocation(`token_issue.${error.code}`);
+          return;
+        }
+        if (error instanceof RemoteControlCloudError && error.code === "device_disabled") {
+          clearCachedAgentToken();
+          lastErrorCode = "device_disabled";
+          if (socket !== null) transportFailed(socket, "device_disabled");
+          else scheduleReconnect(generation);
           return;
         }
         lastErrorCode = "token_unavailable";
@@ -1729,6 +1795,7 @@ export function createRemoteControlAgent(options) {
       else scheduleReconnect(generation);
       return;
     }
+    cacheAgentToken(token, credential.deviceId);
     let nextSocket;
     try { nextSocket = createWebSocket({ url: token.webSocketUrl, accessToken: token.accessToken }); }
     catch {
@@ -1800,6 +1867,7 @@ export function createRemoteControlAgent(options) {
       revocationPendingSource = null;
       revocationVerifyAttempt = 0;
       clearAuthorizations();
+      clearCachedAgentToken();
       invalidateTransport();
     }
     schedulePolicyExpiry();
@@ -1834,6 +1902,7 @@ export function createRemoteControlAgent(options) {
     try { next = normalizeRemoteControlAgentContext(input, { allowInsecureLoopback }); }
     catch (error) {
       clearAuthorizations();
+      clearCachedAgentToken();
       context = null;
       protocolBlocked = false;
       invalidateTransport();
@@ -1843,6 +1912,7 @@ export function createRemoteControlAgent(options) {
     const switched = identityKey(context) !== identityKey(next);
     if (switched) {
       clearAuthorizations();
+      clearCachedAgentToken();
       invalidateTransport();
       encryptedControlSessions.clear();
       enrollment = null;
@@ -1855,6 +1925,7 @@ export function createRemoteControlAgent(options) {
     context = next;
     if (!next.signedIn || !next.policyFresh || !next.featureGates.enrollment || !next.featureGates.readOnlyControl) {
       clearAuthorizations();
+      clearCachedAgentToken();
       invalidateTransport();
     }
     schedulePolicyExpiry();
@@ -1882,6 +1953,7 @@ export function createRemoteControlAgent(options) {
     });
     if (generation !== lifecycleGeneration || activeContext !== context || !contextAllowsConnection()) return status();
     if (!validEnrollment(credential, activeContext)) throw new TypeError("Enrollment returned an invalid device binding.");
+    clearCachedAgentToken();
     enrollment = credential;
     revoked = false;
     revocationPendingSource = null;
@@ -1903,6 +1975,7 @@ export function createRemoteControlAgent(options) {
     }
     let replacedDeviceId = enrollment?.state === "enrolled" ? enrollment.deviceId : null;
     clearAuthorizations();
+    clearCachedAgentToken();
     invalidateTransport();
     encryptedControlSessions.clear();
     enrollment = null;
@@ -1981,6 +2054,7 @@ export function createRemoteControlAgent(options) {
   }
 
   async function deleteDeviceMaterial() {
+    clearCachedAgentToken();
     let credentialError = false;
     let e2eeError = false;
     try { await credentialStore.delete(); } catch { credentialError = true; }
@@ -2000,6 +2074,7 @@ export function createRemoteControlAgent(options) {
     revocationPendingSource = null;
     revocationVerifyAttempt = 0;
     clearAuthorizations();
+    clearCachedAgentToken();
     activeControlSessions.clear();
     remoteSessionBindings.clear();
     encryptedControlSessions.clear();
@@ -2039,6 +2114,7 @@ export function createRemoteControlAgent(options) {
   /** Stops transport synchronously before deleting the platform-protected key. */
   async function deleteCredential() {
     clearAuthorizations();
+    clearCachedAgentToken();
     invalidateTransport();
     encryptedControlSessions.clear();
     enrollment = null;
@@ -2057,6 +2133,7 @@ export function createRemoteControlAgent(options) {
     revocationPendingSource = null;
     revocationVerifyAttempt = 0;
     clearAuthorizations();
+    clearCachedAgentToken();
     activeControlSessions.clear();
     remoteSessionBindings.clear();
     encryptedControlSessions.clear();
@@ -2071,6 +2148,7 @@ export function createRemoteControlAgent(options) {
     suspended = true;
     resumePolicyFloor = timestamp().getTime();
     clearAuthorizations();
+    clearCachedAgentToken();
     if (context?.signedIn) context = Object.freeze({ ...context, policyFresh: false, validatedAt: null });
     lastErrorCode = "device_offline";
     invalidateTransport();

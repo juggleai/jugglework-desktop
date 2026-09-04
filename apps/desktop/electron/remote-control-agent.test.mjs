@@ -695,7 +695,7 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(heartbeat.payload.localControlEnabled, true);
   });
 
-  it("terminates a silent welcomed socket and reconnects with fresh authentication", async () => {
+  it("terminates a silent welcomed socket and reuses its still-valid token", async () => {
     const fixture = harness();
     const socket = await connect(fixture);
     socket.receive(welcome(77));
@@ -707,7 +707,8 @@ describe("remote-control agent context and lifecycle", () => {
     assert.ok(delay >= 250 && delay <= 30_000);
     await fixture.clock.advance(delay);
     assert.equal(fixture.sockets.length, 2);
-    assert.equal(fixture.tokenCalls, 2);
+    assert.equal(fixture.tokenCalls, 1);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-1");
   });
 
   it("refreshes the liveness deadline on every inbound cloud frame", async () => {
@@ -748,6 +749,7 @@ describe("remote-control agent context and lifecycle", () => {
     assert.equal(fixture.tokenCalls, 2);
     assert.equal(fixture.sockets.length, 2);
     assert.equal(first.closeCalls, 1);
+    assert.equal(fixture.webSocketInputs[1].accessToken, "short-lived-token-2");
     assert.equal(JSON.stringify(fixture.agent.status()).includes("token"), false);
   });
 
@@ -798,7 +800,7 @@ describe("remote-control agent context and lifecycle", () => {
     assert.deepEqual(authorizations, [true]);
 
     const suspending = fixture.agent.suspend();
-    assert.equal(socket.closeCalls, 1);
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
     assert.equal(fixture.agent.status().lastErrorCode, "device_offline");
     assert.equal(fixture.agent.status().localControlEnabled, false);
     assert.equal(fixture.clock.nextDelay(), null);
@@ -833,11 +835,15 @@ describe("remote-control agent context and lifecycle", () => {
   it("reconnects with bounded jitter and ignores stale socket events", async () => {
     const fixture = harness();
     const first = await connect(fixture);
+    first.receive(welcome(77));
+    await settle();
     first.unexpectedClose();
     const delay = fixture.clock.nextDelay();
     assert.ok(delay >= 250 && delay <= 30_000);
     await fixture.clock.advance(delay);
     assert.equal(fixture.sockets.length, 2);
+    assert.equal(fixture.tokenCalls, 1, "ordinary reconnect reuses the valid in-memory token");
+    assert.equal(fixture.webSocketInputs[1].accessToken, "short-lived-token-1");
     const second = fixture.sockets[1];
     second.open();
     await settle();
@@ -848,6 +854,75 @@ describe("remote-control agent context and lifecycle", () => {
     await settle();
     assert.equal(first.sent.length, staleSent);
     assert.equal(fixture.sockets.length, 2);
+  });
+
+  it("clears a reused token after pre-welcome rejection and mints a fresh one", async () => {
+    const fixture = harness({ tokenLifetime: 120_000 });
+    const first = await connect(fixture);
+    first.receive(welcome(77));
+    await settle();
+
+    first.unexpectedClose();
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    assert.equal(fixture.tokenCalls, 1);
+    const reused = fixture.sockets[1];
+    reused.open();
+    await settle();
+    reused.unexpectedClose(1008, Buffer.from("bearer rejected"));
+    await fixture.clock.advance(fixture.clock.nextDelay());
+
+    assert.equal(fixture.tokenCalls, 2, "pre-welcome rejection invalidates the cache");
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("clears a reused token after a retryable pre-welcome protocol rejection", async () => {
+    const fixture = harness();
+    const first = await connect(fixture);
+    first.receive(welcome(77));
+    await settle();
+    first.unexpectedClose();
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    const reused = fixture.sockets[1];
+    reused.open();
+    await settle();
+
+    reused.receive(envelope("protocol.error", {
+      schemaVersion: 1, code: "unauthorized", message: "Retry authentication.", retryable: true, correlationId: null,
+    }));
+    await settle();
+    await fixture.clock.advance(fixture.clock.nextDelay());
+
+    assert.equal(fixture.tokenCalls, 2);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("mints a fresh token when the cached token is inside the handshake margin", async () => {
+    const fixture = harness({ tokenLifetime: 30_000 });
+    const first = await connect(fixture);
+    first.receive(welcome(77));
+    await settle();
+    first.unexpectedClose();
+    await fixture.clock.advance(fixture.clock.nextDelay());
+
+    assert.equal(fixture.tokenCalls, 2);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("clears the token when same-identity policy authorization is lost", async () => {
+    const fixture = harness();
+    const first = await connect(fixture);
+    first.receive(welcome(77));
+    await settle();
+
+    await fixture.agent.syncContext(signedInContext({ policyFresh: false, validatedAt: null }));
+    fixture.clock.time += 1;
+    await fixture.agent.syncContext(signedInContext({
+      policyVersion: "policy-2",
+      validatedAt: new Date(fixture.clock.time).toISOString(),
+    }));
+
+    assert.equal(fixture.tokenCalls, 2);
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
   });
 
   it("retains the server close code and sanitized reason for diagnostics", async () => {
@@ -923,11 +998,13 @@ describe("remote-control agent context and lifecycle", () => {
     fixture.setSettings({ schemaVersion: 1, enabled: true, backgroundMode: false, launchAtLogin: false });
     await fixture.agent.refreshLocalSettings();
     const current = fixture.sockets.at(-1);
+    assert.equal(fixture.tokenCalls, 2, "local disable clears the cached token before re-enable");
     const signout = fixture.agent.syncContext(signedOutContext());
     assert.equal(current.closeCalls, 1);
     await signout;
 
     await fixture.agent.syncContext(signedInContext());
+    assert.equal(fixture.tokenCalls, 3, "identity context changes cannot reuse the prior token");
     const accountSocket = fixture.sockets.at(-1);
     const switched = fixture.agent.syncContext(signedInContext({ userId: "user-2" }));
     assert.equal(accountSocket.closeCalls, 1);
@@ -979,6 +1056,8 @@ describe("remote-control agent context and lifecycle", () => {
     const revocations = [];
     const fixture = harness({ onControlRevoked: (input) => revocations.push(input) });
     const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
     socket.receive(envelope("device.disabled", { deviceId: DEVICE_ID, reason: "Remote control was disabled" }));
     socket.unexpectedClose(1008, Buffer.from("device disabled"));
     await settle();
@@ -1000,6 +1079,74 @@ describe("remote-control agent context and lifecycle", () => {
     await settle();
     assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.CONNECTED);
     assert.equal(fixture.webSocketInputs.at(-1).accessToken, "short-lived-token-2");
+  });
+
+  it("cloud disable fences an in-flight proactive refresh before it can install a transport", async () => {
+    let refreshStarted = () => {};
+    let releaseRefresh = () => {};
+    const started = new Promise((resolve) => { refreshStarted = () => resolve(); });
+    const gate = new Promise((resolve) => { releaseRefresh = () => resolve(); });
+    const fixture = harness({
+      issueAgentToken: async (call) => {
+        if (call === 2) {
+          refreshStarted();
+          await gate;
+        }
+        return {
+          accessToken: `token-${call}`,
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    for (const nonce of ["keepalive-1", "keepalive-2", "keepalive-3"]) {
+      await fixture.clock.advance(19_000);
+      socket.receive(envelope("cloud.ping", { nonce }));
+      await settle();
+    }
+    await fixture.clock.advance(3_000);
+    await started;
+    socket.receive(envelope("device.disabled", { deviceId: DEVICE_ID, reason: "Remote control was disabled" }));
+    await settle();
+    releaseRefresh();
+    await settle();
+
+    assert.equal(fixture.sockets.length, 1, "stale refresh cannot install a replacement socket");
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+  });
+
+  it("an explicit cloud-disable refresh rejection clears the token and current transport", async () => {
+    const fixture = harness({
+      issueAgentToken: async (call) => {
+        if (call === 2) throw new RemoteControlCloudError("device_disabled", "Device disabled.", { status: 403 });
+        return {
+          accessToken: `token-${call}`,
+          expiresAt: new Date(NOW + 120_000).toISOString(),
+          webSocketUrl: "wss://cloud.example.test/jwork/api/desktop-agent/v1/connect",
+        };
+      },
+    });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    for (const nonce of ["keepalive-1", "keepalive-2", "keepalive-3"]) {
+      await fixture.clock.advance(19_000);
+      socket.receive(envelope("cloud.ping", { nonce }));
+      await settle();
+    }
+    await fixture.clock.advance(3_000);
+
+    assert.equal(socket.closeCalls + socket.terminateCalls, 1);
+    assert.equal(fixture.agent.status().state, REMOTE_CONTROL_AGENT_STATUS.BACKOFF);
+    assert.equal(fixture.agent.status().lastErrorCode, "device_disabled");
+    await fixture.clock.advance(fixture.clock.nextDelay());
+    assert.equal(fixture.tokenCalls, 3, "retry mints fresh auth instead of reusing the disabled token");
+    assert.equal(fixture.webSocketInputs.at(-1).accessToken, "token-3");
   });
 
   it("a malformed disabled notice fails the transport without deleting credentials", async () => {
