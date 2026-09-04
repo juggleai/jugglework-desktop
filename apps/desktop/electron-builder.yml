@@ -64,6 +64,13 @@ mac:
     NSMicrophoneUsageDescription: JuggleWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
     NSScreenCaptureUsageDescription: JuggleWork uses screen recording only when you ask Computer Use to inspect or interact with your screen.
   extraResources:
+    # Dedicated monochrome macOS menu-bar template image. Keep the 1x and
+    # Retina companion names together so AppKit can select the right scale.
+    - from: resources/tray
+      to: tray
+      filter:
+        - juggleworkTemplate.png
+        - juggleworkTemplate@2x.png
     - from: resources/sidecars
       to: sidecars
       filter:

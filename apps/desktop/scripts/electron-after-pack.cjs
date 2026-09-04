@@ -4,6 +4,10 @@ const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
 
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
+const macTrayTemplateImages = [
+  { name: "juggleworkTemplate.png", width: 16, height: 16 },
+  { name: "juggleworkTemplate@2x.png", width: 32, height: 32 },
+];
 
 const sidecarBases = ["opencode"];
 
@@ -64,6 +68,34 @@ function resolvePackagedResourcesPath(context) {
     return appPath ? path.join(appPath, "Contents", "Resources") : null;
   }
   return path.join(context.appOutDir, "resources");
+}
+
+function readRgbaPngDimensions(filePath) {
+  const header = fs.readFileSync(filePath).subarray(0, 26);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (header.length < 26 || !header.subarray(0, 8).equals(signature) || header.subarray(12, 16).toString("ascii") !== "IHDR") {
+    throw new Error(`Invalid packaged PNG: ${filePath}`);
+  }
+  if (header[24] !== 8 || header[25] !== 6) {
+    throw new Error(`Packaged tray image must be 8-bit RGBA: ${filePath}`);
+  }
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+}
+
+function verifyPackagedMacTrayResources(context) {
+  if (context.electronPlatformName !== "darwin") return;
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const trayDir = resourcesPath ? path.join(resourcesPath, "tray") : null;
+  for (const expected of macTrayTemplateImages) {
+    const filePath = trayDir ? path.join(trayDir, expected.name) : null;
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error(`Missing packaged macOS tray template image: ${filePath ?? expected.name}`);
+    }
+    const dimensions = readRgbaPngDimensions(filePath);
+    if (dimensions.width !== expected.width || dimensions.height !== expected.height) {
+      throw new Error(`Invalid packaged macOS tray template dimensions for ${expected.name}: expected ${expected.width}x${expected.height}, found ${dimensions.width}x${dimensions.height}`);
+    }
+  }
 }
 
 function verifyCompiledRuntimeContracts(context) {
@@ -208,10 +240,12 @@ async function runAfterPack(context, dependencies = {}) {
   const verifyContracts = dependencies.verifyContracts ?? verifyCompiledRuntimeContracts;
   const verifyUiControlMcp = dependencies.verifyUiControlMcp ?? verifyBundledUiControlMcp;
   const verifyUiControlMcpRuntime = dependencies.verifyUiControlMcpRuntime ?? verifyBundledUiControlMcpRuntime;
+  const verifyMacTrayResources = dependencies.verifyMacTrayResources ?? verifyPackagedMacTrayResources;
   const signHelper = dependencies.signHelper ?? signComputerUseHelper;
   verifyContracts(context);
   verifyUiControlMcp(context);
   await verifyUiControlMcpRuntime(context);
+  verifyMacTrayResources(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
@@ -261,5 +295,6 @@ module.exports.normalizeArch = normalizeArch;
 module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
 module.exports.runAfterPack = runAfterPack;
 module.exports.targetTriple = targetTriple;
+module.exports.verifyPackagedMacTrayResources = verifyPackagedMacTrayResources;
 module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
 module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;

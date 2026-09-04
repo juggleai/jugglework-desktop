@@ -61,6 +61,7 @@ import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mj
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
 import { createAppTrayIndicator } from "./app-tray.mjs";
+import { createPlatformTrayIconImage } from "./tray-icon.mjs";
 import { applyLaunchAtLogin as applyLaunchAtLoginSetting, shouldStartHidden } from "./launch-at-login.mjs";
 import { createRemoteControlPendingPolicySynchronizer } from "./remote-control-pending-policy.mjs";
 import { applyPersistedRemoteControlLocalEffects, reconcilePersistedRemoteControlSettings } from "./remote-control-settings-lifecycle.mjs";
@@ -1078,17 +1079,18 @@ const sessionMutationCoordinator = createSessionMutationCoordinator({
   onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
 });
 let startMainWindowHidden = false;
-// TIPS: macOS 状态栏图标的推荐尺寸是 16pt，直接复用大尺寸应用图标会被系统
-// 拉伸导致模糊；Windows/Linux 托盘由系统自行缩放，保持原图即可。
+// macOS uses a packaged 16pt monochrome Template Image (with an @2x sibling)
+// so AppKit can adapt it to menu-bar appearance. Windows/Linux retain the
+// existing organization-brand/app icon behavior.
 function trayIndicatorIconImage() {
-  const image = resolveBrandIconImage() ?? APP_ICON_IMAGE;
-  if (!image || process.platform !== "darwin") return image;
-  try {
-    const resized = image.resize({ width: 16, height: 16 });
-    return resized.isEmpty() ? image : resized;
-  } catch {
-    return image;
-  }
+  return createPlatformTrayIconImage({
+    platform: process.platform,
+    nativeImage,
+    resourcesPath: process.resourcesPath ?? "",
+    moduleDirectory: __dirname,
+    brandImage: resolveBrandIconImage(),
+    appImage: APP_ICON_IMAGE,
+  });
 }
 // 常驻托盘：macOS 状态栏 / Windows 系统托盘图标，是"关闭仅隐藏"模式下
 // 用户找回窗口的唯一可见入口，也是真正的退出入口（Quit 菜单项）。

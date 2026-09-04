@@ -8,7 +8,17 @@ const {
   normalizeArch,
   runAfterPack,
   targetTriple,
+  verifyPackagedMacTrayResources,
 } = require("./electron-after-pack.cjs");
+
+function copyMacTrayResources(resourcesDir) {
+  const sourceDir = path.join(__dirname, "..", "resources", "tray");
+  const trayDir = path.join(resourcesDir, "tray");
+  fs.mkdirSync(trayDir, { recursive: true });
+  for (const name of ["juggleworkTemplate.png", "juggleworkTemplate@2x.png"]) {
+    fs.copyFileSync(path.join(sourceDir, name), path.join(trayDir, name));
+  }
+}
 
 test("normalizes electron-builder numeric and string architectures", () => {
   assert.equal(normalizeArch(1), "x64");
@@ -44,6 +54,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
   fs.mkdirSync(sidecarsDir, { recursive: true });
   fs.mkdirSync(uiControlMcpDir, { recursive: true });
   fs.mkdirSync(sqlitePrebuildsDir, { recursive: true });
+  copyMacTrayResources(path.join(appOutDir, "JuggleWork.app", "Contents", "Resources"));
   fs.writeFileSync(path.join(sidecarsDir, "opencode-aarch64-apple-darwin"), "arm64");
   fs.writeFileSync(path.join(sidecarsDir, "opencode-x86_64-apple-darwin"), "x64");
   fs.writeFileSync(path.join(sidecarsDir, "versions.json-aarch64-apple-darwin"), "arm64 metadata");
@@ -89,6 +100,7 @@ test("skips architecture processing for unsupported targets", async () => {
       verifyContracts() {},
       verifyUiControlMcp() {},
       verifyUiControlMcpRuntime() {},
+      verifyMacTrayResources() {},
       signHelper() {
         signed = true;
       },
@@ -114,5 +126,24 @@ test("rejects packages missing the bundled UI control MCP", async (t) => {
       { verifyContracts() {}, verifyUiControlMcpRuntime() {}, signHelper() {} },
     ),
     /Missing packaged JuggleWork UI control MCP/,
+  );
+});
+
+test("verifies packaged macOS tray template images", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-after-pack-tray-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const appOutDir = path.join(root, "output");
+  const resourcesDir = path.join(appOutDir, "JuggleWork.app", "Contents", "Resources");
+  copyMacTrayResources(resourcesDir);
+  const context = {
+    appOutDir,
+    electronPlatformName: "darwin",
+    packager: { appInfo: { productFilename: "JuggleWork" } },
+  };
+  assert.doesNotThrow(() => verifyPackagedMacTrayResources(context));
+  fs.rmSync(path.join(resourcesDir, "tray", "juggleworkTemplate@2x.png"));
+  assert.throws(
+    () => verifyPackagedMacTrayResources(context),
+    /Missing packaged macOS tray template image/,
   );
 });

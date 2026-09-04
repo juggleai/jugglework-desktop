@@ -1,4 +1,4 @@
-import { existsSync, openSync, closeSync, readSync, readdirSync } from "node:fs";
+import { existsSync, openSync, closeSync, readFileSync, readSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -110,6 +110,34 @@ export function verifyBundleMetadata(appPath) {
   return { minimumSystemVersion, helperMinimumSystemVersion, screenCaptureUsageDescription };
 }
 
+export function verifyMacTrayResources(appPath) {
+  const expectedImages = [
+    { name: "juggleworkTemplate.png", width: 16, height: 16 },
+    { name: "juggleworkTemplate@2x.png", width: 32, height: 32 },
+  ];
+  const trayDir = path.join(appPath, "Contents", "Resources", "tray");
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const verified = [];
+  for (const expected of expectedImages) {
+    const filePath = path.join(trayDir, expected.name);
+    if (!existsSync(filePath)) fail(`Packaged macOS tray template image not found: ${filePath}`);
+    const header = readFileSync(filePath).subarray(0, 26);
+    if (header.length < 26 || !header.subarray(0, 8).equals(signature) || header.subarray(12, 16).toString("ascii") !== "IHDR") {
+      fail(`Invalid packaged macOS tray template PNG: ${filePath}`);
+    }
+    const width = header.readUInt32BE(16);
+    const height = header.readUInt32BE(20);
+    if (width !== expected.width || height !== expected.height) {
+      fail(`Expected ${expected.name} to be ${expected.width}x${expected.height}, found ${width}x${height}`);
+    }
+    if (header[24] !== 8 || header[25] !== 6) {
+      fail(`Expected ${expected.name} to be an 8-bit RGBA PNG`);
+    }
+    verified.push({ name: expected.name, width, height, rgba: true });
+  }
+  return verified;
+}
+
 export function resolvePackagedApp(input) {
   const candidate = path.resolve(input);
   if (!existsSync(candidate)) fail(`App bundle not found: ${candidate}`);
@@ -218,9 +246,10 @@ export async function main() {
   const requestedArch = readArg("--arch") || process.arch;
   const architecture = verifyMachOArchitectures(appPath, requestedArch);
   const metadata = verifyBundleMetadata(appPath);
+  const tray = verifyMacTrayResources(appPath);
   const nativeModules = verifyPackagedNativeModules(appPath);
   const uiControlMcp = await verifyPackagedUiControlMcp(appPath);
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, nativeModules, uiControlMcp }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

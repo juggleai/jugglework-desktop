@@ -73,10 +73,11 @@ export function createAppTrayIndicator({ createTray, buildMenu, restoreWindow, q
       created.on("click", () => safeInvoke(restoreWindow));
       tray = created;
       return true;
-    } catch {
+    } catch (error) {
       tray = null;
       try { created?.destroy(); } catch {}
-      try { logger.warn?.("App tray indicator is unavailable."); } catch {}
+      const reason = error instanceof Error ? error.message.slice(0, 200) : "unknown";
+      try { logger.warn?.(`App tray indicator is unavailable: ${reason}`); } catch {}
       return false;
     }
   }
