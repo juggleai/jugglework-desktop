@@ -736,7 +736,7 @@ export function MembershipUpgradeDialog({
         </DialogHeader>
 
         <div className="md:grid md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1.38fr)_minmax(285px,0.92fr)]">
-          <section className="px-5 py-5 md:px-6">
+          <section className="px-5 py-5 md:min-h-0 md:overflow-y-auto md:px-6">
             <div className="grid grid-cols-2 rounded-[14px] bg-dls-hover p-1" role="tablist" aria-label={zh ? "套餐类型" : "Plan type"}>
               {(["personal", "team"] as const).map((item) => {
                 const active = audience === item;
@@ -875,7 +875,7 @@ export function MembershipUpgradeDialog({
             </div>
           </section>
 
-          <aside className="border-t border-dls-border bg-dls-hover/45 p-4 md:border-l md:border-t-0">
+          <aside className="border-t border-dls-border bg-dls-hover/45 p-4 md:min-h-0 md:overflow-y-auto md:border-l md:border-t-0">
             <div className="flex h-full flex-col rounded-[18px] border border-dls-border bg-background p-4 shadow-[0_18px_44px_-40px_rgba(1,22,39,0.5)]">
               <div className="flex items-center justify-between gap-4">
                 <p className="text-[13px] font-semibold text-dls-text">
