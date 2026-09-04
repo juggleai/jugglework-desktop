@@ -207,6 +207,18 @@ export type DenTenantAccount = {
     canViewLedger: boolean;
     canManageBilling: boolean;
   };
+  billing: {
+    paid: boolean;
+    fundingKind: string;
+    plan: DenTenantTier | null;
+    period: "monthly" | "annual" | null;
+    seats: number;
+    cycleStart: string | null;
+    cycleEnd: string | null;
+    paidThrough: string | null;
+    nextGrantAt: string | null;
+    allowancePerCycle: string;
+  } | null;
 };
 
 export type DenWorkerSummary = {
@@ -425,6 +437,69 @@ export type DenBillingSummary = {
   invoices: DenBillingInvoice[];
   productId: string | null;
   benefitId: string | null;
+};
+
+export type DenMembershipBillingCatalogPlan = {
+  plan: DenTenantTier;
+  tenantKind: "personal" | "organization";
+  monthlyAmountFen: string;
+  annualAmountFen: string;
+  allowancePerCycle: string;
+  minimumSeats: number;
+  pricedPerSeat: boolean;
+};
+
+export type DenMembershipBillingCatalog = {
+  version: string;
+  currency: string;
+  payment: {
+    alipayPageAvailable: boolean;
+    alipayQrAvailable: boolean;
+  };
+  plans: DenMembershipBillingCatalogPlan[];
+};
+
+export type DenMembershipCheckout = {
+  method: "alipay_page";
+  url: string;
+  status: "pending";
+  expiresAt: string | null;
+};
+
+export type DenMembershipPaymentCode = {
+  status: string;
+  content: string;
+  expiresAt: string | null;
+};
+
+export type DenMembershipOrder = {
+  id: string;
+  organizationId: string | null;
+  targetMode: string;
+  targetKind: string;
+  plan: DenTenantTier;
+  period: "monthly" | "annual";
+  seats: number;
+  unitAmountFen: string;
+  totalAmountFen: string;
+  currency: string;
+  allowancePerCycle: string;
+  quoteKind: string;
+  status: string;
+  fulfillmentStatus: string;
+  expiresAt: string | null;
+  paidAt: string | null;
+  fulfilledAt: string | null;
+  nextAction: string;
+  checkout: DenMembershipCheckout | null;
+  paymentCode: DenMembershipPaymentCode | null;
+};
+
+export type DenMembershipOrderSelection = {
+  targetMode: "existing_tenant" | "new_organization";
+  plan: DenTenantTier;
+  period: "monthly" | "annual";
+  seats: number;
 };
 
 type DenAuthResult = {
@@ -1321,6 +1396,10 @@ function getOrgList(payload: unknown): DenOrgSummary[] {
   });
 }
 
+function getOrgSummary(payload: unknown): DenOrgSummary | null {
+  return getOrgList({ orgs: [payload] })[0] ?? null;
+}
+
 function isDenTenantTier(value: unknown): value is DenTenantTier {
   return value === "normal" || value === "pro" || value === "power" || value === "team" || value === "business";
 }
@@ -1331,35 +1410,115 @@ function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown
     : tier === "team" || tier === "business";
 }
 
+function readSafeInteger(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function readDecimalString(value: unknown): string | null {
+  if (typeof value === "string" && /^(0|[1-9]\d*)$/.test(value)) return value;
+  return null;
+}
+
+function readBillingSafeInteger(value: unknown): number | null {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function isPositiveDecimalString(value: string): boolean {
+  return value !== "0";
+}
+
+function readOptionalTimestamp(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") return undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/.exec(value);
+  if (!match) return undefined;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  const date = new Date(parsed);
+  const [, year, month, day, hour, minute, second] = match.map(Number);
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day &&
+    date.getUTCHours() === hour && date.getUTCMinutes() === minute && date.getUTCSeconds() === second
+    ? value
+    : undefined;
+}
+
+function getTenantBilling(value: unknown, kind: "personal" | "organization"): DenTenantAccount["billing"] | undefined {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value) || typeof value.paid !== "boolean" || typeof value.fundingKind !== "string") return undefined;
+  const plan = value.plan === "" || value.plan === null ? null : value.plan;
+  const period = value.period === "" || value.period === null ? null : value.period;
+  const seats = readBillingSafeInteger(value.seats);
+  const allowancePerCycle = readDecimalString(value.allowancePerCycle);
+  const cycleStart = readOptionalTimestamp(value.cycleStart);
+  const cycleEnd = readOptionalTimestamp(value.cycleEnd);
+  const paidThrough = readOptionalTimestamp(value.paidThrough);
+  const nextGrantAt = readOptionalTimestamp(value.nextGrantAt);
+  if (
+    (plan !== null && !isDenTenantTierForKind(kind, plan)) ||
+    (period !== null && period !== "monthly" && period !== "annual") ||
+    seats === null || allowancePerCycle === null ||
+    cycleStart === undefined || cycleEnd === undefined || paidThrough === undefined || nextGrantAt === undefined ||
+    (value.paid
+      ? value.fundingKind !== "paid" || plan === null || period === null || seats < 1 || !isPositiveDecimalString(allowancePerCycle)
+      : value.fundingKind === "community"
+        ? kind !== "personal" || plan !== "normal" || period !== null || seats !== 1 || cycleStart === null || cycleEnd === null || paidThrough !== null || nextGrantAt === null || !isPositiveDecimalString(allowancePerCycle)
+        : value.fundingKind === "unpaid"
+          ? kind !== "organization" || plan !== "team" || period !== null || seats !== 0 || cycleStart !== null || cycleEnd !== null || paidThrough !== null || nextGrantAt !== null || allowancePerCycle !== "0"
+          : true)
+  ) return undefined;
+  return {
+    paid: value.paid,
+    fundingKind: value.fundingKind,
+    plan,
+    period,
+    seats,
+    cycleStart,
+    cycleEnd,
+    paidThrough,
+    nextGrantAt,
+    allowancePerCycle,
+  };
+}
+
 function getTenantAccount(payload: unknown): DenTenantAccount | null {
   if (!isRecord(payload) || !isRecord(payload.points) || !isRecord(payload.permissions)) return null;
   if (
     (payload.kind !== "personal" && payload.kind !== "organization") ||
     !isDenTenantTierForKind(payload.kind, payload.tier) ||
     typeof payload.status !== "string" ||
-    typeof payload.tierVersion !== "number" || !Number.isSafeInteger(payload.tierVersion) ||
-    typeof payload.points.available !== "number" || !Number.isSafeInteger(payload.points.available) ||
-    typeof payload.points.reserved !== "number" || !Number.isSafeInteger(payload.points.reserved) ||
-    typeof payload.points.version !== "number" || !Number.isSafeInteger(payload.points.version) ||
+    readSafeInteger(payload.tierVersion) === null ||
+    readSafeInteger(payload.points.available) === null ||
+    readSafeInteger(payload.points.reserved) === null ||
+    readSafeInteger(payload.points.version) === null ||
     typeof payload.permissions.canViewLedger !== "boolean" ||
     typeof payload.permissions.canManageBilling !== "boolean"
   ) {
     return null;
   }
+  const billing = getTenantBilling(payload.billing, payload.kind);
+  if (billing === undefined) return null;
   return {
     kind: payload.kind,
     tier: payload.tier,
     status: payload.status,
-    tierVersion: payload.tierVersion,
+    tierVersion: readSafeInteger(payload.tierVersion)!,
     points: {
-      available: payload.points.available,
-      reserved: payload.points.reserved,
-      version: payload.points.version,
+      available: readSafeInteger(payload.points.available)!,
+      reserved: readSafeInteger(payload.points.reserved)!,
+      version: readSafeInteger(payload.points.version)!,
     },
     permissions: {
       canViewLedger: payload.permissions.canViewLedger,
       canManageBilling: payload.permissions.canManageBilling,
     },
+    billing,
   };
 }
 
@@ -2190,6 +2349,279 @@ function getBillingSummary(payload: unknown): DenBillingSummary | null {
   };
 }
 
+function getMembershipCatalogPlan(value: unknown): DenMembershipBillingCatalogPlan | null {
+  if (!isRecord(value) || !isDenTenantTier(value.plan)) return null;
+  if (value.tenantKind !== "personal" && value.tenantKind !== "organization") return null;
+  const monthlyAmountFen = readDecimalString(value.monthlyAmountFen);
+  const annualAmountFen = readDecimalString(value.annualAmountFen);
+  const allowancePerCycle = readDecimalString(value.allowancePerCycle);
+  const minimumSeats = readBillingSafeInteger(value.minimumSeats);
+  if (
+    monthlyAmountFen === null ||
+    annualAmountFen === null ||
+    allowancePerCycle === null ||
+    minimumSeats === null ||
+    minimumSeats < 1 ||
+    typeof value.pricedPerSeat !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    plan: value.plan,
+    tenantKind: value.tenantKind,
+    monthlyAmountFen,
+    annualAmountFen,
+    allowancePerCycle,
+    minimumSeats,
+    pricedPerSeat: value.pricedPerSeat,
+  };
+}
+
+const MEMBERSHIP_CATALOG_KINDS: Record<DenTenantTier, "personal" | "organization"> = {
+  normal: "personal",
+  pro: "personal",
+  power: "personal",
+  team: "organization",
+  business: "organization",
+};
+
+export function normalizeDenMembershipBillingCatalog(payload: unknown): DenMembershipBillingCatalog | null {
+  if (
+    !isRecord(payload) ||
+    typeof payload.version !== "string" ||
+    !payload.version.trim() ||
+    payload.currency !== "CNY" ||
+    !isRecord(payload.payment) ||
+    typeof payload.payment.alipayPageAvailable !== "boolean" ||
+    typeof payload.payment.alipayQrAvailable !== "boolean" ||
+    !Array.isArray(payload.plans)
+  ) {
+    return null;
+  }
+  const plans = payload.plans.flatMap((value) => {
+    const plan = getMembershipCatalogPlan(value);
+    return plan ? [plan] : [];
+  });
+  if (plans.length !== payload.plans.length || plans.length !== 5) return null;
+  const plansByName = new Map(plans.map((plan) => [plan.plan, plan]));
+  if (
+    plansByName.size !== 5 ||
+    Object.entries(MEMBERSHIP_CATALOG_KINDS).some(([name, kind]) => plansByName.get(name as DenTenantTier)?.tenantKind !== kind) ||
+    plans.some((plan) => !isPositiveDecimalString(plan.allowancePerCycle)) ||
+    plans.some((plan) => plan.plan === "normal"
+      ? plan.monthlyAmountFen !== "0" || plan.annualAmountFen !== "0" || plan.minimumSeats !== 1 || plan.pricedPerSeat
+      : !isPositiveDecimalString(plan.monthlyAmountFen) || !isPositiveDecimalString(plan.annualAmountFen)) ||
+    plans.some((plan) => plan.tenantKind === "personal"
+      ? plan.minimumSeats !== 1 || plan.pricedPerSeat
+      : !plan.pricedPerSeat)
+  ) return null;
+  return {
+    version: payload.version.trim(),
+    currency: payload.currency.trim(),
+    payment: {
+      alipayPageAvailable: payload.payment.alipayPageAvailable === true,
+      alipayQrAvailable: payload.payment.alipayQrAvailable === true,
+    },
+    plans,
+  };
+}
+
+function getMembershipCheckout(value: unknown): DenMembershipCheckout | null {
+  if (
+    !isRecord(value) ||
+    value.method !== "alipay_page" ||
+    typeof value.url !== "string" ||
+    value.status !== "pending"
+  ) {
+    return null;
+  }
+  const expiresAt = readOptionalTimestamp(value.expiresAt);
+  if (expiresAt === undefined) return null;
+  return {
+    method: value.method,
+    url: value.url,
+    status: value.status,
+    expiresAt,
+  };
+}
+
+function getMembershipPaymentCode(value: unknown): DenMembershipPaymentCode | null {
+  if (!isRecord(value) || value.status !== "pending" || typeof value.content !== "string" || !value.content) return null;
+  const expiresAt = readOptionalTimestamp(value.expiresAt);
+  if (expiresAt === undefined) return null;
+  return {
+    status: value.status,
+    content: value.content,
+    expiresAt,
+  };
+}
+
+const MEMBERSHIP_ORDER_STATUSES = new Set([
+  "quoted", "payment_pending", "paid_pending_fulfillment", "paid_pending_activation",
+  "fulfilled", "expired", "closed", "reconciliation_required",
+]);
+
+function validMembershipOrderState(input: {
+  status: string;
+  fulfillmentStatus: string;
+  paidAt: string | null;
+  fulfilledAt: string | null;
+  nextAction: string;
+  checkout: DenMembershipCheckout | null;
+  paymentCode: DenMembershipPaymentCode | null;
+}): boolean {
+  const noArtifact = input.checkout === null && input.paymentCode === null;
+  switch (input.status) {
+    case "quoted":
+      return input.fulfillmentStatus === "unfulfilled" && input.paidAt === null && input.fulfilledAt === null && noArtifact && (input.nextAction === "refresh_checkout" || input.nextAction === "refresh_payment_code");
+    case "payment_pending":
+      if (input.fulfillmentStatus !== "unfulfilled" || input.paidAt !== null || input.fulfilledAt !== null) return false;
+       if (input.nextAction === "open_checkout") return input.checkout?.method === "alipay_page" && input.checkout.status === "pending" && input.paymentCode === null;
+      if (input.nextAction === "scan_payment") return input.paymentCode !== null && input.checkout === null;
+      return noArtifact && (input.nextAction === "refresh_checkout" || input.nextAction === "refresh_payment_code");
+    case "paid_pending_fulfillment":
+      return input.fulfillmentStatus === "pending" && input.paidAt !== null && input.fulfilledAt === null && noArtifact && input.nextAction === "none";
+    case "paid_pending_activation":
+      return input.fulfillmentStatus === "unfulfilled" && input.paidAt !== null && input.fulfilledAt === null && noArtifact && input.nextAction === "create_organization";
+    case "fulfilled":
+      return input.fulfillmentStatus === "fulfilled" && input.paidAt !== null && input.fulfilledAt !== null && noArtifact && input.nextAction === "refresh_tenant_account";
+    case "expired":
+    case "closed":
+      return input.fulfillmentStatus === "unfulfilled" && input.paidAt === null && input.fulfilledAt === null && noArtifact && input.nextAction === "none";
+    case "reconciliation_required":
+      return input.fulfillmentStatus === "reconciliation_required" && input.paidAt !== null && input.fulfilledAt === null && noArtifact && input.nextAction === "contact_support";
+    default:
+      return false;
+  }
+}
+
+export function normalizeDenMembershipOrder(payload: unknown): DenMembershipOrder | null {
+  if (!isRecord(payload) || typeof payload.id !== "string" || !payload.id.trim()) return null;
+  const organizationId = payload.organizationId === null
+    ? null
+    : typeof payload.organizationId === "string" && payload.organizationId.trim()
+      ? payload.organizationId.trim()
+      : undefined;
+  if (organizationId === undefined) return null;
+  if (!isDenTenantTier(payload.plan) || (payload.period !== "monthly" && payload.period !== "annual")) return null;
+  if (payload.targetMode !== "existing_tenant" && payload.targetMode !== "new_organization") return null;
+  if (payload.targetKind !== "personal" && payload.targetKind !== "organization") return null;
+  if (typeof payload.status !== "string" || !MEMBERSHIP_ORDER_STATUSES.has(payload.status)) return null;
+  const seats = readBillingSafeInteger(payload.seats);
+  const unitAmountFen = readDecimalString(payload.unitAmountFen);
+  const totalAmountFen = readDecimalString(payload.totalAmountFen);
+  const allowancePerCycle = readDecimalString(payload.allowancePerCycle);
+  const expiresAt = readOptionalTimestamp(payload.expiresAt);
+  const paidAt = readOptionalTimestamp(payload.paidAt);
+  const fulfilledAt = readOptionalTimestamp(payload.fulfilledAt);
+  const checkout = payload.checkout === null || payload.checkout === undefined ? null : getMembershipCheckout(payload.checkout);
+  const paymentCode = payload.paymentCode === null || payload.paymentCode === undefined ? null : getMembershipPaymentCode(payload.paymentCode);
+  const targetCombinationValid = payload.targetMode === "new_organization"
+    ? organizationId === null && payload.targetKind === "organization" && (payload.plan === "team" || payload.plan === "business") && payload.quoteKind === "activation"
+    : payload.targetKind === "personal"
+      ? organizationId !== null && (payload.plan === "pro" || payload.plan === "power") && seats === 1
+      : organizationId !== null && (payload.plan === "team" || payload.plan === "business");
+  if (
+    seats === null || seats < 1 || unitAmountFen === null || unitAmountFen === "0" ||
+    totalAmountFen === null || totalAmountFen === "0" || allowancePerCycle === null || allowancePerCycle === "0" ||
+    payload.currency !== "CNY" ||
+    (payload.quoteKind !== "activation" && payload.quoteKind !== "renewal" && payload.quoteKind !== "upgrade") ||
+    expiresAt === undefined || expiresAt === null || paidAt === undefined || fulfilledAt === undefined ||
+    (payload.checkout !== null && payload.checkout !== undefined && checkout === null) ||
+    (payload.paymentCode !== null && payload.paymentCode !== undefined && paymentCode === null) ||
+    typeof payload.fulfillmentStatus !== "string" || typeof payload.nextAction !== "string" ||
+    !targetCombinationValid ||
+    (payload.status === "paid_pending_activation" && payload.targetMode !== "new_organization") ||
+    (payload.status === "paid_pending_fulfillment" && payload.targetMode !== "existing_tenant") ||
+    (checkout !== null && (checkout.expiresAt === null || Date.parse(checkout.expiresAt) > Date.parse(expiresAt))) ||
+    (paidAt !== null && fulfilledAt !== null && Date.parse(fulfilledAt) < Date.parse(paidAt)) ||
+    !validMembershipOrderState({ status: payload.status, fulfillmentStatus: payload.fulfillmentStatus, paidAt, fulfilledAt, nextAction: payload.nextAction, checkout, paymentCode })
+  ) return null;
+  return {
+    id: payload.id.trim(),
+    organizationId,
+    targetMode: payload.targetMode,
+    targetKind: payload.targetKind,
+    plan: payload.plan,
+    period: payload.period,
+    seats,
+    unitAmountFen,
+    totalAmountFen,
+    currency: payload.currency,
+    allowancePerCycle,
+    quoteKind: payload.quoteKind,
+    status: payload.status,
+    fulfillmentStatus: payload.fulfillmentStatus,
+    expiresAt,
+    paidAt,
+    fulfilledAt,
+    nextAction: payload.nextAction,
+    checkout,
+    paymentCode,
+  };
+}
+
+export function isAllowedAlipayCheckoutUrl(input: string, options?: { allowSandbox?: boolean }): boolean {
+  try {
+    if (new TextEncoder().encode(input).byteLength > 4096 || /[\u0000-\u001f\u007f]/.test(input) || input.trim() !== input) return false;
+    const url = new URL(input);
+    const expected = url.hostname === "openapi.alipay.com"
+      ? "https://openapi.alipay.com/gateway.do"
+      : options?.allowSandbox === true && url.hostname === "openapi-sandbox.dl.alipaydev.com"
+        ? "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
+        : "";
+    return expected !== "" && url.href === input && input.startsWith(`${expected}?`) && url.protocol === "https:" && url.origin + url.pathname === expected &&
+      url.username === "" && url.password === "" && url.port === "" && url.hash === "" && url.search.length > 1;
+  } catch {
+    return false;
+  }
+}
+
+export function isMembershipCheckoutOpenable(order: DenMembershipOrder, now = Date.now()): boolean {
+  const expiresAfter = (timestamp: string | null) => timestamp !== null && Date.parse(timestamp) > now;
+  return order.nextAction === "open_checkout" && order.checkout?.method === "alipay_page" && order.checkout.status === "pending" && order.paymentCode === null &&
+    expiresAfter(order.expiresAt) && expiresAfter(order.checkout.expiresAt) && isAllowedAlipayCheckoutUrl(order.checkout.url);
+}
+
+function invalidMembershipOrderResponse(): DenApiError {
+  return new DenApiError(500, "invalid_billing_order_payload", "Billing order response was invalid.");
+}
+
+function sameMembershipOrderQuote(left: DenMembershipOrder, right: DenMembershipOrder): boolean {
+  return left.id === right.id && left.organizationId === right.organizationId && left.targetMode === right.targetMode &&
+    left.targetKind === right.targetKind && left.plan === right.plan && left.period === right.period && left.seats === right.seats &&
+    left.unitAmountFen === right.unitAmountFen && left.totalAmountFen === right.totalAmountFen && left.currency === right.currency &&
+    left.allowancePerCycle === right.allowancePerCycle && left.quoteKind === right.quoteKind && left.expiresAt === right.expiresAt;
+}
+
+function validMembershipOrderTransition(previous: DenMembershipOrder, next: DenMembershipOrder): boolean {
+  const allowedStatuses: Record<string, Set<string>> = {
+    quoted: new Set(["quoted", "payment_pending", "paid_pending_fulfillment", "paid_pending_activation", "fulfilled", "expired", "closed", "reconciliation_required"]),
+    payment_pending: new Set(["payment_pending", "paid_pending_fulfillment", "paid_pending_activation", "fulfilled", "expired", "closed", "reconciliation_required"]),
+    paid_pending_fulfillment: new Set(["paid_pending_fulfillment", "fulfilled", "reconciliation_required"]),
+    paid_pending_activation: new Set(["paid_pending_activation", "fulfilled", "reconciliation_required"]),
+    reconciliation_required: new Set(["reconciliation_required", "paid_pending_fulfillment", "paid_pending_activation", "fulfilled"]),
+    expired: new Set(["expired", "paid_pending_fulfillment", "paid_pending_activation", "fulfilled", "reconciliation_required"]),
+    closed: new Set(["closed", "paid_pending_fulfillment", "paid_pending_activation", "fulfilled", "reconciliation_required"]),
+    fulfilled: new Set(["fulfilled"]),
+  };
+  return sameMembershipOrderQuote(previous, next) &&
+    allowedStatuses[previous.status]?.has(next.status) === true &&
+    (previous.paidAt === null || next.paidAt !== null) &&
+    (previous.status !== "fulfilled" || next.status === "fulfilled");
+}
+
+export function isRetryableMembershipPollingError(error: unknown): boolean {
+  return !(error instanceof DenApiError) || error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+export async function createMembershipClaimIdempotencyKey(orderId: string, organizationName: string): Promise<string> {
+  const input = new TextEncoder().encode(`${orderId.trim()}\n${organizationName.trim()}`);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", input);
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `desktop-membership-claim-${hex}`;
+}
+
 // Den requests target a control plane that does not answer CORS preflights.
 // On desktop, route cross-origin Den calls (including a Den API on a different
 // loopback port than the renderer) through the Electron main process so the
@@ -2215,6 +2647,7 @@ type DenRequestOptions = {
   body?: unknown;
   timeoutMs?: number;
   organizationId?: string | null;
+  idempotencyKey?: string | null;
 };
 
 async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
@@ -2260,6 +2693,10 @@ async function requestJsonRaw<T>(
   const organizationId = options.organizationId?.trim() ?? "";
   if (organizationId) {
     headers[ORG_PROXY_HEADER] = organizationId;
+  }
+  const idempotencyKey = options.idempotencyKey?.trim() ?? "";
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
   }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -2474,6 +2911,119 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
         throw new DenApiError(500, "invalid_tenant_account_payload", "Tenant account response was invalid.");
       }
       return account;
+    },
+
+    async getMembershipBillingCatalog(orgId: string): Promise<DenMembershipBillingCatalog> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/billing/catalog", {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      const catalog = normalizeDenMembershipBillingCatalog(payload);
+      if (!catalog) {
+        throw new DenApiError(500, "invalid_billing_catalog_payload", "Billing catalog response was invalid.");
+      }
+      return catalog;
+    },
+
+    async createMembershipOrder(
+      orgId: string,
+      selection: DenMembershipOrderSelection,
+      idempotencyKey: string,
+    ): Promise<DenMembershipOrder> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/billing/orders", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        idempotencyKey,
+        body: selection,
+      });
+      const order = normalizeDenMembershipOrder(payload);
+      const expectedOrganizationId = selection.targetMode === "existing_tenant" ? orgId : null;
+      if (!order || order.organizationId !== expectedOrganizationId || order.targetMode !== selection.targetMode ||
+        order.plan !== selection.plan || order.period !== selection.period || order.seats !== selection.seats) {
+        throw invalidMembershipOrderResponse();
+      }
+      return order;
+    },
+
+    async listMembershipOrders(limit = 50): Promise<DenMembershipOrder[]> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/billing/orders?limit=${Math.max(1, Math.min(100, Math.floor(limit)))}`, {
+        method: "GET",
+        token,
+      });
+      if (!isRecord(payload) || !Array.isArray(payload.orders)) {
+        throw new DenApiError(500, "invalid_billing_orders_payload", "Billing orders response was invalid.");
+      }
+      const orders = payload.orders.flatMap((value) => {
+        const order = normalizeDenMembershipOrder(value);
+        return order ? [order] : [];
+      });
+      if (orders.length !== payload.orders.length) {
+        throw new DenApiError(500, "invalid_billing_orders_payload", "Billing orders response was invalid.");
+      }
+      return orders;
+    },
+
+    async getMembershipOrder(orgId: string, orderId: string, previous: DenMembershipOrder): Promise<DenMembershipOrder> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/billing/orders/${encodeURIComponent(orderId)}`, {
+        method: "GET",
+        token,
+        organizationId: orgId,
+      });
+      const order = normalizeDenMembershipOrder(payload);
+      if (!order || order.id !== orderId || !validMembershipOrderTransition(previous, order)) {
+        throw invalidMembershipOrderResponse();
+      }
+      return order;
+    },
+
+    async createMembershipPaymentAttempt(
+      orgId: string,
+      orderId: string,
+      previous: DenMembershipOrder,
+    ): Promise<DenMembershipOrder> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/billing/orders/${encodeURIComponent(orderId)}/payment-attempts`, {
+        method: "POST",
+        token,
+        organizationId: orgId,
+      });
+      const order = normalizeDenMembershipOrder(payload);
+      if (!order || order.id !== orderId || !validMembershipOrderTransition(previous, order)) {
+        throw invalidMembershipOrderResponse();
+      }
+      return order;
+    },
+
+    async closeMembershipOrder(orgId: string, orderId: string, previous: DenMembershipOrder): Promise<DenMembershipOrder> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/billing/orders/${encodeURIComponent(orderId)}/close`, {
+        method: "POST",
+        token,
+        organizationId: orgId,
+      });
+      const order = normalizeDenMembershipOrder(payload);
+      if (!order || order.id !== orderId || !validMembershipOrderTransition(previous, order)) {
+        throw invalidMembershipOrderResponse();
+      }
+      return order;
+    },
+
+    async activatePaidTeamOrganization(
+      orderId: string,
+      name: string,
+      idempotencyKey: string,
+    ): Promise<DenOrgSummary> {
+      const payload = await requestJson<unknown>(baseUrls, `/v1/billing/orders/${encodeURIComponent(orderId)}/team-organization`, {
+        method: "POST",
+        token,
+        idempotencyKey,
+        body: { name },
+      });
+      const organization = isRecord(payload) ? getOrgSummary(payload.organization) : null;
+      if (!organization) {
+        throw new DenApiError(500, "invalid_organization_payload", "Organization activation response was invalid.");
+      }
+      return organization;
     },
 
     async listWorkers(orgId: string, limit = 20): Promise<DenWorkerSummary[]> {

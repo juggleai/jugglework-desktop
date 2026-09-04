@@ -1,0 +1,54 @@
+{
+  "contractVersion": "desktop-billing-v2",
+  "catalog": {
+    "version": "membership-cny-v1",
+    "currency": "CNY",
+    "payment": {
+      "alipayQrAvailable": false,
+      "alipayPageAvailable": true
+    },
+    "plans": [
+      { "plan": "normal", "tenantKind": "personal", "monthlyAmountFen": "0", "annualAmountFen": "0", "allowancePerCycle": "1000", "minimumSeats": "1", "pricedPerSeat": false },
+      { "plan": "pro", "tenantKind": "personal", "monthlyAmountFen": "9900", "annualAmountFen": "94800", "allowancePerCycle": "20000", "minimumSeats": "1", "pricedPerSeat": false },
+      { "plan": "power", "tenantKind": "personal", "monthlyAmountFen": "19900", "annualAmountFen": "190800", "allowancePerCycle": "45000", "minimumSeats": "1", "pricedPerSeat": false },
+      { "plan": "team", "tenantKind": "organization", "monthlyAmountFen": "16900", "annualAmountFen": "166800", "allowancePerCycle": "25000", "minimumSeats": "3", "pricedPerSeat": true },
+      { "plan": "business", "tenantKind": "organization", "monthlyAmountFen": "29900", "annualAmountFen": "298800", "allowancePerCycle": "50000", "minimumSeats": "10", "pricedPerSeat": true }
+    ]
+  },
+  "orders": {
+    "quoted": { "id": "order_quoted", "organizationId": "org_personal", "status": "quoted", "fulfillmentStatus": "unfulfilled", "nextAction": "refresh_checkout", "paymentCode": null, "checkout": null },
+    "checkoutPending": {
+      "id": "order_page_pending",
+      "organizationId": "org_personal",
+      "status": "payment_pending",
+      "fulfillmentStatus": "unfulfilled",
+      "nextAction": "open_checkout",
+      "paymentCode": null,
+      "checkout": {
+        "method": "alipay_page",
+        "url": "https://openapi.alipay.com/gateway.do?fixture=desktop-billing-v2",
+        "status": "pending",
+        "expiresAt": "2026-09-03T12:15:00Z",
+        "futureCheckoutField": true
+      }
+    },
+    "checkoutRefresh": { "id": "order_page_refresh", "organizationId": "org_personal", "status": "payment_pending", "fulfillmentStatus": "unfulfilled", "nextAction": "refresh_checkout", "paymentCode": null, "checkout": null },
+    "fulfilled": { "id": "order_fulfilled", "organizationId": "org_personal", "status": "fulfilled", "fulfillmentStatus": "fulfilled", "nextAction": "refresh_tenant_account", "paymentCode": null, "checkout": null },
+    "paidPendingActivation": { "id": "order_claim", "organizationId": null, "status": "paid_pending_activation", "fulfillmentStatus": "unfulfilled", "nextAction": "create_organization", "paymentCode": null, "checkout": null }
+  },
+  "actionableOrders": {
+    "orders": [
+      { "id": "order_page_pending", "organizationId": "org_personal", "status": "payment_pending", "nextAction": "open_checkout" },
+      { "id": "order_claim", "organizationId": null, "status": "paid_pending_activation", "nextAction": "create_organization" }
+    ]
+  },
+  "tenantAccount": {
+    "kind": "organization",
+    "tier": "business",
+    "status": "active",
+    "tierVersion": "2",
+    "points": { "available": "500000", "reserved": "0", "version": "3" },
+    "permissions": { "canViewLedger": true, "canManageBilling": true },
+    "billing": { "paid": true, "fundingKind": "paid", "plan": "business", "period": "monthly", "seats": "10", "cycleStart": "2026-09-01T00:00:00Z", "cycleEnd": "2026-10-01T00:00:00Z", "paidThrough": "2026-10-01T00:00:00Z", "nextGrantAt": "2026-10-01T00:00:00Z", "allowancePerCycle": "500000" }
+  }
+}

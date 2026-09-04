@@ -222,7 +222,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   const switchOrganization = useCallback(async (organizationId: string) => {
     const next = organizations.find((organization) => organization.id === organizationId);
-    if (!next || next.id === activeOrganization?.id) return;
+    if (!next) return;
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     if (!token) throw new Error(t("den.signed_out"));

@@ -71,11 +71,12 @@ describe("account menu", () => {
     expect(source).toContain("currentTier={tier}");
   });
 
-  test("keeps the membership dialog content-sized without internal scrollbars", () => {
+  test("keeps the membership dialog fixed while bounding only the recovery-order selector", () => {
     const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
     expect(source).toContain("max-w-[880px]");
     expect(source).toContain("md:h-[600px]");
-    expect(source).not.toContain("overflow-y-auto");
+    expect(source).toContain('className="mb-3 max-h-28 overflow-y-auto');
+    expect(source).toContain('className="flex w-[calc(100vw-2rem)] max-w-[880px] flex-col gap-0 overflow-hidden');
     expect(source).not.toContain("h-[min(");
   });
 
@@ -84,7 +85,8 @@ describe("account menu", () => {
     expect(source).toContain("relative flex size-40");
     expect(source).toContain("flex h-full flex-col rounded-[18px]");
     expect(source).toContain("支付完成后立即生效");
-    expect(source).toContain("支付宝扫码支付");
+    expect(source).toContain("支付宝网页支付");
+    expect(source).not.toContain("支付宝扫码支付");
   });
 
   test("gives billing choices the same white surface as tier choices", () => {
@@ -95,7 +97,7 @@ describe("account menu", () => {
   test("disables plans below the current membership tier", () => {
     const source = readFileSync(new URL("../src/react-app/shell/membership-upgrade-dialog.tsx", import.meta.url), "utf8");
     expect(source).toContain("isMembershipTierSelectable(currentTier, plan.id)");
-    expect(source).toContain("disabled={!selectable}");
+    expect(source).toContain("disabled={!selectable || selectionFrozen}");
     expect(source).toContain("不可降级");
   });
 });

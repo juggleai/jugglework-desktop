@@ -471,6 +471,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         open={upgradeOpen}
         onOpenChange={setUpgradeOpen}
         currentTier={tier}
+        tenantKind={tenantAccount?.kind ?? activeOrganization?.kind ?? null}
+        organizationId={activeOrganization?.id ?? null}
+        organizations={organizations}
+        canManageBilling={tenantAccount?.permissions.canManageBilling ?? false}
+        billingPeriod={tenantAccount?.billing?.paid ? tenantAccount.billing.period : null}
+        onSwitchOrganization={switchOrganization}
+        onFulfilled={refreshAccount}
       />
     </aside>
   );

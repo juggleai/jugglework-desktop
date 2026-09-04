@@ -54,6 +54,48 @@ describe("Den tenant account client", () => {
     expect(account).toMatchObject({ tier: "power", points: { available: 1280 } });
   });
 
+  test("parses the server decimal-string account contract", async () => {
+    setFetch(async () => new Response(JSON.stringify({
+      kind: "personal",
+      tier: "pro",
+      status: "active",
+      tierVersion: "3",
+      points: { available: "1280", reserved: "20", version: "8" },
+      permissions: { canViewLedger: true, canManageBilling: true },
+      billing: {
+        paid: true,
+        fundingKind: "paid",
+        plan: "pro",
+        period: "monthly",
+        seats: "1",
+        cycleStart: "2026-09-01T00:00:00Z",
+        cycleEnd: "2026-10-01T00:00:00Z",
+        paidThrough: "2026-10-01T00:00:00Z",
+        nextGrantAt: "2026-10-01T00:00:00Z",
+        allowancePerCycle: "20000",
+      },
+      futureAccountField: { ignored: true },
+    })));
+
+    const account = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal");
+    expect(account).toMatchObject({ tierVersion: 3, points: { available: 1280, reserved: 20, version: 8 }, billing: { paid: true, period: "monthly" } });
+  });
+
+  test("accepts an explicit null billing projection", async () => {
+    setFetch(async () => new Response(JSON.stringify({
+      kind: "personal",
+      tier: "normal",
+      status: "active",
+      tierVersion: "1",
+      points: { available: "1000", reserved: "0", version: "1" },
+      permissions: { canViewLedger: true, canManageBilling: true },
+      billing: null,
+    })));
+
+    const account = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal");
+    expect(account.billing).toBeNull();
+  });
+
   test("rejects a tier that does not belong to the tenant kind", async () => {
     setFetch(async () => new Response(JSON.stringify({
       kind: "personal",
