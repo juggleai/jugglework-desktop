@@ -8,6 +8,7 @@ import type { ServerConfig } from "../types.js";
 import { AutomationRepository } from "./repository.js";
 import { registerAutomationRoutes } from "../routes/automations.js";
 import { matchRoute, type RequestContext, type Route } from "../routes/registry.js";
+import { GithubEventAuthStore } from "./github-event-auth-store.js";
 
 test("automation routes support local-first CRUD, manual run and history", async () => {
   const root = await mkdtemp(join(tmpdir(), "jugglework-automation-routes-"));
@@ -250,6 +251,126 @@ test("interactive default permission profile is accepted and preserved", async (
     // 默认权限的任务同样可以手动触发，权限模式不影响可运行性判定。
     const manual = await invoke("POST", `/automations/${created.item.definition.id}/run`, {});
     assert.equal(manual.status, 201);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// TIPS: 这是 resolveAuth 的真实生产落点——渲染进程登录后把云端 session + 设备 agent
+// token 推给这个进程，见 routes/automations.ts 的 PUT /automations/github-event-auth。
+test("github-event-auth push/clear routes write through to the shared store, gated behind mutation scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-github-event-auth-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  const authStore = new GithubEventAuthStore();
+  const scopeChecks: string[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: (_ctx, required) => { scopeChecks.push(required); },
+    githubEventAuthStore: authStore,
+  });
+  const invoke = async (method: string, path: string, body?: unknown) => {
+    const url = new URL(`http://localhost${path}`);
+    const route = matchRoute(routes, method, url.pathname);
+    assert.ok(route, `no route registered for ${method} ${path}`);
+    const request = new Request(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return route.handler({ request, url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  try {
+    assert.equal(authStore.get(), null);
+
+    await assert.rejects(
+      () => invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com" }),
+      (error: unknown) => error instanceof Error && "code" in error && (error as { code: string }).code === "invalid_request",
+    );
+    assert.equal(authStore.get(), null);
+
+    const withoutAgentToken = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok" });
+    assert.equal(withoutAgentToken.status, 200);
+    assert.deepEqual(authStore.get(), { baseUrl: "https://cloud.example.com", token: "tok" });
+
+    const withAgentToken = await invoke("PUT", "/automations/github-event-auth", { baseUrl: "https://cloud.example.com", token: "tok2", agentToken: "agent-tok" });
+    assert.equal(withAgentToken.status, 200);
+    assert.deepEqual(authStore.get(), { baseUrl: "https://cloud.example.com", token: "tok2", agentToken: "agent-tok" });
+
+    const cleared = await invoke("DELETE", "/automations/github-event-auth");
+    assert.equal(cleared.status, 200);
+    assert.equal(authStore.get(), null);
+
+    // TIPS: PUT 和 DELETE 都是写操作，必须走跟其它自动化写接口相同的 collaborator 门槛
+    // （requireMutation），不能因为这是"推凭据"这个特殊用途就绕开权限检查。
+    assert.ok(scopeChecks.length >= 3);
+    assert.ok(scopeChecks.every((scope) => scope === "collaborator"));
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// TIPS: 没传 githubEventAuthStore 时，这两个路径不是"匹配不到路由"——`PUT
+// /automations/:automationId` 这条既有的通用 CRUD 路由本来就会吃掉任何
+// `/automations/<任意字符串>`，把 "github-event-auth" 当成一个 automationId。这里要验证
+// 的是一条安全边界：落到那条通用路由之后，因为这个 ID 对应不到任何真实自动化，会正常走
+// 它自己的 404，不会有任何跟凭据相关的特殊行为——不是没人处理这个请求，而是被安全地当成
+// "一个不存在的自动化"处理掉了。DELETE 没有对应的通用路由，才是真正意义上的匹配不到。
+test("without a store, the path falls through to the generic automation-not-found handler, not a credential endpoint", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-github-event-auth-absent-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+    // githubEventAuthStore intentionally omitted
+  });
+  try {
+    const isAutomationNotFound = (error: unknown) => error instanceof Error && "code" in error && (error as { code: string }).code === "automation_not_found";
+
+    const putRoute = matchRoute(routes, "PUT", "/automations/github-event-auth");
+    assert.ok(putRoute);
+    const putRequest = new Request("http://localhost/automations/github-event-auth", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1, draft: {} }),
+    });
+    await assert.rejects(
+      () => putRoute.handler({ request: putRequest, url: new URL(putRequest.url), params: putRoute.params, config: routeConfig } as RequestContext),
+      isAutomationNotFound,
+    );
+
+    const deleteRoute = matchRoute(routes, "DELETE", "/automations/github-event-auth");
+    assert.ok(deleteRoute);
+    const deleteRequest = new Request("http://localhost/automations/github-event-auth", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseRevision: 1 }),
+    });
+    await assert.rejects(
+      () => deleteRoute.handler({ request: deleteRequest, url: new URL(deleteRequest.url), params: deleteRoute.params, config: routeConfig } as RequestContext),
+      isAutomationNotFound,
+    );
   } finally {
     repository.close();
     await rm(root, { recursive: true, force: true });

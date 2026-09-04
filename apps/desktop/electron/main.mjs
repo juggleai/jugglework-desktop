@@ -48,6 +48,7 @@ import { createRemoteControlSettingsStore } from "./remote-control-settings.mjs"
 import { createRemoteControlCredentialStore } from "./remote-control-credentials.mjs";
 import { createRemoteControlCloudClient } from "./remote-control-cloud-client.mjs";
 import { createRemoteControlOperationRegistry } from "./remote-control-operations.mjs";
+import { createAutomationAgentTokenIssuer } from "./automation-agent-token.mjs";
 import { createManagedRuntimeClient } from "./managed-runtime-client.mjs";
 import { createSessionMutationCoordinator } from "./session-mutation-coordinator.mjs";
 import { createRemoteControlMutationRegistrations } from "./remote-control-mutation-adapters.mjs";
@@ -1046,6 +1047,8 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
   notify: ({ title, body }) => showDesktopNotification({ title, body }),
 });
 let remoteControlAgent = null;
+// 事件触发自动化专用，只读复用远程控制的设备身份——见 automation-agent-token.mjs 顶部注释。
+let automationAgentTokenIssuer = null;
 let remoteSessionEventBridge = null;
 const remoteControlSleepController = createRemoteControlSleepController({
   powerSaveBlocker,
@@ -2247,6 +2250,11 @@ const desktopCommandHandlers = {
       void event;
       return remoteControlAgent ? remoteControlLifecycleManager.status() : stoppedRemoteControlAgentStatus();
   },
+  "mintAutomationAgentToken": async (event, ...args) => {
+      void event;
+      if (!automationAgentTokenIssuer) return null;
+      return automationAgentTokenIssuer.mint(args[0]);
+  },
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
   },
@@ -3223,6 +3231,13 @@ if (!app.requestSingleInstanceLock()) {
     });
     remoteSessionEventBridge = createMainRemoteSessionEventBridge();
     remoteControlAgent = createMainRemoteControlAgent();
+    automationAgentTokenIssuer = createAutomationAgentTokenIssuer({
+      app,
+      safeStorage: require("electron").safeStorage,
+      platform: normalizePlatform(process.platform),
+      allowInsecureLoopback: isDevMode,
+      fetcher: electronNet.fetch,
+    });
     remoteControlPowerMonitorController.start();
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");

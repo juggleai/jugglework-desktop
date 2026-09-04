@@ -11,6 +11,7 @@ import {
 } from "../automation/validation.js";
 import { previewAutomationSchedule } from "../automation/schedule.js";
 import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "../automation/github-event-client.js";
+import type { GithubEventAuthStore } from "../automation/github-event-auth-store.js";
 import { ApiError } from "../errors.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
@@ -38,6 +39,13 @@ export interface RegisterAutomationRoutesOptions {
   listWorkspaceMcp?: (config: ServerConfig, workspaceId: string, workspaceRoot: string) => Promise<McpItem[]>;
   /** 到 jugglework-server 事件中继 API 的客户端；未提供时回落到"未配置"兜底实现。 */
   githubEventRelay?: GithubEventRelayClient;
+  /**
+   * resolveAuth 的真实生产落点——渲染进程登录后把云端 session token（可选带设备
+   * agent token）推给这个进程，见下面 `PUT /automations/github-event-auth`。未提供时
+   * 这两个端点直接 404（保持跟其它可选能力一致的降级方式），githubEventRelay 的
+   * resolveAuth 继续走它自己的兜底（当前是环境变量，见 github-event-auth.ts）。
+   */
+  githubEventAuthStore?: GithubEventAuthStore;
   enabled?: boolean;
 }
 
@@ -85,6 +93,31 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const perWeek = await relay.estimateFrequency(body as unknown as Parameters<GithubEventRelayClient["estimateFrequency"]>[0]);
     return jsonResponse({ perWeek });
   });
+  if (options.githubEventAuthStore) {
+    const authStore = options.githubEventAuthStore;
+    // TIPS: resolveAuth 的真实生产落点。渲染进程本来就持有真实的云端登录态，这里只是把
+    // 它转发进这个进程——不在这个进程里重新做一遍登录或者设备身份认证。baseUrl/token 是
+    // 必填的（没有它们轮询/写回这些能力就完全没法工作），agentToken 是可选的（只有设备已经
+    // 通过远程控制那套流程完成过 enrollment、渲染进程才拿得到，见桌面端设备身份基础设施——
+    // 缺了它只是"需要设备 agent token 的那几个方法"继续优雅拒绝，不影响其余方法）。
+    addRoute(routes, "PUT", "/automations/github-event-auth", "client", async (ctx) => {
+      requireMutation(ctx, options);
+      const body = await readJsonBody(ctx.request);
+      const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      if (!baseUrl || !token) throw new ApiError(400, "invalid_request", "baseUrl and token are required");
+      const agentToken = typeof body.agentToken === "string" ? body.agentToken.trim() : "";
+      authStore.set({ baseUrl, token, ...(agentToken ? { agentToken } : {}) });
+      return jsonResponse({ ok: true });
+    });
+    // TIPS: 渲染进程登出时调用——清掉这份内存里的凭据，避免旧会话的 token 在用户切换账号
+    // 之后还继续被拿去签轮询/写回请求。
+    addRoute(routes, "DELETE", "/automations/github-event-auth", "client", async (ctx) => {
+      requireMutation(ctx, options);
+      authStore.set(null);
+      return jsonResponse({ ok: true });
+    });
+  }
 
   // TIPS:workspaceId 是可选的。创建页在选工作空间之前就要能看到模型、智能体、技能和连接器，
   // 因此未指定时回落到第一个本机工作空间——模型和智能体本来就是用户级配置，技能和连接器则在

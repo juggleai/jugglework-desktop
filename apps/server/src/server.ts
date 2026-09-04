@@ -93,6 +93,11 @@ import {
 import { AutomationRepository } from "./automation/repository.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
+import { AutomationEventPipeline } from "./automation/event-pipeline.js";
+import { AutomationEventPoller } from "./automation/event-poller.js";
+import { createGithubEventRelayClient, type GithubEventRelayClient } from "./automation/github-event-client.js";
+import { resolveGithubEventAuthFromEnv } from "./automation/github-event-auth.js";
+import { GithubEventAuthStore } from "./automation/github-event-auth-store.js";
 import {
   createSessionMutationCoordinator,
   SessionMutationError,
@@ -890,15 +895,38 @@ export async function startServer(config: ServerConfig, options: {
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
   const localAutomationEnabled = resolveLocalAutomationEnabled();
+  // TIPS: resolveAuth 的真实生产落点是 githubEventAuthStore——渲染进程登录后通过
+  // PUT /automations/github-event-auth 把云端 session + 设备 agent token 推进来（见
+  // routes/automations.ts）。环境变量（github-event-auth.ts）是它的兜底，只在渲染进程还
+  // 没推送过、或者开发者手动覆盖时才会用到；resolveAuth 每次调用都重新读，凭据缺失时下游
+  // 的每个方法各自优雅降级，不需要在这里判断"要不要构造这个 client"。
+  const githubEventAuthStore = new GithubEventAuthStore();
+  const githubEventRelayClient: GithubEventRelayClient = createGithubEventRelayClient(
+    async () => githubEventAuthStore.get() ?? resolveGithubEventAuthFromEnv(),
+  );
   const automationExecutor = new AutomationExecutor({
     config,
     repository: automationRepository,
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    githubEventRelay: githubEventRelayClient,
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,
     executor: automationExecutor,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
+  const automationEventPipeline = new AutomationEventPipeline({ repository: automationRepository });
+  const automationEventPoller = new AutomationEventPoller({
+    relay: githubEventRelayClient,
+    pipeline: automationEventPipeline,
+    repository: automationRepository,
+    // TIPS: 轮询器自己不执行任何运行——它只把认领到的事件投递变成数据库里的 queued 运行
+    // 记录（AutomationEventPipeline.processOne 内部调用 repository.claimEventRun 做的），
+    // 真正的执行派发复用 AutomationScheduler 已有的 pump/execute 机制：notifyChanged 会
+    // 立即触发一次 wake，wake 里的 pump 会捡起任何 state==="queued" 的运行快照，不区分
+    // 它是时钟触发的还是事件触发的。见 scheduler.ts 的 pump()。
+    onDispatched: () => automationScheduler.notifyChanged(),
     log: (event, fields) => logger.log("info", event, fields),
   });
   const routes = createRoutes(
@@ -915,6 +943,8 @@ export async function startServer(config: ServerConfig, options: {
     automationRepository,
     automationScheduler,
     (event, fields) => logger.log("info", event, fields),
+    githubEventRelayClient,
+    githubEventAuthStore,
   );
 
   const serverOptions: {
@@ -1097,6 +1127,7 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
+    void automationEventPoller.dispose();
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
@@ -1135,6 +1166,11 @@ export async function startServer(config: ServerConfig, options: {
 
   if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
     automationScheduler.start();
+    // TIPS: 轮询器（task 3.1 的兜底通道）跟调度器同一个启用条件——resolveAuth 没配置时
+    // 每一轮轮询都会在第一步 listPendingDeliveries 就优雅失败并记一条日志，不会因为没有
+    // 真实凭据就抛出未处理异常或者搞垮启动流程，所以不需要额外判断"有没有凭据"才决定
+    // 启不启动。
+    automationEventPoller.start();
   }
 
   return {
@@ -1145,6 +1181,7 @@ export async function startServer(config: ServerConfig, options: {
       internalReloadDispatchers.delete(config);
       const errors: unknown[] = [];
       automationExecutor.dispose();
+      try { await automationEventPoller.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
@@ -1847,6 +1884,8 @@ function createRoutes(
   automationRepository: AutomationRepository,
   automationScheduler: AutomationScheduler,
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
+  githubEventRelayClient: GithubEventRelayClient,
+  githubEventAuthStore: GithubEventAuthStore,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -1962,6 +2001,8 @@ function createRoutes(
     createWorkspaceOpencodeClient,
     listWorkspaceMcp: listMcp,
     enabled: resolveLocalAutomationEnabled(),
+    githubEventRelay: githubEventRelayClient,
+    githubEventAuthStore,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

@@ -22,6 +22,7 @@ import {
 import {
   createDenClient,
   DenApiError,
+  denControlPlaneBaseUrl,
   ensureDenActiveOrganization,
   normalizeDenDesktopConfig,
   readDenBootstrapConfig,
@@ -33,6 +34,7 @@ import {
   applyBrandAppName,
   applyBrandIcon,
   desktopRemoteControlContextSync,
+  mintAutomationAgentToken,
 } from "../../../app/lib/desktop";
 import { createJuggleWorkServerClient } from "../../../app/lib/jugglework-server";
 import {
@@ -207,6 +209,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const remotePolicyRecoveryRef = useRef<Promise<void> | null>(null);
   const remotePolicyRecoveryWakeRef = useRef<(() => void) | null>(null);
   const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
+  // TIPS: 记的是"上一次真的推送成功的凭据摘要"（session token + 铸造出的 agent token），
+  // 不是登录状态本身——避免同一份凭据在每次无关的重渲染里被重复 PUT 上去；一旦
+  // (baseUrl, token, agentToken) 有一项变了或者退出登录了才需要再动一次。
+  const lastPushedGithubEventAuthRef = useRef<string | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
@@ -551,6 +557,59 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       cancelled = true;
     };
   }, [connectEnabled, loading]);
+
+  // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点（见
+  // apps/server/src/automation/github-event-auth-store.ts 和这次改动的 tasks.md 3.1）——
+  // apps/server 自己从来没有登录态，渲染进程本来就持有真实的云端 session，登录/切换账号/
+  // 登出时把它转发进 apps/server 的内存就行，不用另外给那个进程做一套登录。
+  // 设备 agent token 复用远程控制现成的设备身份铸造（服务端只认一个 scope 常量
+  // desktop-agent:connect，两个功能本来就是同一份设备身份，见
+  // automation-agent-token.mjs）——这台设备从没做过远程控制 enrollment 时 mint 返回
+  // null，不是错误，优雅省略 agentToken 就行，需要它的方法（轮询、认领、写回）继续
+  // 优雅拒绝，不影响不需要它的方法已经能用真实凭据工作。
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+
+    void (async () => {
+      const connection = await resolveJuggleWorkConnection();
+      if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+      const client = createJuggleWorkServerClient({
+        baseUrl: connection.normalizedBaseUrl,
+        token: connection.resolvedToken,
+        hostToken: connection.resolvedHostToken,
+      });
+
+      if (denAuth.status !== "signed_in") {
+        if (lastPushedGithubEventAuthRef.current === null) return;
+        lastPushedGithubEventAuthRef.current = null;
+        await client.clearGithubEventAuth();
+        return;
+      }
+
+      const settings = readDenSettings();
+      const cloudToken = settings.authToken?.trim() ?? "";
+      const cloudBaseUrl = settings.baseUrl?.trim() ?? "";
+      if (!cloudToken || !cloudBaseUrl) return;
+
+      const scope = currentPolicyScope();
+      const minted = scope ? await mintAutomationAgentToken(scope).catch(() => null) : null;
+      if (cancelled) return;
+
+      const digest = `${cloudBaseUrl}::${cloudToken}::${minted?.accessToken ?? ""}`;
+      if (lastPushedGithubEventAuthRef.current === digest) return;
+      lastPushedGithubEventAuthRef.current = digest;
+      await client.pushGithubEventAuth({
+        cloudBaseUrl: denControlPlaneBaseUrl(cloudBaseUrl),
+        cloudToken,
+        ...(minted ? { agentToken: minted.accessToken } : {}),
+      });
+    })().catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [denAuth.status, denAuth.user?.id, loading, settingsVersion]);
 
   // Dev-only: expose a bridge so evals can inject config directly without
   // requiring a cloud sign-in. This simply applies the config to React state.

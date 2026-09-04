@@ -700,7 +700,7 @@ function ensureDenApiBasePath(input: string | null | undefined): string | null {
 }
 
 /** The control plane root (`<origin>/jwork`) that `/api/...` routes hang off. */
-function denControlPlaneBaseUrl(baseUrl: string): string {
+export function denControlPlaneBaseUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${DEN_CONTROL_PLANE_PATH}`;
 }
 

@@ -590,6 +590,7 @@ const {
   desktopRemoteControlReregisterAndEnable,
   desktopRemoteControlCredentialDelete,
   desktopRemoteControlStatusRead,
+  mintAutomationAgentToken,
 } = desktopBridge;
 
 export {
@@ -667,4 +668,5 @@ export {
   desktopRemoteControlReregisterAndEnable,
   desktopRemoteControlCredentialDelete,
   desktopRemoteControlStatusRead,
+  mintAutomationAgentToken,
 };
