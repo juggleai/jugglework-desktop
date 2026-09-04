@@ -20,6 +20,7 @@ import {
   readDenSettings,
   resolveDenBaseUrls,
   setDenBootstrapConfig,
+  writeDenIMLoginBootstrap,
   writeDenSettings,
   type DenBootstrapConfig,
   type DenOrgSummary,
@@ -231,7 +232,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     setAccountError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      await client.setActiveOrganization({ organizationId: next.id });
+      // TIPS: 这次切换的响应里带着新组织重新供给的 IM 凭据（可能是 null，比如切进一个
+      // 没开 IM 的组织）——之前这里没接住，切完组织聊天/通讯录永远连不上新组织的 IM，
+      // 见 den.ts 的 ensureActiveOrganization 决策记录。下面 ensureDenActiveOrganization
+      // 那次调用不会重复写：它这时候看到的服务端活跃组织已经等于目标组织，不会再真的
+      // 发起一次切换请求。
+      const switchResult = await client.setActiveOrganization({ organizationId: next.id });
+      writeDenIMLoginBootstrap(switchResult?.im ?? null);
       writeDenSettings({
         ...settings,
         activeOrgId: next.id,
@@ -300,10 +307,16 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // before anything reads it under the new account.
       reconcileDenAccountIdentity(nextUser?.id);
 
-      await ensureDenActiveOrganization({
-        forceServerSync:
-          !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
-      }).catch(() => null);
+      // TIPS: 之前这里只在本地完全没有 activeOrgId 时才 forceServerSync——但 handoff
+      // 登录（比如 desktop-bootstrap.json 里带着目标组织）会先把 activeOrgId 写到本地，
+      // 而服务端那次 exchange 选的活跃组织（`ensureAndSelectOrganization`，默认落在
+      // Personal Workspace）跟这个本地值完全没同步过。此前的条件因为"本地已经有值"就
+      // 误判成"已经同步好了"，直接跳过对服务端的纠正，导致会话永远卡在 Personal
+      // Workspace——而 Personal Workspace 在服务端是硬编码不带 IM 的，聊天/通讯录因此
+      // 白屏，且退出重登也不会自愈。`ensureDenActiveOrganization` 内部本来就只在
+      // `response.activeOrgId !== targetOrg.id` 时才真的发起同步请求，这里始终传
+      // true 交给它自己判断即可，不会增加多余请求。
+      await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
 
       if (currentRun !== refreshTokenRef.current) return;
 

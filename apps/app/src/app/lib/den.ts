@@ -1209,7 +1209,11 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
     options?.forceServerSync &&
     (!response.activeOrgId || response.activeOrgId !== targetOrg.id)
   ) {
-    await client.setActiveOrganization({ organizationId: targetOrg.id });
+    // TIPS: 只有真正发生了服务端切换时，响应里的 `im` 才代表当前活跃组织的最新供给
+    // 结果（可能是 null，比如切到没开 IM 的组织，这也是需要写下去覆盖旧数据的）——
+    // 不切换就不动本地已有的 IM 凭据。
+    const result = await client.setActiveOrganization({ organizationId: targetOrg.id });
+    writeDenIMLoginBootstrap(result?.im ?? null);
   }
 
   writeDenSettings({
@@ -2302,18 +2306,23 @@ async function requestJson<T>(
   return raw.json as T;
 }
 
+// TIPS: 服务端 `/v1/me/active-organization` 在真正切换活跃组织时，会用新组织重新走一遍
+// IM 供给（跟登录时的 handoff exchange 走同一个 `imBootstrapContract` 投影，见服务端
+// apis/cloud.go 的 setActiveOrganization），响应体带着一份新的 `im`——旧代码把这个响应整个
+// 丢掉，只等它 resolve，导致"服务端已经切到正确组织、IM 也重新供给好了，本地却永远拿不到
+// 这份凭据"，只能眼睁睁看着聊天/通讯录白屏。这里把 `im` 解析出来交还给调用方去持久化。
 async function ensureActiveOrganization(
   baseUrls: DenBaseUrls,
   token: string | null,
   input: { organizationId?: string | null; organizationSlug?: string | null },
-) {
+): Promise<{ im: DenIMLoginBootstrap | null } | null> {
   const organizationId = input.organizationId?.trim() ?? "";
   const organizationSlug = input.organizationSlug?.trim() ?? "";
   if (!token || (!organizationId && !organizationSlug)) {
-    return;
+    return null;
   }
 
-  await requestJson<unknown>(baseUrls, "/v1/me/active-organization", {
+  const payload = await requestJson<unknown>(baseUrls, "/v1/me/active-organization", {
     method: "POST",
     token,
     body: {
@@ -2321,6 +2330,7 @@ async function ensureActiveOrganization(
       organizationSlug: organizationSlug || undefined,
     },
   });
+  return { im: getIMLoginBootstrap(payload) };
 }
 
 export function createDenClient(options: { baseUrl: string; token?: string | null }) {
@@ -2333,8 +2343,10 @@ export function createDenClient(options: { baseUrl: string; token?: string | nul
     /** The resolved deployment origin and its derived `/jwork/api` root. */
     baseUrls,
 
-    async setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }): Promise<void> {
-      await ensureActiveOrganization(baseUrls, token, input);
+    async setActiveOrganization(
+      input: { organizationId?: string | null; organizationSlug?: string | null },
+    ): Promise<{ im: DenIMLoginBootstrap | null } | null> {
+      return ensureActiveOrganization(baseUrls, token, input);
     },
 
     async signInAccount(account: string, password: string): Promise<DenAuthResult> {
