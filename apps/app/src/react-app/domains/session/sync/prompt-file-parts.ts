@@ -55,6 +55,26 @@ function toAbsolutePath(value: string, workspaceRoot: string) {
   return "";
 }
 
+function isWorkspacePath(path: string, workspaceRoot: string) {
+  const normalizedPath = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedRoot = workspaceRoot.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!normalizedPath || !normalizedRoot) return false;
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+/**
+ * API routes are commonly written like absolute POSIX paths. In particular,
+ * `/apps/...` endpoints used in prompts must remain text instead of becoming
+ * file parts, otherwise OpenCode attempts to read them from disk and emits a
+ * misleading `File not found` session error.
+ *
+ * Keep an `/apps/...` path when it really points into the selected workspace;
+ * this preserves container workspaces rooted at `/apps`.
+ */
+function isApiRoutePath(value: string, absolutePath: string, workspaceRoot: string) {
+  return /^\/apps(?:\/|$)/i.test(value) && !isWorkspacePath(absolutePath, workspaceRoot);
+}
+
 function filenameFromPath(value: string) {
   const normalized = value.replace(/\\/g, "/");
   const segments = normalized.split("/").filter(Boolean);
@@ -87,6 +107,7 @@ export function firstLineLocalFileParts(text: string, workspaceRoot: string): Fi
     if (!hasPathBoundary(firstLine, match.index ?? 0)) continue;
     const raw = stripTrailingPunctuation(match[0]);
     const absolute = toAbsolutePath(raw, workspaceRoot);
+    if (isApiRoutePath(raw, absolute, workspaceRoot)) continue;
     if (!absolute || seen.has(absolute)) continue;
     seen.add(absolute);
     parts.push({

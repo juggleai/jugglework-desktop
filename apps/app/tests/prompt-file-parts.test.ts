@@ -46,6 +46,31 @@ describe("first-line local file parts", () => {
     expect(parts).toEqual([]);
   });
 
+  test("does not treat /apps API routes as local files", () => {
+    const parts = firstLineLocalFileParts(
+      "补齐 /apps/wsurl/set、/apps/appurl/set、/apps/apiurl/set，参考 /apps/alias/set 的实现",
+      "/Users/omar/code/jugglework",
+    );
+
+    expect(parts).toEqual([]);
+  });
+
+  test("keeps /apps paths that are inside the selected workspace", () => {
+    const parts = firstLineLocalFileParts(
+      "check /apps/jugglework/src/server.ts",
+      "/apps/jugglework",
+    );
+
+    expect(parts).toEqual([
+      {
+        type: "file",
+        mime: "text/plain",
+        url: "file:///apps/jugglework/src/server.ts",
+        filename: "server.ts",
+      },
+    ]);
+  });
+
   test("detects Windows absolute paths in the first line", () => {
     expect(firstLineLocalFileParts("check C:\\Users\\omar\\list.csv", "C:/Users/omar/code/jugglework")).toEqual([
       {
