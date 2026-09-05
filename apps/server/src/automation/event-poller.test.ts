@@ -298,11 +298,11 @@ test("pollNow() skips the remaining interval and starts another poll immediately
 
 test("pollNow() called mid-poll does not start a concurrent poll, but queues exactly one more right after", async () => {
   let callCount = 0;
-  let resolveFirst: (() => void) | null = null;
+  const state: { resolveFirst: (() => void) | null } = { resolveFirst: null };
   const relay = relayStub({
     listPendingDeliveries: async () => {
       callCount += 1;
-      if (callCount === 1) await new Promise<void>((resolve) => { resolveFirst = resolve; });
+      if (callCount === 1) await new Promise<void>((resolve) => { state.resolveFirst = () => resolve(); });
       return { items: [], nextCursor: null };
     },
   });
@@ -322,7 +322,7 @@ test("pollNow() called mid-poll does not start a concurrent poll, but queues exa
   poller.pollNow();
   assert.equal(callCount, 1, "must not start a second, concurrent poll while one is already in flight");
 
-  resolveFirst?.();
+  state.resolveFirst?.();
   await eventually(() => callCount === 2);
   await eventually(() => timers.length === 1);
   assert.equal(timers[0]?.delayMs, 30_000, "normal interval-based scheduling resumes after the queued poll");

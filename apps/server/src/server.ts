@@ -152,6 +152,9 @@ const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
 const JUGGLEWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
 const JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+/** GitHub 官方托管的远程 MCP 端点，认 `Authorization: Bearer <token>`——事件触发自动化的
+ * 运行期写回授权（`AutomationExecutorOptions.writeBackMcp`）挂的就是这一个。 */
+const GITHUB_APP_WRITEBACK_MCP_URL = "https://api.githubcopilot.com/mcp/";
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 const agentDiagnosticsLastRunByServer = new WeakMap<ServerConfig, Map<string, number>>();
 const agentDiagnosticsInFlightByServer = new WeakMap<ServerConfig, Set<string>>();
@@ -916,6 +919,25 @@ export async function startServer(config: ServerConfig, options: {
     resolveWorkspace,
     createWorkspaceOpencodeClient,
     githubEventRelay: githubEventRelayClient,
+    // TIPS: 复用这个产品里已经在用的"工作区 MCP 条目 + 热同步进正在跑的引擎"这套机制
+    // （`jugglework-cloud`/插件分发的 MCP 走的就是这条路，见 mcp.ts 的 addMcp 和下面
+    // syncRuntimeMcpToOpencodeEngine 的路由用法），不是新架构——只是这次挂的是运行期现铸
+    // 的 GitHub 写回 token，不是用户手填的凭据。GitHub 官方托管的远程 MCP 端点认
+    // `Authorization: Bearer <token>`，GitHub App 安装令牌可以直接当这个 Bearer token 用。
+    writeBackMcp: {
+      upsert: async (workspace, name, grant) => {
+        await addMcp(config, workspace.id, name, {
+          type: "remote",
+          url: GITHUB_APP_WRITEBACK_MCP_URL,
+          headers: { Authorization: `Bearer ${grant.token}` },
+        });
+        // Hot-sync into the running engine so this run's session can see the
+        // tool immediately, without waiting for an engine rebuild — same
+        // reasoning as the interactive mcp.add route (see server.ts's
+        // `/workspace/:id/mcp` POST handler).
+        await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
+      },
+    },
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,

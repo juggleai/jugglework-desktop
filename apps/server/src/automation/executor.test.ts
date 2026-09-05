@@ -6,7 +6,7 @@ import test from "node:test";
 import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition } from "@jugglework/types/automation";
 import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
-import { AutomationExecutor } from "./executor.js";
+import { AutomationExecutor, writeBackMcpName } from "./executor.js";
 import { AutomationRepository } from "./repository.js";
 import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "./github-event-client.js";
 import { automationSqliteAdapter } from "./sqlite.js";
@@ -426,10 +426,12 @@ test("event-triggered execution with a github-app connector fetches a fresh writ
     ...createUnconfiguredGithubEventRelayClient(),
     fetchWriteBackGrant: async (automationId, repo) => { grantCalls.push({ automationId, repo }); return { token: "tok", expiresAt: 999 }; },
   };
+  const mcpUpsertCalls: Array<{ workspaceId: string; name: string; grant: { token: string; expiresAt: number } }> = [];
+  let dispatchedPrompt: unknown;
   const opencode = {
     session: {
       create: async () => ({ data: { id: "session-1" } }),
-      promptAsync: async () => ({ data: true, error: undefined }),
+      promptAsync: async (prompt: unknown) => { dispatchedPrompt = prompt; return { data: true, error: undefined }; },
       status: async () => ({ data: { "session-1": { type: "idle" } } }),
       messages: async () => ({ data: [{ info: { role: "assistant", providerID: "provider", modelID: "model", agent: "build" } }] }),
     },
@@ -444,10 +446,21 @@ test("event-triggered execution with a github-app connector fetches a fresh writ
       resolveWorkspace: async () => serverConfig().workspaces[0],
       createWorkspaceOpencodeClient: () => opencode as never,
       githubEventRelay: relay,
+      writeBackMcp: {
+        upsert: async (workspace, name, grant) => { mcpUpsertCalls.push({ workspaceId: workspace.id, name, grant }); },
+      },
       now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
     });
     await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:482", extraPromptParts: [] });
     assert.equal(fixture.repository.getRun(claim.run.id)?.state, "succeeded");
+    // TIPS: 换到的 token 必须真的被拿去挂载工具，不能只停在"换取成功"这一步——这正是
+    // 之前一直卡住的那个缺口（见 executor.ts 的 fetchWriteBackGrant 注释）。
+    assert.equal(mcpUpsertCalls.length, 1);
+    assert.equal(mcpUpsertCalls[0]?.name, writeBackMcpName(definition.id));
+    assert.deepEqual(mcpUpsertCalls[0]?.grant, { token: "tok", expiresAt: 999 });
+    // prompt 里也要带上"这个工具现在可用"的提示，模型不会凭空知道。
+    const parts = (dispatchedPrompt as { parts: Array<{ text?: string }> } | undefined)?.parts ?? [];
+    assert.ok(parts.some((part) => part.text?.includes("GitHub 工具")));
     assert.equal(grantCalls.length, 1);
     assert.equal(grantCalls[0]?.automationId, definition.id);
     assert.deepEqual(grantCalls[0]?.repo, { owner: "juggleai", name: "jugglework-desktop" });
@@ -480,6 +493,82 @@ test("event-triggered execution fails preflight with connector_unavailable when 
       now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
     });
     await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:483", extraPromptParts: [] });
+    const failed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.errorCode, "connector_unavailable");
+  } finally {
+    await fixture.close();
+  }
+});
+
+// TIPS: 换到 token 只是前半段——没有地方把它接到 agent 能调用的工具上，这一轮不该假装成功。
+test("event-triggered execution fails preflight with connector_unavailable when the grant is fetched but nothing can mount it as a tool", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), connectors: [{ id: "github-app", source: "github-app" as const, label: "GitHub App" }] };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-no-mcp",
+    entityRef: "github:pull_request:484", sourceDeliveryId: "delivery-3", now: 100,
+  });
+  const relay: GithubEventRelayClient = {
+    ...createUnconfiguredGithubEventRelayClient(),
+    fetchWriteBackGrant: async () => ({ token: "tok", expiresAt: 999 }),
+  };
+  const opencode = {
+    session: { create: async () => ({ data: { id: "session-1" } }), promptAsync: async () => ({ data: true, error: undefined }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      githubEventRelay: relay,
+      // TIPS:故意不传 writeBackMcp——换到 token 但没地方挂载，必须整轮失败，不能悄悄
+      // 当成"这一轮不需要写回工具"继续跑。
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:484", extraPromptParts: [] });
+    const failed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.errorCode, "connector_unavailable");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("event-triggered execution fails preflight with connector_unavailable when mounting the tool itself fails", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), connectors: [{ id: "github-app", source: "github-app" as const, label: "GitHub App" }] };
+  fixture.repository.createDefinition(definition, definition);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-mcp-fails",
+    entityRef: "github:pull_request:485", sourceDeliveryId: "delivery-4", now: 100,
+  });
+  const relay: GithubEventRelayClient = {
+    ...createUnconfiguredGithubEventRelayClient(),
+    fetchWriteBackGrant: async () => ({ token: "tok", expiresAt: 999 }),
+  };
+  const opencode = {
+    session: { create: async () => ({ data: { id: "session-1" } }), promptAsync: async () => ({ data: true, error: undefined }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      githubEventRelay: relay,
+      writeBackMcp: { upsert: async () => { throw new Error("engine unreachable"); } },
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:485", extraPromptParts: [] });
     const failed = fixture.repository.getRun(claim.run.id)!;
     assert.equal(failed.state, "failed");
     assert.equal(failed.errorCode, "connector_unavailable");

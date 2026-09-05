@@ -7,9 +7,21 @@ import { AUTOMATION_PERMISSION_PROFILE, type AutomationErrorCode, type Automatio
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { applyMcpWorkspacePolicyToPrompt, readMcpWorkspaceToolPolicy } from "../mcp-workspace-tool-policy.js";
 import { AutomationRepository, type AutomationRunSnapshot } from "./repository.js";
-import type { GithubEventRelayClient } from "./github-event-client.js";
+import type { GithubEventRelayClient, GithubAppWriteBackGrant } from "./github-event-client.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
+
+/**
+ * 把一次换到的写回 token 真正挂载成 agent 能调用的工具。
+ * TIPS: 这不是新架构——复用的是这个产品里 `jugglework-cloud`/插件分发的 MCP 已经在用的那套
+ * 机制（`mcp.ts` 的 `addMcp` 写一条工作区 MCP 条目 + `syncRuntimeMcpToOpencodeEngine` 热同步
+ * 进正在跑的引擎），只是这次挂的是运行期现铸的 GitHub 远程 MCP 凭据，不是用户在设置里手填的
+ * 那种。具体实现（`addMcp`/`syncRuntimeMcpToOpencodeEngine` 都是 server.ts 内部持有的能力，
+ * executor 这层不直接依赖它们）由 server.ts 注入。
+ */
+export type WriteBackMcpProvisioner = {
+  upsert(workspace: WorkspaceInfo, name: string, grant: GithubAppWriteBackGrant): Promise<void>;
+};
 
 export type AutomationExecutorOptions = {
   config: ServerConfig;
@@ -18,6 +30,8 @@ export type AutomationExecutorOptions = {
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
   /** 用于事件触发运行的写回授权铸造；省略时事件触发运行的 `github-app` preflight 直接判定不可用。 */
   githubEventRelay?: GithubEventRelayClient;
+  /** 把铸造出的写回授权真正接到 agent 能调用的工具上；省略时同样判定 `github-app` preflight 不可用——见 `WriteBackMcpProvisioner` 的 TIPS。 */
+  writeBackMcp?: WriteBackMcpProvisioner;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
 };
@@ -105,7 +119,10 @@ export class AutomationExecutor {
           : { system: "这是自动化任务，但运行在默认权限下：敏感操作需要用户确认，请在需要时正常发起确认。" }),
         tools: toolAllowlist,
         parts: promptParts(
-          eventContext ? [...definition.prompt.parts, ...eventContext.extraPromptParts] : definition.prompt.parts,
+          appendWriteBackToolNote(
+            eventContext ? [...definition.prompt.parts, ...eventContext.extraPromptParts] : definition.prompt.parts,
+            definition,
+          ),
           workspace.path,
         ),
       }, observedToolIds, policy.disabledServerNames);
@@ -311,28 +328,37 @@ export class AutomationExecutor {
       }
     }
     if (definition.trigger.kind === "event" && definition.connectors.some((connector) => connector.source === "github-app")) {
-      await this.fetchWriteBackGrant(definition);
+      await this.fetchWriteBackGrant(definition, workspace);
     }
     return this.resolveConnectorToolAllowlist(snapshot, opencode);
   }
 
   /**
-   * 换取本轮运行期 GitHub App 写回授权，preflight 阶段失败即整轮失败。
-   * TIPS: 只做到"换取成功/失败"这一步——换到的短时效凭据如何真正注入到 agent 后续调用
-   * GitHub 工具的执行链路（MCP 连接器凭据覆盖），依赖尚未探明的 OpenCode 侧接口，留给
-   * 后续接线；这里已经完整实现了"每轮独立换取、换取失败即挡在 preflight"这条不变量。
+   * 换取本轮运行期 GitHub App 写回授权，并把它接到 agent 真能调用的工具上；preflight
+   * 阶段任一步失败即整轮失败。
+   * TIPS: 挂载用的是这个自动化自己的固定名字（`writeBackMcpName`），不是按 run 单独起名——
+   * 同一个自动化的仓库是固定的，同一实体（PR）先后两轮触发本来就该看到同一个工具，多个
+   * 实体（不同 PR）并发触发时共用最新换到的那份授权也没问题（token 本身就是按仓库、不是
+   * 按 PR 限定的）；真正要避免的是**不同自动化**（不同仓库）共用一个 workspace 时互相覆盖，
+   * 用 automationId 而不是固定字符串命名就是为了避开这个碰撞。
    */
-  private async fetchWriteBackGrant(definition: AutomationRunSnapshot["definition"]): Promise<void> {
+  private async fetchWriteBackGrant(definition: AutomationRunSnapshot["definition"], workspace: WorkspaceInfo): Promise<void> {
     if (definition.trigger.kind !== "event") return;
-    if (!this.options.githubEventRelay) {
+    if (!this.options.githubEventRelay || !this.options.writeBackMcp) {
       throw failure("connector_unavailable", "运行期 GitHub App 写回授权服务当前不可用");
     }
+    let grant: GithubAppWriteBackGrant;
     try {
-      await this.options.githubEventRelay.fetchWriteBackGrant(definition.id, definition.trigger.repository);
+      grant = await this.options.githubEventRelay.fetchWriteBackGrant(definition.id, definition.trigger.repository);
     } catch (error) {
       const code = (error as { code?: string } | undefined)?.code;
       if (code === "github_event_relay_unavailable") throw failure("connector_unavailable", "运行期写回授权服务当前不可用");
       throw failure("connector_reauth_required", "无法换取运行期 GitHub App 写回授权，请检查组织安装状态");
+    }
+    try {
+      await this.options.writeBackMcp.upsert(workspace, writeBackMcpName(definition.id), grant);
+    } catch {
+      throw failure("connector_unavailable", "无法为本轮运行接入 GitHub 写回工具");
     }
   }
 
@@ -448,6 +474,33 @@ export class AutomationExecutor {
       errorMessage: normalized.message,
     }, this.now());
   }
+}
+
+/**
+ * 写回 MCP 挂载用的固定名字——按 automationId 命名，不按 run/PR，见 `fetchWriteBackGrant`
+ * 的 TIPS。`validateMcpName`（`validators.ts`）只认字母数字下划线短横线，automationId 是
+ * UUID，天然满足。
+ */
+export function writeBackMcpName(automationId: string): string {
+  return `github-writeback-${automationId}`;
+}
+
+/**
+ * 静态 prompt 从来不知道"这一轮多了个 GitHub 工具"——`github-app` 连接器本身只是运行期
+ * 才挂载的写回授权标记（见 `resolveConnectorToolAllowlist` 的 TIPS），模型没有任何先验
+ * 理由会去找这个工具。这里补一句显式提示，跟不可信内容边界、增量摘要一样，追加在 prompt
+ * 最后。
+ */
+function appendWriteBackToolNote(
+  parts: AutomationPromptPart[],
+  definition: AutomationRunSnapshot["definition"],
+): AutomationPromptPart[] {
+  if (definition.trigger.kind !== "event") return parts;
+  if (!definition.connectors.some((connector) => connector.source === "github-app")) return parts;
+  return [
+    ...parts,
+    { type: "text", text: "你现在已经连接了一个 GitHub 工具，可以用它对触发这次运行的 PR/Issue 发表评论或提交审查意见；这个工具只在这一轮运行期间有效。" },
+  ];
 }
 
 function promptParts(parts: AutomationPromptPart[], workspacePath: string) {
