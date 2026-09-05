@@ -577,6 +577,58 @@ test("event-triggered execution fails preflight with connector_unavailable when 
   }
 });
 
+// TIPS（3b.8）：写回授权换取失败，且不是"服务暂时不可用"（github_event_relay_unavailable）
+// 那种可重试的失败，大概率是仓库解绑/App 卸载/转移——同一个实体换个新会话也解决不了同一个
+// 病根，所以这条实体的会话归属映射要显式标成 invalid，而不是留着 active 让下一轮触发
+// 继续误以为复用这个会话还有意义。运行记录本身仍然用 connector_reauth_required 呈现，
+// 跟"会话本身不可解析"走的是两条不同的提示路径，不能混用。
+test("event-triggered execution invalidates the entity session mapping when the write-back grant fetch fails with a real (not transient) reauth error", async () => {
+  const fixture = await repositoryFixture();
+  const definition = { ...eventAutomationDefinition(), connectors: [{ id: "github-app", source: "github-app" as const, label: "GitHub App" }] };
+  fixture.repository.createDefinition(definition, definition);
+  // 先手动种一条 active 的会话归属映射，模拟"这个实体之前已经成功复用过会话"。
+  fixture.repository.upsertEntitySessionMapping(definition.id, "github:pull_request:486", "workspace-1", "session-existing", 50);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-revoked",
+    entityRef: "github:pull_request:486", sourceDeliveryId: "delivery-5", now: 100,
+  });
+  const relay: GithubEventRelayClient = {
+    ...createUnconfiguredGithubEventRelayClient(),
+    // TIPS：任何不是 `github_event_relay_unavailable` 的失败都被当成"真的换不到授权"，
+    // 见 fetchWriteBackGrant 的 catch 分支——不需要伪造一个特定的错误码，普通 Error 就够。
+    fetchWriteBackGrant: async () => { throw new Error("installation not found"); },
+  };
+  const opencode = {
+    session: { create: async () => ({ data: { id: "session-1" } }), promptAsync: async () => ({ data: true, error: undefined }), status: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: { all: [] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      githubEventRelay: relay,
+      // TIPS：必须提供 writeBackMcp（哪怕是个空实现）——preflight 的前置守卫是
+      // "githubEventRelay 和 writeBackMcp 任一缺失都直接判 connector_unavailable"，
+      // 不给的话根本走不到真正调用 fetchWriteBackGrant 那一步，测不出这条用例要测的东西。
+      writeBackMcp: { upsert: async () => undefined },
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:486", extraPromptParts: [] });
+    const failed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(failed.state, "failed");
+    assert.equal(failed.errorCode, "connector_reauth_required");
+    const mapping = fixture.repository.getEntitySessionMapping(definition.id, "github:pull_request:486");
+    assert.equal(mapping?.status, "invalid");
+    assert.equal(mapping?.invalidReason, "connector_reauth_required");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("shadow lifecycle runs preflight but never creates a session or dispatches a prompt", async () => {
   const fixture = await repositoryFixture();
   const definition = { ...eventAutomationDefinition(), lifecycle: "shadow" as const };

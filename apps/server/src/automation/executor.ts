@@ -328,7 +328,7 @@ export class AutomationExecutor {
       }
     }
     if (definition.trigger.kind === "event" && definition.connectors.some((connector) => connector.source === "github-app")) {
-      await this.fetchWriteBackGrant(definition, workspace);
+      await this.fetchWriteBackGrant(snapshot, workspace);
     }
     return this.resolveConnectorToolAllowlist(snapshot, opencode);
   }
@@ -342,7 +342,8 @@ export class AutomationExecutor {
    * 按 PR 限定的）；真正要避免的是**不同自动化**（不同仓库）共用一个 workspace 时互相覆盖，
    * 用 automationId 而不是固定字符串命名就是为了避开这个碰撞。
    */
-  private async fetchWriteBackGrant(definition: AutomationRunSnapshot["definition"], workspace: WorkspaceInfo): Promise<void> {
+  private async fetchWriteBackGrant(snapshot: AutomationRunSnapshot, workspace: WorkspaceInfo): Promise<void> {
+    const definition = snapshot.definition;
     if (definition.trigger.kind !== "event") return;
     if (!this.options.githubEventRelay || !this.options.writeBackMcp) {
       throw failure("connector_unavailable", "运行期 GitHub App 写回授权服务当前不可用");
@@ -353,6 +354,15 @@ export class AutomationExecutor {
     } catch (error) {
       const code = (error as { code?: string } | undefined)?.code;
       if (code === "github_event_relay_unavailable") throw failure("connector_unavailable", "运行期写回授权服务当前不可用");
+      // TIPS（3b.8）：这里的失败不是"服务暂时不可用"，是"确实换不到授权"——大概率是仓库
+      // 解绑、App 被卸载或转移到了别的组织，即换个新会话也解决不了同一个病根。把这条实体
+      // 的会话归属映射显式标成 invalid（而不是留着 active，让下一轮触发误以为复用这个会话
+      // 还有意义），运行记录本身继续用 connector_reauth_required 呈现，两者不混用同一种提示
+      // ——排查时要分得清是"会话丢了"还是"上游权限被收回了"。
+      const entityRef = snapshot.run.eventMetadata?.entityRef;
+      if (entityRef) {
+        this.options.repository.invalidateEntitySessionMapping(definition.id, entityRef, "connector_reauth_required", this.now());
+      }
       throw failure("connector_reauth_required", "无法换取运行期 GitHub App 写回授权，请检查组织安装状态");
     }
     try {
