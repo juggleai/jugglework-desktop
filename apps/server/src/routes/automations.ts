@@ -12,6 +12,7 @@ import {
 import { previewAutomationSchedule } from "../automation/schedule.js";
 import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "../automation/github-event-client.js";
 import type { GithubEventAuthStore } from "../automation/github-event-auth-store.js";
+import type { AutomationEventPoller } from "../automation/event-poller.js";
 import { ApiError } from "../errors.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
@@ -48,6 +49,16 @@ export interface RegisterAutomationRoutesOptions {
    * 的登录态无关，见 device-identity.ts。
    */
   githubEventAuthStore?: GithubEventAuthStore;
+  /**
+   * IM 唤醒推送的真实落点——渲染进程收到 jugglework-server 发来的
+   * `jw:automation-event-delivery` 系统消息后，会调用下面的
+   * `POST /automations/github-event-poll-now` 转发这个信号（见
+   * jugglechat/store.ts 的消息订阅）。这条推送本身不带投递内容，只是"现在有新投递了，
+   * 别等定时器"的信号，真正的数据仍然来自 `pollNow()` 触发的那一轮真实轮询。未提供时
+   * 端点直接 404，行为上等同于这条推送从未发生过——轮询本身完全独立工作，不依赖这个
+   * 唤醒信号，只是响应会变慢（回到最多 30 秒的轮询间隔），不会不工作。
+   */
+  githubEventPoller?: Pick<AutomationEventPoller, "pollNow">;
   enabled?: boolean;
 }
 
@@ -115,6 +126,20 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     addRoute(routes, "DELETE", "/automations/github-event-auth", "client", async (ctx) => {
       requireMutation(ctx, options);
       authStore.set(null);
+      return jsonResponse({ ok: true });
+    });
+  }
+  if (options.githubEventPoller) {
+    const poller = options.githubEventPoller;
+    // TIPS: 渲染进程收到 jugglework-server 通过 IM 推的 `jw:automation-event-delivery`
+    // 系统消息后调用这个端点——这条消息本身只是个"现在有新投递了"的信号，不带投递内容，
+    // 所以这里不接收任何 body，只是跳过轮询器剩余的等待、让它立刻发起一轮真实的
+    // `listPendingDeliveries` 拉取（见 event-poller.ts 的 `pollNow()`）。响应不等这一轮拉取
+    // 跑完——推送到达和投递真正落到本地之间本来就没有顺序保证，`pollNow()` 自己的互斥/补跑
+    // 逻辑保证不会因为这里提前返回而漏跑。
+    addRoute(routes, "POST", "/automations/github-event-poll-now", "client", async (ctx) => {
+      requireMutation(ctx, options);
+      poller.pollNow();
       return jsonResponse({ ok: true });
     });
   }

@@ -959,6 +959,7 @@ export async function startServer(config: ServerConfig, options: {
     (event, fields) => logger.log("info", event, fields),
     githubEventRelayClient,
     githubEventAuthStore,
+    automationEventPoller,
   );
 
   const serverOptions: {
@@ -1903,6 +1904,7 @@ function createRoutes(
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
   githubEventRelayClient: GithubEventRelayClient,
   githubEventAuthStore: GithubEventAuthStore,
+  automationEventPoller: AutomationEventPoller,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -2020,6 +2022,7 @@ function createRoutes(
     enabled: resolveLocalAutomationEnabled(),
     githubEventRelay: githubEventRelayClient,
     githubEventAuthStore,
+    githubEventPoller: automationEventPoller,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

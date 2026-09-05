@@ -262,3 +262,70 @@ test("schedules the next poll after the configured interval and stops scheduling
   await poller.dispose();
   assert.equal(timers.length, 0, "dispose must clear the pending timer");
 });
+
+// TIPS: 这两条覆盖的是 IM 唤醒推送真正落地要靠的那个方法——`pollNow()`。它本身不带投递
+// 内容，唯一能验证的是"调用它之后确实提前发起了一轮真实拉取，而不是傻等定时器"。
+test("pollNow() skips the remaining interval and starts another poll immediately", async () => {
+  let callCount = 0;
+  const relay = relayStub({
+    listPendingDeliveries: async () => {
+      callCount += 1;
+      return { items: [], nextCursor: null };
+    },
+  });
+  const { clock, timers } = fakeClock();
+  const poller = new AutomationEventPoller({
+    relay,
+    pipeline: { processOne: () => { throw new Error("unused"); }, recordBacklogDropped: () => { throw new Error("unused"); } },
+    repository: { getDefinition: () => null },
+    onDispatched: () => {},
+    intervalMs: 30_000,
+    clock,
+  });
+
+  poller.start();
+  await eventually(() => timers.length === 1);
+  assert.equal(callCount, 1);
+
+  poller.pollNow();
+  // fakeClock's setTimer never fires its own callback — the only way callCount can reach 2
+  // here is if pollNow() actually bypassed the scheduled timer and started a fresh poll itself.
+  await eventually(() => callCount === 2);
+  await eventually(() => timers.length === 1);
+
+  await poller.dispose();
+});
+
+test("pollNow() called mid-poll does not start a concurrent poll, but queues exactly one more right after", async () => {
+  let callCount = 0;
+  let resolveFirst: (() => void) | null = null;
+  const relay = relayStub({
+    listPendingDeliveries: async () => {
+      callCount += 1;
+      if (callCount === 1) await new Promise<void>((resolve) => { resolveFirst = resolve; });
+      return { items: [], nextCursor: null };
+    },
+  });
+  const { clock, timers } = fakeClock();
+  const poller = new AutomationEventPoller({
+    relay,
+    pipeline: { processOne: () => { throw new Error("unused"); }, recordBacklogDropped: () => { throw new Error("unused"); } },
+    repository: { getDefinition: () => null },
+    onDispatched: () => {},
+    intervalMs: 30_000,
+    clock,
+  });
+
+  poller.start();
+  await eventually(() => callCount === 1);
+
+  poller.pollNow();
+  assert.equal(callCount, 1, "must not start a second, concurrent poll while one is already in flight");
+
+  resolveFirst?.();
+  await eventually(() => callCount === 2);
+  await eventually(() => timers.length === 1);
+  assert.equal(timers[0]?.delayMs, 30_000, "normal interval-based scheduling resumes after the queued poll");
+
+  await poller.dispose();
+});

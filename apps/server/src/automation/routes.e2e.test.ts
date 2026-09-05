@@ -377,3 +377,73 @@ test("without a store, the path falls through to the generic automation-not-foun
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// TIPS: 这条覆盖的是渲染进程收到 jugglework-server 那条 IM 唤醒推送后，真正会打的那个
+// 端点——它本身不带请求体，唯一要验证的是"确实转发给了 poller.pollNow()"和"权限门槛
+// 跟其它写接口一致"。
+test("github-event-poll-now route forwards to the poller, gated behind mutation scope", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-poll-now-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  const pollNowCalls: number[] = [];
+  const scopeChecks: string[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: (_ctx, required) => { scopeChecks.push(required); },
+    githubEventPoller: { pollNow: () => { pollNowCalls.push(Date.now()); } },
+  });
+  try {
+    const route = matchRoute(routes, "POST", "/automations/github-event-poll-now");
+    assert.ok(route);
+    const request = new Request("http://localhost/automations/github-event-poll-now", { method: "POST" });
+    const response = await route.handler({ request, url: new URL(request.url), params: route.params, config: routeConfig } as RequestContext);
+    assert.equal(response.status, 200);
+    assert.equal(pollNowCalls.length, 1);
+    // TIPS: 跟 github-event-auth 那两个写接口一样，走 requireMutation（collaborator 门槛），
+    // 不能因为这条只是"发个信号"就绕开权限检查。
+    assert.ok(scopeChecks.length >= 1);
+    assert.ok(scopeChecks.every((scope) => scope === "collaborator"));
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("without a poller configured, github-event-poll-now has no route at all", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-poll-now-absent-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+    // githubEventPoller intentionally omitted
+  });
+  try {
+    // TIPS: 跟 github-event-auth 那条不一样——没有任何通用 POST 路由会吃掉
+    // /automations/github-event-poll-now 这个路径（既有的通配路由都要求 /:automationId 后面
+    // 跟一个具体动作，比如 /run、/pause），所以这里是真正意义上的"匹配不到路由"，不是落到
+    // 别的处理器上。
+    assert.equal(matchRoute(routes, "POST", "/automations/github-event-poll-now"), null);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

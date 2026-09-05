@@ -1,7 +1,10 @@
 import { create } from "zustand";
 
 import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/lib/den";
+import { createJuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import { resolveJuggleWorkConnection } from "@/react-app/shell/jugglework-connection";
 import { getChatGroupsForContacts, getMembers } from "./api";
+import { AUTOMATION_EVENT_IM_SENDER_ID, isAutomationEventPushMessage } from "./automation-event-message";
 import { juggleChatRuntime } from "./runtime";
 import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
@@ -52,7 +55,10 @@ type JuggleChatState = {
   clearError: () => void;
 };
 
-const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", ""]);
+// TIPS: 这条系统会话（jugglework-server 事件中继推送唤醒信号的固定发送方身份，见
+// automation-event-message.ts 顶部注释）连同其它系统会话（好友申请、动态通知）一起从会话
+// 列表里过滤掉，不让它以"[暂不支持的消息]"这种不可读的样子出现在用户的收件箱里。
+const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", "", AUTOMATION_EVENT_IM_SENDER_ID]);
 let subscriptionsStarted = false;
 
 function messageKey(message: ChatMessage) {
@@ -169,6 +175,22 @@ function errorMessage(error: unknown) {
   return String(error || "Chat 操作失败");
 }
 
+/** 把事件触发自动化的 IM 唤醒推送转发给本地 apps/server；见调用点的 TIPS。 */
+async function notifyLocalServerOfGithubEventPush(): Promise<void> {
+  try {
+    const connection = await resolveJuggleWorkConnection();
+    if (!connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+    const client = createJuggleWorkServerClient({
+      baseUrl: connection.normalizedBaseUrl,
+      token: connection.resolvedToken,
+      hostToken: connection.resolvedHostToken,
+    });
+    await client.notifyGithubEventPushReceived();
+  } catch {
+    // 静默忽略——见调用点 TIPS，这条推送只是可选的提速信号。
+  }
+}
+
 function startSubscriptions() {
   if (subscriptionsStarted) return;
   subscriptionsStarted = true;
@@ -189,6 +211,16 @@ function startSubscriptions() {
   });
   juggleChatRuntime.subscribe("message", (message: ChatMessage) => {
     if (message.isStatus) return;
+    // TIPS: jugglework-server 事件中继在生成一条投递后，会顺手往这台设备的 IM 账号推一条
+    // 这个类型的系统消息（见 automation-event-message.ts 顶部注释）——它不是给人
+    // 看的聊天消息，不进消息列表、不算未读，只在这里被拦下来转发给本地 apps/server，让它的
+    // 事件轮询器跳过剩余等待、立刻拉一轮真实投递。转发失败（apps/server 还没起来、这次改动
+    // 之前的旧版本没有这个端点……）只静默忽略——轮询器本来就会在最多一个轮询周期内自己发现
+    // 这条投递，这条推送只是个可选的提速信号，不是这条链路的正确性依赖。
+    if (isAutomationEventPushMessage(message)) {
+      void notifyLocalServerOfGithubEventPush();
+      return;
+    }
     const state = useJuggleChatStore.getState();
     if (isSameConversation(state.activeConversation, message)) {
       useJuggleChatStore.setState({ messages: appendMessages(state.messages, [message]) });

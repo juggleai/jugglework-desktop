@@ -48,6 +48,9 @@ export class AutomationEventPoller {
   private readonly clock: AutomationEventPollerClock;
   private readonly intervalMs: number;
   private inflight: Promise<void> | null = null;
+  /** `pollNow()` 在一轮已经在跑的时候设置——不打断当前这轮，等它结束后立刻再来一轮，
+   * 而不是乖乖等满剩下的轮询间隔。见 `pollNow()` 自己的 TIPS。 */
+  private pendingImmediatePoll = false;
 
   constructor(private readonly options: AutomationEventPollerOptions) {
     this.clock = options.clock ?? systemClock();
@@ -67,6 +70,24 @@ export class AutomationEventPoller {
     await this.inflight?.catch(() => undefined);
   }
 
+  /**
+   * 跳过剩余的轮询等待，立刻发起一轮认领。供收到 IM 唤醒推送的调用方使用——那条推送本身
+   * 只是个信号，不带投递内容，真正的投递数据仍然要靠这一轮真实的 `listPendingDeliveries` 拉取。
+   * TIPS: 如果这一刻已经有一轮轮询在跑，不会打断它、也不会并发发起第二轮（`pollLoop` 的
+   * `this.polling` 互斥保证了这一点）——只是记一个"这轮跑完之后不要等定时器，立刻再来一轮"
+   * 的标记，因为触发这次唤醒的那条投递，很可能还没被这正在进行的一轮看见（服务端处理和
+   * IM 推送到达之间没有顺序保证）。
+   */
+  pollNow(): void {
+    if (!this.started) return;
+    if (this.polling) {
+      this.pendingImmediatePoll = true;
+      return;
+    }
+    this.clearTimer();
+    void this.pollLoop();
+  }
+
   private async pollLoop(): Promise<void> {
     if (!this.started || this.polling) return;
     this.polling = true;
@@ -77,7 +98,14 @@ export class AutomationEventPoller {
     } finally {
       this.polling = false;
       this.inflight = null;
-      if (this.started) this.scheduleNext();
+      if (this.started) {
+        if (this.pendingImmediatePoll) {
+          this.pendingImmediatePoll = false;
+          void this.pollLoop();
+        } else {
+          this.scheduleNext();
+        }
+      }
     }
   }
 

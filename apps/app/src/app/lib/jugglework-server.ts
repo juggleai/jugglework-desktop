@@ -1605,6 +1605,14 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     /** 渲染进程登出时调用，清掉 apps/server 内存里那份凭据。 */
     clearGithubEventAuth: () =>
       requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", { token, hostToken, method: "DELETE", timeoutMs: timeouts.config }),
+    // TIPS: jugglework-server 在生成一条事件投递记录后，会顺手推一条 IM 系统消息
+    // （`jw:automation-event-delivery`）到这台设备登录的 IM 账号——渲染进程本来就是
+    // 唯一真正连着 IM 的一方（apps/server 从没建立过 IM 连接），收到这条消息就转发到这里，
+    // 让本地轮询器跳过剩余的等待、立刻发起一轮真实拉取（见 jugglechat/store.ts 的消息订阅
+    // 和 apps/server 的 event-poller.ts `pollNow()`）。这条推送不带投递内容，只是个信号——
+    // 请求体留空，真正的数据仍然来自这一轮轮询自己去拉。
+    notifyGithubEventPushReceived: () =>
+      requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-poll-now", { token, hostToken, method: "POST", timeoutMs: timeouts.config }),
     googleWorkspaceConnectStart: (options?: { gmailRead?: boolean; features?: string[] }) => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", body: { gmailRead: options?.gmailRead === true, features: options?.features ?? [] }, timeoutMs: timeouts.status }),
     googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
     googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),
