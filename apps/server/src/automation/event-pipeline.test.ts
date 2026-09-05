@@ -143,6 +143,38 @@ test("out-of-order delivery still produces a chronologically correct delta", asy
   });
 });
 
+// TIPS: 3b.5——claimEventRun 只在"新建运行"（不是防抖合并）这一支才落库 untrustedText/
+// deltaEvents（见 repository.ts claimEventRun 的注释），这里断言这条落库路径真的把
+// processOne 手上的这两样东西传过去了，而不是像 3b.2 修好之前那样，算出来的东西只活在
+// 这一次调用栈里、从没被持久化过。要让第二条事件也走"新建运行"（而不是被合并掉），
+// 先把第一条运行推进到终态——同一实体只有非终态运行存在时才会合并。
+test("claimEventRun persists this dispatch's untrustedText and deltaEvents onto the run's eventMetadata", async () => {
+  await withRepository(async (repository) => {
+    const task = eventDefinition("task-1");
+    repository.createDefinition(task, task);
+    const pipeline = new AutomationEventPipeline({ repository, now: () => NOW, randomId: (() => { let n = 0; return () => `run-${n++}`; })() });
+
+    const first = delivery({ id: "d1", githubEventTimestampMs: NOW, action: "opened", untrustedText: [{ label: "PR 标题", text: "first title" }] });
+    const firstOutcome = pipeline.processOne(first);
+    assert.equal(firstOutcome.kind, "dispatched");
+    const firstRunId = (firstOutcome as { kind: "dispatched"; snapshot: { run: { id: string } } }).snapshot.run.id;
+    const firstRun = repository.getRun(firstRunId)!;
+    assert.deepEqual(firstRun.eventMetadata?.untrustedText, [{ label: "PR 标题", text: "first title" }]);
+    assert.equal(firstRun.eventMetadata?.deltaEvents, undefined);
+    // 推进到终态，这样第二条事件才会新建运行而不是合并进这一条。
+    const running = repository.updateRun(firstRun.id, firstRun.revision, { state: "running", startedAt: NOW }, NOW);
+    repository.updateRun(running.id, running.revision, { state: "succeeded", endedAt: NOW + 1 }, NOW + 1);
+
+    const second = delivery({ id: "d2", githubEventTimestampMs: NOW + 20_000, action: "synchronize", untrustedText: [{ label: "PR 标题", text: "second title" }] });
+    const secondOutcome = pipeline.processOne(second);
+    assert.equal(secondOutcome.kind, "dispatched");
+    const secondRunId = (secondOutcome as { kind: "dispatched"; snapshot: { run: { id: string } } }).snapshot.run.id;
+    const secondRun = repository.getRun(secondRunId)!;
+    assert.deepEqual(secondRun.eventMetadata?.untrustedText, [{ label: "PR 标题", text: "second title" }]);
+    assert.deepEqual(secondRun.eventMetadata?.deltaEvents, [{ eventType: "pull_request", action: "opened" }]);
+  });
+});
+
 test("closing event retires the entity session-affinity mapping", async () => {
   await withRepository(async (repository) => {
     const task = eventDefinition("task-1");

@@ -400,6 +400,10 @@ export class AutomationRepository {
     entityRef: string;
     sourceDeliveryId: string;
     entityUrl?: string;
+    /** 见 `AutomationRun.eventMetadata.untrustedText`——只在新建运行（非合并）时写入。 */
+    untrustedText?: Array<{ label: string; text: string }>;
+    /** 见 `AutomationRun.eventMetadata.deltaEvents`——同上，只在新建运行时写入。 */
+    deltaEvents?: Array<{ eventType: string; action?: string }>;
     now: number;
   }): { run: AutomationRun; merged: boolean } {
     return this.database.transaction(() => {
@@ -421,6 +425,8 @@ export class AutomationRepository {
           entityRef: input.entityRef,
           sourceDeliveryId: input.sourceDeliveryId,
           ...(input.entityUrl ? { entityUrl: input.entityUrl } : {}),
+          ...(input.untrustedText?.length ? { untrustedText: input.untrustedText } : {}),
+          ...(input.deltaEvents?.length ? { deltaEvents: input.deltaEvents } : {}),
         },
       });
       this.insertRun(run, definition);

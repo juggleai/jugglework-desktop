@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AutomationDefinitionRecord, AutomationRun } from "@jugglework/types/automation";
 import { ApiError } from "../errors.js";
 import type { AutomationEventExecutionContext, AutomationExecutor } from "./executor.js";
+import { appendEventContextPromptParts } from "./event-pipeline.js";
 import type { AutomationRepository, AutomationRunSnapshot } from "./repository.js";
 import { latestAutomationOccurrenceAtOrBefore, nextAutomationOccurrence } from "./schedule.js";
 
@@ -219,8 +220,19 @@ function eventContextFor(run: AutomationRun): AutomationEventExecutionContext | 
   const entityRef = run.triggerSource === "event" ? run.eventMetadata?.entityRef : undefined;
   if (!entityRef) return undefined;
   const entityUrl = run.eventMetadata?.entityUrl;
-  const extraPromptParts: AutomationEventExecutionContext["extraPromptParts"] = entityUrl
-    ? [{ type: "text", text: `触发来源：${entityUrl}\n请直接针对这个地址对应的 PR/Issue 操作，不要用搜索工具去猜测目标——写回工具背后的身份可能同时能看到其它不相关仓库。` }]
-    : [];
+  // TIPS：untrustedText/deltaEvents 只在 claimEventRun 新建运行（非防抖合并）那一支落库
+  // （见 event-pipeline.ts processOne 的注释），所以这里读到的永远是"这一轮实际分发时"
+  // 的数据，不是某次被合并掉的旧事件的残留。
+  const extraPromptParts = appendEventContextPromptParts(
+    [],
+    { untrustedText: run.eventMetadata?.untrustedText ?? [], sourceUrl: entityUrl },
+    run.eventMetadata?.deltaEvents ?? [],
+  );
+  if (entityUrl) {
+    extraPromptParts.push({
+      type: "text",
+      text: "请直接针对上面这个触发来源地址对应的 PR/Issue 操作，不要用搜索工具去猜测目标——写回工具背后的身份可能同时能看到其它不相关仓库。",
+    });
+  }
   return { entityRef, extraPromptParts };
 }

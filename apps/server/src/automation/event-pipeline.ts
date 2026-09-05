@@ -110,6 +110,11 @@ export class AutomationEventPipeline {
       }
     }
 
+    // TIPS：delta 必须在 recordDelta 把这条事件计入缓存之前算好——claimEventRun 只在
+    // "新建运行"这一支才会用到它（合并进已有运行的那一支不刷新，见 claimEventRun 自己的
+    // 注释），但这里没法等 claim 结果出来再算，因为 claimEventRun 是把 eventMetadata 一起
+    // 落库的单次调用，delta 得跟 entityUrl 一起提前备好传进去。
+    const deltaSince = this.deltaFor(delivery);
     const claim = this.options.repository.claimEventRun({
       automationId: definition.id,
       definitionRevision: definition.revision,
@@ -117,6 +122,8 @@ export class AutomationEventPipeline {
       entityRef: delivery.entityRef,
       sourceDeliveryId: delivery.id,
       ...(delivery.sourceUrl ? { entityUrl: delivery.sourceUrl } : {}),
+      ...(delivery.untrustedText.length ? { untrustedText: delivery.untrustedText } : {}),
+      ...(deltaSince.length ? { deltaEvents: deltaSince.map((item) => ({ eventType: item.eventType, ...(item.action !== undefined ? { action: item.action } : {}) })) } : {}),
       now: this.now(),
     });
 
@@ -130,7 +137,7 @@ export class AutomationEventPipeline {
 
     const snapshot = this.options.repository.getRunSnapshot(claim.run.id);
     if (!snapshot) return { kind: "merged", runId: claim.run.id };
-    return { kind: "dispatched", snapshot, deltaSince: this.deltaFor(delivery) };
+    return { kind: "dispatched", snapshot, deltaSince };
   }
 
   /** 记录一条"因补投窗口耗尽被丢弃"的汇总，见桌面 PRD 4.5。 */
@@ -162,11 +169,16 @@ export class AutomationEventPipeline {
  * 把事件正文包裹成不可信数据边界，并附加增量上下文，追加到既有 prompt parts 后面。
  * TIPS: 边界标记是无条件的——不管权限档位是 open 还是 restricted 都要包，见桌面 PRD 4.3/4.9
  * 和 design.md 决策 4："权限档位控制运行允许做什么，内容边界控制模型如何理解读到的东西"。
+ *
+ * TIPS: `delivery`/`deltaSince` 的类型故意收窄成只列出用到的字段（而不是完整
+ * `GithubEventDelivery`）——scheduler.ts 的 `eventContextFor` 是这个函数真正的生产调用方
+ * （见 3b.5），它手上只有从 `run.eventMetadata` 反序列化出来的这几个字段，不是一个完整的
+ * `GithubEventDelivery`，收窄参数类型让它不用为了凑类型伪造无用字段。
  */
 export function appendEventContextPromptParts(
   basePrompt: AutomationPromptPart[],
-  delivery: GithubEventDelivery,
-  deltaSince: GithubEventDelivery[],
+  delivery: Pick<GithubEventDelivery, "untrustedText" | "sourceUrl">,
+  deltaSince: Array<Pick<GithubEventDelivery, "eventType" | "action">>,
 ): AutomationPromptPart[] {
   const parts: AutomationPromptPart[] = [...basePrompt];
   if (delivery.untrustedText.length) {

@@ -289,6 +289,18 @@ export type AutomationRun = {
     /** 触发实体的直达链接（PR/Issue 页面），供运行记录展示，见桌面 PRD 4.1。 */
     entityUrl?: string;
     sourceDeliveryId?: string;
+    /**
+     * 触发事件正文里的不可信文本片段（PR/Issue 标题、描述、评论等），落库供
+     * `eventContextFor`（scheduler.ts）在分发时重建增量提示词——只在这一步（认领即将
+     * 分发的新运行）写入，防抖合并进已有运行时不刷新，见桌面 PRD 4.8/4.3。
+     */
+    untrustedText?: Array<{ label: string; text: string }>;
+    /**
+     * 同一实体自上次处理以来新增的事件（按 GitHub 时间戳排序，见桌面 PRD 4.8 对乱序
+     * 到达的处理），供分发时拼出"自上次以来新增了什么"的增量摘要。跟 `untrustedText`
+     * 一样只在新建运行时写入。
+     */
+    deltaEvents?: Array<{ eventType: string; action?: string }>;
     /** 防抖窗口内被合并掉的事件数量，见桌面 PRD 4.4。 */
     mergedEventCount?: number;
     /** 归属会话不可解析、已回退新建会话时置真，见桌面 PRD 4.8 exception。 */
