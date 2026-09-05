@@ -41,6 +41,7 @@ export type EventPipelineOptions = {
 export type EventPipelineOutcome =
   | { kind: "self_loop_suppressed" }
   | { kind: "path_filtered" }
+  | { kind: "content_filtered" }
   | { kind: "rate_limited" }
   | { kind: "merged"; runId: string }
   | { kind: "dispatched"; snapshot: AutomationRunSnapshot; deltaSince: GithubEventDelivery[] };
@@ -90,6 +91,17 @@ export class AutomationEventPipeline {
     ));
     if (matched?.github?.changedPaths?.length && !matchesChangedPaths(delivery.changedPaths, matched.github.changedPaths)) {
       return { kind: "path_filtered" };
+    }
+    // TIPS：@提及关键字/正文关键字（task 7.2）——跟路径过滤同一层"设备端细筛"，同样的
+    // 放行哲学：没配置这个字段，或者这条事件根本没有可比对的文本（untrustedText 为空），
+    // 都直接放行，不能因为筛选器本身或者这条事件类型天然没有正文（比如 release）就误伤。
+    // 只有"确实有文本、确实配了关键字、确实没命中"才真正过滤掉。两个字段都配了时要求都命中
+    // （逐个收窄），不是任一命中就放行。
+    if (matched?.common?.mentionText && !matchesTextFilter(delivery.untrustedText, matched.common.mentionText)) {
+      return { kind: "content_filtered" };
+    }
+    if (matched?.common?.keyword && !matchesTextFilter(delivery.untrustedText, matched.common.keyword)) {
+      return { kind: "content_filtered" };
     }
 
     const hourlyCap = definition.trigger.hourlyTriggerCap;
@@ -203,6 +215,21 @@ export function appendEventContextPromptParts(
     parts.push({ type: "text", text: `触发来源：${delivery.sourceUrl}` });
   }
   return parts;
+}
+
+/**
+ * 判断事件正文（`untrustedText` 里所有片段拼在一起）是否包含指定的关键字/提及文本。
+ * TIPS: 大小写不敏感的子串匹配——@提及关键字/正文关键字（task 7.2）都是自由文本输入，
+ * 不是正则，用户填的是"包含这段文字就算命中"，不是"精确匹配整段文本"。没有可比对的正文
+ * 时视为放行，理由跟 `matchesChangedPaths` 一样：过滤器排除明确不相关的事件，不能因为
+ * 这条事件天然没有正文（比如 `release`）就误伤。
+ */
+export function matchesTextFilter(untrustedText: Array<{ text: string }>, filterText: string): boolean {
+  if (!untrustedText.length) return true;
+  const needle = filterText.trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = untrustedText.map((entry) => entry.text).join("\n").toLowerCase();
+  return haystack.includes(needle);
 }
 
 /**

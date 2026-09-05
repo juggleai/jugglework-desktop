@@ -7,7 +7,7 @@ import { AUTOMATION_PERMISSION_PROFILE, type AutomationDefinition, type Automati
 import { openRuntimeSqliteDatabase } from "../runtime-db.js";
 import { automationSqliteAdapter } from "./sqlite.js";
 import { AutomationRepository } from "./repository.js";
-import { AutomationEventPipeline, appendEventContextPromptParts, matchesChangedPaths, type GithubEventDelivery } from "./event-pipeline.js";
+import { AutomationEventPipeline, appendEventContextPromptParts, matchesChangedPaths, matchesTextFilter, type GithubEventDelivery } from "./event-pipeline.js";
 
 const NOW = Date.parse("2026-09-05T00:00:00Z");
 
@@ -220,6 +220,39 @@ test("matchesChangedPaths: glob inclusion/exclusion, and fails open when data is
   // TIPS:没配置过滤器，或者压根没有改动文件数据（还没接上真实 GitHub API 调用），都必须放行。
   assert.equal(matchesChangedPaths(["anything.md"], []), true);
   assert.equal(matchesChangedPaths(undefined, ["apps/server/**"]), true);
+});
+
+// TIPS: task 7.2——之前 `mentionText`/`keyword` 只在 validation.ts 里被接受和保存，从没有
+// 任何匹配逻辑真正读取它们（2026-09-05 建 PRD §3.4 分支条件枚举表时发现，误标成已完成）。
+// 这条断言子串匹配大小写不敏感、没有正文时放行（`release` 这类天然无正文的事件类型）。
+test("matchesTextFilter: case-insensitive substring match, fails open when there's no text to check", () => {
+  assert.equal(matchesTextFilter([{ text: "请 @juggle 帮忙看看" }], "@juggle"), true);
+  assert.equal(matchesTextFilter([{ text: "请 @JUGGLE 帮忙看看" }], "@juggle"), true, "大小写不敏感");
+  assert.equal(matchesTextFilter([{ text: "跟这个功能无关" }], "@juggle"), false);
+  assert.equal(matchesTextFilter([], "@juggle"), true, "没有可比对的正文时放行，不误伤 release 这类天然无正文的事件");
+  assert.equal(matchesTextFilter([{ text: "随便什么" }], ""), true, "过滤字段本身为空等于没配置");
+});
+
+test("mention/keyword content filtering rejects a non-matching event without creating a run, but lets a matching one through", async () => {
+  await withRepository(async (repository) => {
+    const task = eventDefinition("task-1", {
+      matches: [{ event: "issue_comment_on_pull_request", common: { mentionText: "@juggle" } }],
+    });
+    repository.createDefinition(task, task);
+    const pipeline = new AutomationEventPipeline({ repository, now: () => NOW, randomId: (() => { let n = 0; return () => `run-${n++}`; })() });
+    const noMention = pipeline.processOne(delivery({
+      id: "d1", eventType: "issue_comment_on_pull_request",
+      untrustedText: [{ label: "评论正文", text: "这个改动看起来不错" }],
+    }));
+    assert.deepEqual(noMention, { kind: "content_filtered" });
+    assert.equal(repository.listRuns({ automationId: task.id }).items.length, 0);
+
+    const mentioned = pipeline.processOne(delivery({
+      id: "d2", eventType: "issue_comment_on_pull_request",
+      untrustedText: [{ label: "评论正文", text: "@juggle 帮忙看看这个并发问题" }],
+    }));
+    assert.equal(mentioned.kind, "dispatched");
+  });
 });
 
 test("path-glob filtering rejects a non-matching change without creating a run, but lets a matching one through", async () => {
