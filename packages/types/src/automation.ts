@@ -305,6 +305,13 @@ export type AutomationRun = {
     mergedEventCount?: number;
     /** 归属会话不可解析、已回退新建会话时置真，见桌面 PRD 4.8 exception。 */
     previousSessionUnavailable?: boolean;
+    /**
+     * 会话因上下文用量超阈值"毕业"到新会话时，指向被退休的那个旧会话 id（见桌面 PRD 4.8
+     * "长生命周期 PR 持续复用同一会话，上下文无限膨胀"这条风险的应对）——跟
+     * `previousSessionUnavailable` 语义不同：那个是"旧会话查不到了，被迫新建"，这个是
+     * "旧会话还在、还能查，只是主动决定不再往里塞"，两者不能混用同一个字段。
+     */
+    graduatedFromSessionId?: string;
     /** 离线补投丢弃的事件数量与覆盖时间范围，见桌面 PRD 4.5。 */
     backlogDropped?: { count: number; sinceAt: number; untilAt: number };
     /**

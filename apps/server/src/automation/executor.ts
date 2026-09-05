@@ -11,6 +11,11 @@ import type { GithubEventRelayClient, GithubAppWriteBackGrant } from "./github-e
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 
+/** 会话上下文用量占模型上下文窗口的比例超过这个阈值就"毕业"到新会话，见 3b.4。 */
+const SESSION_GRADUATION_THRESHOLD = 0.8;
+/** 毕业时携带的"上一个会话最后说了什么"小结，截断到这个字符数，保持真正"简短"。 */
+const SESSION_GRADUATION_SUMMARY_MAX_CHARS = 500;
+
 /**
  * 把一次换到的写回 token 真正挂载成 agent 能调用的工具。
  * TIPS: 这不是新架构——复用的是这个产品里 `jugglework-cloud`/插件分发的 MCP 已经在用的那套
@@ -88,6 +93,7 @@ export class AutomationExecutor {
       current = this.options.repository.updateRun(current.id, current.revision, {
         sessionId: resolved.sessionId,
         ...(resolved.previousSessionUnavailable ? { eventMetadata: { previousSessionUnavailable: true } } : {}),
+        ...(resolved.graduatedFromSessionId ? { eventMetadata: { graduatedFromSessionId: resolved.graduatedFromSessionId } } : {}),
       }, this.now());
 
       const toolAllowlist = await this.preflight(snapshot, workspace, opencode);
@@ -120,7 +126,14 @@ export class AutomationExecutor {
         tools: toolAllowlist,
         parts: promptParts(
           appendWriteBackToolNote(
-            eventContext ? [...definition.prompt.parts, ...eventContext.extraPromptParts] : definition.prompt.parts,
+            [
+              ...definition.prompt.parts,
+              // TIPS（3b.4）：毕业小结放在这个自动化自己的 prompt 之后、这一轮事件的
+              // extraPromptParts 之前——先让模型知道"这是接着哪个会话的新起点"，再看这一轮
+              // 具体发生了什么，顺序反过来会让模型先看到这次事件，再莫名其妙冒出一段延续说明。
+              ...(resolved.graduationNote ? [{ type: "text" as const, text: resolved.graduationNote }] : []),
+              ...(eventContext ? eventContext.extraPromptParts : []),
+            ],
             definition,
           ),
           workspace.path,
@@ -229,20 +242,34 @@ export class AutomationExecutor {
     opencode: WorkspaceOpencodeClient,
     current: AutomationRunSnapshot["run"],
     eventContext?: AutomationEventExecutionContext,
-  ): Promise<{ sessionId: string; previousSessionUnavailable: boolean }> {
+  ): Promise<{ sessionId: string; previousSessionUnavailable: boolean; graduatedFromSessionId?: string; graduationNote?: string }> {
     // TIPS: 先记下"进来的时候是不是有一条 active 的归属映射"，这是唯一能判断"要不要标注
     // previousSessionUnavailable"的时机——新建分支里马上就会 upsert 覆盖掉这条记录，事后
     // 再查就只能看到新状态了。
     const hadActiveMapping = eventContext
       ? this.options.repository.getEntitySessionMapping(definition.id, eventContext.entityRef)?.status === "active"
       : false;
+    let graduatedFromSessionId: string | undefined;
+    let graduationNote: string | undefined;
     if (eventContext && hadActiveMapping) {
       const mapping = this.options.repository.getEntitySessionMapping(definition.id, eventContext.entityRef)!;
       try {
         const existing = await opencode.session.get({ sessionID: mapping.sessionId });
         if (existing.data) {
-          this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, mapping.sessionId, this.now());
-          return { sessionId: mapping.sessionId, previousSessionUnavailable: false };
+          // TIPS（3b.4）：会话还能查到、还能继续用，但如果它的上下文用量已经逼近模型的上下文
+          // 窗口，继续往里塞只会让这一轮和以后每一轮都更容易因为超限而失败——这跟"会话查不到了"
+          // 是两回事，見design.md 的 staleness/graduation 决策：复用既有的 token 用量数据
+          // （provider 上报的真实用量，不是估算），不是发明第二套指标。
+          const graduation = await this.checkSessionGraduation(opencode, mapping.sessionId);
+          if (!graduation.shouldGraduate) {
+            this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, mapping.sessionId, this.now());
+            return { sessionId: mapping.sessionId, previousSessionUnavailable: false };
+          }
+          graduatedFromSessionId = mapping.sessionId;
+          graduationNote = [
+            `这个实体此前的对话已经因为上下文用量过高而毕业到一个新会话（原会话 id：${mapping.sessionId}，完整记录可在运行记录里查看）。`,
+            graduation.lastAssistantText ? `延续自上一个会话的简短小结——它最后说的是：\n${graduation.lastAssistantText}` : undefined,
+          ].filter((line): line is string => Boolean(line)).join("\n\n");
         }
       } catch {
         // 会话查询失败视同不可解析，走下面的新建分支，不在这里重试或抛出。
@@ -278,7 +305,59 @@ export class AutomationExecutor {
     if (eventContext) {
       this.options.repository.upsertEntitySessionMapping(definition.id, eventContext.entityRef, workspace.id, created.data.id, this.now());
     }
-    return { sessionId: created.data.id, previousSessionUnavailable: hadActiveMapping };
+    return {
+      sessionId: created.data.id,
+      // TIPS：毕业不算"会话不可用"——旧会话查得到、查得好好的，只是主动决定不再复用，跟
+      // "查不到了被迫新建"是两种不同的原因，不能让毕业路径也打上 previousSessionUnavailable。
+      previousSessionUnavailable: hadActiveMapping && !graduatedFromSessionId,
+      ...(graduatedFromSessionId ? { graduatedFromSessionId, graduationNote } : {}),
+    };
+  }
+
+  /**
+   * 判断一个既有会话是否已经该"毕业"到新会话——见桌面 PRD 4.8"长生命周期 PR 持续复用同一
+   * 会话，上下文无限膨胀"这条风险的应对，design.md 决策要求复用既有的 session 上下文用量
+   * 追踪，不是发明第二套指标。
+   * TIPS: 用的是 provider 对最近一条 assistant 消息实际上报的 token 用量（`input` +
+   * `cache.read` + `cache.write` + `output`，代表这一轮结束时对话已经积累的真实体量），
+   * 不是渲染进程 `context-usage.tsx` 那种"消息还没发出去之前"用的文本长度估算——两者服务于
+   * 不同阶段：估算是给正在输入的用户一个实时预览，这里判断的是"上一轮结束后，值不值得再往
+   * 这个会话里追加下一轮"，已经有真实数字可以直接用，没必要重新估算一遍。查不到用量数据、
+   * 查不到这个模型的上下文窗口，都视为"不用毕业"——这是体验优化，不是正确性依赖，宁可继续
+   * 复用一个已经偏大的会话，也不能因为拿不到诊断数据就武断放弃一个本来还能继续对话的会话。
+   */
+  private async checkSessionGraduation(
+    opencode: WorkspaceOpencodeClient,
+    sessionId: string,
+  ): Promise<{ shouldGraduate: boolean; lastAssistantText?: string }> {
+    try {
+      const messages = await opencode.session.messages({ sessionID: sessionId, limit: 20 });
+      const assistantMessages = [...(messages.data ?? [])].reverse();
+      const latest = assistantMessages.find((message) => message.info.role === "assistant");
+      if (!latest || latest.info.role !== "assistant") return { shouldGraduate: false };
+      // TIPS: 提前拿出 assistant 消息体，不要在下面的闭包（.find 回调）里再去读 `latest.info.*`——
+      // TypeScript 对 const 绑定属性的窄化不会跨闭包边界保留，`latest.info` 在 .find 回调内部
+      // 会被重新加宽回联合类型 `Message`，拿不到 `providerID`。
+      const info = latest.info;
+      const lastAssistantText = latest.parts
+        ?.map((part) => (part.type === "text" ? part.text : null))
+        .filter((text): text is string => text !== null)
+        .join("\n")
+        .trim()
+        .slice(0, SESSION_GRADUATION_SUMMARY_MAX_CHARS) || undefined;
+      const tokens = info.tokens;
+      if (!tokens) return { shouldGraduate: false, lastAssistantText };
+      const used = tokens.input + tokens.output + tokens.cache.read + tokens.cache.write;
+      const providers = await opencode.provider.list();
+      const contextLimit = providers.data?.all
+        ?.find((provider) => provider.id === info.providerID)
+        ?.models?.[info.modelID]
+        ?.limit?.context;
+      if (!contextLimit || contextLimit <= 0) return { shouldGraduate: false, lastAssistantText };
+      return { shouldGraduate: used / contextLimit >= SESSION_GRADUATION_THRESHOLD, lastAssistantText };
+    } catch {
+      return { shouldGraduate: false };
+    }
   }
 
   private async resolveLocalWorkspace(snapshot: AutomationRunSnapshot): Promise<WorkspaceInfo> {

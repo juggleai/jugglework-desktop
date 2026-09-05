@@ -372,6 +372,117 @@ test("event-triggered execution reuses the mapped session instead of creating a 
   }
 });
 
+// TIPS（3b.4）：复用既有的 provider 上报 token 用量（不是渲染进程那种文本长度估算）作为
+// "该不该毕业到新会话"的判断依据，见 design.md 的 staleness/graduation 决策。
+test("event-triggered execution graduates to a new session when context usage crosses the threshold", async () => {
+  const fixture = await repositoryFixture();
+  const definition = eventAutomationDefinition();
+  fixture.repository.createDefinition(definition, definition);
+  fixture.repository.upsertEntitySessionMapping(definition.id, "github:pull_request:482", "workspace", "session-prior", 50);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-graduate",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const createInputs: unknown[] = [];
+  const promptInputs: Array<Record<string, unknown>> = [];
+  const opencode = {
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => sessionID === "session-prior" ? { data: { id: "session-prior" } } : { data: undefined },
+      create: async (input: unknown) => { createInputs.push(input); return { data: { id: "session-graduated" } }; },
+      promptAsync: async (input: Record<string, unknown>) => { promptInputs.push(input); return { data: true, error: undefined }; },
+      status: async () => ({ data: { "session-graduated": { type: "idle" } } }),
+      messages: async () => ({
+        data: [{
+          info: {
+            role: "assistant", providerID: "provider", modelID: "model", agent: "build",
+            tokens: { input: 90_000, output: 0, cache: { read: 0, write: 0 } },
+          },
+          parts: [{ type: "text", text: "并发问题已经修复，另有 1 处建议。" }],
+        }],
+      }),
+    },
+    provider: { list: async () => ({ data: { all: [{ id: "provider", models: { model: { limit: { context: 100_000 } } } }] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(
+      fixture.repository.getRunSnapshot(claim.run.id)!,
+      { entityRef: "github:pull_request:482", extraPromptParts: [{ type: "text", text: "自上次以来新增了 1 次提交" }] },
+    );
+    const completed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(completed.state, "succeeded");
+    assert.equal(completed.sessionId, "session-graduated");
+    assert.equal(createInputs.length, 1, "usage over threshold must create a new session, not reuse the old one");
+    assert.equal(completed.eventMetadata?.graduatedFromSessionId, "session-prior");
+    // previousSessionUnavailable 不能跟着一起打上——旧会话查得到，只是主动决定不再复用。
+    assert.equal(completed.eventMetadata?.previousSessionUnavailable, undefined);
+    const parts = promptInputs[0]!.parts as Array<{ text?: string }>;
+    assert.equal(parts.length, 3, "automation prompt + graduation note + this turn's extraPromptParts");
+    assert.match(String(parts[1]?.text), /session-prior/);
+    assert.match(String(parts[1]?.text), /并发问题已经修复，另有 1 处建议/);
+    assert.match(String(parts[2]?.text), /自上次以来新增了 1 次提交/);
+    assert.equal(fixture.repository.getEntitySessionMapping(definition.id, "github:pull_request:482")?.sessionId, "session-graduated");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("event-triggered execution does not graduate when usage is comfortably under the threshold", async () => {
+  const fixture = await repositoryFixture();
+  const definition = eventAutomationDefinition();
+  fixture.repository.createDefinition(definition, definition);
+  fixture.repository.upsertEntitySessionMapping(definition.id, "github:pull_request:482", "workspace", "session-prior", 50);
+  const claim = fixture.repository.claimEventRun({
+    automationId: definition.id, definitionRevision: 1, runId: "run-no-graduate",
+    entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: 100,
+  });
+  const createInputs: unknown[] = [];
+  const opencode = {
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => sessionID === "session-prior" ? { data: { id: "session-prior" } } : { data: undefined },
+      create: async (input: unknown) => { createInputs.push(input); return { data: { id: "session-new" } }; },
+      promptAsync: async () => ({ data: true, error: undefined }),
+      status: async () => ({ data: { "session-prior": { type: "idle" } } }),
+      messages: async () => ({
+        data: [{
+          info: {
+            role: "assistant", providerID: "provider", modelID: "model", agent: "build",
+            tokens: { input: 10_000, output: 0, cache: { read: 0, write: 0 } },
+          },
+          parts: [{ type: "text", text: "看起来没问题。" }],
+        }],
+      }),
+    },
+    provider: { list: async () => ({ data: { all: [{ id: "provider", models: { model: { limit: { context: 100_000 } } } }] } }) },
+    app: { agents: async () => ({ data: [] }), skills: async () => ({ data: [] }) },
+    mcp: { status: async () => ({ data: {} }) },
+    tool: { ids: async () => ({ data: [] }) },
+  };
+  try {
+    const executor = new AutomationExecutor({
+      config: serverConfig(), repository: fixture.repository,
+      resolveWorkspace: async () => serverConfig().workspaces[0],
+      createWorkspaceOpencodeClient: () => opencode as never,
+      now: (() => { let now = 100; return () => ++now; })(), wait: async () => undefined,
+    });
+    await executor.execute(fixture.repository.getRunSnapshot(claim.run.id)!, { entityRef: "github:pull_request:482", extraPromptParts: [] });
+    const completed = fixture.repository.getRun(claim.run.id)!;
+    assert.equal(completed.sessionId, "session-prior");
+    assert.equal(createInputs.length, 0);
+    assert.equal(completed.eventMetadata?.graduatedFromSessionId, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("event-triggered execution falls back to a new session when the mapped one is unresolvable", async () => {
   const fixture = await repositoryFixture();
   const definition = eventAutomationDefinition();
