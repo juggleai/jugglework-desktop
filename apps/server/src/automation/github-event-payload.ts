@@ -60,6 +60,14 @@ function extractByEventType(eventType: string, action: string | undefined, paylo
     case "issues":
       return extractIssue(action, payload);
     case "issue_comment":
+    // TIPS：服务端在解析层已经把 PR 对话区评论拆成独立的 "issue_comment_on_pull_request"
+    // 类型（见 jugglework-server automation_event_relay.go parseIssueCommentEvent 的注释：
+    // "这个判断必须在这里做完，不能带着歧义进入订阅匹配"）——这个自动化的 matches 订阅的
+    // 正是这个拆分后的类型，不是 "issue_comment"。这里漏掉这个 case 曾经是个真实 bug：
+    // 命中 default 分支返回空 untrustedText/无 sourceUrl，PR 评论触发的运行完全读不到
+    // 评论正文，2026-09-05 用真实 PR 评论事件验证 3b.5 时发现——底层 payload 形状和纯
+    // issue_comment 完全一样，用同一个提取函数即可，不需要单独实现一遍。
+    case "issue_comment_on_pull_request":
       return extractIssueComment(payload);
     case "pull_request_review":
       return extractPullRequestReview(payload);

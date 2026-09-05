@@ -85,6 +85,27 @@ test("issue_comment never closes the entity and prefers the comment body", () =>
   assert.equal(parsed.isEntityClosingEvent, false);
 });
 
+// TIPS: 这条曾经是个真实 bug，不是理论上的遗漏——`extractByEventType` 的 switch 只列了
+// "issue_comment"，没列服务端拆分出来的 "issue_comment_on_pull_request"（PR 对话区评论），
+// 命中 default 分支静默退化成空 untrustedText/无 sourceUrl。2026-09-05 用真实 PR 下的真实
+// 评论事件验证 3b.5 时，运行记录里完全没有评论内容才发现——这个自动化订阅的正是这个拆分
+// 后的类型，不是纯 "issue_comment"，plain issue_comment 的测试覆盖不到它。
+test("issue_comment_on_pull_request (the split-off PR-comment type) extracts the same fields as issue_comment", () => {
+  const parsed = parseGithubEventDeliveryPayload(detail({
+    eventType: "issue_comment_on_pull_request", action: "created", entityRef: "github:pull_request:1",
+    payload: {
+      issue: { title: "test PR" },
+      comment: { body: "请看看这个改动", html_url: "https://github.com/acme/repo/pull/1#issuecomment-2" },
+    },
+  }));
+  assert.deepEqual(parsed.untrustedText, [
+    { label: "所在 Issue/PR 标题", text: "test PR" },
+    { label: "评论正文", text: "请看看这个改动" },
+  ]);
+  assert.equal(parsed.sourceUrl, "https://github.com/acme/repo/pull/1#issuecomment-2");
+  assert.equal(parsed.isEntityClosingEvent, false);
+});
+
 test("pull_request_review includes the review state in the label", () => {
   const parsed = parseGithubEventDeliveryPayload(detail({
     eventType: "pull_request_review", action: "submitted", entityRef: "github:pull_request:482",
