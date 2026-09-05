@@ -266,6 +266,47 @@ test("scheduler reconstructs the event execution context from the claimed run's 
   }
 });
 
+// TIPS: 2026-09-05 用真实 GitHub PR 触发验证写回时实测到——`extraPromptParts` 一直是空的话，
+// 模型不知道这一轮到底该对哪个 PR/Issue 操作，只能调用搜索类工具盲猜，猜出来的经常是写回
+// 工具背后的 GitHub App 安装能看到的其它不相关仓库。`entityUrl` 已经落库在 eventMetadata
+// 里（供运行记录展示用），这里断言它被顺手转成一条直达提示，而不是被无视掉。
+test("scheduler surfaces the claimed run's entityUrl as a prompt hint so the model doesn't have to guess the target", async () => {
+  const fixture = await repositoryFixture();
+  const now = Date.parse("2026-08-11T01:05:00Z");
+  try {
+    const definition = eventDefinition("task-event-url");
+    fixture.repository.createDefinition(definition, definition);
+    fixture.repository.claimEventRun({
+      automationId: definition.id,
+      definitionRevision: definition.revision,
+      runId: "run-event-url-1",
+      entityRef: "github:pull_request:1",
+      sourceDeliveryId: "delivery-url-1",
+      entityUrl: "https://github.com/juggleai/skillhub/pull/1",
+      now,
+    });
+    const seenContexts: unknown[] = [];
+    const executor = {
+      execute: async (snapshot: AutomationRunSnapshot, eventContext?: unknown) => {
+        seenContexts.push(eventContext);
+        const running = fixture.repository.updateRun(snapshot.run.id, snapshot.run.revision, { state: "running", startedAt: now }, now);
+        fixture.repository.updateRun(running.id, running.revision, { state: "succeeded", endedAt: now + 1 }, now + 1);
+      },
+    };
+    const scheduler = new AutomationScheduler({ repository: fixture.repository, executor, clock: fakeClock(now) });
+    scheduler.start();
+    await eventually(() => seenContexts.length === 1);
+    scheduler.dispose();
+    const seen = seenContexts[0] as { entityRef: string; extraPromptParts: Array<{ type: string; text: string }> };
+    assert.equal(seen.entityRef, "github:pull_request:1");
+    assert.equal(seen.extraPromptParts.length, 1);
+    assert.match(seen.extraPromptParts[0]!.text, /https:\/\/github\.com\/juggleai\/skillhub\/pull\/1/);
+    assert.match(seen.extraPromptParts[0]!.text, /不要用搜索工具去猜测目标/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("scheduler passes no event execution context for calendar/manual runs", async () => {
   const fixture = await repositoryFixture();
   const now = Date.parse("2026-08-11T01:05:00Z");
