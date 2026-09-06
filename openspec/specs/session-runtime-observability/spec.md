@@ -28,6 +28,21 @@ The system SHALL track provider retry liveness separately from user-meaningful p
 - **WHEN** assistant output or tool execution makes new progress after a retry
 - **THEN** retry or stalled presentation clears and the session returns to the corresponding active state
 
+### Requirement: Terminal errors settle active presentation
+The system SHALL treat a session error or assistant-message error as terminal runtime evidence, clear stale active presentation, and keep manual stop idempotent when the authoritative run list confirms that no run remains.
+
+#### Scenario: Provider quota ends a run
+- **WHEN** a provider quota error terminates a session after the renderer previously observed busy or retry state
+- **THEN** the conversation stops presenting the run as active without requiring the user to stop it manually
+
+#### Scenario: Stop races with terminal error
+- **WHEN** the user requests stop after the run has already ended and the authoritative active-run refresh confirms no run remains
+- **THEN** the application treats stop as already complete and does not report a stop failure
+
+#### Scenario: Stop cannot be confirmed
+- **WHEN** the abort request is not accepted and the authoritative active-run refresh fails or still reports the run active
+- **THEN** the application reports that the run could not be stopped
+
 ### Requirement: Stalled detection preserves neutral presentation
 The system SHALL retain stalled activity as internal runtime evidence while preserving the existing neutral in-progress presentation in conversations and sidebars.
 

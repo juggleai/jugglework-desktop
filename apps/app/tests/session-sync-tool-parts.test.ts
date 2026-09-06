@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Part, Session } from "@opencode-ai/sdk/v2/client";
+import type { Part, Session, SessionStatus } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
@@ -7,6 +7,7 @@ import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
   seedSessionState,
+  statusKey,
   trackWorkspaceSessionSync,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
@@ -1218,10 +1219,12 @@ describe("tool part mapper", () => {
   test("an aborted assistant message ends the run even without session.idle", () => {
     const syncInput = { workspaceId: "workspace-abort", baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-abort");
     const activity = useSessionActivityStore.getState();
 
     try {
       activity.setRunStatus("workspace-abort", "session-abort", { type: "busy" });
+      getReactQueryClient().setQueryData(statusKey("workspace-abort", "session-abort"), { type: "busy" });
       expect(useSessionActivityStore.getState().getStatus("workspace-abort", "session-abort")).toBe("thinking");
 
       // 中断只写在助手消息上：引擎不一定再发 session.error，session.idle 也可能随 SSE 重连丢失。
@@ -1238,13 +1241,50 @@ describe("tool part mapper", () => {
       } as any);
 
       expect(useSessionActivityStore.getState().getStatus("workspace-abort", "session-abort")).toBe("idle");
+      expect(getReactQueryClient().getQueryData(statusKey("workspace-abort", "session-abort"))).toEqual({ type: "idle" });
 
       // 折叠工作区后侧栏仍在重放运行期间的 busy 列表快照，loading 不能因此回来。
       activity.seedWorkspaceSessions("workspace-abort", [{ id: "session-abort", status: { type: "busy" } }]);
       expect(useSessionActivityStore.getState().getStatus("workspace-abort", "session-abort")).toBe("idle");
     } finally {
+      release();
       cleanup();
       useSessionActivityStore.getState().removeSession("workspace-abort", "session-abort");
+    }
+  });
+
+  test("session.error settles a tracked busy status while preserving the failure", () => {
+    const workspaceId = "workspace-error-terminal";
+    const sessionId = "session-error-terminal";
+    const statusUpdates: Array<{ sessionId: string; status: SessionStatus }> = [];
+    const syncInput = {
+      workspaceId,
+      baseUrl: "http://127.0.0.1:1234",
+      juggleworkToken: "token",
+      onSessionStatus: (update: { sessionId: string; status: SessionStatus }) => statusUpdates.push(update),
+    };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, { type: "busy" });
+      getReactQueryClient().setQueryData(statusKey(workspaceId, sessionId), { type: "retry", attempt: 2, message: "quota", next: 0 });
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.error",
+        properties: {
+          sessionID: sessionId,
+          error: { name: "APIError", data: { message: "Insufficient quota" } },
+        },
+      } as any);
+
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "idle" });
+      expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("error");
+      expect(statusUpdates).toEqual([{ sessionId, status: { type: "idle" } }]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
     }
   });
 

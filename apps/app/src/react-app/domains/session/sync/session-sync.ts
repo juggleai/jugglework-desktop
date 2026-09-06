@@ -436,6 +436,18 @@ function releaseRetainedSessionSoon(input: SyncOptions, entry: SyncEntry, sessio
   retainSession(input, entry, sessionId, idleRetainedSessionTtlMs);
 }
 
+function settleTerminalSessionStatus(entry: SyncEntry, workspaceId: string, sessionId: string) {
+  const queryClient = getReactQueryClient();
+  const tracked = isTrackedSession(entry, sessionId);
+  if (tracked) queryClient.setQueryData(statusKey(workspaceId, sessionId), idleStatus);
+  for (const listener of entry.sessionStatusListeners) listener({ sessionId, status: idleStatus });
+  if (!tracked) return;
+  // TIPS: 模型错误和消息级中断都可能没有后续 session.idle，必须在终态事件处主动刷新快照并
+  // 缩短保留期，否则缓存里的 busy/retry 会让会话继续显示“停止”按钮。
+  void queryClient.invalidateQueries({ queryKey: snapshotKey(workspaceId, sessionId) });
+  releaseRetainedSessionSoon(entry.input, entry, sessionId);
+}
+
 type PermissionSeed = PermissionRequest | PermissionV2Request;
 
 function isV2PermissionRequest(permission: PermissionSeed): permission is PermissionV2Request {
@@ -991,6 +1003,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
           return upsertMessage(current, createSessionErrorUIMessage(turnKey, errorText));
         });
       }
+      settleTerminalSessionStatus(entry, workspaceId, sessionId);
     }
     return;
   }
@@ -1175,7 +1188,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // TIPS: 带 error 的助手消息就是这次运行的终点。中断（MessageAbortedError）只写在消息上，
       // 引擎不一定再发 session.error，session.idle 也可能因为 SSE 重连而丢；不在这里收口，
       // 侧栏（尤其工作区折叠后行尾的 loading）会一直转。
-      if (info.error) messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
+      if (info.error) {
+        messageActivityStore.setRunStatus(workspaceId, info.sessionID, idleStatus);
+        settleTerminalSessionStatus(entry, workspaceId, info.sessionID);
+      }
       else if (info.summary === true && typeof info.time?.completed === "number") {
         messageActivityStore.setCompacting(workspaceId, info.sessionID, false);
       } else messageActivityStore.markRuntimeEvent(workspaceId, info.sessionID);
@@ -1811,7 +1827,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     sessionCreatedListeners: new Set(input.onSessionCreated ? [input.onSessionCreated] : []),
     sessionUpdatedListeners: new Set(),
     sessionDeletedListeners: new Set(input.onSessionDeleted ? [input.onSessionDeleted] : []),
-    sessionStatusListeners: new Set(),
+    sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     pendingDeltas: new Map(),
     suppressedCompactionContinueMessages: new Map(),
     deltaFlushBuffer: [],

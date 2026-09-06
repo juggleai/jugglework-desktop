@@ -160,11 +160,15 @@ describe("session activity reconciliation", () => {
   test("a failed session stays failed across stale busy workspace snapshots", () => {
     const store = useSessionActivityStore.getState();
     store.setRunStatus(workspaceId, sessionId, { type: "busy" });
+    store.setWaitingRequest(workspaceId, sessionId, "permission", "permission-a", true);
+    store.setWaitingRequest(workspaceId, sessionId, "question", "question-a", true);
     store.setError(workspaceId, sessionId, "boom");
 
     store.seedWorkspaceSessions(workspaceId, [{ id: sessionId, status: { type: "busy" } }]);
 
     expect(useSessionActivityStore.getState().getStatus(workspaceId, sessionId)).toBe("error");
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.waitingPermissionIds).toEqual([]);
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.waitingQuestionIds).toEqual([]);
   });
 
   test("an on-demand session snapshot still outranks the live end marker", () => {

@@ -509,6 +509,8 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       liveRunEnded: true,
       assistantOutput: false,
       compacting: false,
+      waitingPermissionIds: [],
+      waitingQuestionIds: [],
       lastMeaningfulProgressAt: null,
       lastRuntimeEventAt: null,
       providerRetry: null,

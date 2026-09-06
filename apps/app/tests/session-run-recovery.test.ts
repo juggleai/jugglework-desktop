@@ -4,6 +4,7 @@ import { JuggleWorkServerError } from "../src/app/lib/jugglework-server";
 import {
   effectiveSessionRunning,
   isSessionBusyError,
+  shouldReportAbortFailure,
 } from "../src/react-app/domains/session/surface/session-run-recovery";
 
 describe("session run recovery", () => {
@@ -12,6 +13,7 @@ describe("session run recovery", () => {
       sending: false,
       liveStatus: "idle",
       activityRunActive: false,
+      activityRunEnded: false,
       coordinatorActive: true,
     })).toBe(true);
   });
@@ -21,6 +23,35 @@ describe("session run recovery", () => {
       sending: false,
       liveStatus: "idle",
       activityRunActive: true,
+      activityRunEnded: false,
+      coordinatorActive: false,
+    })).toBe(true);
+  });
+
+  test("a terminal runtime event overrides stale coordinator and status caches", () => {
+    expect(effectiveSessionRunning({
+      sending: false,
+      liveStatus: "retry",
+      activityRunActive: false,
+      activityRunEnded: true,
+      coordinatorActive: true,
+    })).toBe(false);
+  });
+
+  test("treats abort as idempotent only after authoritative confirmation", () => {
+    expect(shouldReportAbortFailure({
+      abortRequested: false,
+      activeRunsRefreshSucceeded: true,
+      coordinatorActive: false,
+    })).toBe(false);
+    expect(shouldReportAbortFailure({
+      abortRequested: false,
+      activeRunsRefreshSucceeded: true,
+      coordinatorActive: true,
+    })).toBe(true);
+    expect(shouldReportAbortFailure({
+      abortRequested: false,
+      activeRunsRefreshSucceeded: false,
       coordinatorActive: false,
     })).toBe(true);
   });

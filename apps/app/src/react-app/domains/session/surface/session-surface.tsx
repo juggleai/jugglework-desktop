@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { UIMessage } from "ai";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
@@ -48,7 +48,7 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
-import { effectiveSessionRunning, isSessionBusyError } from "./session-run-recovery";
+import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
 import {
   classifyTaskProgress,
   shouldAcknowledgeTerminalProgress,
@@ -488,6 +488,7 @@ function sameAttachments(left: ComposerAttachment[], right: ComposerAttachment[]
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
+  const queryClient = useQueryClient();
   const interactions = useSessionInteractions({
     client: props.client,
     workspaceId: props.workspaceId,
@@ -533,6 +534,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   );
   const sessionActivityRunActive = useSessionActivityStore(
     (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.runActive ?? false,
+  );
+  const sessionActivityRunEnded = useSessionActivityStore(
+    (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.liveRunEnded ?? false,
   );
   const providerRetryActivity = useSessionActivityStore(
     (state) => state.recordsByWorkspaceId[props.workspaceId]?.[props.sessionId]?.providerRetry ?? null,
@@ -737,6 +741,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     sending,
     liveStatus: liveStatus.type,
     activityRunActive: sessionActivityRunActive,
+    activityRunEnded: sessionActivityRunEnded,
     coordinatorActive: coordinatorRun !== null,
   });
   const showTaskProgress = shouldShowTaskProgress({
@@ -1211,7 +1216,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
     setError(null);
-    useSessionActivityStore.getState().markFinishReason(props.workspaceId, props.sessionId, "user_cancelled");
     // Stop means stop: drop queued follow-ups before aborting, otherwise the
     // queue-drain effect below re-prompts the agent the moment the abort
     // lands and the session reports idle (#2014).
@@ -1226,14 +1230,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
       props.sessionId,
       props.workspaceRoot.trim() || undefined,
     );
+    const refreshedActiveRuns = await activeRunsQuery.refetch();
     if (!aborted) {
-      setError({ message: t("session.stop_failed") });
+      const coordinatorStillActive = refreshedActiveRuns.data?.items.some(
+        (run) => run.sessionId === props.sessionId,
+      ) ?? false;
+      if (shouldReportAbortFailure({
+        abortRequested: aborted,
+        activeRunsRefreshSucceeded: refreshedActiveRuns.isSuccess,
+        coordinatorActive: coordinatorStillActive,
+      })) {
+        setError({ message: t("session.stop_failed") });
+        return;
+      }
+      // TIPS: abort=false 也可能表示模型报错后运行已自行结束。权威运行列表确认无活动任务时，
+      // 将停止操作视为幂等成功，收敛本地旧 busy/retry，而不是向用户误报停止失败。
+      useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, IDLE_STATUS);
+      queryClient.setQueryData(statusQueryKey, IDLE_STATUS);
+      setAwaitingAssistantBaseline(null);
+      await snapshotQuery.refetch();
       return;
     }
-    void activeRunsQuery.refetch();
+    useSessionActivityStore.getState().markFinishReason(props.workspaceId, props.sessionId, "user_cancelled");
     captureAnalyticsEvent("task_run_stopped", {});
     await snapshotQuery.refetch();
-  }, [activeRunsQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceId, props.workspaceRoot, queuedDrafts, snapshotQuery.refetch]);
+  }, [activeRunsQuery.refetch, chatStreaming, clearQueuedDrafts, opencodeClient, props.sessionId, props.workspaceId, props.workspaceRoot, queryClient, queuedDrafts, snapshotQuery.refetch, statusQueryKey]);
 
   const handleDismissError = useCallback(() => {
     setError(null);
