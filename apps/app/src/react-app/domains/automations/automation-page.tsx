@@ -45,6 +45,8 @@ import {
 } from "@jugglework/types/automation";
 import { defaultEventTrigger, EventTriggerEditor, type GithubEventTriggerClient } from "./event-trigger-editor";
 import { AccountMismatchBadge, useAutomationSubscriptionAccountStatus } from "./automation-account-mismatch";
+import { EventTriggerReadinessBadge, useEventTriggerReadinessBadge } from "./automation-readiness-badge";
+import { automationReadinessUnblockedEvent } from "./automation-readiness-events";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
@@ -462,6 +464,29 @@ function TaskList(props: {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AutomationDefinition | null>(null);
+  // TIPS: 任务 2.3b——"解除阻塞"推送只带仓库全名，这里对着当前整份列表找出目标仓库是
+  // 谁的事件触发配置，给一个能直接跳进去的提示，而不是让用户自己翻列表找。只有列表
+  // 页挂载着才能收到这个提示；没挂载时不会漏掉——2.3b 本身的就绪态徽标是轮询出来的，
+  // 下次打开列表就能看到最新状态，这条推送只是个"正好在看列表就立刻提醒"的加速信号。
+  const tasksRef = useRef(props.tasks);
+  tasksRef.current = props.tasks;
+  useEffect(() => {
+    const onUnblocked = (event: WindowEventMap[typeof automationReadinessUnblockedEvent]) => {
+      const repository = event.detail.repository;
+      const matches = tasksRef.current.filter((record) => {
+        const trigger = record.definition.trigger;
+        return trigger.kind === "event" && `${trigger.repository.owner}/${trigger.repository.name}` === repository;
+      });
+      if (matches.length === 0) return;
+      toast.success(t("automation.readiness_unblocked_toast", { repository }), {
+        action: matches.length === 1
+          ? { label: t("automation.readiness_unblocked_open"), onClick: () => navigate(`/automations/${encodeURIComponent(matches[0]!.definition.id)}`) }
+          : undefined,
+      });
+    };
+    window.addEventListener(automationReadinessUnblockedEvent, onUnblocked);
+    return () => window.removeEventListener(automationReadinessUnblockedEvent, onUnblocked);
+  }, [navigate]);
   const mutate = async (task: AutomationDefinition, action: "run" | "pause" | "resume" | "delete") => {
     if (!props.client || busy) return;
     setBusy(task.id);
@@ -570,6 +595,12 @@ function TaskRow({ record, client, busy, selecting, selected, onToggleSelected, 
   const paused = task.lifecycle === "paused";
   // TIPS:任务 6.1——只有事件触发的自动化才需要这个检测，定时任务没有"服务端订阅账号"这个概念。
   const accountStatus = useAutomationSubscriptionAccountStatus(client, task.id, task.trigger.kind === "event");
+  // TIPS:任务 2.3b——同理，只有事件触发才有"目标仓库就不就绪"这回事。
+  const readinessState = useEventTriggerReadinessBadge(
+    client,
+    task.trigger.kind === "event" ? task.trigger.repository : null,
+    task.trigger.kind === "event",
+  );
 
   return (
     <article className="group relative flex h-14 items-center gap-3 rounded-xl px-4 transition-colors hover:bg-dls-hover/60">
@@ -601,6 +632,7 @@ function TaskRow({ record, client, busy, selecting, selected, onToggleSelected, 
         </button>
         {/* TIPS:任务 6.1——放在打开编辑页的按钮之外，避免嵌套两层可交互元素；点击徽标
             本身不该顺带触发 onOpen。 */}
+        <EventTriggerReadinessBadge state={readinessState} />
         <AccountMismatchBadge
           status={accountStatus}
           onConfirm={async () => {

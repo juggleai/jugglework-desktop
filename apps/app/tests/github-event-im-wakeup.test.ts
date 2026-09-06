@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
-import { AUTOMATION_EVENT_IM_MESSAGE_NAME, AUTOMATION_EVENT_IM_SENDER_ID, isAutomationEventPushMessage } from "../src/react-app/domains/jugglechat/automation-event-message";
+import {
+  AUTOMATION_EVENT_IM_MESSAGE_NAME,
+  AUTOMATION_EVENT_IM_SENDER_ID,
+  AUTOMATION_READINESS_UNBLOCKED_IM_MESSAGE_NAME,
+  isAutomationEventPushMessage,
+  isAutomationReadinessUnblockedMessage,
+  parseAutomationReadinessUnblockedPayload,
+} from "../src/react-app/domains/jugglechat/automation-event-message";
 
 function readSource(relativePath: string): string {
   return readFileSync(new URL(`../${relativePath}`, import.meta.url), "utf8");
@@ -50,5 +57,48 @@ describe("automation event IM push → local poll wakeup", () => {
     const routes = readSource("../server/src/routes/automations.ts");
     expect(routes).toContain('"/automations/github-event-poll-now"');
     expect(routes).toContain("poller.pollNow();");
+  });
+});
+
+// TIPS: 任务 2.3b——仓库绑定解除阻塞的通知复用同一个系统发送方身份（见
+// automation-event-message.ts 顶部新增的 TIPS），所以必须按 name 精确匹配，不能像
+// 事件推送唤醒那样接受纯 sender.id 兜底，否则会被上面那条判断先吞掉。
+describe("automation readiness-unblocked IM notification → list resume prompt", () => {
+  test("isAutomationReadinessUnblockedMessage matches only by exact message name, not by sender id alone", () => {
+    expect(isAutomationReadinessUnblockedMessage({ name: AUTOMATION_READINESS_UNBLOCKED_IM_MESSAGE_NAME })).toBe(true);
+    expect(isAutomationReadinessUnblockedMessage({ name: AUTOMATION_EVENT_IM_MESSAGE_NAME })).toBe(false);
+    expect(isAutomationReadinessUnblockedMessage({})).toBe(false);
+  });
+
+  test("parseAutomationReadinessUnblockedPayload extracts the repository, and degrades quietly on bad payloads", () => {
+    expect(parseAutomationReadinessUnblockedPayload({ content: { content: '{"repository":"juggleai/skillhub"}' } })).toEqual({ repository: "juggleai/skillhub" });
+    expect(parseAutomationReadinessUnblockedPayload({ content: { content: "not json" } })).toBeNull();
+    expect(parseAutomationReadinessUnblockedPayload({ content: { content: "{}" } })).toBeNull();
+    expect(parseAutomationReadinessUnblockedPayload({ content: {} })).toBeNull();
+    expect(parseAutomationReadinessUnblockedPayload({})).toBeNull();
+  });
+
+  test("the chat store checks the readiness-unblocked message before the event-push wakeup, and dispatches a window event instead of treating it as chat", () => {
+    const store = readSource("src/react-app/domains/jugglechat/store.ts");
+    const readinessIndex = store.indexOf("if (isAutomationReadinessUnblockedMessage(message)) {");
+    const pushIndex = store.indexOf("if (isAutomationEventPushMessage(message)) {");
+    expect(readinessIndex).toBeGreaterThan(-1);
+    expect(pushIndex).toBeGreaterThan(-1);
+    // 必须先判断更具体的那条，理由见上面 describe 块的 TIPS。
+    expect(readinessIndex).toBeLessThan(pushIndex);
+    expect(store).toContain("dispatchAutomationReadinessUnblocked(payload)");
+  });
+
+  test("the automation list listens for the resume event and the readiness badge polls checkGithubEventReadiness", () => {
+    const events = readSource("src/react-app/domains/automations/automation-readiness-events.ts");
+    expect(events).toContain('export const automationReadinessUnblockedEvent = "jugglework-automation-readiness-unblocked"');
+
+    const badge = readSource("src/react-app/domains/automations/automation-readiness-badge.tsx");
+    expect(badge).toContain("client.checkGithubEventReadiness({ owner, name })");
+    expect(badge).toContain("automationReadinessUnblockedEvent");
+
+    const page = readSource("src/react-app/domains/automations/automation-page.tsx");
+    expect(page).toContain("window.addEventListener(automationReadinessUnblockedEvent, onUnblocked)");
+    expect(page).toContain("useEventTriggerReadinessBadge(");
   });
 });

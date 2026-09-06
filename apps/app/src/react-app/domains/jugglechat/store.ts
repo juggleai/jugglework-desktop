@@ -4,7 +4,13 @@ import { readDenIMLoginBootstrap, readDenSettings, type DenUser } from "@/app/li
 import { createJuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { resolveJuggleWorkConnection } from "@/react-app/shell/jugglework-connection";
 import { getChatGroupsForContacts, getMembers } from "./api";
-import { AUTOMATION_EVENT_IM_SENDER_ID, isAutomationEventPushMessage } from "./automation-event-message";
+import {
+  AUTOMATION_EVENT_IM_SENDER_ID,
+  isAutomationEventPushMessage,
+  isAutomationReadinessUnblockedMessage,
+  parseAutomationReadinessUnblockedPayload,
+} from "./automation-event-message";
+import { dispatchAutomationReadinessUnblocked } from "@/react-app/domains/automations/automation-readiness-events";
 import { juggleChatRuntime } from "./runtime";
 import { startJuggleChatSkillBridge } from "./skill-bridge";
 import type { ChatContact, ChatConversation, ChatMessage, ChatReaction, ChatUser, ChatView } from "./types";
@@ -217,6 +223,14 @@ function startSubscriptions() {
     // 事件轮询器跳过剩余等待、立刻拉一轮真实投递。转发失败（apps/server 还没起来、这次改动
     // 之前的旧版本没有这个端点……）只静默忽略——轮询器本来就会在最多一个轮询周期内自己发现
     // 这条投递，这条推送只是个可选的提速信号，不是这条链路的正确性依赖。
+    // TIPS: 任务 2.3b——这条判断必须排在事件推送唤醒判断之前。两种系统消息共用同一个
+    // 固定发送方身份，事件推送那条的匹配规则接受"仅 sender.id 匹配"兜底，顺序反过来
+    // 会让这条也被误判成"该转发去唤醒轮询"，永远走不到下面这个分支。
+    if (isAutomationReadinessUnblockedMessage(message)) {
+      const payload = parseAutomationReadinessUnblockedPayload(message);
+      if (payload) dispatchAutomationReadinessUnblocked(payload);
+      return;
+    }
     if (isAutomationEventPushMessage(message)) {
       void notifyLocalServerOfGithubEventPush();
       return;
