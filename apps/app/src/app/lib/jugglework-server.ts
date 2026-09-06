@@ -36,6 +36,7 @@ import type {
   AutomationDraft,
   AutomationEventTrigger,
   AutomationListResponse,
+  AutomationPromptPart,
   AutomationRun,
   AutomationRunListResponse,
   AutomationSyncMutation,
@@ -1698,6 +1699,14 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     estimateGithubEventFrequency: (trigger: AutomationEventTrigger) => requestJson<{ perWeek: number | null }>(baseUrl, "/automations/github-event-frequency", {
       token, hostToken, method: "POST", body: trigger, timeoutMs: timeouts.config,
     }).then((response) => response.perWeek).catch(() => null),
+    /**
+     * "模拟测试"（任务 5.2）：给一个历史 PR/Issue 链接，看看真实触发时会组装出什么 prompt，
+     * 不创建任何运行或会话——本机这一步只读，本身就没有能创建运行的调用。
+     */
+    previewGithubEventPrompt: (input: { url: string; promptParts: AutomationPromptPart[] }) =>
+      requestJson<{ entityRef: string; entityUrl: string; promptParts: AutomationPromptPart[] }>(baseUrl, "/automations/preview-event-prompt", {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.config,
+      }),
     /** 按 ID 读取本机自动化任务。 */
     getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(
       baseUrl, `/automations/${encodeURIComponent(automationId)}`, { token, hostToken, timeoutMs: timeouts.config },

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AutomationDefinition, AutomationDraft, AutomationRun, AutomationSchedule } from "@jugglework/types/automation";
+import type { AutomationDefinition, AutomationDraft, AutomationPromptPart, AutomationRun, AutomationSchedule } from "@jugglework/types/automation";
 import type { AutomationRepository } from "../automation/repository.js";
 import {
   automationDraftFromUnknown,
@@ -10,6 +10,8 @@ import {
   validateAutomationActiveRange,
 } from "../automation/validation.js";
 import { previewAutomationSchedule } from "../automation/schedule.js";
+import { appendEventContextPromptParts } from "../automation/event-pipeline.js";
+import { fetchGithubEntityPreview, parseGithubEntityUrl } from "../automation/github-entity-preview.js";
 import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "../automation/github-event-client.js";
 import type { GithubEventAuthStore } from "../automation/github-event-auth-store.js";
 import type { AutomationEventPoller } from "../automation/event-poller.js";
@@ -78,6 +80,25 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     const schedule = validateAutomationSchedule(body.schedule as AutomationSchedule | undefined);
     const activeRange = validateAutomationActiveRange(body.activeRange as AutomationDraft["activeRange"]);
     return jsonResponse(previewAutomationSchedule(schedule, activeRange, Date.now(), typeof body.locale === "string" ? body.locale : "zh-CN"));
+  });
+
+  // TIPS: 任务 5.2——"模拟测试"：给一个历史 PR/Issue 链接，看看真实触发时会组装出什么
+  // prompt，但不创建任何运行或会话。之所以只需要这一个只读端点就能满足"不真正执行"这个
+  // 验证要求——不是靠额外加一个"预演模式"开关绕开执行逻辑，而是这条路径压根不触碰
+  // repository.claimEventRun/AutomationExecutor 中的任何一个，结构上就不存在能创建运行
+  // 或会话的代码路径。拼装本身复用 `appendEventContextPromptParts`（跟真实触发同一段代码），
+  // 保证预览看到的就是真实触发会组装出来的东西，不是另一套照猫画虎的展示逻辑。
+  // TIPS: 只支持公开仓库——直接打 GitHub 公开 REST API，不经过 GitHub App 安装令牌
+  // （见 github-entity-preview.ts 顶部注释），私有仓库会在抓取那一步就失败并提示。
+  addRoute(routes, "POST", "/automations/preview-event-prompt", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const url = typeof body.url === "string" ? body.url.trim() : "";
+    const promptParts = Array.isArray(body.promptParts) ? (body.promptParts as AutomationPromptPart[]) : [];
+    const target = parseGithubEntityUrl(url);
+    if (!target) throw new ApiError(400, "invalid_request", "A GitHub issue or pull request URL is required.");
+    const preview = await fetchGithubEntityPreview(target);
+    const parts = appendEventContextPromptParts(promptParts, { untrustedText: preview.untrustedText, sourceUrl: preview.entityUrl }, []);
+    return jsonResponse({ entityRef: preview.entityRef, entityUrl: preview.entityUrl, promptParts: parts });
   });
 
   // TIPS:以下五个路由都是到 jugglework-server 事件中继 API 的直通代理，没有本地状态、

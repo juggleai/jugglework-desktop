@@ -532,3 +532,114 @@ test("without automationSubscriptionAccounts configured, subscription-account ro
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// TIPS: 任务 5.2——"模拟测试"。这里特意不用真实网络，用一个假的 globalThis.fetch 顶替
+// github-entity-preview.ts 默认读的全局 fetch（它的 fetchImpl 参数默认值就是 fetch 本身，
+// 调用方不传时在调用时刻求值，测试前替换 globalThis.fetch 就能拦下来）。核心验证点：
+// 整个流程完全不创建运行/会话——不是靠某个"预演模式"标志位绕开执行，而是这条路由从头
+// 到尾都没碰 repository.claimEventRun/listRuns 会用到的任何写入路径，用"调用前后运行列表
+// 完全没变化"直接证明，而不是只信任代码没写错。
+test("preview-event-prompt fetches a historical PR/issue and assembles the prompt without creating any run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-preview-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+  });
+  const invoke = async (method: string, path: string, body?: unknown) => {
+    const url = new URL(`http://localhost${path}`);
+    const route = matchRoute(routes, method, url.pathname);
+    assert.ok(route);
+    const request = new Request(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return route.handler({ request, url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const requestUrl = String(input);
+    if (requestUrl === "https://api.github.com/repos/juggleai/skillhub/issues/42") {
+      return Response.json({ title: "修复登录跳转", body: "点了登录按钮没反应", html_url: "https://github.com/juggleai/skillhub/issues/42" });
+    }
+    if (requestUrl.startsWith("https://api.github.com/repos/juggleai/skillhub/issues/42/comments")) {
+      return Response.json([{ body: "我也遇到了" }]);
+    }
+    throw new Error(`unexpected fetch in test: ${requestUrl}`);
+  }) as typeof fetch;
+  try {
+    const runsBefore = repository.listRuns({});
+    const preview = await invoke("POST", "/automations/preview-event-prompt", {
+      url: "https://github.com/juggleai/skillhub/issues/42",
+      promptParts: [{ type: "text", text: "帮我看看这个 issue" }],
+    });
+    assert.equal(preview.status, 200);
+    const payload = await preview.json() as { entityRef: string; entityUrl: string; promptParts: Array<{ type: string; text?: string }> };
+    assert.equal(payload.entityRef, "github:issue:42");
+    assert.equal(payload.entityUrl, "https://github.com/juggleai/skillhub/issues/42");
+    // 原有 prompt 部分保留在最前面，事件正文包裹成不可信数据边界追加在后面——跟真实触发
+    // 走 appendEventContextPromptParts 组装出来的形状完全一致（同一段代码），不是预览
+    // 专门另写的展示逻辑。
+    assert.equal(payload.promptParts[0]?.text, "帮我看看这个 issue");
+    assert.ok(payload.promptParts.some((part) => part.text?.includes("<external-untrusted-data>")));
+    assert.ok(payload.promptParts.some((part) => part.text?.includes("触发来源")));
+
+    // 核心断言：预览前后运行记录完全没变化——没有任何运行被创建，不需要另外去校验
+    // "没有调用 executor"这种实现细节，运行列表本身就是最终事实。
+    const runsAfter = repository.listRuns({});
+    assert.deepEqual(runsAfter.items, runsBefore.items);
+  } finally {
+    globalThis.fetch = originalFetch;
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("preview-event-prompt rejects a non-GitHub-entity URL without ever reaching the network", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-preview-invalid-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+  });
+  const invoke = async (method: string, path: string, body?: unknown) => {
+    const url = new URL(`http://localhost${path}`);
+    const route = matchRoute(routes, method, url.pathname);
+    assert.ok(route);
+    const request = new Request(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return route.handler({ request, url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new Error("must not reach the network for an invalid URL"); }) as unknown as typeof fetch;
+  try {
+    await assert.rejects(
+      invoke("POST", "/automations/preview-event-prompt", { url: "not a github url", promptParts: [] }),
+      (error: unknown) => (error as { status: number; code: string }).status === 400 && (error as { code: string }).code === "invalid_request",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

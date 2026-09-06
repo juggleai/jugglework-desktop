@@ -46,6 +46,7 @@ import {
 import { defaultEventTrigger, EventTriggerEditor, type GithubEventTriggerClient } from "./event-trigger-editor";
 import { AccountMismatchBadge, useAutomationSubscriptionAccountStatus } from "./automation-account-mismatch";
 import { EventTriggerReadinessBadge, useEventTriggerReadinessBadge } from "./automation-readiness-badge";
+import { EventPromptPreview } from "./automation-event-preview";
 import { automationReadinessUnblockedEvent } from "./automation-readiness-events";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
@@ -1311,6 +1312,22 @@ function AutomationEditor(props: {
                   permission={permission}
                   onPermissionEscalationConfirmed={() => setPermission(AUTOMATION_PERMISSION_PROFILE)}
                 />
+                {/* TIPS:任务 5.2"模拟测试"——草稿不需要先保存就能预览，promptParts 直接从
+                    当前编辑区的文本现解析；解析失败（比如提示词还是空的）就不渲染这个入口，
+                    不强迫用户先把提示词写完整才能看到这个按钮存在。 */}
+                {props.client ? (() => {
+                  try {
+                    const promptParts = parseAutomationPrompt(prompt).parts;
+                    return (
+                      <EventPromptPreview
+                        client={{ previewPrompt: (input) => props.client!.previewGithubEventPrompt(input) }}
+                        promptParts={promptParts}
+                      />
+                    );
+                  } catch {
+                    return null;
+                  }
+                })() : null}
                 {/* TIPS:影子模式（任务 5.3）只对事件触发有意义——上线前先观察"会不会触发、
                     触发了会做什么"，不真正创建会话或写回 GitHub，见 executor.ts executeShadow()。 */}
                 <label className="flex items-center gap-2 text-sm">
