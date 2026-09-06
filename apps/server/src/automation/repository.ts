@@ -508,6 +508,33 @@ export class AutomationRepository {
   }
 
   /**
+   * 读取某个自动化的事件订阅上一次是在哪个账号下确认/推送成功的；从未推送过时返回 null。
+   * 任务 6.1：`subscription-sync.ts` 用它跟"当前登录账号"比对，判断要不要在推送前拦下来。
+   */
+  getSubscriptionAccount(automationId: string): { accountId: string; confirmedAt: number } | null {
+    const row = this.database.get<{ account_id: string; confirmed_at: number }>(
+      "SELECT account_id, confirmed_at FROM automation_subscription_accounts WHERE automation_id = ?",
+      [automationId],
+    );
+    return row ? { accountId: row.account_id, confirmedAt: row.confirmed_at } : null;
+  }
+
+  /** 记录/更新某个自动化的事件订阅当前确认账号——首次推送时自动登记，或用户显式重新确认后调用。 */
+  setSubscriptionAccount(automationId: string, accountId: string, now: number): void {
+    this.database.run(
+      `INSERT INTO automation_subscription_accounts(automation_id, account_id, confirmed_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(automation_id) DO UPDATE SET account_id = excluded.account_id, confirmed_at = excluded.confirmed_at`,
+      [automationId, accountId, now],
+    );
+  }
+
+  /** 清除某个自动化的订阅账号记账——自动化被删除、或触发方式从事件切回定时时调用。 */
+  deleteSubscriptionAccount(automationId: string): void {
+    this.database.run("DELETE FROM automation_subscription_accounts WHERE automation_id = ?", [automationId]);
+  }
+
+  /**
    * 更新运行状态并在同一事务写入同步 outbox。
    * TIPS: `eventMetadata` 是浅合并（不是整体替换），因为不同调用点会分别推进这个 JSON 袋子
    * 里的不同字段（比如 `dispatched` 在分发成功时置真，`previousSessionUnavailable` 在回退新建

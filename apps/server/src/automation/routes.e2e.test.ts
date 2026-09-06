@@ -447,3 +447,88 @@ test("without a poller configured, github-event-poll-now has no route at all", a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("subscription-account routes: status reflects the sync's view, and confirm only fires for a real mismatch under the current account", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-subscription-account-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  const scopeChecks: string[] = [];
+  const confirmed: Array<{ automationId: string; accountId: string }> = [];
+  let status: { state: "ok" } | { state: "unknown" } | { state: "mismatch"; confirmedAccountId: string; currentAccountId: string } = {
+    state: "mismatch", confirmedAccountId: "user-a", currentAccountId: "user-b",
+  };
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status2 = 200) => Response.json(data, { status: status2 }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: (_ctx, required) => { scopeChecks.push(required); },
+    onChanged: () => undefined,
+    automationSubscriptionAccounts: {
+      getAccountStatus: () => status,
+      confirmAccount: (automationId, accountId) => { confirmed.push({ automationId, accountId }); status = { state: "ok" }; },
+    },
+  });
+  const invoke = async (method: string, path: string) => {
+    const url = new URL(`http://localhost${path}`);
+    const route = matchRoute(routes, method, url.pathname);
+    assert.ok(route);
+    const request = new Request(url, { method });
+    return route.handler({ request, url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  try {
+    const first = await invoke("GET", "/automations/automation-1/subscription-account");
+    assert.equal(first.status, 200);
+    assert.deepEqual(await first.json(), { state: "mismatch", confirmedAccountId: "user-a", currentAccountId: "user-b" });
+
+    // 确认永远确认成"当前登录账号"（currentAccountId），不接受调用方指定别的账号——
+    // 这个请求本身就不带账号参数，路由层只是把 status.currentAccountId 转发给 confirmAccount。
+    const confirm = await invoke("POST", "/automations/automation-1/subscription-account-confirm");
+    assert.equal(confirm.status, 200);
+    assert.deepEqual(confirmed, [{ automationId: "automation-1", accountId: "user-b" }]);
+    assert.ok(scopeChecks.includes("collaborator"));
+
+    // 再次确认时已经不是 mismatch 了——必须拒绝，而不是悄悄再确认一次。
+    await assert.rejects(
+      invoke("POST", "/automations/automation-1/subscription-account-confirm"),
+      (error: unknown) => (error as { status: number; code: string }).status === 409
+        && (error as { code: string }).code === "automation_subscription_account_not_mismatched",
+    );
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("without automationSubscriptionAccounts configured, subscription-account routes have no route at all", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-subscription-account-absent-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+    // automationSubscriptionAccounts intentionally omitted
+  });
+  try {
+    assert.equal(matchRoute(routes, "GET", "/automations/automation-1/subscription-account"), null);
+    assert.equal(matchRoute(routes, "POST", "/automations/automation-1/subscription-account-confirm"), null);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

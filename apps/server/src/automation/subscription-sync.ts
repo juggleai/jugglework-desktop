@@ -30,13 +30,24 @@ export type AutomationSubscriptionSyncClock = {
 
 export type AutomationSubscriptionSyncOptions = {
   relay: Pick<GithubEventRelayClient, "upsertEventSubscription" | "deleteEventSubscription">;
-  // TIPS: 只依赖分页读取，测试可以直接塞一个假仓储，不用为了测同步逻辑连带搭一整套
-  // sqlite repository。
-  repository: Pick<AutomationRepository, "listDefinitions">;
+  // TIPS: 只依赖分页读取 + 账号记账两个窄方法，测试可以直接塞一个假仓储，不用为了测同步
+  // 逻辑连带搭一整套 sqlite repository。
+  repository: Pick<AutomationRepository, "listDefinitions" | "getSubscriptionAccount" | "setSubscriptionAccount" | "deleteSubscriptionAccount">;
+  /**
+   * 当前登录账号 id；返回 null 表示还不知道（未登录，或渲染进程尚未推送）。
+   * 任务 6.1：这是账号切换检测的信号来源——见下面 `reconcileOne` 的账号比对。
+   */
+  currentAccountId?: () => string | null;
   intervalMs?: number;
   clock?: AutomationSubscriptionSyncClock;
   log?: (event: string, fields?: Record<string, unknown>) => void;
 };
+
+/** 一个自动化当前的账号一致性状态，供桌面 UI 渲染重新确认横幅。 */
+export type AutomationSubscriptionAccountStatus =
+  | { state: "ok" }
+  | { state: "unknown" }
+  | { state: "mismatch"; confirmedAccountId: string; currentAccountId: string };
 
 /**
  * 从本地定义算出这条自动化"期望在服务端呈现的订阅状态"——`null` 表示不该存在订阅
@@ -80,6 +91,7 @@ function defaultClock(): AutomationSubscriptionSyncClock {
 export class AutomationSubscriptionSync {
   private readonly relay: AutomationSubscriptionSyncOptions["relay"];
   private readonly repository: AutomationSubscriptionSyncOptions["repository"];
+  private readonly currentAccountId: () => string | null;
   private readonly intervalMs: number;
   private readonly clock: AutomationSubscriptionSyncClock;
   private readonly log: (event: string, fields?: Record<string, unknown>) => void;
@@ -92,13 +104,40 @@ export class AutomationSubscriptionSync {
   // 自动化全量重推一次；服务端那条 PUT 是幂等 upsert，重推的代价是可接受的，换来的是
   // 不需要为"是否已同步"这件事另开一张持久化表。
   private readonly pushed = new Map<string, string>();
+  // TIPS: 任务 6.1——账号不一致时这一轮不推送，状态记在这里供 UI 轮询；不落库是因为它
+  // 只是"当前观察到的偏差"，跟 automation_subscription_accounts 那张记录"上次确认在哪个
+  // 账号下"的表意义不同，重启后重新计算一次就行，不需要持久化。
+  private readonly accountMismatches = new Map<string, { confirmedAccountId: string; currentAccountId: string }>();
 
   constructor(options: AutomationSubscriptionSyncOptions) {
     this.relay = options.relay;
     this.repository = options.repository;
+    this.currentAccountId = options.currentAccountId ?? (() => null);
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.clock = options.clock ?? defaultClock();
     this.log = options.log ?? (() => undefined);
+  }
+
+  /**
+   * 某个自动化当前的账号一致性状态。`"unknown"`：还没确认过账号（首次推送尚未发生），
+   * 或者当前根本不知道登录账号是谁——都不算异常，只是还没有可比对的证据。
+   */
+  getAccountStatus(automationId: string): AutomationSubscriptionAccountStatus {
+    const mismatch = this.accountMismatches.get(automationId);
+    if (mismatch) return { state: "mismatch", confirmedAccountId: mismatch.confirmedAccountId, currentAccountId: mismatch.currentAccountId };
+    return this.repository.getSubscriptionAccount(automationId) ? { state: "ok" } : { state: "unknown" };
+  }
+
+  /**
+   * 用户在重新确认横幅里点了"继续使用当前账号"——把记账更新到当前账号，解除拦截，
+   * 让下一轮同步正常按新账号推送。不在这里直接推送：让常规的 syncLoop 周期去做，
+   * 避免这条路径要重复一遍 reconcileOne 的全部逻辑。
+   */
+  confirmAccount(automationId: string, accountId: string): void {
+    this.repository.setSubscriptionAccount(automationId, accountId, this.clock.now());
+    this.accountMismatches.delete(automationId);
+    // 摘要清掉才能让下一轮真的重新发起推送——不然会命中"没变化就不用推"的短路。
+    this.pushed.delete(automationId);
   }
 
   start(): void {
@@ -157,23 +196,51 @@ export class AutomationSubscriptionSync {
   }
 
   private async reconcileOne(record: AutomationDefinitionRecord): Promise<void> {
+    const automationId = record.definition.id;
     const desired = desiredGithubEventSubscription(record);
+    if (!desired) {
+      // 不再是事件触发（或已墓碑删除）——记账没有意义了，一并清掉，免得这个自动化
+      // 的 id 被复用（理论上不会，但没有理由留着一条永远匹配不到定义的记账行）。
+      this.accountMismatches.delete(automationId);
+      if (this.repository.getSubscriptionAccount(automationId)) this.repository.deleteSubscriptionAccount(automationId);
+    } else {
+      // TIPS: 任务 6.1——先做账号一致性检查，再决定要不要推送。服务端的 `OwnerIMUserID`
+      // 每次 upsert 都会被"这次推送用的是哪个 session"悄悄覆盖（见 jugglework-server
+      // `UpsertSubscription` 的注释），也就是说如果这里不拦，账号切换之后账号仅仅是被
+      // 服务端安静地改写成新账号——不是"忘了检测"，是"检测的证据在推送那一刻自己被抹掉了"。
+      // 所以这道拦截必须在调用 upsertEventSubscription 之前。
+      const accountId = this.currentAccountId();
+      if (accountId) {
+        const confirmed = this.repository.getSubscriptionAccount(automationId);
+        if (confirmed && confirmed.accountId !== accountId) {
+          this.accountMismatches.set(automationId, { confirmedAccountId: confirmed.accountId, currentAccountId: accountId });
+          return; // 拦下——不推送，也不更新 pushed 摘要，等用户显式确认。
+        }
+        // 到这里要么是首次推送（confirmed 为 null），要么账号本来就一致——都可以放行，
+        // 顺带（重新）登记一次账号记账，让下一次账号切换有据可查。
+        if (!confirmed || confirmed.accountId !== accountId) this.repository.setSubscriptionAccount(automationId, accountId, this.clock.now());
+        this.accountMismatches.delete(automationId);
+      }
+      // accountId 为 null（还不知道当前登录是谁）时不拦截——这不是本任务要处理的场景，
+      // resolveAuth 自己的"未登录时优雅降级"已经覆盖了这种情况，upsertEventSubscription
+      // 会在没有凭据时自然失败，跟原有行为一致。
+    }
     const digest = subscriptionDigest(desired);
-    if (this.pushed.get(record.definition.id) === digest) return;
+    if (this.pushed.get(automationId) === digest) return;
     try {
       if (desired) {
-        await this.relay.upsertEventSubscription(record.definition.id, desired);
+        await this.relay.upsertEventSubscription(automationId, desired);
       } else {
         // 只有确实之前成功推送过点什么，才有必要发一次删除——本来就不是事件触发的
         // 自动化，或者从没同步成功过的，不用管。
-        if (!this.pushed.has(record.definition.id)) return;
-        await this.relay.deleteEventSubscription(record.definition.id);
+        if (!this.pushed.has(automationId)) return;
+        await this.relay.deleteEventSubscription(automationId);
       }
-      this.pushed.set(record.definition.id, digest);
+      this.pushed.set(automationId, digest);
     } catch (error) {
       // 不重新抛出——这一条这轮没同步上，下一轮 digest 依然不匹配会自动重试；一条
       // 失败不该挡住这一轮里其它自动化的同步。
-      this.log("automation_event_subscription_sync_failed", { automationId: record.definition.id, error: safeErrorCode(error) });
+      this.log("automation_event_subscription_sync_failed", { automationId, error: safeErrorCode(error) });
     }
   }
 }

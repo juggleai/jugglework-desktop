@@ -80,7 +80,7 @@ test("automation migrations preserve an existing populated runtime database and 
   const reopenedDatabase = automationSqliteAdapter(reopenedRuntime);
   try {
     migrateAutomationDatabase(reopenedDatabase, NOW + 1);
-    assert.equal(automationDatabaseVersion(reopenedDatabase), 4);
+    assert.equal(automationDatabaseVersion(reopenedDatabase), 5);
     assert.equal(reopenedDatabase.get<{ value: string }>("SELECT value FROM existing_runtime_records WHERE id = ?", ["legacy-1"])?.value, "preserved");
   } finally {
     reopenedDatabase.close();
@@ -95,7 +95,7 @@ test("migration replay, revisions, pagination and local-only persistence are ato
   try {
     migrateAutomationDatabase(database, NOW);
     migrateAutomationDatabase(database, NOW + 1);
-    assert.equal(automationDatabaseVersion(database), 4);
+    assert.equal(automationDatabaseVersion(database), 5);
     const repository = AutomationRepository.fromDatabase(database);
     const first = definition("task-1", "任务一", 1, NOW);
     const second = definition("task-2", "任务二", 1, NOW + 1);
@@ -264,6 +264,27 @@ test("entity session mapping round-trips through upsert, close and invalidate", 
     const invalid = repository.getEntitySessionMapping("task-1", "github:pull_request:999");
     assert.equal(invalid?.status, "invalid");
     assert.equal(invalid?.invalidReason, "connector_unavailable");
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("subscription account bookkeeping round-trips through set, overwrite and delete", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-subscription-account-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    assert.equal(repository.getSubscriptionAccount("automation-1"), null);
+    repository.setSubscriptionAccount("automation-1", "user-a", NOW);
+    assert.deepEqual(repository.getSubscriptionAccount("automation-1"), { accountId: "user-a", confirmedAt: NOW });
+
+    // TIPS: 任务 6.1 用户重新确认之后，记账要覆盖成新账号，而不是并存两条。
+    repository.setSubscriptionAccount("automation-1", "user-b", NOW + 1_000);
+    assert.deepEqual(repository.getSubscriptionAccount("automation-1"), { accountId: "user-b", confirmedAt: NOW + 1_000 });
+
+    repository.deleteSubscriptionAccount("automation-1");
+    assert.equal(repository.getSubscriptionAccount("automation-1"), null);
   } finally {
     repository.close();
     await rm(root, { recursive: true, force: true });

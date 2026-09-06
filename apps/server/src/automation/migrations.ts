@@ -251,6 +251,23 @@ const migrations: AutomationMigration[] = [
         ON automation_tasks(workspace_id, deleted_at, updated_at DESC)`,
     ],
   },
+  {
+    version: 5,
+    statements: [
+      // TIPS: 任务 6.1——事件触发订阅推给服务端时带的是"当前登录账号"，而这个账号会随
+      // 设备登出/切换而变化。服务端 `OwnerIMUserID` 每次 upsert 都会被新账号悄悄覆盖
+      // （见 jugglework-server `UpsertSubscription` 的注释：这个字段"仍然由已验证的
+      // session 身份派生"），所以不能拿它当"账号有没有变过"的证据——覆盖发生的那一刻，
+      // 证据本身就被抹掉了。这张表是本地独立的一份记账：记的是"这个自动化的事件订阅上一次
+      // 是在哪个账号下被确认/推送成功的"，只由这个进程自己写，不受服务端那次覆盖影响，
+      // `subscription-sync.ts` 靠它在推送前判断账号是否变了。
+      `CREATE TABLE IF NOT EXISTS automation_subscription_accounts (
+        automation_id TEXT PRIMARY KEY NOT NULL,
+        account_id TEXT NOT NULL,
+        confirmed_at INTEGER NOT NULL
+      )`,
+    ],
+  },
 ];
 
 /** 按版本顺序执行自动化模块的前向 SQLite 迁移。 */

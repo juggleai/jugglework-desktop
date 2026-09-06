@@ -13,6 +13,7 @@ import { previewAutomationSchedule } from "../automation/schedule.js";
 import { createUnconfiguredGithubEventRelayClient, type GithubEventRelayClient } from "../automation/github-event-client.js";
 import type { GithubEventAuthStore } from "../automation/github-event-auth-store.js";
 import type { AutomationEventPoller } from "../automation/event-poller.js";
+import type { AutomationSubscriptionSync } from "../automation/subscription-sync.js";
 import { ApiError } from "../errors.js";
 import type { McpItem, ServerConfig, TokenScope } from "../types.js";
 import type { WorkspaceInfo } from "../types.js";
@@ -59,6 +60,11 @@ export interface RegisterAutomationRoutesOptions {
    * 唤醒信号，只是响应会变慢（回到最多 30 秒的轮询间隔），不会不工作。
    */
   githubEventPoller?: Pick<AutomationEventPoller, "pollNow">;
+  /**
+   * 任务 6.1——账号切换检测的读/写窄接口。未提供时下面两个端点直接 404，跟其它可选能力
+   * 一致的降级方式（没有事件触发自动化的部署完全不需要这套机制）。
+   */
+  automationSubscriptionAccounts?: Pick<AutomationSubscriptionSync, "getAccountStatus" | "confirmAccount">;
   enabled?: boolean;
 }
 
@@ -117,8 +123,11 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
       const body = await readJsonBody(ctx.request);
       const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
       const token = typeof body.token === "string" ? body.token.trim() : "";
+      // accountId 是任务 6.1 加的——可选，不提供也不报错，只是那种情况下账号切换检测
+      // 退化为"不知道账号"（跟登出前的产品行为一致，不引入新的必填前置条件）。
+      const accountId = typeof body.accountId === "string" && body.accountId.trim() ? body.accountId.trim() : null;
       if (!baseUrl || !token) throw new ApiError(400, "invalid_request", "baseUrl and token are required");
-      authStore.set({ baseUrl, token });
+      authStore.set({ baseUrl, token }, accountId);
       return jsonResponse({ ok: true });
     });
     // TIPS: 渲染进程登出时调用——清掉这份内存里的凭据，避免旧会话的 token 在用户切换账号
@@ -140,6 +149,25 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     addRoute(routes, "POST", "/automations/github-event-poll-now", "client", async (ctx) => {
       requireMutation(ctx, options);
       poller.pollNow();
+      return jsonResponse({ ok: true });
+    });
+  }
+  if (options.automationSubscriptionAccounts) {
+    const accounts = options.automationSubscriptionAccounts;
+    // TIPS: 任务 6.1——列表/编辑器轮询这个端点决定要不要渲染"账号已变化，是否继续"的
+    // 横幅。`state: "unknown"` 不是异常，是"还没有可比对的证据"（第一次推送尚未发生，
+    // 或者根本没登录），UI 对这两种都不需要提示，跟 "ok" 一样静默。
+    addRoute(routes, "GET", "/automations/:automationId/subscription-account", "client", async (ctx) => {
+      return jsonResponse(accounts.getAccountStatus(ctx.params.automationId));
+    });
+    // TIPS: 用户在横幅里点"继续使用当前账号"——不接受调用方指定账号 id，永远确认成
+    // "当前登录账号"，避免这个写接口被拿去冒充确认成任意账号。
+    addRoute(routes, "POST", "/automations/:automationId/subscription-account-confirm", "client", async (ctx) => {
+      requireMutation(ctx, options);
+      const status = accounts.getAccountStatus(ctx.params.automationId);
+      if (status.state !== "mismatch") throw new ApiError(409, "automation_subscription_account_not_mismatched", "This automation has no pending account reconfirmation.");
+      accounts.confirmAccount(ctx.params.automationId, status.currentAccountId);
+      options.onChanged?.();
       return jsonResponse({ ok: true });
     });
   }

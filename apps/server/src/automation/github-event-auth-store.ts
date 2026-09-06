@@ -8,12 +8,23 @@ import type { GithubEventRelayAuth } from "./github-event-client.js";
  */
 export class GithubEventAuthStore {
   private current: GithubEventRelayAuth | null = null;
+  // TIPS: 任务 6.1（账号切换检测）需要的信号——跟 `current` 分开存，不塞进
+  // GithubEventRelayAuth 本身，因为那个类型是直接喂给 github-event-client.ts 拼请求的，
+  // 账号 id 不是请求形状的一部分，只是 subscription-sync.ts 用来跟本地记账比对的旁路信息。
+  private accountId: string | null = null;
 
   get(): GithubEventRelayAuth | null {
     return this.current;
   }
 
-  set(auth: GithubEventRelayAuth | null): void {
+  /** 当前推送方所属的账号 id；未登录，或调用方没有一起推送账号 id 时为 null。 */
+  getAccountId(): string | null {
+    return this.accountId;
+  }
+
+  set(auth: GithubEventRelayAuth | null, accountId: string | null = null): void {
     this.current = auth;
+    // 登出（auth 为 null）时账号 id 也一并清空，不留旧账号的痕迹。
+    this.accountId = auth ? accountId : null;
   }
 }

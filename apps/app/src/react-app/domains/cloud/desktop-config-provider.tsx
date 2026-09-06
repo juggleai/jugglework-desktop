@@ -589,10 +589,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       const cloudToken = settings.authToken?.trim() ?? "";
       const cloudBaseUrl = settings.baseUrl?.trim() ?? "";
       if (!cloudToken || !cloudBaseUrl) return;
-      const digest = `${cloudBaseUrl}::${cloudToken}`;
+      const accountId = denAuth.user?.id?.trim() || undefined;
+      const digest = `${cloudBaseUrl}::${cloudToken}::${accountId ?? ""}`;
       if (cancelled || lastPushedGithubEventAuthRef.current === digest) return;
       lastPushedGithubEventAuthRef.current = digest;
-      await client.pushGithubEventAuth({ cloudBaseUrl: denControlPlaneBaseUrl(cloudBaseUrl), cloudToken });
+      await client.pushGithubEventAuth({ cloudBaseUrl: denControlPlaneBaseUrl(cloudBaseUrl), cloudToken, accountId });
     })().catch(() => null);
 
     return () => {

@@ -963,6 +963,10 @@ export async function startServer(config: ServerConfig, options: {
   const automationSubscriptionSync = new AutomationSubscriptionSync({
     relay: githubEventRelayClient,
     repository: automationRepository,
+    // TIPS: 任务 6.1——账号切换检测的信号来源。跟 resolveAuth 同一个落点
+    // （githubEventAuthStore），渲染进程登录/登出/切换账号时会一起推过来（见
+    // desktop-config-provider.tsx），不需要另开一条通道。
+    currentAccountId: () => githubEventAuthStore.getAccountId(),
     log: (event, fields) => logger.log("info", event, fields),
   });
   const routes = createRoutes(
@@ -982,6 +986,7 @@ export async function startServer(config: ServerConfig, options: {
     githubEventRelayClient,
     githubEventAuthStore,
     automationEventPoller,
+    automationSubscriptionSync,
   );
 
   const serverOptions: {
@@ -1927,6 +1932,7 @@ function createRoutes(
   githubEventRelayClient: GithubEventRelayClient,
   githubEventAuthStore: GithubEventAuthStore,
   automationEventPoller: AutomationEventPoller,
+  automationSubscriptionSync: AutomationSubscriptionSync,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -2045,6 +2051,7 @@ function createRoutes(
     githubEventRelay: githubEventRelayClient,
     githubEventAuthStore,
     githubEventPoller: automationEventPoller,
+    automationSubscriptionAccounts: automationSubscriptionSync,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {

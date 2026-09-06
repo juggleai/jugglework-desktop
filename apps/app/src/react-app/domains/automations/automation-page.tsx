@@ -44,6 +44,7 @@ import {
   type AutomationSchedule,
 } from "@jugglework/types/automation";
 import { defaultEventTrigger, EventTriggerEditor, type GithubEventTriggerClient } from "./event-trigger-editor";
+import { AccountMismatchBadge, useAutomationSubscriptionAccountStatus } from "./automation-account-mismatch";
 
 import type { WorkspaceInfo } from "@/app/lib/desktop";
 import { toast } from "@/components/ui/sonner";
@@ -502,6 +503,7 @@ function TaskList(props: {
                 <TaskRow
                   key={record.definition.id}
                   record={record}
+                  client={props.client}
                   busy={busy === record.definition.id}
                   selecting={props.selecting}
                   selected={props.selectedIds.has(record.definition.id)}
@@ -549,8 +551,9 @@ function TaskList(props: {
  * @param onOpen 打开编辑页
  * @param onAction 触发立即执行 / 暂停 / 恢复 / 删除
  */
-function TaskRow({ record, busy, selecting, selected, onToggleSelected, onOpen, onAction }: {
+function TaskRow({ record, client, busy, selecting, selected, onToggleSelected, onOpen, onAction }: {
   record: AutomationDefinitionRecord;
+  client: JuggleWorkServerClient | null;
   busy: boolean;
   selecting: boolean;
   selected: boolean;
@@ -565,6 +568,8 @@ function TaskRow({ record, busy, selecting, selected, onToggleSelected, onOpen, 
   const now = useNowTick(30_000);
   const task = record.definition;
   const paused = task.lifecycle === "paused";
+  // TIPS:任务 6.1——只有事件触发的自动化才需要这个检测，定时任务没有"服务端订阅账号"这个概念。
+  const accountStatus = useAutomationSubscriptionAccountStatus(client, task.id, task.trigger.kind === "event");
 
   return (
     <article className="group relative flex h-14 items-center gap-3 rounded-xl px-4 transition-colors hover:bg-dls-hover/60">
@@ -583,16 +588,27 @@ function TaskRow({ record, busy, selecting, selected, onToggleSelected, onOpen, 
           {selected ? <Check size={13} strokeWidth={3} /> : null}
         </button>
       ) : null}
-      <button type="button" onClick={selecting ? onToggleSelected : onOpen} className="min-w-0 flex-1 truncate text-left">
-        <span className="font-medium">{task.name}</span>
-        <span className="ml-3 text-sm text-dls-secondary">{task.workspace.name}</span>
-        <span className="ml-3 text-sm text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span>
-        {task.activeRange ? (
-          <span className="ml-3 text-sm text-dls-secondary">
-            {t("automation.active_range_prefix")} {displayDate(task.activeRange.startDate)} – {displayDate(task.activeRange.endDate)}
-          </span>
-        ) : null}
-      </button>
+      <span className="flex min-w-0 flex-1 items-center truncate">
+        <button type="button" onClick={selecting ? onToggleSelected : onOpen} className="min-w-0 truncate text-left">
+          <span className="font-medium">{task.name}</span>
+          <span className="ml-3 text-sm text-dls-secondary">{task.workspace.name}</span>
+          <span className="ml-3 text-sm text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span>
+          {task.activeRange ? (
+            <span className="ml-3 text-sm text-dls-secondary">
+              {t("automation.active_range_prefix")} {displayDate(task.activeRange.startDate)} – {displayDate(task.activeRange.endDate)}
+            </span>
+          ) : null}
+        </button>
+        {/* TIPS:任务 6.1——放在打开编辑页的按钮之外，避免嵌套两层可交互元素；点击徽标
+            本身不该顺带触发 onOpen。 */}
+        <AccountMismatchBadge
+          status={accountStatus}
+          onConfirm={async () => {
+            if (!client) return;
+            await client.confirmAutomationSubscriptionAccount(task.id);
+          }}
+        />
+      </span>
 
       {/* TIPS:时间与操作区叠在同一个固定宽度的槽位里，用透明度切换而不是 display——
           否则悬浮时行内元素宽度突变，整行会跟着抖动。 */}

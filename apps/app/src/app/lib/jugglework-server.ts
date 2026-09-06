@@ -1596,15 +1596,28 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     // bearer。设备身份（deviceId）不走这条路径——那是 apps/server 自己在本地生成、持久化
     // 的路由 key，跟渲染进程的登录态、跟远程控制都无关，见 apps/server 的
     // automation/device-identity.ts 和 jugglework-server design.md 决策 12。
-    pushGithubEventAuth: (input: { cloudBaseUrl: string; cloudToken: string }) =>
+    // accountId（任务 6.1）是可选的账号切换检测信号——传了才能在账号变化时拦下事件订阅
+    // 的静默改写，见 apps/server 的 subscription-sync.ts；不传时那套检测退化成"不知道账号"，
+    // 不影响这个方法原有的凭据转发行为。
+    pushGithubEventAuth: (input: { cloudBaseUrl: string; cloudToken: string; accountId?: string }) =>
       requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", {
         token, hostToken, method: "PUT",
-        body: { baseUrl: input.cloudBaseUrl, token: input.cloudToken },
+        body: { baseUrl: input.cloudBaseUrl, token: input.cloudToken, ...(input.accountId ? { accountId: input.accountId } : {}) },
         timeoutMs: timeouts.config,
       }),
     /** 渲染进程登出时调用，清掉 apps/server 内存里那份凭据。 */
     clearGithubEventAuth: () =>
       requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", { token, hostToken, method: "DELETE", timeoutMs: timeouts.config }),
+    // TIPS: 任务 6.1——列表/编辑器用它决定要不要渲染"账号已变化"横幅。
+    getAutomationSubscriptionAccountStatus: (automationId: string) =>
+      requestJson<{ state: "ok" | "unknown" } | { state: "mismatch"; confirmedAccountId: string; currentAccountId: string }>(
+        baseUrl, `/automations/${encodeURIComponent(automationId)}/subscription-account`, { token, hostToken, timeoutMs: timeouts.status },
+      ),
+    /** 用户在横幅里确认"继续使用当前账号"。 */
+    confirmAutomationSubscriptionAccount: (automationId: string) =>
+      requestJson<{ ok: boolean }>(baseUrl, `/automations/${encodeURIComponent(automationId)}/subscription-account-confirm`, {
+        token, hostToken, method: "POST", timeoutMs: timeouts.config,
+      }),
     // TIPS: jugglework-server 在生成一条事件投递记录后，会顺手推一条 IM 系统消息
     // （`jw:automation-event-delivery`）到这台设备登录的 IM 账号——渲染进程本来就是
     // 唯一真正连着 IM 的一方（apps/server 从没建立过 IM 连接），收到这条消息就转发到这里，
