@@ -19,17 +19,20 @@ test("validation applies defaults, rejects secrets and preserves unknown fields"
     name: "  每日任务  ",
     workspace: workspace(),
     prompt: { version: 1, parts: [{ type: "text", text: "检查项目" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai", futureRule: true },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai", futureRule: true },
     permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: NOW },
     executorDeviceId: "device-1",
   }, "device-1");
   const definition = validateAutomationDraft(draft, context(), { id: "task-1", revision: 1, createdAt: NOW });
+  // TIPS: 用旧版本只写过 `schedule` 顶层键的 rawDocument 触发一次性迁移路径，
+  // 验证输出统一收敛到 `trigger`，且未知字段（futureRule）在迁移中不丢失。
   const raw = mergeAutomationRawDocument({ futureTopLevel: { enabled: true }, schedule: { futureRule: true } }, definition);
   assert.equal(definition.name, "每日任务");
   assert.deepEqual(definition.model, { mode: "auto" });
   assert.equal(definition.nextRunAt, Date.parse("2026-08-11T01:00:00Z"));
   assert.deepEqual(raw.futureTopLevel, { enabled: true });
-  assert.equal((raw.schedule as Record<string, unknown>).futureRule, true);
+  assert.equal(raw.schedule, undefined);
+  assert.equal((raw.trigger as Record<string, unknown>).futureRule, true);
 
   assert.throws(
     () => automationDraftFromUnknown({ ...draft, accessToken: "secret" }, "device-1"),
@@ -77,7 +80,7 @@ test("automation migrations preserve an existing populated runtime database and 
   const reopenedDatabase = automationSqliteAdapter(reopenedRuntime);
   try {
     migrateAutomationDatabase(reopenedDatabase, NOW + 1);
-    assert.equal(automationDatabaseVersion(reopenedDatabase), 2);
+    assert.equal(automationDatabaseVersion(reopenedDatabase), 5);
     assert.equal(reopenedDatabase.get<{ value: string }>("SELECT value FROM existing_runtime_records WHERE id = ?", ["legacy-1"])?.value, "preserved");
   } finally {
     reopenedDatabase.close();
@@ -92,7 +95,7 @@ test("migration replay, revisions, pagination and local-only persistence are ato
   try {
     migrateAutomationDatabase(database, NOW);
     migrateAutomationDatabase(database, NOW + 1);
-    assert.equal(automationDatabaseVersion(database), 2);
+    assert.equal(automationDatabaseVersion(database), 5);
     const repository = AutomationRepository.fromDatabase(database);
     const first = definition("task-1", "任务一", 1, NOW);
     const second = definition("task-2", "任务二", 1, NOW + 1);
@@ -170,6 +173,146 @@ test("manual runs allow paused and completed tasks without changing lifecycle or
   }
 });
 
+test("claimEventRun creates one run per entity and merges same-entity retriggers without a new row", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-event-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    const task = definition("task-event", "Event", 1, NOW);
+    repository.createDefinition(task, task);
+
+    const first = repository.claimEventRun({
+      automationId: task.id, definitionRevision: 1, runId: "run-pr-482-a",
+      entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-1", now: NOW,
+    });
+    assert.equal(first.merged, false);
+    assert.equal(first.run.eventMetadata?.entityRef, "github:pull_request:482");
+    assert.equal(first.run.eventMetadata?.mergedEventCount, undefined);
+
+    // TIPS: 同一实体第二次触发必须合并进已有非终态运行，不新建行——这是防抖的数据库层保证。
+    const second = repository.claimEventRun({
+      automationId: task.id, definitionRevision: 1, runId: "run-pr-482-b",
+      entityRef: "github:pull_request:482", sourceDeliveryId: "delivery-2", now: NOW + 1_000,
+    });
+    assert.equal(second.merged, true);
+    assert.equal(second.run.id, first.run.id);
+    assert.equal(second.run.eventMetadata?.mergedEventCount, 1);
+    assert.equal(repository.listRuns({ automationId: task.id }).items.length, 1);
+
+    // TIPS: 不同实体（不同 PR）之间允许并行，不受上面这条非终态运行阻塞。
+    const other = repository.claimEventRun({
+      automationId: task.id, definitionRevision: 1, runId: "run-pr-483",
+      entityRef: "github:pull_request:483", sourceDeliveryId: "delivery-3", now: NOW + 2_000,
+    });
+    assert.equal(other.merged, false);
+    assert.notEqual(other.run.id, first.run.id);
+    assert.equal(repository.listRuns({ automationId: task.id }).items.length, 2);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("recordSkippedEventRun records a terminal skip without ever touching entity non-overlap", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-skip-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    const task = definition("task-skip", "Skip", 1, NOW);
+    repository.createDefinition(task, task);
+    const run = repository.recordSkippedEventRun({
+      automationId: task.id, definitionRevision: 1, runId: "run-dropped",
+      errorCode: "event_backlog_dropped",
+      eventMetadata: { backlogDropped: { count: 12, sinceAt: NOW - 604_800_000, untilAt: NOW } },
+      now: NOW,
+    });
+    assert.equal(run.state, "skipped");
+    assert.equal(run.errorCode, "event_backlog_dropped");
+    assert.equal(run.eventMetadata?.backlogDropped?.count, 12);
+    // TIPS: 跳过记录不占用非重叠约束——紧接着认领一条真正的事件运行必须成功，不被这条跳过记录挡住。
+    const claimed = repository.claimEventRun({
+      automationId: task.id, definitionRevision: 1, runId: "run-real",
+      entityRef: "github:pull_request:1", sourceDeliveryId: "delivery-1", now: NOW + 1,
+    });
+    assert.equal(claimed.merged, false);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("entity session mapping round-trips through upsert, close and invalidate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-entity-session-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    assert.equal(repository.getEntitySessionMapping("task-1", "github:pull_request:482"), null);
+    repository.upsertEntitySessionMapping("task-1", "github:pull_request:482", "workspace-1", "session-1", NOW);
+    const active = repository.getEntitySessionMapping("task-1", "github:pull_request:482");
+    assert.equal(active?.status, "active");
+    assert.equal(active?.sessionId, "session-1");
+
+    // TIPS: 复用发生在第二轮触发换到新会话时——再次 upsert 必须覆盖旧的 session_id，而不是并存两条记录。
+    repository.upsertEntitySessionMapping("task-1", "github:pull_request:482", "workspace-1", "session-2", NOW + 1_000);
+    assert.equal(repository.getEntitySessionMapping("task-1", "github:pull_request:482")?.sessionId, "session-2");
+
+    repository.closeEntitySessionMapping("task-1", "github:pull_request:482", NOW + 2_000);
+    assert.equal(repository.getEntitySessionMapping("task-1", "github:pull_request:482")?.status, "closed");
+
+    repository.upsertEntitySessionMapping("task-1", "github:pull_request:999", "workspace-1", "session-3", NOW);
+    repository.invalidateEntitySessionMapping("task-1", "github:pull_request:999", "connector_unavailable", NOW + 1);
+    const invalid = repository.getEntitySessionMapping("task-1", "github:pull_request:999");
+    assert.equal(invalid?.status, "invalid");
+    assert.equal(invalid?.invalidReason, "connector_unavailable");
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("subscription account bookkeeping round-trips through set, overwrite and delete", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-subscription-account-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    assert.equal(repository.getSubscriptionAccount("automation-1"), null);
+    repository.setSubscriptionAccount("automation-1", "user-a", NOW);
+    assert.deepEqual(repository.getSubscriptionAccount("automation-1"), { accountId: "user-a", confirmedAt: NOW });
+
+    // TIPS: 任务 6.1 用户重新确认之后，记账要覆盖成新账号，而不是并存两条。
+    repository.setSubscriptionAccount("automation-1", "user-b", NOW + 1_000);
+    assert.deepEqual(repository.getSubscriptionAccount("automation-1"), { accountId: "user-b", confirmedAt: NOW + 1_000 });
+
+    repository.deleteSubscriptionAccount("automation-1");
+    assert.equal(repository.getSubscriptionAccount("automation-1"), null);
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("entity session mapping is scoped per automation, not shared across automations on the same entity", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-entity-scope-"));
+  const runtime = await openRuntimeSqliteDatabase(join(root, "runtime.sqlite"));
+  const repository = AutomationRepository.fromDatabase(automationSqliteAdapter(runtime));
+  try {
+    // TIPS:两个不同的自动化（比如"自动评审" task-review 和"合并后通知群里" task-notify）
+    // 都配置在同一个 PR 上，各自的会话归属必须互不干扰。
+    repository.upsertEntitySessionMapping("task-review", "github:pull_request:482", "workspace-1", "session-review", NOW);
+    repository.upsertEntitySessionMapping("task-notify", "github:pull_request:482", "workspace-1", "session-notify", NOW);
+    assert.equal(repository.getEntitySessionMapping("task-review", "github:pull_request:482")?.sessionId, "session-review");
+    assert.equal(repository.getEntitySessionMapping("task-notify", "github:pull_request:482")?.sessionId, "session-notify");
+
+    repository.closeEntitySessionMapping("task-review", "github:pull_request:482", NOW + 1_000);
+    assert.equal(repository.getEntitySessionMapping("task-review", "github:pull_request:482")?.status, "closed");
+    // TIPS:关掉一个自动化的归属不能影响另一个——这才是"按 automation_id + entity_ref 隔离"真正要保证的事。
+    assert.equal(repository.getEntitySessionMapping("task-notify", "github:pull_request:482")?.status, "active");
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function definition(id: string, name: string, revision: number, updatedAt: number): AutomationDefinition {
   return {
     schema: "automation-definition/v1",
@@ -177,7 +320,7 @@ function definition(id: string, name: string, revision: number, updatedAt: numbe
     name,
     workspace: workspace(),
     prompt: { version: 1, parts: [{ type: "text", text: "执行任务" }] },
-    schedule: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
+    trigger: { version: 1, kind: "calendar", frequency: "daily", localTime: "09:00", timezone: "Asia/Shanghai" },
     model: { mode: "auto" },
     skillIds: [],
     connectors: [],

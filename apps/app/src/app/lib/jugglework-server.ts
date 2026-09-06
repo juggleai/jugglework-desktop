@@ -34,7 +34,9 @@ import {
 import type {
   AutomationDefinitionRecord,
   AutomationDraft,
+  AutomationEventTrigger,
   AutomationListResponse,
+  AutomationPromptPart,
   AutomationRun,
   AutomationRunListResponse,
   AutomationSyncMutation,
@@ -1609,6 +1611,43 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     capabilities: () => requestJson<JuggleWorkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     googleWorkspaceStatus: () => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/status", { token, hostToken, timeoutMs: timeouts.status }),
     setConnectState: (connectEnabled: boolean) => requestJson<JuggleWorkConnectState>(baseUrl, "/experimental/connect/state", { token, hostToken, method: "PUT", body: { connectEnabled }, timeoutMs: timeouts.config }),
+    // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点——apps/server 自己
+    // 从来没有登录态，渲染进程本来就持有真实的云端 session，登录/刷新后把它转发进
+    // apps/server 的内存，别的什么都不用做。cloudBaseUrl 是云端 API 根地址（不是这个
+    // client 自己的 baseUrl——那个指向本地 apps/server），cloudToken 是云端 session
+    // bearer。设备身份（deviceId）不走这条路径——那是 apps/server 自己在本地生成、持久化
+    // 的路由 key，跟渲染进程的登录态、跟远程控制都无关，见 apps/server 的
+    // automation/device-identity.ts 和 jugglework-server design.md 决策 12。
+    // accountId（任务 6.1）是可选的账号切换检测信号——传了才能在账号变化时拦下事件订阅
+    // 的静默改写，见 apps/server 的 subscription-sync.ts；不传时那套检测退化成"不知道账号"，
+    // 不影响这个方法原有的凭据转发行为。
+    pushGithubEventAuth: (input: { cloudBaseUrl: string; cloudToken: string; accountId?: string }) =>
+      requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", {
+        token, hostToken, method: "PUT",
+        body: { baseUrl: input.cloudBaseUrl, token: input.cloudToken, ...(input.accountId ? { accountId: input.accountId } : {}) },
+        timeoutMs: timeouts.config,
+      }),
+    /** 渲染进程登出时调用，清掉 apps/server 内存里那份凭据。 */
+    clearGithubEventAuth: () =>
+      requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-auth", { token, hostToken, method: "DELETE", timeoutMs: timeouts.config }),
+    // TIPS: 任务 6.1——列表/编辑器用它决定要不要渲染"账号已变化"横幅。
+    getAutomationSubscriptionAccountStatus: (automationId: string) =>
+      requestJson<{ state: "ok" | "unknown" } | { state: "mismatch"; confirmedAccountId: string; currentAccountId: string }>(
+        baseUrl, `/automations/${encodeURIComponent(automationId)}/subscription-account`, { token, hostToken, timeoutMs: timeouts.status },
+      ),
+    /** 用户在横幅里确认"继续使用当前账号"。 */
+    confirmAutomationSubscriptionAccount: (automationId: string) =>
+      requestJson<{ ok: boolean }>(baseUrl, `/automations/${encodeURIComponent(automationId)}/subscription-account-confirm`, {
+        token, hostToken, method: "POST", timeoutMs: timeouts.config,
+      }),
+    // TIPS: jugglework-server 在生成一条事件投递记录后，会顺手推一条 IM 系统消息
+    // （`jw:automation-event-delivery`）到这台设备登录的 IM 账号——渲染进程本来就是
+    // 唯一真正连着 IM 的一方（apps/server 从没建立过 IM 连接），收到这条消息就转发到这里，
+    // 让本地轮询器跳过剩余的等待、立刻发起一轮真实拉取（见 jugglechat/store.ts 的消息订阅
+    // 和 apps/server 的 event-poller.ts `pollNow()`）。这条推送不带投递内容，只是个信号——
+    // 请求体留空，真正的数据仍然来自这一轮轮询自己去拉。
+    notifyGithubEventPushReceived: () =>
+      requestJson<{ ok: boolean }>(baseUrl, "/automations/github-event-poll-now", { token, hostToken, method: "POST", timeoutMs: timeouts.config }),
     googleWorkspaceConnectStart: (options?: { gmailRead?: boolean; features?: string[] }) => requestJson<GoogleWorkspaceConnectStart>(baseUrl, "/experimental/google-workspace/connect/start", { token, hostToken, method: "POST", body: { gmailRead: options?.gmailRead === true, features: options?.features ?? [] }, timeoutMs: timeouts.status }),
     googleWorkspaceConnectStatus: (flowId: string) => requestJson<GoogleWorkspaceConnectStatus>(baseUrl, `/experimental/google-workspace/connect/status/${encodeURIComponent(flowId)}`, { token, hostToken, timeoutMs: timeouts.status }),
     googleWorkspaceDisconnect: (accountId?: string | null) => requestJson<GoogleWorkspaceAuthStatus>(baseUrl, "/experimental/google-workspace/disconnect", { token, hostToken, method: "POST", body: accountId ? { accountId } : {}, timeoutMs: timeouts.status }),
@@ -1650,6 +1689,44 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     previewAutomationSchedule: (schedule: AutomationSchedule, activeRange?: AutomationActiveRange) =>
       requestJson<{ summary: string; nextRunAt: number | null }>(baseUrl, "/automations/preview", {
         token, hostToken, method: "POST", body: { schedule, activeRange, locale: "zh-CN" }, timeoutMs: timeouts.config,
+      }),
+    /**
+     * 列出可用于事件触发的已绑定 GitHub 仓库。
+     * TIPS: 本机路由把这个请求代理到 jugglework-server（add-github-event-trigger-relay）；
+     * 那一侧的端点还没实现前，请求会失败，调用方（EventTriggerEditor）据此展示空列表而不是崩溃。
+     */
+    listGithubEventRepositories: () => requestJson<{ items: Array<{ connectorId: string; owner: string; name: string; visibility: "public" | "private" }> }>(
+      baseUrl, "/automations/github-repositories", { token, hostToken, timeoutMs: timeouts.config },
+    ).then((response) => response.items),
+    /** 探测某个仓库的事件触发就绪态（未连接/待配置/已连接），见服务端 PRD §4.4。 */
+    checkGithubEventReadiness: (repo: { owner: string; name: string }) => requestJson<{ state: "not_connected" | "pending_configuration" | "ready" }>(
+      baseUrl, `/automations/github-readiness?owner=${encodeURIComponent(repo.owner)}&name=${encodeURIComponent(repo.name)}`,
+      { token, hostToken, timeoutMs: timeouts.config },
+    ).then((response) => response.state).catch(() => "unknown" as const),
+    /**
+     * 生成一条 GitHub App 安装请求，通知组织管理员，见服务端 PRD §2.3。
+     * TIPS: 服务端只有一个"就绪请求"端点覆盖"未连接"和"待绑定"两种情况，都要求带上目标
+     * 仓库（见 jugglework-server `AutomationReadinessRequestService.RequestInstall`），
+     * 不存在"不针对具体仓库"的安装请求。
+     */
+    requestGithubAppInstall: (repo: { owner: string; name: string }) => requestJson<{ ok: true }>(baseUrl, "/automations/github-install-request", {
+      token, hostToken, method: "POST", body: repo, timeoutMs: timeouts.config,
+    }).then(() => undefined),
+    /** 请求把目标仓库绑定为事件触发可用的连接器实例。 */
+    requestGithubRepositoryBind: (repo: { owner: string; name: string }) => requestJson<{ ok: true }>(baseUrl, "/automations/github-repository-bind", {
+      token, hostToken, method: "POST", body: repo, timeoutMs: timeouts.config,
+    }).then(() => undefined),
+    /** 基于仓库近期活动量估算事件触发的预计每周触发次数，见桌面 PRD 4.7。 */
+    estimateGithubEventFrequency: (trigger: AutomationEventTrigger) => requestJson<{ perWeek: number | null }>(baseUrl, "/automations/github-event-frequency", {
+      token, hostToken, method: "POST", body: trigger, timeoutMs: timeouts.config,
+    }).then((response) => response.perWeek).catch(() => null),
+    /**
+     * "模拟测试"（任务 5.2）：给一个历史 PR/Issue 链接，看看真实触发时会组装出什么 prompt，
+     * 不创建任何运行或会话——本机这一步只读，本身就没有能创建运行的调用。
+     */
+    previewGithubEventPrompt: (input: { url: string; promptParts: AutomationPromptPart[] }) =>
+      requestJson<{ entityRef: string; entityUrl: string; promptParts: AutomationPromptPart[] }>(baseUrl, "/automations/preview-event-prompt", {
+        token, hostToken, method: "POST", body: input, timeoutMs: timeouts.config,
       }),
     /** 按 ID 读取本机自动化任务。 */
     getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(

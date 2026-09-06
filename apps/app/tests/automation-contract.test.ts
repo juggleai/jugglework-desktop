@@ -253,3 +253,114 @@ describe("Desktop automation catalog and routes", () => {
     expect(dashboard).toMatch(/<div className="min-h-0 flex-1 overflow-y-auto">/);
   });
 });
+
+describe("Event-trigger editor (add-event-triggered-automation tasks 2.1-2.6)", () => {
+  test("defaultEventTrigger produces a structurally valid AutomationEventTrigger", async () => {
+    const { defaultEventTrigger } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    const trigger = defaultEventTrigger("connector-1");
+    expect(trigger).toEqual({
+      version: 1,
+      kind: "event",
+      provider: "github",
+      connectorId: "connector-1",
+      repository: { owner: "", name: "" },
+      matches: [],
+      concurrencyKey: "entity",
+      deliveryMode: "auto",
+      permissionTier: "auto",
+    });
+  });
+
+  test("defaultEventTrigger fills in the selected repository when provided", async () => {
+    const { defaultEventTrigger } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    const trigger = defaultEventTrigger("connector-1", { connectorId: "connector-1", owner: "juggleai", name: "jugglework-desktop", visibility: "public" });
+    expect(trigger.repository).toEqual({ owner: "juggleai", name: "jugglework-desktop" });
+  });
+
+  test("editor wires the trigger-kind selector, discard confirmation, and event editor branch", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/<TriggerKindSelector[\s\S]{0,400}onRequestChange=/);
+    expect(page).toMatch(/hasEventDraft = eventTrigger\.repository\.owner \|\| eventTrigger\.matches\.length/);
+    expect(page).toMatch(/setPendingTriggerKind\(next\)/);
+    expect(page).toMatch(/triggerKind === "event" \? \(\s*<>\s*<EventTriggerEditor/);
+    // TIPS:影子模式（任务 5.3）只在事件触发分支里出现，跟 EventTriggerEditor 包在同一个 fragment 里。
+    expect(page).toMatch(/checked={lifecycle === "shadow"}/);
+    // TIPS:公开仓库权限升级需要一次独立确认，不能一步选中——这里断言升级动作被路由到
+    // EventTriggerEditor 自己的确认弹窗，而不是编辑器顶层已有的「完整访问权限」弹窗。
+    expect(page).toMatch(/onPermissionEscalationConfirmed=\{\(\) => setPermission\(AUTOMATION_PERMISSION_PROFILE\)\}/);
+  });
+
+  test("save path assigns an event trigger definition and auto-adds a github-app connector entry", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    expect(page).toMatch(/trigger: triggerKind === "event" \? eventTrigger : schedule/);
+    expect(page).toMatch(/source: "github-app" as const/);
+  });
+
+  test("event trigger validation rejects an empty repository or empty event-type selection, independent of server readiness", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const start = page.indexOf("function validateEventEditor");
+    const fn = page.slice(start, page.indexOf("\nfunction ", start + 1));
+    expect(fn).toMatch(/请选择一个仓库/);
+    expect(fn).toMatch(/至少选择一种关心的事件类型/);
+    // TIPS:这条断言是这次简化的关键——本地校验故意不检查服务端就绪态，保存不该被"仓库还没绑定"卡住。
+    expect(fn).not.toMatch(/readiness/i);
+  });
+});
+
+describe("Run history and list rendering for event-sourced runs (tasks 4.1-4.2)", () => {
+  test("run history renders the entity link, merged-event count, and previous-session-unavailable note", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function RunHistory");
+    const fn = page.slice(fnStart, page.indexOf("\nfunction ", fnStart + 1));
+    expect(fn).toMatch(/eventMetadata\?\.entityUrl/);
+    expect(fn).toMatch(/查看触发的 PR\/Issue/);
+    expect(fn).toMatch(/eventMetadata\?\.mergedEventCount/);
+    expect(fn).toMatch(/eventMetadata\?\.previousSessionUnavailable/);
+    expect(fn).toMatch(/event_backlog_dropped/);
+  });
+
+  test("automationFailureAdvice covers the new event-trigger error codes with distinct copy", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function automationFailureAdvice");
+    const fn = page.slice(fnStart, page.indexOf("\n}", fnStart));
+    expect(fn).toMatch(/event_backlog_dropped/);
+    expect(fn).toMatch(/rate_limited/);
+    expect(fn).toMatch(/upstream_connector_revoked/);
+  });
+
+  test("scheduled-task list row shows repository and event-type count for event-kind triggers, not a schedule summary", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const fnStart = page.indexOf("function triggerSummaryLabel");
+    const fn = page.slice(fnStart, page.indexOf("\nfunction ", fnStart + 1));
+    expect(fn).toMatch(/trigger\.repository\.owner/);
+    expect(fn).toMatch(/trigger\.matches\.length/);
+  });
+});
+
+describe("Delivery-mode status indicator (task 5.4)", () => {
+  test("resolveEffectiveDeliveryChannel reflects forced-vs-resolved mismatches", async () => {
+    const { resolveEffectiveDeliveryChannel } = await import("../src/react-app/domains/automations/event-trigger-editor");
+    // 就绪时：auto/im 都解析成 im，poll 强制维持 poll。
+    expect(resolveEffectiveDeliveryChannel("auto", "ready")).toBe("im");
+    expect(resolveEffectiveDeliveryChannel("im", "ready")).toBe("im");
+    expect(resolveEffectiveDeliveryChannel("poll", "ready")).toBe("poll");
+    // 未就绪时：不管配置成什么，一律降级为轮询——这正是"强制 vs 实际生效"最该被看见的落差。
+    expect(resolveEffectiveDeliveryChannel("im", "not_connected")).toBe("poll");
+    expect(resolveEffectiveDeliveryChannel("auto", "pending_configuration")).toBe("poll");
+  });
+});
+
+describe("P2 extended event coverage (tasks 7.1-7.2)", () => {
+  test("event-type matrix includes release, backed by types/validation that already support it", () => {
+    const editor = readFileSync(new URL("../src/react-app/domains/automations/event-trigger-editor.tsx", import.meta.url), "utf8");
+    expect(editor).toMatch(/\{ event: "release", labelKey: "automation\.event_type\.release_published" \}/);
+  });
+
+  test("mention keyword filter is a free-text field, not hardcoded to a fixed @ default", () => {
+    const editor = readFileSync(new URL("../src/react-app/domains/automations/event-trigger-editor.tsx", import.meta.url), "utf8");
+    // TIPS:任务 7.2 想要的能力其实已经存在——mentionText 从设计第一天起就是自由文本输入，
+    // 不曾硬编码过固定的 "@" 触发词，这里只是把这一点显式断言出来，避免以后被误改成受限输入。
+    expect(editor).toMatch(/updateCommonFilter\(\{ mentionText: event\.target\.value \}\)/);
+    expect(editor).not.toMatch(/mentionText.*=.*"@"/);
+  });
+});

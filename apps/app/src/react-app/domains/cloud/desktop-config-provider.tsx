@@ -22,6 +22,7 @@ import {
 import {
   createDenClient,
   DenApiError,
+  denControlPlaneBaseUrl,
   ensureDenActiveOrganization,
   normalizeDenDesktopConfig,
   readDenBootstrapConfig,
@@ -207,6 +208,10 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const remotePolicyRecoveryRef = useRef<Promise<void> | null>(null);
   const remotePolicyRecoveryWakeRef = useRef<(() => void) | null>(null);
   const lastPushedConnectEnabledRef = useRef<boolean | null>(null);
+  // TIPS: 记的是"上一次真的推送成功的凭据摘要"，不是登录状态本身——避免同一份 token 在
+  // 每次无关的重渲染里被重复 PUT 上去；一旦 (baseUrl, token) 变了或者退出登录了才需要
+  // 再动一次。
+  const lastPushedGithubEventAuthRef = useRef<string | null>(null);
   // Safe in-memory copy of the last config we actually applied. State drives
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
@@ -551,6 +556,50 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       cancelled = true;
     };
   }, [connectEnabled, loading]);
+
+  // TIPS: 这是 GitHub 事件触发自动化 resolveAuth 的真实生产落点（见
+  // apps/server/src/automation/github-event-auth-store.ts 和这次改动的 tasks.md 3.1）——
+  // apps/server 自己从来没有登录态，渲染进程本来就持有真实的云端 session，登录/切换账号/
+  // 登出时把它转发进 apps/server 的内存就行，不用另外给那个进程做一套登录。设备身份
+  // （deviceId）不走这条路径——jugglework-server 那几个事件中继端点已经不再要求远程控制
+  // 那套 agent token 了（design.md 决策 12），apps/server 自己在本地生成、持久化一个
+  // deviceId 当路由 key（见 apps/server 的 automation/device-identity.ts），完全不需要
+  // 渲染进程参与，也不需要这台设备做过远程控制 enrollment。
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+
+    void (async () => {
+      const connection = await resolveJuggleWorkConnection();
+      if (cancelled || !connection.normalizedBaseUrl || !connection.resolvedHostToken) return;
+      const client = createJuggleWorkServerClient({
+        baseUrl: connection.normalizedBaseUrl,
+        token: connection.resolvedToken,
+        hostToken: connection.resolvedHostToken,
+      });
+
+      if (denAuth.status !== "signed_in") {
+        if (lastPushedGithubEventAuthRef.current === null) return;
+        lastPushedGithubEventAuthRef.current = null;
+        await client.clearGithubEventAuth();
+        return;
+      }
+
+      const settings = readDenSettings();
+      const cloudToken = settings.authToken?.trim() ?? "";
+      const cloudBaseUrl = settings.baseUrl?.trim() ?? "";
+      if (!cloudToken || !cloudBaseUrl) return;
+      const accountId = denAuth.user?.id?.trim() || undefined;
+      const digest = `${cloudBaseUrl}::${cloudToken}::${accountId ?? ""}`;
+      if (cancelled || lastPushedGithubEventAuthRef.current === digest) return;
+      lastPushedGithubEventAuthRef.current = digest;
+      await client.pushGithubEventAuth({ cloudBaseUrl: denControlPlaneBaseUrl(cloudBaseUrl), cloudToken, accountId });
+    })().catch(() => null);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [denAuth.status, denAuth.user?.id, loading, settingsVersion]);
 
   // Dev-only: expose a bridge so evals can inject config directly without
   // requiring a cloud sign-in. This simply applies the config to React state.

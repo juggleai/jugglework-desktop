@@ -96,6 +96,13 @@ import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
 import { RootSerialization, SessionPermissionBroker, createInteractionPermissionCeiling } from "./session-permission-broker.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
+import { AutomationEventPipeline } from "./automation/event-pipeline.js";
+import { AutomationEventPoller } from "./automation/event-poller.js";
+import { AutomationSubscriptionSync } from "./automation/subscription-sync.js";
+import { createGithubEventRelayClient, type GithubEventRelayClient } from "./automation/github-event-client.js";
+import { resolveGithubEventAuthFromEnv } from "./automation/github-event-auth.js";
+import { readAutomationDeviceId } from "./automation/device-identity.js";
+import { GithubEventAuthStore } from "./automation/github-event-auth-store.js";
 import {
   createSessionMutationCoordinator,
   SessionMutationError,
@@ -148,6 +155,9 @@ const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
 const JUGGLEWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
 const JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
+/** GitHub 官方托管的远程 MCP 端点，认 `Authorization: Bearer <token>`——事件触发自动化的
+ * 运行期写回授权（`AutomationExecutorOptions.writeBackMcp`）挂的就是这一个。 */
+const GITHUB_APP_WRITEBACK_MCP_URL = "https://api.githubcopilot.com/mcp/";
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 const agentDiagnosticsLastRunByServer = new WeakMap<ServerConfig, Map<string, number>>();
 const agentDiagnosticsInFlightByServer = new WeakMap<ServerConfig, Set<string>>();
@@ -905,15 +915,73 @@ export async function startServer(config: ServerConfig, options: {
     log: (event, fields) => logger.log("info", event, fields),
   });
   const localAutomationEnabled = resolveLocalAutomationEnabled();
+  // TIPS: resolveAuth 的真实生产落点是 githubEventAuthStore——渲染进程登录后通过
+  // PUT /automations/github-event-auth 把云端 session 推进来（见 routes/automations.ts）。
+  // 环境变量（github-event-auth.ts）是它的兜底，只在渲染进程还没推送过、或者开发者手动
+  // 覆盖时才会用到；resolveAuth 每次调用都重新读，凭据缺失时下游的每个方法各自优雅降级，
+  // 不需要在这里判断"要不要构造这个 client"。设备身份（deviceId）是独立的一条——本地
+  // 生成、持久化在这个进程自己的数据目录里，不经过渲染进程，也不需要登录态（见
+  // device-identity.ts），jugglework-server 那边这几个端点已经不再要求远程控制那套
+  // agent token 了（design.md 决策 12）。
+  const githubEventAuthStore = new GithubEventAuthStore();
+  const githubEventRelayClient: GithubEventRelayClient = createGithubEventRelayClient(
+    async () => githubEventAuthStore.get() ?? resolveGithubEventAuthFromEnv(),
+    () => readAutomationDeviceId(config),
+  );
   const automationExecutor = new AutomationExecutor({
     config,
     repository: automationRepository,
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    githubEventRelay: githubEventRelayClient,
+    // TIPS: 复用这个产品里已经在用的"工作区 MCP 条目 + 热同步进正在跑的引擎"这套机制
+    // （`jugglework-cloud`/插件分发的 MCP 走的就是这条路，见 mcp.ts 的 addMcp 和下面
+    // syncRuntimeMcpToOpencodeEngine 的路由用法），不是新架构——只是这次挂的是运行期现铸
+    // 的 GitHub 写回 token，不是用户手填的凭据。GitHub 官方托管的远程 MCP 端点认
+    // `Authorization: Bearer <token>`，GitHub App 安装令牌可以直接当这个 Bearer token 用。
+    writeBackMcp: {
+      upsert: async (workspace, name, grant) => {
+        await addMcp(config, workspace.id, name, {
+          type: "remote",
+          url: GITHUB_APP_WRITEBACK_MCP_URL,
+          headers: { Authorization: `Bearer ${grant.token}` },
+        });
+        // Hot-sync into the running engine so this run's session can see the
+        // tool immediately, without waiting for an engine rebuild — same
+        // reasoning as the interactive mcp.add route (see server.ts's
+        // `/workspace/:id/mcp` POST handler).
+        await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
+      },
+    },
   });
   const automationScheduler = new AutomationScheduler({
     repository: automationRepository,
     executor: automationExecutor,
+    log: (event, fields) => logger.log("info", event, fields),
+  });
+  const automationEventPipeline = new AutomationEventPipeline({ repository: automationRepository });
+  const automationEventPoller = new AutomationEventPoller({
+    relay: githubEventRelayClient,
+    pipeline: automationEventPipeline,
+    repository: automationRepository,
+    // TIPS: 轮询器自己不执行任何运行——它只把认领到的事件投递变成数据库里的 queued 运行
+    // 记录（AutomationEventPipeline.processOne 内部调用 repository.claimEventRun 做的），
+    // 真正的执行派发复用 AutomationScheduler 已有的 pump/execute 机制：notifyChanged 会
+    // 立即触发一次 wake，wake 里的 pump 会捡起任何 state==="queued" 的运行快照，不区分
+    // 它是时钟触发的还是事件触发的。见 scheduler.ts 的 pump()。
+    onDispatched: () => automationScheduler.notifyChanged(),
+    log: (event, fields) => logger.log("info", event, fields),
+  });
+  // TIPS: 少了这个，本地"已启用"的事件触发自动化在服务端等于不存在——见
+  // subscription-sync.ts 顶部注释；轮询器/认领/解析全都建好了，但没有它，服务端
+  // routeAutomationEvent 找不到任何订阅，enqueuedCount 恒为 0。
+  const automationSubscriptionSync = new AutomationSubscriptionSync({
+    relay: githubEventRelayClient,
+    repository: automationRepository,
+    // TIPS: 任务 6.1——账号切换检测的信号来源。跟 resolveAuth 同一个落点
+    // （githubEventAuthStore），渲染进程登录/登出/切换账号时会一起推过来（见
+    // desktop-config-provider.tsx），不需要另开一条通道。
+    currentAccountId: () => githubEventAuthStore.getAccountId(),
     log: (event, fields) => logger.log("info", event, fields),
   });
   const routes = createRoutes(
@@ -933,6 +1001,10 @@ export async function startServer(config: ServerConfig, options: {
     sessionPermissionRootLocks,
     sessionPermissionBroker,
     (event, fields) => logger.log("info", event, fields),
+    githubEventRelayClient,
+    githubEventAuthStore,
+    automationEventPoller,
+    automationSubscriptionSync,
   );
 
   const serverOptions: {
@@ -1115,6 +1187,8 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
+    void automationEventPoller.dispose();
+    void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
@@ -1154,6 +1228,12 @@ export async function startServer(config: ServerConfig, options: {
 
   if (localAutomationEnabled && !config.readOnly && config.workspaces.some((workspace) => workspace.workspaceType !== "remote")) {
     automationScheduler.start();
+    // TIPS: 轮询器（task 3.1 的兜底通道）跟调度器同一个启用条件——resolveAuth 没配置时
+    // 每一轮轮询都会在第一步 listPendingDeliveries 就优雅失败并记一条日志，不会因为没有
+    // 真实凭据就抛出未处理异常或者搞垮启动流程，所以不需要额外判断"有没有凭据"才决定
+    // 启不启动。
+    automationEventPoller.start();
+    automationSubscriptionSync.start();
   }
   if (!config.readOnly) {
     sessionPermissionBroker.start();
@@ -1168,6 +1248,8 @@ export async function startServer(config: ServerConfig, options: {
       const errors: unknown[] = [];
       automationExecutor.dispose();
       sessionPermissionBroker.stop();
+      try { await automationEventPoller.dispose(); } catch (error) { errors.push(error); }
+      try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
@@ -1874,6 +1956,10 @@ function createRoutes(
   sessionPermissionRootLocks: RootSerialization,
   sessionPermissionBroker: SessionPermissionBroker,
   automationLog: (event: string, fields: Record<string, string | number | boolean | null>) => void,
+  githubEventRelayClient: GithubEventRelayClient,
+  githubEventAuthStore: GithubEventAuthStore,
+  automationEventPoller: AutomationEventPoller,
+  automationSubscriptionSync: AutomationSubscriptionSync,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -2008,6 +2094,10 @@ function createRoutes(
     createWorkspaceOpencodeClient,
     listWorkspaceMcp: listMcp,
     enabled: resolveLocalAutomationEnabled(),
+    githubEventRelay: githubEventRelayClient,
+    githubEventAuthStore,
+    githubEventPoller: automationEventPoller,
+    automationSubscriptionAccounts: automationSubscriptionSync,
   });
 
   addRoute(routes, "POST", "/workspace/:id/diagnostics/agent-context", "client", async (ctx) => {
