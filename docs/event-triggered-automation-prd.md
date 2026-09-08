@@ -548,6 +548,94 @@
 - AC2：模拟单次写回调用命中授权过期错误时，执行器必须先尝试一次静默续期重试，仍失败才把该次写回标记失败。
 - AC3：授权换取失败必须映射到已有的三个 connector 相关错误码之一，不产生新的未定义错误状态。
 
+### 4.10 触发通知接入现有通知中心
+
+**背景**：事件触发目前完全在"IM 唤醒 → 本地轮询 → 建会话"这条链路里静默发生——GitHub 事件到达时推的那条 IM 消息本身就是设计成不给人看的唤醒信号（固定系统发送方 `jw-automation-events`，客户端收到后直接拦截转发，不进会话列表、不计未读，见 `automation-event-message.ts` 顶部注释）。触发产生的会话虽然会出现在当前工作区的会话侧栏里，并复用侧栏已有的绿点（有结果）/橙点（需要处理）语义，但用户必须**已经停留在那个工作区**才看得到，也分辨不出这个会话是不是"从来没手动开过、是被某个事件自动建的"。换句话说：真正缺的不是"要不要建一套通知系统"，而是"已经建好的通知系统还没有覆盖到自动化这一类事件"。
+
+产品里已经有一套持久化、跨视图常驻的通知中心，本节要做的只是把事件触发的几个关键时刻接进去：
+
+- `kernel/notification-store.ts`：`useNotificationStore`，本地持久化（localStorage），条目按 `dedupeKey` 去重合并计数，最多保留 100 条 / 30 天。
+- `shell/notifications.ts`：两个写入入口——`notifyEvent`（后台事件，只进中心 + 未读角标，不打断）、`notifyAlert`（需要尽快处理的失败，进中心 + 一条 toast，短时间内连续多条会合并成"N 条新通知"的汇总 toast，不会刷屏）。
+- 入口：左侧常驻导航栏（每个视图都在，不需要切到 Automations 页面）账号头像上的红点；点开落地到 Settings → Notifications 列表页。
+
+**交互图 1：入口——账号头像角标（已有组件，本次新增的是这个角标会因为自动化事件而亮，而不是新做一个入口）**
+
+```
+┌────┐  左侧常驻导航栏 · 任何视图下都在（Session / Chat / Apps / Automations 之间切换不影响它）
+│ 🔍 │  搜索会话
+│ +  │  新建工作区
+│ 📁 │  本地任务
+│ ☁  │  云端任务
+│ ⏰ │  Automations
+│ 💬●│  Chat（未读红点，已有）
+│ 👤 │  联系人
+│    │
+│(●) │  ← 账号头像角标：已有的通知中心红点，目前覆盖 providers/reload/cloud/update/system
+└────┘     五类。本节新增 kind: "automation"，事件触发相关通知走同一个角标，
+           用户不需要恰好停留在触发发生的那个工作区，也不需要专门打开 Automations
+           页面，才能知道"刚刚有自动化被触发了 / 被卡住了"。
+```
+
+**交互图 2：Settings → Notifications 列表页——新增的 automation 类型条目（沿用已有的行样式：图标随 severity 变色、标题、正文、可选操作按钮、相对时间、未读点、重复计数）**
+
+```
+┌─ 通知 ────────────────────────────────────────────── 清空全部 ─┐
+│ ⓘ  「自动评审」被触发 ×3                        刚刚      ●   │
+│    juggleai/jugglework-desktop · PR #482 · push 事件           │
+│    [ 打开会话 ]                                                │
+├──────────────────────────────────────────────────────────────┤
+│ ⚠  离线期间 12 条事件未处理                     3 分钟前  ●   │
+│    2026-08-26 09:00 ~ 2026-09-02 14:00 · 自动评审               │
+│    [ 查看运行记录 ]                                             │
+├──────────────────────────────────────────────────────────────┤
+│ ✕  「自动评审」需要重新连接 GitHub               1 小时前       │
+│    授权已过期，事件触发已暂停，新事件不会被处理                  │
+│    [ 去重新连接 ]                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**交互图 3：短时间连续多次触发——沿用 `notifyAlert` 已有的 burst 收敛逻辑，自动化侧不需要重新实现**
+
+```
+第 1 次告警（8 秒窗口内）              第 2 次告警（同一 8 秒窗口内）
+┌───────────────────────────┐        ┌─────────────────────────────┐
+│ ⚠ 「自动评审」需要重新连接    │   →    │ 2 条新通知           [ 查看 ] │
+│    GitHub        [ 去连接 ]  │        └─────────────────────────────┘
+└───────────────────────────┘         点「查看」直接跳转通知中心列表页，
+                                        不会在桌面上叠两条 toast。
+```
+
+**Process**：事件触发生命周期里的几个关键时刻，映射到通知中心的两个写入入口：
+
+| 时刻 | 入口 | severity | dedupeKey | action |
+|---|---|---|---|---|
+| 事件触发成功、建/复用了会话（4.8） | `notifyEvent` | info | `automation:{automationId}` | `open-automation-session`（跳到该会话） |
+| 离线补投丢弃（4.5） | `notifyEvent` | warning | `automation:{automationId}:backlog` | `open-automation-run-history`（跳到该自动化运行记录） |
+| 触发频率超限丢弃（4.7） | `notifyEvent` | warning | `automation:{automationId}:rate-limit` | `open-automation-run-history` |
+| 连接器/授权失效导致自动化被暂停（4.9 的 `connector_reauth_required` 等，含 6.1 的账号切换检测） | `notifyAlert` | error | `automation:{automationId}:blocked` | `reconnect-automation`（跳到该自动化的重连入口） |
+
+`NotificationAction` 新增三个变体（沿用现有"可序列化描述符，不是回调"的约定，重启后仍可执行）：
+```
+| { type: "open-automation-session"; workspaceId: string; sessionId: string }
+| { type: "open-automation-run-history"; automationId: string }
+| { type: "reconnect-automation"; automationId: string }
+```
+
+**与 2.3b（阻塞草稿可发现性）的关系**：2.3b 已经在 Automations 列表页做了页内徽标 + toast，覆盖的是"用户当下就在这个页面"的即时反馈，不需要改动。本节是**在同一个事件上再接一条通路**，把它同时写进持久化中心，覆盖"用户当下不在这个页面、甚至不在这个工作区"的情况——两条通路来源相同、互不替代，用户离开页面后事实不会丢。
+
+**Output**：通知中心条目按 `dedupeKey` 合并计数；点击操作按钮后标记该条目已读，并按 `action.type` 跳转到对应会话 / 运行记录 / 重连入口。
+
+**Exception**：
+- 点击 `open-automation-session` 时若目标会话已被删除或所属工作区已不可解析，提示"该会话已不存在"，不跳转、不崩溃，条目仍标记已读。
+- 点击 `open-automation-run-history` / `reconnect-automation` 时若目标自动化本身已被删除，同样提示"该自动化已被删除"而不是跳到空白页。
+- info 级别的条目当前 UI 只在 warning/error 上显示重复次数角标（`showCount` 逻辑限定于这两档 severity）；同一自动化短时间内多次触发是否需要在 info 级别也显示"×N"，作为本节唯一待决的展示细节留待评审时定，不影响其余部分的实现。
+
+**验收标准**：
+- AC1：GitHub push 事件成功触发自动化并建立/复用会话后，通知中心必须出现对应条目；点击其操作按钮必须跳转到该次触发对应的会话。
+- AC2：自动化因连接器/授权失效被暂停时，必须通过 `notifyAlert` 同时产生 toast 与中心条目，不能只在 Automations 列表页可见。
+- AC3：同一自动化在 8 秒内产生多条 `notifyAlert` 级别的通知时，桌面只呈现一条"N 条新通知"汇总 toast，不叠加多条独立 toast。
+- AC4：中心条目指向的会话或自动化已被删除时，点击操作按钮必须提示"已不存在"，不能跳转失败或崩溃。
+
 ---
 
 ## 5. 非功能需求
@@ -569,6 +657,8 @@
 | `event_trigger_self_loop_blocked` | 自触发被拦截 | automation_id | 防循环有效性验证 |
 | `event_backlog_dropped` | 离线补投丢弃 | automation_id, dropped_count, offline_duration_sec | 可用性缺口量化 |
 | `event_rate_limited` | 触发频率超限 | automation_id, dropped_count | 成本控制有效性 |
+| `automation_notification_created` | 事件触发相关条目写入通知中心 | automation_id, notification_kind(info/warning/error), dedupe_merged | 触发通知覆盖率 |
+| `automation_notification_action_clicked` | 用户点击通知中心内自动化条目的操作按钮 | automation_id, action_type | 通知可用性 / 跳转转化 |
 
 ---
 
@@ -602,6 +692,7 @@
 | 投递方式手动切换 | IM 推送 / 轮询二选一，覆盖自动探测的默认值；当前实现中该选择尚不影响实际行为——唤醒信号按设备生效，不区分单条自动化选择的投递方式 |
 | 事件运行记录详情 | 关联 PR/Issue 链接、原始事件摘要 |
 | 账号/设备切换的孤儿订阅检测 | 检测到订阅创建时的账号与当前登录账号不一致时提示重新确认 |
+| 触发通知接入现有通知中心 | 事件触发、离线丢弃、频率超限、连接器失效等时刻写入已有的通知中心（角标 + Settings 列表），覆盖用户不在触发发生页面/工作区的情况（4.10） |
 
 ### P2 — 扩展与长尾
 
