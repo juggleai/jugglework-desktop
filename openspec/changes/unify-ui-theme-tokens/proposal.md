@@ -14,6 +14,7 @@
 - 发送消息气泡（工作区会话 `bg-muted` → token；消息页 bridge 覆盖上游 `--ui-active`）统一 `#f3f3f4`，同步去除上游 1px 描边。
 - 消息页输入区重构为工作区会话输入栏风格：无边框白底卡片 + 阴影、margin `0 16px 16px`、圆角 16px、编辑器在上/操作行沉底、表情与附件图标统一 16px lucide SVG、无发送按钮（回车发送）。
 - 消息页顶栏去头像与 @id 副行，仅显示会话名称。
+- 工作区任务运行中的 Stop 按钮使用黑白反色：浅色黑底白方块，深色白底黑方块，不改变停止行为。
 
 ## Capabilities
 
@@ -29,5 +30,5 @@
 
 - 渲染层：`apps/app/src/app/index.css`（token 唯一来源）、`apps/app/src/styles/custom.css`（`.session-header`/`.session-panel-header`）、`components/chat/message-list.tsx`（会话气泡）、`react-app/domains/automations/automation-page.tsx`、`settings/shell/settings-shell.tsx`、`session/chat/session-page.tsx`、`shell/list-panel-header.css`、`domains/jugglechat/{components.tsx,jugglechat.css,snailchat-theme.css}`（shadow DOM 桥接层）。
 - 消息页样式覆盖统一收口在 `snailchat-theme.css`（bridge，shadow 内加载顺序最末），需与上游同特异性规则竞争时以加载顺序取胜；不得写回 `jugglechat.css`（先加载，会被上游压掉）。
-- 暗色主题全部经 token 映射（slate 灰阶/上游 ui-* token），不引入新硬编码暗色值。
+- 页面暗色主题经 token 映射（slate 灰阶/上游 ui-* token）；Stop 按钮按用户指定使用固定黑白反色，不随品牌强调色变化。
 - 不改主进程、服务端与依赖。

@@ -2,9 +2,23 @@
 
 ## ADDED Requirements
 
+### Requirement: 运行中停止按钮黑白反色
+
+任务运行中的 Stop 按钮 SHALL 在亮色主题显示黑色圆形背景和白色实心方块，在暗色主题显示白色圆形背景和黑色实心方块。配色变化 SHALL NOT 改变按钮尺寸、队列角标或停止行为。
+
+#### Scenario: 亮色运行中按钮
+
+- **WHEN** 任务运行中且界面使用亮色主题
+- **THEN** Stop 按钮黑底白方块，悬停时仍保持黑底白方块的配色关系
+
+#### Scenario: 暗色运行中按钮
+
+- **WHEN** 任务运行中且界面使用暗色主题（`.dark` 或 `[data-theme="dark"]`）
+- **THEN** Stop 按钮白底黑方块，悬停时仍保持白底黑方块的配色关系
+
 ### Requirement: 页面与列表背景语义 token
 
-系统 **应** 在宿主 `:root` 提供 `--app-page-bg` 与 `--app-list-bg` 唯一来源 token，亮色值 **应** 分别为 `#ffffff` 与 `#fcfcfc`。
+系统 SHALL 在宿主 `:root` 提供 `--app-page-bg` 与 `--app-list-bg` 唯一来源 token，亮色值 **应** 分别为 `#ffffff` 与 `#fcfcfc`。
 
 #### Scenario: 亮色主题下页面背景统一
 
@@ -19,7 +33,7 @@
 
 ### Requirement: 顶栏统一高度与背景
 
-所有页面级顶栏 **应** 统一为 `--app-topbar-height`（亮暗同值 50px）、背景 `--app-page-bg`。
+所有页面级顶栏 SHALL 统一为 `--app-topbar-height`（亮暗同值 50px）、背景 `--app-page-bg`。
 
 #### Scenario: 跨页面顶栏对齐
 
@@ -33,7 +47,7 @@
 
 ### Requirement: 发送消息气泡统一背景
 
-已发送消息气泡背景 **应** 统一引用 `--app-msg-sent-bg`（亮色 `#f3f3f4`，暗色 `--slate-3`），消息页气泡 **应** 无描边。
+已发送消息气泡背景 SHALL 统一引用 `--app-msg-sent-bg`（亮色 `#f3f3f4`，暗色 `--slate-3`），消息页气泡 **应** 无描边。
 
 #### Scenario: 工作区会话与消息页气泡同色
 
@@ -42,7 +56,7 @@
 
 ### Requirement: 消息页输入区卡片形态
 
-消息页输入区 **应** 渲染为无边框白色卡片：白底 `#ffffff`（暗色为主题面板色）、阴影、16px 圆角、`margin: 0 16px 16px`；布局为编辑器在上、操作行沉底；操作行图标统一 16px 线性风格；**不应** 提供发送按钮（回车发送）。
+消息页输入区 SHALL 渲染为无边框白色卡片：白底 `#ffffff`（暗色为主题面板色）、阴影、16px 圆角、`margin: 0 16px 16px`；布局为编辑器在上、操作行沉底；操作行图标统一 16px 线性风格；**不应** 提供发送按钮（回车发送）。
 
 #### Scenario: 输入卡视觉与间距
 

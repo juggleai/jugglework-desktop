@@ -2,7 +2,6 @@
 
 import * as React from "react"
 import {
-  AlertTriangle,
   Check,
   ChevronRight,
   Copy,
@@ -38,6 +37,7 @@ import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
 import { WebsearchTool } from "@/components/tools/websearch"
 import { useMessageList, useSessionErrorMessage } from "@/components/chat/message-list-provider"
+import { SessionErrorMessage } from "@/components/chat/session-error-message"
 import { ArtifactList } from "@/components/chat/artifact"
 import { TaskSuggestions } from "@/components/chat/task-suggestions"
 import {
@@ -891,7 +891,7 @@ type MessageComponentProps = {
 const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, presentation }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
-      return <ErrorMessage error={getMessagesText([message]) || "Session failed"} />
+      return <SessionErrorMessage error={getMessagesText([message]) || "Session failed"} />
     }
 
     if (isEmptyMessage(message)) {
@@ -936,23 +936,6 @@ const LoadingMessage = React.memo(({ label }: { label?: string }) => (
 ))
 
 LoadingMessage.displayName = "LoadingMessage"
-
-interface ErrorMessageProps {
-  error: string | null
-}
-
-function ErrorMessage({ error }: ErrorMessageProps) {
-  return (
-    <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
-      <div className="group flex w-full flex-col items-start gap-0">
-        <div className="text-foreground flex min-w-0 flex-1 flex-row items-start gap-2 rounded-lg border-2 border-red-300 bg-red-300/20 px-2 py-1">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-destructive" />
-          <p className="whitespace-pre-wrap text-destructive">{error}</p>
-        </div>
-      </div>
-    </Message>
-  )
-}
 
 interface RetryMessageProps {
   status: ProviderRetryActivity
@@ -1292,7 +1275,7 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
         <LoadingMessage label={activityLabel ?? undefined} />
       ) : null}
       {retryActivity ? <RetryMessage status={retryActivity} /> : null}
-      {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
+      {error && !hasSessionErrorMessage ? <SessionErrorMessage error={error} /> : null}
     </div>
   )
 }

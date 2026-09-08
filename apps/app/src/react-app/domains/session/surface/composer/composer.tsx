@@ -1978,7 +1978,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <button
                       type="button"
                       onClick={props.onStop}
-                      className="relative inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full border border-dls-border bg-transparent text-gray-11 transition-colors hover:bg-gray-3"
+                      className="relative inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full bg-black text-white transition-colors hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90"
                       title={props.queuedCount > 0 ? t("composer.queued_count", { count: props.queuedCount }) : t("composer.stop")}
                     >
                       <Square size={12} fill="currentColor" />
