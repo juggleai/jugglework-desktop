@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   buildDenDashboardUrl,
+  DEFAULT_DEN_BASE_URL,
   getDenMcpUrl,
   isLegacyWebAppMcpUrl,
   resolveCloudMcpResourceUrl,
@@ -23,6 +25,16 @@ describe("buildDenDashboardUrl", () => {
 });
 
 describe("resolveDenBaseUrls", () => {
+  test("defaults renderer and Electron bootstrap to the requested server", () => {
+    expect(DEFAULT_DEN_BASE_URL).toBe("https://work.jugglechat.cn");
+    expect(resolveDenBaseUrls(undefined)).toEqual({
+      baseUrl: "https://work.jugglechat.cn",
+      apiBaseUrl: "https://work.jugglechat.cn/jwork/api",
+    });
+    const mainSource = readFileSync(new URL("../../desktop/electron/main.mjs", import.meta.url), "utf8");
+    expect(mainSource).toContain(`const DEFAULT_DEN_BASE_URL = "${DEFAULT_DEN_BASE_URL}";`);
+  });
+
   test("always derives the API proxy from the base URL", () => {
     const resolved = resolveDenBaseUrls({
       baseUrl: "https://work.juggle.im",
