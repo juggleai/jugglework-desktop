@@ -1,6 +1,7 @@
 .turbo/
 node_modules/
 apps/desktop/dist-electron/
+apps/desktop/dist-electron-jugglechat-cn/
 apps/desktop/dist-electron-demo-a/
 apps/desktop/dist-electron-demo-b/
 packages/*/node_modules/
