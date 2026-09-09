@@ -4,7 +4,7 @@ import test from "node:test";
 import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, createEvidence, withEvidenceResults } from "./evidence.mjs";
 import { publicUrl } from "./constants.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
-import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion } from "./workflow.mjs";
+import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
 
 function object(key, content, type = "artifact") {
   return {
@@ -83,6 +83,19 @@ test("immutable preflight distinguishes absent, matching resume, and mismatch", 
   await assert.rejects(preflightImmutable([target], { qiniu: matching, resume: false }), /already exists/);
   const mismatch = createFakeQiniu(new Map([[target.key, { size: target.size + 1, etag: target.etag }]]));
   await assert.rejects(preflightImmutable([target], { qiniu: mismatch, resume: true }), /mismatch/);
+});
+
+test("CDN verification binds each digest result to its immutable object key", async () => {
+  const plan = fixturePlan();
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const result = await verifyCdn(plan, {
+    qiniu: createFakeQiniu(initial),
+    verifyObject: async (object) => ({ url: object.url, sha256: object.sha256 }),
+  });
+  assert.deepEqual(
+    result.cdnChecks.map((check) => ({ key: check.key, url: check.url })),
+    [...plan.objects, plan.manifest].map((item) => ({ key: item.key, url: item.url })),
+  );
 });
 
 test("partial resume skips exact objects and uploads manifest after all binaries", async () => {

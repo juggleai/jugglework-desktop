@@ -66,7 +66,9 @@ export async function verifyCdn(plan, { qiniu, fetchImpl, verifyObject = verifyC
   const objects = [...plan.objects, plan.manifest];
   const qiniuChecks = await verifyQiniuObjects(objects, { qiniu });
   const cdnChecks = [];
-  for (const object of objects) cdnChecks.push(await verifyObject(object, { fetchImpl }));
+  for (const object of objects) {
+    cdnChecks.push({ key: object.key, ...(await verifyObject(object, { fetchImpl })) });
+  }
   return { qiniuChecks, cdnChecks };
 }
 
