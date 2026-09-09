@@ -137,7 +137,7 @@
     "targetVersion": "1.2.16",
     "feedBaseUrl": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac",
     "manifestUrl": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/latest-mac.yml",
-    "status": "downloaded-install-blocked-by-legacy-close-to-tray"
+    "status": "installed-and-relaunched"
   },
   "rollout": {
     "promotedAt": "2026-09-09T09:06:24.593Z",
@@ -176,15 +176,46 @@
       "stateWrittenAt": "2026-09-09T11:06:01Z",
       "targetBundleVersionAtObservation": "1.2.15",
       "updateBundleVersion": "1.2.16",
-      "launchAfterInstallation": false,
-      "status": "waiting-for-source-process-exit"
+      "initialLaunchAfterInstallation": false,
+      "finalLaunchAfterInstallation": true,
+      "installationStartedAt": "2026-09-09T12:46:18.865Z",
+      "installationCompletedAt": "2026-09-09T12:46:21.084Z",
+      "applicationRelaunchedAt": "2026-09-09T12:46:21.747Z",
+      "exitCode": 0,
+      "status": "completed"
     },
-    "installation": "blocked",
-    "restart": "not-attempted",
+    "installation": "passed-after-operator-terminated-legacy-process",
+    "restart": "passed-automatic-relaunch",
     "rootCause": "The formally installed 1.2.15 predates the updater install-intent fix. Electron closes application windows before invoking Squirrel's relaunch-to-install path; the legacy close-to-tray handler converts that close into hide, so the process remains alive and ShipIt cannot replace the running bundle.",
     "launchAfterInstallationExplanation": "Squirrel initially writes false while staging every update and rewrites it to true only after Electron closes all windows and reaches relaunchToInstallUpdate. A false value does not block replacement; it only suppresses automatic post-install launch. Because the legacy tray handler intercepted window closure, the rewrite never occurred.",
-    "recovery": "Preserve the staged update, fully quit the old 1.2.15 process, wait for ShipIt to replace the application, and manually reopen JuggleWork if it does not relaunch. Do not delete the ShipIt cache before this recovery attempt.",
-    "finalVerification": "pending"
+    "recovery": "The operator manually terminated the stuck legacy 1.2.15 process without deleting the staged update. ShipIt then replaced the application and automatically reopened JuggleWork.",
+    "networkEvidence": {
+      "packagedFeed": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac",
+      "selectedManifest": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/latest-mac.yml",
+      "selectedArtifact": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.zip",
+      "cachedArtifactSize": 238676213,
+      "cachedArtifactSha256": "8c4fc2cddea827e95d852a0bf14a68292e2ad4c917b59b75e4bc12ff7a03790b",
+      "cachedArtifactMatchesPublishedQiniuObject": true,
+      "activePackagedGitHubUpdaterOrigins": [],
+      "result": "qiniu-only-passed"
+    },
+    "postRestartChecks": {
+      "installedVersion": "1.2.16",
+      "bundleIdentifier": "com.juggleai.jugglework",
+      "teamIdentifier": "H7PDHSK3C7",
+      "hardenedRuntime": true,
+      "codesignDeepStrict": "accepted",
+      "signedInState": "preserved",
+      "sessionHistory": "preserved",
+      "workspaceAuthorization": "preserved",
+      "workspaceReadWrite": "passed",
+      "accessibilityPermission": "preserved",
+      "screenRecordingPermission": "preserved",
+      "chatImBootstrap": "passed",
+      "contactsBootstrap": "not-verified-service-probe-returned-not-found"
+    },
+    "operatorObservation": "After manually killing the stuck JuggleWork 1.2.15 process, JuggleWork automatically reopened and displayed version 1.2.16.",
+    "finalVerification": "passed-for-task-7.2"
   },
-  "verifiedAt": "2026-09-09T11:27:10Z"
+  "verifiedAt": "2026-09-09T12:52:53Z"
 }

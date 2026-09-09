@@ -53,7 +53,7 @@
 ## 7. Prove Qiniu-only ongoing updates
 
 - [x] 7.1 Prepare a newer Qiniu-only patch release (planned 1.2.16) with the same immutable artifact, signing, notarization, and promotion gates, using the separately audited stable `1.2.16` notarization and pre-canary exceptions
-- [ ] 7.2 Upgrade a clean `1.2.15` installation to the newer release and prove manifest/download traffic uses Qiniu with no GitHub request
+- [x] 7.2 Upgrade a clean `1.2.15` installation to the newer release and prove manifest/download traffic uses Qiniu with no GitHub request
 - [ ] 7.3 Verify interrupted download, missing/malformed manifest, hash mismatch, wrong architecture, wrong publisher, stale stable pointer, retry, install restart, and stuck ShipIt cleanup behavior
 - [ ] 7.4 Verify stable, Alpha, targeted-version, architecture-replacement, and manual-DMG paths against public CDN responses
 
@@ -80,8 +80,8 @@
 - Candidate evidence: `candidate-evidence-1.2.16.json`
 - Built from clean `dev` commit `d67258b9d4c158287fb5d5147e1d6368e6b94ab9` in an isolated worktree with a three-package `1.2.16` version overlay; the main worktree remained unchanged.
 - Developer ID, Team `H7PDHSK3C7`, bundle id `com.juggleai.jugglework`, hardened runtime, arm64 inventory, native modules, Qiniu-only packaged defaults, artifact hashes, Qiniu size/ETag, and full public CDN behavior passed.
-- The immutable ZIP, DMG, both blockmaps, and `v1.2.16/mac/latest-mac.yml` were uploaded without overwrite. Stable and both Den environments remain on `1.2.15` pending canary and promotion authorization.
-- Apple notarization credentials were unavailable, so this is an unnotarized candidate and task 7.1 remains open. The `1.2.15` exception does not apply to `1.2.16`; stable promotion is prohibited until a notarized build passes all gates.
+- The immutable ZIP, DMG, both blockmaps, and `v1.2.16/mac/latest-mac.yml` were uploaded without overwrite. At candidate-verification time stable and both Den environments remained on `1.2.15`; section 11 records the subsequently authorized promotion.
+- Apple notarization credentials were unavailable, so the original artifact was an unnotarized candidate. The separately audited exact `stable 1.2.16` exceptions described in section 11 subsequently authorized task 7.1 and promotion without weakening the remaining gates.
 
 ## 11. Stable 1.2.16 live-upgrade authorization (2026-09-09)
 
@@ -98,4 +98,12 @@
 - The installed `1.2.15` `electron/main.mjs` and `electron/updater.mjs` hashes are `f20af6c9471b4e151fdbfa0098ff0a45a7e3b6f454f081f1289afaf3f3715f7f` and `4998c8ba6eb9e1a09b380b817d9740fd4fc8503a872b2b38adb3d0e87b7030e1`. Those bytes lack the updater-install quit-intent flag included in `1.2.16`.
 - Root cause: Electron closes all windows before invoking Squirrel's relaunch-to-install path. The older close-to-tray handler converts that close into hide, so Electron never reaches the path that rewrites `launchAfterInstallation` from `false` to `true` and terminates the process. ShipIt therefore cannot replace the running bundle.
 - `launchAfterInstallation=false` is not a second replacement blocker: Squirrel stages every update with `false`, and ShipIt consults the flag only for post-install relaunch. Once the old process fully exits, ShipIt can replace the bundle, but this attempt may require manually reopening JuggleWork.
-- Task 7.2 remains open until the old process is fully quit, ShipIt replacement completes, `1.2.16` is reopened, and installed version, workspace authorization, permissions, Chat/Contacts bootstrap, and Qiniu-only traffic are verified. The staged ShipIt cache must be preserved until that recovery attempt.
+- This initial failure was recovered without deleting the staged ShipIt cache; the completed result is recorded below.
+
+## 13. Formal 1.2.15 to 1.2.16 live-upgrade completion (2026-09-09)
+
+- The operator manually terminated the stuck legacy `1.2.15` process. ShipIt began installation at `2026-09-09T12:46:18.865Z`, replaced `/Applications/JuggleWork.app`, completed successfully at `2026-09-09T12:46:21.084Z`, and automatically relaunched the application at `2026-09-09T12:46:21.747Z`; its final exit code was `0`.
+- The relaunched installation reports `1.2.16`. It retains bundle id `com.juggleai.jugglework`, Team `H7PDHSK3C7`, hardened runtime, and passes `codesign --deep --strict`. Installed `electron/main.mjs` and `electron/updater.mjs` exactly match the verified `1.2.16` package and contain the updater-install quit-intent fix.
+- The updater cache contains `jugglework-mac-arm64-1.2.16.zip` with size `238676213` and SHA-256 `8c4fc2cddea827e95d852a0bf14a68292e2ad4c917b59b75e4bc12ff7a03790b`, exactly matching the published immutable Qiniu object. Installed `app-update.yml` points to `https://downloads.jugglechat.cn/jugglework/releases/stable/mac`; packaged runtime update code contains the Qiniu resolver and no active GitHub updater origin.
+- The signed-in state, current session, session history, workspace authorization, and workspace read/write access survived the replacement. macOS Accessibility and Screen Recording permissions remain granted. A direct post-restart IM conversation-list call succeeded, proving Chat bootstrap. A Contacts service probe returned a business `not_found`, so Contacts is not separately claimed as verified by this completion record.
+- Task 7.2 is complete. Task 7.3 remains open for the rest of its failure-mode matrix, and task 6.6 remains open because this normal Den-selected upgrade used the immutable targeted feed rather than independently proving lower-client stable-feed discovery.
