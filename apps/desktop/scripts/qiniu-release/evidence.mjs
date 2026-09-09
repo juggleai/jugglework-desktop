@@ -161,7 +161,7 @@ export function assertCanary(plan, canary) {
   return canary;
 }
 
-export function createEvidence({ plan, commit, localVerification = null, canary = null, bridge = {}, den = {}, timestamps = {} }) {
+export function createEvidence({ plan, commit, localVerification = null, canary = null, den = {}, timestamps = {} }) {
   const createdAt = timestamps.createdAt ?? new Date().toISOString();
   const evidence = {
     schema: EVIDENCE_SCHEMA,
@@ -196,10 +196,6 @@ export function createEvidence({ plan, commit, localVerification = null, canary 
       immutable: null,
       cdn: null,
       promotion: null,
-    },
-    bridge: {
-      githubReleaseId: String(bridge.githubReleaseId || ""),
-      githubTag: String(bridge.githubTag || ""),
     },
     den: {
       publishedVersionReadBack: String(den.publishedVersionReadBack || ""),

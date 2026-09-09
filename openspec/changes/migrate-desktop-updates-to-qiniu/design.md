@@ -7,13 +7,14 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 **Goals:**
 - Make Qiniu the only update discovery/download origin for Qiniu-enabled clients, including stable, Alpha, Den-targeted versions, and architecture replacement
 - Create a reproducible, fail-closed release workflow with immutable version objects, atomic channel promotion, remote/CDN verification, audit evidence, and no repository-stored secrets
-- Deliver a safe stable bridge from installed `1.2.14` clients to `1.2.15`, then prove a Qiniu-only upgrade to the next version
+- Publish `1.2.15` directly through Qiniu and prove Qiniu-only upgrades to later versions
 - Preserve application identity, user data, updater recovery behavior, and platform-correct feed routing
 
 **Non-Goals:**
 - Reusing the existing same-version `1.2.14` DMG as an automatic update
 - Enabling differential download in the first Qiniu release
-- Building new Windows/Linux binaries in the first bridge release; feed resolution remains platform-correct so later releases can add them safely
+- Building new Windows/Linux binaries in the first Qiniu-only release; feed resolution remains platform-correct so later releases can add them safely
+- Migrating already-installed clients that remain pinned to a retired GitHub updater feed
 - Implementing a new Den administration API in this repository; publication coordinates with the existing authorized administration path
 - Implementing a public download web page; the first phase uses manifest-selected signed DMGs directly
 - Automatic version downgrade as rollback
@@ -49,7 +50,7 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 8. **Stable macOS promotion is notarization-gated.** Change production packaging from `notarize: false` to an explicit environment-gated notarization path backed by CI/local secret names. Verify bundle id `com.juggleai.jugglework`, Team `H7PDHSK3C7`, hardened runtime, deep signing, notarization result, stapled ticket, Gatekeeper acceptance, and ZIP contents before promotion. Missing credentials may produce a candidate but cannot advance stable.
    - Alpha policy may be configured separately, but an unnotarized Alpha artifact must never be promoted as stable.
 
-9. **Bridge through version `1.2.15`.** Build `1.2.15` with Qiniu feed code. Publish immutable Qiniu artifacts and version manifest, run a targeted version-feed canary, promote Qiniu stable, then publish the exact same artifacts/manifest once to GitHub stable so existing `1.2.14` clients can install it. Leave that bridge available on the legacy feed. If active legacy Alpha installations exist, publish a semantically newer Qiniu-enabled Alpha bridge to `alpha-macos-latest` as well. Prove `1.2.15 → 1.2.16` using Qiniu only before retiring routine GitHub publication.
+9. **Start Qiniu-only publication with version `1.2.15`.** Build `1.2.15` with Qiniu feed code, publish immutable Qiniu artifacts and the version manifest, run a targeted version-feed canary, and promote Qiniu stable. Do not publish updater artifacts or manifests to GitHub. Prove `1.2.15 → 1.2.16` using Qiniu only.
 
 10. **Do not silently fall back or downgrade.** A Qiniu-enabled client treats a missing/malformed Qiniu feed as an update error/no update and keeps the current app. Disable stable `allowDowngrade`; emergency recovery ships a higher patch. A separately audited manual rollback can remain operational documentation, not normal updater behavior.
 
@@ -57,11 +58,11 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 
 12. **Coordinate Den only after client canary.** Qiniu immutable publication and targeted-feed installation happen first, then channel promotion/read-back, then Den `publishedDesktopVersions` and `latestAppVersion`. Organization `allowedDesktopVersions` are never mass-mutated by the release script; they remain explicit policy actions. The release evidence records the Den read-back. If the existing administration path is unavailable, metadata announcement remains blocked and is handled in a separate server-repo change.
 
-13. **Store a non-secret release record.** Generate a versioned JSON/Markdown record containing commit, version, artifact names/keys, sizes, SHA-256/SHA-512, Qiniu ETags, signer/notarization evidence, channel manifest digest, CDN checks, bridge publication identifiers, Den read-back, and timestamps. No access keys, tokens, cookies, private keys, or notarization credentials are recorded.
+13. **Store a non-secret release record.** Generate a versioned JSON/Markdown record containing commit, version, artifact names/keys, sizes, SHA-256/SHA-512, Qiniu ETags, signer/notarization evidence, channel manifest digest, CDN checks, Den read-back, and timestamps. No access keys, tokens, cookies, private keys, or notarization credentials are recorded.
 
 ## Risks / Trade-offs
 
-- **[Old clients are pinned to GitHub]** Qiniu publication alone cannot migrate them → publish the `1.2.15` bridge to Qiniu first and GitHub last, then leave the legacy bridge discoverable.
+- **[Old clients may remain pinned to GitHub]** They will not discover Qiniu-only releases automatically → treat them as outside this migration scope and use an explicitly supported manual installation path when needed.
 - **[ZIP traffic is about 228 MB per update]** Differential download remains disabled → validate reliability first; enable blockmap differentials only in a separate measured change.
 - **[Mutable manifest is cached]** Clients may see stale stable/alpha pointers → use revalidation/short TTL, explicit CDN refresh, and read-back before Den announcement.
 - **[Concurrent publishers race]** Two releases can overwrite the channel pointer → CI concurrency plus bucket promotion lock; immutable object preflight remains fail-closed.
@@ -76,10 +77,10 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 1. Implement feed/layout resolvers, generic packaged configuration, manual-DMG resolution, monotonic behavior, diagnostics, and focused unit tests without changing any channel manifest.
 2. Implement release tooling, manifest normalization/validation, non-overwrite/version locking, Qiniu/CDN verification, dry-run/resume, cache refresh, and release evidence generation.
 3. Configure Apple notarization secrets privately; build and fully verify `1.2.15` arm64 ZIP/DMG/blockmaps and Qiniu-enabled packaged defaults.
-4. Upload immutable `v1.2.15` objects, publish its version manifest, and use a clean, unpublished lower-version canary build containing the new updater code to perform a targeted-feed download/install/restart test. This proves the Qiniu version feed before the bridge version is promoted; `1.2.15` cannot validate an update to itself.
-5. Promote/read back Qiniu stable, then publish identical `1.2.15` assets and manifest as the final GitHub stable bridge; bridge active legacy Alpha clients if inventory requires it.
+4. Upload immutable `v1.2.15` objects, publish its version manifest, and use a clean, unpublished lower-version canary build containing the new updater code to perform a targeted-feed download/install/restart test. This proves the Qiniu version feed before `1.2.15` is promoted; `1.2.15` cannot validate an update to itself.
+5. Promote and read back Qiniu stable. Do not publish updater assets or manifests to GitHub.
 6. Update/read back Den published/latest metadata; leave org allowlists unchanged unless authorized separately.
 7. Build/publish a Qiniu-only `1.2.16` test or production patch and prove `1.2.15 → 1.2.16` has no GitHub requests, retains user state, and passes signing/Gatekeeper checks.
-8. Document routine Qiniu release, failed-stage resume, promotion lock recovery, higher-patch rollback, and legacy-client support. Routine future releases stop publishing to GitHub.
+8. Document routine Qiniu release, failed-stage resume, promotion lock recovery, higher-patch rollback, and the Qiniu-only support boundary.
 
-Rollback before stable promotion leaves the existing channel untouched. After promotion, stop Den rollout and publish a higher patch that restores known-good behavior; do not move stable backwards automatically. The legacy GitHub bridge remains available for pre-migration clients.
+Rollback before stable promotion leaves the existing channel untouched. After promotion, stop Den rollout and publish a higher patch that restores known-good behavior; do not move stable backwards automatically.

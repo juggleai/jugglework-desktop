@@ -98,17 +98,17 @@ Den SHALL NOT advertise a desktop version as published/latest before its Qiniu v
 - **THEN** the existing Den administration path may add the version to published inventory and advance latest version
 - **AND** organization allowlists are changed only by an explicitly authorized policy action
 
-### Requirement: Bridge publication preserves old-client migration
-The first Qiniu-enabled release SHALL be published to Qiniu before being published once through each legacy GitHub channel that still has installed clients.
+### Requirement: Desktop updater publication is Qiniu-only
+The first Qiniu-enabled release and every subsequent desktop updater release SHALL publish updater artifacts and manifests only through Qiniu.
 
-#### Scenario: Stable bridge release
-- **WHEN** the `1.2.15` bridge passes Qiniu version-feed canary validation
-- **THEN** the exact same signed artifacts and manifest are published as the final GitHub stable bridge
-- **AND** the GitHub latest feed remains capable of upgrading `1.2.14` clients to the bridge
+#### Scenario: Stable 1.2.15 release
+- **WHEN** `1.2.15` passes Qiniu version-feed canary validation and stable promotion gates
+- **THEN** its updater artifacts and manifests are available from Qiniu
+- **AND** no GitHub desktop updater assets or manifest are published
 
-#### Scenario: Alpha bridge is required
-- **WHEN** supported Alpha clients still use the legacy GitHub Alpha feed
-- **THEN** a semantically newer Qiniu-enabled prerelease is also published to the legacy Alpha feed before that feed is retired
+#### Scenario: Future stable or Alpha release
+- **WHEN** a later stable or Alpha desktop release is published
+- **THEN** its update discovery and payload delivery use Qiniu only
 
 ### Requirement: Release tooling is safe to operate repeatedly
 The publication workflow SHALL support dry-run, resume, and verification-only modes without making secrets or partial promotion implicit.

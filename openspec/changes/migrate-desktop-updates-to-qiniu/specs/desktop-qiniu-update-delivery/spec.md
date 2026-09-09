@@ -96,14 +96,14 @@ Stable automatic updates MUST NOT downgrade an installed stable version; recover
 - **WHEN** the stable manifest advertises a version lower than the installed version
 - **THEN** the updater ignores it and keeps the installed version
 
-### Requirement: Existing clients receive a bridge update
-Clients installed before the Qiniu migration SHALL have a supported path to a Qiniu-enabled bridge version through their existing update feed.
+### Requirement: Qiniu-enabled clients do not use GitHub update feeds
+Clients that include this migration SHALL use Qiniu for all subsequent update discovery and payload downloads. Publishing an automatic migration for clients pinned to the retired GitHub updater feed is outside this change's scope.
 
-#### Scenario: Stable 1.2.14 client checks GitHub
-- **WHEN** an installed stable `1.2.14` client checks its existing GitHub feed after bridge publication
-- **THEN** it can discover, verify, download, and install the `1.2.15` bridge release
-- **AND** subsequent checks from `1.2.15` use Qiniu
+#### Scenario: Qiniu-enabled client checks for an update
+- **WHEN** an installed Qiniu-enabled client checks stable, Alpha, or a targeted version feed
+- **THEN** manifest and payload requests use the authorized Qiniu CDN
+- **AND** no GitHub updater request or fallback occurs
 
-#### Scenario: Bridge client checks the next Qiniu-only release
-- **WHEN** the installed bridge version checks for a newer published stable release
+#### Scenario: 1.2.15 checks the next Qiniu-only release
+- **WHEN** installed version `1.2.15` checks for a newer published stable release
 - **THEN** discovery, download, and installation complete without a GitHub request
