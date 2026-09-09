@@ -169,6 +169,25 @@ test("promotion order is lock, verification, overwrite, refresh, read-back, unlo
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
 });
 
+test("records the narrowly scoped notarization exception in promotion output", async () => {
+  const plan = fixturePlan();
+  const evidence = verifiedEvidence(plan);
+  evidence.localVerification.releaseState = "candidate";
+  evidence.localVerification.credentialState = "missing";
+  evidence.localVerification.notarization = { status: "unavailable" };
+  evidence.localVerification.staple = { status: "unavailable" };
+  evidence.localVerification.gatekeeper = { status: "unavailable" };
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const reason = "Operator explicitly authorized one-time unnotarized stable 1.2.15 publication";
+  const result = await promoteChannel(plan, evidence, {
+    qiniu: createFakeQiniu(initial),
+    refresh: async () => {},
+    readBack: async () => ({ sha256: plan.manifest.sha256, size: plan.manifest.size }),
+    notarizationExceptionReason: reason,
+  });
+  assert.deepEqual(result.notarizationException, { scope: "stable-1.2.15-only", reason });
+});
+
 test("failed CDN refresh or read-back fails promotion and retains the lock", async () => {
   const plan = fixturePlan();
   const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));

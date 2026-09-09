@@ -25,6 +25,7 @@ import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { createRuntimeIpcHandlers } from "./runtime-ipc.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
+import { waitForQuitCleanup } from "./quit-cleanup.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -1456,6 +1457,8 @@ function createMainRemoteSessionEventBridge() {
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
+let quitCleanupComplete = false;
+let quitCleanupInProgress = false;
 let runtimeBootstrapPromise = null;
 
 function showShutdownScreen() {
@@ -2951,7 +2954,7 @@ async function createMainWindow() {
   // 否则放行原生关闭行为，避免出现无可见入口的后台进程。
   installCloseToHide({
     window: mainWindow,
-    canQuit: () => runtimeDisposedForQuit,
+    canQuit: () => quitCleanupComplete,
     canHide: () => appTrayIndicator.active(),
   });
 
@@ -3104,20 +3107,30 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("before-quit", (event) => {
-    if (runtimeDisposedForQuit) return;
+    if (quitCleanupComplete) return;
     event.preventDefault();
-    if (runtimeDisposeInProgress) return;
+    if (quitCleanupInProgress) return;
+    quitCleanupInProgress = true;
     remoteControlPowerMonitorController.stop();
     appTrayIndicator.stop();
     remoteControlSleepController.stop();
     showShutdownScreen();
-    void Promise.all([
+    void waitForQuitCleanup([
       remoteSessionEventBridge?.stop(),
       remoteControlAgent?.stop(),
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
       stopJuggleChatRouterServer(),
-    ]).finally(() => app.quit());
+    ]).then(({ timedOut, results }) => {
+      if (timedOut) console.warn("[quit] cleanup timed out; allowing updater exit");
+      else if (results.some((result) => result.status === "rejected")) {
+        console.warn("[quit] one or more cleanup tasks failed; allowing exit");
+      }
+    }).finally(() => {
+      quitCleanupComplete = true;
+      quitCleanupInProgress = false;
+      app.quit();
+    });
   });
 
   app.on("second-instance", async (_event, argv) => {

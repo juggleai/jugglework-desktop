@@ -65,6 +65,8 @@ The release process SHALL verify local artifacts, Qiniu object metadata, and pub
 ### Requirement: Stable macOS releases pass signing and notarization gates
 Stable macOS channel promotion SHALL require the expected bundle identity, Developer ID Team identity, hardened runtime, successful Apple notarization, stapling, and Gatekeeper acceptance.
 
+Stable `1.2.15` MAY use an explicitly audited one-time exception for notarization, stapling, and Gatekeeper status. The exception SHALL be rejected for any other version and SHALL NOT bypass Developer ID identity, Team identity, hardened runtime, artifact integrity, remote verification, or real-client canary requirements.
+
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -73,6 +75,11 @@ Stable macOS channel promotion SHALL require the expected bundle identity, Devel
 - **WHEN** notarization cannot be performed or Gatekeeper rejects the candidate
 - **THEN** the release may remain a local or unpublished candidate
 - **AND** it MUST NOT replace the stable channel manifest
+
+#### Scenario: Explicit 1.2.15 migration exception
+- **WHEN** an operator supplies the audited notarization-exception reason for stable `1.2.15`
+- **THEN** promotion may proceed without notarization, stapling, and Gatekeeper acceptance only after all remaining gates pass
+- **AND** the same exception fails closed for every other version or channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.

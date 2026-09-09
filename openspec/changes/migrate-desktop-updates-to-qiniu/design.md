@@ -49,6 +49,7 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 
 8. **Stable macOS promotion is notarization-gated.** Change production packaging from `notarize: false` to an explicit environment-gated notarization path backed by CI/local secret names. Verify bundle id `com.juggleai.jugglework`, Team `H7PDHSK3C7`, hardened runtime, deep signing, notarization result, stapled ticket, Gatekeeper acceptance, and ZIP contents before promotion. Missing credentials may produce a candidate but cannot advance stable.
    - Alpha policy may be configured separately, but an unnotarized Alpha artifact must never be promoted as stable.
+   - One migration-only exception is explicitly authorized for stable `1.2.15`. It requires an audited reason and may bypass only notarization, stapling, and Gatekeeper status; Developer ID identity, Team, hardened runtime, package inventory, immutable hashes, Qiniu/CDN verification, and real-client canary gates remain mandatory. The exception is rejected for every other version.
 
 9. **Start Qiniu-only publication with version `1.2.15`.** Build `1.2.15` with Qiniu feed code, publish immutable Qiniu artifacts and the version manifest, run a targeted version-feed canary, and promote Qiniu stable. Do not publish updater artifacts or manifests to GitHub. Prove `1.2.15 → 1.2.16` using Qiniu only.
 
@@ -67,6 +68,7 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 - **[Mutable manifest is cached]** Clients may see stale stable/alpha pointers → use revalidation/short TTL, explicit CDN refresh, and read-back before Den announcement.
 - **[Concurrent publishers race]** Two releases can overwrite the channel pointer → CI concurrency plus bucket promotion lock; immutable object preflight remains fail-closed.
 - **[Notarization blocks release]** Existing configuration disables it and credentials may be absent → separate candidate creation from stable promotion and request credentials through private setup only.
+- **[One-time 1.2.15 notarization exception]** The migration release may be accepted without an Apple ticket only under the explicit audited exception → hard-code the exact stable version coordinate and preserve every other release gate; later releases fail closed.
 - **[Qiniu outage removes update discovery]** No silent GitHub fallback preserves the declared trust boundary → current installation remains usable; retry and manifest-selected manual DMG remain available when CDN recovers.
 - **[Manifest itself is not natively signed by electron-updater]** Integrity is SHA-512 plus HTTPS and Apple code signing → protect Qiniu credentials, restrict promotion access, audit every manifest digest, and verify the installed Team identity in canary.
 - **[Den inventory and Qiniu diverge]** Clients can target missing versions → order Den updates after CDN canary and fail publication evidence if Den read-back disagrees.

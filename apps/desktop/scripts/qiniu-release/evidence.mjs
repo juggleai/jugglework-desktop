@@ -237,9 +237,24 @@ export function assertEvidenceMatchesPlan(plan, evidence) {
   return evidence;
 }
 
-export function assertPromotionEvidence(plan, evidence) {
+function assertStableNotarizationException(plan, reason) {
+  if (plan.channel !== "stable" || plan.version !== "1.2.15") {
+    throw new Error("The notarization exception is restricted to stable 1.2.15");
+  }
+  if (typeof reason !== "string" || reason.trim().length < 20) {
+    throw new Error("The stable 1.2.15 notarization exception requires an explicit audited reason");
+  }
+  return reason.trim();
+}
+
+export function assertPromotionEvidence(plan, evidence, { notarizationExceptionReason = "" } = {}) {
   assertEvidenceMatchesPlan(plan, evidence);
-  assertLocalVerification(plan, evidence.localVerification);
+  if (notarizationExceptionReason) {
+    assertStableNotarizationException(plan, notarizationExceptionReason);
+    assertLocalVerification(plan, evidence.localVerification, { stable: false });
+  } else {
+    assertLocalVerification(plan, evidence.localVerification);
+  }
   assertCanary(plan, evidence.canary);
   const objects = [...plan.objects, plan.manifest];
   if (evidence.workflow?.immutable?.status !== "verified") throw new Error("Workflow-recorded immutable verification is required");

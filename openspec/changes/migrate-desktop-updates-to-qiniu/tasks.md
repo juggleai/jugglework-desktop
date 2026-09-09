@@ -43,7 +43,7 @@
 
 - [x] 6.1 Bump app/desktop/embedded-server versions from 1.2.14 to 1.2.15 only after updater and release tooling tests pass
 - [x] 6.2 Build isolated macOS arm64 ZIP, ZIP blockmap, DMG, DMG blockmap, and normalized version manifest with Qiniu packaged defaults
-- [ ] 6.3 Complete local package, native module, updater inventory, Developer ID, notarization, stapling, Gatekeeper, version, architecture, and embedded-origin verification
+- [ ] 6.3 Complete local package, native module, updater inventory, Developer ID, version, architecture, and embedded-origin verification; record the explicitly authorized one-time `1.2.15` notarization exception
 - [x] 6.4 Upload and remotely verify immutable `jugglework/releases/v1.2.15/mac/arm64/` artifacts and `v1.2.15/mac/latest-mac.yml` without overwrite
 - [ ] 6.5 Use a clean unpublished lower-version build containing the new updater code to install `1.2.15` through the targeted Qiniu version feed, restart, and verify version, user data, workspace authorization, and permissions
 - [ ] 6.6 Promote and read back `stable/mac/latest-mac.yml`, then verify a clean Qiniu-enabled lower-version client discovers the stable feed

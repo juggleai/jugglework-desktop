@@ -32,7 +32,7 @@ const COMMANDS = new Set([
 ]);
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
-  "audit", "commit", "localVerification", "canary",
+  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason",
 ]);
 
 export function parseArguments(argv) {
@@ -195,11 +195,18 @@ export async function runCli(argv, {
       fetchImpl,
       dryRun: options.dryRun,
       actor: options.actor,
+      notarizationExceptionReason: options.notarizationExceptionReason,
       now,
     });
     if (!options.dryRun) {
       await updateEvidence(options.evidence, withEvidenceResults(evidence, {
-        workflow: { promotion: { status: "verified", channelKey: result.channelKey, readBack: result.readBack, promotedAt: now().toISOString() } },
+        workflow: { promotion: {
+          status: "verified",
+          channelKey: result.channelKey,
+          readBack: result.readBack,
+          notarizationException: result.notarizationException,
+          promotedAt: now().toISOString(),
+        } },
       }, now().toISOString()));
     }
     output(result);
@@ -209,7 +216,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. The audited --notarization-exception-reason is restricted to stable 1.2.15.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -78,9 +78,13 @@ export async function promoteChannel(plan, evidence, {
   dryRun = false,
   now = () => new Date(),
   actor = process.env.CI_JOB_ID || process.env.GITHUB_RUN_ID || "manual",
+  notarizationExceptionReason = "",
   onEvent = () => {},
 } = {}) {
-  assertPromotionEvidence(plan, evidence);
+  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason });
+  const notarizationException = notarizationExceptionReason
+    ? { scope: "stable-1.2.15-only", reason: notarizationExceptionReason.trim() }
+    : null;
   if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
   const lockKey = promotionLockKey(plan.channel);
@@ -114,7 +118,7 @@ export async function promoteChannel(plan, evidence, {
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
     const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
     channelVerified = true;
-    return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult };
+      return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, notarizationException };
   } finally {
     if (channelMutated && !channelVerified) {
       onEvent({ type: "lock-retained", key: lockKey });
