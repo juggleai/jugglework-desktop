@@ -294,6 +294,32 @@ function asAssistantPresentationMessage(message: UIMessage): UIMessage | null {
 const isTransparentUserMessage = (message: UIMessage): boolean =>
   message.role === "user" && message.parts.length === 0;
 
+/**
+ * Older or partially populated compaction events can omit their mode. An
+ * unknown receipt at the end of a run is still the standalone result of a
+ * manual `/compact`, but one followed by more assistant output is necessarily
+ * an internal automatic boundary in the same task.
+ */
+function hasAssistantContinuation(messages: UIMessage[], startIndex: number): boolean {
+  for (let index = startIndex + 1; index < messages.length; index++) {
+    const message = messages[index]!
+    if (isTransparentUserMessage(message)) continue
+    return asAssistantPresentationMessage(message) !== null
+  }
+  return false
+}
+
+function isStandaloneCompaction(
+  compaction: SessionCompactionPresentation | null,
+  messages: UIMessage[],
+  index: number,
+): boolean {
+  if (!compaction) return false
+  if (compaction.mode === "manual") return true
+  if (compaction.mode === "auto") return false
+  return !hasAssistantContinuation(messages, index)
+}
+
 export function groupMessages(messages: UIMessage[], status: ThreadStatus): MessageListItem[] {
   const items: MessageListItem[] = []
   let index = 0
@@ -326,13 +352,15 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
         break
       }
       const compaction = getSessionCompactionFromMessage(nextAssistantMessage)
+      const standaloneCompaction = isStandaloneCompaction(compaction, messages, index)
       // `/compact` does not create a visible user message, so without an
       // explicit boundary its output would be absorbed into the preceding
-      // assistant run. A manual compaction is intentionally its own task.
-      if (compaction && compaction.mode !== "auto" && assistantMessages.length > 0) break
+      // assistant run. A manual compaction is intentionally its own task;
+      // unknown receipts followed by more assistant output are automatic.
+      if (standaloneCompaction && assistantMessages.length > 0) break
       assistantMessages.push({ message: nextAssistantMessage, index });
       index++
-      if (compaction && compaction.mode !== "auto") break
+      if (standaloneCompaction) break
     }
 
     items.push({ messages: assistantMessages });

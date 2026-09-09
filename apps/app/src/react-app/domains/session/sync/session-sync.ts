@@ -27,6 +27,7 @@ import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
 import {
   completeRunningSessionCompactions,
+  getSessionCompactionFromMessage,
   getSessionCompactionFromPart,
   upsertSessionCompactionMessage,
   type SessionCompactionMode,
@@ -98,6 +99,11 @@ type SyncEntry = {
   // can resurrect the empty user shell. Bounded per session and cleared
   // when the session is deleted; entries disappear with the sync itself.
   suppressedCompactionContinueMessages: Map<string, Set<string>>;
+  // OpenCode's compaction lifecycle event may omit `reason`, while the raw
+  // boundary part still carries `auto`. Retain that authoritative mode until
+  // the following summary message arrives so an automatic receipt is not
+  // misclassified as a standalone manual task.
+  pendingCompactionModes: Map<string, SessionCompactionMode>;
   // Coalesce rapid-fire delta events from the SSE stream into one cache
   // commit per animation frame. Without this, a long response produces a
   // setQueryData per token; each triggers a full transcript re-render
@@ -968,6 +974,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       // longer be observed by any snapshot and would only suppress a
       // legitimately reused id in a future session lifecycle.
       clearContinuationSuppression(workspaceId, sessionId);
+      entry.pendingCompactionModes.delete(sessionId);
       removeWorkspaceSessionAncestry(workspaceId, sessionId);
     }
     if (sessionId) {
@@ -1212,19 +1219,25 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       parts: [],
     } satisfies UIMessage;
     const messageId = info.id;
+    const pendingCompactionMode = info.summary === true
+      ? entry.pendingCompactionModes.get(info.sessionID)
+      : undefined;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) => {
       const updated = upsertMessage(current, next);
-      if (info.role !== "assistant" || info.summary !== true || typeof completed !== "number") {
+      if (info.role !== "assistant" || info.summary !== true) {
         return updated;
       }
+      const previous = updated.find((message) => message.id === messageId);
+      const previousCompaction = previous ? getSessionCompactionFromMessage(previous) : null;
       return upsertSessionCompactionMessage(updated, {
         messageId,
-        mode: "unknown",
-        running: false,
+        mode: pendingCompactionMode ?? previousCompaction?.mode ?? "unknown",
+        running: typeof completed !== "number",
         startedAt: created,
-        finishedAt: completed,
+        finishedAt: typeof completed === "number" ? completed : null,
       });
     });
+    if (pendingCompactionMode) entry.pendingCompactionModes.delete(info.sessionID);
     return;
   }
 
@@ -1257,6 +1270,22 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!part?.sessionID || !part.messageID) return;
     const activityStore = useSessionActivityStore.getState();
     activityStore.markRuntimeEvent(workspaceId, part.sessionID);
+    if (part.type === "compaction") {
+      entry.pendingCompactionModes.set(part.sessionID, part.auto ? "auto" : "manual");
+      if (isTrackedSession(entry, part.sessionID)) {
+        const liveMessage = queryClient.getQueryData<UIMessage[]>(
+          transcriptKey(workspaceId, part.sessionID),
+        )?.find((message) => message.id === part.messageID);
+        if (liveMessage?.parts.length === 0) {
+          queryClient.setQueryData<UIMessage[]>(
+            transcriptKey(workspaceId, part.sessionID),
+            (current = []) => current.filter((message) => message.id !== part.messageID),
+          );
+          activityStore.removeMessageRole(workspaceId, part.sessionID, part.messageID);
+        }
+      }
+      return;
+    }
     if (isCompactionContinuePart(part)) {
       // OpenCode resumes an automatic compaction by injecting a synthetic
       // user prompt. It is engine control flow, not a new user turn. Drop
@@ -1667,6 +1696,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     pendingDeltas: new Map(),
     suppressedCompactionContinueMessages: new Map(),
+    pendingCompactionModes: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
   });
@@ -1830,6 +1860,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     sessionStatusListeners: new Set(input.onSessionStatus ? [input.onSessionStatus] : []),
     pendingDeltas: new Map(),
     suppressedCompactionContinueMessages: new Map(),
+    pendingCompactionModes: new Map(),
     deltaFlushBuffer: [],
     deltaFlushScheduled: false,
   });

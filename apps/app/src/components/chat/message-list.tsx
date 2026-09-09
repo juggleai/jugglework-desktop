@@ -435,22 +435,38 @@ export function taskStatusTitle(
   return undefined
 }
 
-function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
-  const { workspaceId, sessionId } = useMessageList()
+function taskSessionMetadata(part: ToolUIPart | DynamicToolUIPart) {
   const metadata = part.type === "dynamic-tool"
     ? (part.callProviderMetadata?.opencode as {
         toolMetadata?: { parentSessionId?: unknown; sessionId?: unknown }
       } | undefined)?.toolMetadata
     : undefined
-  const childSessionId = typeof metadata?.sessionId === "string" ? metadata.sessionId : ""
-  const parentSessionId = typeof metadata?.parentSessionId === "string" ? metadata.parentSessionId : ""
+  return {
+    childSessionId: typeof metadata?.sessionId === "string" ? metadata.sessionId : "",
+    parentSessionId: typeof metadata?.parentSessionId === "string" ? metadata.parentSessionId : "",
+  }
+}
+
+function taskToolWaitsForApproval(
+  part: ToolUIPart | DynamicToolUIPart,
+  interactions: WorkspaceInteractionState,
+  rootSessionId: string,
+): boolean {
+  if (!isTaskToolPart(part)) return false
+  const { childSessionId, parentSessionId } = taskSessionMetadata(part)
+  return Boolean(childSessionId) && (!parentSessionId || parentSessionId === rootSessionId)
+    ? taskHasPendingInteraction(interactions, rootSessionId, childSessionId)
+    : false
+}
+
+function TaskStatusTool({ part }: { part: ToolUIPart | DynamicToolUIPart }) {
+  const { workspaceId, sessionId } = useMessageList()
+  const { childSessionId } = taskSessionMetadata(part)
   const interactions = useQueryCacheState<WorkspaceInteractionState>(
     workspaceInteractionsKey(workspaceId),
     EMPTY_WORKSPACE_INTERACTIONS,
   )
-  const waitingForApproval = Boolean(childSessionId) && (!parentSessionId || parentSessionId === sessionId)
-    ? taskHasPendingInteraction(interactions, sessionId, childSessionId)
-    : false
+  const waitingForApproval = taskToolWaitsForApproval(part, interactions, sessionId)
   const inFlight = isToolPartInFlight(part)
   const status = useSessionActivityStore((state) => (
     childSessionId ? state.getStatus(workspaceId, childSessionId) : "idle"
@@ -1225,6 +1241,11 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, status, activityStatus = "idle", retryActivity, compactionRunning = false }: MessageListProps) {
+  const { workspaceId, sessionId } = useMessageList()
+  const interactions = useQueryCacheState<WorkspaceInteractionState>(
+    workspaceInteractionsKey(workspaceId),
+    EMPTY_WORKSPACE_INTERACTIONS,
+  )
   const isStreaming = status === "streaming" || status === "retrying"
   const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
   const error = useSessionErrorMessage();
@@ -1232,7 +1253,10 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
   // TIPS: 底部提示展示的是当前真实动作（执行命令 / 写文件 / 工具调用…），
   // 而不是一个恒定的「Thinking…」；推不出具体动作时落到「生成回复中」。
   const liveActionLabel = isStreaming
-    ? liveActivityLabel(getLiveActivityKind(messages))
+    ? liveActivityLabel(getLiveActivityKind(messages, {
+        isTaskWaitingForApproval: (part) =>
+          taskToolWaitsForApproval(part, interactions, sessionId),
+      }))
     : null
   const activityLabel = activityStatus === "retrying" || (activityStatus === "stalled" && !liveActionLabel)
     ? getSessionActivityStatusLabel(activityStatus)

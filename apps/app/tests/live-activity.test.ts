@@ -39,11 +39,21 @@ describe("实时动作推导", () => {
       ["webfetch", "reading_web"],
       ["skill", "loading_skill"],
       ["todowrite", "updating_plan"],
-      ["task", "delegating"],
     ];
     for (const [toolName, expected] of cases) {
       expect(getLiveActivityKind([assistant(toolPart(toolName, "input-available"))])).toBe(expected);
     }
+  });
+
+  test("task 按准备、执行和等待审批区分状态", () => {
+    expect(getLiveActivityKind([assistant(toolPart("task", "input-streaming"))]))
+      .toBe("subtask_preparing");
+    expect(getLiveActivityKind([assistant(toolPart("task", "input-available"))]))
+      .toBe("subtask_running");
+    expect(getLiveActivityKind(
+      [assistant(toolPart("task", "input-available"))],
+      { isTaskWaitingForApproval: () => true },
+    )).toBe("subtask_waiting_approval");
   });
 
   test("未知工具落到「工具调用中」而不是兜底文案", () => {

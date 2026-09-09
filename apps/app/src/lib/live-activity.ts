@@ -41,15 +41,21 @@ export type LiveActivityKind =
   | "updating_plan"
   | "inspecting_code"
   | "asking"
-  | "delegating"
+  | "subtask_preparing"
+  | "subtask_running"
+  | "subtask_waiting_approval"
   | "tool_calling"
+
+export type LiveActivityContext = {
+  isTaskWaitingForApproval?: (part: DynamicToolUIPart) => boolean
+}
 
 /**
  * 由在途工具推断动作
  * @param part 在途的工具 part
  * @returns 动作种类
  */
-function toolActivityKind(part: AnyToolPart): LiveActivityKind {
+function toolActivityKind(part: AnyToolPart, context: LiveActivityContext): LiveActivityKind {
   // input-streaming 表示模型还在生成调用参数，尚未真正执行。
   const preparing = part.state === "input-streaming"
   if (isBashToolPart(part)) return preparing ? "command_preparing" : "command_running"
@@ -63,7 +69,10 @@ function toolActivityKind(part: AnyToolPart): LiveActivityKind {
   if (isTodoWriteToolPart(part)) return "updating_plan"
   if (isLspToolPart(part)) return "inspecting_code"
   if (isQuestionToolPart(part)) return "asking"
-  if (isTaskToolPart(part)) return "delegating"
+  if (isTaskToolPart(part)) {
+    if (context.isTaskWaitingForApproval?.(part)) return "subtask_waiting_approval"
+    return preparing ? "subtask_preparing" : "subtask_running"
+  }
   return "tool_calling"
 }
 
@@ -86,11 +95,14 @@ function hasStreamingReasoning(messages: UIMessage[]): boolean {
  * @param messages 当前会话消息
  * @returns 动作种类
  */
-export function getLiveActivityKind(messages: UIMessage[]): LiveActivityKind {
+export function getLiveActivityKind(
+  messages: UIMessage[],
+  context: LiveActivityContext = {},
+): LiveActivityKind {
   const toolParts = collectToolParts(messages)
   for (let index = toolParts.length - 1; index >= 0; index -= 1) {
     const part = toolParts[index]
-    if (part && isToolPartInFlight(part)) return toolActivityKind(part)
+    if (part && isToolPartInFlight(part)) return toolActivityKind(part, context)
   }
   if (hasStreamingReasoning(messages)) return "thinking"
   return "responding"

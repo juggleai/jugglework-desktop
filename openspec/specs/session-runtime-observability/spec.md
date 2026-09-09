@@ -50,6 +50,21 @@ The system SHALL retain stalled activity as internal runtime evidence while pres
 - **WHEN** an active session with existing messages exceeds the meaningful-progress deadline
 - **THEN** the conversation continues to show the current live action or generic generating label without a possibly-stuck instruction
 
+### Requirement: Child-session activity uses observable phases
+The system SHALL distinguish preparation, execution, and approval-waiting phases for an in-flight child-session task using observable tool and interaction state.
+
+#### Scenario: Child task input is still streaming
+- **WHEN** the parent Task tool is still receiving its invocation input
+- **THEN** the live activity says that the subtask is being prepared
+
+#### Scenario: Child task is running
+- **WHEN** the Task invocation input is available and no descendant interaction is pending
+- **THEN** the live activity says that the subtask is running rather than still being delegated
+
+#### Scenario: Child task needs approval
+- **WHEN** an in-flight Task has a pending permission or question in its descendant session tree
+- **THEN** the live activity says that the subtask is waiting for approval
+
 ### Requirement: Child-session retry propagates to its task
 The system SHALL project a child session's retrying state onto the parent task activity without fabricating child completion or failure, while stalled state remains undecorated.
 
@@ -71,3 +86,14 @@ The system SHALL treat raw compaction parts as invisible context-boundary metada
 #### Scenario: Manual compaction completes
 - **WHEN** the runtime emits the compaction-ended event or a summary message contains a completion timestamp
 - **THEN** the in-progress presentation is replaced by one completed compaction receipt
+
+### Requirement: Automatic compaction remains inside the active task
+The system SHALL treat an automatic context boundary, its summary receipt, and the resumed assistant output as one continuous task presentation.
+
+#### Scenario: Lifecycle events omit the compaction reason
+- **WHEN** a raw compaction part identifies an automatic boundary and its lifecycle events omit the reason
+- **THEN** the live transcript retains the automatic mode for the following summary receipt and does not create a standalone task
+
+#### Scenario: Only an unknown summary receipt survives reconciliation
+- **WHEN** a completed summary receipt has unknown mode but is followed by a transparent continuation marker and more assistant output
+- **THEN** the receipt and resumed output remain grouped with the assistant output before compaction

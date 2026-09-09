@@ -227,6 +227,33 @@ describe("task message presentation", () => {
     expect(split.summaryItems[0]?.message.parts).toEqual([{ type: "text", text: "Done" }])
   })
 
+  test("keeps an unknown compaction inside the task when assistant output continues", () => {
+    const grouped = groupMessages([
+      message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),
+      message("assistant-before", "assistant", 1_700_000_001_000, [{ type: "text", text: "Still working" }]),
+      message("assistant-compaction", "assistant", 1_700_000_002_000, [
+        createSessionCompactionUIPart({
+          partId: "part-unknown-auto-compaction",
+          mode: "unknown",
+          running: false,
+          startedAt: 1_700_000_002_000,
+          finishedAt: 1_700_000_003_000,
+        }),
+      ], 1_700_000_003_000),
+      message("synthetic-continue", "user", 1_700_000_003_500, []),
+      message("assistant-after", "assistant", 1_700_000_004_000, [{ type: "text", text: "Done" }]),
+    ], "ready")
+
+    expect(grouped).toHaveLength(2)
+    expect(isMessageGroup(grouped[1]!)).toBe(true)
+    if (!isMessageGroup(grouped[1]!)) throw new Error("expected one assistant task group")
+    expect(grouped[1].messages.map((item) => item.message.id)).toEqual([
+      "assistant-before",
+      "assistant-compaction",
+      "assistant-after",
+    ])
+  })
+
   test("makes manual compact a standalone assistant task boundary", () => {
     const grouped = groupMessages([
       message("user-1", "user", 1_700_000_000_000, [{ type: "text", text: "Do it" }]),

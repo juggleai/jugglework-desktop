@@ -688,10 +688,25 @@ describe("tool part mapper", () => {
       userEvent("assistant-before", "assistant", t1);
       textPartEvent("assistant-before-text", "assistant-before", "Progress before compaction");
 
-      // Automatic compaction lifecycle creates the receipt with mode auto.
+      // Real OpenCode streams the automatic boundary as an empty user
+      // message plus a CompactionPart. Its lifecycle events may omit reason,
+      // so the raw part must carry `auto` forward to the summary receipt.
+      userEvent("compaction-boundary", "user", t1b);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-boundary-part",
+            sessionID: sessionId,
+            messageID: "compaction-boundary",
+            type: "compaction",
+            auto: true,
+          },
+        },
+      } as any);
       __applySessionSyncEventForTest(syncInput, {
         type: "session.next.compaction.started",
-        properties: { sessionID: sessionId, messageID: "summary-live", reason: "auto", timestamp: t2 },
+        properties: { sessionID: sessionId, messageID: "summary-live", timestamp: t2 },
       } as any);
       textPartEvent("summary-live-text", "summary-live", "internal automatic summary");
       __applySessionSyncEventForTest(syncInput, {
@@ -700,7 +715,7 @@ describe("tool part mapper", () => {
       } as any);
       __applySessionSyncEventForTest(syncInput, {
         type: "session.next.compaction.ended",
-        properties: { sessionID: sessionId, messageID: "summary-live", reason: "auto", timestamp: t3 },
+        properties: { sessionID: sessionId, messageID: "summary-live", timestamp: t3 },
       } as any);
 
       // The synthetic continuation is suppressed out of the transcript.
@@ -723,6 +738,7 @@ describe("tool part mapper", () => {
       userEvent("assistant-after", "assistant", t5);
 
       const liveTranscript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(liveTranscript.find((message) => message.id === "compaction-boundary")).toBeUndefined();
       expect(liveTranscript.find((message) => message.id === "cont-live")).toBeUndefined();
       expect(getSessionCompactionFromMessage(liveTranscript.find((message) => message.id === "summary-live")!)).toMatchObject({
         mode: "auto",
