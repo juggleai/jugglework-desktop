@@ -1,8 +1,9 @@
 /** @jsxImportSource react */
-import { useEffect, type PointerEventHandler } from "react";
+import { useEffect, useReducer, type PointerEventHandler } from "react";
 import { CircleAlert, LoaderCircle } from "lucide-react";
 import { t } from "@/i18n";
 
+import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 
 import {
@@ -34,11 +35,17 @@ export function JuggleChatApp({
   const user = useJuggleChatStore((state) => state.user);
   const view = useJuggleChatStore((state) => state.view);
   const denAuth = useDenAuth();
+  const [credentialRevision, bumpCredentialRevision] = useReducer((value: number) => value + 1, 0);
+
+  useEffect(() => {
+    window.addEventListener(denSettingsChangedEvent, bumpCredentialRevision);
+    return () => window.removeEventListener(denSettingsChangedEvent, bumpCredentialRevision);
+  }, []);
 
   useEffect(() => {
     if (denAuth.status === "checking") return;
     void bootstrap(denAuth.user);
-  }, [bootstrap, denAuth.status, denAuth.user]);
+  }, [bootstrap, credentialRevision, denAuth.status, denAuth.user]);
 
   let content;
   if (denAuth.status === "checking" || status === "idle" || status === "initializing") {

@@ -1093,6 +1093,7 @@ export function writeDenIMLoginBootstrap(value: DenIMLoginBootstrap | null) {
     const authToken = readDenSettings().authToken?.trim() ?? "";
     if (!authToken) {
       window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
+      dispatchDenSettingsChanged({ settings: readDenSettings() });
       return;
     }
     window.localStorage.setItem(STORAGE_IM_LOGIN_BOOTSTRAP, JSON.stringify({
@@ -1102,6 +1103,10 @@ export function writeDenIMLoginBootstrap(value: DenIMLoginBootstrap | null) {
   } else {
     window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
   }
+  // Chat is eagerly mounted and its Den user object may remain unchanged when
+  // an organization switch or startup repair provisions new IM credentials.
+  // Notify subscribers so JuggleChat reconnects without requiring a reload.
+  dispatchDenSettingsChanged({ settings: readDenSettings() });
 }
 
 export function writeDenUserId(userId: string | null) {
@@ -1280,13 +1285,17 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
     return null;
   }
 
-  if (
-    options?.forceServerSync &&
-    (!response.activeOrgId || response.activeOrgId !== targetOrg.id)
-  ) {
-    // TIPS: 只有真正发生了服务端切换时，响应里的 `im` 才代表当前活跃组织的最新供给
-    // 结果（可能是 null，比如切到没开 IM 的组织，这也是需要写下去覆盖旧数据的）——
-    // 不切换就不动本地已有的 IM 凭据。
+  const missingIMBootstrap = !readDenIMLoginBootstrap();
+  const shouldRefreshOrganizationBootstrap = options?.forceServerSync && (
+    !response.activeOrgId ||
+    response.activeOrgId !== targetOrg.id ||
+    (missingIMBootstrap && targetOrg.kind !== "personal")
+  );
+  if (shouldRefreshOrganizationBootstrap) {
+    // TIPS: 服务端会为请求指定的非个人组织重新供给 IM 凭据（可能是 null，比如组织没开
+    // IM 或临时供给失败），因此真正切换组织和本地 bootstrap 缺失时都要写回响应。
+    // 已有有效 bootstrap 且服务端组织一致时不请求，避免每次刷新都重新供给；个人工作区
+    // 按服务端契约永远不带 IM，也不做无意义的自愈请求。
     const result = await client.setActiveOrganization({ organizationId: targetOrg.id });
     writeDenIMLoginBootstrap(result?.im ?? null);
   }

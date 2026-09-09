@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   clearDenSession,
   CLOUD_MCP_SYNC_MARKER_STORAGE_KEY,
+  ensureDenActiveOrganization,
   initializeDenBootstrapConfig,
   readDenBootstrapConfig,
+  readDenIMLoginBootstrap,
   readDenSettings,
   setDenBootstrapConfig,
   writeDenSettings,
@@ -67,7 +69,8 @@ describe("desktop Den bootstrap settings", () => {
         localStorage: memoryStorage(),
         dispatchEvent: () => true,
         __JUGGLEWORK_ELECTRON__: {
-          invokeDesktop: async (command: string, payload?: { baseUrl: string; requireSignin: boolean }) => {
+          invokeDesktop: async (command: string, ...args: unknown[]) => {
+            const payload = args[0] as { baseUrl: string; requireSignin: boolean } | undefined;
             if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
             if (command === "setDesktopBootstrapConfig" && payload) {
               bootstrapConfig = {
@@ -223,5 +226,89 @@ describe("desktop Den bootstrap settings", () => {
     window.localStorage.setItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY, "stale-marker");
     clearDenSession();
     expect(window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY)).toBeNull();
+  });
+
+  test("reprovisions missing IM credentials even when the active organization already matches", async () => {
+    await initializeDenBootstrapConfig();
+    writeDenSettings({
+      baseUrl: "https://bootstrap.example.com",
+      authToken: "current-session",
+      activeOrgId: "org_team",
+      activeOrgSlug: "team",
+      activeOrgName: "Team",
+    });
+    const requests: Array<{ url: string; method: string }> = [];
+    window.__JUGGLEWORK_ELECTRON__!.invokeDesktop = async (command: string, ...args: unknown[]) => {
+      if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
+      if (command === "__fetch") {
+        const url = String(args[0]);
+        const init = (args[1] ?? {}) as RequestInit;
+        const method = init.method ?? "GET";
+        requests.push({ url, method });
+        if (url.endsWith("/v1/me/orgs")) {
+          return { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: JSON.stringify({
+            orgs: [{ id: "org_team", name: "Team", slug: "team", role: "member", kind: "organization" }],
+            activeOrgId: "org_team",
+            activeOrgSlug: "team",
+          }) };
+        }
+        if (url.endsWith("/v1/me/active-organization") && method === "POST") {
+          return { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: JSON.stringify({
+            activeOrgId: "org_team",
+            activeOrgSlug: "team",
+            im: {
+              provider: "juggleim",
+              websocketUrl: "wss://im.example.com",
+              appKey: "app-key",
+              imUserId: "im-user",
+              token: "im-session",
+            },
+          }) };
+        }
+        return { status: 404, statusText: "Not Found", headers: {}, body: "not found" };
+      }
+      throw new Error(`Unexpected desktop command: ${command}`);
+    };
+
+    await ensureDenActiveOrganization({ forceServerSync: true });
+
+    expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+      ["GET", "/jwork/api/v1/me/orgs"],
+      ["POST", "/jwork/api/v1/me/active-organization"],
+    ]);
+    expect(readDenIMLoginBootstrap()).toMatchObject({
+      provider: "juggleim",
+      imUserId: "im-user",
+    });
+  });
+
+  test("does not repeatedly request IM credentials for a personal workspace", async () => {
+    await initializeDenBootstrapConfig();
+    writeDenSettings({
+      baseUrl: "https://bootstrap.example.com",
+      authToken: "current-session",
+      activeOrgId: "org_personal",
+      activeOrgSlug: "personal",
+      activeOrgName: "Personal",
+    });
+    const methods: string[] = [];
+    window.__JUGGLEWORK_ELECTRON__!.invokeDesktop = async (command: string, ...args: unknown[]) => {
+      if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
+      if (command === "__fetch") {
+        const init = (args[1] ?? {}) as RequestInit;
+        methods.push(init.method ?? "GET");
+        return { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: JSON.stringify({
+          orgs: [{ id: "org_personal", name: "Personal", slug: "personal", role: "owner", kind: "personal" }],
+          activeOrgId: "org_personal",
+          activeOrgSlug: "personal",
+        }) };
+      }
+      throw new Error(`Unexpected desktop command: ${command}`);
+    };
+
+    await ensureDenActiveOrganization({ forceServerSync: true });
+
+    expect(methods).toEqual(["GET"]);
+    expect(readDenIMLoginBootstrap()).toBeNull();
   });
 });

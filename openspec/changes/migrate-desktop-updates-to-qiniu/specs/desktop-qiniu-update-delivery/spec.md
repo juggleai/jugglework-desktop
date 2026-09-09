@@ -76,6 +76,7 @@ The update flow SHALL preserve the current installation until a verified replace
 - **WHEN** the update is downloaded and the user chooses install and restart
 - **THEN** the application restarts on the new version
 - **AND** existing user data, workspace authorization, application identity, and compatible macOS permissions remain associated with the installation
+- **AND** an authenticated non-personal organization with a missing or stale local IM bootstrap can reprovision it and open Chat and Contacts after restart
 
 ### Requirement: Manual replacement downloads use the Qiniu release inventory
 Architecture replacement and manual fallback actions SHALL resolve the appropriate signed DMG from the Qiniu manifest instead of constructing a GitHub release URL.
