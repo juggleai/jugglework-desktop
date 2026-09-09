@@ -1,5 +1,5 @@
 const { spawnSync } = require("node:child_process");
-const { existsSync, mkdtempSync, rmSync } = require("node:fs");
+const { existsSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
@@ -9,6 +9,19 @@ function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit" });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}`);
+  }
+}
+
+function runJson(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`${command} ${args.join(" ")} failed with status ${result.status}`);
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`${command} did not return valid JSON`);
   }
 }
 
@@ -78,7 +91,7 @@ async function afterSign(context) {
 
   try {
     run("ditto", ["-c", "-k", "--keepParent", appPath, notaryZipPath]);
-    run("xcrun", [
+    const submission = runJson("xcrun", [
       "notarytool",
       "submit",
       notaryZipPath,
@@ -89,10 +102,27 @@ async function afterSign(context) {
       "--issuer",
       issuer,
       "--wait",
+      "--output-format",
+      "json",
     ]);
+    if (submission.status !== "Accepted" || typeof submission.id !== "string" || !submission.id) {
+      throw new Error("Apple notarization submission was not accepted");
+    }
     // Notarization tickets can take minutes to propagate to Apple's CDN after acceptance; stapler can transiently fail with status 65 ("CloudKit query failed").
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
     run("xcrun", ["stapler", "validate", appPath]);
+    const receiptPath = path.join(context.appOutDir, "jugglework-notarization-receipt.json");
+    writeFileSync(receiptPath, `${JSON.stringify({
+      schema: "com.juggleai.jugglework.macos-notarization-receipt",
+      schemaVersion: 1,
+      producer: "electron-after-sign",
+      version: context.packager.appInfo.version,
+      bundleIdentifier: "com.juggleai.jugglework",
+      submissionId: submission.id,
+      status: "accepted",
+      staple: "validated",
+      createdAt: new Date().toISOString(),
+    }, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });
   }
@@ -101,3 +131,4 @@ async function afterSign(context) {
 module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
+module.exports.runJson = runJson;

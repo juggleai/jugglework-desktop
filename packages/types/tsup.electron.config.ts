@@ -3,6 +3,7 @@ import { defineConfig } from "tsup"
 export default defineConfig({
   entry: {
     "desktop-remote-control": "src/desktop-remote-control.ts",
+    "desktop-update-feed": "src/desktop-update-feed.ts",
   },
   tsconfig: "./tsconfig.json",
   format: ["esm"],

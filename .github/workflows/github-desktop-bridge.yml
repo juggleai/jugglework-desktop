@@ -1,0 +1,137 @@
+name: One-time GitHub Desktop Bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      qiniu_run_id:
+        description: "Successful Qiniu Desktop Release run ID for stable 1.2.15"
+        required: true
+        type: string
+      confirm_bridge:
+        description: "Type PUBLISH_V1_2_15_GITHUB_BRIDGE after the Qiniu and installed-client canaries pass"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: one-time-github-desktop-bridge-v1.2.15
+  cancel-in-progress: false
+
+jobs:
+  publish-bridge:
+    name: Publish exact Qiniu-verified 1.2.15 bytes
+    if: inputs.confirm_bridge == 'PUBLISH_V1_2_15_GITHUB_BRIDGE'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: qiniu-desktop-release
+    steps:
+      - name: Checkout bridge verifier
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install verifier dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download retained Qiniu release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: qiniu-desktop-stable-1.2.15-${{ inputs.qiniu_run_id }}
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.qiniu_run_id }}
+          path: ${{ runner.temp }}/bridge
+
+      - name: Verify exact hashes and Qiniu promotion evidence
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/qiniu-release/verify-github-bridge-bundle.mjs \
+            --directory "$RUNNER_TEMP/bridge" \
+            --output-manifest "$RUNNER_TEMP/bridge/latest-mac.yml"
+
+      - name: Create or verify the v1.2.15 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view v1.2.15 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create v1.2.15 --repo "$GITHUB_REPOSITORY" \
+              --title "JuggleWork v1.2.15" \
+              --notes "One-time bridge from the legacy GitHub updater to Qiniu." \
+              --draft
+          fi
+          existing_assets="$(gh release view v1.2.15 --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+          for expected in \
+            jugglework-mac-arm64-1.2.15.zip \
+            jugglework-mac-arm64-1.2.15.zip.blockmap \
+            jugglework-mac-arm64-1.2.15.dmg \
+            jugglework-mac-arm64-1.2.15.dmg.blockmap \
+            latest-mac.yml; do
+            if grep -Fqx "$expected" <<< "$existing_assets"; then
+              echo "Refusing to overwrite existing v1.2.15 updater asset: $expected" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload the exact retained release bytes once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload v1.2.15 \
+            "$RUNNER_TEMP/bridge/jugglework-mac-arm64-1.2.15.zip" \
+            "$RUNNER_TEMP/bridge/jugglework-mac-arm64-1.2.15.zip.blockmap" \
+            "$RUNNER_TEMP/bridge/jugglework-mac-arm64-1.2.15.dmg" \
+            "$RUNNER_TEMP/bridge/jugglework-mac-arm64-1.2.15.dmg.blockmap" \
+            "$RUNNER_TEMP/bridge/latest-mac.yml" \
+            --repo "$GITHUB_REPOSITORY"
+
+      - name: Read back and compare every GitHub updater asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readback="$RUNNER_TEMP/github-bridge-readback"
+          mkdir -p "$readback"
+          for name in \
+            jugglework-mac-arm64-1.2.15.zip \
+            jugglework-mac-arm64-1.2.15.zip.blockmap \
+            jugglework-mac-arm64-1.2.15.dmg \
+            jugglework-mac-arm64-1.2.15.dmg.blockmap \
+            latest-mac.yml; do
+            gh release download v1.2.15 --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$readback"
+            cmp "$RUNNER_TEMP/bridge/$name" "$readback/$name"
+          done
+
+      - name: Record the GitHub identifier and publish the bridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.2.15" --jq '.id')"
+          node apps/desktop/scripts/qiniu-release/verify-github-bridge-bundle.mjs \
+            --directory "$RUNNER_TEMP/bridge" \
+            --record-release-id "$release_id" \
+            --tag v1.2.15
+          gh release edit v1.2.15 --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Retain bridge-updated non-secret evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-desktop-bridge-v1.2.15-${{ github.run_id }}
+          path: ${{ runner.temp }}/bridge/qiniu-release-evidence.json
+          if-no-files-found: error
+          retention-days: 90

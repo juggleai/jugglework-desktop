@@ -1,23 +1,22 @@
 name: Alpha Channel (macOS arm64)
 
-# Every merge to `dev` publishes a fresh macOS arm64 build to the JuggleWork
-# alpha release channel.
+# Legacy GitHub Alpha bridge only. Routine Alpha publication moved to the
+# serialized Qiniu Desktop Release workflow.
 #
-# The alpha channel is macOS-only today. It lives as a rolling GitHub
-# release. Each run also updates a small manifest on the fixed
-# `alpha-macos-latest` release so the Electron updater feed stays stable while
-# historical alpha artifacts remain available.
+# Run this manually only when supported-client inventory proves that an
+# installed pre-Qiniu Alpha client still needs the final bridge.
 #
 # See:
 #   - ARCHITECTURE.md#release-channels
 #   - .github/workflows/release-macos-aarch64.yml (stable channel)
 
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
     inputs:
+      confirm_legacy_bridge:
+        description: "Type PUBLISH_LEGACY_ALPHA_BRIDGE after inventory review"
+        required: true
+        type: string
       publish_pointer:
         description: "Update alpha-macos-latest (leave off for isolated branch validation)"
         required: false
@@ -36,6 +35,7 @@ jobs:
     name: Build + Publish alpha (aarch64-apple-darwin)
     runs-on: macos-26
     timeout-minutes: 180
+    if: inputs.confirm_legacy_bridge == 'PUBLISH_LEGACY_ALPHA_BRIDGE'
 
     env:
       ALPHA_RELEASE_TAG: alpha-macos-latest

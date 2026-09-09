@@ -45,19 +45,18 @@ asarUnpack:
 npmRebuild: true
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
-# electron-updater feed for JuggleWork desktop releases.
-publish:
-  - provider: github
-    owner: juggleai
-    repo: jugglework-desktop
-    releaseType: release
 mac:
   icon: resources/icons/icon.icns
   category: public.app-category.developer-tools
   minimumSystemVersion: "14.0"
   hardenedRuntime: true
   gatekeeperAssess: false
-  notarize: false
+  # apps/desktop/scripts/electron-after-sign.cjs is the explicit
+  # environment-gated notarization path. It submits and staples only when
+  # MACOS_NOTARIZE=true and fails if the required private CI inputs are absent.
+  publish:
+    - provider: generic
+      url: https://downloads.jugglechat.cn/jugglework/releases/stable/mac
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -103,6 +102,9 @@ linux:
   target:
     - AppImage
     - tar.gz
+  publish:
+    - provider: generic
+      url: https://downloads.jugglechat.cn/jugglework/releases/stable/linux
 win:
   icon: resources/icons/icon.ico
   extraResources:
@@ -117,6 +119,9 @@ win:
         - versions.json-x86_64-pc-windows-msvc.exe
   target:
     - nsis
+  publish:
+    - provider: generic
+      url: https://downloads.jugglechat.cn/jugglework/releases/stable/windows
 nsis:
   include: build/installer.nsh
 artifactName: jugglework-${os}-${arch}-${version}.${ext}

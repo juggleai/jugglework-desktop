@@ -1,9 +1,28 @@
-import { existsSync, openSync, closeSync, readFileSync, readSync, readdirSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { extractFile } from "@electron/asar";
 import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
+import { inspectArtifact } from "./qiniu-release/metadata.mjs";
+
+const EXPECTED_APP_ID = "com.juggleai.jugglework";
+const EXPECTED_TEAM_ID = "H7PDHSK3C7";
+const EXPECTED_MAC_UPDATE_FEED = "https://downloads.jugglechat.cn/jugglework/releases/stable/mac";
+const LEGACY_ACTIVE_UPDATE_ORIGIN = "github.com/juggleai/jugglework-desktop/releases";
+const LOCAL_VERIFICATION_SCHEMA = "com.juggleai.jugglework.macos-local-verification";
 
 function fail(message) {
   throw new Error(`[verify-packaged-macos] ${message}`);
@@ -86,7 +105,7 @@ function plistValue(plistPath, key) {
   return result.stdout.trim();
 }
 
-export function verifyBundleMetadata(appPath) {
+export function verifyBundleMetadata(appPath, expectedVersion = null) {
   const appPlist = path.join(appPath, "Contents", "Info.plist");
   const helperPlist = path.join(
     appPath,
@@ -98,16 +117,221 @@ export function verifyBundleMetadata(appPath) {
     "Info.plist",
   );
   const minimumSystemVersion = plistValue(appPlist, "LSMinimumSystemVersion");
+  const bundleIdentifier = plistValue(appPlist, "CFBundleIdentifier");
+  const bundleVersion = plistValue(appPlist, "CFBundleShortVersionString");
   const helperMinimumSystemVersion = plistValue(helperPlist, "LSMinimumSystemVersion");
   if (minimumSystemVersion !== "14.0") {
     fail(`Expected LSMinimumSystemVersion 14.0, found ${minimumSystemVersion}`);
+  }
+  if (bundleIdentifier !== EXPECTED_APP_ID) {
+    fail(`Expected CFBundleIdentifier ${EXPECTED_APP_ID}, found ${bundleIdentifier}`);
+  }
+  if (expectedVersion && bundleVersion !== expectedVersion) {
+    fail(`Expected CFBundleShortVersionString ${expectedVersion}, found ${bundleVersion}`);
   }
   if (helperMinimumSystemVersion !== "14.0") {
     fail(`Expected Computer Use helper LSMinimumSystemVersion 14.0, found ${helperMinimumSystemVersion}`);
   }
   const screenCaptureUsageDescription = plistValue(appPlist, "NSScreenCaptureUsageDescription");
   if (!screenCaptureUsageDescription) fail("NSScreenCaptureUsageDescription must not be empty");
-  return { minimumSystemVersion, helperMinimumSystemVersion, screenCaptureUsageDescription };
+  return { bundleIdentifier, bundleVersion, minimumSystemVersion, helperMinimumSystemVersion, screenCaptureUsageDescription };
+}
+
+function filesRecursively(directory) {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const child = path.join(directory, entry.name);
+    return entry.isDirectory() ? filesRecursively(child) : entry.isFile() ? [child] : [];
+  });
+}
+
+export function assertPackagedUpdaterText(label, text) {
+  if (String(text).includes(LEGACY_ACTIVE_UPDATE_ORIGIN)) {
+    fail(`${label} contains the legacy active GitHub update origin`);
+  }
+}
+
+export function verifyPackagedUpdaterConfiguration(appPath) {
+  const resourcesPath = path.join(appPath, "Contents", "Resources");
+  const updateConfigPath = path.join(resourcesPath, "app-update.yml");
+  if (!existsSync(updateConfigPath)) fail(`Packaged app-update.yml not found: ${updateConfigPath}`);
+  const updateConfig = readFileSync(updateConfigPath, "utf8");
+  assertPackagedUpdaterText("app-update.yml", updateConfig);
+  if (!/^provider:\s*generic\s*$/m.test(updateConfig)) {
+    fail("app-update.yml must use the generic provider");
+  }
+  const configuredUrl = updateConfig.match(/^url:\s*(.+?)\s*$/m)?.[1]?.replace(/^['"]|['"]$/g, "");
+  if (configuredUrl !== EXPECTED_MAC_UPDATE_FEED) {
+    fail(`Expected macOS updater feed ${EXPECTED_MAC_UPDATE_FEED}, found ${configuredUrl || "<missing>"}`);
+  }
+
+  const asarPath = path.join(resourcesPath, "app.asar");
+  if (!existsSync(asarPath)) fail(`Packaged app.asar not found: ${asarPath}`);
+  const updaterSource = ["electron/updater.mjs", "electron/architecture-download.mjs", "electron/main.mjs"]
+    .map((entry) => extractFile(asarPath, entry).toString("utf8"))
+    .join("\n");
+  assertPackagedUpdaterText("compiled Electron updater code", updaterSource);
+  if (!/allowDowngrade\s*=\s*false/.test(updaterSource)) {
+    fail("compiled updater code must explicitly disable downgrade");
+  }
+
+  const rendererFiles = filesRecursively(path.join(resourcesPath, "app-dist"))
+    .filter((filePath) => /\.(?:html|js|mjs|css)$/.test(filePath));
+  for (const filePath of rendererFiles) {
+    assertPackagedUpdaterText(path.relative(resourcesPath, filePath), readFileSync(filePath, "utf8"));
+  }
+  return { provider: "generic", url: configuredUrl, monotonic: true };
+}
+
+export function verifyCodeSignature(appPath) {
+  const verify = spawnSync("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], { encoding: "utf8" });
+  if (verify.error) fail(`Unable to verify code signature: ${verify.error.message}`);
+  if (verify.status !== 0) fail(`codesign verification failed: ${verify.stderr.trim()}`);
+  const details = spawnSync("codesign", ["--display", "--verbose=4", appPath], { encoding: "utf8" });
+  if (details.error) fail(`Unable to inspect code signature: ${details.error.message}`);
+  if (details.status !== 0) fail(`codesign inspection failed: ${details.stderr.trim()}`);
+  const output = `${details.stdout}\n${details.stderr}`;
+  const identifier = output.match(/^Identifier=(.+)$/m)?.[1]?.trim();
+  const teamIdentifier = output.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+  if (identifier !== EXPECTED_APP_ID) fail(`Expected signed identifier ${EXPECTED_APP_ID}, found ${identifier || "<missing>"}`);
+  if (teamIdentifier !== EXPECTED_TEAM_ID) fail(`Expected signing TeamIdentifier ${EXPECTED_TEAM_ID}, found ${teamIdentifier || "<missing>"}`);
+  if (!/^CodeDirectory .*flags=.*\bruntime\b/m.test(output)) fail("Code signature does not enable hardened runtime");
+  return { identifier, teamIdentifier, hardenedRuntime: true };
+}
+
+function commandAssessment(command, args) {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  return {
+    accepted: !result.error && result.status === 0,
+    detail: [result.stdout, result.stderr].filter(Boolean).join("\n").trim(),
+    error: result.error?.message ?? null,
+    status: result.status,
+  };
+}
+
+export function verifyAppleTrust(appPath) {
+  const staple = commandAssessment("xcrun", ["stapler", "validate", appPath]);
+  const gatekeeper = commandAssessment("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
+  return {
+    notarization: { status: staple.accepted ? "accepted" : "unavailable" },
+    staple: { status: staple.accepted ? "validated" : "unavailable" },
+    gatekeeper: { status: gatekeeper.accepted ? "accepted" : "unavailable" },
+    diagnostics: {
+      staple: staple.accepted ? "accepted" : staple.error || staple.detail || `status ${staple.status}`,
+      gatekeeper: gatekeeper.accepted ? "accepted" : gatekeeper.error || gatekeeper.detail || `status ${gatekeeper.status}`,
+    },
+  };
+}
+
+function notarizationCredentialState(environment = process.env) {
+  const required = ["APPLE_API_KEY_PATH", "APPLE_API_KEY", "APPLE_API_ISSUER"];
+  return environment.MACOS_NOTARIZE === "true" && required.every((name) => Boolean(environment[name]))
+    ? "available"
+    : "missing";
+}
+
+export function createLocalVerificationRecord({
+  version,
+  architectures,
+  signature,
+  trust,
+  artifacts = [],
+  manifest = null,
+  notarizationReceipt = null,
+  environment = process.env,
+  verifiedAt = new Date().toISOString(),
+}) {
+  const credentialState = notarizationCredentialState(environment);
+  const receiptMatches = notarizationReceipt?.schema === "com.juggleai.jugglework.macos-notarization-receipt"
+    && notarizationReceipt.schemaVersion === 1
+    && notarizationReceipt.producer === "electron-after-sign"
+    && notarizationReceipt.version === version
+    && notarizationReceipt.bundleIdentifier === signature.identifier
+    && notarizationReceipt.status === "accepted"
+    && notarizationReceipt.staple === "validated"
+    && typeof notarizationReceipt.submissionId === "string"
+    && notarizationReceipt.submissionId.length > 0;
+  const releaseReady = credentialState === "available"
+    && receiptMatches
+    && trust.notarization.status === "accepted"
+    && trust.staple.status === "validated"
+    && trust.gatekeeper.status === "accepted";
+  return {
+    schema: LOCAL_VERIFICATION_SCHEMA,
+    schemaVersion: 1,
+    producer: "verify-packaged-macos",
+    version,
+    platform: "mac",
+    architectures,
+    verifiedAt,
+    releaseState: releaseReady ? "release" : "candidate",
+    credentialState,
+    identity: {
+      bundleIdentifier: signature.identifier,
+      teamIdentifier: signature.teamIdentifier,
+    },
+    codesign: { status: "accepted", deep: true, strict: true },
+    hardenedRuntime: { status: signature.hardenedRuntime ? "enabled" : "disabled" },
+    notarization: releaseReady
+      ? { status: "accepted", submissionId: notarizationReceipt.submissionId }
+      : { status: "unavailable" },
+    staple: trust.staple,
+    gatekeeper: trust.gatekeeper,
+    artifacts,
+    manifest,
+  };
+}
+
+function findSingleApp(directory) {
+  const apps = [];
+  const visit = (current, depth) => {
+    if (depth > 4) return;
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const child = path.join(current, entry.name);
+      if (entry.isDirectory() && entry.name.endsWith(".app")) apps.push(child);
+      else if (entry.isDirectory()) visit(child, depth + 1);
+    }
+  };
+  visit(directory, 0);
+  if (apps.length !== 1) fail(`Expected exactly one .app in ${directory}, found ${apps.length}`);
+  return apps[0];
+}
+
+function verifyReleaseBundle(appPath, { expectedArch, expectedVersion }) {
+  const metadata = verifyBundleMetadata(appPath, expectedVersion);
+  const signature = verifyCodeSignature(appPath);
+  const architecture = verifyMachOArchitectures(appPath, expectedArch);
+  if (metadata.bundleIdentifier !== signature.identifier) fail("Bundle metadata and signed identifier disagree");
+  return { architecture, metadata, signature };
+}
+
+export function verifyZipBundle(zipPath, expected) {
+  const resolved = path.resolve(zipPath);
+  if (!existsSync(resolved)) fail(`ZIP not found: ${resolved}`);
+  const directory = mkdtempSync(path.join(tmpdir(), "jugglework-verify-zip-"));
+  try {
+    const result = spawnSync("ditto", ["-x", "-k", resolved, directory], { encoding: "utf8" });
+    if (result.error || result.status !== 0) fail(`Unable to extract ZIP: ${result.error?.message || result.stderr.trim()}`);
+    return verifyReleaseBundle(findSingleApp(directory), expected);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+export function verifyDmgBundle(dmgPath, expected) {
+  const resolved = path.resolve(dmgPath);
+  if (!existsSync(resolved)) fail(`DMG not found: ${resolved}`);
+  const mountPoint = mkdtempSync(path.join(tmpdir(), "jugglework-verify-dmg-"));
+  let mounted = false;
+  try {
+    const attach = spawnSync("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mountPoint, resolved], { encoding: "utf8" });
+    if (attach.error || attach.status !== 0) fail(`Unable to mount DMG: ${attach.error?.message || attach.stderr.trim()}`);
+    mounted = true;
+    return verifyReleaseBundle(findSingleApp(mountPoint), expected);
+  } finally {
+    if (mounted) spawnSync("hdiutil", ["detach", mountPoint], { encoding: "utf8" });
+    rmSync(mountPoint, { recursive: true, force: true });
+  }
 }
 
 export function verifyMacTrayResources(appPath) {
@@ -244,12 +468,54 @@ export async function main() {
   if (!appInput) fail("Pass --app /path/to/JuggleWork.app");
   const appPath = resolvePackagedApp(appInput);
   const requestedArch = readArg("--arch") || process.arch;
+  const version = readArg("--version");
+  const verificationOutput = readArg("--verification-output");
+  const zipPath = readArg("--zip");
+  const dmgPath = readArg("--dmg");
+  const manifestPath = readArg("--manifest");
+  const notarizationReceiptPath = readArg("--notarization-receipt");
   const architecture = verifyMachOArchitectures(appPath, requestedArch);
-  const metadata = verifyBundleMetadata(appPath);
+  const metadata = verifyBundleMetadata(appPath, version || null);
+  const updater = verifyPackagedUpdaterConfiguration(appPath);
+  const signature = verifyCodeSignature(appPath);
+  const trust = verifyAppleTrust(appPath);
+  const expectedContainer = { expectedArch: requestedArch, expectedVersion: version || null };
+  const zip = zipPath ? verifyZipBundle(zipPath, expectedContainer) : null;
+  const dmg = dmgPath ? verifyDmgBundle(dmgPath, expectedContainer) : null;
+  if (verificationOutput && (!version || !zipPath || !dmgPath || !manifestPath)) {
+    fail("--verification-output requires --version, --zip, --dmg, and --manifest");
+  }
+  const verifiedArtifacts = verificationOutput
+    ? await Promise.all([zipPath, dmgPath, `${zipPath}.blockmap`, `${dmgPath}.blockmap`].map(async (filePath) => ({
+        name: path.basename(filePath),
+        ...(await inspectArtifact(path.resolve(filePath))),
+      })))
+    : [];
+  const verifiedManifest = verificationOutput
+    ? { name: path.basename(manifestPath), ...(await inspectArtifact(path.resolve(manifestPath))) }
+    : null;
+  const notarizationReceipt = notarizationReceiptPath
+    ? JSON.parse(readFileSync(path.resolve(notarizationReceiptPath), "utf8"))
+    : null;
+  const localVerification = verificationOutput
+    ? createLocalVerificationRecord({
+        version,
+        architectures: [requestedArch === "x86_64" ? "x64" : requestedArch],
+        signature,
+        trust,
+        artifacts: verifiedArtifacts,
+        manifest: verifiedManifest,
+        notarizationReceipt,
+      })
+    : null;
   const tray = verifyMacTrayResources(appPath);
   const nativeModules = verifyPackagedNativeModules(appPath);
   const uiControlMcp = await verifyPackagedUiControlMcp(appPath);
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
+  if (verificationOutput) {
+    const outputPath = path.resolve(verificationOutput);
+    writeFileSync(outputPath, `${JSON.stringify(localVerification, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  }
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, trust, zip, dmg, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

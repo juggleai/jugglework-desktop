@@ -10,6 +10,11 @@ const macTrayTemplateImages = [
 ];
 
 const sidecarBases = ["opencode"];
+const updateFeedByPlatform = {
+  darwin: "https://downloads.jugglechat.cn/jugglework/releases/stable/mac",
+  linux: "https://downloads.jugglechat.cn/jugglework/releases/stable/linux",
+  win32: "https://downloads.jugglechat.cn/jugglework/releases/stable/windows",
+};
 
 function normalizeArch(arch) {
   if (typeof arch === "number") {
@@ -68,6 +73,18 @@ function resolvePackagedResourcesPath(context) {
     return appPath ? path.join(appPath, "Contents", "Resources") : null;
   }
   return path.join(context.appOutDir, "resources");
+}
+
+function writePackagedUpdateConfiguration(context) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const url = updateFeedByPlatform[context.electronPlatformName];
+  if (!resourcesPath || !url) {
+    throw new Error(`Cannot resolve packaged updater configuration for ${context.electronPlatformName || "unknown platform"}`);
+  }
+  fs.mkdirSync(resourcesPath, { recursive: true });
+  const content = `provider: generic\nurl: ${url}\nupdaterCacheDirName: '@juggleworkdesktop-updater'\n`;
+  fs.writeFileSync(path.join(resourcesPath, "app-update.yml"), content, { encoding: "utf8", mode: 0o644 });
+  return { provider: "generic", url };
 }
 
 function readRgbaPngDimensions(filePath) {
@@ -242,10 +259,12 @@ async function runAfterPack(context, dependencies = {}) {
   const verifyUiControlMcpRuntime = dependencies.verifyUiControlMcpRuntime ?? verifyBundledUiControlMcpRuntime;
   const verifyMacTrayResources = dependencies.verifyMacTrayResources ?? verifyPackagedMacTrayResources;
   const signHelper = dependencies.signHelper ?? signComputerUseHelper;
+  const writeUpdateConfiguration = dependencies.writeUpdateConfiguration ?? writePackagedUpdateConfiguration;
   verifyContracts(context);
   verifyUiControlMcp(context);
   await verifyUiControlMcpRuntime(context);
   verifyMacTrayResources(context);
+  writeUpdateConfiguration(context);
 
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
@@ -298,3 +317,4 @@ module.exports.targetTriple = targetTriple;
 module.exports.verifyPackagedMacTrayResources = verifyPackagedMacTrayResources;
 module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
 module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;
+module.exports.writePackagedUpdateConfiguration = writePackagedUpdateConfiguration;

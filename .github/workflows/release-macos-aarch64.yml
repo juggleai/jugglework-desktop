@@ -533,63 +533,12 @@ jobs:
           set -euo pipefail
           echo "::warning::Publishing unsigned Windows installer because SIGN_WINDOWS is not enabled."
 
-      - name: Upload Electron release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          assets=(apps/desktop/dist-electron/jugglework-*)
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No Electron release assets found in apps/desktop/dist-electron" >&2
-            exit 1
-          fi
-          gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
-
       - name: Upload Electron updater manifest artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: apps/desktop/dist-electron/latest*.yml
           if-no-files-found: error
-
-  publish-electron-assets:
-    name: Publish Electron Assets
-    needs: [resolve-release, verify-release, publish-electron]
-    if: |
-      always() &&
-      needs.resolve-release.outputs.build_electron == 'true' &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      needs.publish-electron.result == 'success'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          # Dispatch-based release recovery uses the workflow ref so fixes to
-          # release asset publishing can run without moving an already-shipped tag.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Download Electron updater manifest artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: electron-*
-          path: ${{ runner.temp }}/electron-dist
-
-      - name: Upload merged updater manifests
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
   publish-installers:
     name: Build + Upload Installer Assets
@@ -784,7 +733,6 @@ jobs:
       - resolve-release
       - verify-release
       - publish-electron
-      - publish-electron-assets
       - publish-installers
       - publish-npm
       - publish-daytona-snapshot
@@ -793,7 +741,6 @@ jobs:
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
-      (needs.publish-electron-assets.result == 'success' || needs.publish-electron-assets.result == 'skipped') &&
       needs.publish-installers.result == 'success' &&
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
@@ -820,5 +767,7 @@ jobs:
           if [ "${RELEASE_PRERELEASE}" = "true" ]; then
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            # Keep the v1.2.15 bridge as GitHub's legacy updater `latest`.
+            # Routine desktop publication has moved to Qiniu.
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
           fi

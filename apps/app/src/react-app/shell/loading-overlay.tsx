@@ -2,8 +2,6 @@
 import { useBootState, useBootOverlayVisible } from "./boot-state";
 import { OwDotTicker } from "./dot-ticker";
 
-const RELEASES_URL = "https://github.com/juggleai/jugglework-desktop/releases";
-
 /**
  * Quiet, opaque boot overlay. Solid surface fill so nothing bleeds through.
  * A minimal typographic beat plus a small dot ticker. Fades once both the
@@ -35,15 +33,7 @@ export function LoadingOverlay() {
           <div className="flex flex-col gap-2 text-[12px] leading-5 text-red-11">
             <div>{error}</div>
             <div className="text-dls-secondary">
-              Download the latest version manually here:{" "}
-              <a
-                href={RELEASES_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-dls-primary underline decoration-dls-primary/40 underline-offset-4"
-              >
-                {RELEASES_URL}
-              </a>
+              Retry after checking your connection. JuggleWork will not switch to an unapproved update source.
             </div>
           </div>
         ) : null}

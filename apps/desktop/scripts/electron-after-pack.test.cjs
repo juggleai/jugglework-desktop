@@ -9,6 +9,7 @@ const {
   runAfterPack,
   targetTriple,
   verifyPackagedMacTrayResources,
+  writePackagedUpdateConfiguration,
 } = require("./electron-after-pack.cjs");
 
 function copyMacTrayResources(resourcesDir) {
@@ -101,6 +102,7 @@ test("skips architecture processing for unsupported targets", async () => {
       verifyUiControlMcp() {},
       verifyUiControlMcpRuntime() {},
       verifyMacTrayResources() {},
+      writeUpdateConfiguration() {},
       signHelper() {
         signed = true;
       },
@@ -146,4 +148,38 @@ test("verifies packaged macOS tray template images", (t) => {
     () => verifyPackagedMacTrayResources(context),
     /Missing packaged macOS tray template image/,
   );
+});
+
+test("writes platform-specific generic packaged update configuration", (t) => {
+  const cases = [
+    ["darwin", "mac"],
+    ["linux", "linux"],
+    ["win32", "windows"],
+  ];
+  for (const [platform, segment] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `jugglework-update-config-${platform}-`));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const context = platform === "darwin"
+      ? {
+          appOutDir: root,
+          electronPlatformName: platform,
+          packager: { appInfo: { productFilename: "JuggleWork" } },
+        }
+      : {
+          appOutDir: root,
+          electronPlatformName: platform,
+          packager: { appInfo: { productFilename: "JuggleWork" } },
+        };
+    if (platform === "darwin") {
+      fs.mkdirSync(path.join(root, "JuggleWork.app", "Contents", "Resources"), { recursive: true });
+    }
+    writePackagedUpdateConfiguration(context);
+    const resources = platform === "darwin"
+      ? path.join(root, "JuggleWork.app", "Contents", "Resources")
+      : path.join(root, "resources");
+    const content = fs.readFileSync(path.join(resources, "app-update.yml"), "utf8");
+    assert.match(content, /^provider: generic$/m);
+    assert.match(content, new RegExp(`url: https://downloads\\.jugglechat\\.cn/jugglework/releases/stable/${segment}`));
+    assert.doesNotMatch(content, /github\.com/);
+  }
 });

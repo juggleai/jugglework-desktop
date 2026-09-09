@@ -4,6 +4,8 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { resolveDesktopUpdateFeed } from "../dist/runtime/desktop-update-feed.js";
+
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
 
 // In dev mode, app.getVersion() returns the Electron framework version
@@ -29,11 +31,6 @@ function resolveAppVersion(app) {
   }
   return _cachedAppVersion;
 }
-const ELECTRON_UPDATER_FEEDS = Object.freeze({
-  stable: "https://github.com/juggleai/jugglework-desktop/releases/latest/download",
-  alpha: "https://github.com/juggleai/jugglework-desktop/releases/download/alpha-macos-latest",
-});
-
 export function isUnpublishedUpdaterChannelError(error) {
   const message = String(error?.message ?? error ?? "");
   const statusCode = Number(error?.statusCode ?? error?.status ?? error?.response?.statusCode);
@@ -74,7 +71,11 @@ async function writeElectronUpdaterChannel(app, channel) {
 }
 
 function electronUpdaterFeedUrl(channel) {
-  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel)];
+  return resolveDesktopUpdateFeed({
+    platform: process.platform,
+    arch: process.arch,
+    channel: normalizeElectronUpdaterChannel(channel),
+  }).feedUrl;
 }
 
 function normalizeStableTargetVersion(value) {
@@ -155,7 +156,12 @@ function isVersionNewer(candidate, current) {
   return comparison === null ? candidate !== current : comparison > 0;
 }
 
-export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
+export function targetedStableUpdaterFeed(
+  currentVersion,
+  targetVersion,
+  platform = process.platform,
+  arch = process.arch,
+) {
   const normalizedTarget = normalizeStableTargetVersion(targetVersion);
   if (!normalizedTarget) {
     throw new Error("Target update version must use the stable x.y.z format.");
@@ -167,7 +173,12 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion) {
   if (comparison <= 0) {
     throw new Error("Target update version must be newer than the installed version.");
   }
-  return `https://github.com/juggleai/jugglework-desktop/releases/download/v${normalizedTarget}`;
+  return resolveDesktopUpdateFeed({
+    platform,
+    arch,
+    channel: "stable",
+    targetVersion: normalizedTarget,
+  }).feedUrl;
 }
 
 function updaterChannelState(app, channel, targetVersion = null) {
@@ -182,20 +193,30 @@ function updaterChannelState(app, channel, targetVersion = null) {
   };
 }
 
+export function configureElectronUpdaterFeed(updater, state) {
+  updater.allowPrerelease = state.channel === "alpha";
+  // Stable updates are monotonic. Recovery from a bad release must use a
+  // higher patch rather than silently moving an installed client backwards.
+  updater.allowDowngrade = false;
+  if (updater?.setFeedURL) {
+    updater.setFeedURL({ provider: "generic", url: state.feedUrl });
+  }
+}
+
 async function applyElectronUpdaterFeed(app, updater, targetVersion = null) {
   const channel = await readElectronUpdaterChannel(app);
   if (targetVersion && channel !== "stable") {
     throw new Error("Version-specific update feeds are supported only on the stable channel.");
   }
   const state = updaterChannelState(app, channel, targetVersion);
-  updater.allowPrerelease = state.channel === "alpha";
-  // Moving from alpha back to stable can be a semver downgrade; still show
-  // the latest stable so users can return to the stable channel deliberately.
-  updater.allowDowngrade = state.channel === "stable" && !targetVersion;
-  if (updater?.setFeedURL) {
-    updater.setFeedURL({ provider: "generic", url: state.feedUrl });
-  }
+  configureElectronUpdaterFeed(updater, state);
   return state;
+}
+
+export function assertTargetUpdateManifestVersion(actualVersion, targetVersion) {
+  if (targetVersion && compareVersions(actualVersion ?? "", targetVersion) !== 0) {
+    throw new Error(`Target update manifest did not resolve to v${targetVersion}.`);
+  }
 }
 
 function runDefaults(args) {
@@ -363,9 +384,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       const result = await updater.checkForUpdates();
       const info = result?.updateInfo ?? null;
       const currentVersion = resolveAppVersion(app);
-      if (targetVersion && compareVersions(info?.version ?? "", targetVersion) !== 0) {
-        throw new Error(`Target update manifest did not resolve to v${targetVersion}.`);
-      }
+      assertTargetUpdateManifestVersion(info?.version, targetVersion);
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
       checkedUpdateVersion = available ? info.version : null;
       checkedUpdateTargetVersion = available ? targetVersion : null;
@@ -406,12 +425,7 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
         const result = await updater.checkForUpdates();
         const info = result?.updateInfo ?? null;
-        if (
-          checkedUpdateTargetVersion &&
-          compareVersions(info?.version ?? "", checkedUpdateTargetVersion) !== 0
-        ) {
-          throw new Error(`Target update manifest did not resolve to v${checkedUpdateTargetVersion}.`);
-        }
+        assertTargetUpdateManifestVersion(info?.version, checkedUpdateTargetVersion);
         checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
           ? info.version
           : null;

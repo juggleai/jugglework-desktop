@@ -20,6 +20,7 @@ import { unzipSync } from "fflate";
 import { fileURLToPath } from "node:url";
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
+import { resolveMacArchitectureDownloadUrl } from "./architecture-download.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { createRuntimeIpcHandlers } from "./runtime-ipc.mjs";
@@ -141,8 +142,6 @@ if (process.env.JUGGLEWORK_ELECTRON_USE_MOCK_KEYCHAIN === "1") {
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/juggleai/jugglework-desktop/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/juggleai/jugglework-desktop/releases/latest";
 const DOCS_PAGE_URL = "https://juggle.im/docs";
 const applicationMenu = createApplicationMenu({
   appName: APP_NAME,
@@ -266,81 +265,16 @@ function resolveSystemArch() {
   return normalizeRuntimeArch(os.arch());
 }
 
-function platformDownloadSlug() {
-  if (process.platform === "darwin") return "mac";
-  if (process.platform === "win32") return "win";
-  return "linux";
-}
-
-function downloadAssetArch(arch) {
-  if (process.platform === "linux" && arch === "x64") return "x86_64";
-  return arch;
-}
-
-function downloadAssetExtension() {
-  if (process.platform === "darwin") return "dmg";
-  if (process.platform === "win32") return "exe";
-  return "AppImage";
-}
-
-function updaterManifestName(arch) {
-  if (process.platform === "darwin") return "latest-mac.yml";
-  if (process.platform === "win32") return "latest.yml";
-  return arch === "arm64" ? "latest-linux-arm64.yml" : "latest-linux.yml";
-}
-
 function archLabel(arch) {
   if (arch === "arm64") return "ARM";
   if (arch === "x64") return "Intel";
   return arch;
 }
 
-function parseUpdaterManifestFiles(raw) {
-  const files = [];
-  let current = null;
-  for (const line of String(raw || "").split(/\r?\n/)) {
-    const start = line.match(/^\s*-\s+url:\s*(.+?)\s*$/);
-    if (start) {
-      current = { url: start[1].trim().replace(/^['"]|['"]$/g, "") };
-      files.push(current);
-      continue;
-    }
-    const prop = line.match(/^\s{4}([A-Za-z][A-Za-z0-9_-]*):\s*(.+?)\s*$/);
-    if (prop && current) {
-      current[prop[1]] = prop[2].trim().replace(/^['"]|['"]$/g, "");
-    }
-  }
-  return files.filter((file) => file.url);
-}
-
-function selectDownloadFile(files, arch) {
-  const assetArch = downloadAssetArch(arch);
-  const expected = `-${assetArch}-`;
-  const extension = downloadAssetExtension();
-  const matchingArch = files.filter((file) => file.url.includes(expected));
-  return (
-    matchingArch.find((file) => file.url.endsWith(`.${extension}`)) ||
-    matchingArch.find((file) => file.url.endsWith(".zip")) ||
-    matchingArch[0] ||
-    null
-  );
-}
-
 async function resolveCorrectArchitectureDownloadUrl(arch) {
-  const manifestUrl = `${RELEASE_DOWNLOAD_BASE_URL}/${updaterManifestName(arch)}`;
+  if (process.platform !== "darwin" || (arch !== "arm64" && arch !== "x64")) return null;
   try {
-    const response = await fetch(manifestUrl, {
-      headers: { Accept: "text/yaml, text/plain, */*" },
-    });
-    // A source checkout or a repository without a published release has no
-    // `latest` manifest yet. That is an expected absence, not a startup error.
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const selected = selectDownloadFile(parseUpdaterManifestFiles(await response.text()), arch);
-    if (!selected?.url) return null;
-    return /^https?:\/\//i.test(selected.url)
-      ? selected.url
-      : new URL(selected.url, `${RELEASE_DOWNLOAD_BASE_URL}/`).toString();
+    return await resolveMacArchitectureDownloadUrl({ arch });
   } catch (error) {
     console.warn("[architecture] failed to resolve latest download URL", error);
     return null;
@@ -352,24 +286,22 @@ async function resolveArchitectureInfo() {
   const systemArch = resolveSystemArch();
   const version = app.getVersion();
   const targetArch = systemArch === "arm64" || systemArch === "x64" ? systemArch : appArch;
-  const assetName = `jugglework-${platformDownloadSlug()}-${downloadAssetArch(targetArch)}-${version}.${downloadAssetExtension()}`;
   const architectureMismatch = appArch !== systemArch;
   // The manifest is only needed to offer a replacement build. Avoid delaying
   // every normal startup (and producing release-feed noise in source builds).
   const latestDownloadUrl = architectureMismatch
     ? await resolveCorrectArchitectureDownloadUrl(targetArch)
     : null;
-  const hasCorrectArchitectureDownload = Boolean(latestDownloadUrl);
   return {
     appArch,
     appArchLabel: archLabel(appArch),
     systemArch,
     systemArchLabel: archLabel(systemArch),
-    mismatch: architectureMismatch && hasCorrectArchitectureDownload,
+    mismatch: architectureMismatch,
     platform: process.platform === "win32" ? "windows" : process.platform,
     version,
-    downloadUrl: latestDownloadUrl || `${RELEASE_DOWNLOAD_BASE_URL}/${assetName}`,
-    releaseUrl: RELEASE_PAGE_URL,
+    downloadUrl: latestDownloadUrl,
+    releaseUrl: null,
   };
 }
 

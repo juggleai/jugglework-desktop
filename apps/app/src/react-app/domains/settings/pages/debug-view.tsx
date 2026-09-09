@@ -1200,8 +1200,8 @@ export function DebugView(props: DebugViewProps) {
           </div>
 
           <div className="text-[11px] text-dls-secondary">
-            Alpha feed: <span className="font-mono">alpha-macos-latest/latest-mac.yml</span>. Stable feed:{" "}
-            <span className="font-mono">releases/latest/download/latest-mac.yml</span>.
+            Alpha feed: <span className="font-mono">downloads.jugglechat.cn/jugglework/releases/alpha/mac/latest-mac.yml</span>. Stable feed:{" "}
+            <span className="font-mono">downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml</span>.
           </div>
 
           {props.electronAlphaUpdaterStatus ? (

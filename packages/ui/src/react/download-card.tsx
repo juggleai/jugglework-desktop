@@ -21,7 +21,7 @@ export type DownloadPlatformGroup = {
   options: DownloadPlatformOption[]
 }
 
-const FALLBACK_RELEASE = "https://github.com/juggleai/jugglework-desktop/releases"
+const FALLBACK_RELEASE = ""
 
 const FALLBACK_INSTALLERS: DownloadCardInstallers = {
   macos: { appleSilicon: FALLBACK_RELEASE, intel: FALLBACK_RELEASE },
@@ -136,6 +136,14 @@ function DownloadLink({
   keepLabelOnOneLine: boolean
   onDownload?: () => void
 }) {
+  if (!href) {
+    return (
+      <span className="inline-flex items-center gap-2 rounded-lg border border-[#DFE5EE] bg-[#F8FAFC] px-3 py-2 text-[12px] font-medium text-[#8A96AC]">
+        <DownloadIcon className="h-3 w-3 shrink-0" />
+        {children} unavailable
+      </span>
+    )
+  }
   return (
     <a
       href={href}

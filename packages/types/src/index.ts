@@ -1,5 +1,6 @@
 export * from "./agent-context-diagnostics"
 export * from "./desktop-remote-control"
+export * from "./desktop-update-feed"
 export * from "./automation"
 export * from "./session-permission-modes"
 export * from "./jugglework-affordance"

@@ -2,6 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assertTargetUpdateManifestVersion,
+  configureElectronUpdaterFeed,
   isUnpublishedUpdaterChannelError,
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
@@ -24,10 +26,18 @@ describe("staleUpdaterStatePaths", () => {
 });
 
 describe("targetedStableUpdaterFeed", () => {
-  it("builds a fixed GitHub release feed from a strict stable version", () => {
+  it("builds a fixed Qiniu release feed from a strict stable version", () => {
     assert.equal(
-      targetedStableUpdaterFeed("0.17.22", "0.17.23"),
-      "https://github.com/juggleai/jugglework-desktop/releases/download/v0.17.23",
+      targetedStableUpdaterFeed("0.17.22", "0.17.23", "darwin", "arm64"),
+      "https://downloads.jugglechat.cn/jugglework/releases/v0.17.23/mac",
+    );
+    assert.equal(
+      targetedStableUpdaterFeed("0.17.22", "0.17.23", "win32", "x64"),
+      "https://downloads.jugglechat.cn/jugglework/releases/v0.17.23/windows",
+    );
+    assert.equal(
+      targetedStableUpdaterFeed("0.17.22", "0.17.23", "linux", "arm64"),
+      "https://downloads.jugglechat.cn/jugglework/releases/v0.17.23/linux",
     );
   });
 
@@ -57,6 +67,38 @@ describe("targetedStableUpdaterFeed", () => {
     assert.throws(
       () => targetedStableUpdaterFeed("unknown", "0.17.23"),
       /could not be validated/,
+    );
+  });
+});
+
+describe("Qiniu updater configuration", () => {
+  it("configures a generic feed without allowing stable downgrade", () => {
+    const calls = [];
+    const updater = { setFeedURL: (value) => calls.push(value) };
+    configureElectronUpdaterFeed(updater, {
+      channel: "stable",
+      feedUrl: "https://downloads.jugglechat.cn/jugglework/releases/stable/mac",
+    });
+    assert.equal(updater.allowPrerelease, false);
+    assert.equal(updater.allowDowngrade, false);
+    assert.deepEqual(calls, [{
+      provider: "generic",
+      url: "https://downloads.jugglechat.cn/jugglework/releases/stable/mac",
+    }]);
+  });
+
+  it("preserves Alpha prerelease behavior without enabling downgrade", () => {
+    const updater = {};
+    configureElectronUpdaterFeed(updater, { channel: "alpha", feedUrl: "https://example.test" });
+    assert.equal(updater.allowPrerelease, true);
+    assert.equal(updater.allowDowngrade, false);
+  });
+
+  it("rejects a targeted manifest with the wrong version", () => {
+    assert.doesNotThrow(() => assertTargetUpdateManifestVersion("1.2.15", "1.2.15"));
+    assert.throws(
+      () => assertTargetUpdateManifestVersion("1.2.16", "1.2.15"),
+      /did not resolve to v1\.2\.15/,
     );
   });
 });

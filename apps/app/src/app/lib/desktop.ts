@@ -80,8 +80,8 @@ declare global {
           mismatch: boolean;
           platform: "darwin" | "linux" | "windows";
           version: string;
-          downloadUrl: string;
-          releaseUrl: string;
+          downloadUrl: string | null;
+          releaseUrl: string | null;
         }>;
         getMicrophoneStatus?: () => Promise<{
           platform: string;

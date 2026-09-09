@@ -4,30 +4,28 @@
  * There are two channels users can opt into:
  *
  * - "stable": the default. The desktop app auto-updates from the rolling
- *   "latest" GitHub release attached to whichever semver tag most recently
- *   finished the Release App workflow. macOS, Linux, Windows.
+ *   Qiniu channel manifest. macOS, Linux, Windows.
  *
  * - "alpha": a macOS-only rolling channel that auto-updates on every merge
- *   to `dev`. Alpha builds are published to a fixed GitHub release tag
- *   (`alpha-macos-latest`) so the updater endpoint stays stable while the
- *   underlying artifact is replaced on every dev push.
+ *   to `dev`. Alpha builds are published to a fixed Qiniu channel manifest.
  *
  * Only the macOS (arm64) build is published to the alpha channel today.
  * Linux and Windows always resolve to the stable channel.
  */
 
 import type { ReleaseChannel } from "../types";
+import { resolveDesktopUpdateFeed } from "@jugglework/types/desktop-update-feed";
 
 /** Stable channel's Tauri updater manifest URL. */
 export const STABLE_UPDATER_ENDPOINT =
-  "https://github.com/juggleai/jugglework-desktop/releases/latest/download/latest.json";
+  resolveDesktopUpdateFeed({ platform: "mac", channel: "stable" }).manifestUrl;
 
 /** Alpha channel's Tauri updater manifest URL (macOS-only, rolling). */
 export const ALPHA_UPDATER_ENDPOINT =
-  "https://github.com/juggleai/jugglework-desktop/releases/download/alpha-macos-latest/latest.json";
+  resolveDesktopUpdateFeed({ platform: "mac", channel: "alpha" }).manifestUrl;
 
-/** Rolling GitHub release tag that alpha macOS artifacts are published to. */
-export const ALPHA_MACOS_RELEASE_TAG = "alpha-macos-latest";
+/** Rolling Qiniu channel name that alpha macOS artifacts are published to. */
+export const ALPHA_MACOS_RELEASE_TAG = "alpha";
 
 export type PlatformKind = "darwin" | "linux" | "windows" | "web" | "unknown";
 
@@ -53,10 +51,11 @@ export function resolveUpdaterEndpoint(
   channel: ReleaseChannel,
   platform: PlatformKind = "darwin",
 ): string {
-  if (channel === "alpha" && isAlphaChannelSupported(platform)) {
-    return ALPHA_UPDATER_ENDPOINT;
-  }
-  return STABLE_UPDATER_ENDPOINT;
+  const updatePlatform = platform === "windows" ? "windows" : platform === "linux" ? "linux" : "mac";
+  return resolveDesktopUpdateFeed({
+    platform: updatePlatform,
+    channel: channel === "alpha" && isAlphaChannelSupported(platform) ? "alpha" : "stable",
+  }).manifestUrl;
 }
 
 /** Narrow an arbitrary string to a valid ReleaseChannel, defaulting to stable. */

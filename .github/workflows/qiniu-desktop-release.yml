@@ -1,0 +1,251 @@
+name: Qiniu Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact release version (stable X.Y.Z; alpha may be prerelease)"
+        required: true
+        type: string
+      channel:
+        description: "Qiniu channel"
+        required: true
+        type: choice
+        options:
+          - stable
+          - alpha
+      promote:
+        description: "Promote the mutable channel manifest after all gates"
+        required: true
+        default: false
+        type: boolean
+      canary_json:
+        description: "Non-secret machine canary JSON; required when promote=true"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Never cancel a publisher after it may have acquired the bucket lock. The
+# per-channel group serializes every immutable upload and promotion attempt.
+concurrency:
+  group: qiniu-desktop-release-${{ inputs.channel }}-mac
+  cancel-in-progress: false
+
+jobs:
+  release-macos-arm64:
+    name: Build, verify, and publish macOS arm64
+    runs-on: macos-26
+    timeout-minutes: 240
+    environment: qiniu-desktop-release
+    env:
+      VERSION: ${{ inputs.version }}
+      CHANNEL: ${{ inputs.channel }}
+      DIST: apps/desktop/dist-electron
+      MACOS_NOTARIZE: "true"
+
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Setup Go for pinned qshell
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+
+      - name: Install dependencies and qshell
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          go install github.com/qiniu/qshell/v2@v2.19.10
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize private release paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "EVIDENCE=$RUNNER_TEMP/qiniu-release-evidence.json" >> "$GITHUB_ENV"
+          echo "LOCAL_VERIFICATION=$RUNNER_TEMP/macos-local-verification.json" >> "$GITHUB_ENV"
+          echo "CANARY=$RUNNER_TEMP/macos-update-canary.json" >> "$GITHUB_ENV"
+          echo "RELEASE_BUNDLE=$RUNNER_TEMP/qiniu-desktop-release-bundle" >> "$GITHUB_ENV"
+
+      - name: Validate coordinates and set transient build version
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module -e \
+            'import { assertReleaseVersion } from "./apps/desktop/scripts/qiniu-release/constants.mjs"; assertReleaseVersion(process.env.VERSION, process.env.CHANNEL)'
+          VERSION="$VERSION" node <<'NODE'
+          const fs = require("node:fs");
+          for (const file of ["apps/app/package.json", "apps/desktop/package.json", "apps/server/package.json"]) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = process.env.VERSION;
+            fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+          }
+          NODE
+
+      - name: Prepare private Apple credentials
+        shell: bash
+        env:
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_NOTARY_API_KEY_P8_BASE64 APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID APPLE_CODESIGN_CERT_P12_BASE64 APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then echo "Missing required Apple release secret: $name" >&2; exit 1; fi
+          done
+          key_path="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY=$APPLE_NOTARY_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_NOTARY_API_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "CSC_LINK=$APPLE_CODESIGN_CERT_P12_BASE64" >> "$GITHUB_ENV"
+          echo "CSC_KEY_PASSWORD=$APPLE_CODESIGN_CERT_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build and notarize ZIP plus DMG
+        shell: bash
+        env:
+          TARGET: aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          pnpm --filter @jugglework/desktop build:electron
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml --mac dmg zip --arm64 --publish never
+
+      - name: Generate normalized immutable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/qiniu-release/cli.mjs plan \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE"
+
+      - name: Verify exact app, containers, and notarization receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop verify:mac-package -- \
+            --app "dist-electron/mac-arm64/JuggleWork.app" \
+            --arch arm64 --version "$VERSION" \
+            --zip "dist-electron/jugglework-mac-arm64-$VERSION.zip" \
+            --dmg "dist-electron/jugglework-mac-arm64-$VERSION.dmg" \
+            --manifest "dist-electron/qiniu-v$VERSION-latest-mac.yml" \
+            --notarization-receipt "dist-electron/mac-arm64/jugglework-notarization-receipt.json" \
+            --verification-output "$LOCAL_VERIFICATION"
+          node -e 'const fs=require("node:fs");const v=JSON.parse(fs.readFileSync(process.env.LOCAL_VERIFICATION));if(v.releaseState!=="release")throw new Error("Stable-capable release verification was not produced")'
+
+      - name: Create digest-bound release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_sha="$(git rev-parse HEAD)"
+          node apps/desktop/scripts/qiniu-release/cli.mjs verify-local \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE" --commit "$commit_sha" \
+            --local-verification "$LOCAL_VERIFICATION"
+
+      - name: Authenticate qshell from masked CI secrets
+        shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${QINIU_ACCESS_KEY:-}" ] || [ -z "${QINIU_SECRET_KEY:-}" ]; then
+            echo "Missing required Qiniu release secrets" >&2
+            exit 1
+          fi
+          echo "::add-mask::$QINIU_ACCESS_KEY"
+          echo "::add-mask::$QINIU_SECRET_KEY"
+          qshell account "$QINIU_ACCESS_KEY" "$QINIU_SECRET_KEY" "jugglework-ci-$GITHUB_RUN_ID" --overwrite >/dev/null
+
+      - name: Upload immutable version objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/qiniu-release/cli.mjs upload-version \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE"
+
+      - name: Verify immutable CDN bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/qiniu-release/cli.mjs verify-cdn \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE"
+
+      - name: Record machine canary
+        if: inputs.promote
+        shell: bash
+        env:
+          CANARY_JSON: ${{ inputs.canary_json }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CANARY_JSON:-}" ]; then echo "promote=true requires canary_json" >&2; exit 1; fi
+          node -e 'const fs=require("node:fs");const value=JSON.parse(process.env.CANARY_JSON);fs.writeFileSync(process.env.CANARY,`${JSON.stringify(value,null,2)}\n`,{mode:0o600,flag:"wx"})'
+          node apps/desktop/scripts/qiniu-release/cli.mjs verify-only \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE" --canary "$CANARY"
+
+      - name: Promote serialized Qiniu channel
+        if: inputs.promote
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/desktop/scripts/qiniu-release/cli.mjs promote-channel \
+            --version "$VERSION" --channel "$CHANNEL" --platform mac --arch arm64 \
+            --dist "$DIST" --evidence "$EVIDENCE" --actor "github-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+      - name: Stage exact release bytes and non-secret evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_bundle="${RELEASE_BUNDLE:-$RUNNER_TEMP/qiniu-desktop-release-bundle}"
+          evidence="${EVIDENCE:-$RUNNER_TEMP/qiniu-release-evidence.json}"
+          local_verification="${LOCAL_VERIFICATION:-$RUNNER_TEMP/macos-local-verification.json}"
+          mkdir -p "$release_bundle"
+          for source in \
+            "$evidence" \
+            "$local_verification" \
+            "$DIST/qiniu-v$VERSION-latest-mac.yml" \
+            "$DIST/jugglework-mac-arm64-$VERSION.zip" \
+            "$DIST/jugglework-mac-arm64-$VERSION.zip.blockmap" \
+            "$DIST/jugglework-mac-arm64-$VERSION.dmg" \
+            "$DIST/jugglework-mac-arm64-$VERSION.dmg.blockmap"; do
+            if [ -f "$source" ]; then cp "$source" "$release_bundle/"; fi
+          done
+
+      - name: Retain exact release bundle and non-secret evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qiniu-desktop-${{ inputs.channel }}-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/qiniu-desktop-release-bundle/
+          if-no-files-found: warn
+          retention-days: 90

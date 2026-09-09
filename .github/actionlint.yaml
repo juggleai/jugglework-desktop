@@ -1,0 +1,6 @@
+self-hosted-runner:
+  labels:
+    - macos-26
+    - macos-15-intel
+    - windows-11-arm
+    - blacksmith-4vcpu-ubuntu-2404

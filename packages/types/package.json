@@ -80,6 +80,11 @@
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
     },
+    "./desktop-update-feed": {
+      "types": "./src/desktop-update-feed.ts",
+      "development": "./src/desktop-update-feed.ts",
+      "default": "./src/desktop-update-feed.ts"
+    },
     "./connect-link": {
       "types": "./src/connect-link.ts",
       "development": "./src/connect-link.ts",
