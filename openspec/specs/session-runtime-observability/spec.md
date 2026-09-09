@@ -94,6 +94,14 @@ The system SHALL treat an automatic context boundary, its summary receipt, and t
 - **WHEN** a raw compaction part identifies an automatic boundary and its lifecycle events omit the reason
 - **THEN** the live transcript retains the automatic mode for the following summary receipt and does not create a standalone task
 
+#### Scenario: Automatic compaction is still running
+- **WHEN** an automatic boundary and a reason-less compaction-started event arrive before the summary message is available
+- **THEN** the in-progress compaction activity remains inside the active assistant task
+
+#### Scenario: Automatic boundary arrives after the started event
+- **WHEN** a reason-less compaction-started event creates an unknown running receipt before the automatic boundary arrives
+- **THEN** the boundary immediately reclassifies that receipt as automatic without waiting for compaction to finish
+
 #### Scenario: Only an unknown summary receipt survives reconciliation
 - **WHEN** a completed summary receipt has unknown mode but is followed by a transparent continuation marker and more assistant output
 - **THEN** the receipt and resumed output remain grouped with the assistant output before compaction

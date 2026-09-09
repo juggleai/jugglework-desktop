@@ -708,6 +708,23 @@ describe("tool part mapper", () => {
         type: "session.next.compaction.started",
         properties: { sessionID: sessionId, messageID: "summary-live", timestamp: t2 },
       } as any);
+      const compactingTranscript = getReactQueryClient().getQueryData<UIMessage[]>(
+        transcriptKey(workspaceId, sessionId),
+      ) ?? [];
+      expect(getSessionCompactionFromMessage(
+        compactingTranscript.find((message) => message.id === "summary-live")!,
+      )).toMatchObject({ mode: "auto", running: true });
+      const compactingGrouped = groupMessages(
+        deriveRenderedSessionMessages({ transcriptState: compactingTranscript, snapshot: null }),
+        "streaming",
+      );
+      expect(compactingGrouped).toHaveLength(2);
+      expect(isMessageGroup(compactingGrouped[1]!)).toBeTrue();
+      if (!isMessageGroup(compactingGrouped[1]!)) throw new Error("expected one in-progress assistant task group");
+      expect(compactingGrouped[1].messages.map((item) => item.message.id)).toEqual([
+        "assistant-before",
+        "summary-live",
+      ]);
       textPartEvent("summary-live-text", "summary-live", "internal automatic summary");
       __applySessionSyncEventForTest(syncInput, {
         type: "message.updated",
@@ -799,6 +816,80 @@ describe("tool part mapper", () => {
         "assistant-before",
         "summary-live",
         "assistant-after",
+      ]);
+    } finally {
+      release();
+      cleanup();
+      useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    }
+  });
+
+  test("a late automatic boundary reclassifies an unknown running receipt", () => {
+    const workspaceId = "workspace-late-auto-boundary";
+    const sessionId = "session-late-auto-boundary";
+    const syncInput = { workspaceId, baseUrl: "http://127.0.0.1:1234", juggleworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, sessionId);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "user-1", role: "user", sessionID: sessionId, time: { created: 1 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: { id: "user-text", sessionID: sessionId, messageID: "user-1", type: "text", text: "Do it" } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "assistant-before", role: "assistant", sessionID: sessionId, time: { created: 2, completed: 3 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: { part: { id: "assistant-text", sessionID: sessionId, messageID: "assistant-before", type: "text", text: "Working" } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.next.compaction.started",
+        properties: { sessionID: sessionId, messageID: "summary-live", timestamp: 4 },
+      } as any);
+
+      let transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(getSessionCompactionFromMessage(
+        transcript.find((message) => message.id === "summary-live")!,
+      )).toMatchObject({ mode: "unknown", running: true });
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "compaction-boundary", role: "user", sessionID: sessionId, time: { created: 4 } } },
+      } as any);
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "compaction-boundary-part",
+            sessionID: sessionId,
+            messageID: "compaction-boundary",
+            type: "compaction",
+            auto: true,
+          },
+        },
+      } as any);
+
+      transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId)) ?? [];
+      expect(transcript.find((message) => message.id === "compaction-boundary")).toBeUndefined();
+      expect(getSessionCompactionFromMessage(
+        transcript.find((message) => message.id === "summary-live")!,
+      )).toMatchObject({ mode: "auto", running: true });
+      const grouped = groupMessages(
+        deriveRenderedSessionMessages({ transcriptState: transcript, snapshot: null }),
+        "streaming",
+      );
+      expect(grouped).toHaveLength(2);
+      expect(isMessageGroup(grouped[1]!)).toBeTrue();
+      if (!isMessageGroup(grouped[1]!)) throw new Error("expected one reclassified assistant task group");
+      expect(grouped[1].messages.map((item) => item.message.id)).toEqual([
+        "assistant-before",
+        "summary-live",
       ]);
     } finally {
       release();

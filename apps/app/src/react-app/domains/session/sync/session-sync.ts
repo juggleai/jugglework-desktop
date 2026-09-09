@@ -1020,10 +1020,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (!compaction) return;
     useSessionActivityStore.getState().setCompacting(workspaceId, compaction.sessionId, true);
     if (compaction.messageId && isTrackedSession(entry, compaction.sessionId)) {
+      const pendingMode = entry.pendingCompactionModes.get(compaction.sessionId);
       queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, compaction.sessionId), (current = []) =>
         upsertSessionCompactionMessage(current, {
           messageId: compaction.messageId!,
-          mode: compaction.mode,
+          mode: compaction.mode === "unknown" ? pendingMode ?? "unknown" : compaction.mode,
           running: true,
           startedAt: compaction.timestamp,
         }),
@@ -1271,16 +1272,35 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const activityStore = useSessionActivityStore.getState();
     activityStore.markRuntimeEvent(workspaceId, part.sessionID);
     if (part.type === "compaction") {
-      entry.pendingCompactionModes.set(part.sessionID, part.auto ? "auto" : "manual");
+      const boundaryMode: SessionCompactionMode = part.auto ? "auto" : "manual";
+      entry.pendingCompactionModes.set(part.sessionID, boundaryMode);
       if (isTrackedSession(entry, part.sessionID)) {
-        const liveMessage = queryClient.getQueryData<UIMessage[]>(
+        let removedBoundaryShell = false;
+        queryClient.setQueryData<UIMessage[]>(
           transcriptKey(workspaceId, part.sessionID),
-        )?.find((message) => message.id === part.messageID);
-        if (liveMessage?.parts.length === 0) {
-          queryClient.setQueryData<UIMessage[]>(
-            transcriptKey(workspaceId, part.sessionID),
-            (current = []) => current.filter((message) => message.id !== part.messageID),
-          );
+          (current = []) => {
+            const boundaryMessage = current.find((message) => message.id === part.messageID);
+            removedBoundaryShell = boundaryMessage?.parts.length === 0;
+            const withoutBoundary = removedBoundaryShell
+              ? current.filter((message) => message.id !== part.messageID)
+              : current;
+            const runningUnknown = withoutBoundary.findLast((message) => {
+              const compaction = getSessionCompactionFromMessage(message);
+              return compaction?.running === true && compaction.mode === "unknown";
+            });
+            const runningCompaction = runningUnknown
+              ? getSessionCompactionFromMessage(runningUnknown)
+              : null;
+            if (!runningUnknown || !runningCompaction) return withoutBoundary;
+            return upsertSessionCompactionMessage(withoutBoundary, {
+              messageId: runningUnknown.id,
+              mode: boundaryMode,
+              running: true,
+              startedAt: runningCompaction.startedAt,
+            });
+          },
+        );
+        if (removedBoundaryShell) {
           activityStore.removeMessageRole(workspaceId, part.sessionID, part.messageID);
         }
       }
