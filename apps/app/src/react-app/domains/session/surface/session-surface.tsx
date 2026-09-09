@@ -508,6 +508,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const gatedActivePermission = useFullAccessPermissionPromptGate(
     activePermission,
     sessionPermissionMode.state?.effectiveMode ?? null,
+    sessionPermissionMode.grants,
   );
   const permissionReplyBusy = props.permissionReplyBusy ?? interactions.permissionReplyBusy;
   const respondPermission = props.respondPermission ?? interactions.respondPermission;

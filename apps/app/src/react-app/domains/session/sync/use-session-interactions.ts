@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server";
+import type {
+  JuggleWorkServerClient,
+  JuggleWorkSessionPermissionGrantReply,
+  JuggleWorkSessionPermissionModeRead,
+} from "@/app/lib/jugglework-server";
 import type { PendingPermission, PendingQuestion } from "@/app/types";
 import { t } from "@/i18n";
 import { useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { sessionPermissionModeKey } from "./use-session-permission-mode";
 import {
   captureInteractionSnapshotFence,
   pendingInteractionsForRoot,
@@ -71,8 +77,28 @@ export function isTerminalInteractionReplyError(error: unknown): boolean {
     .includes(String(error.code));
 }
 
+export function mergeSessionPermissionGrantReply(
+  current: JuggleWorkSessionPermissionModeRead | undefined,
+  result: JuggleWorkSessionPermissionGrantReply,
+): JuggleWorkSessionPermissionModeRead | undefined {
+  if (!current) {
+    return {
+      state: result.state,
+      grants: [result.grant],
+      supported: true,
+      profileVersion: result.grant.profileVersion,
+    };
+  }
+  return {
+    ...current,
+    state: result.state ?? current.state,
+    grants: [result.grant, ...current.grants.filter((grant) => grant.id !== result.grant.id)],
+  };
+}
+
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const { client, workspaceId, sessionId } = input;
+  const queryClient = useQueryClient();
   const canonical = useQueryCacheState<WorkspaceInteractionState>(
     workspaceId ? workspaceInteractionsKey(workspaceId) : null,
     emptyWorkspaceInteractions,
@@ -146,11 +172,17 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
-        await client.replyPermissionSessionGrant(
+        const result = await client.replyPermissionSessionGrant(
           workspaceId,
           pending.targetSessionId,
           requestID,
         );
+        if (sessionId) {
+          const modeKey = sessionPermissionModeKey(workspaceId, sessionId);
+          queryClient.setQueryData<JuggleWorkSessionPermissionModeRead>(modeKey, (current) =>
+            mergeSessionPermissionGrantReply(current, result));
+          void queryClient.invalidateQueries({ queryKey: modeKey });
+        }
         resolveLiveInteraction(workspaceId, "permission", pending.targetSessionId, requestID);
         return true;
       } catch (error) {
@@ -167,7 +199,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, selected.permissions, workspaceId],
+    [client, queryClient, selected.permissions, sessionId, workspaceId],
   );
 
   const activeQuestion = selected.questions[0] ?? null;

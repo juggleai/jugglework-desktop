@@ -4,8 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { setLocale } from "../src/i18n";
 import { PermissionApprovalPanel, reusableGrantScope } from "../src/react-app/domains/session/chat/permission-approval-modal";
+import { mergeSessionPermissionGrantReply } from "../src/react-app/domains/session/sync/use-session-interactions";
 import { PermissionModeSelect } from "../src/react-app/domains/session/surface/composer/permission-mode-select";
 import type { PendingPermission } from "../src/app/types";
+import type { SessionPermissionGrantRecord } from "@jugglework/types/session-permission-modes";
 
 function legacyPermission(overrides: Partial<PendingPermission> = {}): PendingPermission {
   return {
@@ -56,6 +58,37 @@ describe("reusableGrantScope", () => {
     expect(reusableGrantScope(v2Permission())).toEqual(["/repo/**"]);
     const withoutNested = v2Permission({ v2: { action: "file.edit", resources: ["/repo/a.ts"] } });
     expect(reusableGrantScope(withoutNested)).toEqual([]);
+  });
+});
+
+describe("session permission grant cache", () => {
+  test("makes a newly activated grant available before the background refetch", () => {
+    const oldGrant = { id: "grant-old" } as SessionPermissionGrantRecord;
+    const activatedGrant = {
+      id: "grant-new",
+      state: "active",
+      profileVersion: 1,
+    } as SessionPermissionGrantRecord;
+    const current = {
+      state: null,
+      grants: [oldGrant],
+      supported: true,
+      profileVersion: 1,
+    };
+    const merged = mergeSessionPermissionGrantReply(current, {
+      state: null,
+      grant: activatedGrant,
+    });
+    expect(merged?.grants).toEqual([activatedGrant, oldGrant]);
+    expect(mergeSessionPermissionGrantReply(undefined, {
+      state: null,
+      grant: activatedGrant,
+    })).toEqual({
+      state: null,
+      grants: [activatedGrant],
+      supported: true,
+      profileVersion: activatedGrant.profileVersion,
+    });
   });
 });
 
