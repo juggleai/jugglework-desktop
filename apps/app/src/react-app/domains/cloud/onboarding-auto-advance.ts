@@ -1,4 +1,8 @@
-import type { DenOrgLlmProvider, DenOrgSummary } from "@/app/lib/den";
+import {
+  resolveDenDefaultOrganization,
+  type DenOrgLlmProvider,
+  type DenOrgSummary,
+} from "@/app/lib/den";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 
 /**
@@ -34,8 +38,11 @@ export function buildDefaultModelSelection(
 /** The org to adopt without asking, or null when the user has a real choice. */
 export function autoAdvanceOrganization(
   orgs: readonly DenOrgSummary[] | null | undefined,
+  preferredOrganizationId?: string | null,
 ): DenOrgSummary | null {
-  return orgs?.length === 1 ? orgs[0] : null;
+  return resolveDenDefaultOrganization(orgs, {
+    rememberedOrgId: preferredOrganizationId,
+  });
 }
 
 /**
@@ -51,8 +58,9 @@ export function autoAdvanceOrganization(
 export function autoAdvanceDefaultModel(
   providers: readonly DenOrgLlmProvider[] | null | undefined,
 ): DefaultModelSelection | null {
-  if (providers?.length !== 1) return null;
-  const provider = providers[0];
-  if (provider.models.length !== 1) return null;
-  return buildDefaultModelSelection(provider);
+  for (const provider of providers ?? []) {
+    const selection = buildDefaultModelSelection(provider);
+    if (selection) return selection;
+  }
+  return null;
 }

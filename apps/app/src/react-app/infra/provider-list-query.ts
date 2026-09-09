@@ -100,6 +100,35 @@ export function isModelAvailableInConnectedProviders(
   );
 }
 
+/**
+ * Keep a remembered model when it still exists, otherwise choose the first
+ * model of the first connected provider that exposes an allowed model. Both
+ * provider and model order are the engine's insertion order.
+ */
+export function resolveConnectedProviderModel(
+  value: ProviderListResponse | null | undefined,
+  preferred: ModelRef | null | undefined,
+  options?: {
+    isAllowed?: (input: { provider: ProviderListItem; model: ModelRef }) => boolean;
+  },
+): ModelRef | null {
+  const providers = getConnectedProviderItems(value);
+  const isAllowed = options?.isAllowed ?? (() => true);
+  if (preferred) {
+    const provider = providers.find((item) => item.id === preferred.providerID);
+    if (provider?.models?.[preferred.modelID] && isAllowed({ provider, model: preferred })) {
+      return preferred;
+    }
+  }
+  for (const provider of providers) {
+    for (const modelID of Object.keys(provider.models ?? {})) {
+      const model = { providerID: provider.id, modelID };
+      if (modelID.trim() && isAllowed({ provider, model })) return model;
+    }
+  }
+  return null;
+}
+
 export function getConnectedProviderSnapshotChange(input: {
   baseUrl?: string | null;
   directory?: string | null;

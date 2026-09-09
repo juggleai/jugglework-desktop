@@ -17,10 +17,14 @@ import {
   denOriginComparisonKey,
   isDenSessionRevokedError,
   readDenBootstrapConfig,
+  readDenLastOrganization,
+  readDenUserId,
   readDenSettings,
+  resolveDenDefaultOrganization,
   resolveDenBaseUrls,
   setDenBootstrapConfig,
   writeDenIMLoginBootstrap,
+  writeDenLastOrganization,
   writeDenSettings,
   type DenBootstrapConfig,
   type DenOrgSummary,
@@ -191,13 +195,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const response = await client.listOrgs();
-      const active =
-        response.orgs.find((org) => org.id === settings.activeOrgId?.trim()) ??
-        response.orgs.find((org) => org.slug === settings.activeOrgSlug?.trim()) ??
-        response.orgs.find((org) => org.id === response.activeOrgId) ??
-        response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
-        response.orgs[0] ??
-        null;
+      const active = resolveDenDefaultOrganization(response.orgs, {
+        rememberedOrgId: readDenLastOrganization(readDenUserId()),
+        currentOrgId: settings.activeOrgId,
+        currentOrgSlug: settings.activeOrgSlug,
+        serverActiveOrgId: response.activeOrgId,
+        serverActiveOrgSlug: response.activeOrgSlug,
+      });
       setOrganizations(response.orgs);
       setActiveOrganization(active);
       if (!active) {
@@ -210,6 +214,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         activeOrgSlug: active.slug,
         activeOrgName: active.name,
       }, { persistBootstrap: false });
+      writeDenLastOrganization(readDenUserId(), active.id);
       // Older Den deployments may not expose tenant accounts yet. Keep the
       // identity and organization menu usable while tier/balance degrades to
       // the directory summary or an em dash.
@@ -245,6 +250,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         activeOrgSlug: next.slug,
         activeOrgName: next.name,
       }, { persistBootstrap: false });
+      writeDenLastOrganization(readDenUserId(), next.id);
       setActiveOrganization(next);
       setTenantAccount(await client.getTenantAccount(next.id).catch(() => null));
       await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);

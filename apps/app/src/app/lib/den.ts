@@ -43,6 +43,7 @@ const STORAGE_IM_LOGIN_BOOTSTRAP = "jugglework.den.imLoginBootstrap";
 const STORAGE_ACTIVE_ORG_ID = "jugglework.den.activeOrgId";
 const STORAGE_ACTIVE_ORG_SLUG = "jugglework.den.activeOrgSlug";
 const STORAGE_ACTIVE_ORG_NAME = "jugglework.den.activeOrgName";
+const STORAGE_LAST_ORG_BY_USER = "jugglework.den.lastOrgByUser";
 /**
  * Identity of the account whose local state this machine currently holds.
  * Nothing else persisted here identifies a *user* — base URL, token and org
@@ -1060,6 +1061,79 @@ export function readDenUserId(): string | null {
   return (window.localStorage.getItem(STORAGE_USER_ID) ?? "").trim() || null;
 }
 
+function readLastOrgByUser(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_LAST_ORG_BY_USER) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).flatMap(([userId, orgId]) => {
+        const user = userId.trim();
+        const organization = typeof orgId === "string" ? orgId.trim() : "";
+        return user && organization ? [[user, organization]] : [];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+
+/** Return the last organization selected for one confirmed Den identity. */
+export function readDenLastOrganization(userId: string | null | undefined): string | null {
+  const id = userId?.trim() ?? "";
+  return id ? readLastOrgByUser()[id] ?? null : null;
+}
+
+/** Persist an organization preference without coupling it to the disposable auth session. */
+export function writeDenLastOrganization(
+  userId: string | null | undefined,
+  organizationId: string | null | undefined,
+) {
+  if (typeof window === "undefined") return;
+  const id = userId?.trim() ?? "";
+  const organization = organizationId?.trim() ?? "";
+  if (!id || !organization) return;
+  const next = { ...readLastOrgByUser(), [id]: organization };
+  window.localStorage.setItem(STORAGE_LAST_ORG_BY_USER, JSON.stringify(next));
+}
+
+/**
+ * Resolve the organization used during bootstrap without asking the member.
+ * A remembered choice is account-scoped; currentOrgId exists for explicit
+ * prepared-bootstrap selections that arrive before an account has history.
+ */
+export function resolveDenDefaultOrganization(
+  orgs: readonly DenOrgSummary[] | null | undefined,
+  input?: {
+    rememberedOrgId?: string | null;
+    currentOrgId?: string | null;
+    currentOrgSlug?: string | null;
+    serverActiveOrgId?: string | null;
+    serverActiveOrgSlug?: string | null;
+  },
+): DenOrgSummary | null {
+  const list = orgs ?? [];
+  const byId = (value: string | null | undefined) => {
+    const id = value?.trim() ?? "";
+    return id ? list.find((org) => org.id === id) ?? null : null;
+  };
+  const bySlug = (value: string | null | undefined) => {
+    const slug = value?.trim() ?? "";
+    return slug ? list.find((org) => org.slug === slug) ?? null : null;
+  };
+  return (
+    byId(input?.rememberedOrgId) ??
+    byId(input?.currentOrgId) ??
+    bySlug(input?.currentOrgSlug) ??
+    list.find((org) => org.kind === "personal") ??
+    list.find((org) => org.slug.trim().toLowerCase() === "personal") ??
+    byId(input?.serverActiveOrgId) ??
+    bySlug(input?.serverActiveOrgSlug) ??
+    list[0] ??
+    null
+  );
+}
+
 function denCredentialFingerprint(value: string) {
   let hash = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
@@ -1265,15 +1339,14 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
   });
 
   const response = await client.listOrgs();
-  const selectedOrgId = settings.activeOrgId?.trim() ?? "";
-  const selectedOrgSlug = settings.activeOrgSlug?.trim() ?? "";
-  const targetOrg =
-    response.orgs.find((org) => org.id === selectedOrgId) ??
-    response.orgs.find((org) => org.slug === selectedOrgSlug) ??
-    response.orgs.find((org) => org.id === response.activeOrgId) ??
-    response.orgs.find((org) => org.slug === response.activeOrgSlug) ??
-    response.orgs[0] ??
-    null;
+  const userId = readDenUserId();
+  const targetOrg = resolveDenDefaultOrganization(response.orgs, {
+    rememberedOrgId: readDenLastOrganization(userId),
+    currentOrgId: settings.activeOrgId,
+    currentOrgSlug: settings.activeOrgSlug,
+    serverActiveOrgId: response.activeOrgId,
+    serverActiveOrgSlug: response.activeOrgSlug,
+  });
 
   if (!targetOrg) {
     writeDenSettings({
@@ -1306,6 +1379,7 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
     activeOrgSlug: targetOrg.slug,
     activeOrgName: targetOrg.name,
   }, { persistBootstrap: false });
+  writeDenLastOrganization(userId, targetOrg.id);
 
   return targetOrg;
 }

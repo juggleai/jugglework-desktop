@@ -41,6 +41,7 @@ import {
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { usePlatform } from "../../kernel/platform";
+import { useLocal } from "../../kernel/local-provider";
 import { useBootState } from "../../shell/boot-state";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
@@ -73,12 +74,6 @@ import {
 } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
-import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
-import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group"
-import { useOrgListWindow } from "./use-org-list-window";
 import { useDesktopConfig } from "./desktop-config-provider";
 import {
   autoAdvanceDefaultModel,
@@ -452,7 +447,7 @@ export function OrgOnboardingPage() {
             <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
               <BuildingOffice2Icon className="size-7 text-foreground" />
             </div>
-            <PageTitle>Choose your organization</PageTitle>
+            <PageTitle>Unable to load your organization</PageTitle>
             <Alert variant="destructive">
               <CircleAlert />
               <AlertDescription>
@@ -468,13 +463,9 @@ export function OrgOnboardingPage() {
   if ((data?.orgs.length ?? 0) > 0 && !hasSelectedOrganization) {
     return (
       <OrganizationSelectionPage
-        orgs={data.orgs}
         defaultOrganization={
-          autoAdvanceOrganization(data.orgs) ??
-          data.orgs.find((org) => org.id === orgId) ??
-          data.orgs[0]
+          autoAdvanceOrganization(data.orgs, orgId) ?? data.orgs[0]
         }
-        autoContinue={Boolean(autoAdvanceOrganization(data.orgs))}
         onContinue={() => setHasSelectedOrganization(true)}
       />
     );
@@ -489,6 +480,7 @@ export function ResourceSelectionPage() {
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
   const { refreshFresh } = useDesktopConfig();
+  const local = useLocal();
 
   const prepared = usePreparedBootstrap();
 
@@ -548,10 +540,20 @@ export function ResourceSelectionPage() {
     // If user picked a default model, write it
     const chosenDefault = selectedDefaultRef.current;
     if (chosenDefault) {
-      writeStoredDefaultModel({
+      const model = {
         providerID: chosenDefault.providerId,
         modelID: chosenDefault.modelId,
-      });
+      };
+      writeStoredDefaultModel(model);
+      local.setPrefs((previous) => ({
+        ...previous,
+        defaultModel: model,
+        modelVariant:
+          previous.defaultModel?.providerID === model.providerID &&
+          previous.defaultModel.modelID === model.modelID
+            ? previous.modelVariant
+            : null,
+      }));
     }
     // Mark all providers shown on this page as "seen" so the global
     // toast doesn't re-fire for them on the next sync interval.
@@ -561,7 +563,7 @@ export function ResourceSelectionPage() {
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-  }, [providers]);
+  }, [local.setPrefs, providers]);
 
   const finishOnboarding = useCallback(() => {
     commitOnboardingSelections();
@@ -1075,21 +1077,15 @@ function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCa
 }
 
 interface OrganizationSelectionPageProps {
-  orgs: DenOrgSummary[];
   defaultOrganization: DenOrgSummary;
-  /** Adopt `defaultOrganization` without showing the picker. */
-  autoContinue?: boolean;
   onContinue: () => void;
 }
 
 function OrganizationSelectionPage({
-  orgs,
   defaultOrganization,
-  autoContinue = false,
   onContinue,
 }: OrganizationSelectionPageProps) {
   const { authToken, denClient, settings } = useDenClient();
-  const [selected, setSelected] = useState(defaultOrganization);
   const applyOrganization = useCallback((nextOrg: DenOrgSummary) => {
     writeDenSettings({
       ...settings,
@@ -1111,7 +1107,7 @@ function OrganizationSelectionPage({
 
   const autoContinueStartedRef = useRef(false);
   useEffect(() => {
-    if (!autoContinue || autoContinueStartedRef.current) return;
+    if (autoContinueStartedRef.current) return;
     autoContinueStartedRef.current = true;
     // Already the active org — re-entering onboarding, or resuming after the
     // branding restart. Persist locally and move on without a server round
@@ -1121,35 +1117,11 @@ function OrganizationSelectionPage({
       return;
     }
     mutate(defaultOrganization);
-  }, [applyOrganization, autoContinue, defaultOrganization, mutate, settings.activeOrgId]);
+  }, [applyOrganization, defaultOrganization, mutate, settings.activeOrgId]);
 
   // While settling itself this step has nothing to ask, so it shows progress
   // instead of a one-item radio group. A failure hands the picker back, with
   // the error, rather than stranding the user on a spinner.
-  if (autoContinue && !error) {
-    return (
-      <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
-        <PageContainer>
-          <PageHeader>
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
-              <BuildingOffice2Icon className="size-7 text-foreground" />
-            </div>
-            <PageTitle>{defaultOrganization.name}</PageTitle>
-            <PageDescription>Connecting your organization...</PageDescription>
-          </PageHeader>
-          <PageContent>
-            <PageLoading>
-              <PageLoadingSpinner />
-              <PageLoadingDescription>Connecting...</PageLoadingDescription>
-            </PageLoading>
-          </PageContent>
-        </PageContainer>
-      </Page>
-    );
-  }
-
   return (
     <Page>
       <PageBackground />
@@ -1159,123 +1131,32 @@ function OrganizationSelectionPage({
           <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-hover">
             <BuildingOffice2Icon className="size-7 text-foreground" />
           </div>
-          <PageTitle>Choose your organization</PageTitle>
-          {error ? (
-            <Alert variant="destructive">
-              <CircleAlert />
-              <AlertDescription>
-                {error instanceof Error ? error.message : "Unable to select organization."}
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <PageDescription>
-              Select the organization whose cloud resources should be connected to this workspace.
-            </PageDescription>
-          )}
+          <PageTitle>{defaultOrganization.name}</PageTitle>
+          <PageDescription>
+            {error ? "Unable to connect this organization." : "Connecting your organization..."}
+          </PageDescription>
         </PageHeader>
-
         <PageContent>
-          <OrganizationList
-            orgs={orgs}
-            value={selected}
-            onValueChange={setSelected}
-          />
+          {error ? (
+            <div className="flex flex-col items-center gap-3">
+              <Alert variant="destructive">
+                <CircleAlert />
+                <AlertDescription>
+                  {error instanceof Error ? error.message : "Unable to select organization."}
+                </AlertDescription>
+              </Alert>
+              <Button type="button" onClick={() => mutate(defaultOrganization)} disabled={isPending}>
+                {isPending ? "Connecting..." : "Retry"}
+              </Button>
+            </div>
+          ) : (
+            <PageLoading>
+              <PageLoadingSpinner />
+              <PageLoadingDescription>Connecting...</PageLoadingDescription>
+            </PageLoading>
+          )}
         </PageContent>
-
-        <PageFooter>
-          <Button
-            className="w-fit"
-            type="button"
-            size="lg"
-            onClick={() => mutate(selected)}
-            disabled={isPending}
-          >
-            {isPending ? "Connecting..." : "Continue with organization"}
-            <ArrowRight data-icon="inline-end" />
-          </Button>
-        </PageFooter>
       </PageContainer>
     </Page>
   );
-}
-
-interface OrganizationListProps {
-  orgs: DenOrgSummary[];
-  value: DenOrgSummary;
-  onValueChange: (value: DenOrgSummary) => void;
-}
-
-export function OrganizationList({ orgs, value, onValueChange }: OrganizationListProps) {
-  const { filtered, query, showMore, updateQuery, visible } = useOrgListWindow(orgs);
-  const hasMore = visible.length < filtered.length;
-
-  return (
-    <div className="flex flex-col gap-3">
-      {orgs.length > 10 ? (
-        <Input
-          aria-label="Search organizations"
-          placeholder="Search organizations..."
-          value={query}
-          onChange={(event) => updateQuery(event.target.value)}
-        />
-      ) : null}
-
-      <RadioGroup
-        value={value.id}
-        onValueChange={(nextOrgId) => {
-          const nextOrg = orgs.find((org) => org.id === nextOrgId);
-          if (nextOrg) onValueChange(nextOrg);
-        }}
-        aria-label="Organizations"
-      >
-        {visible.map((org) => {
-          const fieldId = `organization-${org.id}`;
-
-          return (
-            <FieldLabel
-              key={org.id}
-              htmlFor={fieldId}
-              className="p-0! transition-colors hover:bg-input/10"
-            >
-              <Field orientation="horizontal">
-                <FieldTitle className="flex min-w-0 items-center gap-4">
-                  <BuildingOffice2Icon className="size-6 shrink-0 text-muted-foreground" />
-                  <div className="flex min-w-0 flex-col items-start">
-                    <span className="max-w-full truncate text-sm font-semibold">
-                      {org.name}
-                    </span>
-                    <span className="max-w-full truncate text-muted-foreground text-xs">
-                      {org.slug}
-                    </span>
-                  </div>
-                </FieldTitle>
-                <RadioGroupItem
-                  value={org.id}
-                  id={fieldId}
-                  className="group-hover/field-label:bg-foreground/25"
-                />
-              </Field>
-            </FieldLabel>
-          );
-        })}
-      </RadioGroup>
-
-      {filtered.length === 0 && query.trim() ? (
-        <div className="text-sm text-muted-foreground">
-          No organizations match your search.
-        </div>
-      ) : null}
-
-      {hasMore ? (
-        <div className="flex flex-col items-start gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={showMore}>
-            Show more
-          </Button>
-          <div className="text-xs text-muted-foreground">
-            Showing {visible.length} of {filtered.length} organizations
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
 }

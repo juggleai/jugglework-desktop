@@ -48,8 +48,19 @@ describe("autoAdvanceOrganization", () => {
     expect(autoAdvanceOrganization([org("a")])?.id).toBe("a");
   });
 
-  test("keeps the picker when there is a real choice", () => {
-    expect(autoAdvanceOrganization([org("a"), org("b")])).toBe(null);
+  test("restores the preferred organization when there are several", () => {
+    expect(autoAdvanceOrganization([org("a"), org("b")], "b")?.id).toBe("b");
+  });
+
+  test("defaults to the personal organization without a remembered choice", () => {
+    expect(autoAdvanceOrganization([
+      org("team"),
+      { ...org("mine"), kind: "personal" },
+    ])?.id).toBe("mine");
+  });
+
+  test("uses the first organization defensively when personal is unavailable", () => {
+    expect(autoAdvanceOrganization([org("a"), org("b")])?.id).toBe("a");
   });
 
   test("keeps the picker when the list is empty or unavailable", () => {
@@ -70,19 +81,28 @@ describe("autoAdvanceDefaultModel", () => {
     });
   });
 
-  test("keeps the step when the only provider offers a choice of models", () => {
-    // Picking the first would decide something the member can see is a
-    // decision, so the resource list stays and they choose.
+  test("adopts the first model when a provider offers several models", () => {
     expect(autoAdvanceDefaultModel([
       provider("lpr_a", [model("model-a"), model("model-b")]),
-    ])).toBe(null);
+    ])?.modelId).toBe("model-a");
   });
 
-  test("keeps the step when several providers are on offer", () => {
+  test("adopts the first model from the first usable provider", () => {
     expect(autoAdvanceDefaultModel([
       provider("lpr_a", [model("model-a")]),
       provider("lpr_b", [model("model-b")]),
-    ])).toBe(null);
+    ])?.providerId).toBe("lpr_a");
+  });
+
+  test("skips providers without models", () => {
+    expect(autoAdvanceDefaultModel([
+      provider("lpr_empty", []),
+      provider("lpr_b", [model("model-b")]),
+    ])).toEqual({
+      providerId: "lpr_b",
+      modelId: "model-b",
+      label: "OpenRouter · model-b",
+    });
   });
 
   test("keeps the step when the only provider has no models", () => {

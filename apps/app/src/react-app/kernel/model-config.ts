@@ -145,13 +145,13 @@ export function parseWorkspaceModelVariants(
   }
 }
 
-export function readStoredDefaultModel(): ModelRef {
-  if (typeof window === "undefined") return DEFAULT_MODEL;
+export function readStoredDefaultModel(): ModelRef | null {
+  if (typeof window === "undefined") return null;
   try {
     const stored = window.localStorage.getItem(MODEL_PREF_KEY);
-    return parseModelRef(stored) ?? DEFAULT_MODEL;
+    return parseModelRef(stored);
   } catch {
-    return DEFAULT_MODEL;
+    return null;
   }
 }
 
@@ -164,16 +164,28 @@ export function writeStoredDefaultModel(model: ModelRef): void {
   }
 }
 
+/** Keep the remembered reasoning strength paired with the model it describes. */
+export function rememberModelVariant<T extends {
+  defaultModel: ModelRef | null;
+  modelVariant: string | null;
+}>(previous: T, model: ModelRef | null, variant: string | null): T {
+  return {
+    ...previous,
+    ...(model ? { defaultModel: model } : {}),
+    modelVariant: normalizeModelBehaviorValue(variant),
+  };
+}
+
 /**
  * Minimal React hook covering the default model picker state. The richer
  * session/workspace model overrides from context/model-config.ts will be
  * ported incrementally as the session and settings surfaces migrate.
  */
-export function useDefaultModel(): [ModelRef, (next: ModelRef) => void] {
-  const [model, setModel] = useState<ModelRef>(() => readStoredDefaultModel());
+export function useDefaultModel(): [ModelRef | null, (next: ModelRef) => void] {
+  const [model, setModel] = useState<ModelRef | null>(() => readStoredDefaultModel());
 
   useEffect(() => {
-    writeStoredDefaultModel(model);
+    if (model) writeStoredDefaultModel(model);
   }, [model]);
 
   const update = useCallback((next: ModelRef) => {

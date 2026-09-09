@@ -7,9 +7,12 @@ import {
   initializeDenBootstrapConfig,
   readDenBootstrapConfig,
   readDenIMLoginBootstrap,
+  readDenLastOrganization,
   readDenSettings,
+  resolveDenDefaultOrganization,
   setDenBootstrapConfig,
   writeDenSettings,
+  writeDenLastOrganization,
 } from "../src/app/lib/den";
 
 const originalWindow = globalThis.window;
@@ -226,6 +229,35 @@ describe("desktop Den bootstrap settings", () => {
     window.localStorage.setItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY, "stale-marker");
     clearDenSession();
     expect(window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY)).toBeNull();
+  });
+
+  test("keeps last organizations isolated by confirmed user", () => {
+    writeDenLastOrganization("user-a", "org-team-a");
+    writeDenLastOrganization("user-b", "org-team-b");
+
+    expect(readDenLastOrganization("user-a")).toBe("org-team-a");
+    expect(readDenLastOrganization("user-b")).toBe("org-team-b");
+    expect(readDenLastOrganization("user-c")).toBeNull();
+
+    clearDenSession();
+    expect(readDenLastOrganization("user-a")).toBe("org-team-a");
+  });
+
+  test("resolves remembered org before personal and personal before server active", () => {
+    const orgs = [
+      { id: "org-team", name: "Team", slug: "team", role: "member" as const, kind: "organization" as const },
+      { id: "org-personal", name: "Personal", slug: "personal", role: "owner" as const, kind: "personal" as const },
+      { id: "org-other", name: "Other", slug: "other", role: "member" as const, kind: "organization" as const },
+    ];
+
+    expect(resolveDenDefaultOrganization(orgs, {
+      rememberedOrgId: "org-other",
+      serverActiveOrgId: "org-team",
+    })?.id).toBe("org-other");
+    expect(resolveDenDefaultOrganization(orgs, {
+      rememberedOrgId: "missing",
+      serverActiveOrgId: "org-team",
+    })?.id).toBe("org-personal");
   });
 
   test("reprovisions missing IM credentials even when the active organization already matches", async () => {

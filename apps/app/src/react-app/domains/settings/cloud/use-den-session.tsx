@@ -15,8 +15,12 @@ import {
   mergePassiveDenSettings,
   normalizeDenBaseUrl,
   readDenSettings,
+  readDenLastOrganization,
+  readDenUserId,
+  resolveDenDefaultOrganization,
   resolveDenBaseUrls,
   writeDenSettings,
+  writeDenLastOrganization,
   type DenSettings,
   type DenOrgSummary,
 } from "@/app/lib/den";
@@ -376,19 +380,13 @@ export function useDenSession({
         setOrgs(response.orgs);
         const current = activeOrgId.trim();
 
-        // Determine the next org to select:
-        // - If the user already had an org selected and it still exists, keep it.
-        // - If there's exactly one org, auto-select it (no choice needed).
-        // - Otherwise, leave blank so the user is prompted to choose.
-        let next = "";
-        if (current && response.orgs.some((org) => org.id === current)) {
-          next = current;
-        } else if (response.orgs.length === 1) {
-          next = response.orgs[0].id;
-        }
-        // else: leave next = "" so the org picker is shown
-
-        const nextOrg = next ? (response.orgs.find((org) => org.id === next) ?? null) : null;
+        const nextOrg = resolveDenDefaultOrganization(response.orgs, {
+          rememberedOrgId: readDenLastOrganization(readDenUserId()),
+          currentOrgId: current,
+          serverActiveOrgId: response.activeOrgId,
+          serverActiveOrgSlug: response.activeOrgSlug,
+        });
+        const next = nextOrg?.id ?? "";
         setActiveOrgId(next);
         writeDenSettings({
           baseUrl,
@@ -405,6 +403,7 @@ export function useDenSession({
         }
         if (next) {
           await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
+          writeDenLastOrganization(readDenUserId(), next);
         }
         if (!quiet && response.orgs.length > 0) {
           toast.info(t("den.status_loaded_orgs", { count: response.orgs.length }));
@@ -542,6 +541,7 @@ export function useDenSession({
         activeOrgSlug: nextOrg?.slug ?? null,
         activeOrgName: nextOrg?.name ?? null,
       });
+      writeDenLastOrganization(readDenUserId(), nextId);
 
       // 3. Update local state
       setActiveOrgId(nextId);
@@ -569,11 +569,6 @@ export function useDenSession({
     [authToken, baseUrl, client, orgs, setActiveOrganization],
   );
 
-  // User is signed in, orgs loaded, multiple orgs available, but none selected yet.
-  // The UI should prompt the user to pick an org before cloud features activate.
-  const needsOrgSelection =
-    !!authToken.trim() && !!user && !orgsBusy && orgs.length > 1 && !activeOrgId;
-
   return {
     authBusy,
     authError,
@@ -581,7 +576,6 @@ export function useDenSession({
     baseUrlBusy,
     baseUrlDraft,
     baseUrlError,
-    needsOrgSelection,
     orgs,
     orgsBusy,
     orgsError,

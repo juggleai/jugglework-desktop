@@ -88,6 +88,7 @@ import {
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import { rememberModelVariant } from "@/react-app/kernel/model-config";
 import {
   clearSessionModelChoice,
   resolveSessionModelChoice,
@@ -202,6 +203,7 @@ import {
   getProviderSource,
   isModelAvailableInConnectedProviders,
   refreshProviderListQueries,
+  resolveConnectedProviderModel,
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
 
@@ -586,12 +588,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }));
   }, [local.setPrefs, selectedWorkspaceId]);
   const applyModelVariantSelection = useCallback((value: string | null, sessionId: string | null) => {
+    const targetModel = resolveModelForSession(sessionId).model;
     if (sessionId && selectedWorkspaceId) {
       setSessionVariantChoice(selectedWorkspaceId, sessionId, value);
-      return;
     }
-    local.setPrefs((previous) => ({ ...previous, modelVariant: value }));
-  }, [local.setPrefs, selectedWorkspaceId]);
+    local.setPrefs((previous) => rememberModelVariant(previous, targetModel, value));
+  }, [local.setPrefs, resolveModelForSession, selectedWorkspaceId]);
   const cloudMcpProviderModel = useMemo(() => activeModel
     ? {
         provider: activeModel.providerID,
@@ -930,6 +932,37 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     ? `${activeModel.providerID}:${activeModel.modelID}`
     : null;
   const autoOpenedUnavailableModelRef = useRef<string | null>(null);
+
+  // A clean profile has no model preference, and remembered providers/models
+  // can disappear after an org or configuration change. Repair both cases from
+  // the authoritative connected-provider order instead of opening a chooser.
+  useEffect(() => {
+    if (!selectedWorkspaceId || providerListQuery.isPending) return;
+    if (activeModel && !selectedModelUnavailable) return;
+    if (activeModel && isCloudManagedProviderKey(activeModel.providerID) && !cloudProviderSyncReady) return;
+
+    const fallback = resolveConnectedProviderModel(providerListQuery.data, activeModel, {
+      isAllowed: ({ provider, model }) => !isDesktopModelBlocked({
+        model,
+        checkRestriction: checkDesktopRestriction,
+        allowedModels,
+        providerSource: provider.source,
+      }),
+    });
+    if (!fallback) return;
+    applyModelSelection(fallback, selectedSessionId);
+  }, [
+    activeModel,
+    allowedModels,
+    applyModelSelection,
+    checkDesktopRestriction,
+    cloudProviderSyncReady,
+    providerListQuery.data,
+    providerListQuery.isPending,
+    selectedModelUnavailable,
+    selectedSessionId,
+    selectedWorkspaceId,
+  ]);
 
   // Repair local preferences left behind when an organization replaces a
   // cloud-managed provider. This runs only after cloud sync is authoritative

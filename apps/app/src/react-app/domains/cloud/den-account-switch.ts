@@ -1,5 +1,5 @@
 import { MODEL_PREF_KEY } from "../../../app/constants";
-import { readDenUserId, writeDenUserId } from "../../../app/lib/den";
+import { readDenSettings, readDenUserId, writeDenSettings, writeDenUserId } from "../../../app/lib/den";
 import { clearAllCloudMcpLocalState } from "../connections/cloud-mcp-user-state";
 
 /**
@@ -65,6 +65,13 @@ export function reconcileDenAccountIdentity(nextUserId: string | null | undefine
 
   if (transition === "switched") {
     clearAccountScopedLocalState();
+    const settings = readDenSettings();
+    writeDenSettings({
+      ...settings,
+      activeOrgId: null,
+      activeOrgSlug: null,
+      activeOrgName: null,
+    }, { persistBootstrap: false });
     // Per-workspace cloud state is deliberately NOT purged from here. Each
     // workspace settles its own owner stamp at the top of its next provider
     // sync, which is the one place where the purge is ordered before the new
