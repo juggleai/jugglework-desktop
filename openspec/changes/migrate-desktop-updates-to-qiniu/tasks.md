@@ -43,12 +43,12 @@
 
 - [x] 6.1 Bump app/desktop/embedded-server versions from 1.2.14 to 1.2.15 only after updater and release tooling tests pass
 - [x] 6.2 Build isolated macOS arm64 ZIP, ZIP blockmap, DMG, DMG blockmap, and normalized version manifest with Qiniu packaged defaults
-- [ ] 6.3 Complete local package, native module, updater inventory, Developer ID, version, architecture, and embedded-origin verification; record the explicitly authorized one-time `1.2.15` notarization exception
+- [x] 6.3 Complete local package, native module, updater inventory, Developer ID, version, architecture, and embedded-origin verification; record the explicitly authorized one-time `1.2.15` notarization exception
 - [x] 6.4 Upload and remotely verify immutable `jugglework/releases/v1.2.15/mac/arm64/` artifacts and `v1.2.15/mac/latest-mac.yml` without overwrite
-- [ ] 6.5 Use a clean unpublished lower-version build containing the new updater code to install `1.2.15` through the targeted Qiniu version feed, restart, and verify version, user data, workspace authorization, permissions, and successful Chat/Contacts IM bootstrap
+- [x] 6.5 Use a clean unpublished lower-version build containing the new updater code to install `1.2.15` through the targeted Qiniu version feed, restart, and verify version, user data, workspace authorization, permissions, and successful Chat/Contacts IM bootstrap
 - [ ] 6.6 Promote and read back `stable/mac/latest-mac.yml`, then verify a clean Qiniu-enabled lower-version client discovers the stable feed
 - [x] 6.7 Remove stable and Alpha GitHub updater publication paths; `1.2.15` and all later updater assets/manifests are Qiniu-only
-- [ ] 6.8 Update and read back Den published/latest version metadata only after Qiniu canary and stable promotion pass; leave organization allowlists unchanged unless separately authorized
+- [x] 6.8 Update and read back Den published/latest version metadata only after Qiniu canary and stable promotion pass; leave organization allowlists unchanged unless separately authorized
 
 ## 7. Prove Qiniu-only ongoing updates
 
@@ -61,4 +61,16 @@
 
 - [x] 8.1 Document routine Qiniu release, dry-run, verification-only, safe resume, promotion lock recovery, CDN cache refresh, Den ordering, Qiniu-only policy, and higher-patch rollback
 - [x] 8.2 Run updater/release unit tests, app and Electron typechecks, complete Desktop tests, packaged macOS verification, strict OpenSpec validation, and `git diff --check`
-- [ ] 8.3 Record final 1.2.15 and Qiniu-only canary evidence in the change without secrets and confirm all versioned remote size/hash values match local artifacts
+- [x] 8.3 Record final 1.2.15 and Qiniu-only canary evidence in the change without secrets and confirm all versioned remote size/hash values match local artifacts
+
+## 9. Stable 1.2.15 rollout evidence (2026-09-09)
+
+- Release evidence: `release-evidence-1.2.15.json`
+- Den rollout evidence: `den-rollout-1.2.15.json`
+- Final app commit: `7813649f5a4258ce925280035a1d4651c7484b85`; release-tooling follow-up commit: `4f3421a22d78fc8a227b4b433c73deb593138471`
+- Stable manifest: `https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml`; SHA-256 `e9f4f2a3bd91edc622fa4c156ff26f8781754be309ece52ffe55d8e572a683c7`; size `706` bytes
+- macOS arm64 ZIP: SHA-256 `9fab962328857ccd031f2b6a708ceff2f75d7fbc2ab10c96ad5439959d4d99d6`; size `238675780` bytes
+- macOS arm64 DMG: SHA-256 `0c9520d19cca7ff40f635edd294478c6c85836e60e2f08d86c432dbe156c1fb9`; size `241446316` bytes
+- Targeted `1.2.14` to `1.2.15` canary passed discovery, download, native installation, restart, installed-version, user-data, workspace-access, and permission checks. Chat/Contacts IM bootstrap under real signed-in state was subsequently operator-verified successfully on 2026-09-09, completing task 6.5.
+- Stable promotion and public digest read-back passed. Task 6.6 remains open until a lower-version client independently discovers the promoted stable feed rather than the immutable targeted feed.
+- China Den (`work.jugglechat.cn`) was updated and verified before overseas Den (`work.juggle.im`). Both advertise latest `1.2.15`, publish `[0.1.0, 1.2.15]`, retain minimum `0.1.0`, and retain their organization allowlists unchanged.

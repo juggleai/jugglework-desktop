@@ -1,0 +1,111 @@
+{
+  "schema": "com.juggleai.jugglework.qiniu-release-audit",
+  "schemaVersion": 1,
+  "version": "1.2.15",
+  "channel": "stable",
+  "platform": "mac",
+  "architectures": [
+    "arm64"
+  ],
+  "commits": {
+    "app": "7813649f5a4258ce925280035a1d4651c7484b85",
+    "releaseTooling": "4f3421a22d78fc8a227b4b433c73deb593138471"
+  },
+  "identity": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "codesignDeepStrict": "accepted",
+    "hardenedRuntime": "enabled"
+  },
+  "trust": {
+    "notarization": "unavailable",
+    "staple": "unavailable",
+    "gatekeeper": "unavailable",
+    "exception": {
+      "scope": "stable-1.2.15-only",
+      "reason": "Operator explicitly authorized the one-time unnotarized stable 1.2.15 migration release after Developer ID, Qiniu CDN, and real-client canary verification."
+    }
+  },
+  "artifacts": [
+    {
+      "key": "jugglework/releases/v1.2.15/mac/arm64/jugglework-mac-arm64-1.2.15.zip",
+      "size": 238675780,
+      "sha256": "9fab962328857ccd031f2b6a708ceff2f75d7fbc2ab10c96ad5439959d4d99d6",
+      "sha512": "cTBY9XX2ohANVA1tMQ4znl0kAoBC7/wXg7P+Es6EHMPTsmoVjPF8R8T266rtaSnSMPN1Ehp7sNbv9CxGxTA5IQ==",
+      "qiniuEtag": "lgIbUYuiXbv4pZdDmKgkurKlGxdt",
+      "mime": "application/zip",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.15/mac/arm64/jugglework-mac-arm64-1.2.15.dmg",
+      "size": 241446316,
+      "sha256": "0c9520d19cca7ff40f635edd294478c6c85836e60e2f08d86c432dbe156c1fb9",
+      "sha512": "EnDyWez5wA+TxnifqYLdTl89E3cMjlJ7ki+gdll+dFiroGR1dEtP2xeoQbW251zjgicp8HYL1fmLWP8DjGZPaA==",
+      "qiniuEtag": "lkAG8VCDWlzt137ryE3wMH2m7nFB",
+      "mime": "application/x-apple-diskimage",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.15/mac/arm64/jugglework-mac-arm64-1.2.15.zip.blockmap",
+      "size": 248365,
+      "sha256": "125ca6d570579acde31b718bbe8ca23e6685e41224607d04a075409692f7af6e",
+      "sha512": "7FpYejjIx1qagsbw6GF9Y7CyZROyLawD7oo5C9rjf6SOLWs9q1EKBQ69jwUIzBE0v21W30XtFvZjtP4mtam8Fw==",
+      "qiniuEtag": "FnBFfV4u7MOHMEJJg409yNObEcJH",
+      "mime": "application/octet-stream",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.15/mac/arm64/jugglework-mac-arm64-1.2.15.dmg.blockmap",
+      "size": 251923,
+      "sha256": "193b204b8fc8b0a46db390341ae9cdc1614f5e713e6ecf02dbd18ba918ff24e7",
+      "sha512": "wvSaHl3HhiNuZTkzP/CwBUbWP9wl6PoKW4Ehp7HiTyuan/+w9MkrcDZfzZ0J8OiXiAbqZYtGgK8PihgTCNISiw==",
+      "qiniuEtag": "FnaWJ9x4ycA63sT89BDsiQ6FKKlI",
+      "mime": "application/octet-stream",
+      "remoteMatch": true
+    }
+  ],
+  "immutableManifest": {
+    "key": "jugglework/releases/v1.2.15/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac/latest-mac.yml",
+    "size": 706,
+    "sha256": "e9f4f2a3bd91edc622fa4c156ff26f8781754be309ece52ffe55d8e572a683c7",
+    "sha512": "HrIszmkuR1rQRF/bYtyt6gA0HKJ7hWF6FdiUK62NVf5Y3qOhhFpPx+28FCAuW/uHKx6MSQLj/ZOuEgRUS82J0A==",
+    "qiniuEtag": "FqNxs4IHD3bYVSTzdF4MTgt_XDxu",
+    "mime": "text/yaml",
+    "remoteMatch": true
+  },
+  "canary": {
+    "runId": "qiniu-stable-1.2.15-arm64-20260909T0657Z",
+    "sourceVersion": "1.2.14",
+    "targetVersion": "1.2.15",
+    "feed": "immutable-targeted",
+    "result": "passed",
+    "verifiedAt": "2026-09-09T07:01:35.000Z",
+    "productionSignInStatePresent": false,
+    "signedInImBootstrap": {
+      "result": "passed",
+      "verification": "operator-confirmed",
+      "verifiedAt": "2026-09-09",
+      "surfaces": [
+        "Chat",
+        "Contacts"
+      ]
+    }
+  },
+  "promotion": {
+    "channelKey": "jugglework/releases/stable/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/stable/mac/latest-mac.yml",
+    "sha256": "e9f4f2a3bd91edc622fa4c156ff26f8781754be309ece52ffe55d8e572a683c7",
+    "size": 706,
+    "cacheControl": "no-cache, max-age=0, must-revalidate",
+    "readBack": "verified",
+    "promotedAt": "2026-09-09T07:19:13.747Z"
+  },
+  "den": {
+    "rolloutEvidence": "den-rollout-1.2.15.json",
+    "publishedVersionReadBack": "1.2.15",
+    "latestVersionReadBack": "1.2.15",
+    "organizationAllowlistsChanged": false
+  },
+  "createdAt": "2026-09-09T07:41:18.000Z"
+}
