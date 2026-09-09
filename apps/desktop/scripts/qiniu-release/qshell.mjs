@@ -71,7 +71,9 @@ export function createQshellAdapter({ bucket, run = defaultRun, binary = "qshell
     },
 
     async uploadFile(key, localPath, mime, { overwrite = false } = {}) {
-      const args = ["fput", bucket, key, localPath, "--mimetype", mime];
+      // Without this flag qshell re-detects application/octet-stream from the
+      // key extension and serves electron-updater blockmaps as application/x-gzip.
+      const args = ["fput", bucket, key, localPath, "--mimetype", mime, "--detect-mime", "-1"];
       if (overwrite) args.push("--overwrite");
       const result = await invoke(args);
       if (result.status !== 0) throw new Error(`qshell fput failed for ${key}: ${redactCommandOutput(`${result.stdout}\n${result.stderr}`)}`);

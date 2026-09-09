@@ -12,7 +12,7 @@ test("qshell adapter uses argument arrays and omits overwrite for immutable file
   const qiniu = createQshellAdapter({ bucket: "juggleim", run });
   await qiniu.uploadFile("immutable key", "/tmp/file name.zip", "application/zip");
   await qiniu.uploadFile("channel", "/tmp/latest.yml", "text/yaml", { overwrite: true });
-  assert.deepEqual(calls[0].args, ["fput", "juggleim", "immutable key", "/tmp/file name.zip", "--mimetype", "application/zip"]);
+  assert.deepEqual(calls[0].args, ["fput", "juggleim", "immutable key", "/tmp/file name.zip", "--mimetype", "application/zip", "--detect-mime", "-1"]);
   assert.equal(calls[0].args.includes("--overwrite"), false);
   assert.equal(calls[1].args.at(-1), "--overwrite");
 });
