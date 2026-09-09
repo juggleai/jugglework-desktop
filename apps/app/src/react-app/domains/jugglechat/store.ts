@@ -8,6 +8,7 @@ import {
   isAutomationEventPushMessage,
   isAutomationNotificationMessage,
   isAutomationReadinessUnblockedMessage,
+  isHiddenAutomationConversationMessage,
   parseAutomationReadinessUnblockedPayload,
 } from "./automation-event-message";
 import { dispatchAutomationReadinessUnblocked } from "@/react-app/domains/automations/automation-readiness-events";
@@ -169,10 +170,12 @@ function releaseLocalMediaUrls(messages: ChatMessage[]) {
 // 更新仍然不能带着这条会话（连带它的原始内容预览）冒出来。这条更新的 latestMessage 正好
 // 是判断依据——命中隐藏消息判断函数就跳过这次合并，跟没收到过这次更新一样；没有
 // latestMessage（比如置顶/免打扰这类跟消息无关的字段变化）或者是可见消息就正常合并。
+// TIPS: 逻辑本体在 automation-event-message.ts 的 isHiddenAutomationConversationMessage
+// 里，这里只是个薄封装——那边没有 DOM 依赖，能被直接单测；这条判断曾经在这个文件里
+// 直接写错过（sender.id 兜底把可见通知也当成了隐藏消息），拆出去之后才有真实的行为
+// 测试锁住它，不只是断言源码字符串。
 function isHiddenConversationUpdate(conversation: ChatConversation): boolean {
-  const latestMessage = conversation.latestMessage;
-  if (!latestMessage) return false;
-  return isAutomationEventPushMessage(latestMessage) || isAutomationReadinessUnblockedMessage(latestMessage);
+  return isHiddenAutomationConversationMessage(conversation.latestMessage);
 }
 
 function mergeConversations(current: ChatConversation[], incoming: ChatConversation[], currentUserId?: string) {

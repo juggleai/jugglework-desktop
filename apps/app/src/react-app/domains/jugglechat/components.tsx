@@ -52,7 +52,8 @@ import {
   removeGroupMembers,
   updateGroup,
 } from "./api";
-import { AutomationTriggerNotificationBubble } from "./automation-trigger-notification-bubble";
+import { parseAutomationTriggerNotificationPayload } from "./automation-event-message";
+import { AutomationTriggerNotificationBubble, bubbleCopy, resolveAutomationTriggerBubbleTemplate } from "./automation-trigger-notification-bubble";
 import { useJuggleCallStore } from "./call-store";
 import { juggleChatRuntime } from "./runtime";
 import { useJuggleChatStore } from "./store";
@@ -148,7 +149,10 @@ function useChatNameDirectory(): ChatNameDirectory {
  *
  * TIPS: 引擎给的 conversationTitle 可能为空（尤其是单聊），此时先查通讯录拿真实
  * 姓名，只有查不到才退回 id——否则列表和聊天页顶部会直接把用户 id 摆给用户看。
- *
+ * 通讯录只收真实好友/成员，系统发送方（比如 §4.10 的 jw-automation-events）从来不在
+ * 里面——但它的昵称其实已经通过 IM 的用户资料注册好了，就挂在最新一条消息的
+ * `sender.name` 上，查不到通讯录时先试这个，再退回 id，不需要另外维护一份系统发送方
+ * 名单。
  * @param conversation 会话
  * @param directory 通讯录显示名索引，缺省时直接退回 id
  */
@@ -158,6 +162,7 @@ function conversationName(conversation: ChatConversation | null, directory?: Cha
   return conversation.conversationAlias
     || conversation.conversationTitle
     || directory?.get(`${conversation.conversationType}:${conversation.conversationId}`)
+    || conversation.latestMessage?.sender?.name
     || conversation.conversationId;
 }
 
@@ -230,6 +235,15 @@ function messagePreview(message?: ChatMessage) {
   if (message.name === "jgd:grpntf") return t("chat.preview_group_notice");
   if (message.name === "jgd:friendntf") return t("chat.preview_friend_notice");
   if (message.name === "jg:recallinfo" || message.name === "jg:recall") return t("chat.message_recalled");
+  // §4.10——不能落进下面的"不支持"兜底，否则会话列表预览会显示成"[暂不支持的消息]"，
+  // 这条消息本来就是要给人看的。复用 AutomationTriggerNotificationBubble 同一套
+  // 内容解析/文案函数，不新发明一套预览规则。
+  if (message.name === MESSAGE_NAMES.automationNotification) {
+    const payload = parseAutomationTriggerNotificationPayload(message);
+    if (!payload) return "自动化通知";
+    const copy = bubbleCopy(resolveAutomationTriggerBubbleTemplate(payload.resourceType), payload);
+    return copy.subtitle || copy.title;
+  }
   return t("chat.preview_unsupported");
 }
 

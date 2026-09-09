@@ -55,6 +55,25 @@ export function isAutomationReadinessUnblockedMessage(message: Pick<ChatMessage,
 }
 
 /**
+ * 一条会话更新的 latestMessage 是不是三种系统消息里该隐藏的那两种——供 store.ts 的
+ * `mergeConversations` 判断要不要跳过合并（§4.10：会话本身不再整体过滤，但隐藏消息
+ * 的到达不能把这条会话带出来，见 store.ts `isHiddenConversationUpdate` 调用点）。
+ *
+ * TIPS: 这条判断单独拆出来、能被直接单测，是因为 store.ts 里同名逻辑曾经真的写错过——
+ * 之前的实现直接调用 `isAutomationEventPushMessage(latestMessage) ||
+ * isAutomationReadinessUnblockedMessage(latestMessage)`，但 `isAutomationEventPushMessage`
+ * 的 sender.id 兜底会把 `jw:automation-notification` 也匹配上，导致这条真实可见消息的
+ * 会话更新被错误当成"隐藏消息"跳过合并——这条 bug 只有拿一条同时带 name 和 sender.id
+ * 的完整消息真的跑一遍这个函数才会暴露，纯读源码断言字符串是否出现看不出来。见
+ * §4.10 现场用真实服务端+真实桌面 App 验证时发现并修复。
+ */
+export function isHiddenAutomationConversationMessage(message: Pick<ChatMessage, "name" | "sender"> | undefined): boolean {
+  if (!message) return false;
+  if (isAutomationNotificationMessage(message)) return false;
+  return isAutomationEventPushMessage(message) || isAutomationReadinessUnblockedMessage(message);
+}
+
+/**
  * 从仓库就绪解除阻塞的系统消息里取出仓库全名。
  * @param message 完整消息（只用得到 `content.content` 这一份 JSON 字符串负载）
  * @returns 解析出的 `owner/name`；负载缺失或不是预期形状时返回 null（不是给人看的
@@ -86,7 +105,15 @@ export type AutomationTriggerNotificationPayload = {
 
 /**
  * 从 `jw:automation-notification` 消息里取出摘要级内容，供消息气泡渲染用。
- * @param message 完整消息（只用得到 `content.content` 这一份 JSON 字符串负载）
+ *
+ * TIPS: 字段直接就在 `message.content` 上，不是嵌套在 `content.content` 里再 JSON.parse
+ * 一层——跟 `parseAutomationReadinessUnblockedPayload` 那种"content.content 是一份 JSON
+ * 字符串"的写法不一样。IM vendor SDK 会把 `SendSystemMsg` 传的 `msg_content`（服务端
+ * marshal 出来的 JSON 字符串）自动解析后**摊平合并**进 `content` 对象本身，不是包一层——
+ * 这是拿真实服务端 + 真实桌面 App 完整跑一遍、抓真实消息对象时才发现的：之前照抄
+ * readiness-unblocked 那个函数的写法是没有事实依据的假设，两份消息都没有真的用真实
+ * 消息验证过这个形状。
+ * @param message 完整消息
  * @returns 解析出的负载；缺失路由字段（automationId/entityRef/resourceType/eventType）
  *          时返回 null——这几个字段是气泡渲染和点击路由都依赖的，缺了就没法正常展示，
  *          不是给人看的聊天消息负载解析失败不该抛错打断消息流，静默忽略即可。
@@ -94,23 +121,23 @@ export type AutomationTriggerNotificationPayload = {
 export function parseAutomationTriggerNotificationPayload(
   message: Pick<ChatMessage, "content">,
 ): AutomationTriggerNotificationPayload | null {
-  const raw = message.content?.content;
-  if (typeof raw !== "string" || !raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<AutomationTriggerNotificationPayload>;
-    if (!parsed.automationId || !parsed.entityRef || !parsed.resourceType || !parsed.eventType) return null;
-    return {
-      automationId: parsed.automationId,
-      entityRef: parsed.entityRef,
-      resourceType: parsed.resourceType,
-      eventType: parsed.eventType,
-      repository: parsed.repository,
-      action: parsed.action,
-      actorLogin: parsed.actorLogin,
-      title: parsed.title,
-      excerpt: parsed.excerpt,
-    };
-  } catch {
-    return null;
-  }
+  const content = message.content;
+  if (!content) return null;
+  const automationId = content.automationId;
+  const entityRef = content.entityRef;
+  const resourceType = content.resourceType;
+  const eventType = content.eventType;
+  if (typeof automationId !== "string" || !automationId) return null;
+  if (typeof entityRef !== "string" || !entityRef) return null;
+  if (typeof resourceType !== "string" || !resourceType) return null;
+  if (typeof eventType !== "string" || !eventType) return null;
+  const optionalString = (value: unknown): string | undefined => typeof value === "string" && value ? value : undefined;
+  return {
+    automationId, entityRef, resourceType, eventType,
+    repository: optionalString(content.repository),
+    action: optionalString(content.action),
+    actorLogin: optionalString(content.actorLogin),
+    title: optionalString(content.title),
+    excerpt: optionalString(content.excerpt),
+  };
 }

@@ -143,4 +143,25 @@ describe("automation trigger notification bubble — wiring into the message ren
     const namesBlock = components.slice(components.indexOf("const MESSAGE_NAMES ="), components.indexOf("const SUPPORTED_MESSAGE_NAMES ="));
     expect(namesBlock).toContain("automationNotification");
   });
+
+  // TIPS: 拿真实服务端 + 真实桌面 App 走一遍才发现的两个真实问题（不是设计阶段能想到的）：
+  // 1) messagePreview 有自己独立的 message.name 分发表，没登记会退回"[暂不支持的消息]"，
+  //    跟 MESSAGE_NAMES/SUPPORTED_MESSAGE_NAMES 是两套完全不相关的机制；
+  // 2) conversationName 的通讯录查找找不到系统发送方（它不是真实好友/成员），会话列表
+  //    标题退回显示原始 sender id，而不是已经注册好的昵称。
+  test("messagePreview and conversationName both handle jw:automation-notification instead of falling back to raw ids/unsupported text", () => {
+    const components = readSource("src/react-app/domains/jugglechat/components.tsx");
+    const previewFn = components.slice(components.indexOf("function messagePreview("), components.indexOf("function ListAddMenu("));
+    expect(previewFn).toContain("if (message.name === MESSAGE_NAMES.automationNotification) {");
+    expect(previewFn).toContain("parseAutomationTriggerNotificationPayload(message)");
+    expect(previewFn).toContain("bubbleCopy(resolveAutomationTriggerBubbleTemplate(payload.resourceType), payload)");
+
+    const nameFn = components.slice(components.indexOf("function conversationName("), components.indexOf("function initials("));
+    expect(nameFn).toContain("conversation.latestMessage?.sender?.name");
+    // 通讯录查不到时才轮到这条兜底，不能排在通讯录前面——通讯录里的真实姓名应该优先。
+    const directoryIndex = nameFn.indexOf("directory?.get(");
+    const senderNameIndex = nameFn.indexOf("conversation.latestMessage?.sender?.name");
+    expect(directoryIndex).toBeGreaterThan(-1);
+    expect(directoryIndex).toBeLessThan(senderNameIndex);
+  });
 });

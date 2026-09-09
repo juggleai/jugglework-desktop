@@ -8,6 +8,7 @@ import {
   isAutomationEventPushMessage,
   isAutomationNotificationMessage,
   isAutomationReadinessUnblockedMessage,
+  isHiddenAutomationConversationMessage,
   parseAutomationReadinessUnblockedPayload,
   parseAutomationTriggerNotificationPayload,
 } from "../src/react-app/domains/jugglechat/automation-event-message";
@@ -142,21 +143,22 @@ describe("automation trigger notification (§4.10) — a real, visible system me
     expect(isAutomationEventPushMessage(readinessUnblocked)).toBe(true);
   });
 
+  // TIPS: 字段直接就在 content 上，不是嵌套的 JSON 字符串——见 automation-event-message.ts
+  // 里 parseAutomationTriggerNotificationPayload 的 TIPS：这是拿真实服务端+真实桌面 App
+  // 抓到的真实消息对象改的，之前的写法（content.content 是一份 JSON 字符串）从来没有用
+  // 真实消息验证过，实际是错的——IM vendor SDK 会把 msg_content 解析后摊平合并进 content，
+  // 不是包一层。
   test("parseAutomationTriggerNotificationPayload extracts routing + summary fields, and degrades quietly on incomplete payloads", () => {
-    const full = JSON.stringify({
+    const full = {
       automationId: "auto-1", entityRef: "github:pull_request:482", resourceType: "pull_request",
       eventType: "pull_request", action: "opened", repository: "juggleai/skillhub",
       actorLogin: "octocat", title: "Fix the thing", excerpt: "looks good to me",
-    });
-    expect(parseAutomationTriggerNotificationPayload({ content: { content: full } })).toEqual({
-      automationId: "auto-1", entityRef: "github:pull_request:482", resourceType: "pull_request",
-      eventType: "pull_request", action: "opened", repository: "juggleai/skillhub",
-      actorLogin: "octocat", title: "Fix the thing", excerpt: "looks good to me",
-    });
+    };
+    expect(parseAutomationTriggerNotificationPayload({ content: full })).toEqual(full);
     // 缺路由字段（这里缺 resourceType）时整体判定失败，不是"部分渲染"。
-    expect(parseAutomationTriggerNotificationPayload({ content: { content: JSON.stringify({ automationId: "a", entityRef: "e", eventType: "pull_request" }) } })).toBeNull();
-    expect(parseAutomationTriggerNotificationPayload({ content: { content: "not json" } })).toBeNull();
+    expect(parseAutomationTriggerNotificationPayload({ content: { automationId: "a", entityRef: "e", eventType: "pull_request" } })).toBeNull();
     expect(parseAutomationTriggerNotificationPayload({ content: {} })).toBeNull();
+    expect(parseAutomationTriggerNotificationPayload({ content: undefined as never })).toBeNull();
   });
 
   test("the chat store treats jw:automation-notification as a real message, not a forwarded wakeup signal", () => {
@@ -175,13 +177,35 @@ describe("automation trigger notification (§4.10) — a real, visible system me
     expect(store).toMatch(/if \(isAutomationNotificationMessage\(message\)\) \{\s*\/\/[^\n]*\n\s*\} else if \(isAutomationEventPushMessage\(message\)\) \{/);
   });
 
-  test("the conversation list no longer blanket-filters the automation sender id, but still filters hidden-message-only updates", () => {
+  test("the conversation list no longer blanket-filters the automation sender id; store.ts delegates the per-message decision instead of reimplementing it", () => {
     const store = readSource("src/react-app/domains/jugglechat/store.ts");
     // IGNORED_CONVERSATIONS 不再整体过滤这个发送方 id——它现在会发真实要展示的消息。
     expect(store).not.toMatch(/IGNORED_CONVERSATIONS = new Set\(\[[^\]]*AUTOMATION_EVENT_IM_SENDER_ID[^\]]*\]\)/);
-    // 换成按 latestMessage 精确判断，复用既有的两个隐藏消息判断函数，不新发明第三套。
-    expect(store).toContain("function isHiddenConversationUpdate(conversation: ChatConversation): boolean {");
-    expect(store).toContain("isAutomationEventPushMessage(latestMessage) || isAutomationReadinessUnblockedMessage(latestMessage)");
+    expect(store).toContain("isHiddenAutomationConversationMessage(conversation.latestMessage)");
     expect(store).toContain("if (isHiddenConversationUpdate(conversation)) continue;");
+  });
+
+  // TIPS: 这条曾经在 store.ts 里直接写错——`isAutomationEventPushMessage(latestMessage) ||
+  // isAutomationReadinessUnblockedMessage(latestMessage)`，没有先排除可见通知，导致
+  // isAutomationEventPushMessage 的 sender.id 兜底把 jw:automation-notification 自己的会话
+  // 更新也判成"隐藏"，会话永远不出现在列表里——用真实服务端 + 真实桌面 App 点击验证时
+  // 才暴露出来，因为之前的测试只断言了源码字符串，没有拿一条同时带 name 和 sender.id
+  // 的完整消息真的调用一次这个函数。拆到 automation-event-message.ts 后这里能直接调用
+  // 真实函数，不再是"看起来对"。
+  test("isHiddenAutomationConversationMessage does not classify the visible notification as hidden, even though it shares the hidden messages' sender id", () => {
+    const visibleWithSenderId = { name: AUTOMATION_NOTIFICATION_IM_MESSAGE_NAME, sender: { id: AUTOMATION_EVENT_IM_SENDER_ID } };
+    expect(isHiddenAutomationConversationMessage(visibleWithSenderId)).toBe(false);
+
+    const wakeSignal = { name: AUTOMATION_EVENT_IM_MESSAGE_NAME, sender: { id: AUTOMATION_EVENT_IM_SENDER_ID } };
+    expect(isHiddenAutomationConversationMessage(wakeSignal)).toBe(true);
+
+    const readinessUnblocked = { name: AUTOMATION_READINESS_UNBLOCKED_IM_MESSAGE_NAME, sender: { id: AUTOMATION_EVENT_IM_SENDER_ID } };
+    expect(isHiddenAutomationConversationMessage(readinessUnblocked)).toBe(true);
+
+    // 没有 latestMessage（比如置顶/免打扰这类跟消息无关的更新）：不算隐藏，正常合并。
+    expect(isHiddenAutomationConversationMessage(undefined)).toBe(false);
+
+    // 一条真实的、非自动化系统消息的普通聊天消息：也不算隐藏。
+    expect(isHiddenAutomationConversationMessage({ name: "jg:text", sender: { id: "member1" } })).toBe(false);
   });
 });
