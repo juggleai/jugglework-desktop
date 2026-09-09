@@ -1578,6 +1578,22 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
+/**
+ * §4.10 的 (automationId, entityRef) → 会话归属记录，跟 apps/server 的
+ * `EntitySessionMapping`（automation/repository.ts）一一对应——渲染进程和本地服务是
+ * 两个不同进程，这里镜像 JSON 形状，不跨进程边界导入内部类型。
+ */
+export type AutomationEntitySessionMapping = {
+  automationId: string;
+  entityRef: string;
+  workspaceId: string;
+  sessionId: string;
+  status: "active" | "closed" | "invalid";
+  invalidReason?: string;
+  createdAt: number;
+  lastUsedAt: number;
+};
+
 export function createJuggleWorkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
@@ -1732,6 +1748,17 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
     getAutomation: (automationId: string) => requestJson<{ item: AutomationDefinitionRecord }>(
       baseUrl, `/automations/${encodeURIComponent(automationId)}`, { token, hostToken, timeoutMs: timeouts.config },
     ),
+    /**
+     * §4.10 的"打开会话"用它——按 (automationId, entityRef) 实时解析当前归属会话，不用
+     * 消息里的快照。`item` 为 null 表示这个实体从没触发过（自动化还在，只是没有归属记录）；
+     * 自动化本身已被删除会走 404（`JuggleWorkServerError`），调用方两种情况都提示
+     * "该会话已不存在"，不需要区分原因——见 PRD §4.10 的 Exception。
+     */
+    getAutomationEntitySession: (automationId: string, entityRef: string) =>
+      requestJson<{ item: AutomationEntitySessionMapping | null }>(
+        baseUrl, `/automations/${encodeURIComponent(automationId)}/entity-session?entityRef=${encodeURIComponent(entityRef)}`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
     /** 原子创建本机自动化任务。 */
     createAutomation: (draft: AutomationDraft) => requestJson<{ item: AutomationDefinitionRecord }>(
       baseUrl, "/automations", { token, hostToken, method: "POST", body: draft, timeoutMs: timeouts.config },

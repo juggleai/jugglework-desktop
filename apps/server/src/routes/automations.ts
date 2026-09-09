@@ -250,6 +250,20 @@ export function registerAutomationRoutes(options: RegisterAutomationRoutesOption
     return jsonResponse({ item });
   });
 
+  // TIPS: §4.10 的"打开会话"用它——jw:automation-notification 消息不携带 sessionId/
+  // workspaceId 快照，点击时按 (automationId, entityRef) 实时查这张表来解析当前归属
+  // 会话，这样同一实体的会话按 4.8 的规则"毕业"到新会话后，旧消息点开仍然指向当前会话。
+  // 自动化本身已被删除也走这里（先查 getDefinition，跟上面 GET /automations/:automationId
+  // 同一个 404），跟"归属记录本身缺失/失效"统一成一种前端提示（"该会话已不存在"），
+  // 不需要调用方先后调用两个端点区分这两种原因——见 PRD §4.10 的 Exception。
+  addRoute(routes, "GET", "/automations/:automationId/entity-session", "client", async (ctx) => {
+    const entityRef = ctx.url.searchParams.get("entityRef")?.trim() || "";
+    if (!entityRef) throw new ApiError(400, "invalid_request", "entityRef is required");
+    if (!repository.getDefinition(ctx.params.automationId)) throw new ApiError(404, "automation_not_found", "Automation not found");
+    const mapping = repository.getEntitySessionMapping(ctx.params.automationId, entityRef);
+    return jsonResponse({ item: mapping });
+  });
+
   addRoute(routes, "POST", "/automations", "client", async (ctx) => {
     requireMutation(ctx, options);
     const body = await readJsonBody(ctx.request);

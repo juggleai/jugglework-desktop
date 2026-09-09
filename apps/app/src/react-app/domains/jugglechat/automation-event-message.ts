@@ -19,9 +19,30 @@ export const AUTOMATION_EVENT_IM_MESSAGE_NAME = "jw:automation-event-delivery";
 // 区分这两种消息，必须按 `name` 精确匹配——见下面 `isAutomationReadinessUnblockedMessage`
 // 只判断 name，不像 `isAutomationEventPushMessage` 那样也接受纯 sender.id 匹配。
 export const AUTOMATION_READINESS_UNBLOCKED_IM_MESSAGE_NAME = "jw:automation-readiness-unblocked";
+// TIPS: §4.10——第三种消息，跟前两种共用同一个固定发送方身份，但客户端不拦截它，是真实
+// 呈现给用户看的会话消息。只按 name 精确匹配（不接受 sender.id 兜底），理由见下面
+// isAutomationEventPushMessage 的 TIPS：这三种消息现在共用同一个 sender.id，任何一个
+// 判断函数如果单靠 sender.id 兜底，就会把其它两种也一并错判进来。
+export const AUTOMATION_NOTIFICATION_IM_MESSAGE_NAME = "jw:automation-notification";
 
+/**
+ * TIPS: sender.id 兜底匹配是这个判断函数的既有行为（在只有两种系统消息共用一个发送方
+ * 身份时是安全的），但 §4.10 引入 `jw:automation-notification` 之后，这条兜底会把新的
+ * 可见消息也误判成"该转发去唤醒轮询、不显示"——三种消息现在共用同一个 sender.id，只有
+ * name 还能精确区分它们。调用方（store.ts）必须先用 isAutomationNotificationMessage
+ * 排除掉可见消息，再调用这个函数，不能指望这个函数自己排除；这里不改掉 sender.id 兜底
+ * 本身，是因为不确定历史上是不是有 name 字段缺失、只能靠 sender.id 兜底识别的真实场景。
+ */
 export function isAutomationEventPushMessage(message: Pick<ChatMessage, "name" | "sender">): boolean {
   return message.name === AUTOMATION_EVENT_IM_MESSAGE_NAME || message.sender?.id === AUTOMATION_EVENT_IM_SENDER_ID;
+}
+
+/**
+ * `jw:automation-notification`（§4.10 新增的真实可见消息）判断。只按 name 精确匹配，
+ * 理由同 isAutomationReadinessUnblockedMessage。
+ */
+export function isAutomationNotificationMessage(message: Pick<ChatMessage, "name">): boolean {
+  return message.name === AUTOMATION_NOTIFICATION_IM_MESSAGE_NAME;
 }
 
 /**
@@ -45,6 +66,50 @@ export function parseAutomationReadinessUnblockedPayload(message: Pick<ChatMessa
   try {
     const parsed = JSON.parse(raw) as { repository?: unknown };
     return typeof parsed.repository === "string" && parsed.repository ? { repository: parsed.repository } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `jw:automation-notification` 的消息内容——跟服务端 automationTriggerNotificationIMContent 一一对应（§4.10）。 */
+export type AutomationTriggerNotificationPayload = {
+  automationId: string;
+  entityRef: string;
+  resourceType: string;
+  repository?: string;
+  eventType: string;
+  action?: string;
+  actorLogin?: string;
+  title?: string;
+  excerpt?: string;
+};
+
+/**
+ * 从 `jw:automation-notification` 消息里取出摘要级内容，供消息气泡渲染用。
+ * @param message 完整消息（只用得到 `content.content` 这一份 JSON 字符串负载）
+ * @returns 解析出的负载；缺失路由字段（automationId/entityRef/resourceType/eventType）
+ *          时返回 null——这几个字段是气泡渲染和点击路由都依赖的，缺了就没法正常展示，
+ *          不是给人看的聊天消息负载解析失败不该抛错打断消息流，静默忽略即可。
+ */
+export function parseAutomationTriggerNotificationPayload(
+  message: Pick<ChatMessage, "content">,
+): AutomationTriggerNotificationPayload | null {
+  const raw = message.content?.content;
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AutomationTriggerNotificationPayload>;
+    if (!parsed.automationId || !parsed.entityRef || !parsed.resourceType || !parsed.eventType) return null;
+    return {
+      automationId: parsed.automationId,
+      entityRef: parsed.entityRef,
+      resourceType: parsed.resourceType,
+      eventType: parsed.eventType,
+      repository: parsed.repository,
+      action: parsed.action,
+      actorLogin: parsed.actorLogin,
+      title: parsed.title,
+      excerpt: parsed.excerpt,
+    };
   } catch {
     return null;
   }

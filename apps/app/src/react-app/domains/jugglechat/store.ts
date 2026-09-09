@@ -5,8 +5,8 @@ import { createJuggleWorkServerClient } from "@/app/lib/jugglework-server";
 import { resolveJuggleWorkConnection } from "@/react-app/shell/jugglework-connection";
 import { getChatGroupsForContacts, getMembers } from "./api";
 import {
-  AUTOMATION_EVENT_IM_SENDER_ID,
   isAutomationEventPushMessage,
+  isAutomationNotificationMessage,
   isAutomationReadinessUnblockedMessage,
   parseAutomationReadinessUnblockedPayload,
 } from "./automation-event-message";
@@ -64,7 +64,11 @@ type JuggleChatState = {
 // TIPS: 这条系统会话（jugglework-server 事件中继推送唤醒信号的固定发送方身份，见
 // automation-event-message.ts 顶部注释）连同其它系统会话（好友申请、动态通知）一起从会话
 // 列表里过滤掉，不让它以"[暂不支持的消息]"这种不可读的样子出现在用户的收件箱里。
-const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", "", AUTOMATION_EVENT_IM_SENDER_ID]);
+// TIPS: §4.10——jw-automation-events 这个系统会话不再整体过滤（以前在这——见迁移前的
+// AUTOMATION_EVENT_IM_SENDER_ID 那一项），因为它现在会发一种真实要展示的消息
+// （jw:automation-notification）。改成在 mergeConversations 里按 latestMessage 精确
+// 判断要不要跳过合并，见那里的 TIPS。
+const IGNORED_CONVERSATIONS = new Set(["friend_apply", "post_ntf", ""]);
 let subscriptionsStarted = false;
 
 function messageKey(message: ChatMessage) {
@@ -160,10 +164,22 @@ function releaseLocalMediaUrls(messages: ChatMessage[]) {
   for (const url of urls) URL.revokeObjectURL(url);
 }
 
+// TIPS: §4.10——jw-automation-events 的会话本身不再整体过滤，但它的两种隐藏消息
+// （jw:automation-event-delivery/jw:automation-readiness-unblocked）到达时推来的会话
+// 更新仍然不能带着这条会话（连带它的原始内容预览）冒出来。这条更新的 latestMessage 正好
+// 是判断依据——命中隐藏消息判断函数就跳过这次合并，跟没收到过这次更新一样；没有
+// latestMessage（比如置顶/免打扰这类跟消息无关的字段变化）或者是可见消息就正常合并。
+function isHiddenConversationUpdate(conversation: ChatConversation): boolean {
+  const latestMessage = conversation.latestMessage;
+  if (!latestMessage) return false;
+  return isAutomationEventPushMessage(latestMessage) || isAutomationReadinessUnblockedMessage(latestMessage);
+}
+
 function mergeConversations(current: ChatConversation[], incoming: ChatConversation[], currentUserId?: string) {
   const map = new Map(current.map((conversation) => [`${conversation.conversationType}:${conversation.conversationId}`, conversation]));
   for (const conversation of incoming) {
     if (!conversation.conversationId || conversation.conversationId === currentUserId || IGNORED_CONVERSATIONS.has(conversation.conversationId)) continue;
+    if (isHiddenConversationUpdate(conversation)) continue;
     const key = `${conversation.conversationType}:${conversation.conversationId}`;
     map.set(key, { ...map.get(key), ...conversation });
   }
@@ -231,7 +247,14 @@ function startSubscriptions() {
       if (payload) dispatchAutomationReadinessUnblocked(payload);
       return;
     }
-    if (isAutomationEventPushMessage(message)) {
+    // TIPS: §4.10——jw:automation-notification 是真实要展示的消息，必须在
+    // isAutomationEventPushMessage 之前判断、且判断为真时不能 return。isAutomationEventPushMessage
+    // 的 sender.id 兜底会把这条也匹配上（三种系统消息现在共用同一个 sender.id），
+    // 用 else if 让它在已经识别成可见通知时完全不被调用，而不是指望它自己排除——
+    // 这条消息该走下面普通消息的处理路径（追加进消息列表/计未读/刷新会话列表）。
+    if (isAutomationNotificationMessage(message)) {
+      // 不特殊处理，直接落进下面的普通消息分支。
+    } else if (isAutomationEventPushMessage(message)) {
       void notifyLocalServerOfGithubEventPush();
       return;
     }

@@ -52,6 +52,7 @@ import {
   removeGroupMembers,
   updateGroup,
 } from "./api";
+import { AutomationTriggerNotificationBubble } from "./automation-trigger-notification-bubble";
 import { useJuggleCallStore } from "./call-store";
 import { juggleChatRuntime } from "./runtime";
 import { useJuggleChatStore } from "./store";
@@ -417,6 +418,9 @@ const MESSAGE_NAMES = {
   contactCard: "jgd:contactcard",
   sticker: "snl:sticker",
   chain: "snl:replay",
+  // §4.10——必须在这里登记，否则会被下面 SUPPORTED_MESSAGE_NAMES 判成"不支持"，落进
+  // system 分支渲染成一条灰色的"消息暂不支持"分隔行，永远走不到 MessageBubble。
+  automationNotification: "jw:automation-notification",
 } as const;
 
 const SUPPORTED_MESSAGE_NAMES = new Set<string>(Object.values(MESSAGE_NAMES));
@@ -668,6 +672,7 @@ function MessageBubble({ message, onResend }: { message: ChatMessage; onResend?:
   if (message.name === MESSAGE_NAMES.merge) return <MergeMessage message={message} />;
   if (message.name === MESSAGE_NAMES.contactCard) return <ContactCardMessage message={message} />;
   if (message.name === MESSAGE_NAMES.chain) return <ChainMessage message={message} />;
+  if (message.name === MESSAGE_NAMES.automationNotification) return <AutomationTriggerNotificationBubble message={message} />;
   if (message.name === MESSAGE_NAMES.callFinished) return <div className="tyn-reply-bubble"><div className="tyn-reply-text tyn-reply-call-text wr wr-rtc-status-hangup">{callFinishedText(message)}</div></div>;
   if (message.name === MESSAGE_NAMES.streamText) {
     const stream = `${String(message.content?.content || "")}${String(message.streamMsg?.streams || "")}`;

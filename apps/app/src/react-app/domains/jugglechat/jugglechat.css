@@ -583,6 +583,12 @@
 .jw-im-call-error { z-index: 42; position: absolute; top: 15px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-radius: 10px; color: #a53b4d; background: #fff1f3; box-shadow: 0 8px 25px rgb(40 20 24 / 15%); font-size: 11px; }
 .jw-im-call-error button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
 
+.jw-im-automation-notification .jw-im-automation-notification-body { display: flex; flex-direction: column; gap: 4px; min-width: 200px; }
+.jw-im-automation-notification-title { font-size: 13px; font-weight: 620; }
+.jw-im-automation-notification-subtitle { color: #65636d; font-size: 12px; line-height: 1.4; }
+.jw-im-automation-notification-action { align-self: flex-start; margin-top: 4px; padding: 5px 10px; border: 0; border-radius: 8px; color: white; background: var(--jw-im-accent); font-size: 11.5px; font-weight: 560; cursor: pointer; }
+.jw-im-automation-notification-action:disabled { opacity: 0.6; cursor: default; }
+
 @media (max-width: 860px) {
   .jw-im-list-pane { flex-basis: 270px; }
   .jw-im-message-stack { max-width: 82%; }

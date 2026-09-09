@@ -102,6 +102,91 @@ test("automation routes support local-first CRUD, manual run and history", async
   }
 });
 
+// TIPS: §4.10 的"打开会话"用它——jw:automation-notification 消息不携带 sessionId/
+// workspaceId 快照，渲染进程点击时按 (automationId, entityRef) 实时查这个端点解析当前
+// 归属会话。三种结果都要覆盖：有映射、没有映射（但自动化还在）、自动化本身已被删除——
+// 后两者服务端故意统一成"查不到"，前端不需要区分原因，见 PRD §4.10 的 Exception。
+test("entity-session route resolves the live session mapping, and folds missing-mapping/deleted-automation into one not-found shape", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-automation-entity-session-"));
+  const workspacePath = join(root, "workspace");
+  await mkdir(workspacePath);
+  await writeFile(join(workspacePath, ".keep"), "");
+  const routeConfig = config(root, workspacePath);
+  const repository = await AutomationRepository.open(routeConfig);
+  const routes: Route[] = [];
+  registerAutomationRoutes({
+    routes,
+    config: routeConfig,
+    repository,
+    jsonResponse: (data, status = 200) => Response.json(data, { status }),
+    readJsonBody: async (request) => await request.json() as Record<string, unknown>,
+    ensureWritable: () => undefined,
+    requireClientScope: () => undefined,
+  });
+  const invoke = async (method: string, path: string, body?: unknown) => {
+    const url = new URL(`http://localhost${path}`);
+    const route = matchRoute(routes, method, url.pathname);
+    assert.ok(route);
+    const request = new Request(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    return route.handler({ request, url, params: route.params, config: routeConfig } as RequestContext);
+  };
+  const now = Date.now();
+  const localDate = new Date(now + 86_400_000).toISOString().slice(0, 10);
+  try {
+    // 走真实的 POST /automations 建一条最小定义，跟上面那条测试同一套请求体形状——
+    // 这条测试只关心 entity-session 这一个新端点，不重复造一套 repository 直写的逻辑。
+    const create = await invoke("POST", "/automations", {
+      name: "会话解析测试",
+      workspace: { id: "workspace-1", name: "工作空间", path: workspacePath, workspaceType: "local" },
+      prompt: { version: 1, parts: [{ type: "text", text: "执行测试" }] },
+      timezone: "UTC",
+      trigger: { version: 1, kind: "once", localDate, localTime: "23:59", timezone: "UTC" },
+      model: { mode: "auto" },
+      skillIds: [],
+      connectors: [],
+      permission: { profile: AUTOMATION_PERMISSION_PROFILE, acknowledgedAt: now },
+      lifecycle: "enabled",
+      executorDeviceId: "device-1",
+    });
+    assert.equal(create.status, 201);
+    const created = await create.json() as { item: { definition: { id: string } } };
+    const automationId = created.item.definition.id;
+
+    // 没有归属记录：自动化还在，只是这个实体从没触发过。
+    const noMapping = await invoke("GET", `/automations/${automationId}/entity-session?entityRef=${encodeURIComponent("github:pull_request:482")}`);
+    assert.equal(noMapping.status, 200);
+    assert.deepEqual((await noMapping.json()) as { item: unknown }, { item: null });
+
+    // 有归属记录：解析出当前会话。
+    repository.upsertEntitySessionMapping(automationId, "github:pull_request:482", "workspace-1", "session-abc", now);
+    const withMapping = await invoke("GET", `/automations/${automationId}/entity-session?entityRef=${encodeURIComponent("github:pull_request:482")}`);
+    assert.equal(withMapping.status, 200);
+    const mappingPayload = (await withMapping.json()) as { item: { sessionId: string; workspaceId: string; status: string } };
+    assert.equal(mappingPayload.item.sessionId, "session-abc");
+    assert.equal(mappingPayload.item.workspaceId, "workspace-1");
+    assert.equal(mappingPayload.item.status, "active");
+
+    // 自动化本身已被删除：跟"没有归属记录"统一成 404，前端按同一种提示处理。
+    await assert.rejects(
+      invoke("GET", `/automations/does-not-exist/entity-session?entityRef=${encodeURIComponent("github:pull_request:482")}`),
+      (error: unknown) => (error as { status: number; code: string }).status === 404 && (error as { code: string }).code === "automation_not_found",
+    );
+
+    // entityRef 缺失：明确的 400，不是静默返回空。
+    await assert.rejects(
+      invoke("GET", `/automations/${automationId}/entity-session`),
+      (error: unknown) => (error as { status: number }).status === 400,
+    );
+  } finally {
+    repository.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 function config(root: string, workspacePath: string): ServerConfig {
   return {
     host: "127.0.0.1",
