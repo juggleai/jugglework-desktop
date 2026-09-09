@@ -160,7 +160,7 @@ function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicat
       title={title}
       aria-label={title}
     >
-      <SessionCircularProgress />
+      <SessionCircularProgress className="dark:text-white" />
     </span>
   );
 }

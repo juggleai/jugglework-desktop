@@ -1,11 +1,13 @@
 /** @jsxImportSource react */
 
+import { cn } from "@/lib/utils";
+
 /** Shared session/workspace activity indicator. */
-export function SessionCircularProgress() {
+export function SessionCircularProgress({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      className="size-3.5 animate-spin text-dls-accent motion-reduce:animate-none"
+      className={cn("size-3.5 animate-spin text-dls-accent motion-reduce:animate-none", className)}
       style={{ animationDuration: "850ms" }}
       aria-hidden="true"
     >

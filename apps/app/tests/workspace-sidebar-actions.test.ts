@@ -36,6 +36,15 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/data-session-hover-actions[\s\S]+group-has-\[:focus-visible\]\/menu-sub-item:pointer-events-auto/);
   });
 
+  test("renders the active-session loading indicator in white in dark mode", () => {
+    const indicator = source.slice(
+      source.indexOf("function SessionLoadingIndicator"),
+      source.indexOf("interface SessionOutcomeIndicatorProps"),
+    );
+
+    expect(indicator).toMatch(/<SessionCircularProgress className="dark:text-white" \/>/);
+  });
+
   test("keeps the empty left lane after moving session loading to the trailing slot", () => {
     expect(source).toMatch(/const LEFT_ACTIVITY_SLOT = "flex size-4 shrink-0 items-center justify-center"/);
     expect(source).toMatch(/const leading = \([\s\S]+aria-hidden="true" className=\{LEFT_ACTIVITY_SLOT\}/);

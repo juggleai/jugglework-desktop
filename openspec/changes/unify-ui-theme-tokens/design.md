@@ -47,6 +47,10 @@
 
 输入框运行中按钮采用固定黑白反色，不复用品牌强调色：亮色黑底白方块，暗色白底黑方块。沿用现有 Tailwind dark variant（同时覆盖 `.dark` 与 `[data-theme="dark"]`），方块保持 `fill="currentColor"`。保留 36px 圆形尺寸、点击停止回调、队列角标和 idle 发送按钮样式；悬停仅轻微降低背景不透明度。
 
+### 会话列表运行图标补充
+
+共享圆形进度组件继续默认使用强调色，并开放 `className` 供具体展示位置覆盖。会话列表行尾传入 `dark:text-white`，使图标在 `.dark` 与 `[data-theme="dark"]` 下为白色；导航栏与工作区级加载图标不受影响，亮色主题仍使用既有强调色。
+
 - 亮色从 #fcfcfd → #ffffff、列表 #f9f9fb → #fcfcfc 是全局视觉变化，依赖旧灰底的截图/测试会失效。
 - 顶栏 56→50px 影响 mac 标题栏拖拽区高度（仍 >= 系统最小值，实测可用）。
 - 消息页卡片硬编码亮色 `#ffffff`（非 token）：为排除 token 解析问题的刻意选择，暗色由 `:host([data-theme=dark])` 覆盖回 `--ui-surface`。
