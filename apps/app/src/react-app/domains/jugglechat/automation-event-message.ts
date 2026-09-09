@@ -75,19 +75,21 @@ export function isHiddenAutomationConversationMessage(message: Pick<ChatMessage,
 
 /**
  * 从仓库就绪解除阻塞的系统消息里取出仓库全名。
- * @param message 完整消息（只用得到 `content.content` 这一份 JSON 字符串负载）
+ *
+ * TIPS: 字段直接就在 `message.content` 上（`content.repository`），不是嵌套在
+ * `content.content` 里再 JSON.parse 一层——这里原来的写法假设 IM vendor SDK 会把
+ * `msg_content`（服务端 marshal 出来的 JSON 字符串）包一层塞进 `content.content`，
+ * 但拿真实服务端 + 真实桌面 App 验证 §4.10 新增的 `jw:automation-notification`
+ * （走同一条 `SendSystemMsg` 通道、同样的服务端 marshal 方式）时发现：SDK 实际上是把
+ * 解析后的字段**摊平合并**进 `content` 对象本身，不是包一层。这条消息共用同一条发送
+ * 通道，此前从没有用真实消息验证过这个假设，是同一个错误。
+ * @param message 完整消息
  * @returns 解析出的 `owner/name`；负载缺失或不是预期形状时返回 null（不是给人看的
  *          聊天消息负载解析失败不该抛错打断消息流，静默忽略即可）
  */
 export function parseAutomationReadinessUnblockedPayload(message: Pick<ChatMessage, "content">): { repository: string } | null {
-  const raw = message.content?.content;
-  if (typeof raw !== "string" || !raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as { repository?: unknown };
-    return typeof parsed.repository === "string" && parsed.repository ? { repository: parsed.repository } : null;
-  } catch {
-    return null;
-  }
+  const repository = message.content?.repository;
+  return typeof repository === "string" && repository ? { repository } : null;
 }
 
 /** `jw:automation-notification` 的消息内容——跟服务端 automationTriggerNotificationIMContent 一一对应（§4.10）。 */

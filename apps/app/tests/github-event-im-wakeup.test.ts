@@ -73,10 +73,12 @@ describe("automation readiness-unblocked IM notification → list resume prompt"
     expect(isAutomationReadinessUnblockedMessage({})).toBe(false);
   });
 
+  // TIPS: 字段直接在 content 上，不是嵌套的 JSON 字符串——见 automation-event-message.ts
+  // 里这个函数的 TIPS：原来的写法是从没被真实消息验证过的错误假设，跟 §4.10 那条消息
+  // 共用同一条发送通道，同一个错误，用真实服务端+真实桌面 App 验证时一起发现并改正。
   test("parseAutomationReadinessUnblockedPayload extracts the repository, and degrades quietly on bad payloads", () => {
-    expect(parseAutomationReadinessUnblockedPayload({ content: { content: '{"repository":"juggleai/skillhub"}' } })).toEqual({ repository: "juggleai/skillhub" });
-    expect(parseAutomationReadinessUnblockedPayload({ content: { content: "not json" } })).toBeNull();
-    expect(parseAutomationReadinessUnblockedPayload({ content: { content: "{}" } })).toBeNull();
+    expect(parseAutomationReadinessUnblockedPayload({ content: { repository: "juggleai/skillhub" } })).toEqual({ repository: "juggleai/skillhub" });
+    expect(parseAutomationReadinessUnblockedPayload({ content: { repository: "" } })).toBeNull();
     expect(parseAutomationReadinessUnblockedPayload({ content: {} })).toBeNull();
     expect(parseAutomationReadinessUnblockedPayload({})).toBeNull();
   });
@@ -207,5 +209,21 @@ describe("automation trigger notification (§4.10) — a real, visible system me
 
     // 一条真实的、非自动化系统消息的普通聊天消息：也不算隐藏。
     expect(isHiddenAutomationConversationMessage({ name: "jg:text", sender: { id: "member1" } })).toBe(false);
+  });
+
+  // TIPS: 真实点击验证时发现的第五个问题——两种隐藏消息之前只在实时推送那条路径上被
+  // 拦截（"message" 订阅收到就 return），但历史消息加载（打开会话/往上翻）是完全不同的
+  // 另一条路径，直接从 IM 拉历史、根本不经过那个拦截点。这条会话过去只发过哑信号，
+  // 累积了大量历史消息，会话不再整体过滤之后，用户一打开就看到一堆"消息暂不支持"的
+  // 历史哑信号行——这条测试锁定 appendMessages/prependMessages/selectConversation 的
+  // 初始加载都在真正过滤，不只是实时推送那一条路径。
+  test("history loading (selectConversation's initial fetch, loadEarlierMessages, appendMessages/prependMessages) also filters hidden messages, not just the live push subscription", () => {
+    const store = readSource("src/react-app/domains/jugglechat/store.ts");
+    expect(store).toContain("function filterVisibleMessages(messages: ChatMessage[]) {");
+    expect(store).toContain("return messages.filter((message) => !isHiddenAutomationConversationMessage(message));");
+    // appendMessages/prependMessages 内部过滤，覆盖实时推送 + 往上翻历史两条路径。
+    expect(store).toContain("for (const message of filterVisibleMessages(incoming)) {");
+    // selectConversation 的首次加载是直接 set messages，不经过 appendMessages，得单独过滤。
+    expect(store).toContain("messages: filterVisibleMessages(result.messages ?? []),");
   });
 });

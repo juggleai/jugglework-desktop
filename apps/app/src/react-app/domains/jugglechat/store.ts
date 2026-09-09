@@ -134,9 +134,19 @@ function syncActiveConversation(activeConversation: ChatConversation | null, con
   return updated ? { ...activeConversation, ...updated } : activeConversation;
 }
 
+// TIPS: §4.10——两种隐藏消息（jw:automation-event-delivery/jw:automation-readiness-
+// unblocked）之前只在实时推送那条路径上被拦截（juggleChatRuntime.subscribe("message", ...)
+// 收到就 return，从不走到这两个函数）。但历史消息加载（selectConversation 打开会话、
+// loadEarlierMessages 往上翻）是完全不同的另一条路径，直接从 IM 拉历史记录、从不经过那个
+// 拦截点——这条会话曾经只发哑信号，累积了大量历史消息，会话不再整体过滤之后，用户一打开
+// 就会看到一堆"消息暂不支持"的历史哑信号行。在这里统一过滤，覆盖 append/prepend 两条路径。
+function filterVisibleMessages(messages: ChatMessage[]) {
+  return messages.filter((message) => !isHiddenAutomationConversationMessage(message));
+}
+
 function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   const messages = [...current];
-  for (const message of incoming) {
+  for (const message of filterVisibleMessages(incoming)) {
     const index = messageIndex(messages, message);
     if (index >= 0) messages[index] = mergeMessage(messages[index], message);
     else messages.push(message);
@@ -147,7 +157,7 @@ function appendMessages(current: ChatMessage[], incoming: ChatMessage[]) {
 function prependMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   const existing = [...current];
   const history: ChatMessage[] = [];
-  for (const message of incoming) {
+  for (const message of filterVisibleMessages(incoming)) {
     const currentIndex = messageIndex(existing, message);
     if (currentIndex >= 0) {
       existing[currentIndex] = mergeMessage(existing[currentIndex], message);
@@ -541,7 +551,7 @@ export const useJuggleChatStore = create<JuggleChatState>((set, get) => ({
       ]);
       if (!isSameConversation(get().activeConversation, conversation)) return;
       set({
-        messages: result.messages ?? [],
+        messages: filterVisibleMessages(result.messages ?? []),
         loadingMessages: false,
         messagesFinished: Boolean(result.isFinished),
         pinnedMessage: hasMessageIdentity(pinned?.message) ? { message: pinned.message, operator: pinned?.operator, createdTime: pinned?.createdTime } : null,
