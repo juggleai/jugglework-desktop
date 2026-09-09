@@ -24,6 +24,27 @@ export function sessionPermissionModeKey(workspaceId: string, sessionId: string)
   return ["session-permission-mode", workspaceId, sessionId] as const;
 }
 
+export const ACTIVE_PERMISSION_MODE_REFETCH_MS = 750;
+
+type PermissionModeQueryData = {
+  state: Pick<SessionPermissionModeState, "requestedMode"> | null;
+  grants: Array<Pick<SessionPermissionGrantRecord, "state">>;
+};
+
+/**
+ * Authority may be suspended or invalidated asynchronously by the server-side
+ * broker, without a renderer mutation to invalidate this query. Refresh while
+ * automatic authority is configured so the UI cannot keep showing stale Full
+ * access or grant state.
+ */
+export function sessionPermissionModeRefetchInterval(
+  data: PermissionModeQueryData | null | undefined,
+): number | false {
+  if (data?.state?.requestedMode === "full-access") return ACTIVE_PERMISSION_MODE_REFETCH_MS;
+  if (data?.grants.some((grant) => grant.state === "active")) return ACTIVE_PERMISSION_MODE_REFETCH_MS;
+  return false;
+}
+
 export type SessionPermissionModeHookInput = {
   client: JuggleWorkServerClient | null;
   workspaceId: string;
@@ -54,6 +75,8 @@ export function useSessionPermissionMode(input: SessionPermissionModeHookInput):
     queryFn: () => client!.getSessionPermissionMode(workspaceId, sessionId!),
     enabled: Boolean(client && sessionId),
     staleTime: 30_000,
+    refetchInterval: (query) =>
+      sessionPermissionModeRefetchInterval(query.state.data),
     retry: 1,
   });
 

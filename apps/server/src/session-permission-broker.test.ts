@@ -23,6 +23,7 @@ import {
   captureActivationBoundary,
   evaluateSessionApprovalCeiling,
   normalizePendingPermissionRequest,
+  resolveLocalHostAuthorizingPrincipal,
   RootSerialization,
   SessionPermissionBroker,
   verifyAuthorizingPrincipal,
@@ -201,11 +202,6 @@ async function createHarness(options?: { hostToken?: string }): Promise<Harness>
   };
 }
 
-const hostPrincipal = (config: ServerConfig) => ({
-  id: hashToken(config.hostToken),
-  scope: "owner" as const,
-});
-
 async function activateFullAccess(h: Harness, exclusion: string[] = []) {
   const result = h.store.updateMode({
     workspaceId: h.workspace.id,
@@ -213,7 +209,7 @@ async function activateFullAccess(h: Harness, exclusion: string[] = []) {
     requestedMode: "full-access",
     expectedRevision: h.store.readAuthorityRevision(h.workspace.id, "ses_root"),
     acknowledgementProfileVersion: 1,
-    authorizingPrincipal: hostPrincipal(h.config),
+    authorizingPrincipal: await resolveLocalHostAuthorizingPrincipal(h.config),
     activationExclusionRequestIds: exclusion,
     now: NOW,
   });
@@ -330,21 +326,47 @@ describe("session permission broker", () => {
     );
   });
 
-  test("principal authority loss durably suspends full access without silent resumption", async () => {
+  test("local installation authority survives embedded host-token rotation", async () => {
     const h = harness = await createHarness();
     await activateFullAccess(h);
     h.engine.permissions = [legacyPending()];
 
-    // Rotate the host token: the recorded principal no longer verifies.
+    // Changing workspaces may rotate the embedded server transport token, but
+    // it remains the same trusted local desktop installation.
     h.config.hostToken = "owt_rotated_host";
 
+    await h.runCycle();
+    assert.equal(h.engine.replies.length, 1);
+    assert.equal(
+      h.store.readModeState(h.workspace.id, "ses_root")?.effectiveMode,
+      "full-access",
+    );
+  });
+
+  test("principal authority loss durably suspends full access without silent resumption", async () => {
+    const h = harness = await createHarness();
+    const owner = await h.tokens.create("owner", { label: "test owner" });
+    const enabled = h.store.updateMode({
+      workspaceId: h.workspace.id,
+      rootSessionId: "ses_root",
+      requestedMode: "full-access",
+      expectedRevision: 0,
+      acknowledgementProfileVersion: 1,
+      authorizingPrincipal: { id: hashToken(owner.token), scope: "owner" },
+      activationExclusionRequestIds: [],
+      now: NOW,
+    });
+    assert.ok(enabled.ok);
+    h.engine.permissions = [legacyPending()];
+
+    await h.tokens.revoke(owner.id);
     await h.runCycle();
     assert.equal(h.engine.replies.length, 0);
     const suspended = h.store.readModeState(h.workspace.id, "ses_root");
     assert.equal(suspended?.effectiveMode, "full-access-suspended");
 
-    // Restoring the old host token must NOT silently resume full access.
-    h.config.hostToken = HOST_TOKEN;
+    // Restoring equivalent owner authority must NOT reactivate the old mode.
+    await h.tokens.create("owner", { label: "replacement owner" });
     h.engine.permissions = [legacyPending({ id: "req_after_restore" })];
     await h.runCycle();
     assert.equal(h.engine.replies.length, 0);
@@ -427,6 +449,17 @@ describe("session permission broker", () => {
 
   test("verifyAuthorizingPrincipal validates host and token principals", async () => {
     const h = harness = await createHarness();
+    const localPrincipal = await resolveLocalHostAuthorizingPrincipal(h.config);
+    assert.equal(
+      (await verifyAuthorizingPrincipal({
+        config: h.config,
+        tokens: h.tokens,
+        principal: localPrincipal,
+      })).valid,
+      true,
+    );
+    // Pre-migration records remain valid while their transport token is
+    // current, but only the installation identity survives token rotation.
     assert.equal(
       (await verifyAuthorizingPrincipal({
         config: h.config,
@@ -434,6 +467,23 @@ describe("session permission broker", () => {
         principal: { id: hashToken(HOST_TOKEN), scope: "owner" },
       })).valid,
       true,
+    );
+    h.config.hostToken = "owt_rotated_host";
+    assert.equal(
+      (await verifyAuthorizingPrincipal({
+        config: h.config,
+        tokens: h.tokens,
+        principal: localPrincipal,
+      })).valid,
+      true,
+    );
+    assert.equal(
+      (await verifyAuthorizingPrincipal({
+        config: h.config,
+        tokens: h.tokens,
+        principal: { id: hashToken(HOST_TOKEN), scope: "owner" },
+      })).valid,
+      false,
     );
     assert.equal(
       (await verifyAuthorizingPrincipal({

@@ -125,6 +125,11 @@ The system SHALL require an explicit risk acknowledgement before enabling Full a
 - **THEN** the system durably suspends Full access and advances the authority revision before another request is dispatched
 - **AND** a current owner must explicitly re-enable or re-acknowledge Full access
 
+#### Scenario: Local desktop rotates its transport credential
+- **WHEN** a validated local desktop recreates its embedded server or switches workspaces and receives a different host transport token
+- **THEN** its installation-level authorizing principal identity remains stable
+- **AND** Full access and reusable grants are not suspended solely because the transport credential changed
+
 #### Scenario: Full access principal authority cannot be verified
 - **WHEN** the owning server cannot authoritatively verify the current Full access principal's required scope
 - **THEN** the system durably suspends Full access and requires explicit renewal after authority is restored
@@ -165,6 +170,11 @@ Permission modes and reusable grants SHALL be persisted by the owning JuggleWork
 #### Scenario: Renderer reconnects or another client opens the session
 - **WHEN** the renderer reconnects or another authorized client opens the same root session
 - **THEN** it observes the authoritative saved mode and grant effects from the owning server
+
+#### Scenario: Authority changes while the session remains open
+- **WHEN** the server asynchronously suspends Full access or invalidates a reusable grant
+- **THEN** the open renderer refreshes the authoritative state within a bounded interval
+- **AND** it does not continue presenting stale automatic authority
 
 #### Scenario: Root session is deleted
 - **WHEN** a root session is deleted

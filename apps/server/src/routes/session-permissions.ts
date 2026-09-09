@@ -24,12 +24,12 @@ import {
   captureActivationBoundary,
   evaluateSessionApprovalCeiling,
   normalizePendingPermissionRequest,
+  resolveLocalHostAuthorizingPrincipal,
   resolveServerFullAccessPolicy,
   type RootSerialization,
 } from "../session-permission-broker.js";
 import type { SessionPermissionModeStore } from "../session-permission-mode-store.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "../types.js";
-import { hashToken } from "../utils.js";
 import {
   dispatchPermissionReply,
   readInteractionSnapshot,
@@ -70,21 +70,29 @@ const modeUpdateSchema = z.object({
  * host token header (host-equivalent local authority). Both are
  * server-verified; nothing caller-asserted participates.
  */
-function requireOwnerOrHost(ctx: RequestContext, config: ServerConfig): SessionPermissionAuthorizingPrincipal | null {
+async function requireOwnerOrHost(
+  ctx: RequestContext,
+  config: ServerConfig,
+): Promise<SessionPermissionAuthorizingPrincipal | null> {
   const hostHeader = ctx.request.headers.get("x-jugglework-host-token");
   if (hostHeader && hostHeader === config.hostToken) {
-    return { id: hashToken(hostHeader), scope: "owner" };
+    return resolveLocalHostAuthorizingPrincipal(config);
   }
   if (ctx.actor?.scope === "owner" && ctx.actor.tokenHash) {
+    if (ctx.actor.type === "host") return resolveLocalHostAuthorizingPrincipal(config);
     return { id: ctx.actor.tokenHash, scope: "owner" };
   }
   return null;
 }
 
-function principalFromActor(ctx: RequestContext): SessionPermissionAuthorizingPrincipal | null {
+async function principalFromActor(
+  ctx: RequestContext,
+  config: ServerConfig,
+): Promise<SessionPermissionAuthorizingPrincipal | null> {
   const tokenHash = ctx.actor?.tokenHash;
   const scope = ctx.actor?.scope;
   if (!tokenHash || (scope !== "owner" && scope !== "collaborator")) return null;
+  if (ctx.actor?.type === "host") return resolveLocalHostAuthorizingPrincipal(config);
   return { id: tokenHash, scope };
 }
 
@@ -135,7 +143,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
 
     const now = Date.now();
     if (body.requestedMode === "full-access") {
-      const principal = requireOwnerOrHost(ctx, config);
+      const principal = await requireOwnerOrHost(ctx, config);
       if (!principal) {
         throw new ApiError(403, "forbidden", "Enabling Full access requires owner or host authority");
       }
@@ -195,13 +203,14 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     }
 
     // Downgrade to request approval: collaborator+ may narrow authority.
+    const principal = await principalFromActor(ctx, config);
     const decision = store.appendDecisionIntent({
       workspaceId: workspace.id,
       rootSessionId,
       targetSessionId: null,
       kind: "mode-change",
       resourceSummary: ["request-approval"],
-      actor: { origin: "renderer", id: principalFromActor(ctx)?.id ?? null },
+      actor: { origin: "renderer", id: principal?.id ?? null },
       authorityRevision: body.expectedRevision,
       requestId: null,
       now,
@@ -230,6 +239,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const rootSessionId = ctx.params.sessionId;
     const now = Date.now();
+    const principal = await principalFromActor(ctx, config);
     const clearedGrantIds = await rootLocks.with(`${workspace.id}\0${rootSessionId}`, () =>
       Promise.resolve(store.clearGrants(workspace.id, rootSessionId, now)),
     );
@@ -240,7 +250,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
         targetSessionId: null,
         kind: "grant-remove",
         resourceSummary: ["cleared-by-user"],
-        actor: { origin: "renderer", id: principalFromActor(ctx)?.id ?? null },
+        actor: { origin: "renderer", id: principal?.id ?? null },
         authorityRevision: null,
         requestId: grantId,
         now,
@@ -256,7 +266,7 @@ export function registerSessionPermissionRoutes(options: RegisterSessionPermissi
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/interactions/:interactionId/permission/grant-reply", "client", async (ctx) => {
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
-    const principal = principalFromActor(ctx);
+    const principal = await principalFromActor(ctx, config);
     if (!principal) throw new ApiError(403, "forbidden", "Grant creation requires collaborator authority");
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const targetSessionId = ctx.params.sessionId;

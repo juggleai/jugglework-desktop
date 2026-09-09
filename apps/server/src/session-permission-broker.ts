@@ -30,6 +30,7 @@ import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
 import type { ServerConfig, TokenScope, WorkspaceInfo } from "./types.js";
 import type { TokenService } from "./tokens.js";
 import { hashToken } from "./utils.js";
+import { readInstallId } from "./workspace-key.js";
 import {
   dispatchPermissionReply,
   readInteractionSnapshot,
@@ -89,13 +90,40 @@ export function resolveServerFullAccessPolicy(config: ServerConfig): boolean {
 
 export type PrincipalVerification = { valid: true } | { valid: false };
 
+const LOCAL_HOST_PRINCIPAL_DOMAIN = "jugglework-session-permission-local-host/v1";
+
+/**
+ * Resolve the durable identity for this validated local desktop installation.
+ *
+ * The embedded server's host token is a transport credential and may rotate
+ * when the active workspace changes. Persisting its hash as the authorizing
+ * principal would incorrectly suspend Full access for the same installation.
+ */
+export async function resolveLocalHostAuthorizingPrincipal(
+  config: ServerConfig,
+): Promise<SessionPermissionAuthorizingPrincipal> {
+  const installId = await readInstallId(config);
+  return {
+    id: hashToken(`${LOCAL_HOST_PRINCIPAL_DOMAIN}\0${installId}`),
+    scope: "owner",
+  };
+}
+
 export async function verifyAuthorizingPrincipal(options: {
   config: ServerConfig;
   tokens: TokenService;
   principal: SessionPermissionAuthorizingPrincipal;
 }): Promise<PrincipalVerification> {
   const { config, tokens, principal } = options;
-  // Host-equivalent principal: compare against the current host token hash.
+  // Local-host authority is tied to the durable installation identity rather
+  // than the workspace-specific transport credential.
+  const localHostPrincipal = await resolveLocalHostAuthorizingPrincipal(config);
+  if (principal.scope === "owner" && principal.id === localHostPrincipal.id) {
+    return { valid: true };
+  }
+  // Backward compatibility for authority records created before installation-
+  // stable principals. Only the current host token is accepted; stale tokens
+  // remain fail-closed and require explicit renewal.
   if (principal.id === hashToken(config.hostToken)) return { valid: true };
   // Token principal: the recorded hash must still resolve to a live token
   // holding at least the recorded scope. Unknown → invalid (fail-closed).

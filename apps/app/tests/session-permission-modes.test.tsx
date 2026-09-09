@@ -5,6 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { setLocale } from "../src/i18n";
 import { PermissionApprovalPanel, reusableGrantScope } from "../src/react-app/domains/session/chat/permission-approval-modal";
 import { mergeSessionPermissionGrantReply } from "../src/react-app/domains/session/sync/use-session-interactions";
+import {
+  ACTIVE_PERMISSION_MODE_REFETCH_MS,
+  sessionPermissionModeRefetchInterval,
+} from "../src/react-app/domains/session/sync/use-session-permission-mode";
 import { PermissionModeSelect } from "../src/react-app/domains/session/surface/composer/permission-mode-select";
 import type { PendingPermission } from "../src/app/types";
 import type { SessionPermissionGrantRecord } from "@jugglework/types/session-permission-modes";
@@ -89,6 +93,27 @@ describe("session permission grant cache", () => {
       supported: true,
       profileVersion: activatedGrant.profileVersion,
     });
+  });
+});
+
+describe("session permission authority refresh", () => {
+  test("polls while full access or an active reusable grant is configured", () => {
+    expect(sessionPermissionModeRefetchInterval({
+      state: { requestedMode: "full-access" },
+      grants: [],
+    })).toBe(ACTIVE_PERMISSION_MODE_REFETCH_MS);
+    expect(sessionPermissionModeRefetchInterval({
+      state: { requestedMode: "request-approval" },
+      grants: [{ state: "active" }],
+    })).toBe(ACTIVE_PERMISSION_MODE_REFETCH_MS);
+  });
+
+  test("does not poll sessions without automatic authority", () => {
+    expect(sessionPermissionModeRefetchInterval({
+      state: { requestedMode: "request-approval" },
+      grants: [],
+    })).toBe(false);
+    expect(sessionPermissionModeRefetchInterval(null)).toBe(false);
   });
 });
 
