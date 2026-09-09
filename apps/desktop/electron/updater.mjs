@@ -275,7 +275,12 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
+export function triggerUpdaterInstall(updater, onInstallAndRestart) {
+  onInstallAndRestart?.();
+  updater.quitAndInstall(false, true);
+}
+
+export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRestart = undefined }) {
   let autoUpdaterInstance = null;
   let autoUpdaterLoaded = false;
   let checkedUpdateVersion = null;
@@ -454,7 +459,11 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow }) {
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
       await enableSquirrelDirectContentsWrite();
-      updater.quitAndInstall(false, true);
+      // On macOS the native updater closes the window before Electron emits
+      // `before-quit`. Tell the desktop shell about the update intent first so
+      // close-to-tray does not intercept that native close and leave ShipIt
+      // waiting forever for a process that never quits.
+      triggerUpdaterInstall(updater, onInstallAndRestart);
       return { ok: true };
     } catch (error) {
       return { ok: false, reason: String(error?.message ?? error) };

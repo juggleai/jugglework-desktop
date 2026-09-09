@@ -9,6 +9,7 @@ import {
   registerUpdaterIpc,
   staleUpdaterStatePaths,
   targetedStableUpdaterFeed,
+  triggerUpdaterInstall,
 } from "./updater.mjs";
 
 const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/test/${key}`) };
@@ -104,6 +105,18 @@ describe("Qiniu updater configuration", () => {
 });
 
 describe("installAndRestart", () => {
+  it("announces update quit intent before invoking the native installer", () => {
+    const calls = [];
+    triggerUpdaterInstall(
+      { quitAndInstall: (...args) => calls.push(["quitAndInstall", ...args]) },
+      () => calls.push(["intent"]),
+    );
+    assert.deepEqual(calls, [
+      ["intent"],
+      ["quitAndInstall", false, true],
+    ]);
+  });
+
   it("refuses to invoke the installer before an update is downloaded", async () => {
     const handlers = new Map();
     registerUpdaterIpc({

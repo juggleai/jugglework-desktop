@@ -1459,6 +1459,7 @@ let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
 let quitCleanupComplete = false;
 let quitCleanupInProgress = false;
+let updaterInstallQuitRequested = false;
 let runtimeBootstrapPromise = null;
 
 function showShutdownScreen() {
@@ -2954,7 +2955,7 @@ async function createMainWindow() {
   // 否则放行原生关闭行为，避免出现无可见入口的后台进程。
   installCloseToHide({
     window: mainWindow,
-    canQuit: () => quitCleanupComplete,
+    canQuit: () => quitCleanupComplete || updaterInstallQuitRequested,
     canHide: () => appTrayIndicator.active(),
   });
 
@@ -3101,7 +3102,14 @@ ipcMain.handle("jugglework:terminal:kill", (event, terminalId) => {
 browserPanel.registerIpc(ipcMain);
 
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({ app, ipcMain, getMainWindow: () => mainWindow });
+const { ensureAutoUpdater } = registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow: () => mainWindow,
+  onInstallAndRestart: () => {
+    updaterInstallQuitRequested = true;
+  },
+});
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
