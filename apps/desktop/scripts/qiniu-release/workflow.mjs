@@ -81,11 +81,15 @@ export async function promoteChannel(plan, evidence, {
   now = () => new Date(),
   actor = process.env.CI_JOB_ID || process.env.GITHUB_RUN_ID || "manual",
   notarizationExceptionReason = "",
+  preCanaryExceptionReason = "",
   onEvent = () => {},
 } = {}) {
-  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason });
+  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason });
   const notarizationException = notarizationExceptionReason
-    ? { scope: "stable-1.2.15-only", reason: notarizationExceptionReason.trim() }
+    ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
+    : null;
+  const preCanaryException = preCanaryExceptionReason
+    ? { scope: "stable-1.2.16-only", reason: preCanaryExceptionReason.trim() }
     : null;
   if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
@@ -120,7 +124,7 @@ export async function promoteChannel(plan, evidence, {
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
     const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
     channelVerified = true;
-      return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, notarizationException };
+      return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, notarizationException, preCanaryException };
   } finally {
     if (channelMutated && !channelVerified) {
       onEvent({ type: "lock-retained", key: lockKey });

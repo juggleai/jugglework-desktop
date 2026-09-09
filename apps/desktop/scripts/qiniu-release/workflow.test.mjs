@@ -13,17 +13,17 @@ function object(key, content, type = "artifact") {
   };
 }
 
-function fixturePlan() {
-  const root = "jugglework/releases/v1.2.15/mac/arm64";
+function fixturePlan(version = "1.2.15") {
+  const root = `jugglework/releases/v${version}/mac/arm64`;
   const objects = [
-    object(`${root}/jugglework-mac-arm64-1.2.15.zip`, "zip"),
-    object(`${root}/jugglework-mac-arm64-1.2.15.dmg`, "dmg"),
-    object(`${root}/jugglework-mac-arm64-1.2.15.zip.blockmap`, "zip-blockmap"),
-    object(`${root}/jugglework-mac-arm64-1.2.15.dmg.blockmap`, "dmg-blockmap"),
+    object(`${root}/jugglework-mac-arm64-${version}.zip`, "zip"),
+    object(`${root}/jugglework-mac-arm64-${version}.dmg`, "dmg"),
+    object(`${root}/jugglework-mac-arm64-${version}.zip.blockmap`, "zip-blockmap"),
+    object(`${root}/jugglework-mac-arm64-${version}.dmg.blockmap`, "dmg-blockmap"),
   ];
-  const manifest = object("jugglework/releases/v1.2.15/mac/latest-mac.yml", "version: 1.2.15\n", "manifest");
+  const manifest = object(`jugglework/releases/v${version}/mac/latest-mac.yml`, `version: ${version}\n`, "manifest");
   return {
-    version: "1.2.15", channel: "stable", platform: "mac", architectures: ["arm64"], objects, manifest,
+    version, channel: "stable", platform: "mac", architectures: ["arm64"], objects, manifest,
     channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml", url: publicUrl("jugglework/releases/stable/mac/latest-mac.yml") },
   };
 }
@@ -199,6 +199,30 @@ test("records the narrowly scoped notarization exception in promotion output", a
     notarizationExceptionReason: reason,
   });
   assert.deepEqual(result.notarizationException, { scope: "stable-1.2.15-only", reason });
+  assert.equal(result.preCanaryException, null);
+});
+
+test("records both stable 1.2.16 pre-canary candidate exceptions", async () => {
+  const plan = fixturePlan("1.2.16");
+  const evidence = verifiedEvidence(plan);
+  evidence.localVerification.releaseState = "candidate";
+  evidence.localVerification.credentialState = "missing";
+  evidence.localVerification.notarization = { status: "unavailable" };
+  evidence.localVerification.staple = { status: "unavailable" };
+  evidence.localVerification.gatekeeper = { status: "unavailable" };
+  evidence.canary = null;
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const notarizationReason = "Operator authorized unnotarized stable 1.2.16 for the live upgrade validation";
+  const preCanaryReason = "Operator authorized exposing stable 1.2.16 before validating the live 1.2.15 upgrade";
+  const result = await promoteChannel(plan, evidence, {
+    qiniu: createFakeQiniu(initial),
+    refresh: async () => {},
+    readBack: async () => ({ sha256: plan.manifest.sha256, size: plan.manifest.size }),
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  });
+  assert.deepEqual(result.notarizationException, { scope: "stable-1.2.16-only", reason: notarizationReason });
+  assert.deepEqual(result.preCanaryException, { scope: "stable-1.2.16-only", reason: preCanaryReason });
 });
 
 test("failed CDN refresh or read-back fails promotion and retains the lock", async () => {

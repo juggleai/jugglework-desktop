@@ -238,16 +238,29 @@ export function assertEvidenceMatchesPlan(plan, evidence) {
 }
 
 function assertStableNotarizationException(plan, reason) {
-  if (plan.channel !== "stable" || plan.version !== "1.2.15") {
-    throw new Error("The notarization exception is restricted to stable 1.2.15");
+  if (plan.channel !== "stable" || !["1.2.15", "1.2.16"].includes(plan.version)) {
+    throw new Error("The notarization exception is restricted to stable 1.2.15 or stable 1.2.16");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
-    throw new Error("The stable 1.2.15 notarization exception requires an explicit audited reason");
+    throw new Error(`The stable ${plan.version} notarization exception requires an explicit audited reason`);
   }
   return reason.trim();
 }
 
-export function assertPromotionEvidence(plan, evidence, { notarizationExceptionReason = "" } = {}) {
+function assertStablePreCanaryException(plan, reason) {
+  if (plan.channel !== "stable" || plan.version !== "1.2.16") {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16");
+  }
+  if (typeof reason !== "string" || reason.trim().length < 20) {
+    throw new Error("The stable 1.2.16 pre-canary promotion exception requires an explicit audited reason");
+  }
+  return reason.trim();
+}
+
+export function assertPromotionEvidence(plan, evidence, {
+  notarizationExceptionReason = "",
+  preCanaryExceptionReason = "",
+} = {}) {
   assertEvidenceMatchesPlan(plan, evidence);
   if (notarizationExceptionReason) {
     assertStableNotarizationException(plan, notarizationExceptionReason);
@@ -255,7 +268,12 @@ export function assertPromotionEvidence(plan, evidence, { notarizationExceptionR
   } else {
     assertLocalVerification(plan, evidence.localVerification);
   }
-  assertCanary(plan, evidence.canary);
+  if (preCanaryExceptionReason) {
+    assertStablePreCanaryException(plan, preCanaryExceptionReason);
+    if (evidence.canary !== null && evidence.canary !== undefined) assertCanary(plan, evidence.canary);
+  } else {
+    assertCanary(plan, evidence.canary);
+  }
   const objects = [...plan.objects, plan.manifest];
   if (evidence.workflow?.immutable?.status !== "verified") throw new Error("Workflow-recorded immutable verification is required");
   if (evidence.workflow?.cdn?.status !== "verified") throw new Error("Workflow-recorded CDN verification is required");

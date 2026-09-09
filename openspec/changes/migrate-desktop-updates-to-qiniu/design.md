@@ -61,6 +61,8 @@ See `proposal.md`. Packaged version `1.2.14` uses `electron-updater` 6.8.3 and r
 
 13. **Store a non-secret release record.** Generate a versioned JSON/Markdown record containing commit, version, artifact names/keys, sizes, SHA-256/SHA-512, Qiniu ETags, signer/notarization evidence, channel manifest digest, CDN checks, Den read-back, and timestamps. No access keys, tokens, cookies, private keys, or notarization credentials are recorded.
 
+14. **Allow one audited `1.2.16` live-upgrade exception.** The operator explicitly authorizes stable `1.2.16` to be exposed before its real-client canary and without notarization so the already-installed production `1.2.15` UI can discover and install it through the normal Den-selected flow. Tooling requires separate long-form notarization and pre-canary reasons and hard-codes the exact stable `1.2.16` coordinate. It still requires the expected Developer ID/Team, hardened runtime, immutable artifact digests, Qiniu/CDN verification, promotion lock, refresh, and read-back. A present failed canary is never ignored. After the update, record the operator-observed `1.2.15 → 1.2.16` result; later versions return to normal notarization-first and canary-first ordering.
+
 ## Risks / Trade-offs
 
 - **[Old clients may remain pinned to GitHub]** They will not discover Qiniu-only releases automatically → treat them as outside this migration scope and use an explicitly supported manual installation path when needed.

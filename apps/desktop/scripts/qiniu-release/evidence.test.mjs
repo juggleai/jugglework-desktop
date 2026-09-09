@@ -16,10 +16,10 @@ import {
 } from "./evidence.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
 
-function plan() {
-  const artifact = { name: "app.zip", key: "jugglework/releases/v1.2.15/mac/arm64/app.zip", url: "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac/arm64/app.zip", mime: "application/zip", ...metadataForBuffer("zip", "app.zip") };
-  const manifest = { key: "jugglework/releases/v1.2.15/mac/latest-mac.yml", url: "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac/latest-mac.yml", mime: "text/yaml", ...metadataForBuffer("version: 1.2.15\n", "latest.yml") };
-  return { version: "1.2.15", channel: "stable", platform: "mac", architectures: ["arm64"], objects: [artifact], manifest };
+function plan(version = "1.2.15", channel = "stable") {
+  const artifact = { name: "app.zip", key: `jugglework/releases/v${version}/mac/arm64/app.zip`, url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/mac/arm64/app.zip`, mime: "application/zip", ...metadataForBuffer("zip", "app.zip") };
+  const manifest = { key: `jugglework/releases/v${version}/mac/latest-mac.yml`, url: `https://downloads.jugglechat.cn/jugglework/releases/v${version}/mac/latest-mac.yml`, mime: "text/yaml", ...metadataForBuffer(`version: ${version}\n`, "latest.yml") };
+  return { version, channel, platform: "mac", architectures: ["arm64"], objects: [artifact], manifest };
 }
 
 function localVerification(releasePlan = plan(), overrides = {}) {
@@ -57,36 +57,35 @@ function localVerification(releasePlan = plan(), overrides = {}) {
   };
 }
 
-function canary() {
+function canary(releasePlan = plan()) {
   return {
     schema: CANARY_SCHEMA,
     schemaVersion: 1,
     producer: "jugglework-macos-update-canary",
     result: "passed",
-    channel: "stable",
+    channel: releasePlan.channel,
     sourceVersion: "1.2.14",
-    targetVersion: "1.2.15",
-    feedUrl: "https://downloads.jugglechat.cn/jugglework/releases/v1.2.15/mac/latest-mac.yml",
+    targetVersion: releasePlan.version,
+    feedUrl: releasePlan.manifest.url,
     architectures: ["arm64"],
-    manifestSha256: plan().manifest.sha256,
+    manifestSha256: releasePlan.manifest.sha256,
     runId: "canary-123",
     verifiedAt: "2026-09-08T01:00:00.000Z",
     checks: {
       cleanClient: "passed", updateDiscovered: "passed", download: "passed", install: "passed", restart: "passed",
-      installedVersion: "1.2.15", userData: "preserved", workspaceAccess: "preserved", permissions: "preserved",
+      installedVersion: releasePlan.version, userData: "preserved", workspaceAccess: "preserved", permissions: "preserved",
     },
     network: { manifestOrigin: "https://downloads.jugglechat.cn", artifactOrigin: "https://downloads.jugglechat.cn" },
   };
 }
 
-function promotionEvidence() {
-  const releasePlan = plan();
+function promotionEvidence(releasePlan = plan()) {
   const checks = [...releasePlan.objects, releasePlan.manifest].map((item) => ({ key: item.key, size: item.size, etag: item.etag }));
   const cdnChecks = [...releasePlan.objects, releasePlan.manifest].map((item) => ({
     key: item.key, url: item.url, https: true, range: true, mime: item.mime, contentLength: item.size,
     size: item.size, sha256: item.sha256, sha512: item.sha512,
   }));
-  return withEvidenceResults(createEvidence({ plan: releasePlan, commit: "abc123", localVerification: localVerification(releasePlan), canary: canary(), timestamps: { createdAt: "2026-09-08T00:00:00.000Z" } }), {
+  return withEvidenceResults(createEvidence({ plan: releasePlan, commit: "abc123", localVerification: localVerification(releasePlan), canary: canary(releasePlan), timestamps: { createdAt: "2026-09-08T00:00:00.000Z" } }), {
     workflow: {
       immutable: { status: "verified", verifiedAt: "2026-09-08T02:00:00.000Z", qiniuChecks: checks },
       cdn: { status: "verified", verifiedAt: "2026-09-08T03:00:00.000Z", qiniuChecks: checks, cdnChecks },
@@ -147,11 +146,56 @@ test("an audited notarization exception is restricted to stable 1.2.15 and prese
   const reason = "Operator explicitly authorized one-time unnotarized stable 1.2.15 publication";
   assert.equal(assertPromotionEvidence(plan(), evidence, { notarizationExceptionReason: reason }).schemaVersion, 2);
   assert.throws(() => assertPromotionEvidence(plan(), evidence, { notarizationExceptionReason: "too short" }), /audited reason/);
-  const nextPlan = { ...plan(), version: "1.2.16" };
-  assert.throws(() => assertPromotionEvidence(nextPlan, evidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15|coordinates/);
+  const futurePlan = plan("1.2.17");
+  const futureEvidence = promotionEvidence(futurePlan);
+  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15 or stable 1\.2\.16/);
   const brokenCanary = structuredClone(evidence);
   brokenCanary.canary.result = "failed";
   assert.throws(() => assertPromotionEvidence(plan(), brokenCanary, { notarizationExceptionReason: reason }), /passed machine-generated/);
+});
+
+test("stable 1.2.16 requires two audited exceptions before a signed candidate can precede its canary", () => {
+  const releasePlan = plan("1.2.16");
+  const evidence = promotionEvidence(releasePlan);
+  evidence.localVerification = localVerification(releasePlan, {
+    releaseState: "candidate",
+    credentialState: "missing",
+    notarization: { status: "unavailable" },
+    staple: { status: "unavailable" },
+    gatekeeper: { status: "unavailable" },
+  });
+  evidence.canary = null;
+  const notarizationReason = "Operator authorized unnotarized stable 1.2.16 for the live upgrade validation";
+  const preCanaryReason = "Operator authorized exposing stable 1.2.16 before validating the live 1.2.15 upgrade";
+  assert.equal(assertPromotionEvidence(releasePlan, evidence, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  }).schemaVersion, 2);
+  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { notarizationExceptionReason: notarizationReason }), /Canary schema|machine-generated macOS update canary/);
+  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, { preCanaryExceptionReason: preCanaryReason }), /credential state|rejects candidate/);
+  assert.throws(() => assertPromotionEvidence(releasePlan, evidence, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: "too short",
+  }), /audited reason/);
+
+  const failedCanary = structuredClone(evidence);
+  failedCanary.canary = canary(releasePlan);
+  failedCanary.canary.result = "failed";
+  assert.throws(() => assertPromotionEvidence(releasePlan, failedCanary, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  }), /passed machine-generated/);
+
+  const wrongTeam = structuredClone(evidence);
+  wrongTeam.localVerification.identity.teamIdentifier = "WRONGTEAM";
+  assert.throws(() => assertPromotionEvidence(releasePlan, wrongTeam, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  }), /identities/);
+
+  const alphaPlan = plan("1.2.16-alpha.1", "alpha");
+  const alphaEvidence = promotionEvidence(alphaPlan);
+  assert.throws(() => assertPromotionEvidence(alphaPlan, alphaEvidence, { preCanaryExceptionReason: preCanaryReason }), /restricted to stable 1\.2\.16/);
 });
 
 test("accepted notarization without an Apple submission ID cannot authorize stable promotion", () => {

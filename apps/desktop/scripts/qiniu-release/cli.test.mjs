@@ -13,9 +13,10 @@ const REQUIRED = [
 ];
 
 test("CLI strictly parses release coordinates and dry-run", () => {
-  const parsed = parseArguments(["plan", ...REQUIRED, "--dry-run"]);
+  const parsed = parseArguments(["plan", ...REQUIRED, "--dry-run", "--pre-canary-exception-reason", "Operator authorized the live upgrade validation"]);
   assert.equal(parsed.options.dryRun, true);
   assert.deepEqual(parsed.options.architectures, ["arm64", "x64"]);
+  assert.equal(parsed.options.preCanaryExceptionReason, "Operator authorized the live upgrade validation");
 });
 
 test("SemVer prereleases are alpha-only and targets stay restricted", () => {

@@ -1,0 +1,190 @@
+{
+  "schema": "com.juggleai.jugglework.qiniu-candidate-audit",
+  "schemaVersion": 1,
+  "version": "1.2.16",
+  "channelCoordinate": "stable",
+  "publicationState": "stable-promoted-awaiting-live-upgrade",
+  "source": {
+    "baseCommit": "d67258b9d4c158287fb5d5147e1d6368e6b94ab9",
+    "baseBranch": "dev",
+    "baseMatchedOriginDev": true,
+    "baseWorkingTreeClean": true,
+    "versionOverlayFiles": [
+      "apps/app/package.json",
+      "apps/desktop/package.json",
+      "apps/server/package.json"
+    ],
+    "versionOverlayDiffSha256": "c4faf686af761f42e62fea6f40a3c9a4ad78f736d1f05192470c978dd9ac7ed5"
+  },
+  "verification": {
+    "appTypecheck": "passed",
+    "electronTypecheck": "passed",
+    "desktopTests": {
+      "passed": 538,
+      "failed": 0,
+      "skipped": 1
+    },
+    "latestCommitFocusedTests": {
+      "passed": 56,
+      "failed": 0
+    },
+    "packageVerification": "passed",
+    "qiniuMetadataVerification": "passed",
+    "publicCdnVerification": "passed"
+  },
+  "identity": {
+    "bundleIdentifier": "com.juggleai.jugglework",
+    "teamIdentifier": "H7PDHSK3C7",
+    "architecture": "arm64",
+    "minimumMacOSVersion": "14.0",
+    "codesignDeepStrict": "accepted",
+    "hardenedRuntime": "enabled"
+  },
+  "trust": {
+    "releaseState": "candidate",
+    "notarization": "unavailable",
+    "staple": "unavailable",
+    "gatekeeper": "unavailable",
+    "stablePromotionAuthorized": true,
+    "reason": "The operator explicitly authorized an exact stable 1.2.16 notarization exception and a separate pre-canary promotion exception for the formal 1.2.15 live-upgrade validation.",
+    "exceptions": [
+      {
+        "kind": "notarization",
+        "scope": "stable-1.2.16-only"
+      },
+      {
+        "kind": "pre-canary-promotion",
+        "scope": "stable-1.2.16-only"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "key": "jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.zip",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.zip",
+      "size": 238676213,
+      "sha256": "8c4fc2cddea827e95d852a0bf14a68292e2ad4c917b59b75e4bc12ff7a03790b",
+      "sha512": "GS7v2x4uO8LTxaSCwFw+sqdSbVVEt5mTxSfOvq48EJzKuMxR+Dr5yvi+Ykfo4THQy7Fz+FEO0pjRodiUlhsFrA==",
+      "qiniuEtag": "lv9Ha94nGwWNRC86O6RjBY5phSrx",
+      "mime": "application/zip",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.dmg",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.dmg",
+      "size": 241458380,
+      "sha256": "1d384419a8c251b06927678c37f905272896db16edbca1f9ce126cbe22555bf5",
+      "sha512": "ZwQNl1AyBKsF/6vsnLgr+UcKZNqiArEzrzzvxPrWFqGrCILn95m+OA8oPKIjkEmYCG/2vVJnCAhIVD4i+XlFMw==",
+      "qiniuEtag": "lpAVsneFoFORJYBdInl4Fop8xrsd",
+      "mime": "application/x-apple-diskimage",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.zip.blockmap",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.zip.blockmap",
+      "size": 248212,
+      "sha256": "ddd2fd81db9226dfe24177db78502851fb986ae35e3e8f2a71b2da76efc8b1c0",
+      "sha512": "BBScV1hYh22iSmcII95l5TM1ANTpJiUIFdKSQhJTlMBBF6X6CaWQQgHj9hUs3Bpq9b+bcvEVWwTJMV//ypLKDw==",
+      "qiniuEtag": "FiW3QJ9brlixVZbfixX4TSXV5ZbQ",
+      "mime": "application/octet-stream",
+      "remoteMatch": true
+    },
+    {
+      "key": "jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.dmg.blockmap",
+      "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/arm64/jugglework-mac-arm64-1.2.16.dmg.blockmap",
+      "size": 252648,
+      "sha256": "93ea917d96729384bdc034e2b32fa0a5151c8583b4a0e73b68281616ce27321e",
+      "sha512": "sojboaDtptaxXmHKCMdhN+arsHsuC8HhT9ISdtaieVdpZB9BEtn3+NhcCUiV5BGRL/h8H6nQMFHpv9MGhjn0lA==",
+      "qiniuEtag": "Fki_azeZ4LHey6C91Uz3X9sUIOnz",
+      "mime": "application/octet-stream",
+      "remoteMatch": true
+    }
+  ],
+  "manifest": {
+    "key": "jugglework/releases/v1.2.16/mac/latest-mac.yml",
+    "url": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/latest-mac.yml",
+    "version": "1.2.16",
+    "size": 706,
+    "sha256": "1ae948c9e23d692941ebc8f8417725790559407cc382974fcde759aa2bc38eae",
+    "sha512": "Y9aOr57COb5VcuS0zpvGuBWZH2Rt/hEjrsex1HFifcSDduYhMt6RZ7uTcvOedbvmNP8PNq+//BG8WPnN6bjRsg==",
+    "qiniuEtag": "FvrrYEqDJAdDauAg9esK-9z2fHP6",
+    "mime": "text/yaml",
+    "primaryPayload": "zip",
+    "remoteMatch": true
+  },
+  "publicationBoundary": {
+    "stableManifestVersion": "1.2.16",
+    "stableManifestSha256": "1ae948c9e23d692941ebc8f8417725790559407cc382974fcde759aa2bc38eae",
+    "stableManifestCacheControl": "no-cache, max-age=0, must-revalidate",
+    "chinaDenLatestVersion": "1.2.16",
+    "chinaDenPublishedVersions": [
+      "0.1.0",
+      "1.2.15",
+      "1.2.16"
+    ],
+    "overseasDenLatestVersion": "1.2.16",
+    "overseasDenPublishedVersions": [
+      "0.1.0",
+      "1.2.15",
+      "1.2.16"
+    ],
+    "stableManifestChanged": true,
+    "denChanged": true,
+    "organizationAllowlistsChanged": false
+  },
+  "targetedUpdate": {
+    "sourceVersion": "1.2.15",
+    "targetVersion": "1.2.16",
+    "feedBaseUrl": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac",
+    "manifestUrl": "https://downloads.jugglechat.cn/jugglework/releases/v1.2.16/mac/latest-mac.yml",
+    "status": "downloaded-install-blocked-by-legacy-close-to-tray"
+  },
+  "rollout": {
+    "promotedAt": "2026-09-09T09:06:24.593Z",
+    "chinaDenBackup": "/root/jugglework-server/conf/config.yml.bak.desktop-1.2.16-20260909T171324+0800",
+    "overseasDenBackup": "/root/jugglework-server/conf/config.yml.bak.desktop-1.2.16-20260909T171548+0800",
+    "chinaHealth": 200,
+    "chinaReady": 200,
+    "overseasHealth": 200,
+    "overseasReady": 200,
+    "criticalStartupErrorCount": 0
+  },
+  "liveUpgradeCanary": {
+    "observedAt": "2026-09-09T11:27:10Z",
+    "sourceInstallation": {
+      "path": "/Applications/JuggleWork.app",
+      "version": "1.2.15",
+      "mainSha256": "f20af6c9471b4e151fdbfa0098ff0a45a7e3b6f454f081f1289afaf3f3715f7f",
+      "updaterSha256": "4998c8ba6eb9e1a09b380b817d9740fd4fc8503a872b2b38adb3d0e87b7030e1",
+      "containsUpdaterInstallQuitIntentFix": false
+    },
+    "stagedInstallation": {
+      "version": "1.2.16",
+      "bundleIdentifier": "com.juggleai.jugglework",
+      "teamIdentifier": "H7PDHSK3C7",
+      "hardenedRuntime": true,
+      "codesignDeepStrict": "accepted",
+      "mainSha256": "cfcba1416aff29a1218b8e05f8c08b73eac5ae5c78813a9aedc1639e4ca62039",
+      "updaterSha256": "4bc6cfa91e266c42d9bc0d0fee8e3a3179c3e968efe84c96402a423c5f923988",
+      "matchesCurrentSource": true,
+      "containsUpdaterInstallQuitIntentFix": true
+    },
+    "discovery": "passed",
+    "download": "passed",
+    "shipIt": {
+      "requestDetected": true,
+      "stateWrittenAt": "2026-09-09T11:06:01Z",
+      "targetBundleVersionAtObservation": "1.2.15",
+      "updateBundleVersion": "1.2.16",
+      "launchAfterInstallation": false,
+      "status": "waiting-for-source-process-exit"
+    },
+    "installation": "blocked",
+    "restart": "not-attempted",
+    "rootCause": "The formally installed 1.2.15 predates the updater install-intent fix. Electron closes application windows before invoking Squirrel's relaunch-to-install path; the legacy close-to-tray handler converts that close into hide, so the process remains alive and ShipIt cannot replace the running bundle.",
+    "launchAfterInstallationExplanation": "Squirrel initially writes false while staging every update and rewrites it to true only after Electron closes all windows and reaches relaunchToInstallUpdate. A false value does not block replacement; it only suppresses automatic post-install launch. Because the legacy tray handler intercepted window closure, the rewrite never occurred.",
+    "recovery": "Preserve the staged update, fully quit the old 1.2.15 process, wait for ShipIt to replace the application, and manually reopen JuggleWork if it does not relaunch. Do not delete the ShipIt cache before this recovery attempt.",
+    "finalVerification": "pending"
+  },
+  "verifiedAt": "2026-09-09T11:27:10Z"
+}

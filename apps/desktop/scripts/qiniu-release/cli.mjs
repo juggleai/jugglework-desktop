@@ -32,7 +32,7 @@ const COMMANDS = new Set([
 ]);
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
-  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason",
+  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason",
 ]);
 
 export function parseArguments(argv) {
@@ -196,6 +196,7 @@ export async function runCli(argv, {
       dryRun: options.dryRun,
       actor: options.actor,
       notarizationExceptionReason: options.notarizationExceptionReason,
+      preCanaryExceptionReason: options.preCanaryExceptionReason,
       now,
     });
     if (!options.dryRun) {
@@ -205,6 +206,7 @@ export async function runCli(argv, {
           channelKey: result.channelKey,
           readBack: result.readBack,
           notarizationException: result.notarizationException,
+          preCanaryException: result.preCanaryException,
           promotedAt: now().toISOString(),
         } },
       }, now().toISOString()));
@@ -216,7 +218,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. The audited --notarization-exception-reason is restricted to stable 1.2.15.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. Audited notarization exceptions are restricted to stable 1.2.15/1.2.16; the audited pre-canary exception is restricted to stable 1.2.16.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

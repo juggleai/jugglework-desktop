@@ -52,7 +52,7 @@
 
 ## 7. Prove Qiniu-only ongoing updates
 
-- [ ] 7.1 Prepare a newer Qiniu-only patch release (planned 1.2.16) with the same immutable artifact, signing, notarization, and promotion gates
+- [x] 7.1 Prepare a newer Qiniu-only patch release (planned 1.2.16) with the same immutable artifact, signing, notarization, and promotion gates, using the separately audited stable `1.2.16` notarization and pre-canary exceptions
 - [ ] 7.2 Upgrade a clean `1.2.15` installation to the newer release and prove manifest/download traffic uses Qiniu with no GitHub request
 - [ ] 7.3 Verify interrupted download, missing/malformed manifest, hash mismatch, wrong architecture, wrong publisher, stale stable pointer, retry, install restart, and stuck ShipIt cleanup behavior
 - [ ] 7.4 Verify stable, Alpha, targeted-version, architecture-replacement, and manual-DMG paths against public CDN responses
@@ -74,3 +74,28 @@
 - Targeted `1.2.14` to `1.2.15` canary passed discovery, download, native installation, restart, installed-version, user-data, workspace-access, and permission checks. Chat/Contacts IM bootstrap under real signed-in state was subsequently operator-verified successfully on 2026-09-09, completing task 6.5.
 - Stable promotion and public digest read-back passed. Task 6.6 remains open until a lower-version client independently discovers the promoted stable feed rather than the immutable targeted feed.
 - China Den (`work.jugglechat.cn`) was updated and verified before overseas Den (`work.juggle.im`). Both advertise latest `1.2.15`, publish `[0.1.0, 1.2.15]`, retain minimum `0.1.0`, and retain their organization allowlists unchanged.
+
+## 10. Immutable 1.2.16 candidate evidence (2026-09-09)
+
+- Candidate evidence: `candidate-evidence-1.2.16.json`
+- Built from clean `dev` commit `d67258b9d4c158287fb5d5147e1d6368e6b94ab9` in an isolated worktree with a three-package `1.2.16` version overlay; the main worktree remained unchanged.
+- Developer ID, Team `H7PDHSK3C7`, bundle id `com.juggleai.jugglework`, hardened runtime, arm64 inventory, native modules, Qiniu-only packaged defaults, artifact hashes, Qiniu size/ETag, and full public CDN behavior passed.
+- The immutable ZIP, DMG, both blockmaps, and `v1.2.16/mac/latest-mac.yml` were uploaded without overwrite. Stable and both Den environments remain on `1.2.15` pending canary and promotion authorization.
+- Apple notarization credentials were unavailable, so this is an unnotarized candidate and task 7.1 remains open. The `1.2.15` exception does not apply to `1.2.16`; stable promotion is prohibited until a notarized build passes all gates.
+
+## 11. Stable 1.2.16 live-upgrade authorization (2026-09-09)
+
+- The operator explicitly authorized exposing both stable `1.2.15` and `1.2.16` to users and requested that the formally installed `1.2.15` UI discover and install `1.2.16` through its normal Check for Updates action.
+- The operator separately authorized stable `1.2.16` to proceed without notarization and before its real-client canary. Tooling restricts both exceptions to exact stable `1.2.16` and preserves signing identity, Team, hardened runtime, immutable artifact, Qiniu/CDN, locking, refresh, and read-back gates.
+- The earlier statement that stable promotion was prohibited is superseded only for this exact audited `1.2.16` rollout. Task 7.2 remains open until the operator completes and confirms the formal installed-client update.
+- Stable `1.2.16` promotion completed at `2026-09-09T09:06:24.593Z`; public manifest SHA-256 is `1ae948c9e23d692941ebc8f8417725790559407cc382974fcde759aa2bc38eae`, and its cache policy was conditionally corrected to `no-cache, max-age=0, must-revalidate` without changing immutable objects.
+- China Den was updated and verified before overseas Den. Both now advertise latest `1.2.16` and publish `[0.1.0, 1.2.15, 1.2.16]`; organization allowlists were not modified.
+
+## 12. Formal 1.2.15 live-upgrade failure evidence (2026-09-09)
+
+- The formally installed `/Applications/JuggleWork.app` discovered and downloaded `1.2.16`; the staged bundle is version `1.2.16`, passes `codesign --deep --strict`, retains bundle id `com.juggleai.jugglework`, Team `H7PDHSK3C7`, and hardened runtime, and exactly matches the current `1.2.16` source for `electron/main.mjs` and `electron/updater.mjs`.
+- Selecting Install and Restart started ShipIt and hid the window, but left the installed `1.2.15` process alive. ShipIt remains in an install request waiting for that source process to exit, while `/Applications/JuggleWork.app` remains `1.2.15`.
+- The installed `1.2.15` `electron/main.mjs` and `electron/updater.mjs` hashes are `f20af6c9471b4e151fdbfa0098ff0a45a7e3b6f454f081f1289afaf3f3715f7f` and `4998c8ba6eb9e1a09b380b817d9740fd4fc8503a872b2b38adb3d0e87b7030e1`. Those bytes lack the updater-install quit-intent flag included in `1.2.16`.
+- Root cause: Electron closes all windows before invoking Squirrel's relaunch-to-install path. The older close-to-tray handler converts that close into hide, so Electron never reaches the path that rewrites `launchAfterInstallation` from `false` to `true` and terminates the process. ShipIt therefore cannot replace the running bundle.
+- `launchAfterInstallation=false` is not a second replacement blocker: Squirrel stages every update with `false`, and ShipIt consults the flag only for post-install relaunch. Once the old process fully exits, ShipIt can replace the bundle, but this attempt may require manually reopening JuggleWork.
+- Task 7.2 remains open until the old process is fully quit, ShipIt replacement completes, `1.2.16` is reopened, and installed version, workspace authorization, permissions, Chat/Contacts bootstrap, and Qiniu-only traffic are verified. The staged ShipIt cache must be preserved until that recovery attempt.
