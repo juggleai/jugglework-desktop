@@ -797,6 +797,18 @@ export function buildDenDashboardUrl(baseUrl: string | null | undefined): string
   return new URL(DEN_DASHBOARD_PATH, resolveDenBaseUrls(baseUrl).baseUrl).toString();
 }
 
+export type DenMembershipUpgradeContext = "personal" | "team";
+
+/** Opens the server-owned tier selector; Desktop never chooses a plan itself. */
+export function buildDenMembershipUpgradeUrl(
+  baseUrl: string | null | undefined,
+  context: DenMembershipUpgradeContext,
+): string {
+  const url = new URL(`${DEN_DASHBOARD_PATH}/dashboard/`, resolveDenBaseUrls(baseUrl).baseUrl);
+  url.searchParams.set("membership", context);
+  return url.toString();
+}
+
 /** The MCP endpoint served through the Den web proxy from the single base URL. */
 export function getDenMcpUrl(): string {
   const { apiBaseUrl } = resolveDenBaseUrls(readDenBootstrapConfig());

@@ -35,7 +35,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
-import { buildDenDashboardUrl, readDenSettings } from "@/app/lib/den";
+import { buildDenDashboardUrl, buildDenMembershipUpgradeUrl, readDenSettings } from "@/app/lib/den";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
@@ -50,8 +50,7 @@ import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
 import { visibleLocalWorkspaceIndicator } from "./app-navigation-status";
-import { accountDisplayName, membershipTierLabel, organizationMenuGroups } from "./account-menu-model";
-import { MembershipUpgradeDialog } from "./membership-upgrade-dialog";
+import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
@@ -174,7 +173,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   ));
   const bootstrapChat = useJuggleChatStore((state) => state.bootstrap);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   useEffect(() => {
     void bootstrapChat(user);
@@ -195,6 +193,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const tierLabel = membershipTierLabel(tier);
   const organizationLabel = activeOrganization?.name ?? readDenSettings().activeOrgName?.trim() ?? t("account_menu.no_organization");
   const organizationGroups = organizationMenuGroups(organizations);
+  const upgradeContext = membershipUpgradeContext(tenantAccount, activeOrganization);
   const balanceLabel = tenantAccount
     ? new Intl.NumberFormat(currentLocale()).format(tenantAccount.points.available)
     : accountBusy
@@ -202,8 +201,9 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
       : "—";
 
   const openUpgrade = () => {
+    if (!upgradeContext) return;
     setAccountMenuOpen(false);
-    setUpgradeOpen(true);
+    platform.openLink(buildDenMembershipUpgradeUrl(readDenSettings().baseUrl, upgradeContext));
   };
   const openBillingDashboard = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
   const openManagementConsole = () => platform.openLink(buildDenDashboardUrl(readDenSettings().baseUrl));
@@ -377,15 +377,17 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 <div className="truncate text-[14px] font-semibold leading-5 text-popover-foreground">{identity}</div>
                 <div className="mt-0.5 truncate text-[12px] leading-4 text-muted-foreground">{tierLabel} · {organizationLabel}</div>
               </div>
-              <button
-                type="button"
-                onClick={(event) => { event.stopPropagation(); openUpgrade(); }}
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-dls-accent px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
-                data-testid="account-menu-upgrade"
-              >
-                <Sparkles className="size-3.5" />
-                {t("account_menu.upgrade")}
-              </button>
+              {upgradeContext ? (
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); openUpgrade(); }}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-xl bg-dls-accent px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 active:scale-[0.98]"
+                  data-testid="account-menu-upgrade"
+                >
+                  <Sparkles className="size-3.5" />
+                  {t("account_menu.upgrade")}
+                </button>
+              ) : null}
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={props.onOpenSettings} data-testid="account-menu-settings">
@@ -467,18 +469,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <MembershipUpgradeDialog
-        open={upgradeOpen}
-        onOpenChange={setUpgradeOpen}
-        currentTier={tier}
-        tenantKind={tenantAccount?.kind ?? activeOrganization?.kind ?? null}
-        organizationId={activeOrganization?.id ?? null}
-        organizations={organizations}
-        canManageBilling={tenantAccount?.permissions.canManageBilling ?? false}
-        billingPeriod={tenantAccount?.billing?.paid ? tenantAccount.billing.period : null}
-        onSwitchOrganization={switchOrganization}
-        onFulfilled={refreshAccount}
-      />
     </aside>
   );
 }

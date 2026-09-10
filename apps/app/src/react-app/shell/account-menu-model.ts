@@ -1,4 +1,4 @@
-import type { DenOrgSummary, DenTenantTier } from "@/app/lib/den";
+import type { DenMembershipUpgradeContext, DenOrgSummary, DenTenantAccount, DenTenantTier } from "@/app/lib/den";
 import { t } from "@/i18n";
 
 export function membershipTierLabel(tier: DenTenantTier | null | undefined): string {
@@ -30,4 +30,13 @@ export function organizationMenuGroups(organizations: DenOrgSummary[]): {
     }
   }
   return { personal, others };
+}
+
+export function membershipUpgradeContext(
+  account: DenTenantAccount | null | undefined,
+  organization: DenOrgSummary | null | undefined,
+): DenMembershipUpgradeContext | null {
+  if (!account?.permissions.canManageBilling) return null;
+  if (account.kind === "personal") return account.tier === "power" ? null : "personal";
+  return organization?.role === "owner" ? "team" : null;
 }

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import {
   buildDenDashboardUrl,
+  buildDenMembershipUpgradeUrl,
   DEFAULT_DEN_BASE_URL,
   getDenMcpUrl,
   isLegacyWebAppMcpUrl,
@@ -20,6 +21,20 @@ describe("buildDenDashboardUrl", () => {
   test("keeps developer-mode control plane origins", () => {
     expect(buildDenDashboardUrl("http://localhost:3000")).toBe(
       "http://localhost:3000/jwork/console",
+    );
+  });
+});
+
+describe("buildDenMembershipUpgradeUrl", () => {
+  test("targets the server-owned personal tier selector", () => {
+    expect(buildDenMembershipUpgradeUrl("https://work.juggle.im", "personal")).toBe(
+      "https://work.juggle.im/jwork/console/dashboard/?membership=personal",
+    );
+  });
+
+  test("targets the server-owned team tier selector on development origins", () => {
+    expect(buildDenMembershipUpgradeUrl("http://localhost:3000", "team")).toBe(
+      "http://localhost:3000/jwork/console/dashboard/?membership=team",
     );
   });
 });
