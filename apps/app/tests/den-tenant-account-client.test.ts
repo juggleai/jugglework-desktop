@@ -20,14 +20,14 @@ describe("Den tenant account client", () => {
       activeOrgSlug: "team",
       orgs: [
         { id: "org_personal", name: "Personal", slug: "personal", role: "owner", kind: "personal", tier: "pro", accountStatus: "active" },
-        { id: "org_team", name: "Studio", slug: "team", role: "admin", kind: "organization", tier: "business", accountStatus: "active" },
+        { id: "org_team", name: "Studio", slug: "team", role: "admin", kind: "organization", tier: "lite_team", accountStatus: "active" },
       ],
     }), { headers: { "content-type": "application/json" } }));
 
     const result = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).listOrgs();
     expect(result.orgs).toEqual([
       { id: "org_personal", name: "Personal", slug: "personal", role: "owner", kind: "personal", tier: "pro", accountStatus: "active" },
-      { id: "org_team", name: "Studio", slug: "team", role: "admin", kind: "organization", tier: "business", accountStatus: "active" },
+      { id: "org_team", name: "Studio", slug: "team", role: "admin", kind: "organization", tier: "lite_team", accountStatus: "active" },
     ]);
   });
 
@@ -96,6 +96,34 @@ describe("Den tenant account client", () => {
     expect(account.billing).toBeNull();
   });
 
+  test("accepts new Lite Team and legacy Team unpaid organization baselines", async () => {
+    for (const tier of ["lite_team", "team"] as const) {
+      setFetch(async () => new Response(JSON.stringify({
+        kind: "organization",
+        tier,
+        status: "active",
+        tierVersion: "1",
+        points: { available: "0", reserved: "0", version: "1" },
+        permissions: { canViewLedger: true, canManageBilling: true },
+        billing: {
+          paid: false,
+          fundingKind: "unpaid",
+          plan: tier,
+          period: null,
+          seats: "0",
+          cycleStart: null,
+          cycleEnd: null,
+          paidThrough: null,
+          nextGrantAt: null,
+          allowancePerCycle: "0",
+        },
+      })));
+
+      const account = await createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_team");
+      expect(account).toMatchObject({ kind: "organization", tier, billing: { paid: false, plan: tier } });
+    }
+  });
+
   test("rejects a tier that does not belong to the tenant kind", async () => {
     setFetch(async () => new Response(JSON.stringify({
       kind: "personal",
@@ -105,6 +133,21 @@ describe("Den tenant account client", () => {
       points: { available: 1000, reserved: 0, version: 1 },
       permissions: { canViewLedger: true, canManageBilling: false },
     }), { headers: { "content-type": "application/json" } }));
+
+    await expect(
+      createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal"),
+    ).rejects.toMatchObject({ code: "invalid_tenant_account_payload" });
+  });
+
+  test("rejects Lite Team for a Personal account", async () => {
+    setFetch(async () => new Response(JSON.stringify({
+      kind: "personal",
+      tier: "lite_team",
+      status: "active",
+      tierVersion: 1,
+      points: { available: 1000, reserved: 0, version: 1 },
+      permissions: { canViewLedger: true, canManageBilling: false },
+    })));
 
     await expect(
       createDenClient({ baseUrl: "https://den.test", token: "tok_test" }).getTenantAccount("org_personal"),

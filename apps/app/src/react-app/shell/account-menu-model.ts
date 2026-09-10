@@ -6,6 +6,7 @@ export function membershipTierLabel(tier: DenTenantTier | null | undefined): str
     case "normal": return t("account_menu.tier_normal");
     case "pro": return t("account_menu.tier_pro");
     case "power": return t("account_menu.tier_power");
+    case "lite_team": return t("account_menu.tier_lite_team");
     case "team": return t("account_menu.tier_team");
     case "business": return t("account_menu.tier_business");
     default: return t("account_menu.membership_unknown");

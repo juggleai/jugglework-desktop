@@ -9,6 +9,7 @@ describe("account menu presentation", () => {
     expect(membershipTierLabel("normal")).toBe("Normal");
     expect(membershipTierLabel("pro")).toBe("Pro");
     expect(membershipTierLabel("power")).toBe("Power");
+    expect(membershipTierLabel("lite_team")).toBe("Lite Team");
     expect(membershipTierLabel("team")).toBe("Team");
     expect(membershipTierLabel("business")).toBe("Business");
   });
@@ -16,6 +17,12 @@ describe("account menu presentation", () => {
   test("calls a normal membership 普通用户 in Chinese", () => {
     setLocale("zh");
     expect(membershipTierLabel("normal")).toBe("普通用户");
+    setLocale("en");
+  });
+
+  test("shows the localized Lite Team product label in Chinese", () => {
+    setLocale("zh");
+    expect(membershipTierLabel("lite_team")).toBe("团队轻量版");
     setLocale("en");
   });
 

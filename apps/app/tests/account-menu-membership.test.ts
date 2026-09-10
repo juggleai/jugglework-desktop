@@ -26,14 +26,17 @@ describe("account menu membership upgrade", () => {
   });
 
   test("shows team selection only to an organization Owner", () => {
+    expect(membershipUpgradeContext(account("organization", "lite_team"), organization("owner"))).toBe("team");
     expect(membershipUpgradeContext(account("organization", "team"), organization("owner"))).toBe("team");
     expect(membershipUpgradeContext(account("organization", "business"), organization("owner"))).toBe("team");
     expect(membershipUpgradeContext(account("organization", "team"), organization("admin"))).toBeNull();
     expect(membershipUpgradeContext(account("organization", "team"), organization("member"))).toBeNull();
+    expect(membershipUpgradeContext(account("organization", "lite_team"), organization("admin"))).toBeNull();
   });
 
   test("never exposes upgrade without billing permission", () => {
     expect(membershipUpgradeContext(account("personal", "normal", false), organization("owner"))).toBeNull();
     expect(membershipUpgradeContext(account("organization", "team", false), organization("owner"))).toBeNull();
+    expect(membershipUpgradeContext(account("organization", "lite_team", false), organization("owner"))).toBeNull();
   });
 });

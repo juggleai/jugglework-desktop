@@ -19,6 +19,7 @@ export default {
   "account_menu.switch_failed": "切换组织失败",
   "account_menu.switch_organization": "切换组织",
   "account_menu.tier_business": "Business",
+  "account_menu.tier_lite_team": "团队轻量版",
   "account_menu.tier_normal": "普通用户",
   "account_menu.tier_power": "Power",
   "account_menu.tier_pro": "Pro",

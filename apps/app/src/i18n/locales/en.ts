@@ -16,6 +16,7 @@ export default {
   "account_menu.switch_failed": "Couldn't switch organization",
   "account_menu.switch_organization": "Switch organization",
   "account_menu.tier_business": "Business",
+  "account_menu.tier_lite_team": "Lite Team",
   "account_menu.tier_normal": "Normal",
   "account_menu.tier_power": "Power",
   "account_menu.tier_pro": "Pro",

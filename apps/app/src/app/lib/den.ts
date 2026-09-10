@@ -192,7 +192,7 @@ export type DenOrgSummary = {
   accountStatus?: string | null;
 };
 
-export type DenTenantTier = "normal" | "pro" | "power" | "team" | "business";
+export type DenTenantTier = "normal" | "pro" | "power" | "lite_team" | "team" | "business";
 
 export type DenTenantAccount = {
   kind: "personal" | "organization";
@@ -1500,13 +1500,13 @@ function getOrgSummary(payload: unknown): DenOrgSummary | null {
 }
 
 function isDenTenantTier(value: unknown): value is DenTenantTier {
-  return value === "normal" || value === "pro" || value === "power" || value === "team" || value === "business";
+  return value === "normal" || value === "pro" || value === "power" || value === "lite_team" || value === "team" || value === "business";
 }
 
 function isDenTenantTierForKind(kind: "personal" | "organization", tier: unknown): tier is DenTenantTier {
   return kind === "personal"
     ? tier === "normal" || tier === "pro" || tier === "power"
-    : tier === "team" || tier === "business";
+    : tier === "lite_team" || tier === "team" || tier === "business";
 }
 
 function readSafeInteger(value: unknown): number | null {
@@ -1569,7 +1569,7 @@ function getTenantBilling(value: unknown, kind: "personal" | "organization"): De
       : value.fundingKind === "community"
         ? kind !== "personal" || plan !== "normal" || period !== null || seats !== 1 || cycleStart === null || cycleEnd === null || paidThrough !== null || nextGrantAt === null || !isPositiveDecimalString(allowancePerCycle)
         : value.fundingKind === "unpaid"
-          ? kind !== "organization" || plan !== "team" || period !== null || seats !== 0 || cycleStart !== null || cycleEnd !== null || paidThrough !== null || nextGrantAt !== null || allowancePerCycle !== "0"
+          ? kind !== "organization" || (plan !== "lite_team" && plan !== "team") || period !== null || seats !== 0 || cycleStart !== null || cycleEnd !== null || paidThrough !== null || nextGrantAt !== null || allowancePerCycle !== "0"
           : true)
   ) return undefined;
   return {
@@ -2480,6 +2480,7 @@ const MEMBERSHIP_CATALOG_KINDS: Record<DenTenantTier, "personal" | "organization
   normal: "personal",
   pro: "personal",
   power: "personal",
+  lite_team: "organization",
   team: "organization",
   business: "organization",
 };
@@ -2501,10 +2502,11 @@ export function normalizeDenMembershipBillingCatalog(payload: unknown): DenMembe
     const plan = getMembershipCatalogPlan(value);
     return plan ? [plan] : [];
   });
-  if (plans.length !== payload.plans.length || plans.length !== 5) return null;
+  const expectedPlanCount = Object.keys(MEMBERSHIP_CATALOG_KINDS).length;
+  if (plans.length !== payload.plans.length || plans.length !== expectedPlanCount) return null;
   const plansByName = new Map(plans.map((plan) => [plan.plan, plan]));
   if (
-    plansByName.size !== 5 ||
+    plansByName.size !== expectedPlanCount ||
     Object.entries(MEMBERSHIP_CATALOG_KINDS).some(([name, kind]) => plansByName.get(name as DenTenantTier)?.tenantKind !== kind) ||
     plans.some((plan) => !isPositiveDecimalString(plan.allowancePerCycle)) ||
     plans.some((plan) => plan.plan === "normal"
@@ -2616,10 +2618,10 @@ export function normalizeDenMembershipOrder(payload: unknown): DenMembershipOrde
   const checkout = payload.checkout === null || payload.checkout === undefined ? null : getMembershipCheckout(payload.checkout);
   const paymentCode = payload.paymentCode === null || payload.paymentCode === undefined ? null : getMembershipPaymentCode(payload.paymentCode);
   const targetCombinationValid = payload.targetMode === "new_organization"
-    ? organizationId === null && payload.targetKind === "organization" && (payload.plan === "team" || payload.plan === "business") && payload.quoteKind === "activation"
+    ? organizationId === null && payload.targetKind === "organization" && (payload.plan === "lite_team" || payload.plan === "team" || payload.plan === "business") && payload.quoteKind === "activation"
     : payload.targetKind === "personal"
       ? organizationId !== null && (payload.plan === "pro" || payload.plan === "power") && seats === 1
-      : organizationId !== null && (payload.plan === "team" || payload.plan === "business");
+      : organizationId !== null && (payload.plan === "lite_team" || payload.plan === "team" || payload.plan === "business");
   if (
     seats === null || seats < 1 || unitAmountFen === null || unitAmountFen === "0" ||
     totalAmountFen === null || totalAmountFen === "0" || allowancePerCycle === null || allowancePerCycle === "0" ||

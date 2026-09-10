@@ -1,7 +1,7 @@
 {
   "contractVersion": "desktop-billing-v2",
   "catalog": {
-    "version": "membership-cny-v1",
+    "version": "membership-cny-v2",
     "currency": "CNY",
     "payment": {
       "alipayQrAvailable": false,
@@ -11,6 +11,7 @@
       { "plan": "normal", "tenantKind": "personal", "monthlyAmountFen": "0", "annualAmountFen": "0", "allowancePerCycle": "1000", "minimumSeats": "1", "pricedPerSeat": false },
       { "plan": "pro", "tenantKind": "personal", "monthlyAmountFen": "9900", "annualAmountFen": "94800", "allowancePerCycle": "20000", "minimumSeats": "1", "pricedPerSeat": false },
       { "plan": "power", "tenantKind": "personal", "monthlyAmountFen": "19900", "annualAmountFen": "190800", "allowancePerCycle": "45000", "minimumSeats": "1", "pricedPerSeat": false },
+      { "plan": "lite_team", "tenantKind": "organization", "monthlyAmountFen": "990", "annualAmountFen": "11880", "allowancePerCycle": "10000", "minimumSeats": "3", "pricedPerSeat": true },
       { "plan": "team", "tenantKind": "organization", "monthlyAmountFen": "16900", "annualAmountFen": "166800", "allowancePerCycle": "25000", "minimumSeats": "3", "pricedPerSeat": true },
       { "plan": "business", "tenantKind": "organization", "monthlyAmountFen": "29900", "annualAmountFen": "298800", "allowancePerCycle": "50000", "minimumSeats": "10", "pricedPerSeat": true }
     ]

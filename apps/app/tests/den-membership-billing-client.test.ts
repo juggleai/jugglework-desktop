@@ -65,9 +65,20 @@ describe("Den membership billing parsers", () => {
     payload.futureCatalogField = true;
     const catalog = normalizeDenMembershipBillingCatalog(payload);
 
-    expect(catalog).toMatchObject({
-      payment: { alipayPageAvailable: true, alipayQrAvailable: false },
-      plans: expect.arrayContaining([{ ...catalog?.plans[1], plan: "pro", annualAmountFen: "9223372036854775807", minimumSeats: 1 }]),
+    expect(catalog).not.toBeNull();
+    expect(catalog!.version).toBe("membership-cny-v2");
+    expect(catalog!.payment).toEqual({ alipayPageAvailable: true, alipayQrAvailable: false });
+    expect(catalog!.plans).toHaveLength(6);
+    expect(catalog!.plans.find((plan) => plan.plan === "pro")).toMatchObject({
+      plan: "pro",
+      annualAmountFen: "9223372036854775807",
+      minimumSeats: 1,
+    });
+    expect(catalog!.plans.find((plan) => plan.plan === "lite_team")).toMatchObject({
+      plan: "lite_team",
+      tenantKind: "organization",
+      monthlyAmountFen: "990",
+      minimumSeats: 3,
     });
     expect(fixture.orders.checkoutPending.organizationId).toBe("org_personal");
     expect(fixture.orders.paidPendingActivation.organizationId).toBeNull();
@@ -77,7 +88,7 @@ describe("Den membership billing parsers", () => {
     const missing = structuredClone(fixture.catalog);
     missing.plans.pop();
     const duplicate = structuredClone(fixture.catalog);
-    duplicate.plans[4].plan = "team";
+    duplicate.plans.find((plan: { plan: string }) => plan.plan === "business")!.plan = "team";
     const wrongKind = structuredClone(fixture.catalog);
     wrongKind.plans[1].tenantKind = "organization";
     expect(normalizeDenMembershipBillingCatalog(missing)).toBeNull();
@@ -97,8 +108,8 @@ describe("Den membership billing parsers", () => {
       (catalog: typeof fixture.catalog) => { catalog.plans[1].annualAmountFen = "0"; },
       (catalog: typeof fixture.catalog) => { catalog.plans[1].minimumSeats = "2"; },
       (catalog: typeof fixture.catalog) => { catalog.plans[1].pricedPerSeat = true; },
-      (catalog: typeof fixture.catalog) => { catalog.plans[3].pricedPerSeat = false; },
-      (catalog: typeof fixture.catalog) => { catalog.plans[3].allowancePerCycle = "0"; },
+      (catalog: typeof fixture.catalog) => { catalog.plans.find((plan: { plan: string }) => plan.plan === "lite_team")!.pricedPerSeat = false; },
+      (catalog: typeof fixture.catalog) => { catalog.plans.find((plan: { plan: string }) => plan.plan === "lite_team")!.allowancePerCycle = "0"; },
     ]) {
       const invalid = structuredClone(fixture.catalog);
       mutate(invalid);
@@ -147,6 +158,26 @@ describe("Den membership billing parsers", () => {
       seats: "3",
       quoteKind: "activation",
     }))).toMatchObject({ organizationId: null, targetMode: "new_organization" });
+    expect(normalizeDenMembershipOrder(pageOrder({
+      organizationId: null,
+      targetMode: "new_organization",
+      targetKind: "organization",
+      plan: "lite_team",
+      seats: "3",
+      unitAmountFen: "990",
+      totalAmountFen: "2970",
+      allowancePerCycle: "30000",
+      quoteKind: "activation",
+    }))).toMatchObject({ organizationId: null, targetMode: "new_organization", plan: "lite_team" });
+    expect(normalizeDenMembershipOrder(pageOrder({
+      organizationId: "org_lite",
+      targetKind: "organization",
+      plan: "lite_team",
+      seats: "3",
+      unitAmountFen: "990",
+      totalAmountFen: "2970",
+      allowancePerCycle: "30000",
+    }))).toMatchObject({ organizationId: "org_lite", plan: "lite_team" });
   });
 
   test("rejects contradictory target, status, fulfillment, and payment-artifact combinations", () => {
