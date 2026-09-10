@@ -23,6 +23,8 @@ import type { ServeResult } from "./serve-node.js";
 import type { ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
+  /** Historical local-host token hashes used for a bounded upgrade migration. */
+  trustedLegacyHostTokenHashes?: string[];
   /** When true, spawn a managed OpenCode child process. */
   manageOpencode?: boolean;
   /** Path to the OpenCode binary. Falls back to JUGGLEWORK_OPENCODE_BIN env. */
@@ -55,6 +57,11 @@ export type EmbeddedServerHandle = {
 
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
+  config.trustedLegacyHostTokenHashes = [...new Set(
+    (options.trustedLegacyHostTokenHashes ?? [])
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => /^[a-f0-9]{64}$/.test(value)),
+  )].slice(0, 256);
   // The engine's provider catalog comes from the connected deployment
   // (`<origin>/jwork/models`). With no deployment to read it from, the variable
   // is left unset and the engine uses its own built-in catalog source.

@@ -100,3 +100,15 @@ The system SHALL derive a concise task-progress summary from observable tool act
 #### Scenario: Progress summary is not transcript content
 - **WHEN** the user copies or exports the conversation or the next model request is built
 - **THEN** the locally derived progress summary is excluded
+
+### Requirement: Queued follow-ups use compact rows
+The system SHALL present each follow-up queued during an active task as a compact single-line row without a separate visible queue-count heading.
+
+#### Scenario: Queued text exceeds the available width
+- **WHEN** a queued follow-up is wider than the composer accessory area
+- **THEN** its visible text is truncated to one line with an ellipsis
+- **AND** edit and remove actions remain visible
+
+#### Scenario: Multiple follow-ups are queued
+- **WHEN** more than one follow-up is waiting
+- **THEN** each follow-up has its own compact row in queue order

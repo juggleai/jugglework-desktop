@@ -108,13 +108,14 @@ function QueuedAttachmentChip(props: { attachment: ComposerAttachment }) {
         src={props.attachment.previewUrl}
         alt={props.attachment.name}
         className="mx-0.5 align-middle"
+        thumbnailClassName="size-7 rounded-lg"
       />
     );
   }
 
   return (
     <span
-      className="mx-0.5 inline-flex h-10 max-w-[140px] items-center gap-1.5 rounded-xl border border-border/70 bg-muted/40 px-2 align-middle"
+      className="mx-0.5 inline-flex h-7 max-w-[140px] items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 px-2 align-middle"
       title={props.attachment.name}
     >
       <FileText className="size-3.5 shrink-0 text-muted-foreground" />
@@ -123,66 +124,63 @@ function QueuedAttachmentChip(props: { attachment: ComposerAttachment }) {
   );
 }
 
+function queuedDraftTitle(draft: ComposerDraft) {
+  const text = draft.text.trim();
+  if (text) return text;
+  return draft.attachments.map((attachment) => attachment.name).join(", ");
+}
+
 /**
  * Shows the follow-up messages the user has queued while the agent is busy.
- * Rendered above the composer (mirrors the QuestionPanel header style). Each
- * entry can be moved back into the composer for editing or cancelled.
+ * Rendered as compact single-line rows above the composer. Each entry can be
+ * moved back into the composer for editing or cancelled.
  */
 export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
   if (props.drafts.length === 0) return null;
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
-      <div className="border-b border-dls-border px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-5 shrink-0 items-center justify-center rounded-full border border-gray-7/40 bg-gray-3/40 text-gray-11">
-            <ListPlus size={12} />
+    <div
+      className="max-h-36 space-y-1 overflow-y-auto border-b border-dls-border bg-transparent px-4 py-2"
+      role="list"
+      aria-label={t("composer.queued_count", { count: props.drafts.length })}
+    >
+      {props.drafts.map((item) => (
+        <div
+          key={item.id}
+          role="listitem"
+          className="group flex min-h-10 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-gray-2/70"
+        >
+          <ListPlus className="size-4 shrink-0 text-gray-10" aria-hidden="true" />
+          <div
+            className="min-w-0 flex-1 truncate whitespace-nowrap text-sm font-medium leading-5 text-gray-12"
+            title={queuedDraftTitle(item.draft)}
+          >
+            <QueuedDraftContent draft={item.draft} />
           </div>
-          <div className="text-sm font-medium leading-5 text-gray-12">
-            {t("composer.queued_count", { count: props.drafts.length })}
+          <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={() => props.onEdit(item.id)}
+              disabled={props.sending}
+              className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+              title={t("common.edit")}
+              aria-label={t("common.edit")}
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onRemove(item.id)}
+              disabled={props.sending}
+              className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-red-3 hover:text-red-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-8 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+              title={t("common.remove")}
+              aria-label={t("common.remove")}
+            >
+              <X size={13} />
+            </button>
           </div>
         </div>
-      </div>
-
-      <div className="max-h-48 space-y-2 overflow-auto px-4 py-3">
-        {props.drafts.map((item, index) => (
-            <div
-              key={item.id}
-              className="group flex items-start justify-between gap-3 rounded-xl border border-gray-6/80 bg-gray-1/80 px-3 py-2.5 transition-colors hover:border-gray-7 hover:bg-gray-2/70"
-            >
-              <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-gray-3 font-mono text-[10px] tabular-nums text-gray-10">
-                  {index + 1}
-                </span>
-                <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 text-gray-11">
-                  <QueuedDraftContent draft={item.draft} />
-                </div>
-              </div>
-              <div className="mt-0.5 flex shrink-0 items-center gap-1 opacity-80 transition-opacity group-hover:opacity-100">
-                <button
-                  type="button"
-                  onClick={() => props.onEdit(item.id)}
-                  disabled={props.sending}
-                  className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] disabled:pointer-events-none disabled:opacity-40"
-                  title={t("common.edit")}
-                  aria-label={t("common.edit")}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => props.onRemove(item.id)}
-                  disabled={props.sending}
-                  className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-red-3 hover:text-red-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-8 disabled:pointer-events-none disabled:opacity-40"
-                  title={t("common.remove")}
-                  aria-label={t("common.remove")}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            </div>
-        ))}
-      </div>
+      ))}
     </div>
   );
 }

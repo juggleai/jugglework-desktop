@@ -121,6 +121,15 @@ export async function verifyAuthorizingPrincipal(options: {
   if (principal.scope === "owner" && principal.id === localHostPrincipal.id) {
     return { valid: true };
   }
+  // Upgrade compatibility: the embedded desktop passes hashes of host tokens
+  // retained by this exact installation. This keeps legacy grants valid while
+  // Full access rows are migrated to the installation-stable principal.
+  if (
+    principal.scope === "owner" &&
+    config.trustedLegacyHostTokenHashes?.includes(principal.id)
+  ) {
+    return { valid: true };
+  }
   // Backward compatibility for authority records created before installation-
   // stable principals. Only the current host token is accepted; stale tokens
   // remain fail-closed and require explicit renewal.
@@ -131,6 +140,69 @@ export async function verifyAuthorizingPrincipal(options: {
   if (scope !== "owner" && scope !== "collaborator") return { valid: false };
   if (principal.scope === "owner" && scope !== "owner") return { valid: false };
   return { valid: true };
+}
+
+/**
+ * Upgrade pre-installation-identity Full access records without treating an
+ * arbitrary revoked owner token as local authority. A record is eligible only
+ * when its exact SHA-256 principal is still present in Electron's private
+ * historical host-token store for this installation.
+ */
+export async function migrateTrustedLegacyLocalHostFullAccess(options: {
+  config: ServerConfig;
+  store: SessionPermissionModeStore;
+  now?: number;
+}): Promise<number> {
+  const { config, store } = options;
+  const stablePrincipal = await resolveLocalHostAuthorizingPrincipal(config);
+  const legacyPrincipalIds = new Set(
+    (config.trustedLegacyHostTokenHashes ?? [])
+      .filter((value) => value !== stablePrincipal.id),
+  );
+  if (legacyPrincipalIds.size === 0) return 0;
+
+  const now = options.now ?? Date.now();
+  const seen = new Set<string>();
+  let migratedCount = 0;
+  for (const workspace of config.workspaces) {
+    for (const legacyPrincipalId of legacyPrincipalIds) {
+      for (const record of store.listFullAccessByPrincipal(workspace.id, legacyPrincipalId)) {
+        const key = `${record.workspaceId}\0${record.rootSessionId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        // Persist the security intent before restoring the semantically
+        // unchanged Full access authority.
+        const decision = store.appendDecisionIntent({
+          workspaceId: record.workspaceId,
+          rootSessionId: record.rootSessionId,
+          targetSessionId: null,
+          kind: "mode-change",
+          resourceSummary: ["migrated: legacy local host principal"],
+          actor: { origin: "system", id: stablePrincipal.id },
+          authorityRevision: record.authorityRevision + 1,
+          requestId: null,
+          now,
+        });
+        try {
+          const migrated = store.migrateLegacyLocalHostFullAccess({
+            workspaceId: record.workspaceId,
+            rootSessionId: record.rootSessionId,
+            legacyPrincipalId,
+            stablePrincipal,
+            expectedRevision: record.authorityRevision,
+            now,
+          });
+          store.resolveDecision(decision.id, migrated ? "succeeded" : "failed", now);
+          if (migrated) migratedCount += 1;
+        } catch (error) {
+          store.resolveDecision(decision.id, "failed", now);
+          throw error;
+        }
+      }
+    }
+  }
+  return migratedCount;
 }
 
 // ---------------------------------------------------------------------------

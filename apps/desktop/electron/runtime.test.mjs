@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  collectTrustedLegacyHostTokenHashes,
   commandMatchesPackagedSidecar,
   createRuntimeManager,
   denModelsCatalogUrl,
@@ -18,6 +19,24 @@ import {
   shouldReuseHealthyManagedRuntime,
   snapshotEngineState,
 } from "./runtime.mjs";
+
+describe("collectTrustedLegacyHostTokenHashes", () => {
+  it("hashes and deduplicates retained host credentials without returning plaintext", () => {
+    const hashes = collectTrustedLegacyHostTokenHashes({
+      workspaces: {
+        first: { hostToken: "legacy-host-a" },
+        duplicate: { hostToken: "legacy-host-a" },
+        second: { hostToken: "legacy-host-b" },
+        malformed: { hostToken: "" },
+      },
+    });
+
+    assert.equal(hashes.length, 2);
+    assert.equal(hashes.every((value) => /^[a-f0-9]{64}$/.test(value)), true);
+    assert.equal(hashes.includes("legacy-host-a"), false);
+    assert.equal(hashes.includes("legacy-host-b"), false);
+  });
+});
 
 async function listen(server, port = 0) {
   await new Promise((resolve, reject) => {

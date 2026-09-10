@@ -106,6 +106,13 @@ type ExclusionRow = {
   created_at: number;
 };
 
+export type FullAccessPrincipalRecord = {
+  workspaceId: string;
+  rootSessionId: string;
+  authorizingPrincipalId: string;
+  authorityRevision: number;
+};
+
 // ---------------------------------------------------------------------------
 // Sanitization (task 5.2)
 // ---------------------------------------------------------------------------
@@ -443,13 +450,19 @@ export class SessionPermissionModeStore {
     );
   }
 
-  /** Full-access rows authored by a principal (for durable suspension). */
-  listFullAccessByPrincipal(workspaceId: string, principalId: string): ModeRow[] {
-    return this.database.all<ModeRow>(
+  /** Full-access rows authored by a principal, including already-suspended rows. */
+  listFullAccessByPrincipal(workspaceId: string, principalId: string): FullAccessPrincipalRecord[] {
+    const rows = this.database.all<ModeRow>(
       `SELECT * FROM session_permission_modes
-       WHERE workspace_id = ? AND author_principal_id = ? AND requested_mode = 'full-access' AND suspended = 0`,
+       WHERE workspace_id = ? AND author_principal_id = ? AND requested_mode = 'full-access'`,
       [workspaceId, principalId],
     );
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      rootSessionId: row.root_session_id,
+      authorizingPrincipalId: row.author_principal_id!,
+      authorityRevision: row.authority_revision,
+    }));
   }
 
   listExcludedRequestIds(workspaceId: string, rootSessionId: string): Set<string> {
@@ -567,6 +580,44 @@ export class SessionPermissionModeStore {
       );
       return this.readModeState(workspaceId, rootSessionId);
     });
+  }
+
+  /**
+   * Replace a pre-v1 local-host token principal with the durable installation
+   * principal. The exact principal and revision form a CAS boundary so a
+   * concurrent user mode change always wins.
+   */
+  migrateLegacyLocalHostFullAccess(input: {
+    workspaceId: string;
+    rootSessionId: string;
+    legacyPrincipalId: string;
+    stablePrincipal: SessionPermissionAuthorizingPrincipal;
+    expectedRevision: number;
+    now: number;
+  }): SessionPermissionModeState | null {
+    const result = this.database.run(
+      `UPDATE session_permission_modes SET
+         author_principal_id = ?,
+         author_principal_scope = 'owner',
+         suspended = 0,
+         authority_revision = ?,
+         updated_at = ?
+       WHERE workspace_id = ? AND root_session_id = ?
+         AND requested_mode = 'full-access'
+         AND author_principal_id = ? AND author_principal_scope = 'owner'
+         AND authority_revision = ?`,
+      [
+        input.stablePrincipal.id,
+        input.expectedRevision + 1,
+        input.now,
+        input.workspaceId,
+        input.rootSessionId,
+        input.legacyPrincipalId,
+        input.expectedRevision,
+      ],
+    );
+    if (result.changes !== 1) return null;
+    return this.readModeState(input.workspaceId, input.rootSessionId);
   }
 
   /** Durable grant invalidation (author lost authority). */

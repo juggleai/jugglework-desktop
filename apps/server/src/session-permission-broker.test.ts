@@ -22,6 +22,7 @@ import {
 import {
   captureActivationBoundary,
   evaluateSessionApprovalCeiling,
+  migrateTrustedLegacyLocalHostFullAccess,
   normalizePendingPermissionRequest,
   resolveLocalHostAuthorizingPrincipal,
   RootSerialization,
@@ -343,6 +344,75 @@ describe("session permission broker", () => {
     );
   });
 
+  test("migrates a suspended legacy desktop host principal to the stable installation identity", async () => {
+    const h = harness = await createHarness();
+    const legacyHostToken = "owt_pre_installation_identity";
+    const legacyPrincipalId = hashToken(legacyHostToken);
+    const enabled = h.store.updateMode({
+      workspaceId: h.workspace.id,
+      rootSessionId: "ses_root",
+      requestedMode: "full-access",
+      expectedRevision: 0,
+      acknowledgementProfileVersion: 1,
+      authorizingPrincipal: { id: legacyPrincipalId, scope: "owner" },
+      activationExclusionRequestIds: [],
+      now: NOW,
+    });
+    assert.ok(enabled.ok);
+    h.store.suspendFullAccessForPrincipal(h.workspace.id, "ses_root", NOW + 1);
+    assert.equal(
+      h.store.readModeState(h.workspace.id, "ses_root")?.effectiveMode,
+      "full-access-suspended",
+    );
+
+    h.config.trustedLegacyHostTokenHashes = [legacyPrincipalId];
+    assert.equal(await migrateTrustedLegacyLocalHostFullAccess({
+      config: h.config,
+      store: h.store,
+      now: NOW + 2,
+    }), 1);
+
+    const migrated = h.store.readModeState(h.workspace.id, "ses_root");
+    assert.equal(migrated?.effectiveMode, "full-access");
+    assert.equal(
+      migrated?.authorizingPrincipal?.id,
+      (await resolveLocalHostAuthorizingPrincipal(h.config)).id,
+    );
+    assert.equal(migrated?.authorityRevision, 3);
+
+    h.engine.permissions = [legacyPending()];
+    await h.runCycle();
+    assert.equal(h.engine.replies.length, 1);
+  });
+
+  test("does not migrate a suspended principal absent from this installation's host-token history", async () => {
+    const h = harness = await createHarness();
+    const untrustedPrincipalId = hashToken("owt_untrusted_old_owner");
+    const enabled = h.store.updateMode({
+      workspaceId: h.workspace.id,
+      rootSessionId: "ses_root",
+      requestedMode: "full-access",
+      expectedRevision: 0,
+      acknowledgementProfileVersion: 1,
+      authorizingPrincipal: { id: untrustedPrincipalId, scope: "owner" },
+      activationExclusionRequestIds: [],
+      now: NOW,
+    });
+    assert.ok(enabled.ok);
+    h.store.suspendFullAccessForPrincipal(h.workspace.id, "ses_root", NOW + 1);
+    h.config.trustedLegacyHostTokenHashes = [hashToken("owt_different_installation")];
+
+    assert.equal(await migrateTrustedLegacyLocalHostFullAccess({
+      config: h.config,
+      store: h.store,
+      now: NOW + 2,
+    }), 0);
+    assert.equal(
+      h.store.readModeState(h.workspace.id, "ses_root")?.effectiveMode,
+      "full-access-suspended",
+    );
+  });
+
   test("principal authority loss durably suspends full access without silent resumption", async () => {
     const h = harness = await createHarness();
     const owner = await h.tokens.create("owner", { label: "test owner" });
@@ -482,6 +552,23 @@ describe("session permission broker", () => {
         config: h.config,
         tokens: h.tokens,
         principal: { id: hashToken(HOST_TOKEN), scope: "owner" },
+      })).valid,
+      false,
+    );
+    h.config.trustedLegacyHostTokenHashes = [hashToken(HOST_TOKEN)];
+    assert.equal(
+      (await verifyAuthorizingPrincipal({
+        config: h.config,
+        tokens: h.tokens,
+        principal: { id: hashToken(HOST_TOKEN), scope: "owner" },
+      })).valid,
+      true,
+    );
+    assert.equal(
+      (await verifyAuthorizingPrincipal({
+        config: h.config,
+        tokens: h.tokens,
+        principal: { id: hashToken(HOST_TOKEN), scope: "collaborator" },
       })).valid,
       false,
     );

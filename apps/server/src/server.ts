@@ -93,7 +93,12 @@ import {
 } from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
-import { RootSerialization, SessionPermissionBroker, createInteractionPermissionCeiling } from "./session-permission-broker.js";
+import {
+  RootSerialization,
+  SessionPermissionBroker,
+  createInteractionPermissionCeiling,
+  migrateTrustedLegacyLocalHostFullAccess,
+} from "./session-permission-broker.js";
 import { AutomationExecutor } from "./automation/executor.js";
 import { AutomationScheduler } from "./automation/scheduler.js";
 import { AutomationEventPipeline } from "./automation/event-pipeline.js";
@@ -903,6 +908,15 @@ export async function startServer(config: ServerConfig, options: {
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
+  const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
+    config,
+    store: sessionPermissionStore,
+  });
+  if (migratedLegacyFullAccessCount > 0) {
+    logger.log("info", "session-permission:migrated-legacy-local-host", {
+      modes: migratedLegacyFullAccessCount,
+    });
+  }
   const sessionPermissionRootLocks = new RootSerialization();
   const sessionPermissionBroker = new SessionPermissionBroker({
     store: sessionPermissionStore,

@@ -86,6 +86,12 @@ export interface ServerConfig {
   port: number;
   token: string;
   hostToken: string;
+  /**
+   * SHA-256 hashes of host transport tokens previously issued by this local
+   * desktop installation. Embedded desktop runtimes use these only to migrate
+   * pre-installation-identity permission records after an upgrade.
+   */
+  trustedLegacyHostTokenHashes?: string[];
   configPath?: string;
   opencodeBaseUrl?: string;
   opencodeDirectory?: string;

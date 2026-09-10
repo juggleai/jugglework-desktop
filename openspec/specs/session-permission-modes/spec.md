@@ -130,6 +130,12 @@ The system SHALL require an explicit risk acknowledgement before enabling Full a
 - **THEN** its installation-level authorizing principal identity remains stable
 - **AND** Full access and reusable grants are not suspended solely because the transport credential changed
 
+#### Scenario: Existing local Full access record predates installation identity
+- **WHEN** an upgrade encounters a Full access record authored with a historical host transport token
+- **AND** that exact token hash is still retained by the same desktop installation
+- **THEN** the server migrates the record to the installation-level principal and restores a false transport-rotation suspension
+- **AND** records that do not match the installation's retained host-token history remain suspended
+
 #### Scenario: Full access principal authority cannot be verified
 - **WHEN** the owning server cannot authoritatively verify the current Full access principal's required scope
 - **THEN** the system durably suspends Full access and requires explicit renewal after authority is restored

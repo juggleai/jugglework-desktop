@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -31,6 +31,21 @@ function normalizeWorkspaceKey(value) {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
   return path.resolve(trimmed).replace(/\\/g, "/").toLowerCase();
+}
+
+/**
+ * Hash every host transport credential retained by this desktop installation.
+ * Only hashes cross into the embedded server; plaintext historical tokens
+ * remain confined to Electron's private token store.
+ */
+export function collectTrustedLegacyHostTokenHashes(store) {
+  const hashes = new Set();
+  for (const entry of Object.values(store?.workspaces ?? {})) {
+    const token = typeof entry?.hostToken === "string" ? entry.hostToken.trim() : "";
+    if (!token) continue;
+    hashes.add(createHash("sha256").update(token).digest("hex"));
+  }
+  return [...hashes];
 }
 
 export function prioritizeWorkspacePaths(preferredPath, workspacePaths = []) {
@@ -1086,6 +1101,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     const activeWorkspace = selectStickyJuggleWorkPortWorkspace(requestedWorkspacePaths, workspacePaths);
     const portSelection = await resolveJuggleWorkPort(host, activeWorkspace, currentPort);
     const tokens = await loadOrCreateWorkspaceTokens(activeWorkspace);
+    const trustedLegacyHostTokenHashes = collectTrustedLegacyHostTokenHashes(await loadTokenStore());
 
     // One call: resolve config, spawn managed OpenCode, start HTTP server.
     // Dev must prefer apps/server/dist; build output also stages a packaged
@@ -1116,6 +1132,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
       workspaces: workspacePaths,
       token: tokens.clientToken,
       hostToken: tokens.hostToken,
+      trustedLegacyHostTokenHashes,
       opencodeBaseUrl: options.opencodeBaseUrl ?? undefined,
       opencodeDirectory: activeWorkspace || undefined,
       manageOpencode: options.manageOpencode === true,
