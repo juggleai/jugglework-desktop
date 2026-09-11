@@ -1164,26 +1164,35 @@ export function readDenIMLoginBootstrap(): DenIMLoginBootstrap | null {
   const raw = window.localStorage.getItem(STORAGE_IM_LOGIN_BOOTSTRAP);
   if (!raw) return null;
   try {
-    const stored = JSON.parse(raw) as { authFingerprint?: unknown; im?: unknown };
-    const authToken = readDenSettings().authToken?.trim() ?? "";
+    const stored = JSON.parse(raw) as { authFingerprint?: unknown; organizationId?: unknown; im?: unknown };
+    const settings = readDenSettings();
+    const authToken = settings.authToken?.trim() ?? "";
+    const activeOrgId = settings.activeOrgId?.trim() ?? "";
     if (!authToken || stored.authFingerprint !== denCredentialFingerprint(authToken)) return null;
+    if (!activeOrgId || stored.organizationId !== activeOrgId) return null;
     return getIMLoginBootstrap({ im: stored.im });
   } catch {
     return null;
   }
 }
 
-export function writeDenIMLoginBootstrap(value: DenIMLoginBootstrap | null) {
+export function writeDenIMLoginBootstrap(
+  value: DenIMLoginBootstrap | null,
+  organizationId?: string | null,
+) {
   if (typeof window === "undefined") return;
   if (value) {
-    const authToken = readDenSettings().authToken?.trim() ?? "";
-    if (!authToken) {
+    const settings = readDenSettings();
+    const authToken = settings.authToken?.trim() ?? "";
+    const scopedOrganizationId = organizationId?.trim() || settings.activeOrgId?.trim() || "";
+    if (!authToken || !scopedOrganizationId) {
       window.localStorage.removeItem(STORAGE_IM_LOGIN_BOOTSTRAP);
       dispatchDenSettingsChanged({ settings: readDenSettings() });
       return;
     }
     window.localStorage.setItem(STORAGE_IM_LOGIN_BOOTSTRAP, JSON.stringify({
       authFingerprint: denCredentialFingerprint(authToken),
+      organizationId: scopedOrganizationId,
       im: value,
     }));
   } else {
@@ -1382,15 +1391,21 @@ export async function ensureDenActiveOrganization(options?: { forceServerSync?: 
     // 已有有效 bootstrap 且服务端组织一致时不请求，避免每次刷新都重新供给；个人工作区
     // 按服务端契约永远不带 IM，也不做无意义的自愈请求。
     const result = await client.setActiveOrganization({ organizationId: targetOrg.id });
-    writeDenIMLoginBootstrap(result?.im ?? null);
+    writeDenSettings({
+      ...settings,
+      activeOrgId: targetOrg.id,
+      activeOrgSlug: targetOrg.slug,
+      activeOrgName: targetOrg.name,
+    }, { persistBootstrap: false });
+    writeDenIMLoginBootstrap(result?.im ?? null, targetOrg.id);
+  } else {
+    writeDenSettings({
+      ...settings,
+      activeOrgId: targetOrg.id,
+      activeOrgSlug: targetOrg.slug,
+      activeOrgName: targetOrg.name,
+    }, { persistBootstrap: false });
   }
-
-  writeDenSettings({
-    ...settings,
-    activeOrgId: targetOrg.id,
-    activeOrgSlug: targetOrg.slug,
-    activeOrgName: targetOrg.name,
-  }, { persistBootstrap: false });
   writeDenLastOrganization(userId, targetOrg.id);
 
   return targetOrg;

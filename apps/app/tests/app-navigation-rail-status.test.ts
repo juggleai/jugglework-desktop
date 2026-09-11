@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
-import { visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
+import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "../src/react-app/shell/app-navigation-status";
 
 describe("local workspace rail status", () => {
   test("hides running status while the local workspace page is visible", () => {
@@ -24,6 +24,23 @@ describe("chat unread reminder", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
     const chat = source.slice(source.indexOf('label={t("navigation.chat")}'), source.indexOf("<MessageSquare />"));
     expect(chat).toMatch(/badgeVariant="dot"/);
+  });
+
+  test("shows Chat and Contacts only with current IM bootstrap availability", () => {
+    const im = { provider: "juggleim", websocketUrl: "wss://im.example.com", appKey: "app", imUserId: "user", token: "token" };
+    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: "org", im })).toBe(true);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: "org", im: null })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "checking", accountBusy: false, activeOrganizationId: "org", im })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: true, activeOrganizationId: "org", im })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: null, im })).toBe(false);
+  });
+
+  test("gates the Chat and Contacts buttons as one block", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const block = source.slice(source.indexOf("{imNavigationVisible ? ("), source.indexOf("</nav>"));
+    expect(block).toContain('testId="app-rail-chat"');
+    expect(block).toContain('testId="app-rail-contacts"');
+    expect(block).toContain(") : null}");
   });
 });
 

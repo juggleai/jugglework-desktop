@@ -12,6 +12,7 @@ import {
   resolveDenDefaultOrganization,
   setDenBootstrapConfig,
   writeDenSettings,
+  writeDenIMLoginBootstrap,
   writeDenLastOrganization,
 } from "../src/app/lib/den";
 
@@ -312,6 +313,53 @@ describe("desktop Den bootstrap settings", () => {
       provider: "juggleim",
       imUserId: "im-user",
     });
+  });
+
+  test("accepts IM credentials only for their current organization", () => {
+    writeDenSettings({
+      baseUrl: "https://bootstrap.example.com",
+      authToken: "current-session",
+      activeOrgId: "org_a",
+      activeOrgSlug: "a",
+      activeOrgName: "A",
+    });
+    writeDenIMLoginBootstrap({
+      provider: "juggleim",
+      websocketUrl: "wss://im.example.com",
+      appKey: "app-key",
+      imUserId: "im-user",
+      token: "im-session",
+    }, "org_a");
+    expect(readDenIMLoginBootstrap()?.imUserId).toBe("im-user");
+
+    writeDenSettings({
+      ...readDenSettings(),
+      activeOrgId: "org_b",
+      activeOrgSlug: "b",
+      activeOrgName: "B",
+    });
+    expect(readDenIMLoginBootstrap()).toBeNull();
+  });
+
+  test("rejects legacy IM cache entries without an organization binding", () => {
+    writeDenSettings({
+      baseUrl: "https://bootstrap.example.com",
+      authToken: "current-session",
+      activeOrgId: "org_a",
+      activeOrgSlug: "a",
+      activeOrgName: "A",
+    });
+    writeDenIMLoginBootstrap({
+      provider: "juggleim",
+      websocketUrl: "wss://im.example.com",
+      appKey: "app-key",
+      imUserId: "im-user",
+      token: "im-session",
+    }, "org_a");
+    const stored = JSON.parse(window.localStorage.getItem("jugglework.den.imLoginBootstrap")!);
+    delete stored.organizationId;
+    window.localStorage.setItem("jugglework.den.imLoginBootstrap", JSON.stringify(stored));
+    expect(readDenIMLoginBootstrap()).toBeNull();
   });
 
   test("does not repeatedly request IM credentials for a personal workspace", async () => {

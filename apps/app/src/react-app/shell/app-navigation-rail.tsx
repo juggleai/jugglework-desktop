@@ -35,7 +35,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
-import { buildDenDashboardUrl, buildDenMembershipUpgradeUrl, readDenSettings } from "@/app/lib/den";
+import { buildDenDashboardUrl, buildDenMembershipUpgradeUrl, readDenIMLoginBootstrap, readDenSettings } from "@/app/lib/den";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
@@ -49,7 +49,7 @@ import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/side
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 import { LOCAL_AUTOMATION_ENABLED } from "@/react-app/domains/automations/automation-feature-flags";
-import { visibleLocalWorkspaceIndicator } from "./app-navigation-status";
+import { isIMNavigationVisible, visibleLocalWorkspaceIndicator } from "./app-navigation-status";
 import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, organizationMenuGroups } from "./account-menu-model";
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
@@ -151,6 +151,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const location = useLocation();
   const platform = usePlatform();
   const {
+    status: authStatus,
     user,
     organizations,
     activeOrganization,
@@ -194,6 +195,12 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const organizationLabel = activeOrganization?.name ?? readDenSettings().activeOrgName?.trim() ?? t("account_menu.no_organization");
   const organizationGroups = organizationMenuGroups(organizations);
   const upgradeContext = membershipUpgradeContext(tenantAccount, activeOrganization);
+  const imNavigationVisible = isIMNavigationVisible({
+    authStatus,
+    accountBusy,
+    activeOrganizationId: activeOrganization?.id,
+    im: readDenIMLoginBootstrap(),
+  });
   const balanceLabel = tenantAccount
     ? new Intl.NumberFormat(currentLocale()).format(tenantAccount.points.available)
     : accountBusy
@@ -320,24 +327,28 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         >
           <AlarmClock />
         </RailButton> : null}
-        <RailButton
-          label={t("navigation.chat")}
-          active={props.chatActive && chatView !== "contacts"}
-          onClick={() => openChatView("conversations")}
-          testId="app-rail-chat"
-          badge={totalUnreadCount}
-          badgeVariant="dot"
-        >
-          <MessageSquare />
-        </RailButton>
-        <RailButton
-          label={t("navigation.contacts")}
-          active={props.chatActive && chatView === "contacts"}
-          onClick={() => openChatView("contacts")}
-          testId="app-rail-contacts"
-        >
-          <ContactRound />
-        </RailButton>
+        {imNavigationVisible ? (
+          <>
+            <RailButton
+              label={t("navigation.chat")}
+              active={props.chatActive && chatView !== "contacts"}
+              onClick={() => openChatView("conversations")}
+              testId="app-rail-chat"
+              badge={totalUnreadCount}
+              badgeVariant="dot"
+            >
+              <MessageSquare />
+            </RailButton>
+            <RailButton
+              label={t("navigation.contacts")}
+              active={props.chatActive && chatView === "contacts"}
+              onClick={() => openChatView("contacts")}
+              testId="app-rail-contacts"
+            >
+              <ContactRound />
+            </RailButton>
+          </>
+        ) : null}
       </nav>
 
       <div className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag">

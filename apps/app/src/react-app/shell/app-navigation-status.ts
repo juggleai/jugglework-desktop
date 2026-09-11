@@ -1,4 +1,6 @@
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
+import type { DenAuthStatus } from "@/react-app/domains/cloud/den-auth-provider";
+import type { DenIMLoginBootstrap } from "@/app/lib/den";
 
 /**
  * 计算本地工作区导航图标是否需要展示后台任务状态。
@@ -16,4 +18,18 @@ export function visibleLocalWorkspaceIndicator(
   taskScope: "local" | "remote",
 ): WorkspaceSessionIndicator {
   return homeActive && taskScope === "local" && indicator === "running" ? null : indicator;
+}
+
+export function isIMNavigationVisible(input: {
+  authStatus: DenAuthStatus;
+  accountBusy: boolean;
+  activeOrganizationId: string | null | undefined;
+  im: DenIMLoginBootstrap | null;
+}): boolean {
+  return (
+    (input.authStatus === "signed_in" || input.authStatus === "unavailable") &&
+    !input.accountBusy &&
+    Boolean(input.activeOrganizationId?.trim()) &&
+    input.im !== null
+  );
 }

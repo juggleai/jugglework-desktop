@@ -58,7 +58,7 @@ export async function exchangeHandoffAndSignIn(
       activeOrgSlug: options.activeOrg?.slug ?? null,
       activeOrgName: options.activeOrg?.name ?? null,
     });
-    writeDenIMLoginBootstrap(exchange.im);
+    writeDenIMLoginBootstrap(exchange.im, options.activeOrg?.id ?? null);
 
     dispatchDenSessionUpdated({
       status: "success",

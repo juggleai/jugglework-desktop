@@ -243,13 +243,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // 那次调用不会重复写：它这时候看到的服务端活跃组织已经等于目标组织，不会再真的
       // 发起一次切换请求。
       const switchResult = await client.setActiveOrganization({ organizationId: next.id });
-      writeDenIMLoginBootstrap(switchResult?.im ?? null);
       writeDenSettings({
         ...settings,
         activeOrgId: next.id,
         activeOrgSlug: next.slug,
         activeOrgName: next.name,
       }, { persistBootstrap: false });
+      writeDenIMLoginBootstrap(switchResult?.im ?? null, next.id);
       writeDenLastOrganization(readDenUserId(), next.id);
       setActiveOrganization(next);
       setTenantAccount(await client.getTenantAccount(next.id).catch(() => null));
