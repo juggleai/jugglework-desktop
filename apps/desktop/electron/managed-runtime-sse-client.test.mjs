@@ -20,6 +20,30 @@ function streamResponse(chunks) {
 }
 
 describe("managed runtime SSE client", () => {
+  it("subscribes to the embedded server workspace OpenCode route", async () => {
+    const controller = new AbortController();
+    const requests = [];
+    const client = createManagedRuntimeSseClient({
+      getAccess: () => ({ baseUrl: `${access.baseUrl}/ignored-mount`, clientToken: access.clientToken }),
+      fetcher: async (url, init) => {
+        requests.push({ url: url.toString(), init });
+        return streamResponse(["data: {\"type\":\"server.connected\",\"properties\":{}}\n\n"]);
+      },
+      timers: immediateTimers,
+    });
+    await client.subscribe({
+      workspaceId: "ws/one",
+      signal: controller.signal,
+      onReconnectGap: () => {},
+      onEvent: () => controller.abort(),
+    });
+    const [request] = requests;
+    assert.ok(request);
+    assert.equal(request.url, "http://127.0.0.1:4096/workspace/ws%2Fone/opencode/event");
+    assert.equal(request.init.headers.Authorization, "Bearer runtime-token");
+    assert.equal(request.init.headers.Accept, "text/event-stream");
+  });
+
   it("frames chunked CRLF records, comments, and multiline data", async () => {
     const controller = new AbortController();
     const events = [];

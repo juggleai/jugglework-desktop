@@ -12,6 +12,17 @@ function identifier(value) {
     !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+/** @param {Record<string, any> | null} data */
+function eventSessionId(data) {
+  if (!data) return null;
+  for (const candidate of [data, data.info, data.part]) {
+    if (!isRecord(candidate)) continue;
+    if (identifier(candidate.sessionID)) return candidate.sessionID;
+    if (identifier(candidate.sessionId)) return candidate.sessionId;
+  }
+  return null;
+}
+
 /** @param {string | null} type @param {Record<string, any> | null} data */
 function observationStatus(type, data) {
   if (type === "session.idle") return "idle";
@@ -33,20 +44,23 @@ function observationStatus(type, data) {
  *   randomUUID: () => string,
  *   now: () => number | Date,
  *   timers: { setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void },
- *   logger?: { warn?: (message: string, metadata?: object) => void },
+ *   logger?: { debug?: (message: string, metadata?: object) => void, info?: (message: string, metadata?: object) => void, warn?: (message: string, metadata?: object) => void, error?: (message: string, metadata?: object) => void },
  *   coalesceMs?: number,
+ *   subscriptionRetryDelaysMs?: number[],
  *   onNotificationEvent?: (event: unknown) => void,
  *   onStop?: () => void,
  *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, onNotificationEvent = null, onStop = null, interactions = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
        typeof publish !== "function" || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
        !(onStop === null || typeof onStop === "function") ||
-       !(interactions === null || typeof interactions?.resolveOwnership === "function")) {
+       !(interactions === null || typeof interactions?.resolveOwnership === "function") ||
+       !Array.isArray(subscriptionRetryDelaysMs) || subscriptionRetryDelaysMs.length === 0 ||
+       subscriptionRetryDelaysMs.some((delay) => !Number.isSafeInteger(delay) || delay < 1 || delay > 60_000)) {
     throw new TypeError("Remote session event bridge dependencies are invalid.");
   }
 
@@ -57,6 +71,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   let lifetime = 1;
   let stopped = false;
   let projector = createProjector();
+  const projectedCounts = new Map();
 
   /** @param {number} attempt */
   function retryDelay(attempt) {
@@ -64,8 +79,19 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   }
 
   /** @param {number} ms */
-  function wait(ms) {
-    return new Promise((resolve) => timers.setTimeout(() => resolve(), ms));
+  function wait(ms, signal = null) {
+    if (signal?.aborted) return Promise.resolve();
+    if (!signal) return new Promise((resolve) => timers.setTimeout(() => resolve(), ms));
+    return new Promise((resolve) => {
+      let handle = null;
+      function done() {
+        signal.removeEventListener("abort", done);
+        if (handle !== null) timers.clearTimeout(handle);
+        resolve(undefined);
+      }
+      signal.addEventListener("abort", done, { once: true });
+      handle = timers.setTimeout(done, ms);
+    });
   }
 
   /** @param {unknown} error */
@@ -101,7 +127,13 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       emit: (event) => {
         const binding = bindings.get(event.controlSessionId);
         if (binding && binding.workspaceId === event.workspaceId && binding.sessionId === event.sessionId) {
-          const accepted = publish(event, { connectionGeneration: binding.connectionGeneration });
+          let accepted = false;
+          try {
+            accepted = publish(event, { connectionGeneration: binding.connectionGeneration });
+            try { logger.debug?.("remote_session_publish", { eventType: event.data.type, accepted }); } catch {}
+          } catch {
+            try { logger.error?.("remote_session_publish_failed", { eventType: event.data.type, reason: "publisher_exception" }); } catch {}
+          }
           if (!accepted) {
             unbind(binding.controlSessionId);
           } else if (event.data.type === "interaction.upsert" &&
@@ -117,8 +149,10 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
               });
             } catch {}
           }
+          if (accepted) projectedCounts.set(event.workspaceId, (projectedCounts.get(event.workspaceId) ?? 0) + 1);
           return accepted;
         }
+        try { logger.debug?.("remote_session_projection_dropped", { reason: "binding_mismatch", eventType: event.data?.type ?? "unknown" }); } catch {}
         return false;
       },
     });
@@ -135,17 +169,22 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     void hydrateWorkspaceRuns(workspaceId).then(() => {
       if (!current()) return;
     }).catch(() => undefined);
-    void sseClient.subscribe({
-      workspaceId,
-      signal: controller.signal,
-      onEvent: async (raw) => {
+    const onEvent = async (raw) => {
         if (!current()) return;
         const event = isRecord(raw) && isRecord(raw.payload) ? raw.payload : raw;
         const data = isRecord(event) ? (isRecord(event.data) ? event.data : event.properties) : null;
         const type = isRecord(event) && typeof event.type === "string" ? event.type : null;
-        const sessionId = isRecord(data)
-          ? (identifier(data.sessionID) ? data.sessionID : identifier(data.sessionId) ? data.sessionId : null)
-          : null;
+        const before = projectedCounts.get(workspaceId) ?? 0;
+        const bindingCount = [...bindings.values()].filter((binding) => binding.workspaceId === workspaceId).length;
+        try { logger.debug?.("remote_session_raw_received", { eventType: type ?? "unknown", bindingCount }); } catch {}
+        const sessionId = eventSessionId(data);
+        if (!type || !data) {
+          try { logger.debug?.("remote_session_projection_dropped", { reason: "invalid_envelope", eventType: type ?? "unknown" }); } catch {}
+          return;
+        }
+        if (!sessionId) {
+          try { logger.debug?.("remote_session_projection_dropped", { reason: "missing_session", eventType: type }); } catch {}
+        }
         const status = observationStatus(type, data);
         let runId = sessionId && status ? coordinator.getActiveRunId({ workspaceId, sessionId }) : null;
         // A queued operation is intentionally absent from the mirror until the
@@ -165,10 +204,16 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           } catch {}
         }
         if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && !interactionOwnership) {
+          try { logger.warn?.("remote_session_projection_dropped", { reason: "interaction_ownership", eventType: type }); } catch {}
           projector.reconnectGap(workspaceId, "sequence_gap");
           return;
         }
         projector.accept(workspaceId, raw, interactionOwnership);
+        const projected = (projectedCounts.get(workspaceId) ?? 0) - before;
+        try {
+          if (projected > 0) logger.debug?.("remote_session_projected", { eventType: type, projectedCount: projected });
+          else logger.debug?.("remote_session_projection_dropped", { reason: "projector_filtered", eventType: type });
+        } catch {}
         if (!current() || !sessionId || !status || !runId) return;
         try {
           let response;
@@ -207,18 +252,33 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           // Keep the exact mirrored run. A later event/reconnect or server-side
           // authoritative status reconciliation can complete it safely.
         }
-      },
-      onReconnectGap: async (reason) => {
+      };
+    const onReconnectGap = async (reason) => {
         if (!current()) return;
         projector.reconnectGap(workspaceId, reason);
         try { await hydrateWorkspaceRuns(workspaceId); } catch {}
-      },
-    }).catch(() => {
-      if (!current()) return;
-      subscriptions.delete(workspaceId);
-      projector.reconnectGap(workspaceId);
-      try { logger.warn?.("Remote session event subscription failed.", { workspaceId }); } catch {}
-    });
+      };
+    void (async () => {
+      let attempt = 0;
+      while (current() && [...bindings.values()].some((binding) => binding.workspaceId === workspaceId)) {
+        try { logger.info?.("remote_session_subscription_start", { attempt: attempt + 1, bindingCount: [...bindings.values()].filter((binding) => binding.workspaceId === workspaceId).length }); } catch {}
+        try {
+          await sseClient.subscribe({ workspaceId, signal: controller.signal, onEvent, onReconnectGap });
+          if (!current()) return;
+          throw Object.assign(new Error("subscription ended"), { code: "stream_ended" });
+        } catch (error) {
+          if (!current()) return;
+          projector.reconnectGap(workspaceId);
+          const code = isRecord(error) && typeof error.code === "string" ? error.code.slice(0, 64) : "unknown";
+          const status = isRecord(error) && Number.isSafeInteger(error.status) ? Number(error.status) : undefined;
+          const retryDelayMs = subscriptionRetryDelaysMs[Math.min(attempt, subscriptionRetryDelaysMs.length - 1)];
+          try { logger.warn?.("remote_session_subscription_retry", { code, ...(status ? { status } : {}), attempt: attempt + 1, retryDelayMs }); } catch {}
+          attempt += 1;
+          await wait(retryDelayMs, controller.signal);
+        }
+      }
+      if (current()) subscriptions.delete(workspaceId);
+    })();
   }
 
   /** @param {unknown} input */
@@ -277,6 +337,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     for (const subscription of subscriptions.values()) subscription.controller.abort();
     subscriptions.clear();
     bindings.clear();
+    projectedCounts.clear();
     projector.stop();
     if (!stopped) projector = createProjector();
   }

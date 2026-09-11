@@ -60,6 +60,7 @@ import { createRemoteControlAgent, normalizeRemoteControlAgentContext } from "./
 import { createRemoteControlE2EEKeyStore } from "./remote-control-e2ee.mjs";
 import { createManagedRuntimeSseClient } from "./managed-runtime-sse-client.mjs";
 import { createRemoteSessionEventBridge } from "./remote-session-event-bridge.mjs";
+import { createRemoteEventDiagnostics } from "./remote-event-diagnostics.mjs";
 import { createRemoteControlNotificationController } from "./remote-control-notifications.mjs";
 import { createRemoteControlSleepController, createRemoteControlPowerMonitorController } from "./remote-control-power.mjs";
 import { createAppTrayIndicator } from "./app-tray.mjs";
@@ -981,6 +982,10 @@ const remoteControlNotificationController = createRemoteControlNotificationContr
 });
 let remoteControlAgent = null;
 let remoteSessionEventBridge = null;
+const remoteEventDiagnostics = createRemoteEventDiagnostics({
+  enabled: process.env.JUGGLEWORK_REMOTE_EVENT_DIAGNOSTICS === "1",
+  logsDirectory: app.getPath("logs"),
+});
 const remoteControlSleepController = createRemoteControlSleepController({
   powerSaveBlocker,
   logger: { warn: (message) => console.warn(`[desktop-remote] ${message}`) },
@@ -1140,8 +1145,16 @@ function createMainRemoteControlAgent() {
       if (!authorized) sessionMutationCoordinator.clearRemoteRuns();
     },
     logger: {
-      warn: (_message, metadata) => console.warn("[desktop-remote] state warning", metadata),
-      error: (_message, metadata) => console.error("[desktop-remote] state error", metadata),
+      debug: (_message, metadata) => remoteEventDiagnostics.debug("remote_control_agent", metadata),
+      info: (_message, metadata) => remoteEventDiagnostics.info("remote_control_agent", metadata),
+      warn: (_message, metadata) => {
+        console.warn("[desktop-remote] state warning", metadata);
+        remoteEventDiagnostics.warn("remote_control_agent", metadata);
+      },
+      error: (_message, metadata) => {
+        console.error("[desktop-remote] state error", metadata);
+        remoteEventDiagnostics.error("remote_control_agent", metadata);
+      },
     },
   });
 }
@@ -1428,6 +1441,7 @@ function createMainRemoteSessionEventBridge() {
     sseClient: createManagedRuntimeSseClient({
       getAccess: () => runtimeManager.managedServerAccess(),
       fetcher: electronNet.fetch,
+      logger: remoteEventDiagnostics,
     }),
     coordinator: sessionMutationCoordinator,
     listActiveRuns: ({ workspaceId }) => managedRuntimeClient.getJson(
@@ -1446,9 +1460,7 @@ function createMainRemoteSessionEventBridge() {
       setTimeout: globalThis.setTimeout.bind(globalThis),
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
     },
-    logger: {
-      warn: (_message, metadata) => console.warn("[desktop-remote] session event warning", metadata),
-    },
+    logger: remoteEventDiagnostics,
     onNotificationEvent: (event) => remoteControlNotificationController.accept(event),
     onStop: () => remoteControlSleepController.setAuthorized(false),
     interactions: remoteControlInteractionStore,
@@ -3126,6 +3138,7 @@ if (!app.requestSingleInstanceLock()) {
     void waitForQuitCleanup([
       remoteSessionEventBridge?.stop(),
       remoteControlAgent?.stop(),
+      remoteEventDiagnostics.flush(),
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
       stopJuggleChatRouterServer(),

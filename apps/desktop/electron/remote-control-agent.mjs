@@ -2169,11 +2169,20 @@ export function createRemoteControlAgent(options) {
   /** @param {unknown} event @param {{ connectionGeneration?: unknown }} [options] */
   function publishSessionEvent(event, options = {}) {
     const parsed = desktopRemoteSessionEventSchema.safeParse(event);
-    if (!parsed.success || !socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null ||
-        options.connectionGeneration !== connectionGeneration || parsed.data.deviceId !== enrollment?.deviceId) return false;
+    const reject = (reason, eventType = "unknown") => {
+      log("warn", "session_event_publish_rejected", { reason, eventType });
+      return false;
+    };
+    if (!parsed.success) return reject("invalid_schema");
+    const eventType = parsed.data.data.type;
+    if (!socket || state !== REMOTE_CONTROL_AGENT_STATUS.CONNECTED || connectionGeneration === null) {
+      return reject("transport_unavailable", eventType);
+    }
+    if (options.connectionGeneration !== connectionGeneration) return reject("generation_mismatch", eventType);
+    if (parsed.data.deviceId !== enrollment?.deviceId) return reject("device_mismatch", eventType);
     if (context?.featureGates.payloadEncryption) {
       const session = encryptedControlSessions.get(parsed.data.controlSessionId);
-      if (!session) return false;
+      if (!session) return reject("encryption_session_missing", eventType);
       const occurredAt = new Date(parsed.data.occurredAt).toISOString();
       const routing = {
         kind: "session-event", eventId: parsed.data.eventId, controlSessionId: parsed.data.controlSessionId,
@@ -2187,9 +2196,19 @@ export function createRemoteControlAgent(options) {
         aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...routing }),
         value: parsed.data.data,
       });
-      return sendRaw(socket, encryptedEnvelope(routing, payload, session.desktopKeyId));
+      const accepted = sendRaw(socket, encryptedEnvelope(routing, payload, session.desktopKeyId));
+      log(accepted ? "debug" : "error", accepted ? "session_event_publish_accepted" : "session_event_publish_failed", {
+        eventType,
+        reason: accepted ? "encrypted" : "transport_send_failed",
+      });
+      return accepted;
     }
-    return send(socket, "session.event", parsed.data);
+    const accepted = send(socket, "session.event", parsed.data);
+    log(accepted ? "debug" : "error", accepted ? "session_event_publish_accepted" : "session_event_publish_failed", {
+      eventType,
+      reason: accepted ? "plain" : "transport_send_failed",
+    });
+    return accepted;
   }
 
   /** Returns content- and credential-free diagnostic state. */

@@ -1959,6 +1959,15 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.agent.publishSessionEvent({ ...event, deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, { connectionGeneration: 77 }), false);
     assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 77 }), true);
     assert.deepEqual(frames(socket, "session.event")[0].payload, event);
+    assert.deepEqual(fixture.logs.filter((entry) => entry.metadata?.code?.startsWith("session_event_publish")).map((entry) => ({
+      code: entry.metadata.code,
+      reason: entry.metadata.reason,
+      eventType: entry.metadata.eventType,
+    })), [
+      { code: "session_event_publish_rejected", reason: "generation_mismatch", eventType: "todos.replace" },
+      { code: "session_event_publish_rejected", reason: "device_mismatch", eventType: "todos.replace" },
+      { code: "session_event_publish_accepted", reason: "plain", eventType: "todos.replace" },
+    ]);
     fixture.agent.stopAll();
     assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 77 }), false);
   });

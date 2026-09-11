@@ -63,6 +63,7 @@ function runtimeAccess(value) {
  *   maxBufferBytes?: number,
  *   maxBackoffMs?: number,
  *   timers?: Timers,
+ *   logger?: { debug?: (message: string, metadata?: object) => void, info?: (message: string, metadata?: object) => void, warn?: (message: string, metadata?: object) => void },
  * }} options
  */
 export function createManagedRuntimeSseClient({
@@ -73,6 +74,7 @@ export function createManagedRuntimeSseClient({
   maxBufferBytes = DEFAULT_MAX_BUFFER_BYTES,
   maxBackoffMs = DEFAULT_MAX_BACKOFF_MS,
   timers = { setTimeout: globalThis.setTimeout.bind(globalThis), clearTimeout: globalThis.clearTimeout.bind(globalThis) },
+  logger = {},
 }) {
   if (typeof getAccess !== "function" || typeof fetcher !== "function" || !positiveInteger(headerTimeoutMs) ||
     !positiveInteger(inactivityMs) || !positiveInteger(maxBufferBytes) || !positiveInteger(maxBackoffMs) ||
@@ -121,6 +123,12 @@ export function createManagedRuntimeSseClient({
         /** @type {Record<string, string>} */
         const headers = { Accept: "text/event-stream", Authorization: `Bearer ${access.clientToken}` };
         if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+        try { logger.info?.("managed_runtime_sse_request", {
+          attempt: reconnects + 1,
+          hasAuthorization: true,
+          hasCursor: Boolean(lastEventId),
+          contentType: "text/event-stream",
+        }); } catch {}
         response = await fetcher(url, {
           method: "GET",
           headers,
@@ -133,7 +141,11 @@ export function createManagedRuntimeSseClient({
         timers.clearTimeout(headerTimer);
         signal.removeEventListener("abort", abort);
         if (signal.aborted) break;
-        if (controller.signal.aborted) throw new ManagedRuntimeSseClientError("timeout");
+        if (controller.signal.aborted) {
+          try { logger.warn?.("managed_runtime_sse_failed", { code: "timeout" }); } catch {}
+          throw new ManagedRuntimeSseClientError("timeout");
+        }
+        try { logger.warn?.("managed_runtime_sse_reconnect", { code: "unavailable" }); } catch {}
         if (connectedOnce) await onReconnectGap("sequence_gap");
         await sleep(Math.min(serverRetryMs * (2 ** Math.min(reconnects++, 5)), maxBackoffMs), signal);
         continue;
@@ -141,12 +153,14 @@ export function createManagedRuntimeSseClient({
       timers.clearTimeout(headerTimer);
       if (response.status >= 300 && response.status < 400) {
         signal.removeEventListener("abort", abort);
+        try { logger.warn?.("managed_runtime_sse_failed", { code: "redirect", status: response.status }); } catch {}
         throw new ManagedRuntimeSseClientError("redirect");
       }
       if ([401, 403, 404].includes(response.status)) {
         signal.removeEventListener("abort", abort);
         const error = new ManagedRuntimeSseClientError("unauthorized");
         error.status = response.status;
+        try { logger.warn?.("managed_runtime_sse_failed", { code: "unauthorized", status: response.status }); } catch {}
         throw error;
       }
       if (!response.ok) {
@@ -157,6 +171,7 @@ export function createManagedRuntimeSseClient({
       }
       if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
         signal.removeEventListener("abort", abort);
+        try { logger.warn?.("managed_runtime_sse_failed", { code: "invalid_response", status: response.status, contentType: "other" }); } catch {}
         throw new ManagedRuntimeSseClientError("invalid_response");
       }
       const reader = response.body?.getReader();
@@ -166,6 +181,7 @@ export function createManagedRuntimeSseClient({
       }
       connectedOnce = true;
       reconnects = 0;
+      try { logger.info?.("managed_runtime_sse_connected", { status: response.status, contentType: "text/event-stream" }); } catch {}
       const decoder = new TextDecoder("utf-8", { fatal: true });
       let lineBuffer = "";
       let dataLines = [];
@@ -184,7 +200,14 @@ export function createManagedRuntimeSseClient({
           if (dataLines.length > 0) {
             const data = dataLines.join("\n");
             let parsed;
-            try { parsed = JSON.parse(data); } catch { throw new ManagedRuntimeSseClientError("invalid_response"); }
+            try { parsed = JSON.parse(data); } catch {
+              try { logger.warn?.("managed_runtime_sse_record_dropped", { reason: "invalid_json" }); } catch {}
+              throw new ManagedRuntimeSseClientError("invalid_response");
+            }
+            const event = isRecord(parsed) && isRecord(parsed.payload) ? parsed.payload : parsed;
+            const eventType = isRecord(event) && typeof event.type === "string" && /^[a-z0-9._-]{1,128}$/i.test(event.type)
+              ? event.type : "unknown";
+            try { logger.debug?.("managed_runtime_sse_record", { eventType }); } catch {}
             await onEvent(parsed);
           }
           if (recordId !== null) lastEventId = recordId;
@@ -220,6 +243,10 @@ export function createManagedRuntimeSseClient({
           }
         }
       } catch (error) {
+        if (!signal.aborted) {
+          const code = error instanceof ManagedRuntimeSseClientError ? error.code : "consumer_error";
+          try { logger.warn?.("managed_runtime_sse_stream_failed", { code }); } catch {}
+        }
         if (!signal.aborted && error instanceof ManagedRuntimeSseClientError && error.code === "buffer_overflow") throw error;
         streamFailed = !signal.aborted;
       } finally {

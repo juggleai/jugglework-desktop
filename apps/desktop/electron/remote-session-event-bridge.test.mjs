@@ -7,8 +7,8 @@ const CONTROL = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
-/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown> }} [input] */
-function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }) } = {}) {
+/** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionRetryDelaysMs?: number[] }} [input] */
+function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback) => { callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionRetryDelaysMs } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -42,7 +42,9 @@ function harness({ publish = () => true, observeRun, listActiveRuns = async () =
     publish: (event, options) => { published.push({ event, options }); return publish(event, options); },
     randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
     now: () => NOW,
-    timers: { setTimeout: (callback) => { callback(); return 1; }, clearTimeout() {} },
+    timers,
+    logger,
+    ...(subscriptionRetryDelaysMs ? { subscriptionRetryDelaysMs } : {}),
     onNotificationEvent: (event) => notificationEvents.push(event),
     interactions: { resolveOwnership },
   });
@@ -265,16 +267,34 @@ describe("remote session event bridge", () => {
     assert.equal(h.subscriptions.length, 2);
   });
 
-  it("reports a subscription failure and retries on a later identical bind", async () => {
-    const h = harness();
-    h.bridge.bind(h.binding);
-    h.subscriptions[0].reject(new Error("secret url and token"));
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(h.published.at(-1).event.data.type, "snapshot_required");
-    assert.equal(h.bridge.bind(h.binding), true);
-    assert.equal(h.subscriptions.length, 2);
-  });
+  for (const status of [401, 404]) {
+    it(`retries an initial ${status} subscription while its binding remains active`, async () => {
+      const scheduled = [];
+      const logs = [];
+      const h = harness({
+        timers: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return callback; }, clearTimeout() {} },
+        logger: { warn: (message, metadata) => logs.push({ message, metadata }) },
+        subscriptionRetryDelaysMs: [100, 500],
+      });
+      h.bridge.bind(h.binding);
+      h.subscriptions[0].reject(Object.assign(new Error("secret url and token"), { code: "unauthorized", status }));
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(h.published.at(-1).event.data.type, "snapshot_required");
+      assert.equal(h.subscriptions.length, 1);
+      assert.equal(scheduled[0].delay, 100);
+      scheduled.shift().callback();
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.equal(h.subscriptions.length, 2);
+      await h.subscriptions[1].onEvent({ type: "todo.updated", properties: { sessionID: "ses_1", todos: [] } });
+      assert.equal(h.published.at(-1).event.data.type, "todos.replace");
+      assert.deepEqual(logs[0], {
+        message: "remote_session_subscription_retry",
+        metadata: { code: "unauthorized", status, attempt: 1, retryDelayMs: 100 },
+      });
+    });
+  }
 
   it("makes stop permanent", () => {
     const h = harness();
