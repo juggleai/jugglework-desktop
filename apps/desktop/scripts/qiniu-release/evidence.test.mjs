@@ -134,7 +134,7 @@ test("candidate and missing-credential states can be recorded but never authoriz
   assert.throws(() => assertPromotionEvidence(plan(), missingCredentials), /credential state/);
 });
 
-test("an audited notarization exception is restricted to stable 1.2.15 and preserves every other gate", () => {
+test("an audited notarization exception is restricted to approved stable versions and preserves every other gate", () => {
   const evidence = promotionEvidence();
   evidence.localVerification = localVerification(plan(), {
     releaseState: "candidate",
@@ -146,9 +146,20 @@ test("an audited notarization exception is restricted to stable 1.2.15 and prese
   const reason = "Operator explicitly authorized one-time unnotarized stable 1.2.15 publication";
   assert.equal(assertPromotionEvidence(plan(), evidence, { notarizationExceptionReason: reason }).schemaVersion, 2);
   assert.throws(() => assertPromotionEvidence(plan(), evidence, { notarizationExceptionReason: "too short" }), /audited reason/);
-  const futurePlan = plan("1.2.17");
+  const approvedPlan = plan("1.2.17");
+  const approvedEvidence = promotionEvidence(approvedPlan);
+  approvedEvidence.localVerification = localVerification(approvedPlan, {
+    releaseState: "candidate",
+    credentialState: "missing",
+    notarization: { status: "unavailable" },
+    staple: { status: "unavailable" },
+    gatekeeper: { status: "unavailable" },
+  });
+  const approvedReason = "Operator explicitly authorized one-time unnotarized stable 1.2.17 publication";
+  assert.equal(assertPromotionEvidence(approvedPlan, approvedEvidence, { notarizationExceptionReason: approvedReason }).schemaVersion, 2);
+  const futurePlan = plan("1.2.18");
   const futureEvidence = promotionEvidence(futurePlan);
-  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15 or stable 1\.2\.16/);
+  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15, stable 1\.2\.16, or stable 1\.2\.17/);
   const brokenCanary = structuredClone(evidence);
   brokenCanary.canary.result = "failed";
   assert.throws(() => assertPromotionEvidence(plan(), brokenCanary, { notarizationExceptionReason: reason }), /passed machine-generated/);

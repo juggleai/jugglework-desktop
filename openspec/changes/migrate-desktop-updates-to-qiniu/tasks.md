@@ -107,3 +107,9 @@
 - The updater cache contains `jugglework-mac-arm64-1.2.16.zip` with size `238676213` and SHA-256 `8c4fc2cddea827e95d852a0bf14a68292e2ad4c917b59b75e4bc12ff7a03790b`, exactly matching the published immutable Qiniu object. Installed `app-update.yml` points to `https://downloads.jugglechat.cn/jugglework/releases/stable/mac`; packaged runtime update code contains the Qiniu resolver and no active GitHub updater origin.
 - The signed-in state, current session, session history, workspace authorization, and workspace read/write access survived the replacement. macOS Accessibility and Screen Recording permissions remain granted. A direct post-restart IM conversation-list call succeeded, proving Chat bootstrap. A Contacts service probe returned a business `not_found`, so Contacts is not separately claimed as verified by this completion record.
 - Task 7.2 is complete. Task 7.3 remains open for the rest of its failure-mode matrix, and task 6.6 remains open because this normal Den-selected upgrade used the immutable targeted feed rather than independently proving lower-client stable-feed discovery.
+
+## 14. Stable 1.2.17 notarization authorization (2026-09-11)
+
+- The operator explicitly authorized exact stable `1.2.17` to proceed without Apple notarization, stapling, and Gatekeeper acceptance.
+- This authorization is notarization-only: it does not authorize promotion before a valid lower-version canary and does not bypass Developer ID/Team, bundle id, hardened runtime, artifact integrity, immutable Qiniu publication, CDN verification, promotion locking, cache refresh, or read-back.
+- Tooling hard-codes the exception to `stable-1.2.17-only`; later versions fail closed unless separately reviewed and authorized.

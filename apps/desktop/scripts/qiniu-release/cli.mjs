@@ -218,7 +218,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. Audited notarization exceptions are restricted to stable 1.2.15/1.2.16; the audited pre-canary exception is restricted to stable 1.2.16.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. Audited notarization exceptions are restricted to stable 1.2.15/1.2.16/1.2.17; the audited pre-canary exception is restricted to stable 1.2.16.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

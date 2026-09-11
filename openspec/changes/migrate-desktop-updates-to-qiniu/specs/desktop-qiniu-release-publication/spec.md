@@ -69,6 +69,8 @@ Stable `1.2.15` MAY use an explicitly audited one-time exception for notarizatio
 
 Stable `1.2.16` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status, together with a separately audited pre-canary promotion exception so an operator can expose `1.2.16` to the installed `1.2.15` UI and perform the real-client update canary after promotion. Both exceptions SHALL be restricted to stable `1.2.16`; they SHALL NOT bypass Developer ID identity, Team identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back. A present failed or mismatched canary SHALL NOT be ignored, and the successful post-promotion canary SHALL be recorded before the rollout is considered complete.
 
+Stable `1.2.17` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status only. The exception SHALL be restricted to exact stable `1.2.17` and SHALL NOT bypass a successful lower-version canary, Developer ID identity, Team identity, bundle identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
+
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -89,6 +91,12 @@ Stable `1.2.16` MAY use a separately audited one-time exception for notarization
 - **AND** both audited exception reasons are recorded with scope `stable-1.2.16-only`
 - **AND** the exceptions fail closed for Alpha, every other version, missing or short reasons, invalid signing identity, mismatched artifacts, or an existing failed canary
 - **AND** a real installed `1.2.15` client SHALL subsequently discover, download, install, and restart into `1.2.16`, and that result SHALL be recorded before rollout completion
+
+#### Scenario: Explicit 1.2.17 notarization exception
+- **WHEN** an operator authorizes unnotarized stable `1.2.17` publication
+- **THEN** tooling accepts a signed candidate only with an audited reason scoped to `stable-1.2.17-only`
+- **AND** it still requires a passed `1.2.16 → 1.2.17` canary and every non-Apple publication gate
+- **AND** it rejects the exception for any other version or channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
