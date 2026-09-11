@@ -113,3 +113,4 @@
 - The operator explicitly authorized exact stable `1.2.17` to proceed without Apple notarization, stapling, and Gatekeeper acceptance.
 - This authorization is notarization-only: it does not authorize promotion before a valid lower-version canary and does not bypass Developer ID/Team, bundle id, hardened runtime, artifact integrity, immutable Qiniu publication, CDN verification, promotion locking, cache refresh, or read-back.
 - Tooling hard-codes the exception to `stable-1.2.17-only`; later versions fail closed unless separately reviewed and authorized.
+- The first clean `1.2.17` arm64 package verification caught an x64 `@lydell/node-pty-darwin-x64` optional prebuild inside `app.asar.unpacked`. Publication stopped before upload. The target-aware after-pack hook now removes non-target `node-pty` prebuild packages and fails if the expected target package is absent; the release is rebuilt from scratch after this fix.

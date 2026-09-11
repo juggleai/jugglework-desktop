@@ -52,9 +52,20 @@ test("selects only the requested sidecar and processes the macOS helper", async 
     "better-sqlite3",
     "prebuilds",
   );
+  const ptyPackagesDir = path.join(
+    appOutDir,
+    "JuggleWork.app",
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@lydell",
+  );
   fs.mkdirSync(sidecarsDir, { recursive: true });
   fs.mkdirSync(uiControlMcpDir, { recursive: true });
   fs.mkdirSync(sqlitePrebuildsDir, { recursive: true });
+  fs.mkdirSync(path.join(ptyPackagesDir, "node-pty-darwin-arm64", "prebuilds", "darwin-arm64"), { recursive: true });
+  fs.mkdirSync(path.join(ptyPackagesDir, "node-pty-darwin-x64", "prebuilds", "darwin-x64"), { recursive: true });
   copyMacTrayResources(path.join(appOutDir, "JuggleWork.app", "Contents", "Resources"));
   fs.writeFileSync(path.join(sidecarsDir, "opencode-aarch64-apple-darwin"), "arm64");
   fs.writeFileSync(path.join(sidecarsDir, "opencode-x86_64-apple-darwin"), "x64");
@@ -90,6 +101,7 @@ test("selects only the requested sidecar and processes the macOS helper", async 
     "versions.json-aarch64-apple-darwin",
   ]);
   assert.deepEqual(fs.readdirSync(sqlitePrebuildsDir), ["darwin-arm64.node"]);
+  assert.deepEqual(fs.readdirSync(ptyPackagesDir), ["node-pty-darwin-arm64"]);
   assert.equal(helperContext, context);
 });
 

@@ -214,6 +214,28 @@ function pruneBetterSqlitePrebuilds(context, arch) {
   }
 }
 
+function pruneNodePtyPrebuildPackages(context, arch) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const nodeModulesDir = resourcesPath
+    ? path.join(resourcesPath, "app.asar.unpacked", "node_modules")
+    : null;
+  const normalizedArch = normalizeArch(arch);
+  if (!nodeModulesDir || !normalizedArch || !fs.existsSync(nodeModulesDir)) return;
+
+  const platform = context.electronPlatformName;
+  const scopedDir = path.join(nodeModulesDir, "@lydell");
+  const keep = `node-pty-${platform}-${normalizedArch}`;
+  if (!fs.existsSync(scopedDir)) return;
+  for (const entry of fs.readdirSync(scopedDir)) {
+    if (entry.startsWith(`node-pty-${platform}-`) && entry !== keep) {
+      fs.rmSync(path.join(scopedDir, entry), { recursive: true, force: true });
+    }
+  }
+  if (!fs.existsSync(path.join(scopedDir, keep))) {
+    throw new Error(`Missing packaged node-pty prebuild package for target: ${keep}`);
+  }
+}
+
 function signComputerUseHelper(context) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
@@ -269,6 +291,7 @@ async function runAfterPack(context, dependencies = {}) {
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
   pruneBetterSqlitePrebuilds(context, context.arch);
+  pruneNodePtyPrebuildPackages(context, context.arch);
 
   const sidecarsDir = resolveSidecarsDir(context);
   if (!sidecarsDir || !fs.existsSync(sidecarsDir)) return;
@@ -312,6 +335,7 @@ module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeArch = normalizeArch;
 module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
+module.exports.pruneNodePtyPrebuildPackages = pruneNodePtyPrebuildPackages;
 module.exports.runAfterPack = runAfterPack;
 module.exports.targetTriple = targetTriple;
 module.exports.verifyPackagedMacTrayResources = verifyPackagedMacTrayResources;
