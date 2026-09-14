@@ -115,6 +115,10 @@ function verifyPackagedMacTrayResources(context) {
   }
 }
 
+function normalizeAsarEntries(entries) {
+  return entries.map((entry) => entry.replaceAll("\\", "/"));
+}
+
 function verifyCompiledRuntimeContracts(context) {
   const resourcesPath = resolvePackagedResourcesPath(context);
   const archivePath = resourcesPath ? path.join(resourcesPath, "app.asar") : null;
@@ -122,7 +126,10 @@ function verifyCompiledRuntimeContracts(context) {
     throw new Error(`Missing packaged app.asar at ${archivePath ?? "unknown path"}`);
   }
 
-  const entries = asar.listPackage(archivePath);
+  // @electron/asar builds its listing with path.join(), so Windows returns
+  // backslash-delimited entries while the archive itself uses POSIX paths.
+  // Normalize before enforcing the cross-platform package contract.
+  const entries = normalizeAsarEntries(asar.listPackage(archivePath));
   const runtimePackageRoot = "/node_modules/@jugglework/types/";
   const compiledContract = "/dist/runtime/desktop-remote-control.js";
   const automationContract = `${runtimePackageRoot}dist/automation.js`;
@@ -334,6 +341,7 @@ async function afterPack(context) {
 module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeArch = normalizeArch;
+module.exports.normalizeAsarEntries = normalizeAsarEntries;
 module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
 module.exports.pruneNodePtyPrebuildPackages = pruneNodePtyPrebuildPackages;
 module.exports.runAfterPack = runAfterPack;

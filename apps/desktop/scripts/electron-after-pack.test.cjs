@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   normalizeArch,
+  normalizeAsarEntries,
   runAfterPack,
   targetTriple,
   verifyPackagedMacTrayResources,
@@ -33,6 +34,19 @@ test("normalizes electron-builder numeric and string architectures", () => {
   assert.equal(targetTriple("darwin", 3), "aarch64-apple-darwin");
   assert.equal(targetTriple("linux", "arm64"), "aarch64-unknown-linux-gnu");
   assert.equal(targetTriple("win32", "x64"), "x86_64-pc-windows-msvc");
+});
+
+test("normalizes Windows ASAR listing separators before contract checks", () => {
+  assert.deepEqual(
+    normalizeAsarEntries([
+      "\\dist\\runtime\\desktop-remote-control.js",
+      "\\node_modules\\@jugglework\\types\\dist\\automation.js",
+    ]),
+    [
+      "/dist/runtime/desktop-remote-control.js",
+      "/node_modules/@jugglework/types/dist/automation.js",
+    ],
+  );
 });
 
 test("selects only the requested sidecar and processes the macOS helper", async (t) => {
