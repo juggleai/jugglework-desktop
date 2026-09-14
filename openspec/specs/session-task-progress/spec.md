@@ -119,15 +119,17 @@ The system SHALL provide a compact navigation rail for scrollable task sessions 
 #### Scenario: User reviews a long task session
 - **WHEN** a task session has multiple visible user-authored turns and its transcript overflows the available viewport
 - **THEN** the session shows one navigation marker for each user-authored turn
-- **AND** the marker for the current reading position is visually distinct
+- **AND** every marker whose task-turn content intersects the current viewport is visually distinct
+- **AND** the markers form a compact, vertically centered group rather than stretching across the full viewport
 
 #### Scenario: User previews and selects a navigation marker
 - **WHEN** the user hovers or focuses a navigation marker
 - **THEN** a bounded preview identifies the corresponding task turn
+- **AND** that marker reaches the longest width while nearby markers lengthen progressively according to proximity
 - **WHEN** the user activates that marker
 - **THEN** the transcript scrolls smoothly to the corresponding user message
 - **AND** subsequent transcript growth does not force the view back to the latest message
 
 #### Scenario: Session pane is narrow or does not scroll
-- **WHEN** the task-session pane cannot fit the navigation rail without crowding the transcript, or the transcript does not overflow
+- **WHEN** the space to the left of the transcript cannot fit the navigation rail without crowding the transcript, or the transcript does not overflow
 - **THEN** the navigation rail remains hidden

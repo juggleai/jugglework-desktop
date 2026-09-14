@@ -4,6 +4,9 @@ import type { UIMessage } from "ai";
 import {
   buildSessionQuickNavigationEntries,
   resolveActiveQuickNavigationIndex,
+  resolveQuickNavigationMarkerScale,
+  resolveVisibleQuickNavigationIndices,
+  shouldShowSessionQuickNavigation,
 } from "../src/react-app/domains/session/surface/session-quick-navigation";
 
 function message(id: string, role: "user" | "assistant", text: string): UIMessage {
@@ -35,11 +38,32 @@ describe("session quick navigation", () => {
     expect(resolveActiveQuickNavigationIndex([], 500, false)).toBe(-1);
   });
 
+  test("highlights every task turn intersecting the current viewport", () => {
+    const tops = [80, 240, 560, 900];
+    expect(resolveVisibleQuickNavigationIndices(tops, 1_200, 200, 600)).toEqual([0, 1, 2]);
+    expect(resolveVisibleQuickNavigationIndices(tops, 1_200, 250, 550)).toEqual([1]);
+    expect(resolveVisibleQuickNavigationIndices(tops, 1_200, 850, 1_200)).toEqual([2, 3]);
+  });
+
   test("bounds preview and accessibility text for very large prompts", () => {
     const [entry] = buildSessionQuickNavigationEntries([
       message("large", "user", "x".repeat(400)),
     ]);
     expect(entry?.preview.length).toBe(240);
     expect(entry?.preview.endsWith("…")).toBe(true);
+  });
+
+  test("uses the actual content gutter instead of an arbitrary pane width", () => {
+    expect(shouldShowSessionQuickNavigation(5, 1_325, 58)).toBe(true);
+    expect(shouldShowSessionQuickNavigation(5, 1_325, 47)).toBe(false);
+    expect(shouldShowSessionQuickNavigation(1, 1_325, 58)).toBe(false);
+    expect(shouldShowSessionQuickNavigation(5, 47, 58)).toBe(false);
+  });
+
+  test("fans marker lengths out progressively around the hovered task", () => {
+    expect([0, 1, 2, 3, 4, 5].map((index) =>
+      resolveQuickNavigationMarkerScale(index, 2),
+    )).toEqual([1.6, 2.2, 2.8, 2.2, 1.6, 1.25]);
+    expect(resolveQuickNavigationMarkerScale(2, null)).toBe(1);
   });
 });

@@ -5,11 +5,13 @@ import { getMessagesText } from "@/components/chat/utils";
 import { currentLocale } from "@/i18n";
 import { cn } from "@/lib/utils";
 
-const MIN_NAVIGATION_WIDTH_PX = 840;
+const MIN_NAVIGATION_GUTTER_PX = 48;
 const MIN_SCROLL_OVERFLOW_PX = 48;
 const ACTIVE_LINE_VIEWPORT_RATIO = 0.28;
 const ACTIVE_LINE_MAX_PX = 180;
 const PREVIEW_MAX_LENGTH = 240;
+const NAVIGATION_ITEM_PITCH_REM = 1.25;
+const MARKER_SCALES_BY_DISTANCE = [2.8, 2.2, 1.6, 1.25] as const;
 
 export type SessionQuickNavigationEntry = {
   messageId: string;
@@ -58,6 +60,35 @@ export function resolveActiveQuickNavigationIndex(
   return activeIndex;
 }
 
+export function resolveVisibleQuickNavigationIndices(
+  messageTops: number[],
+  contentBottom: number,
+  viewportTop: number,
+  viewportBottom: number,
+) {
+  return messageTops.flatMap((turnTop, index) => {
+    if (!Number.isFinite(turnTop)) return [];
+    const nextTurnTop = messageTops[index + 1];
+    const turnBottom = Number.isFinite(nextTurnTop) ? nextTurnTop : contentBottom;
+    return turnBottom > viewportTop && turnTop < viewportBottom ? [index] : [];
+  });
+}
+
+export function shouldShowSessionQuickNavigation(
+  entryCount: number,
+  scrollOverflow: number,
+  leftContentGutter: number,
+) {
+  return entryCount > 1 &&
+    scrollOverflow >= MIN_SCROLL_OVERFLOW_PX &&
+    leftContentGutter >= MIN_NAVIGATION_GUTTER_PX;
+}
+
+export function resolveQuickNavigationMarkerScale(index: number, interactionIndex: number | null) {
+  if (interactionIndex === null) return 1;
+  return MARKER_SCALES_BY_DISTANCE[Math.abs(index - interactionIndex)] ?? 1;
+}
+
 function messageElementsById(container: HTMLElement) {
   const elements = new Map<string, HTMLElement>();
   for (const element of container.querySelectorAll('[data-message-role="user"][data-message-id]')) {
@@ -83,7 +114,10 @@ export function SessionQuickNavigation({
 }: SessionQuickNavigationProps) {
   const entries = useMemo(() => buildSessionQuickNavigationEntries(messages), [messages]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [visibleTurnIndices, setVisibleTurnIndices] = useState<number[]>([]);
   const [visible, setVisible] = useState(false);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const zh = currentLocale() === "zh";
 
@@ -92,14 +126,14 @@ export function SessionQuickNavigation({
     if (!container) return;
 
     const overflow = container.scrollHeight - container.clientHeight;
-    setVisible(
-      entries.length > 1 &&
-      container.clientWidth >= MIN_NAVIGATION_WIDTH_PX &&
-      overflow >= MIN_SCROLL_OVERFLOW_PX,
-    );
+    const containerRect = container.getBoundingClientRect();
+    const contentRect = contentRef.current?.getBoundingClientRect();
+    const leftContentGutter = contentRect
+      ? Math.max(0, contentRect.left - containerRect.left)
+      : 0;
+    setVisible(shouldShowSessionQuickNavigation(entries.length, overflow, leftContentGutter));
     if (entries.length === 0) return;
 
-    const containerRect = container.getBoundingClientRect();
     const elements = messageElementsById(container);
     const messageTops = entries.map((entry) =>
       elements.get(entry.messageId)?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY,
@@ -111,7 +145,13 @@ export function SessionQuickNavigation({
     const atBottom = overflow - container.scrollTop <= 2;
     const nextIndex = resolveActiveQuickNavigationIndex(messageTops, activationLine, atBottom);
     if (nextIndex >= 0) setActiveIndex(nextIndex);
-  }, [containerRef, entries]);
+    setVisibleTurnIndices(resolveVisibleQuickNavigationIndices(
+      messageTops,
+      contentRect?.bottom ?? containerRect.bottom,
+      containerRect.top,
+      containerRect.bottom,
+    ));
+  }, [containerRef, contentRef, entries]);
 
   const scheduleRefresh = useCallback(() => {
     if (frameRef.current !== null) return;
@@ -148,18 +188,24 @@ export function SessionQuickNavigation({
   if (!visible) return null;
 
   const navigationLabel = zh ? "任务快速导航" : "Task quick navigation";
+  const interactionIndex = hoveredIndex ?? focusedIndex;
   return (
     <nav
       aria-label={navigationLabel}
-      className="pointer-events-none absolute inset-y-5 left-2 z-20 flex w-11 py-1"
+      className="pointer-events-none absolute inset-y-5 left-2 z-20 flex w-11 items-center py-1"
       data-testid="session-quick-navigation"
     >
       <div
         className="grid h-full w-full items-center"
-        style={{ gridTemplateRows: `repeat(${entries.length}, minmax(0, 1fr))` }}
+        style={{
+          height: `min(${entries.length * NAVIGATION_ITEM_PITCH_REM}rem, 64%)`,
+          gridTemplateRows: `repeat(${entries.length}, minmax(0, 1fr))`,
+        }}
       >
         {entries.map((entry, index) => {
-          const active = index === activeIndex;
+          const active = visibleTurnIndices.includes(index);
+          const interacting = index === interactionIndex;
+          const markerScale = resolveQuickNavigationMarkerScale(index, interactionIndex);
           const ratio = entries.length <= 1 ? 0 : index / (entries.length - 1);
           const previewPosition = ratio < 0.2
             ? "top-0"
@@ -175,21 +221,27 @@ export function SessionQuickNavigation({
               key={entry.messageId}
               type="button"
               aria-label={itemLabel}
-              aria-current={active ? "step" : undefined}
+              aria-current={index === activeIndex ? "step" : undefined}
               className="group pointer-events-auto relative flex h-full min-h-1 w-full items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2"
+              onMouseEnter={() => setHoveredIndex(index)}
+              onMouseLeave={() => setHoveredIndex((current) => current === index ? null : current)}
+              onFocus={() => setFocusedIndex(index)}
+              onBlur={() => setFocusedIndex((current) => current === index ? null : current)}
               onClick={() => {
                 setActiveIndex(index);
+                setVisibleTurnIndices([index]);
                 onNavigate(entry.messageId, "smooth");
               }}
             >
               <span
                 aria-hidden="true"
                 className={cn(
-                  "block h-0.5 rounded-full transition-[width,background-color,opacity] duration-200",
-                  active
-                    ? "w-7 bg-foreground opacity-100"
-                    : "w-2.5 bg-muted-foreground/45 group-hover:w-5 group-hover:bg-foreground/70 group-hover:opacity-100 group-focus-visible:w-5 group-focus-visible:bg-foreground/70",
+                  "block h-0.5 w-2.5 origin-left rounded-full transition-[transform,background-color,opacity] duration-200 ease-out",
+                  active || interacting
+                    ? "bg-foreground opacity-100"
+                    : "bg-muted-foreground/45",
                 )}
+                style={{ transform: `scaleX(${markerScale})` }}
               />
               <span
                 className={cn(
