@@ -252,6 +252,25 @@ export function useSessionScrollController(
     [options.containerRef, selectedSessionId, setManualScroll],
   );
 
+  const jumpToMessage = useCallback(
+    (messageId: string, behavior: ScrollBehavior = "smooth") => {
+      const container = options.containerRef.current;
+      if (!container) return;
+      const target = messageElementById(container, messageId);
+      if (!target) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const targetTop = Math.max(0, container.scrollTop + targetRect.top - containerRect.top - 16);
+      setManualScroll(selectedSessionId, targetTop, null);
+      programmaticScrollRef.current = true;
+      container.scrollTo({ top: targetTop, behavior });
+      if (behavior === "auto") lastKnownScrollTopRef.current = targetTop;
+      releaseProgrammaticScrollSoon();
+    },
+    [options.containerRef, releaseProgrammaticScrollSoon, selectedSessionId, setManualScroll],
+  );
+
   useEffect(() => {
     updateOverflowAnchor();
     return useSessionScrollStore.subscribe(updateOverflowAnchor);
@@ -339,5 +358,6 @@ export function useSessionScrollController(
     scrollToBottom,
     jumpToLatest,
     jumpToStartOfMessage,
+    jumpToMessage,
   };
 }

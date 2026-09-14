@@ -68,6 +68,7 @@ import { isAttachmentFileReadable, resolveAttachmentFileMetadata } from "@/react
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
 import { useSessionScrollController } from "./scroll-controller";
 import { SessionScrollOverlay } from "./scroll-overlay";
+import { SessionQuickNavigation } from "./session-quick-navigation";
 import { SessionFindBar } from "./find-bar";
 import { useSessionFindStore } from "./find-store";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store";
@@ -2160,6 +2161,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
           isStreaming={chatStreaming}
           onJumpToLatest={sessionScroll.jumpToLatest}
           onJumpToStartOfMessage={sessionScroll.jumpToStartOfMessage}
+        />
+        <SessionQuickNavigation
+          messages={renderedMessages}
+          containerRef={scrollRef}
+          contentRef={contentRef}
+          onNavigate={sessionScroll.jumpToMessage}
         />
         <SessionFindBar
           sessionId={props.sessionId}

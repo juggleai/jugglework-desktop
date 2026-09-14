@@ -112,3 +112,22 @@ The system SHALL present each follow-up queued during an active task as a compac
 #### Scenario: Multiple follow-ups are queued
 - **WHEN** more than one follow-up is waiting
 - **THEN** each follow-up has its own compact row in queue order
+
+### Requirement: Long task sessions provide quick turn navigation
+The system SHALL provide a compact navigation rail for scrollable task sessions with multiple user-authored turns, while preserving the conversation's reading width and normal scroll behavior.
+
+#### Scenario: User reviews a long task session
+- **WHEN** a task session has multiple visible user-authored turns and its transcript overflows the available viewport
+- **THEN** the session shows one navigation marker for each user-authored turn
+- **AND** the marker for the current reading position is visually distinct
+
+#### Scenario: User previews and selects a navigation marker
+- **WHEN** the user hovers or focuses a navigation marker
+- **THEN** a bounded preview identifies the corresponding task turn
+- **WHEN** the user activates that marker
+- **THEN** the transcript scrolls smoothly to the corresponding user message
+- **AND** subsequent transcript growth does not force the view back to the latest message
+
+#### Scenario: Session pane is narrow or does not scroll
+- **WHEN** the task-session pane cannot fit the navigation rail without crowding the transcript, or the transcript does not overflow
+- **THEN** the navigation rail remains hidden
