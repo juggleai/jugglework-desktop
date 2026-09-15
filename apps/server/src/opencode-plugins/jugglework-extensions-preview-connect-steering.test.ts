@@ -2,15 +2,19 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   composeJuggleWorkExtensionDiscoveryInstruction,
+  composeJuggleWorkExtensionDiscoveryResolution,
   composeSkillAuthoringInstruction,
   composeSteeringFromEngineMcpStatus,
+  composeSteeringResolutionFromEngineMcpStatus,
   JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION,
   JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION,
   JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION,
   JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION,
   JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+  parseJuggleWorkConnectSkillPromptCatalog,
   resetJuggleWorkExtensionDiscoveryInstructionCacheForTests,
+  resolveJuggleWorkExtensionDiscovery,
   resolveJuggleWorkExtensionDiscoveryInstruction,
   type JuggleWorkEngineMcpStatusClient,
   type JuggleWorkExtensionConnectState,
@@ -132,36 +136,102 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
     expect(composeJuggleWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION);
   });
 
-  test("selects one compact skill-authoring prompt from verified Cloud access", () => {
-    expect(composeSkillAuthoringInstruction(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION)).toEqual({
-      mode: "cloud",
+  test("selects remote-guided local authoring only for ready access with the exact built-in capability", () => {
+    expect(composeSkillAuthoringInstruction({
+      cloudReady: true,
+      capabilities: new Set(["skill:create-skill"]),
+    })).toEqual({
+      mode: "remote-guided-local",
       prompt: JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
     });
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Cloud");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation routing: Remote-guided local");
     expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("retrieve and follow the listed create-skill remote skill");
     expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("jugglework-cloud_execute_capability");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact <capability>");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("JuggleWork Cloud as a private plugin");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-to-marketplace");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("add-user-to-marketplace");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("workspace-local skill");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("Do not create both copies");
-    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Local");
-
-    for (const instruction of [
-      JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION,
-      JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION,
-      JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION,
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("exact skill:create-skill capability");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain(".opencode/skills/<skill-name>/SKILL.md");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("guidance only");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("never persist or save the authored skill to Cloud or the server");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain("explicit request for a workspace-local skill is handled directly as local authoring");
+    for (const required of [
+      "user-provided valid name, intended behavior, source or content, and workspace-local target take precedence over generic defaults",
+      "do not ask again for details already supplied",
+      "preserve its body and content rather than regenerating it",
+      "one complete file at <current-workspace>/.opencode/skills/<skill-name>/SKILL.md",
+      "Never override a valid user-specified local target",
+      "reject or clarify an invalid or outside target instead",
+      "Validate and re-read the file after writing",
     ]) {
-      expect(composeSkillAuthoringInstruction(instruction)).toEqual({
-        mode: "local",
-        prompt: JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
-      });
+      expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).toContain(required);
     }
-    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation: Local");
-    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("only when the user requests one");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation routing: Local");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("private plugin");
+    expect(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION).not.toContain("cloud.skill.create");
+
+    expect(composeSkillAuthoringInstruction({
+      cloudReady: false,
+      capabilities: new Set(["skill:create-skill"]),
+    })).toEqual({
+      mode: "local",
+      prompt: JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+    });
+    expect(composeSkillAuthoringInstruction({ cloudReady: true, capabilities: new Set() })).toEqual({
+      mode: "local",
+      prompt: JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION,
+    });
+    expect(composeSkillAuthoringInstruction({
+      cloudReady: true,
+      capabilities: new Set(["skill:create-skill-extra", "skill:other-create-skill"]),
+    }).mode).toBe("local");
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Skill creation routing: Local fallback");
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("bundled local skill-creator guidance");
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("Explicit workspace-local requests are always handled directly");
     expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain(".opencode/skills/<skill-name>/SKILL.md");
-    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation: Cloud");
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("There is no Cloud or server persistence mode");
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain("never save one remotely");
+    for (const required of [
+      "User-provided valid name, intended behavior, source or content, and workspace-local target take precedence over generic defaults",
+      "do not ask again for details already supplied",
+      "preserve its body and content rather than regenerating it",
+      "one complete file at <current-workspace>/.opencode/skills/<skill-name>/SKILL.md",
+      "Never override a valid user-specified local target",
+      "reject or clarify an invalid or outside target instead",
+      "Validate and re-read the file after writing",
+    ]) {
+      expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).toContain(required);
+    }
+    expect(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION).not.toContain("Skill creation routing: Cloud");
+  });
+
+  test("derives exact capabilities from skills and preserves the legacy envelope", () => {
+    const catalog = parseJuggleWorkConnectSkillPromptCatalog({
+      ok: true,
+      schemaVersion: 1,
+      instruction: "<available_skills />",
+      skills: [
+        { capability: "skill:create-skill" },
+        { capability: "skill:customer-briefing" },
+      ],
+    });
+
+    expect(catalog.instruction).toBe("<available_skills />");
+    expect([...catalog.capabilities]).toEqual(["skill:create-skill", "skill:customer-briefing"]);
+  });
+
+  test("fails closed when optional capabilities disagree with skills", () => {
+    expect(() => parseJuggleWorkConnectSkillPromptCatalog({
+      ok: true,
+      schemaVersion: 1,
+      instruction: "<available_skills><skill><name>legacy</name></skill></available_skills>",
+      skills: [{ capability: "skill:legacy" }],
+      capabilities: ["skill:create-skill"],
+    })).toThrow("Connect skill capabilities do not match");
+
+    expect(() => parseJuggleWorkConnectSkillPromptCatalog({
+      ok: true,
+      schemaVersion: 1,
+      instruction: "<available_skills />",
+      capabilities: ["skill:create-skill"],
+    })).toThrow();
   });
 
   test("keeps neutral steering when provider projection is missing", () => {
@@ -178,6 +248,16 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
     })));
 
     expect(instruction).toBe(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  });
+
+  test("does not treat unknown model usability as proven health readiness", () => {
+    expect(composeJuggleWorkExtensionDiscoveryResolution(state(health({
+      usable: true,
+      usableByCurrentModel: null,
+    })))).toEqual({
+      instruction: JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION,
+      cloudReady: false,
+    });
   });
 
   test("uses neutral, signed-out, and disabled branches", () => {
@@ -215,6 +295,33 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
         message: "disabled",
       },
     })), connectCatalogEnabled: false })).toBe(JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION);
+
+    for (const resolution of [
+      composeJuggleWorkExtensionDiscoveryResolution(null),
+      composeJuggleWorkExtensionDiscoveryResolution({
+        ...state(null),
+        workspace: { resolution: "unknown", id: null, directory: "/tmp/unknown" },
+      }),
+      composeJuggleWorkExtensionDiscoveryResolution({
+        ...state(health({
+          usable: false,
+          phase: "missing_desired",
+          desired: { present: false, revision: null },
+          firstFailure: failure("cloud_mcp_missing"),
+        })),
+        connectCatalogEnabled: false,
+      }),
+      composeJuggleWorkExtensionDiscoveryResolution({
+        ...state(health({
+          usable: false,
+          phase: "engine_disabled",
+          firstFailure: failure("cloud_mcp_disabled"),
+        })),
+        connectCatalogEnabled: false,
+      }),
+    ]) {
+      expect(resolution.cloudReady).toBe(false);
+    }
   });
 
   test("keeps neutral steering for probe-side server failures", () => {
@@ -347,15 +454,25 @@ describe("resolveJuggleWorkExtensionDiscoveryInstruction", () => {
       return Response.json({ message: "unexpected" }, { status: 500 });
     };
 
-    const instruction = await resolveJuggleWorkExtensionDiscoveryInstruction(
+    const resolution = await resolveJuggleWorkExtensionDiscovery(
       { context: { directory: "/tmp/ws_1" } },
       serverFetch,
       { client, directory: "/tmp/factory" },
     );
 
-    expect(instruction).toBe(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION);
+    expect(resolution).toEqual({
+      instruction: JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION,
+      cloudReady: true,
+    });
     expect(requests).toEqual([{ query: { directory: "/tmp/ws_1" } }]);
     expect(serverFetchCalls).toBe(0);
+  });
+
+  test("marks only connected engine status as Cloud-ready", () => {
+    expect(composeSteeringResolutionFromEngineMcpStatus("connected").cloudReady).toBe(true);
+    for (const status of ["disabled", "needs_auth", "needs_client_registration", "failed", "starting", undefined]) {
+      expect(composeSteeringResolutionFromEngineMcpStatus(status).cloudReady).toBe(false);
+    }
   });
 
   test("uses engine auth-needed status without fetching server connect state", async () => {

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { JuggleWorkExtensionsPreview } from "./jugglework-extensions-preview.js";
 import * as JuggleWorkExtensionsPreviewEntry from "./jugglework-extensions-preview.js";
+import { JuggleWorkCapabilitiesKnowledge } from "./jugglework-capabilities-knowledge.js";
 import {
   JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION,
   JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION,
@@ -76,7 +77,7 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof JuggleWorkExt
   return output.system.join("\n");
 }
 
-function startFakeJuggleWorkServer() {
+function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
@@ -124,6 +125,7 @@ function startFakeJuggleWorkServer() {
       }
 
       if (url.pathname === "/experimental/connect/skills") {
+        const createSkillAvailable = options.createSkillAvailable !== false;
         return Response.json({
           ok: true,
           schemaVersion: 1,
@@ -132,8 +134,14 @@ function startFakeJuggleWorkServer() {
             title: "Customer briefing",
             description: "Prepare a connected customer briefing.",
             capability: "skill:skl_customer_briefing",
-          }],
-          instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+          }, ...(createSkillAvailable ? [{
+            name: "create-skill",
+            title: "Create Skill",
+            description: "Guide creation of a Desktop workspace-local skill.",
+            capability: "skill:create-skill",
+          }] : [])],
+          instruction: `<available_skills><skill><name>customer-briefing</name></skill>${createSkillAvailable ? "<skill><name>create-skill</name><capability>skill:create-skill</capability></skill>" : ""}</available_skills>`,
+          capabilities: ["skill:skl_customer_briefing", ...(createSkillAvailable ? ["skill:create-skill"] : [])],
         });
       }
 
@@ -330,13 +338,17 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     const connectSkillsRequest = fake.requests.find((request) => request.pathname === "/experimental/connect/skills");
     expect(connectStateRequest?.search).toBe("?directory=%2Ftmp%2Farchive&provider=anthropic&model=claude-sonnet-4");
     expect(connectSkillsRequest?.search).toBe("");
+    expect(fake.requests.filter((request) => request.pathname === "/experimental/connect/skills")).toHaveLength(1);
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).not.toContain(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
+    expect(output.system.join("\n")).toContain("<capability>skill:create-skill</capability>");
+    expect(output.system.join("\n")).toContain("never persist or save the authored skill to Cloud or the server");
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
+    startFakeJuggleWorkServer();
     const requests: unknown[] = [];
     const mcp = {
       result: { data: { "jugglework-cloud": { status: "connected" } } },
@@ -354,6 +366,65 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).not.toContain(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+  });
+
+  test("uses local fallback when Cloud is ready but create-skill is absent", async () => {
+    startFakeJuggleWorkServer({ createSkillAvailable: false });
+    const plugin = await JuggleWorkExtensionsPreview({
+      client: {
+        mcp: {
+          status: async () => ({ data: { "jugglework-cloud": { status: "connected" } } }),
+        },
+      },
+      directory: "/tmp/archive",
+    });
+
+    const system = await transformedSystem(plugin);
+
+    expect(system).toContain("verified ready for this exact workspace/model");
+    expect(system).toContain(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).not.toContain(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).toContain("<name>customer-briefing</name>");
+    expect(system).not.toContain("<name>create-skill</name>");
+  });
+
+  test("uses local fallback when Cloud is signed out even if create-skill remains discoverable", async () => {
+    startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({
+      client: {
+        mcp: {
+          status: async () => ({ data: { "jugglework-cloud": { status: "needs_auth" } } }),
+        },
+      },
+    });
+
+    const system = await transformedSystem(plugin);
+
+    expect(system).toContain(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).not.toContain(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).toContain("<capability>skill:create-skill</capability>");
+  });
+
+  test("combined transforms do not route to remote create-skill when it is absent", async () => {
+    startFakeJuggleWorkServer({ createSkillAvailable: false });
+    const extensions = await JuggleWorkExtensionsPreview({
+      client: {
+        mcp: {
+          status: async () => ({ data: { "jugglework-cloud": { status: "connected" } } }),
+        },
+      },
+    });
+    const capabilities = await JuggleWorkCapabilitiesKnowledge();
+    const output: { system: string[] } = { system: [] };
+
+    await capabilities["experimental.chat.system.transform"]({}, output);
+    await extensions["experimental.chat.system.transform"]({}, output);
+    const system = output.system.join("\n");
+
+    expect(system).toContain(JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).not.toContain(JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(system).not.toContain("retrieve the listed remote `create-skill` skill");
+    expect(system).not.toContain("<name>create-skill</name>");
   });
 
   test("uses neutral transform steering when the engine reports failed Cloud status", async () => {

@@ -30,7 +30,13 @@ const skillIndexSchema = z.object({
 }).passthrough();
 
 export type JuggleWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][number];
-const catalogCache = new Map<string, { expiresAt: number; value: Promise<JuggleWorkConnectSkill[] | null> }>();
+export type JuggleWorkConnectSkillCatalog = {
+  skills: JuggleWorkConnectSkill[];
+  instruction: string;
+  capabilities: ReadonlySet<string>;
+};
+
+const catalogCache = new Map<string, { expiresAt: number; value: Promise<JuggleWorkConnectSkillCatalog | null> }>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -57,15 +63,26 @@ export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher
   if (!Array.isArray(contents)) return null;
   const text = contents.find((item) => isRecord(item) && item.uri === SKILL_INDEX_URI && typeof item.text === "string")?.text;
   if (typeof text !== "string") return null;
-  return skillIndexSchema.parse(JSON.parse(text)).skills;
+  return parseJuggleWorkConnectSkillIndex(text);
 }
 
-async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch): Promise<JuggleWorkConnectSkill[] | null> {
+export function parseJuggleWorkConnectSkillIndex(input: string | unknown): JuggleWorkConnectSkill[] {
+  return skillIndexSchema.parse(typeof input === "string" ? JSON.parse(input) : input).skills;
+}
+
+async function readIndexCached(
+  cloud: Record<string, unknown>,
+  fetcher: McpFetch,
+  now: () => number,
+): Promise<JuggleWorkConnectSkillCatalog | null> {
   const cacheKey = createHash("sha256").update(JSON.stringify(cloud)).digest("hex");
   const cached = catalogCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return await cached.value;
-  const value = readMcpSkillIndex(cloud, fetcher).catch(() => null);
-  catalogCache.set(cacheKey, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, value });
+  const currentTime = now();
+  if (cached && cached.expiresAt > currentTime) return await cached.value;
+  const value = readMcpSkillIndex(cloud, fetcher)
+    .then((skills) => skills === null ? null : composeJuggleWorkConnectSkillCatalog(skills))
+    .catch(() => null);
+  catalogCache.set(cacheKey, { expiresAt: currentTime + CATALOG_CACHE_TTL_MS, value });
   return await value;
 }
 
@@ -81,15 +98,23 @@ export async function readJuggleWorkConnectSkillCatalog(
   config: ServerConfig,
   fetcher: McpFetch = externalFetch,
 ): Promise<JuggleWorkConnectSkill[]> {
+  return (await readJuggleWorkConnectSkillCatalogSnapshot(config, fetcher)).skills;
+}
+
+export async function readJuggleWorkConnectSkillCatalogSnapshot(
+  config: ServerConfig,
+  fetcher: McpFetch = externalFetch,
+  now: () => number = Date.now,
+): Promise<JuggleWorkConnectSkillCatalog> {
   try {
     for (const candidate of await listCloudMcpCandidates(config)) {
-      const skills = await readIndexCached(candidate.cloud, fetcher);
-      if (skills === null) continue;
-      return skills;
+      const catalog = await readIndexCached(candidate.cloud, fetcher, now);
+      if (catalog === null) continue;
+      return catalog;
     }
-    return [];
+    return composeJuggleWorkConnectSkillCatalog([]);
   } catch {
-    return [];
+    return composeJuggleWorkConnectSkillCatalog([]);
   }
 }
 
@@ -162,4 +187,12 @@ export function renderJuggleWorkConnectSkillInstruction(skills: JuggleWorkConnec
   lines.push("</available_skills>");
   logInjectedMarketplaceSkills(injectedMarketplaceSkills);
   return lines.join("\n");
+}
+
+export function composeJuggleWorkConnectSkillCatalog(skills: JuggleWorkConnectSkill[]): JuggleWorkConnectSkillCatalog {
+  return {
+    skills,
+    instruction: renderJuggleWorkConnectSkillInstruction(skills),
+    capabilities: new Set(skills.map((skill) => skill.capability)),
+  };
 }

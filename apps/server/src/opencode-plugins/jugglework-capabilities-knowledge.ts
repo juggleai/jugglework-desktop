@@ -92,7 +92,7 @@ Here is what you can help users with:
 ## Skills
 - Specialized instruction packs for specific workflows.
 - Manageable via Settings > Skills.
-- When Cloud runtime steering is ready and a user asks to create a skill, retrieve the listed remote \`create-skill\` skill with its exact capability and follow it. Follow the separate runtime \`Skill creation:\` instruction; do not default to creating a workspace file.
+- Skill authoring guidance is selected at runtime. Follow the runtime \`Skill creation routing:\` instruction together with the actual \`available_skills\` catalog; those sources are authoritative. Authored skills are stored only in the current Desktop workspace, whether the guidance is remote or bundled locally.
 
 ## Creating Plugins
 - Plugins extend JuggleWork/OpenCode with custom tools.
