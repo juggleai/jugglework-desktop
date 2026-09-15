@@ -7,6 +7,8 @@ const CONTROL = "11111111-1111-4111-8111-111111111111";
 const DEVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
 /** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionRetryDelaysMs?: number[] }} [input] */
 function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback) => { callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionRetryDelaysMs } = {}) {
   const subscriptions = [];
@@ -88,6 +90,55 @@ describe("remote session event bridge", () => {
     assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
   });
 
+  it("processes message records while a prior status observation remains unresolved", async () => {
+    let resolveObservation;
+    const h = harness({
+      observeRun: () => new Promise((resolve) => { resolveObservation = resolve; }),
+    });
+    h.bridge.bind(h.binding);
+
+    await h.subscriptions[0].onEvent({
+      type: "session.status",
+      properties: { sessionID: "ses_1", status: "busy" },
+    });
+    await h.subscriptions[0].onEvent({
+      type: "message.updated",
+      properties: { info: { id: "msg_1", sessionID: "ses_1", role: "assistant", time: { created: 1 } } },
+    });
+    await h.subscriptions[0].onEvent({
+      type: "message.part.updated",
+      properties: { part: { id: "prt_1", messageID: "msg_1", sessionID: "ses_1", type: "text", text: "reply" } },
+    });
+
+    assert.equal(typeof resolveObservation, "function");
+    assert.deepEqual(h.published.map(({ event }) => event.data.type), [
+      "session.status",
+      "run.status",
+      "message.upsert",
+      "message.part.upsert",
+    ]);
+    assert.equal(h.published[2].event.data.message.parts[0].text, "reply");
+    assert.equal(h.published[3].event.data.part.text, "reply");
+    /** @type {(value: unknown) => void} */ (resolveObservation)({ cleared: false, run: null });
+  });
+
+  it("observes statuses in arrival order for the same workspace session", async () => {
+    const resolvers = [];
+    const h = harness({
+      observeRun: () => new Promise((resolve) => resolvers.push(resolve)),
+    });
+    h.bridge.bind(h.binding);
+
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "retry" } });
+    assert.deepEqual(h.observationCalls.map(({ input }) => input.status), ["running"]);
+
+    resolvers[0]({ cleared: false, run: { runId: "run_1" } });
+    await flush();
+    assert.deepEqual(h.observationCalls.map(({ input }) => input.status), ["running", "retrying"]);
+    resolvers[1]({ cleared: false, run: { runId: "run_1" } });
+  });
+
   it("hydrates server-owned active runs when a workspace subscription starts", async () => {
     const serverRun = { runId: "run_local", origin: "local-renderer" };
     const h = harness({ listActiveRuns: async () => ({ items: [serverRun] }) });
@@ -110,6 +161,7 @@ describe("remote session event bridge", () => {
     h.bridge.bind(h.binding);
     await Promise.resolve();
     await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    await flush();
     assert.equal(listCalls, 2);
     assert.deepEqual(h.mirroredRuns, [admitted]);
     assert.equal(h.observationCalls[0].input.runId, "run_admitted");
@@ -206,7 +258,7 @@ describe("remote session event bridge", () => {
     assert.deepEqual(h.published[0].event.data, { type: "snapshot_required", reason: "sequence_gap" });
   });
 
-  it("cannot clear a replacement when a stale terminal observation completes", async () => {
+  it("does not clear a replacement when a stale terminal observation completes", async () => {
     let resolveObservation;
     const h = harness({
       observeRun: () => new Promise((resolve) => { resolveObservation = resolve; }),
@@ -217,7 +269,8 @@ describe("remote session event bridge", () => {
     assert.equal(typeof resolveObservation, "function");
     /** @type {(value: unknown) => void} */ (resolveObservation)({ cleared: true, run: null, terminalStatus: "completed" });
     await terminal;
-    assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
+    await flush();
+    assert.deepEqual(h.terminalCalls, []);
     assert.equal(h.getRunId(), "run_2");
   });
 
@@ -232,6 +285,7 @@ describe("remote session event bridge", () => {
     });
     h.bridge.bind(h.binding);
     await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
     assert.equal(attempts, 2);
     assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
   });
@@ -251,6 +305,7 @@ describe("remote session event bridge", () => {
     h.bridge.bind(h.binding);
     await Promise.resolve();
     await h.subscriptions[0].onEvent({ type: "session.idle", properties: { sessionID: "ses_1" } });
+    await flush();
     assert.equal(h.getRunId(), "run_2");
     assert.deepEqual(h.mirroredRuns, [replacement]);
   });

@@ -30,9 +30,41 @@ function toolMessage(id: string, toolName: string, input: Record<string, unknown
   };
 }
 
+function interruptedToolMessage(id: string): UIMessage {
+  return {
+    id,
+    role: "assistant",
+    parts: [{
+      type: "dynamic-tool",
+      toolName: "task",
+      toolCallId: `${id}:call`,
+      state: "output-error",
+      input: { description: "Review implementation" },
+      errorText: "Execution ended before this tool returned a result.",
+    }],
+  };
+}
+
 const openTodo = [{ id: "todo-1", content: "Finish implementation", status: "in_progress", priority: "high" }];
 
 describe("run completion diagnostics", () => {
+  test("reports an orphaned child task as an incomplete terminal run", () => {
+    const result = analyzeRunCompletion([
+      textMessage("user-1", "user", "Review it"),
+      interruptedToolMessage("assistant-task"),
+    ], []);
+
+    expect(result).toMatchObject({
+      incomplete: true,
+      interruptedTool: true,
+      finishReason: "child_session_orphaned",
+    });
+    expect(result?.message.parts[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("stopped without returning a terminal result"),
+    });
+  });
+
   test("treats a successful file edit followed by an empty assistant as abnormal", () => {
     const result = analyzeRunCompletion([
       textMessage("user-1", "user", "Implement it"),

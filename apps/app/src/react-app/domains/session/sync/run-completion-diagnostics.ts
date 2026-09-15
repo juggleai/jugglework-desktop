@@ -14,6 +14,7 @@ export type RunCompletionDiagnostic = {
   incomplete: boolean;
   unverified: boolean;
   anomalousEmptyTurn: boolean;
+  interruptedTool: boolean;
 };
 
 const FILE_MUTATION_TOOLS = new Set(["apply_patch", "edit", "write"]);
@@ -59,6 +60,12 @@ function isVerification(part: UIMessage["parts"][number]) {
   return VERIFICATION_COMMAND_RE.test(command);
 }
 
+function isInterruptedTool(part: UIMessage["parts"][number]) {
+  return part.type === "dynamic-tool" &&
+    part.state === "output-error" &&
+    part.errorText === "Execution ended before this tool returned a result.";
+}
+
 function currentTurn(messages: UIMessage[]) {
   let latestUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -100,6 +107,7 @@ export function analyzeRunCompletion(
     (message) => message !== turn.terminalAssistant && message.parts.some(isFileMutation),
   );
   const anomalousEmptyTurn = terminalIsEmpty && priorAssistantHadMutation;
+  const interruptedTool = tools.some(isInterruptedTool);
   const openTodos = todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress");
   const explicitFinishReason = options.finishReason?.trim() || null;
   const metadata = opencodeMetadata(turn.terminalAssistant);
@@ -110,10 +118,14 @@ export function analyzeRunCompletion(
   // TIPS: 部分 Provider/网关在工具调用后的下一轮推理失败时不会返回结构化 error，
   // 只会留下 finish=unknown 的零 token 空消息。该状态必须作为异常终态，而不能静默当成 stop。
   const abnormalFinish = effectiveFinishReason !== "stop";
-  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || unverified || abnormalFinish;
+  const incomplete = openTodos.length > 0 || anomalousEmptyTurn || unverified || abnormalFinish || interruptedTool;
   if (!incomplete) return null;
 
-  const finishReason = anomalousEmptyTurn ? "tool_loop_terminated" : effectiveFinishReason;
+  const finishReason = interruptedTool
+    ? "child_session_orphaned"
+    : anomalousEmptyTurn
+      ? "tool_loop_terminated"
+      : effectiveFinishReason;
   const lines = ["Task incomplete.", `finish_reason: ${finishReason}`];
   if (openTodos.length > 0) {
     lines.push(`${openTodos.length} todo item${openTodos.length === 1 ? " remains" : "s remain"} pending or in progress.`);
@@ -124,6 +136,9 @@ export function analyzeRunCompletion(
   if (unverified) {
     lines.push("Changes applied but not verified");
   }
+  if (interruptedTool) {
+    lines.push("A tool or delegated task stopped without returning a terminal result.");
+  }
 
   const id = runDiagnosticMessageId(turn.user.id);
   return {
@@ -131,6 +146,7 @@ export function analyzeRunCompletion(
     incomplete,
     unverified,
     anomalousEmptyTurn,
+    interruptedTool,
     message: {
       id,
       role: "assistant",

@@ -666,6 +666,7 @@ export default {
   "session.assistant_empty_response": "Tác nhân không trả về nội dung nào. Hãy thử lại.",
   "session.assistant_responding": "Đang phản hồi",
   "session.assistant_thinking": "Đang suy nghĩ",
+  "session.assistant_stalled": "Không có tiến triển — đang kiểm tra trạng thái tác vụ",
   "session.todo_progress": "{completed} / {total} task hoàn thành",
   "session.undo_label": "Hoàn tác",
   "session.undo_title": "Hoàn tác tin nhắn cuối",

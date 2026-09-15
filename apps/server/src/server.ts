@@ -76,6 +76,7 @@ import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } 
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { createSessionPendingOperationStore, type SessionPendingOperationStore } from "./session-pending-operations.js";
 import { createSessionPendingOperationPump, type SessionPendingOperationPump } from "./session-pending-operation-pump.js";
+import { createSessionRunJournal } from "./session-run-journal.js";
 import { registerInteractionRoutes } from "./routes/interactions.js";
 import { registerSessionPermissionRoutes } from "./routes/session-permissions.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
@@ -896,8 +897,28 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   };
   const engineMcpServerState = beginEngineMcpServerState(config);
-  const sessionMutations = createSessionMutationCoordinator();
   const sessionPendingOperations = await createSessionPendingOperationStore({ config });
+  let sessionRunJournal: Awaited<ReturnType<typeof createSessionRunJournal>>;
+  try {
+    sessionRunJournal = await createSessionRunJournal({ config });
+  } catch (error) {
+    sessionPendingOperations.close();
+    throw error;
+  }
+  const lastJournalProgressAtByRun = new Map<string, number>();
+  const sessionMutations = createSessionMutationCoordinator({
+    onLifecycleEvent: (event) => {
+      const timestamp = Date.now();
+      if (event.event === "progress") {
+        const previous = lastJournalProgressAtByRun.get(event.run.runId) ?? 0;
+        if (timestamp - previous < 5_000) return;
+        lastJournalProgressAtByRun.set(event.run.runId, timestamp);
+      } else if (event.event === "run_terminal" || event.event === "start_rolled_back") {
+        lastJournalProgressAtByRun.delete(event.run.runId);
+      }
+      sessionRunJournal.record({ ...event, occurredAt: timestamp });
+    },
+  });
   let sessionPendingOperationPump: SessionPendingOperationPump | null = null;
   let sessionPendingOperationsClosed = false;
   const closeSessionPendingOperations = () => {
@@ -1201,6 +1222,7 @@ export async function startServer(config: ServerConfig, options: {
     watcherHandle.close();
     internalReloadDispatchers.delete(config);
     closeSessionPendingOperations();
+    sessionRunJournal.close();
     void automationEventPoller.dispose();
     void automationSubscriptionSync.dispose();
     void automationScheduler.dispose();
@@ -1278,6 +1300,7 @@ export async function startServer(config: ServerConfig, options: {
       if (pendingPumpClosed) {
         try { closeSessionPendingOperations(); } catch (error) { errors.push(error); }
       }
+      try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       if (errors.length === 1) throw errors[0];

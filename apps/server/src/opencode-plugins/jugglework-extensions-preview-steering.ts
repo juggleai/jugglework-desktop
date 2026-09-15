@@ -132,16 +132,18 @@ const connectSkillsResponseSchema = z.object({
   ok: z.literal(true),
   schemaVersion: z.number(),
   instruction: z.string(),
+  skills: z.array(z.object({ capability: z.string().min(1) }).passthrough()),
+  capabilities: z.array(z.string()).optional(),
 }).passthrough();
 
 export const JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   "If the user asks for something you cannot do with obvious built-in tools, check JuggleWork extensions before saying the capability is unavailable. Use jugglework_query with id extension.actions to inspect available extension actions, then jugglework_execute with id extension.call for the matching action.";
 
 export const JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Cloud. When the user asks to create a skill, retrieve and follow the listed create-skill remote skill by calling jugglework-cloud_execute_capability with its exact <capability>. Create the skill in JuggleWork Cloud as a private plugin, not in the workspace. For later steps, use add-to-marketplace or add-user-to-marketplace only when the user asks. Use a workspace-local skill only when the user explicitly requests one. Do not create both copies.";
+  "Skill creation routing: Remote-guided local. For a general request to create or update a skill, retrieve and follow the listed create-skill remote skill by calling jugglework-cloud_execute_capability with the exact skill:create-skill capability. Its returned instructions are authoritative generic authoring guidance, but user-provided valid name, intended behavior, source or content, and workspace-local target take precedence over generic defaults; do not ask again for details already supplied. If the user supplies a complete valid SKILL.md, preserve its body and content rather than regenerating it. The result must remain one complete file at <current-workspace>/.opencode/skills/<skill-name>/SKILL.md. Never override a valid user-specified local target; reject or clarify an invalid or outside target instead. Validate and re-read the file after writing. The remote skill is guidance only: never persist or save the authored skill to Cloud or the server. An explicit request for a workspace-local skill is handled directly as local authoring without retrieving remote guidance.";
 
 export const JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION =
-  "Skill creation: Local. Create or update a workspace-local skill only when the user requests one. Keep one skill in .opencode/skills/<skill-name>/SKILL.md, validate it, and re-read it after writing. Do not create a Cloud copy.";
+  "Skill creation routing: Local fallback. For a general request to create or update a skill, use the bundled local skill-creator guidance. User-provided valid name, intended behavior, source or content, and workspace-local target take precedence over generic defaults; do not ask again for details already supplied. If the user supplies a complete valid SKILL.md, preserve its body and content rather than regenerating it. Keep one complete file at <current-workspace>/.opencode/skills/<skill-name>/SKILL.md. Never override a valid user-specified local target; reject or clarify an invalid or outside target instead. Validate and re-read the file after writing. Explicit workspace-local requests are always handled directly by this local path. There is no Cloud or server persistence mode for authored skills; never save one remotely.";
 
 // fix(L3): 组织连接器是 Cloud MCP，不应在搜索为空后被误判为本地 MCP。
 // before: 只提示关键词变体；after: 明确空目录结果的边界。
@@ -304,47 +306,103 @@ async function fetchJuggleWorkConnectState(input: unknown, fetcher: JuggleWorkFe
   };
 }
 
-export async function resolveJuggleWorkConnectSkillInstruction(_input?: unknown, fetcher: JuggleWorkFetch = fetch): Promise<string> {
+export type JuggleWorkConnectSkillPromptCatalog = {
+  instruction: string;
+  capabilities: ReadonlySet<string>;
+};
+
+export function parseJuggleWorkConnectSkillPromptCatalog(payload: unknown): JuggleWorkConnectSkillPromptCatalog {
+  const parsed = connectSkillsResponseSchema.parse(payload);
+  const capabilities = new Set(parsed.skills.map((skill) => skill.capability));
+  if (parsed.capabilities) {
+    const declaredCapabilities = new Set(parsed.capabilities);
+    const setsMatch = capabilities.size === declaredCapabilities.size
+      && [...capabilities].every((capability) => declaredCapabilities.has(capability));
+    if (!setsMatch) throw new Error("Connect skill capabilities do not match the rendered skill catalog");
+  }
+  return {
+    instruction: parsed.instruction,
+    capabilities,
+  };
+}
+
+export async function resolveJuggleWorkConnectSkillPromptCatalog(_input?: unknown, fetcher: JuggleWorkFetch = fetch): Promise<JuggleWorkConnectSkillPromptCatalog> {
   try {
     const { url, token } = requireJuggleWorkServer();
     // Connect skills are server-scoped; workspace/directory query params are unused.
     const response = await fetcher(`${url}/experimental/connect/skills`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) return "";
-    return connectSkillsResponseSchema.parse(await parseResponse(response)).instruction;
+    if (!response.ok) return { instruction: "", capabilities: new Set() };
+    return parseJuggleWorkConnectSkillPromptCatalog(await parseResponse(response));
   } catch {
-    return "";
+    return { instruction: "", capabilities: new Set() };
   }
+}
+
+export async function resolveJuggleWorkConnectSkillInstruction(input?: unknown, fetcher: JuggleWorkFetch = fetch): Promise<string> {
+  return (await resolveJuggleWorkConnectSkillPromptCatalog(input, fetcher)).instruction;
+}
+
+export type JuggleWorkExtensionDiscoveryResolution = {
+  instruction: string;
+  cloudReady: boolean;
+};
+
+function discoveryResolution(instruction: string, cloudReady = false): JuggleWorkExtensionDiscoveryResolution {
+  return { instruction, cloudReady };
+}
+
+export function composeJuggleWorkExtensionDiscoveryResolution(state: JuggleWorkExtensionConnectState | null): JuggleWorkExtensionDiscoveryResolution {
+  if (!state) return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  const health = state.cloudHealth;
+  if (health?.usable === true && health.usableByCurrentModel === true) {
+    return discoveryResolution(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION, true);
+  }
+  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") {
+    return discoveryResolution(JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION);
+  }
+  if (health) {
+    if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") {
+      return discoveryResolution(JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION);
+    }
+    return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  }
+  if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) {
+    return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+  }
+  return discoveryResolution(JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION);
 }
 
 export function composeJuggleWorkExtensionDiscoveryInstruction(state: JuggleWorkExtensionConnectState | null): string {
-  if (!state) return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  if (state.workspace?.resolution && state.workspace.resolution !== "resolved") return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  const health = state.cloudHealth;
-  if (health?.usable === true && health.usableByCurrentModel !== false) return JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION;
-  if (health?.phase === "engine_disabled" || health?.firstFailure?.code === "engine_disabled" || health?.firstFailure?.code === "cloud_mcp_disabled") return JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION;
-  if (health) {
-    if (!health.desired.present || health.firstFailure?.code === "cloud_mcp_missing") return JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION;
-    return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  }
-  if (!state.connectCatalogEnabled || state.googleWorkspace.legacyConfigured) return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
-  return JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION;
+  return composeJuggleWorkExtensionDiscoveryResolution(state).instruction;
 }
 
 export function composeSteeringFromEngineMcpStatus(status: string | undefined): string {
-  if (status === "connected") return JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION;
-  if (status === "disabled") return JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION;
-  if (status === "needs_auth" || status === "needs_client_registration") return JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION;
-  return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+  return composeSteeringResolutionFromEngineMcpStatus(status).instruction;
 }
 
-export function composeSkillAuthoringInstruction(extensionInstruction: string): {
-  mode: "cloud" | "local";
+export function composeSteeringResolutionFromEngineMcpStatus(status: string | undefined): JuggleWorkExtensionDiscoveryResolution {
+  // This status is the in-process projection used to build the current prompt's
+  // MCP tool set, so connected proves readiness without a second server probe.
+  if (status === "connected") return discoveryResolution(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION, true);
+  if (status === "disabled") return discoveryResolution(JUGGLEWORK_CONNECT_DISABLED_INSTRUCTION);
+  if (status === "needs_auth" || status === "needs_client_registration") {
+    return discoveryResolution(JUGGLEWORK_CONNECT_SIGN_IN_INSTRUCTION);
+  }
+  return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+}
+
+export function composeSkillAuthoringInstruction(input: {
+  cloudReady: boolean;
+  capabilities: ReadonlySet<string>;
+}): {
+  mode: "remote-guided-local" | "local";
   prompt: string;
 } {
-  if (extensionInstruction === JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION) {
-    return { mode: "cloud", prompt: JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION };
+  if (input.cloudReady && input.capabilities.has("skill:create-skill")) {
+    return { mode: "remote-guided-local", prompt: JUGGLEWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION };
   }
   return { mode: "local", prompt: JUGGLEWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION };
 }
@@ -358,6 +416,14 @@ export async function resolveJuggleWorkExtensionDiscoveryInstruction(
   fetcher: JuggleWorkFetch = fetch,
   engine: JuggleWorkEngineMcpStatusSource = {},
 ): Promise<string> {
+  return (await resolveJuggleWorkExtensionDiscovery(input, fetcher, engine)).instruction;
+}
+
+export async function resolveJuggleWorkExtensionDiscovery(
+  input?: unknown,
+  fetcher: JuggleWorkFetch = fetch,
+  engine: JuggleWorkEngineMcpStatusSource = {},
+): Promise<JuggleWorkExtensionDiscoveryResolution> {
   if (engine.client) {
     try {
       // Invariant: the OpenCode engine owns MCP registration and builds the
@@ -365,14 +431,14 @@ export async function resolveJuggleWorkExtensionDiscoveryInstruction(
       // same in-process MCP state. Server health probes may fail for reasons
       // (for example corporate TLS trust) that do not affect engine tools.
       const engineStatus = await fetchEngineMcpStatus(input, engine);
-      if (engineStatus.found) return composeSteeringFromEngineMcpStatus(engineStatus.status);
+      if (engineStatus.found) return composeSteeringResolutionFromEngineMcpStatus(engineStatus.status);
     } catch {
-      return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+      return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
     }
   }
   try {
-    return composeJuggleWorkExtensionDiscoveryInstruction(await fetchJuggleWorkConnectState(input, fetcher));
+    return composeJuggleWorkExtensionDiscoveryResolution(await fetchJuggleWorkConnectState(input, fetcher));
   } catch {
-    return JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION;
+    return discoveryResolution(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION);
   }
 }

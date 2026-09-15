@@ -11,6 +11,7 @@ on:
         options:
           - all
           - windows-arm64-installer
+          - windows-x64-installer
   push:
     branches:
       - electron-notary-test
@@ -190,5 +191,70 @@ jobs:
           path: |
             apps/desktop/dist-electron/jugglework-win-arm64-*.exe
             apps/desktop/dist-electron/jugglework-win-arm64-*.exe.blockmap
+            apps/desktop/dist-electron/latest.yml
+          if-no-files-found: error
+
+  build-windows-x64-installer:
+    name: Build Windows x64 installer
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'windows-x64-installer'
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable git long paths
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Electron application
+        shell: bash
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        run: pnpm --filter @jugglework/desktop build:electron
+
+      - name: Package Windows x64 installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop exec electron-builder \
+            --config electron-builder.yml \
+            --win --x64 \
+            --publish never
+
+      - name: Verify installer inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f apps/desktop/dist-electron/jugglework-win-x64-*.exe
+          test -f apps/desktop/dist-electron/jugglework-win-x64-*.exe.blockmap
+          test -f apps/desktop/dist-electron/latest.yml
+
+      - name: Upload Windows x64 installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jugglework-electron-windows-x64-installer
+          path: |
+            apps/desktop/dist-electron/jugglework-win-x64-*.exe
+            apps/desktop/dist-electron/jugglework-win-x64-*.exe.blockmap
             apps/desktop/dist-electron/latest.yml
           if-no-files-found: error

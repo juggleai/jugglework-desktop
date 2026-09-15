@@ -8,7 +8,7 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readJuggleWorkConnectSkillCatalog, renderJuggleWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readJuggleWorkConnectSkillCatalogSnapshot } from "../connect-skill-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { ApiError } from "../errors.js";
 import {
@@ -300,12 +300,13 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
 
   addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
     // Connect skills are server/account-scoped (jugglework-cloud on the host), not per-workspace.
-    const skills = await readJuggleWorkConnectSkillCatalog(config);
+    const catalog = await readJuggleWorkConnectSkillCatalogSnapshot(config);
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
-      skills,
-      instruction: renderJuggleWorkConnectSkillInstruction(skills),
+      skills: catalog.skills,
+      instruction: catalog.instruction,
+      capabilities: [...catalog.capabilities],
     });
   });
 

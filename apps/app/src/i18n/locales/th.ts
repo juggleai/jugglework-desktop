@@ -666,6 +666,7 @@ export default {
   "session.assistant_empty_response": "เอเจนต์ไม่ได้ตอบอะไรกลับมา ลองอีกครั้ง",
   "session.assistant_responding": "กำลังตอบ",
   "session.assistant_thinking": "กำลังคิด",
+  "session.assistant_stalled": "ไม่มีความคืบหน้า — กำลังตรวจสอบสถานะงาน",
   "session.todo_progress": "{completed} จาก {total} งานเสร็จแล้ว",
   "session.undo_label": "ย้อนกลับ",
   "session.undo_title": "เลิกทำข้อความล่าสุด",

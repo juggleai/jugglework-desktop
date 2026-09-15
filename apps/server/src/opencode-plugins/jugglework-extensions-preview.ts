@@ -10,8 +10,8 @@ import {
 } from "./agent-instruction-compose.js";
 import {
   composeSkillAuthoringInstruction,
-  resolveJuggleWorkConnectSkillInstruction,
-  resolveJuggleWorkExtensionDiscoveryInstruction,
+  resolveJuggleWorkConnectSkillPromptCatalog,
+  resolveJuggleWorkExtensionDiscovery,
   type OpenCodeContext,
   type JuggleWorkEngineMcpStatusClient,
 } from "./jugglework-extensions-preview-steering.js";
@@ -867,14 +867,17 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
   return {
   "experimental.chat.system.transform": async (input: unknown, output: { system: string[] }) => {
     const mergedInput = mergeTransformInputWithFactoryContext(input, factoryContext);
-    const [extensionInstruction, skillInstruction] = await Promise.all([
-      resolveJuggleWorkExtensionDiscoveryInstruction(mergedInput, fetch, {
+    const [extensionDiscovery, skillCatalog] = await Promise.all([
+      resolveJuggleWorkExtensionDiscovery(mergedInput, fetch, {
         client: engineMcpStatusClient,
         directory: engineMcpStatusDirectory,
       }),
-      resolveJuggleWorkConnectSkillInstruction(mergedInput, fetch),
+      resolveJuggleWorkConnectSkillPromptCatalog(mergedInput, fetch),
     ]);
-    const skillAuthoring = composeSkillAuthoringInstruction(extensionInstruction);
+    const skillAuthoring = composeSkillAuthoringInstruction({
+      cloudReady: extensionDiscovery.cloudReady,
+      capabilities: skillCatalog.capabilities,
+    });
     if (process.env.JUGGLEWORK_DEV_MODE === "1") {
       console.log("[jugglework:skill-authoring] system prompt selected", {
         mode: skillAuthoring.mode,
@@ -885,10 +888,10 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     // One section id per concern — combine drops empties/duplicates so routing,
     // remote skills, session, and browser guidance never overlap by accident.
     const sections = combineInstructionSections(
-      createInstructionSection("routing", extensionInstruction),
+      createInstructionSection("routing", extensionDiscovery.instruction),
       createInstructionSection("agent-surface", JUGGLEWORK_AGENT_SURFACE_INSTRUCTION),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
-      createInstructionSection("connect-skills", skillInstruction),
+      createInstructionSection("connect-skills", skillCatalog.instruction),
       createInstructionSection("browser", JUGGLEWORK_BROWSER_INSTRUCTION),
     );
     output.system.push(...composeAgentInstructions(sections));

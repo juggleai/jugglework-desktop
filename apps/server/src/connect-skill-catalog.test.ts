@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  composeJuggleWorkConnectSkillCatalog,
+  parseJuggleWorkConnectSkillIndex,
   readMcpSkillIndex,
   readJuggleWorkConnectSkillCatalog,
+  readJuggleWorkConnectSkillCatalogSnapshot,
   renderJuggleWorkConnectSkillInstruction,
   resetJuggleWorkConnectSkillCatalogCacheForTests,
   type JuggleWorkConnectSkill,
@@ -85,6 +88,32 @@ async function serverConfig(): Promise<ServerConfig> {
 }
 
 describe("JuggleWork Connect skill catalog", () => {
+  test("parses and composes a built-in skill without dropping source metadata", () => {
+    const skills = parseJuggleWorkConnectSkillIndex({
+      $schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+      skills: [{
+        name: "create-skill",
+        type: "skill-md",
+        title: "Create Skill",
+        description: "Guide creation of a Desktop workspace-local skill.",
+        url: "skill://create-skill/SKILL.md",
+        capability: "skill:create-skill",
+        source: "builtin",
+      }],
+    });
+    const catalog = composeJuggleWorkConnectSkillCatalog(skills);
+
+    expect(catalog.skills[0]).toMatchObject({
+      name: "create-skill",
+      source: "builtin",
+      capability: "skill:create-skill",
+    });
+    expect(catalog.instruction).toContain("<name>create-skill</name>");
+    expect(catalog.instruction).toContain("<location>skill://create-skill/SKILL.md</location>");
+    expect(catalog.instruction).toContain("<capability>skill:create-skill</capability>");
+    expect([...catalog.capabilities]).toEqual(["skill:create-skill"]);
+  });
+
   test("renders discovery metadata and capability retrieval guidance", () => {
     const instruction = renderJuggleWorkConnectSkillInstruction([{
       name: "customer-briefing",
@@ -264,6 +293,35 @@ describe("JuggleWork Connect skill catalog", () => {
     const skills = await readJuggleWorkConnectSkillCatalog(config, skillIndexFetcher());
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe("customer-briefing");
+  });
+
+  test("caches the composed catalog for 30 seconds and refreshes on expiry", async () => {
+    const config = await serverConfig();
+    await writeConnectCloudMcp(config, {
+      type: "remote",
+      url: "https://connect.example/mcp/agent",
+      enabled: true,
+    });
+    let now = 1_000;
+    let resourceReads = 0;
+    const baseFetcher = skillIndexFetcher("skill:create-skill");
+    const fetcher = async (url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.method === "resources/read") resourceReads += 1;
+      return baseFetcher(url, init);
+    };
+
+    const first = await readJuggleWorkConnectSkillCatalogSnapshot(config, fetcher, () => now);
+    now += 29_999;
+    const cached = await readJuggleWorkConnectSkillCatalogSnapshot(config, fetcher, () => now);
+    now += 1;
+    const refreshed = await readJuggleWorkConnectSkillCatalogSnapshot(config, fetcher, () => now);
+
+    expect(resourceReads).toBe(2);
+    expect(cached).toBe(first);
+    expect(refreshed).not.toBe(first);
+    expect(first.instruction).toContain("<capability>skill:create-skill</capability>");
+    expect(first.capabilities.has("skill:create-skill")).toBe(true);
   });
 
   test("ignores workspace runtime copies — they carry workspace-scoped execution tokens", async () => {

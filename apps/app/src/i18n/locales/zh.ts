@@ -1487,6 +1487,7 @@ export default {
   "session.assistant_empty_response": "代理未返回任何内容。请重试。",
   "session.assistant_compacting": "压缩中",
   "session.assistant_error": "出错",
+  "session.assistant_stalled": "长时间无进展，正在检查任务状态",
   "session.assistant_idle": "空闲",
   "session.assistant_responding": "正在回复",
   "session.assistant_thinking": "正在思考",

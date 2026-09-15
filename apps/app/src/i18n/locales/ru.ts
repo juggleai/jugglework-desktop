@@ -597,6 +597,7 @@ export default {
   "session.assistant_empty_response": "Агент ничего не ответил. Попробуйте еще раз.",
   "session.assistant_responding": "Отвечает",
   "session.assistant_thinking": "Думает",
+  "session.assistant_stalled": "Нет прогресса — проверка состояния задачи",
   "session.todo_label": "Задачи",
   "session.todo_progress": "{completed} из {total} задач выполнено",
   "session.todo_progress_label": "Прогресс",

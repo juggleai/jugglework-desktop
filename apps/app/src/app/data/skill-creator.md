@@ -1,35 +1,27 @@
 ---
 name: skill-creator
-description: Create or update skills in JuggleWork Cloud when available, or locally when requested.
+description: Create or update a skill only in the current Desktop workspace under .opencode/skills/.
 ---
 
 # Skill Creator
 
-This skill is a template + checklist for creating skills in a workspace.
+This skill is a template and checklist for creating skills in the current workspace.
 
 ## What is a skill?
 
-A local skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`. A remote skill is stored in JuggleWork Cloud as a plugin skill component.
+A workspace skill is a folder under `.opencode/skills/<skill-name>/` anchored by `SKILL.md`.
 
-## JuggleWork authoring contract
+## Workspace authoring contract
 
-Follow the runtime `Skill creation:` instruction for this workspace/model:
-
-- `Cloud`: create or update the skill in JuggleWork Cloud first when it is available, then follow the remote flow below.
-- `Local`: inspect `.opencode/skills/` and `.claude/skills/`, then write or update exactly one `.opencode/skills/<skill-name>/SKILL.md` and re-read it.
-- Use the local flow only when the user explicitly requests a workspace-local skill. Do not create both copies. Move an existing local skill to Cloud only when the user explicitly requests migration.
-
-## Remote Cloud flow
-
-Use this flow only when the runtime instruction says `Cloud`:
-
-1. Search JuggleWork Cloud with 2-4 variants for existing skills/config objects, plugins, marketplaces, plugin creation, config-object version creation, and read operations. Use only exact capability names returned by search.
-2. Resolve exact-name matches before writing: create when none exists, update when one exists and the user requested changes, or ask the user to choose when matches are ambiguous.
-3. Draft one complete replacement `SKILL.md` with frontmatter containing a matching `name`, a trigger-oriented `description`, and a non-empty instruction body. Do not include secrets.
-4. To create, execute the returned plugin-create capability with one component: `{"type":"skill","input":{"rawSourceText":"<complete SKILL.md>"}}`. Set organization-wide access or a marketplace only when the user requested and confirmed it.
-5. To update, execute the returned config-object-version creation capability with the existing `configObjectId` in `path` and `{"input":{"rawSourceText":"<complete SKILL.md>"},"reason":"<short change summary>"}` in `body`. Keep the existing name unless the user requested a rename. Never call plugin-create for an update.
-6. Read back the config object or resolved plugin detail. Verify the latest stored name, description, content, IDs, marketplace, and access before reporting success.
-7. If Cloud returns an authorization, validation, ambiguity, or persistence error, report it. Do not create a duplicate or silently create a local copy.
+1. Inspect `.opencode/skills/` before writing so an existing exact-name skill is updated instead of duplicated.
+2. User-provided valid details take precedence over generic defaults: preserve the requested name, intended behavior, source or content, and workspace-local target. Do not ask again for details the user already supplied.
+3. Accept a user-specified target only when its normalized destination is exactly `<current-workspace>/.opencode/skills/<skill-name>/SKILL.md` and its `<skill-name>` matches the valid Skill name. Never override a valid user-specified local target; reject or clarify any target outside the current workspace, outside `.opencode/skills`, or not matching this exact contract.
+4. If the user supplies a complete valid `SKILL.md`, use that complete source as-is and preserve its body and content rather than regenerating it.
+5. Clarify only missing, conflicting, or invalid details. Otherwise, create or update exactly one `.opencode/skills/<skill-name>/SKILL.md` for the request.
+6. When source must be drafted, write complete frontmatter with a matching lower-case hyphenated `name`, a trigger-oriented `description`, and a non-empty instruction body.
+7. Maintain one complete file and do not create supporting files or unrelated resources.
+8. Validate the completed `SKILL.md`, then re-read it and compare it with the intended complete source before reporting success.
+9. Never persist, publish, or save the authored Skill to Cloud or a server.
 
 ## Design goals
 
@@ -45,9 +37,6 @@ Use this flow only when the runtime instruction says `Cloud`:
   skills/
     my-skill/
       SKILL.md
-      README.md
-      templates/
-      scripts/
 ```
 
 ## Trigger phrases (critical)
@@ -84,10 +73,9 @@ description: |
 
 ## Authoring checklist
 
-1. Follow the runtime-selected Cloud or local flow.
-2. Start with a clear purpose statement: when to use it + what it outputs.
-3. Specify inputs/outputs and any required permissions.
-4. Include “Setup” steps if the skill needs local tooling.
-5. Add examples: at least 2 realistic user prompts.
-6. Keep it safe: avoid destructive defaults; ask for confirmation.
-7. Validate before creation and verify the result after creation.
+1. Start with a clear purpose statement: when to use it and what it outputs.
+2. Specify inputs, outputs, and any required permissions.
+3. Include "Setup" steps if the skill needs local tooling.
+4. Add at least two realistic example user prompts.
+5. Keep it safe: avoid destructive defaults and ask for confirmation.
+6. Validate the file and verify its final contents after creation.

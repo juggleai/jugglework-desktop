@@ -22,6 +22,7 @@ import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/li
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import {
   useSessionActivityStore,
+  type SessionActivityRecord,
 } from "../status/session-activity-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { reconcileRunCompletionDiagnostic } from "./run-completion-diagnostics";
@@ -112,6 +113,30 @@ type SyncEntry = {
   deltaFlushBuffer: PendingDelta[];
   deltaFlushScheduled: boolean;
 };
+
+const DELEGATED_TASK_STALL_RECOVERY_GRACE_MS = 60_000;
+
+export function shouldRecoverStalledDelegatedTask(input: {
+  record: SessionActivityRecord | undefined;
+  messages: UIMessage[];
+  now: number;
+}) {
+  const { record } = input;
+  if (
+    !record?.runActive ||
+    record.stalledAt === null ||
+    input.now - record.stalledAt < DELEGATED_TASK_STALL_RECOVERY_GRACE_MS ||
+    record.providerRetry !== null ||
+    record.waitingPermissionIds.length > 0 ||
+    record.waitingQuestionIds.length > 0
+  ) return false;
+
+  return input.messages.some((message) => message.parts.some((part) => (
+    part.type === "dynamic-tool" &&
+    part.toolName.trim().toLowerCase().replace(/^functions\./, "") === "task" &&
+    (part.state === "input-streaming" || part.state === "input-available")
+  )));
+}
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
@@ -1595,6 +1620,9 @@ function startSync(input: SyncOptions) {
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let activeConnectionController: AbortController | null = null;
   let lastEventAt = Date.now();
+  let hasConnected = false;
+  const reconciledStalls = new Map<string, number>();
+  const recoveringStalls = new Map<string, number>();
   let retryDelayMs = 1_000;
   const staleStreamMs = 30_000;
 
@@ -1605,6 +1633,62 @@ function startSync(input: SyncOptions) {
       ...entry.retainedSessionTimers.keys(),
     ]);
     await reconcileWorkspaceInteractionRoots(input.interactionClient, input.workspaceId, sessionIds);
+  };
+
+  const reconcileTrackedSessions = () => {
+    if (!entry) return;
+    const queryClient = getReactQueryClient();
+    const sessionIds = new Set([
+      ...entry.trackedSessionRefs.keys(),
+      ...entry.retainedSessionTimers.keys(),
+    ]);
+    for (const sessionId of sessionIds) {
+      void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, sessionId) });
+    }
+    void queryClient.invalidateQueries({ queryKey: ["session-active-runs", input.workspaceId] });
+  };
+
+  const reconcileNewStalls = () => {
+    const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
+    const queryClient = getReactQueryClient();
+    for (const [sessionId, record] of Object.entries(records)) {
+      if (record.stalledAt === null || reconciledStalls.get(sessionId) === record.stalledAt) continue;
+      reconciledStalls.set(sessionId, record.stalledAt);
+      void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, sessionId) });
+      void queryClient.invalidateQueries({ queryKey: ["session-active-runs", input.workspaceId] });
+    }
+  };
+
+  const recoverConfirmedDelegatedTaskStalls = async () => {
+    if (!entry || !input.interactionClient) return;
+    const activityStore = useSessionActivityStore.getState();
+    const records = activityStore.recordsByWorkspaceId[input.workspaceId] ?? {};
+    const queryClient = getReactQueryClient();
+    for (const [sessionId, record] of Object.entries(records)) {
+      if (record.stalledAt !== null && recoveringStalls.get(sessionId) === record.stalledAt) continue;
+      const messages = queryClient.getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, sessionId)) ?? [];
+      if (!shouldRecoverStalledDelegatedTask({ record, messages, now: Date.now() })) continue;
+      recoveringStalls.set(sessionId, record.stalledAt!);
+      try {
+        // listActiveSessionRuns performs the server's two-sample authoritative
+        // reconciliation first. Abort only if the exact fenced run is still
+        // active afterwards; otherwise a fresh idle snapshot terminalizes the
+        // stale task projection without sending a destructive command.
+        const activeRuns = await input.interactionClient.listActiveSessionRuns(input.workspaceId);
+        const run = activeRuns.items.find((item) => item.sessionId === sessionId);
+        if (run) {
+          await input.interactionClient.abortSessionRun(input.workspaceId, sessionId, run.runId, {
+            abortCommandCorrelationId: `stalled-task-${crypto.randomUUID()}`,
+          });
+        }
+      } catch {
+        // Keep the suspect state visible and retry after a later watchdog tick.
+        recoveringStalls.delete(sessionId);
+        continue;
+      }
+      void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, sessionId) });
+      void queryClient.invalidateQueries({ queryKey: ["session-active-runs", input.workspaceId] });
+    }
   };
 
   const scheduleRetry = () => {
@@ -1624,6 +1708,8 @@ function startSync(input: SyncOptions) {
       const sub = await client.event.subscribe(undefined, { signal: connectionController.signal });
       retryDelayMs = 1_000;
       lastEventAt = Date.now();
+      if (hasConnected) reconcileTrackedSessions();
+      hasConnected = true;
       void reconcileTrackedInteractions();
       for await (const raw of sub.stream) {
         if (controller.signal.aborted || connectionController.signal.aborted) return;
@@ -1669,6 +1755,8 @@ function startSync(input: SyncOptions) {
   void connect();
   watchdogTimer = setInterval(() => {
     useSessionActivityStore.getState().refreshStalledStatuses();
+    reconcileNewStalls();
+    void recoverConfirmedDelegatedTaskStalls();
     if (disposed || controller.signal.aborted || retryTimer) return;
     const active = activeConnectionController;
     if (!active || active.signal.aborted) return;

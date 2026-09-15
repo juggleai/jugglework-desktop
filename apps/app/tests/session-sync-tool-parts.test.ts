@@ -110,6 +110,64 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("terminalizes an in-progress tool when the authoritative snapshot is idle", () => {
+    const session = {
+      id: "session-a",
+      title: "Test",
+      time: { created: 1, updated: 2 },
+    } as Session;
+    const messages = snapshotToUIMessages({
+      session,
+      status: { type: "idle" },
+      todos: [],
+      messages: [{
+        info: {
+          id: "msg-a",
+          sessionID: "session-a",
+          role: "assistant",
+          time: { created: 1 },
+          parentID: "user-a",
+          modelID: "test",
+          providerID: "test",
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        } as any,
+        parts: [writeToolPart("running", { content: "hello" })],
+      }],
+    });
+
+    expect(messages[0]?.parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      state: "output-error",
+      errorText: "Execution ended before this tool returned a result.",
+    });
+  });
+
+  test("does not hide an empty-input orphan in an authoritative idle snapshot", () => {
+    const messages = snapshotToUIMessages({
+      session: { id: "session-a", title: "Test", time: { created: 1, updated: 2 } } as Session,
+      status: { type: "idle" },
+      todos: [],
+      messages: [{
+        info: {
+          id: "msg-a",
+          sessionID: "session-a",
+          role: "assistant",
+          time: { created: 1 },
+        } as any,
+        parts: [writeToolPart("pending", {})],
+      }],
+    });
+
+    expect(messages[0]?.parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      state: "output-error",
+    });
+  });
+
   test("maps completed tools", () => {
     const part = writeToolPart("completed", { content: "hello", filePath: "src/a.ts" });
     expect(parseDynamicToolUIPart(part)).toMatchObject({
