@@ -68,6 +68,8 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   const bindings = new Map();
   /** @type {Map<string, { identity: object, controller: AbortController }>} */
   const subscriptions = new Map();
+  /** @type {Map<string, { identity: object, tail: Promise<void> }>} */
+  const observationChains = new Map();
   let lifetime = 1;
   let stopped = false;
   let projector = createProjector();
@@ -101,10 +103,10 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     return !Number.isFinite(status) || status >= 500;
   }
 
-  /** @param {string} workspaceId @param {string | null} sessionId */
-  async function hydrateWorkspaceRuns(workspaceId, sessionId = null) {
+  /** @param {string} workspaceId @param {string | null} sessionId @param {() => boolean} [current] */
+  async function hydrateWorkspaceRuns(workspaceId, sessionId = null, current = () => true) {
     const response = await listActiveRuns({ workspaceId });
-    if (!isRecord(response) || !Array.isArray(response.items)) return null;
+    if (!current() || !isRecord(response) || !Array.isArray(response.items)) return null;
     const activeSessionIds = new Set();
     for (const run of response.items) {
       if (isRecord(run) && identifier(run.sessionId)) activeSessionIds.add(run.sessionId);
@@ -115,6 +117,98 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       if (staleRunId) coordinator.clearTerminalRun({ workspaceId, sessionId, runId: staleRunId });
     }
     return response;
+  }
+
+  /** @param {string} workspaceId @param {string} sessionId */
+  const observationKey = (workspaceId, sessionId) => `${workspaceId}\u0000${sessionId}`;
+
+  /** @param {string} workspaceId @param {string} sessionId */
+  function clearObservationChain(workspaceId, sessionId) {
+    observationChains.delete(observationKey(workspaceId, sessionId));
+  }
+
+  /**
+   * @param {string} workspaceId
+   * @param {string} sessionId
+   * @param {ReturnType<typeof observationStatus>} status
+   * @param {() => boolean} subscriptionCurrent
+   */
+  function enqueueRunObservation(workspaceId, sessionId, status, subscriptionCurrent) {
+    if (!status) return;
+    const key = observationKey(workspaceId, sessionId);
+    const capturedBindings = [...bindings.values()].filter((binding) =>
+      binding.workspaceId === workspaceId && binding.sessionId === sessionId);
+    if (capturedBindings.length === 0) return;
+    const capturedRunId = coordinator.getActiveRunId({ workspaceId, sessionId });
+    let chain = observationChains.get(key);
+    const hadChain = Boolean(chain);
+    if (!chain) {
+      chain = { identity: {}, tail: Promise.resolve() };
+      observationChains.set(key, chain);
+    }
+    const identity = chain.identity;
+    const current = () => subscriptionCurrent() && observationChains.get(key)?.identity === identity &&
+      capturedBindings.some((binding) => bindings.get(binding.controlSessionId) === binding);
+
+    const reconcile = async () => {
+      if (!current()) return;
+      let runId = capturedRunId;
+      // A queued operation is absent from the mirror until the server admits it.
+      if (!runId) {
+        try { await hydrateWorkspaceRuns(workspaceId, sessionId, current); } catch {}
+        if (!current()) return;
+        runId = coordinator.getActiveRunId({ workspaceId, sessionId });
+      }
+      if (!runId) return;
+      const exactRunCurrent = () => current() && coordinator.getActiveRunId({ workspaceId, sessionId }) === runId;
+      if (!exactRunCurrent()) return;
+      try {
+        let response;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (!exactRunCurrent()) return;
+          try {
+            response = await observeRun({ workspaceId, sessionId, runId, status });
+            break;
+          } catch (error) {
+            if (!exactRunCurrent() || attempt === 3 || !retryableObservationError(error)) throw error;
+            await wait(retryDelay(attempt));
+          }
+        }
+        if (!exactRunCurrent() || !isRecord(response)) return;
+        if (response.cleared === true && response.run === null) {
+          if (response.terminalStatus === "completed" || response.terminalStatus === "failed" || response.terminalStatus === "aborted") {
+            try {
+              onNotificationEvent?.({
+                origin: "live",
+                type: "run.terminal",
+                workspaceId,
+                sessionId,
+                runId,
+                outcome: response.terminalStatus,
+              });
+            } catch {}
+          }
+          coordinator.clearTerminalRun({ workspaceId, sessionId, runId });
+        } else if (response.cleared === false && isRecord(response.run)) {
+          coordinator.recordServerRun(response.run);
+        }
+      } catch (error) {
+        if (isRecord(error) && error.serverCode === "run_mismatch" && exactRunCurrent()) {
+          try { await hydrateWorkspaceRuns(workspaceId, sessionId, exactRunCurrent); } catch {}
+        }
+        // Keep the exact mirrored run. A later event/reconnect or server-side
+        // authoritative status reconciliation can complete it safely.
+      }
+    };
+
+    const task = hadChain ? chain.tail.then(reconcile) : reconcile();
+    chain.tail = task.catch(() => undefined);
+    const tail = chain.tail;
+    void tail.then(() => {
+      if (observationChains.get(key)?.identity === identity && observationChains.get(key)?.tail === tail) {
+        observationChains.delete(key);
+      }
+    });
   }
 
   function createProjector() {
@@ -166,7 +260,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     const generation = lifetime;
     subscriptions.set(workspaceId, { identity, controller });
     const current = () => !stopped && generation === lifetime && subscriptions.get(workspaceId)?.identity === identity;
-    void hydrateWorkspaceRuns(workspaceId).then(() => {
+    void hydrateWorkspaceRuns(workspaceId, null, current).then(() => {
       if (!current()) return;
     }).catch(() => undefined);
     const onEvent = async (raw) => {
@@ -186,17 +280,6 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           try { logger.debug?.("remote_session_projection_dropped", { reason: "missing_session", eventType: type }); } catch {}
         }
         const status = observationStatus(type, data);
-        let runId = sessionId && status ? coordinator.getActiveRunId({ workspaceId, sessionId }) : null;
-        // A queued operation is intentionally absent from the mirror until the
-        // server admits it. Hydrate that new authoritative run on its first SSE
-        // status rather than treating the queued item itself as active.
-        if (sessionId && status && !runId) {
-          try {
-            const response = await hydrateWorkspaceRuns(workspaceId, sessionId);
-            if (!current() || !isRecord(response) || !Array.isArray(response.items)) return;
-            runId = coordinator.getActiveRunId({ workspaceId, sessionId });
-          } catch {}
-        }
         let interactionOwnership = null;
         if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && interactions) {
           try {
@@ -214,49 +297,12 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           if (projected > 0) logger.debug?.("remote_session_projected", { eventType: type, projectedCount: projected });
           else logger.debug?.("remote_session_projection_dropped", { reason: "projector_filtered", eventType: type });
         } catch {}
-        if (!current() || !sessionId || !status || !runId) return;
-        try {
-          let response;
-          for (let attempt = 0; attempt < 4; attempt++) {
-            try {
-              response = await observeRun({ workspaceId, sessionId, runId, status });
-              break;
-            } catch (error) {
-              if (!current() || coordinator.getActiveRunId({ workspaceId, sessionId }) !== runId ||
-                  attempt === 3 || !retryableObservationError(error)) throw error;
-              await wait(retryDelay(attempt));
-            }
-          }
-          if (!current() || !isRecord(response)) return;
-          if (response.cleared === true && response.run === null) {
-            if (response.terminalStatus === "completed" || response.terminalStatus === "failed" || response.terminalStatus === "aborted") {
-              try {
-                onNotificationEvent?.({
-                  origin: "live",
-                  type: "run.terminal",
-                  workspaceId,
-                  sessionId,
-                  runId,
-                  outcome: response.terminalStatus,
-                });
-              } catch {}
-            }
-            coordinator.clearTerminalRun({ workspaceId, sessionId, runId });
-          } else if (response.cleared === false && isRecord(response.run)) {
-            coordinator.recordServerRun(response.run);
-          }
-        } catch (error) {
-          if (isRecord(error) && error.serverCode === "run_mismatch" && current()) {
-            try { await hydrateWorkspaceRuns(workspaceId, sessionId); } catch {}
-          }
-          // Keep the exact mirrored run. A later event/reconnect or server-side
-          // authoritative status reconciliation can complete it safely.
-        }
+        if (current() && sessionId && status) enqueueRunObservation(workspaceId, sessionId, status, current);
       };
     const onReconnectGap = async (reason) => {
         if (!current()) return;
         projector.reconnectGap(workspaceId, reason);
-        try { await hydrateWorkspaceRuns(workspaceId); } catch {}
+        try { await hydrateWorkspaceRuns(workspaceId, null, current); } catch {}
       };
     void (async () => {
       let attempt = 0;
@@ -325,6 +371,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     if (!binding) return false;
     bindings.delete(controlSessionId);
     projector.unbind(controlSessionId);
+    clearObservationChain(binding.workspaceId, binding.sessionId);
     if (![...bindings.values()].some((candidate) => candidate.workspaceId === binding.workspaceId)) {
       subscriptions.get(binding.workspaceId)?.controller.abort();
       subscriptions.delete(binding.workspaceId);
@@ -336,6 +383,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     lifetime += 1;
     for (const subscription of subscriptions.values()) subscription.controller.abort();
     subscriptions.clear();
+    observationChains.clear();
     bindings.clear();
     projectedCounts.clear();
     projector.stop();
