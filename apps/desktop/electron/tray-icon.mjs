@@ -3,7 +3,7 @@ import path from "node:path";
 
 export const MACOS_TRAY_TEMPLATE_FILENAME = "juggleworkTemplate.png";
 export const MACOS_TRAY_TEMPLATE_RETINA_FILENAME = "juggleworkTemplate@2x.png";
-export const MACOS_TRAY_ICON_SIZE = 32;
+export const MACOS_TRAY_ICON_SIZE = 24;
 
 /**
  * Resolve the macOS menu-bar template image in both packaged and source runs.

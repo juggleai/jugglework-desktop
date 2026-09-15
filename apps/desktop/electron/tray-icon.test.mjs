@@ -10,6 +10,10 @@ import {
 } from "./tray-icon.mjs";
 
 describe("tray icon image", () => {
+  it("renders the macOS menu-bar icon at 24 by 24 pixels", () => {
+    assert.equal(MACOS_TRAY_ICON_SIZE, 24);
+  });
+
   it("prefers the packaged macOS template resource", () => {
     const packaged = path.join("/bundle", "tray", MACOS_TRAY_TEMPLATE_FILENAME);
     const source = path.resolve("/repo/electron", "../resources/tray", MACOS_TRAY_TEMPLATE_FILENAME);

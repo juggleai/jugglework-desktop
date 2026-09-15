@@ -1017,9 +1017,9 @@ const sessionMutationCoordinator = createSessionMutationCoordinator({
   onActiveRemoteRunCountChanged: (count) => remoteControlSleepController.setActiveRunCount(count),
 });
 let startMainWindowHidden = false;
-// macOS uses a packaged 16pt monochrome Template Image (with an @2x sibling)
-// so AppKit can adapt it to menu-bar appearance. Windows/Linux retain the
-// existing organization-brand/app icon behavior.
+// macOS renders the packaged monochrome Template Image at 24x24 pixels (with
+// an @2x source representation) so AppKit can adapt it to menu-bar appearance.
+// Windows/Linux retain the existing organization-brand/app icon behavior.
 function trayIndicatorIconImage() {
   return createPlatformTrayIconImage({
     platform: process.platform,
