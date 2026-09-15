@@ -113,6 +113,24 @@ The system SHALL present each follow-up queued during an active task as a compac
 - **WHEN** more than one follow-up is waiting
 - **THEN** each follow-up has its own compact row in queue order
 
+### Requirement: Queued follow-ups can steer the active task
+The system SHALL let the user promote a specific queued follow-up into the active task without waiting for the automatic FIFO drain. Promotion MUST be mutually exclusive with automatic queue draining and MUST preserve the queued draft when the immediate submission is not accepted.
+
+#### Scenario: User steers with a queued follow-up
+- **WHEN** the user activates the steer action on a queued follow-up while the task is running
+- **THEN** that exact follow-up is removed from the queue and submitted through the active session's immediate steer path
+- **AND** the remaining follow-ups retain their relative queue order
+
+#### Scenario: Steer submission is not accepted
+- **WHEN** the promoted follow-up is blocked, cancelled, or fails before acceptance
+- **THEN** the follow-up is restored to its original queue position
+- **AND** it remains available for editing, removal, or a later steer attempt
+
+#### Scenario: Automatic drain races with steer
+- **WHEN** the active task becomes idle while a queued follow-up is being promoted
+- **THEN** only one path may claim and submit that follow-up
+- **AND** the application does not create a duplicate user message
+
 ### Requirement: Long task sessions provide quick turn navigation
 The system SHALL provide a compact navigation rail for scrollable task sessions with multiple user-authored turns, while preserving the conversation's reading width and normal scroll behavior.
 

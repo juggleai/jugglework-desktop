@@ -576,6 +576,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [steering, setSteering] = useState(false);
+  const [steeringQueuedDraftId, setSteeringQueuedDraftId] = useState<string | null>(null);
   const connectInventoryCacheRef = useRef<{
     scope: string;
     promise: Promise<ConnectCapabilityInventory>;
@@ -1214,6 +1215,55 @@ export function SessionSurface(props: SessionSurfaceProps) {
       composerShellRef.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus();
     }, 0);
   }, [attachments.length, draft, editQueuedDraftInStore, props.sessionId]);
+
+  // Promote one queued follow-up into the currently running task. The shared
+  // drain lock makes the claim exclusive with the automatic FIFO drain during
+  // busy-to-idle transitions, while stable IDs keep row reordering harmless.
+  const steerQueuedDraft = useCallback(async (id: string) => {
+    if (props.taskSubmissionDisabled || drainingQueueRef.current) return;
+    const currentQueue = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId);
+    const originalIndex = currentQueue.findIndex((item) => item.id === id);
+    if (originalIndex < 0) return;
+
+    const previouslyWaitingForIdle = queueWaitsForIdleRef.current;
+    drainingQueueRef.current = true;
+    queueWaitsForIdleRef.current = false;
+    queuedRunObservedBusyRef.current = chatStreaming;
+    setSteeringQueuedDraftId(id);
+    if (chatStreaming) setSteering(true);
+
+    const claimed = removeQueuedDraftFromStore(props.sessionId, id);
+    if (!claimed) {
+      drainingQueueRef.current = false;
+      queueWaitsForIdleRef.current = previouslyWaitingForIdle;
+      setSteeringQueuedDraftId(null);
+      return;
+    }
+
+    let accepted = false;
+    try {
+      const result = await sendDraft(claimed.draft);
+      if (result.outcome === "blocked") {
+        cloudQueueBlockedRef.current = true;
+        restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+      } else if (result.outcome === "cancelled") {
+        restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+      } else {
+        accepted = true;
+        claimed.draft.attachments.forEach(revokeAttachmentPreview);
+      }
+    } catch {
+      restoreQueuedDraft(props.sessionId, claimed, originalIndex);
+    } finally {
+      drainingQueueRef.current = false;
+      queueWaitsForIdleRef.current = accepted
+        ? queuedRunObservedBusyRef.current
+        : previouslyWaitingForIdle;
+      if (!accepted && chatStreaming) setSteering(false);
+      setSteeringQueuedDraftId(null);
+      setQueueDrainVersion((version) => version + 1);
+    }
+  }, [chatStreaming, props.sessionId, props.taskSubmissionDisabled, removeQueuedDraftFromStore, restoreQueuedDraft, sendDraft]);
 
   const handleAbort = useCallback(async () => {
     if (!chatStreaming) return;
@@ -2301,6 +2351,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     drafts={queuedDrafts}
                     onRemove={removeQueuedDraft}
                     onEdit={editQueuedDraft}
+                    onSteer={(id) => void steerQueuedDraft(id)}
+                    steeringId={steeringQueuedDraftId}
                     sending={drainingQueueRef.current}
                   />
                 ) : null}

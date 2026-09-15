@@ -116,4 +116,20 @@ describe("composer state store", () => {
       second.id,
     ]);
   });
+
+  test("restores a failed promoted item to its original queue position", () => {
+    const { appendQueuedDraft, removeQueuedDraft, restoreQueuedDraft } = useComposerStateStore.getState();
+    const first = appendQueuedDraft("session-a", draft("first"));
+    const second = appendQueuedDraft("session-a", draft("second"));
+    const third = appendQueuedDraft("session-a", draft("third"));
+
+    const claimed = removeQueuedDraft("session-a", second.id);
+    if (claimed) restoreQueuedDraft("session-a", claimed, 1);
+
+    expect(getComposerQueuedDrafts(useComposerStateStore.getState(), "session-a").map((item) => item.id)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+  });
 });

@@ -54,7 +54,7 @@ export type ComposerStateStore = {
   appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => QueuedComposerDraft;
   removeQueuedDraft: (sessionId: string, id: string) => QueuedComposerDraft | null;
-  restoreQueuedDraft: (sessionId: string, item: QueuedComposerDraft) => void;
+  restoreQueuedDraft: (sessionId: string, item: QueuedComposerDraft, index?: number) => void;
   editQueuedDraft: (sessionId: string, id: string) => QueuedComposerDraft | null;
   clearQueuedDrafts: (sessionId: string) => void;
   clearSession: (sessionId: string) => void;
@@ -179,10 +179,13 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     });
     return removed;
   },
-  restoreQueuedDraft: (sessionId, item) => set((state) => {
+  restoreQueuedDraft: (sessionId, item, index = 0) => set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
     if (current.some((entry) => entry.id === item.id)) return state;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [item, ...current] } };
+    const insertionIndex = Math.max(0, Math.min(index, current.length));
+    const next = [...current];
+    next.splice(insertionIndex, 0, item);
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: next } };
   }),
   editQueuedDraft: (sessionId, id) => {
     let edited: QueuedComposerDraft | null = null;

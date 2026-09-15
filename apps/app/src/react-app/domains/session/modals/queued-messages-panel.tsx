@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { FileText, ListPlus, Pencil, X } from "lucide-react";
+import { CornerDownRight, FileText, ListPlus, LoaderCircle, Pencil, X } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge";
@@ -11,6 +11,8 @@ export type QueuedMessagesPanelProps = {
   drafts: QueuedComposerDraft[];
   onRemove: (id: string) => void;
   onEdit: (id: string) => void;
+  onSteer: (id: string) => void;
+  steeringId?: string | null;
   sending?: boolean;
 };
 
@@ -133,7 +135,8 @@ function queuedDraftTitle(draft: ComposerDraft) {
 /**
  * Shows the follow-up messages the user has queued while the agent is busy.
  * Rendered as compact single-line rows above the composer. Each entry can be
- * moved back into the composer for editing or cancelled.
+ * steered into the active task, moved back into the composer for editing, or
+ * cancelled.
  */
 export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
   if (props.drafts.length === 0) return null;
@@ -144,43 +147,58 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
       role="list"
       aria-label={t("composer.queued_count", { count: props.drafts.length })}
     >
-      {props.drafts.map((item) => (
-        <div
-          key={item.id}
-          role="listitem"
-          className="group flex min-h-10 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-gray-2/70"
-        >
-          <ListPlus className="size-4 shrink-0 text-gray-10" aria-hidden="true" />
+      {props.drafts.map((item) => {
+        const steering = props.steeringId === item.id;
+        const actionsDisabled = Boolean(props.sending || props.steeringId);
+        return (
           <div
-            className="min-w-0 flex-1 truncate whitespace-nowrap text-sm font-medium leading-5 text-gray-12"
-            title={queuedDraftTitle(item.draft)}
+            key={item.id}
+            role="listitem"
+            className="group flex min-h-10 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-gray-2/70"
           >
-            <QueuedDraftContent draft={item.draft} />
-          </div>
-          <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            <button
-              type="button"
-              onClick={() => props.onEdit(item.id)}
-              disabled={props.sending}
-              className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
-              title={t("common.edit")}
-              aria-label={t("common.edit")}
+            <ListPlus className="size-4 shrink-0 text-gray-10" aria-hidden="true" />
+            <div
+              className="min-w-0 flex-1 truncate whitespace-nowrap text-sm font-medium leading-5 text-gray-12"
+              title={queuedDraftTitle(item.draft)}
             >
-              <Pencil size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => props.onRemove(item.id)}
-              disabled={props.sending}
-              className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-red-3 hover:text-red-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-8 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
-              title={t("common.remove")}
-              aria-label={t("common.remove")}
-            >
-              <X size={13} />
-            </button>
+              <QueuedDraftContent draft={item.draft} />
+            </div>
+            <div className="flex shrink-0 items-center gap-1 opacity-70 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <button
+                type="button"
+                onClick={() => props.onSteer(item.id)}
+                disabled={actionsDisabled}
+                className="inline-flex h-7 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                title={t("composer.queued_send_now_hint")}
+                aria-label={t("composer.queued_send_now")}
+              >
+                {steering ? <LoaderCircle size={13} className="animate-spin" /> : <CornerDownRight size={13} />}
+                <span>{t("composer.queued_send_now")}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onEdit(item.id)}
+                disabled={actionsDisabled}
+                className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                title={t("common.edit")}
+                aria-label={t("common.edit")}
+              >
+                <Pencil size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => props.onRemove(item.id)}
+                disabled={actionsDisabled}
+                className="flex size-7 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-red-3 hover:text-red-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-8 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                title={t("common.remove")}
+                aria-label={t("common.remove")}
+              >
+                <X size={13} />
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

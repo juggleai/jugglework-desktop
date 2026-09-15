@@ -29,6 +29,7 @@ describe("queued messages panel", () => {
         ]}
         onEdit={() => {}}
         onRemove={() => {}}
+        onSteer={() => {}}
       />,
     );
 
@@ -37,5 +38,7 @@ describe("queued messages panel", () => {
     expect(html.match(/role="listitem"/g)).toHaveLength(2);
     expect(html).toContain("truncate whitespace-nowrap");
     expect(html).toContain(`title="${firstText}"`);
+    expect(html).toContain(`aria-label="${t("composer.queued_send_now")}"`);
+    expect(html).toContain(`>${t("composer.queued_send_now")}<`);
   });
 });
