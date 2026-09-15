@@ -163,6 +163,7 @@ function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
   if (type === "slides") return "slides";
   if (type === "document") return "document";
   if (type === "image") return "image";
+  if (type === "video") return "video";
   if (type === "pdf") return "pdf";
   if (type === "html") return "html";
   if (type === "text") return "text";

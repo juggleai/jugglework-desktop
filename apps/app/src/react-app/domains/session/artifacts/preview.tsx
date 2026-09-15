@@ -96,6 +96,14 @@ export function ImagePreview({ src, alt, className, ...props }: ImagePreviewProp
   );
 }
 
+export function VideoPreview({ src, title, className }: { src: string; title: string; className?: string }) {
+  return (
+    <div className={cn("flex h-full items-center justify-center overflow-auto bg-black p-3", className)}>
+      <video src={src} title={title} controls preload="metadata" className="max-h-full max-w-full" />
+    </div>
+  );
+}
+
 interface PreviewUnavailableProps extends React.ComponentProps<"div"> {}
 
 export function PreviewUnavailable({ className, ...props }: PreviewUnavailableProps) {

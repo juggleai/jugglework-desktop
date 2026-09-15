@@ -32,6 +32,7 @@ import {
   svgResponse,
 } from "../toy-ui.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
+import type { MediaGenerationExtensionRuntime } from "../extensions/media-generation.js";
 import { addRoute, type Route } from "./registry.js";
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -60,6 +61,7 @@ interface RegisterCoreRoutesOptions {
   resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
+  mediaGeneration?: MediaGenerationExtensionRuntime;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +114,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveWorkspace,
     resolveOpencodeDirectory,
     createWorkspaceOpencodeClient,
+    mediaGeneration,
     refreshRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveToyUiEnabled,
@@ -335,7 +338,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) })));
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), mediaGeneration));
   });
 
   addRoute(routes, "GET", "/experimental/google-workspace/status", "client", async (ctx) => {

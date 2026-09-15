@@ -175,7 +175,7 @@ export const getProviderModelIds = (
  * catalog entry. 6: gateway mirror failures are no longer best-effort, so
  * existing baselines are reconciled once under the strict mirror contract.
  */
-export const CLOUD_PROVIDER_METADATA_VERSION = 6;
+export const CLOUD_PROVIDER_METADATA_VERSION = 7;
 
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
@@ -240,6 +240,7 @@ const CLOUD_PROVIDER_MODEL_FIELDS = [
   "cost",
   "limit",
   "modalities",
+  "mediaGeneration",
   "status",
   "options",
   "headers",

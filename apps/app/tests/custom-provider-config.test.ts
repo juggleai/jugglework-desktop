@@ -238,6 +238,27 @@ describe("buildCustomProviderConfig", () => {
 
     expect(config.models?.["acme-chat-v2"]).toEqual({ name: "Acme Chat V2" });
   });
+
+  test("preserves explicitly declared video capabilities without model-name inference", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{
+        id: "acme-motion",
+        name: "Acme Motion",
+        mediaGeneration: {
+          textToVideo: true,
+          outputVideo: { mimeTypes: ["video/mp4"], maxDurationSeconds: 8 },
+        },
+      }],
+    }));
+
+    expect(config.models?.["acme-motion"]).toEqual({
+      name: "Acme Motion",
+      mediaGeneration: {
+        textToVideo: true,
+        outputVideo: { mimeTypes: ["video/mp4"], maxDurationSeconds: 8 },
+      },
+    });
+  });
 });
 
 describe("formatConfigWithCustomProvider", () => {

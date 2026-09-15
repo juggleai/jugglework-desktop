@@ -1,0 +1,127 @@
+## Context
+
+See `proposal.md` for motivation and scope. JuggleWork currently obtains provider/model records from the OpenCode provider list, imports cloud provider metadata through a controlled allowlist, and projects a reduced model shape into the desktop picker. Model metadata already represents attachment and text/image modalities, but there is no normalized or executable video-generation capability.
+
+Media generation already has one useful precedent: the OpenAI image-generation server extension resolves credentials server-side, invokes an external generation API, safely writes an artifact into the active workspace, and exposes the operation through extension actions. Video APIs add long-running provider jobs, polling, cancellation, large result downloads, process-restart recovery, and higher duplicate-charge risk. Workspace configuration is stored in the runtime database; session model overrides are currently renderer-local and partitioned by workspace.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Add a provider-neutral contract that can support materially different video APIs without exposing those differences to the agent or UI.
+- Make capability discovery authoritative by combining declared model metadata, provider readiness, workspace visibility, and adapter availability.
+- Persist generation lifecycle state so accepted jobs survive UI refreshes and server restarts.
+- Reuse existing extension-action, image-attachment, workspace authorization, and artifact conventions where safe.
+- Keep preference resolution deterministic and separate from chat-model preferences.
+- Produce a first-provider MVP without preventing later adapters or managed-cloud providers.
+
+**Non-Goals:**
+
+- Routing video-generation models through the normal `session.prompt` LLM path.
+- General video upload, chat-model video understanding, video editing, multi-image storyboards, audio generation, or local transcoding in the first release.
+- A provider marketplace or automatic installation of missing video providers.
+- A cross-provider lowest-price or highest-quality optimization algorithm; fallback is capability and preference based.
+
+## Decisions
+
+### 1. Add a provider-neutral Media Generation server domain
+
+The server will own a `MediaGenerationService` that resolves models, validates requests, creates jobs, delegates provider operations, and publishes artifacts. It will be exposed initially through a `media-generation` extension with actions for model listing, generation, job status, cancellation, and defaults.
+
+This follows the current image-generation extension's credential and workspace boundary while avoiding provider-specific actions in the conversation protocol. The existing extension list/call HTTP routes and agent affordance bridge can remain generic.
+
+**Alternative considered:** teach each chat model to call provider-specific APIs directly. Rejected because credentials and binary downloads would leak into model/tool context, contracts would differ per provider, and long-running jobs could not be reliably recovered.
+
+**Alternative considered:** send the request through `session.prompt` using a video model as if it were a chat model. Rejected because most video APIs use submit/poll/download semantics and do not implement the chat completion contract.
+
+### 2. Require explicit executable capability metadata
+
+Shared model projections will gain a validated `mediaGeneration` capability with independent `textToVideo` and `imageToVideo` flags plus supported input/output constraints. A model is `ready` only when its provider is connected and allowed in the workspace, credentials pass readiness checks, the requested mode is declared, and an adapter accepts the model.
+
+Cloud provider metadata will pass the field through a controlled allowlist and metadata-version migration. Custom compatible-provider configuration will permit the same constrained structure. Picker options will retain normalized capabilities rather than discarding them.
+
+Output modality alone and model-name matching are insufficient. This avoids showing models that advertise video conceptually but cannot be invoked by JuggleWork.
+
+**Alternative considered:** maintain a hard-coded list of known Sora/Veo/Kling model names. Rejected because aliases and API compatibility change, custom providers cannot be represented safely, and a recognized name does not guarantee credentials or an implemented endpoint.
+
+### 3. Use a persistent asynchronous job state machine
+
+Accepted requests will create a runtime-database record before provider submission. The record carries the workspace/session identity, selected model, mode, redacted options, idempotency identity, provider job ID, status, progress, artifact metadata, and sanitized terminal error.
+
+The canonical lifecycle is:
+
+```text
+queued -> submitting -> submitted -> running -> downloading -> completed
+                       \-------------------------------> failed
+queued/submitting/submitted/running -> cancel_requested -> cancelled
+```
+
+A background reconciler will poll active jobs with bounded backoff and recover incomplete jobs on startup. Adapters may translate verified webhook callbacks to the same state transitions in future. State updates and completion handling must be idempotent.
+
+**Alternative considered:** hold the original extension HTTP request until the video completes. Rejected because provider work can exceed normal tool/request timeouts, cancellation is unreliable, and server restart loses progress.
+
+### 4. Define a narrow provider adapter contract
+
+Each adapter will implement model matching, submit, status, optional cancel, and result acquisition. Provider-specific duration, aspect ratio, resolution, image upload, and error semantics are normalized at this boundary. The first adapter proves text-to-video; image-to-video is enabled only when both metadata and adapter behavior support it. A second adapter should be added before declaring the contract stable.
+
+The adapter receives a resolved credential reference from the existing provider/environment infrastructure, never from the renderer request. It returns sanitized statuses and either a guarded result stream or a download descriptor that the service validates.
+
+**Alternative considered:** a single switch statement in the extension action. Rejected because provider polling and result acquisition differences would quickly couple UI, validation, and lifecycle logic.
+
+### 5. Materialize reference images as dedicated generation input
+
+The composer continues to accept and preview images using `ComposerAttachment`. For an I2V request, the image is materialized into the workspace inbox and the server receives a workspace-relative source path plus MIME type. The service resolves the path against the active workspace, rejects traversal and unsupported content, enforces adapter limits, and stages/uploads the image as required.
+
+The general chat attachment MIME policy will not be expanded to `video/*`. Generated video artifacts are displayable outputs, not automatically readable chat inputs.
+
+**Alternative considered:** send a base64 image through the agent's tool arguments. Rejected because it inflates transcripts/tool payloads and risks durable leakage of source media.
+
+### 6. Store independent defaults with explicit precedence
+
+Workspace configuration in the runtime database will gain `media.defaultVideoModel`. A separate session media preference store, partitioned by workspace and session, will mirror the existing renderer model override pattern for the first release. It uses a new storage key and contains only `{providerID, modelID}` plus optional mode intent. It can later migrate to server session metadata without changing resolution semantics.
+
+Resolution order is explicit request, session, workspace, optional user-wide default, and stable first compatible model. Every candidate is revalidated for the requested mode at execution time; stale choices are skipped with sanitized diagnostics.
+
+**Alternative considered:** reuse `defaultModel` and session chat overrides. Rejected because generation providers have different costs and capabilities and often are not chat models.
+
+### 7. Write artifacts atomically and render them as video-specific outputs
+
+Completed results are downloaded to a temporary child path under the workspace, bounded by configured byte/time limits, checked for approved MIME and file signatures, and renamed to `artifacts/<slug>-<job-id>.<ext>` only after validation succeeds. The artifact descriptor includes relative path, MIME, bytes, provider/model, and available duration/resolution metadata.
+
+The transcript will render a video job/artifact component with status, cancellation, retry, `<video controls preload="metadata">`, and open/download controls. Provider URLs are never rendered or persisted.
+
+**Alternative considered:** stream the provider's signed result URL directly into the player. Rejected because URLs expire, can disclose provider information, and do not produce a durable workspace artifact.
+
+### 8. Enforce idempotency, redaction, and workspace policies centrally
+
+The generation service will deduplicate accepted requests using a client request identity scoped to workspace/session. It will cap concurrent jobs, duration, resolution, and output bytes using workspace policy before submission. Normal logs and job records exclude secrets, authorization headers, signed URLs, and base64 media. Provider safety refusals and rate limits become stable sanitized error codes with retryability metadata.
+
+This control remains server-side so agent and direct UI entry points behave identically.
+
+## Risks / Trade-offs
+
+- **[Provider metadata may be incomplete or stale]** → Require an adapter match and live readiness validation in addition to catalog metadata; expose diagnostic states without making them selectable.
+- **[Video jobs can be costly and retries may duplicate charges]** → Persist before submit, use idempotency keys where providers support them, reconcile ambiguous submissions, and require explicit retry after non-retryable failures.
+- **[Server restarts during submit can leave an ambiguous provider job]** → Store submission identity before the call, capture provider IDs immediately, and make adapter reconciliation part of its contract where supported.
+- **[Large video downloads consume disk and bandwidth]** → Apply workspace quotas, concurrent-download limits, streaming byte caps, temporary-file cleanup, and metadata-only preload in the UI.
+- **[Session defaults are initially device-local]** → Scope keys by workspace/session and document the limitation; preserve a migration path to server session metadata.
+- **[Provider cancellation may be best-effort]** → Represent `cancel_requested` distinctly and reconcile a provider-completed race rather than falsely claiming immediate cancellation.
+- **[Reference images are sent to an external provider]** → Show the selected provider before submission, validate only one image in the first release, and delete staging material according to retention policy.
+- **[Adding model metadata may affect existing provider reconciliation]** → Version the metadata projection and add migration/regression tests around cloud and custom providers.
+
+## Migration Plan
+
+1. Add shared capability types and runtime validation while treating missing `mediaGeneration` as unsupported; existing providers remain unchanged.
+2. Extend cloud/custom provider projections behind the controlled metadata version and register the first adapter without exposing UI generation until discovery tests pass.
+3. Add the runtime job table/repository and worker. The migration is additive and can coexist with older workspaces.
+4. Register read-only model/status actions, then generation/status/cancel actions behind a feature flag.
+5. Add artifact rendering and text-to-video UI; canary with one provider and bounded quotas.
+6. Add I2V materialization and capability filtering after text-to-video lifecycle metrics are stable.
+7. Add workspace/session defaults and then a second adapter before removing the feature flag.
+
+Rollback disables new generation entry points and worker submission while leaving status/read access available for already submitted jobs. Active jobs are reconciled to a terminal state and completed artifacts remain ordinary workspace files. The additive database schema is retained during rollback to avoid losing provider job identities.
+
+## Open Questions
+
+- Which configured provider and exact API/model should be the first production adapter? The adapter contract and capability requirements are fixed, but credentials, endpoint limits, and rollout ownership depend on the selected provider.
+- What default workspace quota values should apply to duration, resolution, concurrent jobs, and retained artifact bytes? These are policy defaults and do not change the behavior contract.

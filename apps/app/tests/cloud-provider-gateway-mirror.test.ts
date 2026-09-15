@@ -134,7 +134,7 @@ describe("gateway credential mirror", () => {
       sourceProviderId: "JuggleRouter",
       metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
     });
-    expect(finalBaseline.metadataVersion).toBe(6);
+    expect(finalBaseline.metadataVersion).toBe(7);
 
     const connectStart = storeSource.indexOf("async function connectCloudProviderInternal");
     const connectEnd = storeSource.indexOf("async function connectCloudProvider(", connectStart);

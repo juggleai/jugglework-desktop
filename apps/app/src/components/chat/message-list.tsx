@@ -413,6 +413,9 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <JuggleWorkSessionCreateTool part={part} />
   }
 
+  const videoJob = videoGenerationJobFromToolPart(part)
+  if (videoJob) return <VideoGenerationJobCard job={videoJob} />
+
   return (
     <Tool
       toolPart={part}
@@ -420,6 +423,49 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       onReopenAuthorization={onMcpReopenAuthorization}
       onRetry={onMcpRetry}
     />
+  )
+}
+
+type TranscriptVideoJob = {
+  id: string
+  status: string
+  progress?: number
+  model?: { providerID?: string; modelID?: string }
+  artifact?: { path?: string }
+  error?: { message?: string }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function videoGenerationJobFromToolPart(part: ToolUIPart | DynamicToolUIPart): TranscriptVideoJob | null {
+  if (part.type !== "dynamic-tool" || part.toolName !== "jugglework_execute") return null
+  const input = record(part.input)
+  if (input?.id !== "extension.call") return null
+  const args = record(input.args)
+  if (args?.extensionId !== "media-generation") return null
+  const output = record(part.output)
+  const extension = record(output?.result)
+  const extensionResult = record(extension?.result)
+  const job = record(extensionResult?.job)
+  return job && typeof job.id === "string" && typeof job.status === "string" ? job as TranscriptVideoJob : null
+}
+
+function VideoGenerationJobCard({ job }: { job: TranscriptVideoJob }) {
+  const complete = job.status === "completed"
+  const failed = job.status === "failed"
+  return (
+    <div data-testid="video-generation-job" className="rounded-xl border border-border bg-muted/20 p-3 text-sm">
+      <div className="flex items-center gap-2 font-medium">
+        {!complete && !failed && job.status !== "cancelled" ? <LoaderCircle className="size-4 animate-spin" /> : complete ? <Check className="size-4" /> : null}
+        <span>Video generation · {job.status.replaceAll("_", " ")}</span>
+      </div>
+      {typeof job.progress === "number" ? <div className="mt-1 text-xs text-muted-foreground">Progress: {Math.round(job.progress)}%</div> : null}
+      {job.model?.modelID ? <div className="mt-1 text-xs text-muted-foreground">{job.model.providerID}/{job.model.modelID}</div> : null}
+      {job.artifact?.path ? <div className="mt-2 break-all font-mono text-xs">{job.artifact.path}</div> : null}
+      {job.error?.message ? <div className="mt-2 text-xs text-destructive">{job.error.message}</div> : null}
+    </div>
   )
 }
 

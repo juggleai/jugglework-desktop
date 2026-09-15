@@ -17,10 +17,12 @@ import {
   OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
   OPENAI_IMAGE_GENERATION_EXTENSION_ID,
 } from "./openai-image-generation.js";
+import { callMediaGenerationExtensionAction, MEDIA_GENERATION_EXTENSION_ACTIONS, MEDIA_GENERATION_EXTENSION_ID, type MediaGenerationExtensionRuntime } from "./media-generation.js";
 
 const JUGGLEWORK_EXPERIMENTAL_EXTENSION_ACTIONS = [
   ...GOOGLE_WORKSPACE_EXTENSION_ACTIONS,
   ...OPENAI_IMAGE_GENERATION_EXTENSION_ACTIONS,
+  ...MEDIA_GENERATION_EXTENSION_ACTIONS,
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,7 +44,7 @@ export function listExperimentalExtensionActions(extensionId: string, connectSna
   return actions.filter((action) => action.extensionId !== GOOGLE_WORKSPACE_EXTENSION_ID || action.action === "status");
 }
 
-export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot) {
+export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot, mediaGeneration?: MediaGenerationExtensionRuntime) {
   if (!isRecord(input)) {
     throw new ApiError(400, "invalid_payload", "Expected extension action call payload");
   }
@@ -78,6 +80,10 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
 
   if (extensionId === OPENAI_IMAGE_GENERATION_EXTENSION_ID) {
     const result = await callOpenAiImageGenerationExtensionAction(config, env, action, args, context);
+    if (result) return result;
+  }
+  if (extensionId === MEDIA_GENERATION_EXTENSION_ID && mediaGeneration) {
+    const result = await callMediaGenerationExtensionAction(mediaGeneration, action, args, context);
     if (result) return result;
   }
 

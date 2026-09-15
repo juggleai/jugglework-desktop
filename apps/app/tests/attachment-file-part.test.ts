@@ -5,11 +5,28 @@ import {
   buildChatAttachmentInboxPath,
   composerAttachmentsToWorkspaceFileParts,
   composerAttachmentToFilePart,
+  materializeGenerationSourceImage,
   resolveAttachmentFileMetadata,
   safeAttachmentFilename,
   workspaceInboxPath,
   type ChatAttachmentWorkspaceEndpoint,
 } from "../src/react-app/domains/session/sync/attachment-file-part";
+
+test("materializes one generation reference image as structured workspace metadata", async () => {
+  const file = new File([JPEG_BYTES], "reference.jpg", { type: "image/jpeg" });
+  const { endpoint } = uploadRecorder("workspace-1");
+  expect(await materializeGenerationSourceImage({ attachment: attachmentFor(file), endpoint, sessionId: "session-1", workspaceRoot: "/workspace", createId: () => "source" })).toEqual({
+    workspacePath: ".opencode/jugglework/inbox/chat-attachments/session-1/source-reference.jpg",
+    mimeType: "image/jpeg",
+    bytes: file.size,
+    filename: "reference.jpg",
+  });
+});
+
+test("rejects a non-image generation source", async () => {
+  const { endpoint } = uploadRecorder("workspace-1");
+  await expect(materializeGenerationSourceImage({ attachment: attachmentFor(new File(["x"], "note.txt", { type: "text/plain" })), endpoint, sessionId: "session-1", workspaceRoot: "/workspace" })).rejects.toThrow("must be an image");
+});
 
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
 const DOCX_BYTES = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x77, 0x6f, 0x72, 0x64]);

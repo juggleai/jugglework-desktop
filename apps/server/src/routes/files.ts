@@ -146,6 +146,10 @@ function contentTypeForPath(path: string): string {
   if (lowered.endsWith(".jpg") || lowered.endsWith(".jpeg")) return "image/jpeg";
   if (lowered.endsWith(".gif")) return "image/gif";
   if (lowered.endsWith(".webp")) return "image/webp";
+  if (lowered.endsWith(".mp4") || lowered.endsWith(".m4v")) return "video/mp4";
+  if (lowered.endsWith(".webm")) return "video/webm";
+  if (lowered.endsWith(".mov")) return "video/quicktime";
+  if (lowered.endsWith(".ogv")) return "video/ogg";
   if (lowered.endsWith(".pdf")) return "application/pdf";
   if (lowered.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (lowered.endsWith(".csv")) return "text/csv; charset=utf-8";
@@ -179,6 +183,7 @@ function artifactPreviewForPath(path: string): string {
   if (/\.(ppt|pptx|pptm|pot|potx|odp|key|sxi)$/.test(lowered)) return "slides";
   if (lowered.endsWith(".docx")) return "document";
   if (/\.(png|jpe?g|gif|webp|svg)$/.test(lowered)) return "image";
+  if (/\.(mp4|webm|mov|m4v|ogv)$/.test(lowered)) return "video";
   if (lowered.endsWith(".pdf")) return "pdf";
   if (/\.(html|htm)$/.test(lowered)) return "html";
   if (isSupportedWorkspaceTextFilePath(path)) return "text";

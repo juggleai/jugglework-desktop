@@ -94,6 +94,11 @@ import {
 } from "./mcp-workspace-tool-policy.js";
 import { AutomationRepository } from "./automation/repository.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
+import { MediaGenerationRepository } from "./media-generation/repository.js";
+import { MediaGenerationService } from "./media-generation/service.js";
+import { MediaGenerationWorker } from "./media-generation/worker.js";
+import { credentialReadiness, openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
+import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
 import {
   RootSerialization,
   SessionPermissionBroker,
@@ -928,6 +933,7 @@ export async function startServer(config: ServerConfig, options: {
   };
   const interactionResolutions = options.interactionResolutions ?? createInteractionResolutionCoordinator();
   const automationRepository = await AutomationRepository.open(config);
+  const mediaGenerationRepository = await MediaGenerationRepository.open(config);
   const sessionPermissionStore = await SessionPermissionModeStore.open(config);
   const migratedLegacyFullAccessCount = await migrateTrustedLegacyLocalHostFullAccess({
     config,
@@ -1019,6 +1025,90 @@ export async function startServer(config: ServerConfig, options: {
     currentAccountId: () => githubEventAuthStore.getAccountId(),
     log: (event, fields) => logger.log("info", event, fields),
   });
+  const videoSubmissionEnabled = /^(1|true|yes)$/i.test(process.env.JUGGLEWORK_VIDEO_GENERATION_ENABLED?.trim() ?? "");
+  const resolveMediaWorkspace = (context: Record<string, unknown>) => {
+    const workspaceId = typeof context.workspaceId === "string" ? context.workspaceId.trim() : typeof context.workspaceID === "string" ? context.workspaceID.trim() : "";
+    const directory = typeof context.directory === "string" ? resolve(context.directory) : typeof context.worktree === "string" ? resolve(context.worktree) : "";
+    const matches = config.workspaces.filter((workspace) => workspaceId
+      ? workspace.id === workspaceId
+      : Boolean(directory) && (directory === resolve(workspace.path) || directory.startsWith(`${resolve(workspace.path)}${sep}`)));
+    if (matches.length !== 1) throw new ApiError(400, "video_workspace_ambiguous", "Video generation requires one explicit active workspace.");
+    return matches[0];
+  };
+  const resolveMediaRuntime = async (workspace: WorkspaceInfo) => {
+    const runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+    const adapters = openAiCompatibleVideoAdapters(runtimeConfig, env);
+    const credentials = await credentialReadiness(env);
+    const providerRecords = runtimeConfig.provider ?? {};
+    const catalog: ProviderCatalogSnapshot = {
+      connected: Object.keys(providerRecords),
+      all: Object.entries(providerRecords).map(([id, raw]) => {
+        const record = ensurePlainObject(raw);
+        return { id, name: typeof record.name === "string" ? record.name : id, models: ensurePlainObject(record.models) };
+      }),
+    };
+    const credentialReady = (ref: { providerID: string }) => {
+      const provider = ensurePlainObject(providerRecords[ref.providerID]);
+      const keys = Array.isArray(provider.env) ? provider.env.filter((key): key is string => typeof key === "string") : [];
+      return keys.some((key) => credentials.has(key));
+    };
+    return { adapters, catalog, credentialReady };
+  };
+  const workerVideoAdapters = (await Promise.all(config.workspaces.map(async (workspace) =>
+    openAiCompatibleVideoAdapters(await readRuntimeOpencodeConfig(config, workspace.id), env)))).flat();
+  const mediaGenerationWorker = new MediaGenerationWorker({
+    repository: mediaGenerationRepository,
+    adapters: workerVideoAdapters,
+    workspaceRoot: (workspaceId) => config.workspaces.find((workspace) => workspace.id === workspaceId)?.path ?? null,
+  });
+  const mediaGenerationRuntime = {
+    async status(context: Record<string, unknown>) {
+      const workspace = resolveMediaWorkspace(context);
+      const runtime = await resolveMediaRuntime(workspace);
+      return { submissionEnabled: videoSubmissionEnabled, models: discoverVideoModels({ catalog: runtime.catalog, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady }) };
+    },
+    async listModels(mode: import("@jugglework/types/media-generation").VideoGenerationMode | undefined, context: Record<string, unknown>) {
+      const workspace = resolveMediaWorkspace(context);
+      const runtime = await resolveMediaRuntime(workspace);
+      const models = listReadyVideoModels({ catalog: runtime.catalog, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      return models.length || !mode ? { ok: true, models } : noVideoModelResult(mode);
+    },
+    async generate(input: { prompt: string; mode: import("@jugglework/types/media-generation").VideoGenerationMode; model?: { providerID: string; modelID: string }; sourceImagePath?: string; durationSeconds?: number; resolution?: string; clientRequestId: string }, context: Record<string, unknown>) {
+      const workspace = resolveMediaWorkspace(context);
+      const runtime = await resolveMediaRuntime(workspace);
+      const ready = listReadyVideoModels({ catalog: runtime.catalog, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const selected = input.model ? ready.find((item) => item.ref.providerID === input.model?.providerID && item.ref.modelID === input.model?.modelID) : ready[0];
+      if (!selected) return noVideoModelResult(input.mode);
+      const service = new MediaGenerationService({
+        repository: mediaGenerationRepository,
+        adapters: runtime.adapters,
+        submissionEnabled: videoSubmissionEnabled,
+        audit: (event) => { void recordAudit(workspace.path, {
+          id: event.jobId,
+          workspaceId: event.workspaceId,
+          actor: { type: "host" },
+          action: event.action,
+          target: `media-generation-job:${event.jobId}`,
+          summary: `${event.mode} ${event.providerID}/${event.modelID} ${event.status}`,
+          timestamp: Date.now(),
+        }); },
+      });
+      const job = await service.submit({ workspace, sessionId: typeof context.sessionID === "string" ? context.sessionID : undefined, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+      return { job };
+    },
+    async getJob(jobId: string, context: Record<string, unknown>) {
+      const workspace = resolveMediaWorkspace(context);
+      const job = mediaGenerationRepository.get(jobId);
+      if (!job || job.workspaceId !== workspace.id) throw new ApiError(404, "video_job_not_found", "Video job not found");
+      return { job };
+    },
+    async cancelJob(jobId: string, context: Record<string, unknown>) {
+      const workspace = resolveMediaWorkspace(context);
+      const job = mediaGenerationRepository.get(jobId);
+      if (!job || job.workspaceId !== workspace.id) throw new ApiError(404, "video_job_not_found", "Video job not found");
+      return { job: mediaGenerationRepository.requestCancellation(jobId) };
+    },
+  };
   const routes = createRoutes(
     config,
     approvals,
@@ -1040,6 +1130,7 @@ export async function startServer(config: ServerConfig, options: {
     githubEventAuthStore,
     automationEventPoller,
     automationSubscriptionSync,
+    mediaGenerationRuntime,
   );
 
   const serverOptions: {
@@ -1228,6 +1319,7 @@ export async function startServer(config: ServerConfig, options: {
     void automationScheduler.dispose();
     automationExecutor.dispose();
     automationRepository.close();
+    mediaGenerationRepository.close();
     sessionPermissionStore.close();
     throw error;
   }
@@ -1274,6 +1366,7 @@ export async function startServer(config: ServerConfig, options: {
   if (!config.readOnly) {
     sessionPermissionBroker.start();
   }
+  mediaGenerationWorker.start();
 
   return {
     ...server,
@@ -1287,6 +1380,7 @@ export async function startServer(config: ServerConfig, options: {
       try { await automationEventPoller.dispose(); } catch (error) { errors.push(error); }
       try { await automationSubscriptionSync.dispose(); } catch (error) { errors.push(error); }
       try { await automationScheduler.dispose(); } catch (error) { errors.push(error); }
+      try { await mediaGenerationWorker.dispose(); } catch (error) { errors.push(error); }
       let pendingPumpClosed = false;
       try { await sessionPendingOperationPump?.close(); pendingPumpClosed = true; } catch (error) {
         errors.push(error);
@@ -1302,6 +1396,7 @@ export async function startServer(config: ServerConfig, options: {
       }
       try { sessionRunJournal.close(); } catch (error) { errors.push(error); }
       try { automationRepository.close(); } catch (error) { errors.push(error); }
+      try { mediaGenerationRepository.close(); } catch (error) { errors.push(error); }
       try { sessionPermissionStore.close(); } catch (error) { errors.push(error); }
       if (errors.length === 1) throw errors[0];
       if (errors.length > 1) throw new AggregateError(errors, "Failed to stop JuggleWork server");
@@ -1997,6 +2092,7 @@ function createRoutes(
   githubEventAuthStore: GithubEventAuthStore,
   automationEventPoller: AutomationEventPoller,
   automationSubscriptionSync: AutomationSubscriptionSync,
+  mediaGeneration: import("./extensions/media-generation.js").MediaGenerationExtensionRuntime,
 ): Route[] {
   const routes: Route[] = [];
   registerCoreRoutes({
@@ -2020,6 +2116,7 @@ function createRoutes(
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    mediaGeneration,
   });
 
   registerWorkspaceRoutes({

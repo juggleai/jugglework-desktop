@@ -11,6 +11,7 @@ import {
 
 export const MODEL_PREF_KEY = "jugglework.defaultModel";
 export const SESSION_MODEL_PREF_KEY = "jugglework.sessionModels";
+export const SESSION_MEDIA_MODEL_PREF_KEY = "jugglework.sessionMediaModels";
 export const THINKING_PREF_KEY = "jugglework.showThinking";
 export const VARIANT_PREF_KEY = "jugglework.modelVariant";
 export { LANGUAGE_PREF_KEY } from "../i18n";

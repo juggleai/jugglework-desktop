@@ -296,6 +296,9 @@ export type WorkspaceJuggleWorkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
+  media?: {
+    defaultVideoModel?: ModelRef | null;
+  } | null;
   blueprint?: WorkspaceBlueprint | null;
   reload?: {
     auto?: boolean;
@@ -469,6 +472,7 @@ export type ModelOption = {
    * tell a locally configured provider from a models.dev catalog entry.
    */
   providerSource?: ProviderListItem["source"];
+  capabilities?: import("@jugglework/types/media-generation").NormalizedModelCapabilities;
 };
 
 export type SelectedSessionSnapshot = {

@@ -1,5 +1,6 @@
 import { applyEdits, modify, parse } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
+import { parseMediaGenerationCapabilities, type MediaGenerationCapabilities } from "@jugglework/types/media-generation";
 
 import { isCloudManagedProviderKey } from "./cloud-provider-config";
 
@@ -21,6 +22,7 @@ export const CUSTOM_PROVIDER_NPM = "@ai-sdk/openai-compatible";
 export type CustomProviderModel = {
   id: string;
   name: string;
+  mediaGeneration?: MediaGenerationCapabilities;
 };
 
 const OPENAI_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -104,7 +106,8 @@ export const normalizeCustomProviderInput = (
     baseUrl: normalizeCustomProviderBaseUrl(input.baseUrl),
     models: input.models.flatMap((model) => {
       const id = model.id.trim();
-      return id ? [{ id, name: model.name.trim() || id }] : [];
+      const mediaGeneration = parseMediaGenerationCapabilities(model.mediaGeneration);
+      return id ? [{ id, name: model.name.trim() || id, ...(mediaGeneration ? { mediaGeneration } : {}) }] : [];
     }),
     contextLimit: input.contextLimit ?? null,
     outputLimit: input.outputLimit ?? null,
@@ -179,6 +182,7 @@ export const buildCustomProviderConfig = (
         {
           name: model.name,
           ...inferCustomProviderModelMetadata(model.id),
+          ...(model.mediaGeneration ? { mediaGeneration: model.mediaGeneration } : {}),
           ...(limit ? { limit } : {}),
         },
       ]),

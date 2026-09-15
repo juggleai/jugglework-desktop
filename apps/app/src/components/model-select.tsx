@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
 import { Check, ChevronDown, Settings2 } from "lucide-react";
 
 import type { ModelOption, ModelRef } from "@/app/types";
@@ -98,6 +99,7 @@ function useModelOptions(open: boolean) {
           isFree: false,
           isConnected: true,
           providerSource: provider.source,
+          capabilities: parseNormalizedModelCapabilities(model),
         })),
       );
 

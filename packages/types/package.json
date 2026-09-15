@@ -45,6 +45,11 @@
       "development": "./src/jugglework-provider.ts",
       "default": "./src/jugglework-provider.ts"
     },
+    "./media-generation": {
+      "types": "./src/media-generation.ts",
+      "development": "./src/media-generation.ts",
+      "default": "./src/media-generation.ts"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

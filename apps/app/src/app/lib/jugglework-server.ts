@@ -881,7 +881,7 @@ export type JuggleWorkResolvedArtifactTarget = {
   kind: "file" | "url";
   value: string;
   name: string;
-  preview: "browser" | "markdown" | "sheet" | "slides" | "image" | "pdf" | "html" | "text" | "external";
+  preview: "browser" | "markdown" | "sheet" | "slides" | "image" | "video" | "pdf" | "html" | "text" | "external";
   confidence: number;
   reason: string;
   exists?: boolean;

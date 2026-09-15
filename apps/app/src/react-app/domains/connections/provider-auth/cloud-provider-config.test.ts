@@ -178,6 +178,29 @@ describe("isCloudProviderOutOfSync", () => {
 });
 
 describe("buildCloudProviderConfig", () => {
+  test("preserves explicit media generation metadata", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([{
+      ...makeModel("video-model"),
+      config: {
+        mediaGeneration: {
+          textToVideo: true,
+          imageToVideo: true,
+          outputVideo: { mimeTypes: ["video/mp4"] },
+        },
+      },
+      }]),
+      apiKey: "test-key",
+      apiKeys: null,
+    };
+
+    const config = buildCloudProviderConfig(provider);
+    expect((config.models?.["video-model"] as Record<string, unknown>).mediaGeneration).toEqual({
+      textToVideo: true,
+      imageToVideo: true,
+      outputVideo: { mimeTypes: ["video/mp4"] },
+    });
+  });
   test("keeps an empty models map for a cloud provider without models", () => {
     const provider: DenOrgLlmProviderConnection = {
       id: "lpr_catalog",

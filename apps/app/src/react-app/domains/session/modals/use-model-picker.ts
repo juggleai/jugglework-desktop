@@ -4,6 +4,7 @@
 // session-route.tsx; settings-route carries a sibling copy that should adopt
 // this hook next.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
 import { isDesktopModelBlocked } from "@/app/cloud/desktop-app-restrictions";
 import type { Client, ModelOption } from "@/app/types";
 import {
@@ -143,6 +144,7 @@ export function useModelPicker(input: UseModelPickerInput) {
           isConnected: true,
           isRecommended: isNew,
           providerSource: provider.source,
+          capabilities: parseNormalizedModelCapabilities(model),
           source:
             /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "jugglework"
               ? ("cloud" as const)

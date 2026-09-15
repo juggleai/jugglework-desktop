@@ -15,6 +15,9 @@ type WorkspaceJuggleWorkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
+  media?: {
+    defaultVideoModel?: { providerID: string; modelID: string } | null;
+  } | null;
   reload?: {
     auto?: boolean;
     resume?: boolean;
@@ -48,6 +51,7 @@ export function defaultWorkspaceJuggleWorkConfig(workspaceRoot: string, preset: 
       preset,
     },
     authorizedRoots: [workspaceRoot],
+    media: null,
     reload: null,
   };
 }

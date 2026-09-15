@@ -323,6 +323,22 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   ];
 }
 
+export async function materializeGenerationSourceImage(input: {
+  attachment: ComposerAttachment;
+  endpoint: ChatAttachmentWorkspaceEndpoint;
+  sessionId: string;
+  workspaceRoot: string;
+  createId?: () => string;
+}): Promise<{ workspacePath: string; mimeType: string; bytes: number; filename: string }> {
+  const metadata = resolveAttachmentFileMetadata(input.attachment.file);
+  if (!metadata.mime.startsWith("image/")) throw new Error("Video generation reference must be an image.");
+  const id = input.createId ? input.createId() : randomAttachmentId();
+  const inboxPath = buildChatAttachmentInboxPath({ sessionId: input.sessionId, filename: metadata.filename, id });
+  const result = await input.endpoint.client.uploadInbox(input.endpoint.workspaceId.trim(), input.attachment.file, { path: inboxPath });
+  if (!result.ok || !result.path.trim() || result.bytes !== input.attachment.file.size) throw new Error(uploadErrorMessage(metadata.filename, "upload was rejected"));
+  return { workspacePath: workspaceInboxPath(result.path), mimeType: metadata.mime, bytes: result.bytes, filename: metadata.filename };
+}
+
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput> {
   const metadata = resolveAttachmentFileMetadata(attachment.file);
   return {

@@ -186,9 +186,10 @@ async function expectLegacyCallPassesThrough(base: string) {
 }
 
 function expectAllActions(actions: ActionItem[]) {
-  expect(actions).toHaveLength(16);
+  expect(actions).toHaveLength(21);
   expect(actions.filter((action) => action.extensionId === "google-workspace")).toHaveLength(14);
   expect(actions.filter((action) => action.extensionId === "openai-image-generation")).toHaveLength(2);
+  expect(actions.filter((action) => action.extensionId === "media-generation")).toHaveLength(5);
 }
 
 beforeEach(() => {
@@ -260,6 +261,11 @@ describe("Connect-aware legacy extension gating", () => {
     const actions = await listActions(base);
     expect(actionKeys(actions)).toEqual([
       "google-workspace/status",
+      "media-generation/status",
+      "media-generation/video_generate",
+      "media-generation/video_job_cancel",
+      "media-generation/video_job_get",
+      "media-generation/video_models_list",
       "openai-image-generation/image_generate",
       "openai-image-generation/status",
     ]);
