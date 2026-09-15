@@ -93,7 +93,7 @@ export async function promoteChannel(plan, evidence, {
     ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
     : null;
   const preCanaryException = preCanaryExceptionReason
-    ? { scope: "stable-1.2.16-only", reason: preCanaryExceptionReason.trim() }
+    ? { scope: `stable-${plan.version}-only`, reason: preCanaryExceptionReason.trim() }
     : null;
   if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");

@@ -71,7 +71,7 @@ Stable `1.2.16` MAY use a separately audited one-time exception for notarization
 
 Stable `1.2.17` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status only. The exception SHALL be restricted to exact stable `1.2.17` and SHALL NOT bypass a successful lower-version canary, Developer ID identity, Team identity, bundle identity, hardened runtime, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
 
-Stable `2.1.18` MAY use a separately audited one-time exception for notarization, stapling, and Gatekeeper status only. The exception SHALL be restricted to exact stable `2.1.18` and SHALL NOT bypass a successful lower-version canary, Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back. This exception SHALL NOT apply to `1.2.18`; that coordinate may be added only to explicitly authorized Den allowlists.
+Stable `1.2.18` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for the local macOS canary. Both exceptions SHALL be restricted to exact stable `1.2.18` and SHALL NOT apply to Windows or bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
 
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
@@ -100,11 +100,11 @@ Stable `2.1.18` MAY use a separately audited one-time exception for notarization
 - **AND** it still requires a passed `1.2.16 → 1.2.17` canary and every non-Apple publication gate
 - **AND** it rejects the exception for any other version or channel
 
-#### Scenario: Explicit 2.1.18 notarization exception
-- **WHEN** an operator authorizes unnotarized stable `2.1.18` publication
-- **THEN** tooling accepts a signed candidate only with an audited reason scoped to `stable-2.1.18-only`
-- **AND** it still requires a passed lower-version canary and every non-Apple publication gate
-- **AND** it rejects the exception for `1.2.18`, every other version, and every other channel
+#### Scenario: Explicit 1.2.18 macOS exceptions
+- **WHEN** an operator authorizes unnotarized stable `1.2.18` publication without a local macOS canary
+- **THEN** tooling accepts a signed candidate only with separate audited notarization and pre-canary reasons scoped to `stable-1.2.18-only`
+- **AND** it still requires every non-Apple and non-canary publication gate
+- **AND** it rejects both exceptions for Windows, every other version, and every other channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
