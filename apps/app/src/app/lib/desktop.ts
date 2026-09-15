@@ -114,11 +114,13 @@ declare global {
         getChannel?: () => Promise<{
           channel: "stable" | "alpha";
           feedUrl: string;
+          manifestUrl: string;
           currentVersion: string;
         }>;
         setChannel?: (channel: "stable" | "alpha") => Promise<{
           channel: "stable" | "alpha";
           feedUrl: string;
+          manifestUrl: string;
           currentVersion: string;
         }>;
         check?: (channel?: "stable" | "alpha", targetVersion?: string) => Promise<{
@@ -130,9 +132,42 @@ declare global {
           channel?: "stable" | "alpha";
           feedUrl?: string;
           reason?: string;
+          code?: string;
+          statusCode?: number;
+          manifestUrl?: string;
+          updateId?: string | null;
+          candidate?: {
+            updateId: string;
+            version: string;
+            targetVersion: string | null;
+            channel: "stable" | "alpha";
+            feedUrl: string;
+            manifestUrl: string;
+            arch: string;
+            artifactUrl: string | null;
+            sha512: string | null;
+          } | null;
         }>;
-        download?: () => Promise<{ ok: boolean; reason?: string }>;
-        installAndRestart?: () => Promise<{ ok: boolean; reason?: string }>;
+        download?: (updateId: string) => Promise<{
+          ok: boolean;
+          reason?: string;
+          code?: string;
+          updateId?: string;
+        }>;
+        installAndRestart?: (updateId: string) => Promise<{
+          ok: boolean;
+          reason?: string;
+          code?: string;
+          updateId?: string;
+        }>;
+        onDownloadProgress?: (callback: (data: {
+          updateId: string | null;
+          transferred: number;
+          total: number;
+          percent: number;
+          bytesPerSecond: number;
+          delta: number;
+        }) => void) => () => void;
       };
       browser?: {
         show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;

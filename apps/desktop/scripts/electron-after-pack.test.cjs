@@ -10,6 +10,7 @@ const {
   runAfterPack,
   targetTriple,
   verifyPackagedMacTrayResources,
+  windowsPublisherNames,
   writePackagedUpdateConfiguration,
 } = require("./electron-after-pack.cjs");
 
@@ -208,4 +209,45 @@ test("writes platform-specific generic packaged update configuration", (t) => {
     assert.match(content, new RegExp(`url: https://downloads\\.jugglechat\\.cn/jugglework/releases/stable/${segment}`));
     assert.doesNotMatch(content, /github\.com/);
   }
+});
+
+test("injects the explicit Windows publisher allowlist without guessing a value", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-update-publishers-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const context = {
+    appOutDir: root,
+    electronPlatformName: "win32",
+    packager: { appInfo: { productFilename: "JuggleWork" } },
+  };
+  const publishers = ["CN=Example Publisher, O=Example Corp", "CN=Rotated Publisher"];
+
+  const result = writePackagedUpdateConfiguration(context, {
+    JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: JSON.stringify(publishers),
+  });
+  const content = fs.readFileSync(path.join(root, "resources", "app-update.yml"), "utf8");
+
+  assert.deepEqual(result.publisherName, publishers);
+  assert.match(content, /publisherName:\n  - "CN=Example Publisher, O=Example Corp"\n  - "CN=Rotated Publisher"/);
+  assert.deepEqual(windowsPublisherNames({ JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: publishers[0] }), [publishers[0]]);
+});
+
+test("omits Windows publisherName for ordinary packaging and rejects an invalid configured allowlist", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jugglework-update-no-publisher-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const context = {
+    appOutDir: root,
+    electronPlatformName: "win32",
+    packager: { appInfo: { productFilename: "JuggleWork" } },
+  };
+
+  writePackagedUpdateConfiguration(context, {});
+  assert.doesNotMatch(fs.readFileSync(path.join(root, "resources", "app-update.yml"), "utf8"), /publisherName/);
+  assert.throws(
+    () => writePackagedUpdateConfiguration(context, { JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: '["Publisher", ""]' }),
+    /must contain one or more non-empty publisher names/,
+  );
+  assert.throws(
+    () => writePackagedUpdateConfiguration(context, { JUGGLEWORK_WINDOWS_PUBLISHER_NAMES: "[]" }),
+    /must contain one or more non-empty publisher names/,
+  );
 });

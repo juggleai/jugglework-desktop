@@ -1,29 +1,33 @@
 import path from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 import {
   artifactKey,
-  assertArchitecture,
   assertChannel,
   assertPlatform,
   assertReleaseVersion,
+  assertWindowsReleaseVersion,
   channelManifestKey,
+  normalizeReleaseArchitectures,
   publicUrl,
   versionManifestKey,
 } from "./constants.mjs";
-import { normalizeMacManifest } from "./manifest.mjs";
+import { normalizeMacManifest, normalizeWindowsManifest } from "./manifest.mjs";
 import { inspectArtifact, metadataForBuffer } from "./metadata.mjs";
 
-const ARTIFACT_TYPES = ["zip", "dmg", "zip.blockmap", "dmg.blockmap"];
+function artifactTypes(platform) {
+  return platform === "mac" ? ["zip", "dmg", "zip.blockmap", "dmg.blockmap"] : ["exe", "exe.blockmap"];
+}
 
-function artifactName(version, arch, type) {
-  return `jugglework-mac-${arch}-${version}.${type}`;
+function artifactName(version, arch, type, platform) {
+  return `jugglework-${platform === "mac" ? "mac" : "win"}-${arch}-${version}.${type}`;
 }
 
 export async function createReleasePlan({
   version,
   channel,
-  platform,
+  platform = "mac",
   architectures,
   dist,
   releaseDate,
@@ -32,74 +36,86 @@ export async function createReleasePlan({
 }) {
   assertReleaseVersion(version, channel);
   assertPlatform(platform);
-  if (!Array.isArray(architectures) || architectures.length === 0) throw new Error("At least one architecture is required");
-  if (new Set(architectures).size !== architectures.length) throw new Error("Duplicate architectures are not allowed");
-  architectures.forEach(assertArchitecture);
-  if (architectures.includes("universal") && architectures.length !== 1) {
-    throw new Error("Universal architecture cannot be combined with architecture-specific artifacts");
-  }
+  if (platform === "windows") assertWindowsReleaseVersion(version);
+  const normalizedArchitectures = normalizeReleaseArchitectures(architectures, platform);
   if (!dist) throw new Error("Distribution directory is required");
   const resolvedDist = path.resolve(dist);
 
   const artifacts = [];
-  for (const arch of architectures) {
-    for (const type of ARTIFACT_TYPES) {
-      const name = artifactName(version, arch, type);
-      const localPath = path.join(resolvedDist, name);
+  const stagingManifests = [];
+  for (const arch of normalizedArchitectures) {
+    const artifactDist = platform === "windows" ? path.join(resolvedDist, arch) : resolvedDist;
+    for (const type of artifactTypes(platform)) {
+      const name = artifactName(version, arch, type, platform);
+      const localPath = path.join(artifactDist, name);
       const metadata = await inspect(localPath);
+      const key = artifactKey(version, arch, name, platform);
       artifacts.push({
         arch,
         type,
         name,
         path: localPath,
-        key: artifactKey(version, arch, name),
-        url: publicUrl(artifactKey(version, arch, name)),
+        key,
+        url: publicUrl(key),
         ...metadata,
       });
     }
+    if (platform === "windows") {
+      const stagingPath = path.join(artifactDist, "latest.yml");
+      let manifest;
+      try {
+        manifest = parseYaml(await readFile(stagingPath, "utf8"));
+      } catch (error) {
+        throw new Error(`Unable to read Windows staging manifest ${stagingPath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      stagingManifests.push({ arch, path: stagingPath, manifest });
+    }
   }
 
-  const normalized = normalizeMacManifest({
+  const normalized = (platform === "mac" ? normalizeMacManifest : normalizeWindowsManifest)({
     version,
     platform,
     artifacts,
-    primaryArch: architectures.includes("universal") ? "universal" : architectures[0],
+    primaryArch: normalizedArchitectures.includes("universal") ? "universal" : normalizedArchitectures[0],
     releaseDate,
+    stagingManifests,
   });
   const manifestBytes = Buffer.from(normalized.yaml, "utf8");
-  const manifestPath = path.join(resolvedDist, `qiniu-v${version}-latest-mac.yml`);
+  const manifestName = platform === "mac" ? "latest-mac.yml" : "latest.yml";
+  const manifestPath = path.join(resolvedDist, platform === "mac" ? `qiniu-v${version}-latest-mac.yml` : `qiniu-v${version}-latest.yml`);
   if (persistManifest) {
     await writeFile(manifestPath, normalized.yaml, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  const manifestKey = versionManifestKey(version);
+  const manifestKey = versionManifestKey(version, platform);
   const manifest = {
-    name: "latest-mac.yml",
+    name: manifestName,
     type: "manifest",
     path: persistManifest ? manifestPath : null,
     key: manifestKey,
     url: publicUrl(manifestKey),
     content: normalized.yaml,
-    ...metadataForBuffer(manifestBytes, "latest-mac.yml"),
+    ...metadataForBuffer(manifestBytes, manifestName),
   };
   return {
     version,
     channel,
     platform,
-    architectures: [...architectures],
+    architectures: normalizedArchitectures,
     dist: resolvedDist,
     objects: normalized.artifacts,
     manifest,
     channelManifest: {
-      key: channelManifestKey(channel),
-      url: publicUrl(channelManifestKey(channel)),
+      key: channelManifestKey(channel, platform),
+      url: publicUrl(channelManifestKey(channel, platform)),
     },
     actions: [
+      ...(platform === "windows" ? ["require passed Windows local verification evidence"] : []),
       ...normalized.artifacts.map((item) => `upload immutable ${item.key}`),
       `upload immutable ${manifest.key}`,
       `verify CDN ${manifest.url}`,
-      `acquire promotion lock for ${channel}/mac`,
-      `overwrite channel manifest ${channelManifestKey(channel)}`,
-      `refresh CDN ${publicUrl(channelManifestKey(channel))}`,
+      `acquire promotion lock for ${channel}/${platform}`,
+      `overwrite channel manifest ${channelManifestKey(channel, platform)}`,
+      `refresh CDN ${publicUrl(channelManifestKey(channel, platform))}`,
       "verify channel digest convergence",
       "release promotion lock",
     ],

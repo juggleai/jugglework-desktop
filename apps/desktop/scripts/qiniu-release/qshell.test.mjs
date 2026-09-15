@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createQshellAdapter, redactCommandOutput } from "./qshell.mjs";
@@ -63,4 +64,22 @@ test("qshell CDN refresh sends URLs over stdin instead of shell interpolation", 
   await qiniu.refresh(["https://downloads.jugglechat.cn/a", "https://downloads.jugglechat.cn/b"]);
   assert.deepEqual(calls[0].args, ["cdnrefresh"]);
   assert.equal(calls[0].options.input, "https://downloads.jugglechat.cn/a\nhttps://downloads.jugglechat.cn/b\n");
+});
+
+test("qshell reads exact channel content through checked get argv", async () => {
+  const calls = [];
+  const content = Buffer.from("version: 1.2.17\n");
+  const qiniu = createQshellAdapter({
+    bucket: "juggleim",
+    run: async (_command, args) => {
+      calls.push(args);
+      if (args[0] === "stat") return { status: 0, stdout: JSON.stringify({ hash: "etag", fsize: content.length }), stderr: "" };
+      await writeFile(args[args.indexOf("--outfile") + 1], content);
+      return { status: 0, stdout: "", stderr: "" };
+    },
+  });
+  assert.deepEqual(await qiniu.readContent("channel/latest.yml"), content);
+  assert.deepEqual(calls[1].slice(0, 3), ["get", "juggleim", "channel/latest.yml"]);
+  assert.equal(calls[1].includes("--check-size"), true);
+  assert.equal(calls[1].includes("--check-hash"), true);
 });

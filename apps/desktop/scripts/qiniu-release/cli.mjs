@@ -3,7 +3,13 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-import { DEFAULT_BUCKET, assertArchitecture, assertPlatform, assertReleaseVersion } from "./constants.mjs";
+import {
+  DEFAULT_BUCKET,
+  assertPlatform,
+  assertReleaseVersion,
+  assertWindowsReleaseVersion,
+  normalizeReleaseArchitectures,
+} from "./constants.mjs";
 import {
   appendAuditRecord,
   assertCanary,
@@ -61,17 +67,15 @@ export function parseArguments(argv) {
   for (const name of ["version", "channel", "platform", "arch", "dist", "evidence"]) {
     if (!options[name]) throw new Error(`Missing required --${name}`);
   }
-  options.architectures = options.arch.split(",").map((value) => value.trim()).filter(Boolean);
-  if (options.architectures.length === 0) throw new Error("--arch must contain at least one architecture");
-  if (new Set(options.architectures).size !== options.architectures.length) throw new Error("Duplicate architectures are not allowed");
+  const architectures = options.arch.split(",").map((value) => value.trim()).filter(Boolean);
   assertReleaseVersion(options.version, options.channel);
   assertPlatform(options.platform);
-  options.architectures.forEach(assertArchitecture);
-  if (options.architectures.includes("universal") && options.architectures.length !== 1) {
-    throw new Error("Universal architecture cannot be combined with architecture-specific artifacts");
-  }
+  if (options.platform === "windows") assertWindowsReleaseVersion(options.version);
+  options.architectures = normalizeReleaseArchitectures(architectures, options.platform);
   if (command === "build" && commandArgv.length === 0) throw new Error("build requires a command argv after --");
-  if (command === "recover-lock" && !options.audit) throw new Error("recover-lock requires --audit PATH");
+  if (command === "recover-lock" && (!options.audit || !options.reason)) {
+    throw new Error("recover-lock requires --reason TEXT and --audit PATH");
+  }
   if (command === "verify-local" && (!options.commit || !options.localVerification)) {
     throw new Error("verify-local requires --commit and --local-verification PATH");
   }
@@ -127,6 +131,7 @@ export async function runCli(argv, {
   if (command === "recover-lock") {
     const result = await recoverPromotionLock({
       channel: options.channel,
+      platform: options.platform,
       qiniu,
       reason: options.reason,
       actor: options.actor,
@@ -161,11 +166,16 @@ export async function runCli(argv, {
     return result;
   }
   if (command === "upload-version" || command === "resume") {
-    const checks = await uploadVersion(plan, { qiniu, resume: command === "resume", dryRun: options.dryRun });
-    if (!options.dryRun) {
-      const evidence = await loadEvidence(options.evidence, read);
+    const evidence = plan.platform === "windows" ? await loadEvidence(options.evidence, read) : null;
+    if (evidence) {
       assertEvidenceMatchesPlan(plan, evidence);
-      await updateEvidence(options.evidence, withEvidenceResults(evidence, {
+      assertLocalVerification(plan, evidence.localVerification, { stable: false });
+    }
+    const checks = await uploadVersion(plan, { qiniu, evidence, resume: command === "resume", dryRun: options.dryRun });
+    if (!options.dryRun) {
+      const persistedEvidence = evidence ?? await loadEvidence(options.evidence, read);
+      assertEvidenceMatchesPlan(plan, persistedEvidence);
+      await updateEvidence(options.evidence, withEvidenceResults(persistedEvidence, {
         workflow: { immutable: { status: "verified", qiniuChecks: checks, verifiedAt: now().toISOString() } },
       }, now().toISOString()));
     }
@@ -218,7 +228,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac --arch arm64[,x64|universal] --dist PATH --evidence PATH [options] [-- argv...]\n\nStable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. recover-lock requires --audit PATH. Audited notarization exceptions are restricted to stable 1.2.15/1.2.16/1.2.17; the audited pre-canary exception is restricted to stable 1.2.16.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple exceptions are macOS-only: notarization exceptions are restricted to stable 1.2.15/1.2.16/1.2.17 and the pre-canary exception to stable 1.2.16.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

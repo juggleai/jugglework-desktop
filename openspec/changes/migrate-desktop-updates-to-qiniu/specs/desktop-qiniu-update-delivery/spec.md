@@ -27,6 +27,16 @@ Packaged desktop clients SHALL resolve update manifests from `https://downloads.
 - **THEN** it uses the platform-specific `windows` or `linux` segment rather than the macOS segment
 - **AND** a macOS-only migration cannot route another platform to macOS artifacts
 
+#### Scenario: Windows stable channel check
+- **WHEN** a packaged Windows x64 or arm64 client on the stable channel checks without a target version
+- **THEN** it requests `https://downloads.jugglechat.cn/jugglework/releases/stable/windows/latest.yml`
+- **AND** both architectures use the same channel manifest URL
+
+#### Scenario: Den selects a specific Windows version
+- **WHEN** Den selects a stable Windows target version newer than the installed version
+- **THEN** the client requests `https://downloads.jugglechat.cn/jugglework/releases/v<version>/windows/latest.yml`
+- **AND** it rejects a manifest whose declared version differs from the requested target
+
 ### Requirement: macOS automatic updates use a ZIP payload
 A macOS update manifest MUST provide a signed ZIP payload compatible with the installed Electron updater, while a DMG MAY be provided for manual installation.
 
@@ -45,7 +55,7 @@ A macOS update manifest MUST provide a signed ZIP payload compatible with the in
 - **THEN** the client does not download or install it as an update
 
 ### Requirement: Update integrity and publisher identity are verified
-The client SHALL verify the manifest-declared payload integrity and SHALL install only an application signed by the expected JuggleWork publisher identity.
+The client SHALL verify the manifest-declared payload integrity and SHALL install only an application signed by the expected platform-specific JuggleWork publisher identity.
 
 #### Scenario: Payload matches manifest
 - **WHEN** the ZIP size and SHA-512 match the selected manifest entry and the contained application has the expected bundle identifier and Apple Team identity
@@ -58,6 +68,15 @@ The client SHALL verify the manifest-declared payload integrity and SHALL instal
 #### Scenario: Publisher identity differs
 - **WHEN** the downloaded application is not signed for `com.juggleai.jugglework` by Apple Team `H7PDHSK3C7`
 - **THEN** installation fails closed and the currently installed application is retained
+
+#### Scenario: Windows Authenticode identity matches
+- **WHEN** a Windows installer matches the manifest size and SHA-512, carries a valid SHA-256 Authenticode signature, has an approved `publisherName`, and has a trusted RFC 3161 timestamp
+- **THEN** the updater may stage that native-architecture installer
+
+#### Scenario: Windows signature or timestamp differs
+- **WHEN** the Windows installer is unsigned, its publisher is not approved, its signature chain or digest is invalid, or its trusted timestamp is missing or invalid
+- **THEN** installation fails closed without invoking the installer
+- **AND** the currently installed application is retained
 
 ### Requirement: Update installation is recoverable
 The update flow SHALL preserve the current installation until a verified replacement is ready and SHALL support retry after manifest, network, cache, or installer failure.
@@ -77,6 +96,64 @@ The update flow SHALL preserve the current installation until a verified replace
 - **THEN** the application restarts on the new version
 - **AND** existing user data, workspace authorization, application identity, and compatible macOS permissions remain associated with the installation
 - **AND** an authenticated non-personal organization with a missing or stale local IM bootstrap can reprovision it and open Chat and Contacts after restart
+
+### Requirement: Windows clients select only their native architecture
+The shared Windows `latest.yml` SHALL describe both x64 and arm64 installers under immutable architecture-specific paths. Its `files` array SHALL be authoritative, and the published manifest MUST NOT contain top-level `path` or `sha512`. Before `NsisUpdater` receives a candidate, the Windows runtime SHALL validate the complete shared inventory, select exactly the entry matching its native packaged architecture, replace the in-memory `files` inventory with that entry, and inject that entry's immutable URL and SHA-512 as the in-memory `path` and `sha512`. Those runtime-only selection fields MUST NOT be written back to or required from the shared manifest.
+
+#### Scenario: Windows x64 checks a dual-architecture manifest
+- **WHEN** an x64 package reads a shared manifest containing valid x64 and arm64 entries
+- **THEN** it validates both authoritative `files` entries and selects only the x64 signed EXE
+- **AND** it injects only the verified x64 entry into the in-memory native-updater selection
+- **AND** it does not download or execute the arm64 installer
+
+#### Scenario: Windows arm64 checks a dual-architecture manifest
+- **WHEN** an arm64 package reads a shared manifest containing valid x64 and arm64 entries
+- **THEN** it validates both authoritative `files` entries and selects only the arm64 signed EXE
+- **AND** it injects only the verified arm64 entry into the in-memory native-updater selection
+- **AND** it does not download or execute the x64 installer through emulation
+
+#### Scenario: Shared manifest contains top-level selection fields
+- **WHEN** the published shared manifest contains top-level `path` or `sha512`
+- **THEN** publication or packaged verification rejects it as architecture-biased
+- **AND** the client does not rely on those fields to select a Windows installer
+
+#### Scenario: Native entry is missing or ambiguous
+- **WHEN** the shared manifest omits the client's architecture, duplicates it, points it outside the requested immutable version, or maps it to another architecture
+- **THEN** the update fails closed before installer download or execution
+- **AND** the current installation remains runnable
+
+### Requirement: Pending updates do not install on ordinary exit
+The desktop updater SHALL keep automatic installation on application quit disabled. A downloaded update MUST NOT install because the user closes all windows, chooses the ordinary Quit action, signs out of the operating system, shuts down, or restarts the machine. Only a current explicit `Install and restart` action may invoke the updater's native installer.
+
+#### Scenario: User exits after downloading an update
+- **WHEN** a verified update is pending and the application exits without an accepted `Install and restart` request
+- **THEN** the process exits without invoking the native installer
+- **AND** the installed version remains unchanged on the next launch
+
+#### Scenario: User explicitly installs and restarts
+- **WHEN** the renderer submits the current valid installation identity through `Install and restart`
+- **THEN** Main marks explicit update-quit intent before invoking the native installer
+- **AND** ordinary close-to-tray handling does not block that installer-owned exit and restart
+
+### Requirement: Installation requests are fenced by update identity
+Main SHALL issue an opaque, process-local, single-use `updateId` for an available update and bind it to the selected channel or target version, manifest identity, version, architecture, and payload identity. Download and `Install and restart` requests SHALL carry the matching ID. Main MUST reject a missing, unknown, stale, mismatched, or consumed ID without quitting or invoking the installer.
+
+#### Scenario: Current update identity completes installation
+- **WHEN** a download completes for the current `updateId` and the user submits that same ID through `Install and restart`
+- **THEN** Main consumes the ID exactly once and may invoke the verified native installer
+
+#### Scenario: A newer check supersedes the UI state
+- **WHEN** the channel, target version, manifest, architecture, or selected payload changes after the renderer retained an earlier `updateId`
+- **THEN** Main invalidates the earlier ID
+- **AND** an install request carrying that stale ID returns a diagnosable rejection without quitting or invoking the installer
+
+#### Scenario: Update state is invalidated
+- **WHEN** a new check starts, the channel or target changes, updater verification or download fails, another download supersedes the pending one, installation completes, or the desktop process restarts
+- **THEN** any previously issued `updateId` cannot authorize installation
+
+#### Scenario: Install request is replayed
+- **WHEN** an already-consumed `updateId` is submitted again
+- **THEN** Main rejects the replay and does not invoke the installer a second time
 
 ### Requirement: Manual replacement downloads use the Qiniu release inventory
 Architecture replacement and manual fallback actions SHALL resolve the appropriate signed DMG from the Qiniu manifest instead of constructing a GitHub release URL.

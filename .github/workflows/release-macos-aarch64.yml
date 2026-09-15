@@ -38,11 +38,6 @@ on:
         required: false
         type: boolean
         default: true
-      publish_daytona_snapshot:
-        description: "Build + push Daytona worker snapshot"
-        required: false
-        type: boolean
-        default: true
       build_electron:
         description: "Build + publish Electron desktop artifacts (macOS/Linux/Windows)"
         required: false
@@ -79,7 +74,6 @@ jobs:
       build_electron: ${{ steps.resolve.outputs.build_electron }}
       sign_windows: ${{ steps.resolve.outputs.sign_windows }}
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
-      publish_daytona_snapshot: ${{ steps.resolve.outputs.publish_daytona_snapshot }}
     steps:
       - name: Resolve metadata
         id: resolve
@@ -94,9 +88,7 @@ jobs:
           INPUT_BUILD_ELECTRON: ${{ github.event.inputs.build_electron }}
           INPUT_SIGN_WINDOWS: ${{ github.event.inputs.sign_windows }}
           INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
-          INPUT_PUBLISH_DAYTONA_SNAPSHOT: ${{ github.event.inputs.publish_daytona_snapshot }}
           DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
-          DEFAULT_PUBLISH_DAYTONA_SNAPSHOT: ${{ vars.RELEASE_PUBLISH_DAYTONA_SNAPSHOT }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
           DEFAULT_BUILD_ELECTRON: ${{ vars.RELEASE_PUBLISH_ELECTRON }}
           DEFAULT_SIGN_WINDOWS: ${{ vars.RELEASE_SIGN_WINDOWS }}
@@ -175,11 +167,6 @@ jobs:
             publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
           fi
 
-          publish_daytona_snapshot="${INPUT_PUBLISH_DAYTONA_SNAPSHOT:-}"
-          if [ -z "$publish_daytona_snapshot" ]; then
-            publish_daytona_snapshot="${DEFAULT_PUBLISH_DAYTONA_SNAPSHOT:-true}"
-          fi
-
           TAG="${TAG//$'\n'/}"
           TAG="${TAG//$'\r'/}"
           RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
@@ -193,7 +180,6 @@ jobs:
           echo "build_electron=$build_electron" >> "$GITHUB_OUTPUT"
           echo "sign_windows=$sign_windows" >> "$GITHUB_OUTPUT"
           echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
-          echo "publish_daytona_snapshot=$publish_daytona_snapshot" >> "$GITHUB_OUTPUT"
           {
             echo "release_body<<__JUGGLEWORK_RELEASE_BODY_EOF__"
             printf '%s\n' "$RELEASE_BODY"
@@ -660,20 +646,6 @@ jobs:
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter jugglework-server publish --access public --no-git-checks
 
-  publish-daytona-snapshot:
-    name: Build + Push Daytona Snapshot
-    needs: [resolve-release, verify-release, publish-npm]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      needs.resolve-release.outputs.publish_daytona_snapshot == 'true'
-    uses: ./.github/workflows/release-daytona-snapshot.yml
-    with:
-      tag: ${{ needs.resolve-release.outputs.release_tag }}
-    secrets: inherit
-
   aur-publish:
     name: Publish AUR
     needs: [resolve-release, publish-electron, publish-release]
@@ -735,15 +707,13 @@ jobs:
       - publish-electron
       - publish-installers
       - publish-npm
-      - publish-daytona-snapshot
     if: |
       always() &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-electron.result == 'success' || needs.publish-electron.result == 'skipped') &&
       needs.publish-installers.result == 'success' &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
-      (needs.publish-daytona-snapshot.result == 'success' || needs.publish-daytona-snapshot.result == 'skipped')
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}

@@ -117,15 +117,16 @@ async function seedDesktopSession(ctx) {
         latestVersion: '0.17.30',
         channel: 'stable',
         feedUrl: 'eval',
+        updateId: 'onboarding-update-0.17.30',
       }),
-      download: async () => {
+      download: async (updateId) => {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         window.__juggleworkUpdateDownloadedForOnboarding = true;
-        return { ok: true };
+        return { ok: updateId === 'onboarding-update-0.17.30', updateId };
       },
-      installAndRestart: async () => {
+      installAndRestart: async (updateId) => {
         window.__juggleworkOnboardingInstallCalled = true;
-        return { ok: true };
+        return { ok: updateId === 'onboarding-update-0.17.30', updateId };
       },
     };
     window.dispatchEvent(new CustomEvent('jugglework-den-settings-changed', { detail: {} }));

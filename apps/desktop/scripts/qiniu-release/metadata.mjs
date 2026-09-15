@@ -5,6 +5,7 @@ import { stat } from "node:fs/promises";
 export const QINIU_BLOCK_SIZE = 4 * 1024 * 1024;
 
 const MIME_TYPES = new Map([
+  [".exe", "application/vnd.microsoft.portable-executable"],
   [".zip", "application/zip"],
   [".dmg", "application/x-apple-diskimage"],
   [".blockmap", "application/octet-stream"],

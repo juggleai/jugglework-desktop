@@ -106,10 +106,11 @@ async function configureDesktopEval(ctx, input) {
           channel: 'stable',
           feedUrl: targetVersion ? 'https://github.com/juggleai/jugglework-desktop/releases/download/v' + targetVersion : 'eval://stable',
           releaseDate: '2026-07-13T18:43:13.427Z',
+          updateId: 'eval-update-' + resolvedVersion,
         };
       },
-      download: async () => ({ ok: true }),
-      installAndRestart: async () => ({ ok: true }),
+      download: async (updateId) => ({ ok: Boolean(updateId), updateId }),
+      installAndRestart: async (updateId) => ({ ok: Boolean(updateId), updateId }),
     };
     return true;
   })()`);

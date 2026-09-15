@@ -43,6 +43,10 @@ function createFakeQiniu(initial = new Map()) {
       calls.push(["uploadContent", key, content, mime, options]);
       state.set(key, metadataForBuffer(content, key));
     },
+    async readContent(key) {
+      calls.push(["readContent", key]);
+      return state.get(key)?.content ?? null;
+    },
     async delete(key) { calls.push(["delete", key]); state.delete(key); },
   };
 }
@@ -156,6 +160,28 @@ test("lock recovery dry-run does not delete or emit a completed audit", async ()
   assert.deepEqual(events, []);
 });
 
+test("Windows immutable upload fails closed on absent local verification before Qiniu calls", async () => {
+  const plan = { ...fixturePlan("1.2.18"), platform: "windows", architectures: ["arm64", "x64"] };
+  const qiniu = createFakeQiniu();
+  await assert.rejects(uploadVersion(plan, { qiniu }), /evidence schema|local verification/i);
+  assert.deepEqual(qiniu.calls, []);
+});
+
+test("lock recovery is isolated by Windows platform", async () => {
+  const lockKey = "jugglework/releases/locks/stable-windows.lock";
+  const qiniu = createFakeQiniu(new Map([[lockKey, { size: 10, etag: "held", putTime: "123" }]]));
+  const result = await recoverPromotionLock({
+    channel: "stable",
+    platform: "windows",
+    qiniu,
+    reason: "Windows publisher was confirmed terminated",
+    dryRun: true,
+  });
+  assert.equal(result.platform, "windows");
+  assert.equal(result.lockKey, lockKey);
+  assert.equal(qiniu.calls[0][1], lockKey);
+});
+
 test("missing machine verification or canary makes no Qiniu calls", async () => {
   const plan = fixturePlan();
   for (const mutate of [(e) => { e.localVerification = null; }, (e) => { e.canary.result = "failed"; }]) {
@@ -180,6 +206,56 @@ test("promotion order is lock, verification, overwrite, refresh, read-back, unlo
   assert.equal(readBackCalls[0][2].expectedSize, plan.manifest.size);
   assert.deepEqual(qiniu.calls.find((call) => call[0] === "uploadContent" && call[1] === plan.channelManifest.key)[4], { overwrite: true });
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
+  const lockCall = qiniu.calls.find((call) => call[0] === "uploadContent" && call[1].endsWith(".lock"));
+  const lock = JSON.parse(lockCall[2]);
+  assert.equal(lock.expectedPreviousChannelDigest, null);
+  assert.equal(lock.candidateDigest, plan.manifest.sha256);
+});
+
+test("promotion lock records previous digest and refuses channel races before overwrite", async () => {
+  const plan = fixturePlan();
+  const previous = "version: 1.2.14\n";
+  const initial = new Map([
+    ...[...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]),
+    [plan.channelManifest.key, { ...metadataForBuffer(previous, plan.channelManifest.key), content: Buffer.from(previous) }],
+  ]);
+  const qiniu = createFakeQiniu(initial);
+  const originalRead = qiniu.readContent;
+  let reads = 0;
+  qiniu.readContent = async (key) => {
+    const value = await originalRead.call(qiniu, key);
+    reads += 1;
+    return reads === 2 ? Buffer.from("version: raced\n") : value;
+  };
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu, refresh: async () => {}, readBack: async () => ({}),
+  }), /changed after lock acquisition/);
+  assert.equal(qiniu.calls.some((call) => call[0] === "uploadContent" && call[1] === plan.channelManifest.key), false);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
+  const lock = JSON.parse(qiniu.calls.find((call) => call[0] === "uploadContent" && call[1].endsWith(".lock"))[2]);
+  assert.equal(lock.expectedPreviousChannelDigest, metadataForBuffer(previous, plan.channelManifest.key).sha256);
+  assert.equal(lock.candidateDigest, plan.manifest.sha256);
+});
+
+test("promotion revalidates lock ownership immediately before channel overwrite", async () => {
+  const plan = fixturePlan();
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const qiniu = createFakeQiniu(initial);
+  const originalStat = qiniu.stat;
+  let lockStats = 0;
+  qiniu.stat = async (key) => {
+    const value = await originalStat.call(qiniu, key);
+    if (key.endsWith(".lock") && value) {
+      lockStats += 1;
+      if (lockStats === 2) return { ...value, etag: "stolen" };
+    }
+    return value;
+  };
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu, refresh: async () => {}, readBack: async () => ({}),
+  }), /ownership changed before channel overwrite/);
+  assert.equal(qiniu.calls.some((call) => call[0] === "uploadContent" && call[1] === plan.channelManifest.key), false);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
 });
 
 test("records the narrowly scoped notarization exception in promotion output", async () => {

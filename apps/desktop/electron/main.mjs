@@ -3121,6 +3121,9 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   onInstallAndRestart: () => {
     updaterInstallQuitRequested = true;
   },
+  onInstallAndRestartFailed: () => {
+    updaterInstallQuitRequested = false;
+  },
 });
 
 if (!app.requestSingleInstanceLock()) {

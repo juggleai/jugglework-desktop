@@ -1,12 +1,20 @@
 import { open, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { CDN_ORIGIN, assertSemverVersion, compareSemver } from "./constants.mjs";
+import {
+  CDN_ORIGIN,
+  assertSemverVersion,
+  assertWindowsReleaseVersion,
+  compareSemver,
+  normalizeReleaseArchitectures,
+} from "./constants.mjs";
 
 export const EVIDENCE_SCHEMA = "com.juggleai.jugglework.qiniu-release-evidence";
 export const EVIDENCE_SCHEMA_VERSION = 2;
 export const LOCAL_VERIFICATION_SCHEMA = "com.juggleai.jugglework.macos-local-verification";
 export const CANARY_SCHEMA = "com.juggleai.jugglework.macos-update-canary";
+export const WINDOWS_LOCAL_VERIFICATION_SCHEMA = "com.juggleai.jugglework.windows-local-verification";
+export const WINDOWS_CANARY_SCHEMA = "com.juggleai.jugglework.windows-update-canary";
 export const VERIFICATION_SCHEMA_VERSION = 1;
 export const EXPECTED_BUNDLE_ID = "com.juggleai.jugglework";
 export const EXPECTED_TEAM_ID = "H7PDHSK3C7";
@@ -67,7 +75,33 @@ function exactObjectCheck(check, object, label) {
   }
 }
 
-export function assertLocalVerification(plan, verification, { stable = plan.channel === "stable" } = {}) {
+function sameArray(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function artifactDigestsMatch(verified, object) {
+  return verified?.name === object.name && verified.size === object.size && verified.sha256 === object.sha256
+    && verified.sha512 === object.sha512 && verified.etag === object.etag;
+}
+
+function assertWindowsSignerCertificate(certificate, objectName) {
+  for (const field of ["subject", "issuer", "serialNumber"]) {
+    if (typeof certificate?.[field] !== "string" || !certificate[field].trim()) {
+      throw new Error(`Windows EXE signer certificate ${field} is missing for ${objectName}`);
+    }
+  }
+  if (typeof certificate.sha256Thumbprint !== "string" || !/^[0-9a-f]{64}$/i.test(certificate.sha256Thumbprint)) {
+    throw new Error(`Windows EXE signer certificate SHA-256 thumbprint is missing or invalid for ${objectName}`);
+  }
+  timestamp(certificate.notBefore, `Windows EXE signer certificate notBefore for ${objectName}`);
+  timestamp(certificate.notAfter, `Windows EXE signer certificate notAfter for ${objectName}`);
+  if (Date.parse(certificate.notBefore) >= Date.parse(certificate.notAfter)) {
+    throw new Error(`Windows EXE signer certificate validity period is invalid for ${objectName}`);
+  }
+  return certificate;
+}
+
+function assertMacLocalVerification(plan, verification, { stable }) {
   assertNoSecrets(verification);
   if (verification?.schema !== LOCAL_VERIFICATION_SCHEMA || verification?.schemaVersion !== VERIFICATION_SCHEMA_VERSION) {
     throw new Error("Local verification schema or version is unsupported");
@@ -75,7 +109,7 @@ export function assertLocalVerification(plan, verification, { stable = plan.chan
   if (verification.producer !== "verify-packaged-macos" || verification.version !== plan.version || verification.platform !== "mac") {
     throw new Error("Local verification producer or release coordinates do not match");
   }
-  if (JSON.stringify(verification.architectures) !== JSON.stringify(plan.architectures)) {
+  if (!sameArray(verification.architectures, plan.architectures)) {
     throw new Error("Local verification architectures do not match the release plan");
   }
   timestamp(verification.verifiedAt, "Local verification verifiedAt");
@@ -122,7 +156,83 @@ export function assertLocalVerification(plan, verification, { stable = plan.chan
   return verification;
 }
 
-export function assertCanary(plan, canary) {
+function assertWindowsLocalVerification(plan, verification, { stable }) {
+  assertNoSecrets(verification);
+  assertWindowsReleaseVersion(plan.version);
+  normalizeReleaseArchitectures(plan.architectures, "windows");
+  if (verification?.schema !== WINDOWS_LOCAL_VERIFICATION_SCHEMA || verification?.schemaVersion !== VERIFICATION_SCHEMA_VERSION) {
+    throw new Error("Windows local verification schema or version is unsupported");
+  }
+  if (verification.producer !== "verify-packaged-windows" || verification.version !== plan.version || verification.platform !== "windows"
+    || verification.result !== "passed" || !sameArray(verification.architectures, plan.architectures)) {
+    throw new Error("Windows local verification producer, result, or release coordinates do not match");
+  }
+  timestamp(verification.verifiedAt, "Windows local verification verifiedAt");
+  if (!Array.isArray(verification.approvedPublishers) || verification.approvedPublishers.length === 0
+    || verification.approvedPublishers.some((publisher) => typeof publisher !== "string" || !publisher.trim())
+    || new Set(verification.approvedPublishers).size !== verification.approvedPublishers.length) {
+    throw new Error("Windows local verification requires an explicit non-empty approved publisher list");
+  }
+  const expectedFeed = `${CDN_ORIGIN}/jugglework/releases/${plan.channel}/windows`;
+  if (verification.packagedUpdater?.provider !== "generic" || verification.packagedUpdater?.feedUrl !== expectedFeed
+    || !sameArray(verification.packagedUpdater?.publisherNames, verification.approvedPublishers)) {
+    throw new Error("Packaged Windows updater must bind the approved publisher list and Qiniu channel feed");
+  }
+  if (!Array.isArray(verification.artifacts) || verification.artifacts.length !== plan.objects.length) {
+    throw new Error("Windows local verification artifact inventory is incomplete");
+  }
+  const verifiedArtifacts = new Map(verification.artifacts.map((artifact) => [artifact.name, artifact]));
+  if (verifiedArtifacts.size !== plan.objects.length) throw new Error("Windows local verification artifact inventory is incomplete");
+  for (const object of plan.objects) {
+    const verified = verifiedArtifacts.get(object.name);
+    if (!artifactDigestsMatch(verified, object) || verified.arch !== object.arch || verified.type !== object.type) {
+      throw new Error(`Windows local verification artifact digest does not match ${object.name}`);
+    }
+    if (object.type === "exe") {
+      const signature = verified.authenticode;
+      const signerCertificate = assertWindowsSignerCertificate(signature?.signerCertificate, object.name);
+      if (signature?.status !== "valid" || signature.publisher !== signerCertificate.subject
+        || !verification.approvedPublishers.includes(signerCertificate.subject)) {
+        throw new Error(`Windows EXE Authenticode publisher is invalid or unapproved for ${object.name}`);
+      }
+      if (signature.digestAlgorithm !== "SHA256") {
+        throw new Error(`Windows EXE Authenticode digest algorithm must be SHA256 for ${object.name}`);
+      }
+      if (signature.timestamp?.status !== "trusted" || typeof signature.timestamp.authority !== "string" || !signature.timestamp.authority.trim()) {
+        throw new Error(`Windows EXE requires a trusted Authenticode timestamp for ${object.name}`);
+      }
+      timestamp(signature.timestamp.signedAt, `Windows EXE timestamp for ${object.name}`);
+      if (Date.parse(signature.timestamp.signedAt) < Date.parse(signerCertificate.notBefore)
+        || Date.parse(signature.timestamp.signedAt) > Date.parse(signerCertificate.notAfter)) {
+        throw new Error(`Windows EXE timestamp is outside the signer certificate validity period for ${object.name}`);
+      }
+      if (verified.peArchitecture !== object.arch) throw new Error(`Windows PE architecture does not match ${object.arch} for ${object.name}`);
+    } else {
+      const executable = plan.objects.find((candidate) => candidate.arch === object.arch && candidate.type === "exe");
+      if (verified.postSign?.status !== "verified" || verified.postSign.executableName !== executable?.name
+        || verified.postSign.executableSha256 !== executable?.sha256) {
+        throw new Error(`Windows blockmap was not verified against the post-sign EXE for ${object.name}`);
+      }
+    }
+  }
+  if (!verification.manifest || verification.manifest.size !== plan.manifest.size
+    || verification.manifest.sha256 !== plan.manifest.sha256 || verification.manifest.sha512 !== plan.manifest.sha512
+    || verification.manifest.etag !== plan.manifest.etag) {
+    throw new Error("Windows local verification manifest digest does not match the release plan");
+  }
+  if (stable && verification.releaseState !== "release") {
+    throw new Error("Stable Windows promotion rejects candidate or otherwise non-release verification state");
+  }
+  return verification;
+}
+
+export function assertLocalVerification(plan, verification, { stable = plan.channel === "stable" } = {}) {
+  if (plan.platform === "windows") return assertWindowsLocalVerification(plan, verification, { stable });
+  if (plan.platform !== "mac") throw new Error(`Unsupported local verification platform: ${plan.platform}`);
+  return assertMacLocalVerification(plan, verification, { stable });
+}
+
+function assertMacCanary(plan, canary) {
   assertNoSecrets(canary);
   if (canary?.schema !== CANARY_SCHEMA || canary?.schemaVersion !== VERIFICATION_SCHEMA_VERSION) {
     throw new Error("Canary schema or version is unsupported");
@@ -133,7 +243,7 @@ export function assertCanary(plan, canary) {
   if (canary.channel !== plan.channel || canary.targetVersion !== plan.version || canary.feedUrl !== plan.manifest.url) {
     throw new Error("Canary release coordinates or targeted feed do not match the release plan");
   }
-  if (JSON.stringify(canary.architectures) !== JSON.stringify(plan.architectures) || canary.manifestSha256 !== plan.manifest.sha256) {
+  if (!sameArray(canary.architectures, plan.architectures) || canary.manifestSha256 !== plan.manifest.sha256) {
     throw new Error("Canary architectures or immutable manifest digest do not match the release plan");
   }
   assertSemverVersion(canary.sourceVersion);
@@ -159,6 +269,78 @@ export function assertCanary(plan, canary) {
     throw new Error("Canary did not verify the required Qiniu CDN origins");
   }
   return canary;
+}
+
+function assertCanaryChecks(checks, version, label) {
+  const expectedChecks = {
+    cleanClient: "passed",
+    updateDiscovered: "passed",
+    download: "passed",
+    install: "passed",
+    restart: "passed",
+    installedVersion: version,
+    userData: "preserved",
+    workspaceAccess: "preserved",
+    permissions: "preserved",
+    publisherIdentity: "passed",
+  };
+  for (const [name, expected] of Object.entries(expectedChecks)) {
+    if (checks?.[name] !== expected) throw new Error(`${label} check ${name} is missing or failed`);
+  }
+}
+
+function assertWindowsCanary(plan, canary) {
+  assertNoSecrets(canary);
+  assertWindowsReleaseVersion(plan.version);
+  normalizeReleaseArchitectures(plan.architectures, "windows");
+  if (canary?.schema !== WINDOWS_CANARY_SCHEMA || canary?.schemaVersion !== VERIFICATION_SCHEMA_VERSION) {
+    throw new Error("Windows canary schema or version is unsupported");
+  }
+  if (canary.producer !== "jugglework-windows-update-canary" || canary.result !== "passed" || canary.channel !== plan.channel
+    || canary.targetVersion !== plan.version || canary.feedUrl !== plan.manifest.url
+    || !sameArray(canary.architectures, plan.architectures) || canary.manifestSha256 !== plan.manifest.sha256) {
+    throw new Error("A passed aggregated Windows update canary matching the release plan is required");
+  }
+  timestamp(canary.verifiedAt, "Windows canary verifiedAt");
+  if (!Array.isArray(canary.runs) || canary.runs.length !== plan.architectures.length) {
+    throw new Error("Windows canary must aggregate exactly one run per architecture");
+  }
+  const runs = new Map(canary.runs.map((run) => [run.arch, run]));
+  if (runs.size !== plan.architectures.length) throw new Error("Windows canary must aggregate exactly one run per architecture");
+  const machineIds = new Set();
+  const runIds = new Set();
+  for (const arch of plan.architectures) {
+    const run = runs.get(arch);
+    const executable = plan.objects.find((object) => object.arch === arch && object.type === "exe");
+    if (!run || run.result !== "passed" || typeof run.runId !== "string" || !run.runId.trim() || run.targetVersion !== plan.version
+      || run.artifactName !== executable?.name || run.artifactSha256 !== executable?.sha256) {
+      throw new Error(`Windows canary run is missing or mismatched for ${arch}`);
+    }
+    const machineId = typeof run.machineId === "string" ? run.machineId.trim() : "";
+    const runId = run.runId.trim();
+    if (!machineId || machineIds.has(machineId) || runIds.has(runId)) {
+      throw new Error(`Windows canary requires unique non-empty machineId and runId values for ${arch}`);
+    }
+    machineIds.add(machineId);
+    runIds.add(runId);
+    if (run.machineKind !== "physical" || run.nativeArchitecture !== arch || run.emulated !== false) {
+      throw new Error(`Windows canary run must use a physical, non-emulated native ${arch} machine`);
+    }
+    assertSemverVersion(run.sourceVersion);
+    if (compareSemver(run.sourceVersion, plan.version) >= 0) throw new Error(`Windows canary source version must be older for ${arch}`);
+    timestamp(run.verifiedAt, `Windows canary verifiedAt for ${arch}`);
+    assertCanaryChecks(run.checks, plan.version, `Windows canary ${arch}`);
+    if (run.network?.manifestOrigin !== CDN_ORIGIN || run.network?.artifactOrigin !== CDN_ORIGIN) {
+      throw new Error(`Windows canary did not verify Qiniu CDN origins for ${arch}`);
+    }
+  }
+  return canary;
+}
+
+export function assertCanary(plan, canary) {
+  if (plan.platform === "windows") return assertWindowsCanary(plan, canary);
+  if (plan.platform !== "mac") throw new Error(`Unsupported canary platform: ${plan.platform}`);
+  return assertMacCanary(plan, canary);
 }
 
 export function createEvidence({ plan, commit, localVerification = null, canary = null, den = {}, timestamps = {} }) {
@@ -262,6 +444,9 @@ export function assertPromotionEvidence(plan, evidence, {
   preCanaryExceptionReason = "",
 } = {}) {
   assertEvidenceMatchesPlan(plan, evidence);
+  if (plan.platform !== "mac" && (notarizationExceptionReason || preCanaryExceptionReason)) {
+    throw new Error("Apple notarization and pre-canary exceptions are allowed only for macOS releases");
+  }
   if (notarizationExceptionReason) {
     assertStableNotarizationException(plan, notarizationExceptionReason);
     assertLocalVerification(plan, evidence.localVerification, { stable: false });

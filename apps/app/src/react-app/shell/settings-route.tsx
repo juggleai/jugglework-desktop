@@ -933,6 +933,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [local],
   );
   const electronUpdaterState = useElectronUpdaterState({
+    enabled: !props.embedded,
     releaseChannel: local.prefs.releaseChannel ?? "stable",
     onReleaseChannelChange,
     updateAutoCheck,

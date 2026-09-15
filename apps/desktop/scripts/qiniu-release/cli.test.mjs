@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseArguments, runCli } from "./cli.mjs";
+import { parseArguments, runCli, usage } from "./cli.mjs";
 
 const REQUIRED = [
   "--version", "1.2.15",
@@ -30,9 +30,20 @@ test("CLI rejects missing inputs, unknown subcommands, and unaudited recovery", 
   assert.throws(() => parseArguments(["publish", ...REQUIRED]), /Unknown command/);
   assert.throws(() => parseArguments(["plan", ...REQUIRED.slice(0, -2)]), /Missing required --evidence/);
   assert.throws(() => parseArguments(["plan", ...REQUIRED, "--unknown", "value"]), /Unknown option/);
-  assert.throws(() => parseArguments(["plan", ...REQUIRED.with(5, "windows")]), /Unsupported release platform/);
+  assert.throws(() => parseArguments(["plan", ...REQUIRED.with(5, "linux")]), /Unsupported release platform/);
   assert.throws(() => parseArguments(["plan", ...REQUIRED.with(7, "ia32")]), /Unsupported architecture/);
-  assert.throws(() => parseArguments(["recover-lock", ...REQUIRED, "--reason", "publisher terminated"]), /requires --audit/);
+  assert.throws(() => parseArguments(["recover-lock", ...REQUIRED, "--reason", "publisher terminated"]), /requires --reason TEXT and --audit/);
+  assert.throws(() => parseArguments(["recover-lock", ...REQUIRED, "--audit", "/secure/audit.jsonl"]), /requires --reason TEXT and --audit/);
+});
+
+test("CLI accepts Windows arm64,x64 and rejects universal", () => {
+  const windows = REQUIRED.with(1, "1.2.18").with(5, "windows").with(7, "x64,arm64");
+  assert.deepEqual(parseArguments(["plan", ...windows]).options.architectures, ["arm64", "x64"]);
+  assert.throws(() => parseArguments(["plan", ...windows.with(7, "universal")]), /exactly arm64 and x64|Unsupported architecture/);
+  assert.throws(() => parseArguments(["plan", ...windows.with(1, "1.2.17")]), /greater than 1\.2\.17/);
+  assert.throws(() => parseArguments(["plan", ...windows.with(7, "arm64")]), /exactly arm64 and x64/);
+  assert.match(usage(), /--platform mac\|windows/);
+  assert.match(usage(), /selected --platform lock/);
 });
 
 test("build executes caller argv without shell while dry-run never executes", async () => {
@@ -66,4 +77,5 @@ test("recover-lock routes authorized and completed records to the required audit
     ["/secure/audit.jsonl", "authorized"],
     ["/secure/audit.jsonl", "completed"],
   ]);
+  assert.equal(records[0].record.platform, "mac");
 });

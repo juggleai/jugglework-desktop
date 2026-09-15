@@ -1,12 +1,15 @@
 import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveDesktopUpdateFeed } from "../dist/runtime/desktop-update-feed.js";
 
 const ELECTRON_UPDATER_CHANNEL_FILENAME = "electron-updater-channel.v1.json";
+const WINDOWS_UPDATE_ARCHITECTURES = ["x64", "arm64"];
+const WINDOWS_UPDATE_ORIGIN = "https://downloads.jugglechat.cn";
 
 // In dev mode, app.getVersion() returns the Electron framework version
 // (e.g. "35.7.5") instead of the JuggleWork app version. Read from
@@ -68,14 +71,6 @@ async function writeElectronUpdaterChannel(app, channel) {
     "utf8",
   );
   return normalized;
-}
-
-function electronUpdaterFeedUrl(channel) {
-  return resolveDesktopUpdateFeed({
-    platform: process.platform,
-    arch: process.arch,
-    channel: normalizeElectronUpdaterChannel(channel),
-  }).feedUrl;
 }
 
 function normalizeStableTargetVersion(value) {
@@ -184,11 +179,19 @@ export function targetedStableUpdaterFeed(
 function updaterChannelState(app, channel, targetVersion = null) {
   const normalized = normalizeElectronUpdaterChannel(channel);
   const currentVersion = resolveAppVersion(app);
+  const resolvedFeed = resolveDesktopUpdateFeed({
+    platform: process.platform,
+    arch: process.arch,
+    channel: normalized,
+    targetVersion,
+  });
+  const feedUrl = targetVersion
+    ? targetedStableUpdaterFeed(currentVersion, targetVersion)
+    : resolvedFeed.feedUrl;
   return {
     channel: normalized,
-    feedUrl: targetVersion
-      ? targetedStableUpdaterFeed(currentVersion, targetVersion)
-      : electronUpdaterFeedUrl(normalized),
+    feedUrl,
+    manifestUrl: `${feedUrl}/${resolvedFeed.manifestName}`,
     currentVersion,
   };
 }
@@ -275,17 +278,105 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function triggerUpdaterInstall(updater, onInstallAndRestart) {
+export function triggerUpdaterInstall(updater, onInstallAndRestart, onInstallAndRestartFailed) {
   onInstallAndRestart?.();
-  updater.quitAndInstall(false, true);
+  try {
+    updater.quitAndInstall(false, true);
+  } catch (error) {
+    onInstallAndRestartFailed?.();
+    throw error;
+  }
 }
 
-export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRestart = undefined }) {
-  let autoUpdaterInstance = null;
-  let autoUpdaterLoaded = false;
-  let checkedUpdateVersion = null;
-  let checkedUpdateTargetVersion = null;
-  let updateDownloaded = false;
+function validSha512(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(value)) return false;
+  try {
+    return Buffer.from(value, "base64").length === 64;
+  } catch {
+    return false;
+  }
+}
+
+export function selectWindowsUpdateArtifact(updateInfo, arch = process.arch) {
+  if (!WINDOWS_UPDATE_ARCHITECTURES.includes(arch)) {
+    throw new Error(`Unsupported Windows update architecture: ${arch}`);
+  }
+  if (!updateInfo?.version || !Array.isArray(updateInfo.files)) {
+    throw new Error("Windows update manifest inventory is missing.");
+  }
+
+  const inventory = new Map(WINDOWS_UPDATE_ARCHITECTURES.map((value) => [value, []]));
+  for (const file of updateInfo.files) {
+    if (typeof file?.url !== "string" || !validSha512(file.sha512)) {
+      throw new Error("Windows update manifest contains an invalid EXE URL or SHA-512.");
+    }
+    let artifactUrl;
+    try {
+      artifactUrl = new URL(file.url);
+    } catch {
+      throw new Error(`Windows update artifact URL must be absolute: ${file.url}`);
+    }
+    if (artifactUrl.protocol !== "https:" || artifactUrl.origin !== WINDOWS_UPDATE_ORIGIN) {
+      throw new Error(`Windows update artifact uses an unauthorized origin: ${file.url}`);
+    }
+    if (artifactUrl.search || artifactUrl.hash) {
+      throw new Error(`Windows update artifact URL must be immutable: ${file.url}`);
+    }
+    const match = artifactUrl.pathname.match(
+      /^\/jugglework\/releases\/v([^/]+)\/windows\/(x64|arm64)\/jugglework-win-(x64|arm64)-([^/]+)\.exe$/,
+    );
+    if (!match || match[1] !== updateInfo.version || match[2] !== match[3] || match[4] !== updateInfo.version) {
+      throw new Error(`Windows update artifact is mutable, cross-architecture, or has the wrong version: ${file.url}`);
+    }
+    inventory.get(match[2]).push({ file, artifactUrl: artifactUrl.toString() });
+  }
+
+  for (const requiredArch of WINDOWS_UPDATE_ARCHITECTURES) {
+    if (inventory.get(requiredArch).length !== 1) {
+      throw new Error(`Windows update manifest must contain exactly one ${requiredArch} EXE.`);
+    }
+  }
+  const selected = inventory.get(arch);
+  if (selected.length !== 1) {
+    throw new Error(`Windows update manifest does not uniquely select ${arch}.`);
+  }
+  return {
+    arch,
+    artifactUrl: selected[0].artifactUrl,
+    sha512: selected[0].file.sha512,
+    file: selected[0].file,
+  };
+}
+
+export function registerUpdaterIpc({
+  app,
+  ipcMain,
+  getMainWindow,
+  onInstallAndRestart = undefined,
+  onInstallAndRestartFailed = undefined,
+  loadAutoUpdater = () => import("electron-updater"),
+}) {
+  let autoUpdaterPromise = null;
+  let updaterOperation = Promise.resolve();
+  let checkedCandidate = null;
+  let downloadedCandidate = null;
+  let activeDownloadUpdateId = null;
+  let candidateGeneration = 0;
+  let installIntentActive = false;
+  const consumedUpdateIds = new Set();
+
+  function invalidateCandidates() {
+    candidateGeneration += 1;
+    checkedCandidate = null;
+    downloadedCandidate = null;
+    activeDownloadUpdateId = null;
+  }
+
+  function failInstallIntent() {
+    if (!installIntentActive) return;
+    installIntentActive = false;
+    onInstallAndRestartFailed?.();
+  }
 
   function sendToRenderer(channel, data) {
     try {
@@ -298,54 +389,82 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
     }
   }
 
-  async function ensureAutoUpdater() {
-    if (!app.isPackaged) return null;
-    if (autoUpdaterLoaded) return autoUpdaterInstance;
-    autoUpdaterLoaded = true;
-    try {
-      const mod = await import("electron-updater");
-      autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
-      if (autoUpdaterInstance) {
-        autoUpdaterInstance.autoDownload = false;
-        autoUpdaterInstance.autoInstallOnAppQuit = true;
-        // Differential (blockmap) downloads reconstruct the update zip from the
-        // installed app + a diff. On macOS that reconstructed bundle is what
-        // feeds Squirrel's fragile move-based install, and is a common trigger
-        // for the "Failed to copy bundle … no such file" abort. Download the
-        // full zip instead — alpha builds are swapped wholesale anyway.
-        autoUpdaterInstance.disableDifferentialDownload = true;
-        // Make Squirrel.Mac write contents in place rather than moving whole
-        // bundles (see enableSquirrelDirectContentsWrite for why).
-        await enableSquirrelDirectContentsWrite();
-        autoUpdaterInstance.on("error", (err) => {
-          updateDownloaded = false;
-          if (isUnpublishedUpdaterChannelError(err)) {
-            console.info("[updater] no release manifest is published for the selected channel");
-          } else {
-            console.warn("[updater] error", err);
-          }
-        });
-        autoUpdaterInstance.on("update-downloaded", () => {
-          updateDownloaded = true;
-        });
-        // Forward download progress to the renderer so the UI can show
-        // incremental bytes instead of staying stuck at 0.
-        autoUpdaterInstance.on("download-progress", (info) => {
-          sendToRenderer("jugglework:updater:download-progress", {
-            bytesPerSecond: info.bytesPerSecond ?? 0,
-            percent: info.percent ?? 0,
-            transferred: info.transferred ?? 0,
-            total: info.total ?? 0,
-            delta: info.delta ?? 0,
+  function ensureAutoUpdater() {
+    if (!app.isPackaged) return Promise.resolve(null);
+    if (!autoUpdaterPromise) {
+      autoUpdaterPromise = (async () => {
+        try {
+          const mod = await loadAutoUpdater();
+          const autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
+          if (!autoUpdaterInstance) return null;
+          autoUpdaterInstance.autoDownload = false;
+          autoUpdaterInstance.autoInstallOnAppQuit = false;
+          // Differential (blockmap) downloads reconstruct the update zip from the
+          // installed app + a diff. On macOS that reconstructed bundle is what
+          // feeds Squirrel's fragile move-based install, and is a common trigger
+          // for the "Failed to copy bundle … no such file" abort. Download the
+          // full zip instead — alpha builds are swapped wholesale anyway.
+          autoUpdaterInstance.disableDifferentialDownload = true;
+          // Make Squirrel.Mac write contents in place rather than moving whole
+          // bundles (see enableSquirrelDirectContentsWrite for why).
+          await enableSquirrelDirectContentsWrite();
+          autoUpdaterInstance.on("error", (err) => {
+            invalidateCandidates();
+            failInstallIntent();
+            if (isUnpublishedUpdaterChannelError(err)) {
+              console.info("[updater] no release manifest is published for the selected channel");
+            } else {
+              console.warn("[updater] error", err);
+            }
           });
-        });
-        await applyElectronUpdaterFeed(app, autoUpdaterInstance);
-      }
-    } catch (error) {
-      console.warn("[updater] electron-updater not available", error);
-      autoUpdaterInstance = null;
+          // Forward download progress to the renderer so the UI can show
+          // incremental bytes instead of staying stuck at 0.
+          autoUpdaterInstance.on("download-progress", (info) => {
+            sendToRenderer("jugglework:updater:download-progress", {
+              updateId: activeDownloadUpdateId,
+              bytesPerSecond: info.bytesPerSecond ?? 0,
+              percent: info.percent ?? 0,
+              transferred: info.transferred ?? 0,
+              total: info.total ?? 0,
+              delta: info.delta ?? 0,
+            });
+          });
+          await applyElectronUpdaterFeed(app, autoUpdaterInstance);
+          autoUpdaterInstance.autoInstallOnAppQuit = false;
+          return autoUpdaterInstance;
+        } catch (error) {
+          console.warn("[updater] electron-updater not available", error);
+          return null;
+        }
+      })();
     }
-    return autoUpdaterInstance;
+    return autoUpdaterPromise;
+  }
+
+  function serializeUpdaterOperation(operation) {
+    const result = updaterOperation.then(operation, operation);
+    updaterOperation = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function requestedUpdateId(value) {
+    return typeof value === "string" && value.trim() ? value : null;
+  }
+
+  function missingUpdateIdResult() {
+    return {
+      ok: false,
+      reason: "A non-empty updateId is required.",
+      code: "missing-update-id",
+    };
+  }
+
+  function staleCandidateResult() {
+    return {
+      ok: false,
+      reason: "Update candidate is stale or no longer available.",
+      code: "stale-update-candidate",
+    };
   }
 
   ipcMain.handle("jugglework:updater:getChannel", async () => {
@@ -353,12 +472,10 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
     return updaterChannelState(app, channel);
   });
 
-  ipcMain.handle("jugglework:updater:setChannel", async (_event, rawChannel) => {
-    const channel = await writeElectronUpdaterChannel(app, rawChannel);
-    checkedUpdateVersion = null;
-    checkedUpdateTargetVersion = null;
-    updateDownloaded = false;
+  ipcMain.handle("jugglework:updater:setChannel", (_event, rawChannel) => serializeUpdaterOperation(async () => {
     const updater = await ensureAutoUpdater();
+    const channel = await writeElectronUpdaterChannel(app, rawChannel);
+    invalidateCandidates();
     if (updater) {
       // A channel change invalidates any previously downloaded update. This
       // also prevents an Alpha build from installing automatically on quit
@@ -367,21 +484,25 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
       return applyElectronUpdaterFeed(app, updater);
     }
     return updaterChannelState(app, channel);
-  });
+  }));
 
-  ipcMain.handle("jugglework:updater:check", async (_event, rawChannel, rawTargetVersion) => {
+  ipcMain.handle("jugglework:updater:check", (_event, rawChannel, rawTargetVersion) => serializeUpdaterOperation(async () => {
+    invalidateCandidates();
+    const operationGeneration = candidateGeneration;
+    const updater = await ensureAutoUpdater();
     if (rawChannel !== undefined) {
       await writeElectronUpdaterChannel(app, rawChannel);
     }
-    const updater = await ensureAutoUpdater();
+    let targetVersion = null;
+    let channelState = null;
     try {
-      const targetVersion = rawTargetVersion === undefined
+      targetVersion = rawTargetVersion === undefined
         ? null
         : normalizeStableTargetVersion(rawTargetVersion);
       if (rawTargetVersion !== undefined && !targetVersion) {
         throw new Error("Target update version must use the stable x.y.z format.");
       }
-      const channelState = updater
+      channelState = updater
         ? await applyElectronUpdaterFeed(app, updater, targetVersion)
         : updaterChannelState(app, await readElectronUpdaterChannel(app), targetVersion);
       if (!updater) return { available: false, reason: "unavailable", ...channelState };
@@ -391,11 +512,35 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
       const currentVersion = resolveAppVersion(app);
       assertTargetUpdateManifestVersion(info?.version, targetVersion);
       const available = Boolean(info?.version && isVersionNewer(info.version, currentVersion));
-      checkedUpdateVersion = available ? info.version : null;
-      checkedUpdateTargetVersion = available ? targetVersion : null;
-      if (!available) updateDownloaded = false;
+      let windowsArtifact = null;
+      if (available && process.platform === "win32") {
+        windowsArtifact = selectWindowsUpdateArtifact(info, process.arch);
+        // NsisUpdater selects the first EXE. Keep only the validated native
+        // entry so electron-updater cannot choose the other architecture.
+        info.files = [windowsArtifact.file];
+        info.path = windowsArtifact.artifactUrl;
+        info.sha512 = windowsArtifact.sha512;
+      }
+      if (candidateGeneration !== operationGeneration) {
+        return { available: false, reason: "Update check was invalidated.", code: "stale-update-candidate" };
+      }
+      checkedCandidate = available
+        ? {
+            updateId: randomUUID(),
+            version: info.version,
+            targetVersion,
+            channel: channelState.channel,
+            feedUrl: channelState.feedUrl,
+            manifestUrl: channelState.manifestUrl,
+            arch: windowsArtifact?.arch ?? process.arch,
+            artifactUrl: windowsArtifact?.artifactUrl ?? null,
+            sha512: windowsArtifact?.sha512 ?? null,
+          }
+        : null;
       return {
         available,
+        updateId: checkedCandidate?.updateId ?? null,
+        candidate: checkedCandidate,
         currentVersion,
         latestVersion: targetVersion ?? info?.version ?? null,
         releaseDate: info?.releaseDate ?? null,
@@ -403,58 +548,92 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
         ...channelState,
       };
     } catch (error) {
-      checkedUpdateVersion = null;
-      checkedUpdateTargetVersion = null;
-      updateDownloaded = false;
+      invalidateCandidates();
+      const channel = await readElectronUpdaterChannel(app);
+      let errorState = channelState;
+      if (!errorState) {
+        try {
+          errorState = updaterChannelState(app, channel, targetVersion);
+        } catch {
+          errorState = updaterChannelState(app, channel);
+        }
+      }
       if (isUnpublishedUpdaterChannelError(error)) {
         return {
           available: false,
+          updateId: null,
+          candidate: null,
           latestVersion: resolveAppVersion(app),
-          ...updaterChannelState(app, await readElectronUpdaterChannel(app)),
+          reason: `Update manifest was not found (404): ${errorState.manifestUrl}`,
+          code: "update-manifest-not-found",
+          statusCode: 404,
+          ...errorState,
         };
       }
       return {
         available: false,
+        updateId: null,
+        candidate: null,
         reason: String(error?.message ?? error),
-        ...updaterChannelState(app, await readElectronUpdaterChannel(app)),
+        ...errorState,
       };
     }
-  });
+  }));
 
-  ipcMain.handle("jugglework:updater:download", async () => {
+  ipcMain.handle("jugglework:updater:download", (_event, rawCandidate) => serializeUpdaterOperation(async () => {
+    const updateId = requestedUpdateId(rawCandidate);
+    if (!updateId) return missingUpdateIdResult();
     const updater = await ensureAutoUpdater();
     if (!updater) return { ok: false, reason: "unavailable" };
+    const candidate = checkedCandidate;
+    if (!candidate || updateId !== candidate.updateId) {
+      return staleCandidateResult();
+    }
+    downloadedCandidate = null;
+    const operationGeneration = candidateGeneration;
     try {
-      await applyElectronUpdaterFeed(app, updater, checkedUpdateTargetVersion);
+      configureElectronUpdaterFeed(updater, candidate);
+      updater.autoInstallOnAppQuit = false;
       const currentVersion = resolveAppVersion(app);
-      if (!checkedUpdateVersion || !isVersionNewer(checkedUpdateVersion, currentVersion)) {
-        const result = await updater.checkForUpdates();
-        const info = result?.updateInfo ?? null;
-        assertTargetUpdateManifestVersion(info?.version, checkedUpdateTargetVersion);
-        checkedUpdateVersion = info?.version && isVersionNewer(info.version, currentVersion)
-          ? info.version
-          : null;
-      }
-      if (!checkedUpdateVersion) {
+      if (!isVersionNewer(candidate.version, currentVersion)) {
+        invalidateCandidates();
         return { ok: false, reason: "No update available." };
       }
       // Clear any stuck ShipIt state from a prior aborted install so this
       // download applies cleanly on quit.
       await cleanStaleUpdaterState(app);
-      updater.autoInstallOnAppQuit = true;
+      activeDownloadUpdateId = candidate.updateId;
       await updater.downloadUpdate();
-      updateDownloaded = true;
-      return { ok: true };
+      if (candidateGeneration !== operationGeneration || checkedCandidate !== candidate) {
+        return staleCandidateResult();
+      }
+      downloadedCandidate = candidate;
+      return { ok: true, updateId: candidate.updateId, candidate };
     } catch (error) {
-      updateDownloaded = false;
+      invalidateCandidates();
       return { ok: false, reason: String(error?.message ?? error) };
+    } finally {
+      activeDownloadUpdateId = null;
+      updater.autoInstallOnAppQuit = false;
     }
-  });
+  }));
 
-  ipcMain.handle("jugglework:updater:installAndRestart", async () => {
-    if (!updateDownloaded) return { ok: false, reason: "update-not-downloaded" };
+  ipcMain.handle("jugglework:updater:installAndRestart", (_event, rawCandidate) => serializeUpdaterOperation(async () => {
+    const updateId = requestedUpdateId(rawCandidate);
+    if (!updateId) return missingUpdateIdResult();
+    if (consumedUpdateIds.has(updateId)) return staleCandidateResult();
+    if (!downloadedCandidate) return { ok: false, reason: "update-not-downloaded" };
+    if (updateId !== downloadedCandidate.updateId) {
+      return staleCandidateResult();
+    }
+    const consumedCandidate = downloadedCandidate;
+    downloadedCandidate = null;
     const updater = await ensureAutoUpdater();
-    if (!updater) return { ok: false, reason: "unavailable" };
+    if (!updater) {
+      downloadedCandidate = consumedCandidate;
+      return { ok: false, reason: "unavailable" };
+    }
+    consumedUpdateIds.add(updateId);
     try {
       // Re-assert the in-place-write default right before the swap; the ShipIt
       // defaults domain may have been wiped when stale state was cleaned.
@@ -463,12 +642,20 @@ export function registerUpdaterIpc({ app, ipcMain, getMainWindow, onInstallAndRe
       // `before-quit`. Tell the desktop shell about the update intent first so
       // close-to-tray does not intercept that native close and leave ShipIt
       // waiting forever for a process that never quits.
-      triggerUpdaterInstall(updater, onInstallAndRestart);
-      return { ok: true };
+      updater.autoInstallOnAppQuit = false;
+      installIntentActive = true;
+      triggerUpdaterInstall(updater, onInstallAndRestart, failInstallIntent);
+      if (!installIntentActive) {
+        return { ok: false, reason: "The native updater failed to start." };
+      }
+      return { ok: true, updateId: consumedCandidate.updateId };
     } catch (error) {
+      consumedUpdateIds.delete(updateId);
+      downloadedCandidate = consumedCandidate;
+      failInstallIntent();
       return { ok: false, reason: String(error?.message ?? error) };
     }
-  });
+  }));
 
   return { ensureAutoUpdater };
 }

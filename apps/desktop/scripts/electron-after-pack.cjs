@@ -16,6 +16,31 @@ const updateFeedByPlatform = {
   win32: "https://downloads.jugglechat.cn/jugglework/releases/stable/windows",
 };
 
+function windowsPublisherNames(environment = process.env) {
+  const raw = String(environment.JUGGLEWORK_WINDOWS_PUBLISHER_NAMES ?? "").trim();
+  if (!raw) return [];
+
+  let values;
+  if (raw.startsWith("[")) {
+    try {
+      values = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`JUGGLEWORK_WINDOWS_PUBLISHER_NAMES must be a JSON array or one publisher name: ${error.message}`);
+    }
+    if (!Array.isArray(values)) {
+      throw new Error("JUGGLEWORK_WINDOWS_PUBLISHER_NAMES must be a JSON array or one publisher name");
+    }
+  } else {
+    values = [raw];
+  }
+
+  if (values.length === 0 || values.some((value) => typeof value !== "string" || !value.trim())) {
+    throw new Error("JUGGLEWORK_WINDOWS_PUBLISHER_NAMES must contain one or more non-empty publisher names");
+  }
+  const normalized = values.map((value) => value.trim());
+  return [...new Set(normalized)];
+}
+
 function normalizeArch(arch) {
   if (typeof arch === "number") {
     // electron-builder's Arch enum: x64 = 1, arm64 = 3.
@@ -75,16 +100,20 @@ function resolvePackagedResourcesPath(context) {
   return path.join(context.appOutDir, "resources");
 }
 
-function writePackagedUpdateConfiguration(context) {
+function writePackagedUpdateConfiguration(context, environment = process.env) {
   const resourcesPath = resolvePackagedResourcesPath(context);
   const url = updateFeedByPlatform[context.electronPlatformName];
   if (!resourcesPath || !url) {
     throw new Error(`Cannot resolve packaged updater configuration for ${context.electronPlatformName || "unknown platform"}`);
   }
   fs.mkdirSync(resourcesPath, { recursive: true });
-  const content = `provider: generic\nurl: ${url}\nupdaterCacheDirName: '@juggleworkdesktop-updater'\n`;
+  const publishers = context.electronPlatformName === "win32" ? windowsPublisherNames(environment) : [];
+  const publisherConfiguration = publishers.length > 0
+    ? `publisherName:\n${publishers.map((name) => `  - ${JSON.stringify(name)}`).join("\n")}\n`
+    : "";
+  const content = `provider: generic\nurl: ${url}\n${publisherConfiguration}updaterCacheDirName: '@juggleworkdesktop-updater'\n`;
   fs.writeFileSync(path.join(resourcesPath, "app-update.yml"), content, { encoding: "utf8", mode: 0o644 });
-  return { provider: "generic", url };
+  return { provider: "generic", url, ...(publishers.length > 0 ? { publisherName: publishers } : {}) };
 }
 
 function readRgbaPngDimensions(filePath) {
@@ -350,3 +379,4 @@ module.exports.verifyPackagedMacTrayResources = verifyPackagedMacTrayResources;
 module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
 module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;
 module.exports.writePackagedUpdateConfiguration = writePackagedUpdateConfiguration;
+module.exports.windowsPublisherNames = windowsPublisherNames;

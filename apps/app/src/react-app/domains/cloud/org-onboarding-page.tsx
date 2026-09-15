@@ -98,6 +98,7 @@ type BrandingRestartState = {
   fingerprint: string;
   reasons: BrandingRestartReason[];
   updateReady: boolean;
+  updateId: string | null;
   warning: string | null;
 };
 
@@ -136,9 +137,10 @@ function onboardingUpdaterBridge(): OnboardingUpdaterBridge | undefined {
 
 async function stageOnboardingUpdate(
   desktopConfig: DenDesktopConfig,
-): Promise<boolean> {
+): Promise<{ updateReady: boolean; updateId: string | null }> {
   const updater = onboardingUpdaterBridge();
-  if (!updater?.getChannel || !updater.check || !updater.download) return false;
+  const notReady = { updateReady: false, updateId: null };
+  if (!updater?.getChannel || !updater.check || !updater.download) return notReady;
 
   const channelState = await updater.getChannel();
   if (
@@ -146,7 +148,7 @@ async function stageOnboardingUpdate(
     !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
   ) {
     await updater.setChannel?.("stable");
-    return false;
+    return notReady;
   }
   let targetVersion: string | undefined;
   if (channelState.channel === "stable") {
@@ -154,22 +156,31 @@ async function stageOnboardingUpdate(
       currentVersion: channelState.currentVersion,
       refreshDesktopConfig: async () => desktopConfig,
     });
-    if (selection?.kind !== "update") return false;
+    if (selection?.kind !== "update") return notReady;
     targetVersion = selection.targetVersion;
   }
 
   const update = await updater.check(channelState.channel, targetVersion);
-  if (!update.available || update.reason) return false;
+  const updateId = typeof update.updateId === "string" && update.updateId.trim()
+    ? update.updateId
+    : null;
+  if (!update.available || update.reason || !updateId) return notReady;
   if (
     channelState.channel === "alpha" &&
     update.latestVersion &&
     !(await isAlphaUpdateAllowed(update.latestVersion, desktopConfig))
   ) {
-    return false;
+    return notReady;
   }
 
-  const download = await updater.download();
-  return download.ok;
+  const download = await updater.download(updateId);
+  const downloadedUpdateId = typeof download.updateId === "string" && download.updateId.trim()
+    ? download.updateId
+    : null;
+  return {
+    updateReady: download.ok && downloadedUpdateId === updateId,
+    updateId: download.ok && downloadedUpdateId === updateId ? updateId : null,
+  };
 }
 
 function subscribeToDenSettings(onStoreChange: () => void) {
@@ -617,14 +628,14 @@ export function ResourceSelectionPage() {
 
       // Staging an update is only worth the wait when a restart is happening
       // anyway; otherwise the background updater picks it up later.
-      let updateReady = false;
+      let stagedUpdate = { updateReady: false, updateId: null as string | null };
       let warning: string | null = null;
       try {
-        updateReady = await stageOnboardingUpdate(desktopConfig);
+        stagedUpdate = await stageOnboardingUpdate(desktopConfig);
       } catch (error) {
         warning = error instanceof Error ? error.message : "The application update could not be prepared.";
       }
-      setBrandingRestart({ fingerprint, reasons, updateReady, warning });
+      setBrandingRestart({ fingerprint, reasons, ...stagedUpdate, warning });
     } catch (error) {
       // Preparation itself failed, so there is no telling what applied. Offer
       // the restart as the recovery path, without recording a fingerprint that
@@ -633,6 +644,7 @@ export function ResourceSelectionPage() {
         fingerprint: workspaceBrandingFingerprint(orgId, {}),
         reasons: [],
         updateReady: false,
+        updateId: null,
         warning: error instanceof Error ? error.message : "Workspace branding could not be prepared.",
       });
     } finally {
@@ -661,8 +673,10 @@ export function ResourceSelectionPage() {
     commitOnboardingSelections();
     markBrandingApplied(brandingRestart.fingerprint);
     window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
-    if (brandingRestart.updateReady) {
-      const result = await onboardingUpdaterBridge()?.installAndRestart?.();
+    if (brandingRestart.updateReady && brandingRestart.updateId) {
+      const result = await onboardingUpdaterBridge()?.installAndRestart?.(
+        brandingRestart.updateId,
+      );
       if (result?.ok) return;
     }
     await relaunchDesktopApp();

@@ -1,21 +1,10 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 
-const [signedArtifactDirArg, distDirArg] = process.argv.slice(2);
-
-if (!signedArtifactDirArg || !distDirArg) {
-  console.error("Usage: node scripts/release/apply-signpath-windows-artifact.mjs <signed-artifact-dir> <dist-dir>");
-  process.exit(2);
-}
-
-const signedArtifactDir = resolve(signedArtifactDirArg);
-const distDir = resolve(distDirArg);
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const desktopRequire = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
 const YAML = desktopRequire("yaml");
 
@@ -32,9 +21,8 @@ function walk(dir) {
 
 function findOne(paths, description) {
   if (paths.length !== 1) {
-    console.error(`Expected exactly one ${description}, found ${paths.length}.`);
-    for (const path of paths) console.error(`- ${path}`);
-    process.exit(1);
+    const matches = paths.map((path) => `- ${path}`).join("\n");
+    throw new Error(`Expected exactly one ${description}, found ${paths.length}.${matches ? `\n${matches}` : ""}`);
   }
   return paths[0];
 }
@@ -43,43 +31,23 @@ function sha512(file) {
   return createHash("sha512").update(readFileSync(file)).digest("base64");
 }
 
-function findAppBuilderPath() {
-  const pnpmDir = join(repoRoot, "node_modules", ".pnpm");
-  if (!existsSync(pnpmDir)) {
-    throw new Error(`Cannot find pnpm store directory: ${pnpmDir}`);
-  }
-
-  for (const entry of readdirSync(pnpmDir)) {
-    if (!entry.startsWith("app-builder-bin@")) continue;
-    const appBuilderPackage = join(pnpmDir, entry, "node_modules", "app-builder-bin", "index.js");
-    if (!existsSync(appBuilderPackage)) continue;
-    const appBuilderRequire = createRequire(appBuilderPackage);
-    const { appBuilderPath } = appBuilderRequire(appBuilderPackage);
-    return appBuilderPath;
-  }
-
-  throw new Error("Cannot find app-builder-bin. Run pnpm install before applying the signed Windows artifact.");
+function loadBuildBlockMap() {
+  const electronBuilderEntry = desktopRequire.resolve("electron-builder");
+  const electronBuilderRequire = createRequire(electronBuilderEntry);
+  return electronBuilderRequire("app-builder-lib/out/targets/blockmap/blockmap.js").buildBlockMap;
 }
 
-function regenerateBlockmap(installerPath) {
+async function regenerateBlockmap(installerPath, buildBlockMap) {
   const blockmapPath = `${installerPath}.blockmap`;
   mkdirSync(dirname(blockmapPath), { recursive: true });
-
-  const result = spawnSync(findAppBuilderPath(), ["blockmap", "--input", installerPath, "--output", blockmapPath], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`app-builder blockmap failed with status ${result.status}`);
-  }
+  rmSync(blockmapPath, { force: true });
+  await buildBlockMap(installerPath, "gzip", blockmapPath);
   if (!existsSync(blockmapPath)) {
-    throw new Error(`app-builder did not create ${blockmapPath}`);
+    throw new Error(`electron-builder did not create ${blockmapPath}`);
   }
 }
 
-function updateLatestYml(installerPath) {
+function updateLatestYml(installerPath, distDir) {
   const latestPath = join(distDir, "latest.yml");
   if (!existsSync(latestPath)) {
     throw new Error(`Missing Windows updater manifest: ${latestPath}`);
@@ -114,26 +82,50 @@ function updateLatestYml(installerPath) {
   writeFileSync(latestPath, YAML.stringify(manifest), "utf8");
 }
 
-if (!existsSync(signedArtifactDir)) {
-  console.error(`Signed artifact directory does not exist: ${signedArtifactDir}`);
-  process.exit(1);
+export async function applySignedWindowsArtifact(signedArtifactDirArg, distDirArg, dependencies = {}) {
+  const signedArtifactDir = resolve(signedArtifactDirArg);
+  const distDir = resolve(distDirArg);
+
+  if (!existsSync(signedArtifactDir)) {
+    throw new Error(`Signed artifact directory does not exist: ${signedArtifactDir}`);
+  }
+  if (!existsSync(distDir)) {
+    throw new Error(`Electron dist directory does not exist: ${distDir}`);
+  }
+  const buildBlockMap = dependencies.buildBlockMap ?? loadBuildBlockMap();
+
+  const signedInstaller = findOne(
+    walk(signedArtifactDir).filter((file) => /^jugglework-win-(x64|arm64)-.+\.exe$/i.test(basename(file))),
+    "signed Windows installer from SignPath",
+  );
+  const distInstaller = findOne(
+    walk(distDir).filter((file) => basename(file) === basename(signedInstaller)),
+    "matching unsigned Windows installer in dist-electron",
+  );
+
+  copyFileSync(signedInstaller, distInstaller);
+  await regenerateBlockmap(distInstaller, buildBlockMap);
+  updateLatestYml(distInstaller, distDir);
+  return distInstaller;
 }
-if (!existsSync(distDir)) {
-  console.error(`Electron dist directory does not exist: ${distDir}`);
-  process.exit(1);
+
+async function main() {
+  const [signedArtifactDirArg, distDirArg] = process.argv.slice(2);
+  if (!signedArtifactDirArg || !distDirArg) {
+    console.error("Usage: node scripts/release/apply-signpath-windows-artifact.mjs <signed-artifact-dir> <dist-dir>");
+    process.exitCode = 2;
+    return;
+  }
+
+  try {
+    const distInstaller = await applySignedWindowsArtifact(signedArtifactDirArg, distDirArg);
+    console.log(`Applied signed Windows installer: ${distInstaller}`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
 }
 
-const signedInstaller = findOne(
-  walk(signedArtifactDir).filter((file) => /^jugglework-win-(x64|arm64)-.+\.exe$/i.test(basename(file))),
-  "signed Windows installer from SignPath",
-);
-const distInstaller = findOne(
-  walk(distDir).filter((file) => basename(file) === basename(signedInstaller)),
-  "matching unsigned Windows installer in dist-electron",
-);
-
-copyFileSync(signedInstaller, distInstaller);
-regenerateBlockmap(distInstaller);
-updateLatestYml(distInstaller);
-
-console.log(`Applied signed Windows installer: ${distInstaller}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main();
+}

@@ -163,11 +163,17 @@ contextBridge.exposeInMainWorld("__JUGGLEWORK_ELECTRON__", {
     check(channel, targetVersion) {
       return ipcRenderer.invoke("jugglework:updater:check", channel, targetVersion);
     },
-    download() {
-      return ipcRenderer.invoke("jugglework:updater:download");
+    download(updateId) {
+      if (typeof updateId !== "string" || !updateId.trim()) {
+        return Promise.resolve({ ok: false, reason: "A non-empty updateId is required.", code: "missing-update-id" });
+      }
+      return ipcRenderer.invoke("jugglework:updater:download", updateId);
     },
-    installAndRestart() {
-      return ipcRenderer.invoke("jugglework:updater:installAndRestart");
+    installAndRestart(updateId) {
+      if (typeof updateId !== "string" || !updateId.trim()) {
+        return Promise.resolve({ ok: false, reason: "A non-empty updateId is required.", code: "missing-update-id" });
+      }
+      return ipcRenderer.invoke("jugglework:updater:installAndRestart", updateId);
     },
     /** Subscribe to incremental download progress from electron-updater. */
     onDownloadProgress(callback) {

@@ -2,7 +2,10 @@ export const CDN_ORIGIN = "https://downloads.jugglechat.cn";
 export const RELEASE_ROOT = "jugglework/releases";
 export const DEFAULT_BUCKET = "juggleim";
 export const SUPPORTED_ARCHITECTURES = ["arm64", "x64", "universal"];
+export const SUPPORTED_PLATFORMS = ["mac", "windows"];
 export const SUPPORTED_CHANNELS = ["stable", "alpha"];
+export const WINDOWS_ARCHITECTURES = ["arm64", "x64"];
+export const WINDOWS_VERSION_FLOOR = "1.2.17";
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const PRERELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)$/;
@@ -57,14 +60,43 @@ export function compareSemver(left, right) {
   return 0;
 }
 
-export function assertPlatform(platform) {
-  if (platform !== "mac") throw new Error(`Unsupported release platform: ${platform || "<empty>"}`);
+export function assertPlatform(platform = "mac") {
+  if (!SUPPORTED_PLATFORMS.includes(platform)) throw new Error(`Unsupported release platform: ${platform || "<empty>"}`);
   return platform;
 }
 
-export function assertArchitecture(arch) {
+export function normalizeReleaseArchitectures(architectures, platform = "mac") {
+  assertPlatform(platform);
+  if (!Array.isArray(architectures) || architectures.length === 0) throw new Error("At least one architecture is required");
+  if (new Set(architectures).size !== architectures.length) throw new Error("Duplicate architectures are not allowed");
+  architectures.forEach((arch) => assertArchitecture(arch, platform));
+  if (platform === "windows") {
+    if (architectures.length !== WINDOWS_ARCHITECTURES.length || WINDOWS_ARCHITECTURES.some((arch) => !architectures.includes(arch))) {
+      throw new Error("Windows releases require exactly arm64 and x64 architectures");
+    }
+    return [...WINDOWS_ARCHITECTURES];
+  }
+  if (architectures.includes("universal") && architectures.length !== 1) {
+    throw new Error("Universal architecture cannot be combined with architecture-specific artifacts");
+  }
+  return [...architectures];
+}
+
+export function assertWindowsReleaseVersion(version) {
+  assertSemverVersion(version);
+  if (compareSemver(version, WINDOWS_VERSION_FLOOR) <= 0) {
+    throw new Error(`Windows release version must be greater than ${WINDOWS_VERSION_FLOOR}`);
+  }
+  return version;
+}
+
+export function assertArchitecture(arch, platform = "mac") {
+  assertPlatform(platform);
   if (!SUPPORTED_ARCHITECTURES.includes(arch)) {
     throw new Error(`Unsupported architecture: ${arch || "<empty>"}`);
+  }
+  if (platform === "windows" && arch === "universal") {
+    throw new Error(`Unsupported architecture for windows: ${arch}`);
   }
   return arch;
 }
@@ -76,28 +108,32 @@ export function assertChannel(channel) {
   return channel;
 }
 
-export function artifactKey(version, arch, name) {
+export function artifactKey(version, arch, name, platform = "mac") {
   assertSemverVersion(version);
-  assertArchitecture(arch);
+  assertPlatform(platform);
+  assertArchitecture(arch, platform);
   if (!name || name !== name.split(/[\\/]/).at(-1) || name.includes("..")) {
     throw new Error(`Invalid artifact name: ${name || "<empty>"}`);
   }
-  return `${RELEASE_ROOT}/v${version}/mac/${arch}/${name}`;
+  return `${RELEASE_ROOT}/v${version}/${platform}/${arch}/${name}`;
 }
 
-export function versionManifestKey(version) {
+export function versionManifestKey(version, platform = "mac") {
   assertSemverVersion(version);
-  return `${RELEASE_ROOT}/v${version}/mac/latest-mac.yml`;
+  assertPlatform(platform);
+  return `${RELEASE_ROOT}/v${version}/${platform}/${platform === "mac" ? "latest-mac.yml" : "latest.yml"}`;
 }
 
-export function channelManifestKey(channel) {
+export function channelManifestKey(channel, platform = "mac") {
   assertChannel(channel);
-  return `${RELEASE_ROOT}/${channel}/mac/latest-mac.yml`;
+  assertPlatform(platform);
+  return `${RELEASE_ROOT}/${channel}/${platform}/${platform === "mac" ? "latest-mac.yml" : "latest.yml"}`;
 }
 
-export function promotionLockKey(channel) {
+export function promotionLockKey(channel, platform = "mac") {
   assertChannel(channel);
-  return `${RELEASE_ROOT}/locks/${channel}-mac.lock`;
+  assertPlatform(platform);
+  return `${RELEASE_ROOT}/locks/${channel}-${platform}.lock`;
 }
 
 export function publicUrl(key) {

@@ -69,3 +69,5 @@ evals/results/
 .playwright-mcp/
 .vscode/
 .opencode
+.github
+.devcontainer

@@ -1,7 +1,7 @@
 import { metadataForBuffer } from "./metadata.mjs";
 import { promotionLockKey } from "./constants.mjs";
 import { readBackDigest, verifyCdnObject } from "./cdn.mjs";
-import { assertPromotionEvidence } from "./evidence.mjs";
+import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
 
 function exactRemote(remote, object) {
   return remote?.size === object.size && remote?.etag === object.etag;
@@ -34,7 +34,11 @@ export async function verifyQiniuObjects(objects, { qiniu }) {
   return checks;
 }
 
-export async function uploadVersion(plan, { qiniu, resume = false, dryRun = false, onEvent = () => {} }) {
+export async function uploadVersion(plan, { qiniu, evidence, resume = false, dryRun = false, onEvent = () => {} }) {
+  if (plan.platform === "windows") {
+    assertEvidenceMatchesPlan(plan, evidence);
+    assertLocalVerification(plan, evidence.localVerification, { stable: false });
+  }
   const binaries = plan.objects;
   const manifest = plan.manifest;
   if (dryRun) {
@@ -93,7 +97,7 @@ export async function promoteChannel(plan, evidence, {
     : null;
   if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
-  const lockKey = promotionLockKey(plan.channel);
+  const lockKey = promotionLockKey(plan.channel, plan.platform);
   if (dryRun) {
     return { dryRun: true, lockKey, channelKey: plan.channelManifest.key, overwrite: true };
   }
@@ -102,16 +106,43 @@ export async function promoteChannel(plan, evidence, {
   if (existingLock) {
     throw new Error(`Promotion lock is held at ${lockKey}; putTime=${existingLock.putTime ?? "unknown"}. Inspect and use audited recover-lock if stale.`);
   }
-  const lockContent = `${JSON.stringify({ version: plan.version, channel: plan.channel, actor, acquiredAt: now().toISOString() })}\n`;
+  if (typeof qiniu.readContent !== "function") throw new Error("Qiniu content read-back operation is unavailable");
+  const previousChannelContent = await qiniu.readContent(plan.channelManifest.key);
+  const expectedPreviousChannelDigest = previousChannelContent === null
+    ? null
+    : metadataForBuffer(previousChannelContent, plan.channelManifest.key).sha256;
+  const lockPayload = {
+    version: plan.version,
+    channel: plan.channel,
+    platform: plan.platform,
+    actor,
+    acquiredAt: now().toISOString(),
+    expectedPreviousChannelDigest,
+    candidateDigest: plan.manifest.sha256,
+  };
+  const lockContent = `${JSON.stringify(lockPayload)}\n`;
   const lockMetadata = metadataForBuffer(lockContent, "promotion.lock");
   let channelMutated = false;
   let channelVerified = false;
+  let lockOwnershipLost = false;
   onEvent({ type: "lock-acquire", key: lockKey });
   await qiniu.uploadContent(lockKey, lockContent, lockMetadata.mime, { overwrite: false });
   try {
     const acquired = await qiniu.stat(lockKey);
     if (!exactRemote(acquired, lockMetadata)) throw new Error(`Promotion lock acquisition could not be verified: ${lockKey}`);
     await verifyQiniuObjects([...plan.objects, plan.manifest], { qiniu });
+    const ownedBeforeOverwrite = await qiniu.stat(lockKey);
+    if (!exactRemote(ownedBeforeOverwrite, lockMetadata)) {
+      lockOwnershipLost = true;
+      throw new Error(`Promotion lock ownership changed before channel overwrite: ${lockKey}`);
+    }
+    const currentChannelContent = await qiniu.readContent(plan.channelManifest.key);
+    const currentChannelDigest = currentChannelContent === null
+      ? null
+      : metadataForBuffer(currentChannelContent, plan.channelManifest.key).sha256;
+    if (currentChannelDigest !== expectedPreviousChannelDigest) {
+      throw new Error(`Channel manifest changed after lock acquisition; refusing overwrite: ${plan.channelManifest.key}`);
+    }
     onEvent({ type: "channel-upload", key: plan.channelManifest.key });
     await qiniu.uploadContent(plan.channelManifest.key, plan.manifest.content, plan.manifest.mime, { overwrite: true });
     channelMutated = true;
@@ -124,9 +155,9 @@ export async function promoteChannel(plan, evidence, {
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
     const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
     channelVerified = true;
-      return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, notarizationException, preCanaryException };
+    return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
   } finally {
-    if (channelMutated && !channelVerified) {
+    if (lockOwnershipLost || (channelMutated && !channelVerified)) {
       onEvent({ type: "lock-retained", key: lockKey });
     } else {
       onEvent({ type: "lock-release", key: lockKey });
@@ -137,16 +168,17 @@ export async function promoteChannel(plan, evidence, {
   }
 }
 
-export async function recoverPromotionLock({ channel, qiniu, reason, actor = "manual", dryRun = false, now = () => new Date(), onAudit = () => {} }) {
+export async function recoverPromotionLock({ channel, platform = "mac", qiniu, reason, actor = "manual", dryRun = false, now = () => new Date(), onAudit = () => {} }) {
   if (!reason || String(reason).trim().length < 10) {
     throw new Error("Lock recovery requires an explicit audited --reason of at least 10 characters");
   }
-  const lockKey = promotionLockKey(channel);
+  const lockKey = promotionLockKey(channel, platform);
   const existing = await qiniu.stat(lockKey);
   if (!existing) throw new Error(`No promotion lock exists at ${lockKey}`);
   const audit = {
     action: "recover-promotion-lock",
     channel,
+    platform,
     lockKey,
     actor,
     reason: String(reason).trim(),

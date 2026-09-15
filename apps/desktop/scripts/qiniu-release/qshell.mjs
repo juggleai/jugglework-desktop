@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -85,6 +85,22 @@ export function createQshellAdapter({ bucket, run = defaultRun, binary = "qshell
       try {
         await writeFile(localPath, content, { mode: 0o600 });
         await this.uploadFile(key, localPath, mime, options);
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+
+    async readContent(key) {
+      const metadata = await this.stat(key);
+      if (!metadata) return null;
+      const directory = await mkdtemp(path.join(os.tmpdir(), "jugglework-qiniu-read-"));
+      const localPath = path.join(directory, "payload");
+      try {
+        const result = await invoke(["get", bucket, key, "--outfile", localPath, "--check-size", "--check-hash"]);
+        if (result.status !== 0) throw new Error(`qshell get failed for ${key}: ${redactCommandOutput(`${result.stdout}\n${result.stderr}`)}`);
+        const content = await readFile(localPath);
+        if (content.length !== metadata.size) throw new Error(`qshell get size mismatch for ${key}`);
+        return content;
       } finally {
         await rm(directory, { recursive: true, force: true });
       }

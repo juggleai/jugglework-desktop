@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { inspectArtifact, metadataForBuffer, qiniuEtagBuffer, QINIU_BLOCK_SIZE } from "./metadata.mjs";
+import { inspectArtifact, metadataForBuffer, mimeTypeForPath, qiniuEtagBuffer, QINIU_BLOCK_SIZE } from "./metadata.mjs";
 
 test("computes standard Qiniu ETags for empty and single-block content", () => {
   assert.equal(qiniuEtagBuffer(Buffer.alloc(0)), "Fto5o-5ea0sNMlW_75VgGJCv2AcJ");
@@ -34,4 +34,9 @@ test("computes file metadata without credential inputs", async (t) => {
   const actual = await inspectArtifact(filePath);
   assert.deepEqual(actual, metadataForBuffer("hello", filePath));
   assert.equal(actual.mime, "application/zip");
+});
+
+test("uses the Windows executable MIME type", () => {
+  assert.equal(mimeTypeForPath("jugglework-win-x64-1.2.17.EXE"), "application/vnd.microsoft.portable-executable");
+  assert.equal(mimeTypeForPath("jugglework-win-x64-1.2.17.exe.blockmap"), "application/octet-stream");
 });
