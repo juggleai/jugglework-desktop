@@ -73,6 +73,8 @@ Stable `1.2.17` MAY use a separately audited one-time exception for notarization
 
 Stable `1.2.18` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for the local macOS canary. Both exceptions SHALL be restricted to exact stable `1.2.18` and SHALL NOT apply to Windows or bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN verification, promotion locking, cache refresh, or public channel read-back.
 
+Exact stable macOS `1.2.18` MAY retain the promoted channel object's observed `Cache-Control: public, max-age=31536000` under a separately audited operator exception. This exception SHALL NOT apply to another version, channel, platform, or object, and SHALL NOT permit different manifest bytes, a missing CDN refresh, a digest mismatch, or an absent public read-back.
+
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -105,6 +107,12 @@ Stable `1.2.18` MAY use separately audited one-time exceptions for notarization,
 - **THEN** tooling accepts a signed candidate only with separate audited notarization and pre-canary reasons scoped to `stable-1.2.18-only`
 - **AND** it still requires every non-Apple and non-canary publication gate
 - **AND** it rejects both exceptions for Windows, every other version, and every other channel
+
+#### Scenario: Explicit 1.2.18 channel-cache exception
+- **WHEN** exact stable macOS `1.2.18` has been promoted with the verified immutable manifest bytes and its mutable object inherits a one-year public cache response header
+- **THEN** an operator MAY explicitly authorize continuing the rollout without changing that header
+- **AND** the system still requires CDN refresh and exact public digest and length read-back
+- **AND** the exception is invalid for every other coordinate
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.

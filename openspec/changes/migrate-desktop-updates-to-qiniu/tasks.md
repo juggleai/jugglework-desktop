@@ -161,8 +161,15 @@
 ## 18. Stable 1.2.18 release authorization (2026-09-15)
 
 - [x] 18.1 Record the operator's correction from `2.1.18` to exact stable `1.2.18` and delete the never-promoted `v2.1.18` Qiniu objects after exact ETag/size verification
-- [x] 18.2 Record the operator's exact authorization for stable macOS arm64 `1.2.18` to proceed without Apple notarization, stapling, Gatekeeper acceptance, or a local macOS canary while preserving Developer ID/Team, hardened runtime, package inventory, integrity, immutable publication, CDN, promotion-lock, cache, and read-back gates
+- [x] 18.2 Record the operator's exact authorization for stable macOS arm64 `1.2.18` to proceed without Apple notarization, stapling, Gatekeeper acceptance, or a local macOS canary while preserving Developer ID/Team, hardened runtime, package inventory, integrity, immutable publication, CDN, promotion-lock, refresh, and read-back gates
 - [x] 18.3 Keep the formal Windows x64/ARM64 release fail-closed without Authenticode, trusted timestamp, dual-architecture inventory, physical canary, cache-metadata, or public read-back evidence
-- [ ] 18.4 Build, verify, immutably publish, and promote macOS arm64 stable `1.2.18` using both exact audited exceptions
+- [x] 18.4 Build, verify, immutably publish, and promote macOS arm64 stable `1.2.18` using the exact notarization and pre-canary exceptions
 - [ ] 18.5 Complete protected SignPath signing, immutable publication, physical x64/ARM64 canaries, cache-metadata verification, and Stable promotion for Windows `1.2.18`
 - [ ] 18.6 Update landing and deploy Den metadata China first, then overseas; advertise and allow exact `1.2.18`
+
+## 19. Stable macOS 1.2.18 rollout evidence (2026-09-15)
+
+- [x] 19.1 Build exact commit `5e1c8ac50b3fdc113167880e795cfb3d6ae331b1` as macOS arm64 `1.2.18` in an isolated clean worktree and verify Developer ID Team `H7PDHSK3C7`, bundle id `com.juggleai.jugglework`, deep/strict signing, hardened runtime, target-only Mach-O inventory, native modules, sidecars, ZIP, DMG, blockmaps, and the Qiniu-only updater feed
+- [x] 19.2 Publish all five immutable `v1.2.18/mac` objects only after absence preflight; verify Qiniu size/ETag plus public HTTPS MIME, length, range, full SHA-256, and full SHA-512. ZIP SHA-256 is `a99bb89e657a443290d26a89746fce8d248139f6fba99d877bb2fd30c8fa081f`; DMG SHA-256 is `da4f9b1643d66efbef5000040b7896ce2094a7dea0ede457c9b0a4eaf0ac701c`
+- [x] 19.3 Promote the exact 706-byte immutable manifest under the stable macOS lock and read it back with SHA-256 `0f98bde210c39e6cd0129fabc93f95adeca16fcc86b79f77e261291d30d96e2c` and Qiniu ETag `Fom96EgoS43jEBWVtqUnNZ5_i84_`; confirm the lock was released and all referenced immutable objects remain available
+- [x] 19.4 Record the operator's post-promotion authorization to retain `Cache-Control: public, max-age=31536000` for exact `stable/mac/latest-mac.yml` version `1.2.18` and continue Den/landing rollout without weakening any other release gate
