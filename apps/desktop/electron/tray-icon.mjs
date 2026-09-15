@@ -3,6 +3,7 @@ import path from "node:path";
 
 export const MACOS_TRAY_TEMPLATE_FILENAME = "juggleworkTemplate.png";
 export const MACOS_TRAY_TEMPLATE_RETINA_FILENAME = "juggleworkTemplate@2x.png";
+export const MACOS_TRAY_ICON_SIZE = 32;
 
 /**
  * Resolve the macOS menu-bar template image in both packaged and source runs.
@@ -38,7 +39,13 @@ export function createPlatformTrayIconImage({
   if (platform !== "darwin") return brandImage ?? appImage;
   const iconPath = resolveMacTrayTemplatePath({ resourcesPath, moduleDirectory, exists });
   if (!iconPath) return null;
-  const image = nativeImage.createFromPath(iconPath);
+  const sourceImage = nativeImage.createFromPath(iconPath);
+  if (!sourceImage || sourceImage.isEmpty()) return null;
+  const image = sourceImage.resize({
+    width: MACOS_TRAY_ICON_SIZE,
+    height: MACOS_TRAY_ICON_SIZE,
+    quality: "best",
+  });
   if (!image || image.isEmpty()) return null;
   image.setTemplateImage(true);
   return image;

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import path from "node:path";
 
 import {
+  MACOS_TRAY_ICON_SIZE,
   MACOS_TRAY_TEMPLATE_FILENAME,
   createPlatformTrayIconImage,
   resolveMacTrayTemplatePath,
@@ -31,29 +32,42 @@ describe("tray icon image", () => {
   it("marks the macOS image as a Template Image", () => {
     let template = false;
     let loadedPath = null;
-    const image = {
+    let resizeOptions = null;
+    const resizedImage = {
       isEmpty: () => false,
       setTemplateImage(value) { template = value; },
+    };
+    const sourceImage = {
+      isEmpty: () => false,
+      resize(options) {
+        resizeOptions = options;
+        return resizedImage;
+      },
     };
     const result = createPlatformTrayIconImage({
       platform: "darwin",
       nativeImage: {
         createFromPath(candidate) {
           loadedPath = candidate;
-          return image;
+          return sourceImage;
         },
       },
       resourcesPath: "/bundle",
       moduleDirectory: "/repo/electron",
       exists: () => true,
     });
-    assert.equal(result, image);
+    assert.equal(result, resizedImage);
     assert.equal(loadedPath, path.join("/bundle", "tray", MACOS_TRAY_TEMPLATE_FILENAME));
+    assert.deepEqual(resizeOptions, {
+      width: MACOS_TRAY_ICON_SIZE,
+      height: MACOS_TRAY_ICON_SIZE,
+      quality: "best",
+    });
     assert.equal(template, true);
   });
 
   it("fails closed when the macOS resource is missing or empty", () => {
-    const nativeImage = { createFromPath: () => ({ isEmpty: () => true, setTemplateImage() {} }) };
+    const nativeImage = { createFromPath: () => ({ isEmpty: () => true, resize() {}, setTemplateImage() {} }) };
     assert.equal(createPlatformTrayIconImage({
       platform: "darwin", nativeImage, resourcesPath: "/missing", moduleDirectory: "/missing", exists: () => false,
     }), null);
