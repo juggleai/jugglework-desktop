@@ -165,7 +165,7 @@
 - [x] 18.3 Keep the formal Windows x64/ARM64 release fail-closed without Authenticode, trusted timestamp, dual-architecture inventory, physical canary, cache-metadata, or public read-back evidence
 - [x] 18.4 Build, verify, immutably publish, and promote macOS arm64 stable `1.2.18` using the exact notarization and pre-canary exceptions
 - [ ] 18.5 Complete protected SignPath signing, immutable publication, physical x64/ARM64 canaries, cache-metadata verification, and Stable promotion for Windows `1.2.18`
-- [ ] 18.6 Update landing and deploy Den metadata China first, then overseas; advertise and allow exact `1.2.18`
+- [x] 18.6 Leave landing on its existing `1.2.17` manual-download URL and expose exact `1.2.18` through configuration-only Den metadata, China first and overseas second
 
 ## 19. Stable macOS 1.2.18 rollout evidence (2026-09-15)
 
@@ -173,3 +173,5 @@
 - [x] 19.2 Publish all five immutable `v1.2.18/mac` objects only after absence preflight; verify Qiniu size/ETag plus public HTTPS MIME, length, range, full SHA-256, and full SHA-512. ZIP SHA-256 is `a99bb89e657a443290d26a89746fce8d248139f6fba99d877bb2fd30c8fa081f`; DMG SHA-256 is `da4f9b1643d66efbef5000040b7896ce2094a7dea0ede457c9b0a4eaf0ac701c`
 - [x] 19.3 Promote the exact 706-byte immutable manifest under the stable macOS lock and read it back with SHA-256 `0f98bde210c39e6cd0129fabc93f95adeca16fcc86b79f77e261291d30d96e2c` and Qiniu ETag `Fom96EgoS43jEBWVtqUnNZ5_i84_`; confirm the lock was released and all referenced immutable objects remain available
 - [x] 19.4 Record the operator's post-promotion authorization to retain `Cache-Control: public, max-age=31536000` for exact `stable/mac/latest-mac.yml` version `1.2.18` and continue Den/landing rollout without weakening any other release gate
+- [x] 19.5 Back up each environment's private configuration independently, add `1.2.18` only to `latestAppVersion`, `publishedDesktopVersions`, and the already-present `allowedDesktopVersions`, and restart the unchanged production binary. China PID changed to `3801769` and overseas PID to `180472`; both retained binary SHA-256 `803431b9b2a768cf658c6110f2961938436396e9a2c92b69d3a9ddb592b7d4b1`, passed local/public health and readiness, runtime-config, console, loopback-only 8021, and post-restart log checks, and publicly returned latest/published `1.2.18`
+- [x] 19.6 Revert the unshipped server landing-link commit with `6442e264aa0cc293f057aa39608a494908f12c6d`, preserving the two existing `1.2.17` macOS DMG links and deploying no new server binary or database migration for this rollout
