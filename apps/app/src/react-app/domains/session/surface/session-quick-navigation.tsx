@@ -10,7 +10,7 @@ const MIN_SCROLL_OVERFLOW_PX = 48;
 const ACTIVE_LINE_VIEWPORT_RATIO = 0.28;
 const ACTIVE_LINE_MAX_PX = 180;
 const PREVIEW_MAX_LENGTH = 240;
-const NAVIGATION_ITEM_PITCH_REM = 1.25;
+const NAVIGATION_ITEM_PITCH_REM = 0.625;
 const MARKER_SCALES_BY_DISTANCE = [2.8, 2.2, 1.6, 1.25] as const;
 
 export type SessionQuickNavigationEntry = {
@@ -236,7 +236,7 @@ export function SessionQuickNavigation({
               <span
                 aria-hidden="true"
                 className={cn(
-                  "block h-0.5 w-2.5 origin-left rounded-full transition-[transform,background-color,opacity] duration-200 ease-out",
+                  "block h-0.5 w-1.5 origin-left rounded-full transition-[transform,background-color,opacity] duration-200 ease-out",
                   active || interacting
                     ? "bg-foreground opacity-100"
                     : "bg-muted-foreground/45",
