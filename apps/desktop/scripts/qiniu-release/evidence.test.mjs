@@ -265,9 +265,23 @@ test("an audited notarization exception is restricted to approved stable version
   });
   const approvedReason = "Operator explicitly authorized one-time unnotarized stable 1.2.17 publication";
   assert.equal(assertPromotionEvidence(approvedPlan, approvedEvidence, { notarizationExceptionReason: approvedReason }).schemaVersion, 2);
+  const approvedMajorPlan = plan("2.1.18");
+  const approvedMajorEvidence = promotionEvidence(approvedMajorPlan);
+  approvedMajorEvidence.localVerification = localVerification(approvedMajorPlan, {
+    releaseState: "candidate",
+    credentialState: "missing",
+    notarization: { status: "unavailable" },
+    staple: { status: "unavailable" },
+    gatekeeper: { status: "unavailable" },
+  });
+  const approvedMajorReason = "Operator explicitly authorized one-time unnotarized stable 2.1.18 publication";
+  assert.equal(assertPromotionEvidence(approvedMajorPlan, approvedMajorEvidence, { notarizationExceptionReason: approvedMajorReason }).schemaVersion, 2);
   const futurePlan = plan("1.2.18");
   const futureEvidence = promotionEvidence(futurePlan);
-  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15, stable 1\.2\.16, or stable 1\.2\.17/);
+  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15, stable 1\.2\.16, stable 1\.2\.17, or stable 2\.1\.18/);
+  const laterMajorPlan = plan("2.1.19");
+  const laterMajorEvidence = promotionEvidence(laterMajorPlan);
+  assert.throws(() => assertPromotionEvidence(laterMajorPlan, laterMajorEvidence, { notarizationExceptionReason: approvedMajorReason }), /restricted to stable/);
   const brokenCanary = structuredClone(evidence);
   brokenCanary.canary.result = "failed";
   assert.throws(() => assertPromotionEvidence(plan(), brokenCanary, { notarizationExceptionReason: reason }), /passed machine-generated/);

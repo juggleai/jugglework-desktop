@@ -420,8 +420,8 @@ export function assertEvidenceMatchesPlan(plan, evidence) {
 }
 
 function assertStableNotarizationException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17"].includes(plan.version)) {
-    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, or stable 1.2.17");
+  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "2.1.18"].includes(plan.version)) {
+    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, or stable 2.1.18");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} notarization exception requires an explicit audited reason`);

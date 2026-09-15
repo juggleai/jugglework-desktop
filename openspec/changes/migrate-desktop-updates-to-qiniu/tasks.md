@@ -158,3 +158,11 @@
 - [ ] 17.17 After both physical canaries and cache-metadata implementation pass, promote and read back `stable/windows/latest.yml` under its independent cooperative lock, then update and verify China Den before overseas Den; leave organization allowlists unchanged unless separately authorized
 - [ ] 17.18 Record non-secret final Windows rollout evidence covering the protected signed CI, local/package gates, immutable Qiniu/CDN bytes, both physical canaries, cache metadata, stable promotion/read-back, and Den rollout; run strict OpenSpec validation and final target diff checks without treating code-only or mocked evidence as rollout proof
 
+## 18. Stable 2.1.18 release authorization (2026-09-15)
+
+- [x] 18.1 Record the operator's exact authorization for stable macOS arm64 `2.1.18` to proceed without Apple notarization, stapling, or Gatekeeper acceptance while preserving Developer ID/Team, hardened runtime, package inventory, integrity, immutable publication, CDN, canary, promotion-lock, cache, and read-back gates
+- [x] 18.2 Record the operator's request to continue the formal Windows x64/ARM64 release without relaxing Authenticode, trusted timestamp, dual-architecture inventory, physical canary, cache-metadata, or public read-back gates
+- [x] 18.3 Record the operator's authorization to add both `2.1.18` and `1.2.18` to the China and overseas Den allowlists, while advertising only the actually published stable `2.1.18` as latest/published
+- [ ] 18.4 Build, verify, immutably publish, canary, and promote macOS arm64 stable `2.1.18`
+- [ ] 18.5 Complete protected SignPath signing, immutable publication, physical x64/ARM64 canaries, cache-metadata verification, and Stable promotion for Windows `2.1.18`
+- [ ] 18.6 Update landing and deploy Den metadata China first, then overseas; verify both allowlists contain `1.2.18` and `2.1.18`
