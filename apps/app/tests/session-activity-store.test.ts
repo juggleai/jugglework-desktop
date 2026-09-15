@@ -19,8 +19,9 @@ function resetStore() {
 describe("session activity reconciliation", () => {
   beforeEach(resetStore);
 
-  test("presents a stalled session with the neutral thinking label", () => {
-    expect(getSessionActivityStatusLabel("stalled")).toBe(getSessionActivityStatusLabel("thinking"));
+  test("presents a stalled session as an authoritative state check", () => {
+    expect(getSessionActivityStatusLabel("stalled")).toBe("No progress — checking task state");
+    expect(getSessionActivityStatusLabel("stalled")).not.toBe(getSessionActivityStatusLabel("thinking"));
   });
 
   test("authoritative workspace snapshots clear a stale running indicator", () => {

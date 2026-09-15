@@ -674,6 +674,7 @@ export default {
   "session.assistant_empty_response": "L'agent n'a rien renvoyé. Réessayez.",
   "session.assistant_responding": "Réponse en cours",
   "session.assistant_thinking": "Réflexion",
+  "session.assistant_stalled": "Aucune progression — vérification de l’état de la tâche",
   "session.todo_progress": "{completed} tâches terminées sur {total}",
   "session.undo_label": "Annuler",
   "session.undo_title": "Annuler le dernier message",

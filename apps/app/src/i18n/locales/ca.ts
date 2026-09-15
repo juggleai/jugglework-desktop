@@ -674,6 +674,7 @@ export default {
   "session.assistant_empty_response": "L'agent no ha respost res. Torna-ho a provar.",
   "session.assistant_responding": "Responent",
   "session.assistant_thinking": "Pensant",
+  "session.assistant_stalled": "Sense progrés — comprovant l’estat de la tasca",
   "session.todo_progress": "{completed} de les tasques {total} completades",
   "session.undo_label": "Revertir",
   "session.undo_title": "Desfer l'últim missatge",

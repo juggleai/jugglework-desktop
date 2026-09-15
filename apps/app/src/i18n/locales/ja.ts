@@ -665,6 +665,7 @@ export default {
   "session.assistant_empty_response": "エージェントは何も返しませんでした。もう一度お試しください。",
   "session.assistant_responding": "応答中",
   "session.assistant_thinking": "考え中",
+  "session.assistant_stalled": "進捗がありません — タスク状態を確認中",
   "session.todo_progress": "{total}件中{completed}件のタスクが完了",
   "session.undo_label": "元に戻す",
   "session.undo_title": "最後のメッセージを元に戻す",

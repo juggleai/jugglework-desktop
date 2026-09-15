@@ -218,6 +218,7 @@ type MountedSessionRunFence = Pick<JuggleWorkSessionRun, "runId" | "generation">
 const mountedSessionRuns = new Map<string, MountedSessionRunFence>();
 const mountedSessionObservationQueues = new Map<string, Promise<void>>();
 const mountedSessionRunRevisions = new Map<string, number>();
+const mountedSessionProgressObservedAt = new Map<string, number>();
 
 function bumpMountedSessionRunRevision(key: string): void {
   mountedSessionRunRevisions.set(key, (mountedSessionRunRevisions.get(key) ?? 0) + 1);
@@ -239,6 +240,7 @@ function rememberMountedSessionRun(key: string, run: MountedSessionRunFence): Mo
 function forgetMountedSessionRun(key: string, runId: string): void {
   if (mountedSessionRuns.get(key)?.runId === runId) {
     mountedSessionRuns.delete(key);
+    mountedSessionProgressObservedAt.delete(key);
     bumpMountedSessionRunRevision(key);
   }
 }
@@ -301,23 +303,43 @@ function semanticQuestionAnswers(
   }));
 }
 
-function sessionRunObservation(raw: unknown): { sessionId: string; status: JuggleWorkSessionRunObservation } | null {
+export function sessionRunObservation(raw: unknown): { sessionId: string; status: JuggleWorkSessionRunObservation } | null {
   if (!raw || typeof raw !== "object") return null;
   const event = "payload" in raw && raw.payload && typeof raw.payload === "object" ? raw.payload : raw;
   if (!("type" in event) || typeof event.type !== "string") return null;
-  const properties = "properties" in event && event.properties && typeof event.properties === "object" ? event.properties : null;
-  if (!properties || !("sessionID" in properties) || typeof properties.sessionID !== "string") return null;
-  if (event.type === "session.idle") return { sessionId: properties.sessionID, status: "idle" };
-  if (event.type === "session.error") return { sessionId: properties.sessionID, status: "failed" };
+  const properties = "properties" in event && event.properties && typeof event.properties === "object"
+    ? event.properties as Record<string, unknown> : null;
+  if (!properties) return null;
+  const nestedInfo = "info" in properties && properties.info && typeof properties.info === "object"
+    ? properties.info as Record<string, unknown> : null;
+  const nestedPart = "part" in properties && properties.part && typeof properties.part === "object"
+    ? properties.part as Record<string, unknown> : null;
+  const sessionId = typeof properties.sessionID === "string"
+    ? properties.sessionID
+    : typeof nestedInfo?.sessionID === "string"
+      ? nestedInfo.sessionID
+      : typeof nestedPart?.sessionID === "string"
+        ? nestedPart.sessionID
+        : null;
+  if (!sessionId) return null;
+  if (event.type === "session.idle") return { sessionId, status: "idle" };
+  if (event.type === "session.error") return { sessionId, status: "failed" };
+  if (
+    event.type === "message.updated" ||
+    event.type === "message.part.updated" ||
+    event.type === "message.part.delta"
+  ) {
+    return { sessionId, status: "running" };
+  }
   if (event.type !== "session.status" || !("status" in properties)) return null;
   const status = properties.status && typeof properties.status === "object" && "type" in properties.status
     ? properties.status.type
     : properties.status;
-  if (status === "busy") return { sessionId: properties.sessionID, status: "running" };
-  if (status === "retry") return { sessionId: properties.sessionID, status: "retrying" };
+  if (status === "busy") return { sessionId, status: "running" };
+  if (status === "retry") return { sessionId, status: "retrying" };
   if (status === "running" || status === "retrying" || status === "waiting" ||
     status === "idle" || status === "completed" || status === "failed" || status === "aborted") {
-    return { sessionId: properties.sessionID, status };
+    return { sessionId, status };
   }
   return null;
 }
@@ -804,6 +826,18 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
     const enqueueMountedSessionObservation = (observation: { sessionId: string; status: JuggleWorkSessionRunObservation }) => {
       const key = sessionRunKey(juggleworkMount, observation.sessionId);
+      if (observation.status === "running") {
+        const timestamp = Date.now();
+        if (timestamp - (mountedSessionProgressObservedAt.get(key) ?? 0) < 1_000) return;
+        mountedSessionProgressObservedAt.set(key, timestamp);
+      } else if (
+        observation.status === "idle" ||
+        observation.status === "completed" ||
+        observation.status === "failed" ||
+        observation.status === "aborted"
+      ) {
+        mountedSessionProgressObservedAt.delete(key);
+      }
       const bindFence = async (): Promise<MountedSessionRunFence | null> => {
         const current = mountedSessionRuns.get(key);
         if (current) return { ...current };

@@ -221,10 +221,26 @@ function mapFileParts(part: FilePart): UIMessage["parts"] {
   return [mapFilePart(part)];
 }
 
-function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
+function mapSnapshotToolParts(part: ToolPart, authoritativeIdle: boolean): UIMessage["parts"] {
   if (part.tool === STRUCTURED_OUTPUT_TOOL) {
     const mapped = parseStructuredOutputUIPart(part);
     return mapped ? [mapped] : [];
+  }
+
+  if (authoritativeIdle && part.state.status !== "completed" && part.state.status !== "error") {
+    const interrupted = parseDynamicToolUIPart({
+      ...part,
+      state: {
+        status: "error",
+        input: part.state.input,
+        error: "Execution ended before this tool returned a result.",
+        time: {
+          start: "time" in part.state && typeof part.state.time?.start === "number" ? part.state.time.start : 0,
+          end: Date.now(),
+        },
+      },
+    });
+    return interrupted ? [interrupted] : [];
   }
 
   const mapped = parseDynamicToolUIPart(part);
@@ -239,6 +255,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
 
 export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMessage[] {
   let pendingCompactionMode: "auto" | "manual" | null = null;
+  const authoritativeIdle = snapshot.status.type === "idle";
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
     const completed = message.info.time && "completed" in message.info.time
@@ -296,7 +313,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
           return mapFileParts(part);
         }
         if (part.type === "tool") {
-          return mapSnapshotToolParts(part);
+          return mapSnapshotToolParts(part, authoritativeIdle);
         }
         if (part.type === "agent") {
           return [{

@@ -33,6 +33,21 @@ export interface SessionMutationIdleReconciliation {
   retryAfterMs: number | null;
 }
 
+export type SessionMutationLifecycleEvent = {
+  event:
+    | "run_reserved"
+    | "run_started"
+    | "progress"
+    | "idle_suspected"
+    | "abort_requested"
+    | "abort_accepted"
+    | "abort_rolled_back"
+    | "start_rolled_back"
+    | "run_terminal";
+  run: ActiveSessionMutation;
+  terminalReason?: SessionMutationTerminalStatus | "dispatch_failed" | null;
+};
+
 export class SessionMutationError extends Error {
   readonly currentRunId: string | null;
 
@@ -62,11 +77,17 @@ function publicRun(run: StoredSessionMutation): ActiveSessionMutation {
 export function createSessionMutationCoordinator(options: {
   randomUUID?: () => string;
   now?: () => number;
+  onLifecycleEvent?: (event: SessionMutationLifecycleEvent) => void;
 } = {}) {
   const randomUUID = options.randomUUID ?? cryptoRandomUUID;
   const now = options.now ?? Date.now;
   const runs = new Map<string, StoredSessionMutation>();
   const generations = new Map<string, number>();
+  const emit = (event: SessionMutationLifecycleEvent) => {
+    try { options.onLifecycleEvent?.(event); } catch {
+      // Diagnostics must never change command execution semantics.
+    }
+  };
 
   function reserveStart(input: {
     workspaceId: string;
@@ -96,6 +117,7 @@ export function createSessionMutationCoordinator(options: {
       authoritativeIdleObservedAt: null,
     };
     runs.set(key, run);
+    emit({ event: "run_reserved", run: publicRun(run) });
     return publicRun(run);
   }
 
@@ -109,6 +131,7 @@ export function createSessionMutationCoordinator(options: {
     if (run.status === "starting") {
       run.status = "running";
       run.updatedAt = now();
+      emit({ event: "run_started", run: publicRun(run) });
     }
     // Idle evidence observed before upstream accepted the start may belong to
     // the previous engine state. Require fresh authoritative samples.
@@ -120,7 +143,9 @@ export function createSessionMutationCoordinator(options: {
     const key = sessionKey(input.workspaceId, input.sessionId);
     const run = runs.get(key);
     if (!run || run.runId !== input.runId) return false;
-    return runs.delete(key);
+    const deleted = runs.delete(key);
+    if (deleted) emit({ event: "start_rolled_back", run: publicRun(run), terminalReason: "dispatch_failed" });
+    return deleted;
   }
 
   function reserveAbort(input: {
@@ -143,6 +168,7 @@ export function createSessionMutationCoordinator(options: {
     run.updatedAt = timestamp;
     run.abortAccepted = false;
     run.authoritativeIdleObservedAt = null;
+    emit({ event: "abort_requested", run: publicRun(run) });
     return { run: publicRun(run), previousStatus };
   }
 
@@ -157,6 +183,7 @@ export function createSessionMutationCoordinator(options: {
       run.abortCommandCorrelationId !== input.abortCommandCorrelationId) return null;
     run.abortAccepted = true;
     run.updatedAt = now();
+    emit({ event: "abort_accepted", run: publicRun(run) });
     return publicRun(run);
   }
 
@@ -175,6 +202,7 @@ export function createSessionMutationCoordinator(options: {
     run.abortRequestedAt = null;
     run.updatedAt = now();
     run.authoritativeIdleObservedAt = null;
+    emit({ event: "abort_rolled_back", run: publicRun(run) });
     return true;
   }
 
@@ -194,15 +222,18 @@ export function createSessionMutationCoordinator(options: {
       const canClear = run.status === "aborting" ? run.abortAccepted : run.observedActive;
       if (!canClear) return { cleared: false, run: publicRun(run), terminalStatus: null };
       runs.delete(key);
+      const terminalReason = run.status === "aborting" ? "aborted" : "completed";
+      emit({ event: "run_terminal", run: publicRun(run), terminalReason });
       return {
         cleared: true,
         run: null,
-        terminalStatus: run.status === "aborting" ? "aborted" : "completed",
+        terminalStatus: terminalReason,
       };
     }
 
     if (input.status === "completed" || input.status === "failed" || input.status === "aborted") {
       runs.delete(key);
+      emit({ event: "run_terminal", run: publicRun(run), terminalReason: input.status });
       return { cleared: true, run: null, terminalStatus: input.status };
     }
 
@@ -215,6 +246,7 @@ export function createSessionMutationCoordinator(options: {
     // Once abort is reserved, ordinary engine activity cannot downgrade it.
     if (run.status !== "aborting" || input.status === "aborting") run.status = input.status;
     run.updatedAt = timestamp;
+    emit({ event: "progress", run: publicRun(run) });
     return { cleared: false, run: publicRun(run), terminalStatus: null };
   }
 
@@ -262,11 +294,13 @@ export function createSessionMutationCoordinator(options: {
         };
       }
       runs.delete(key);
+      emit({ event: "run_terminal", run: publicRun(run), terminalReason: "aborted" });
       return { cleared: true, run: null, terminalStatus: "aborted", retryAfterMs: null };
     }
 
     if (run.observedActive) {
       runs.delete(key);
+      emit({ event: "run_terminal", run: publicRun(run), terminalReason: "completed" });
       return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
     }
 
@@ -274,6 +308,7 @@ export function createSessionMutationCoordinator(options: {
     if (run.authoritativeIdleObservedAt === null) {
       run.authoritativeIdleObservedAt = timestamp;
       run.updatedAt = timestamp;
+      emit({ event: "idle_suspected", run: publicRun(run) });
       return {
         cleared: false,
         run: publicRun(run),
@@ -293,6 +328,7 @@ export function createSessionMutationCoordinator(options: {
     }
 
     runs.delete(key);
+    emit({ event: "run_terminal", run: publicRun(run), terminalReason: "completed" });
     return { cleared: true, run: null, terminalStatus: "completed", retryAfterMs: null };
   }
 

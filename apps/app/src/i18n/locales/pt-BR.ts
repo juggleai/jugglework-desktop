@@ -672,6 +672,7 @@ export default {
   "session.assistant_empty_response": "O agente não respondeu nada. Tente novamente.",
   "session.assistant_responding": "Respondendo",
   "session.assistant_thinking": "Pensando",
+  "session.assistant_stalled": "Sem progresso — verificando o estado da tarefa",
   "session.todo_progress": "{completed} de {total} tarefas concluídas",
   "session.undo_label": "Reverter",
   "session.undo_title": "Desfazer última mensagem",
