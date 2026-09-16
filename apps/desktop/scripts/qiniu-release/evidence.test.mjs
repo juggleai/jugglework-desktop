@@ -299,9 +299,9 @@ test("an audited notarization exception is restricted to approved stable version
   });
   const approvedPatchReason = "Operator explicitly authorized one-time unnotarized stable 1.2.18 publication";
   assert.equal(assertPromotionEvidence(approvedPatchPlan, approvedPatchEvidence, { notarizationExceptionReason: approvedPatchReason }).schemaVersion, 2);
-  const futurePlan = plan("1.2.19");
+  const futurePlan = plan("1.2.20");
   const futureEvidence = promotionEvidence(futurePlan);
-  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15, stable 1\.2\.16, stable 1\.2\.17, or stable 1\.2\.18/);
+  assert.throws(() => assertPromotionEvidence(futurePlan, futureEvidence, { notarizationExceptionReason: reason }), /restricted to stable 1\.2\.15, stable 1\.2\.16, stable 1\.2\.17, stable 1\.2\.18, or stable 1\.2\.19/);
   const laterMajorPlan = plan("2.1.19");
   const laterMajorEvidence = promotionEvidence(laterMajorPlan);
   assert.throws(() => assertPromotionEvidence(laterMajorPlan, laterMajorEvidence, { notarizationExceptionReason: approvedPatchReason }), /restricted to stable/);
@@ -374,9 +374,34 @@ test("stable 1.2.18 accepts both audited macOS exceptions and rejects them elsew
   assert.throws(() => assertPromotionEvidence(releasePlan, evidence, {
     notarizationExceptionReason: notarizationReason,
   }), /Canary schema|machine-generated macOS update canary/);
-  assert.throws(() => assertPromotionEvidence(plan("1.2.19"), promotionEvidence(plan("1.2.19")), {
+  assert.throws(() => assertPromotionEvidence(plan("1.2.20"), promotionEvidence(plan("1.2.20")), {
     preCanaryExceptionReason: preCanaryReason,
-  }), /restricted to stable 1\.2\.16 or stable 1\.2\.18/);
+  }), /restricted to stable 1\.2\.16, stable 1\.2\.18, or stable 1\.2\.19/);
+});
+
+test("stable 1.2.19 accepts both audited macOS exceptions and preserves all other gates", () => {
+  const releasePlan = plan("1.2.19");
+  const evidence = promotionEvidence(releasePlan);
+  evidence.localVerification = localVerification(releasePlan, {
+    releaseState: "candidate",
+    credentialState: "missing",
+    notarization: { status: "unavailable" },
+    staple: { status: "unavailable" },
+    gatekeeper: { status: "unavailable" },
+  });
+  evidence.canary = null;
+  const notarizationReason = "Operator authorized stable macOS 1.2.19 without production notarization for this release only";
+  const preCanaryReason = "Operator authorized stable macOS 1.2.19 without a local installation canary for this release only";
+  assert.equal(assertPromotionEvidence(releasePlan, evidence, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  }).schemaVersion, 2);
+  const wrongTeam = structuredClone(evidence);
+  wrongTeam.localVerification.identity.teamIdentifier = "WRONGTEAM";
+  assert.throws(() => assertPromotionEvidence(releasePlan, wrongTeam, {
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  }), /identities/);
 });
 
 test("accepted notarization without an Apple submission ID cannot authorize stable promotion", () => {

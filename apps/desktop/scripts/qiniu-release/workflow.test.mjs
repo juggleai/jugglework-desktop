@@ -347,6 +347,29 @@ test("records both stable 1.2.18 macOS exceptions with the corrected scope", asy
   assert.deepEqual(result.preCanaryException, { scope: "stable-1.2.18-only", reason: preCanaryReason });
 });
 
+test("records both stable 1.2.19 macOS exceptions with exact release scope", async () => {
+  const plan = fixturePlan("1.2.19");
+  const evidence = verifiedEvidence(plan);
+  evidence.localVerification.releaseState = "candidate";
+  evidence.localVerification.credentialState = "missing";
+  evidence.localVerification.notarization = { status: "unavailable" };
+  evidence.localVerification.staple = { status: "unavailable" };
+  evidence.localVerification.gatekeeper = { status: "unavailable" };
+  evidence.canary = null;
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const notarizationReason = "Operator authorized stable macOS 1.2.19 without production notarization for this release only";
+  const preCanaryReason = "Operator authorized stable macOS 1.2.19 without a local installation canary for this release only";
+  const result = await promoteChannel(plan, evidence, {
+    qiniu: createFakeQiniu(initial),
+    refresh: async () => {},
+    readBack: async () => ({ sha256: plan.manifest.sha256, size: plan.manifest.size }),
+    notarizationExceptionReason: notarizationReason,
+    preCanaryExceptionReason: preCanaryReason,
+  });
+  assert.deepEqual(result.notarizationException, { scope: "stable-1.2.19-only", reason: notarizationReason });
+  assert.deepEqual(result.preCanaryException, { scope: "stable-1.2.19-only", reason: preCanaryReason });
+});
+
 test("failed CDN refresh or read-back fails promotion and retains the lock", async () => {
   const plan = fixturePlan();
   const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));

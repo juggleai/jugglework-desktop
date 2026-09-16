@@ -175,3 +175,13 @@
 - [x] 19.4 Record the operator's post-promotion authorization to retain `Cache-Control: public, max-age=31536000` for exact `stable/mac/latest-mac.yml` version `1.2.18` and continue Den/landing rollout without weakening any other release gate
 - [x] 19.5 Back up each environment's private configuration independently, add `1.2.18` only to `latestAppVersion`, `publishedDesktopVersions`, and the already-present `allowedDesktopVersions`, and restart the unchanged production binary. China PID changed to `3801769` and overseas PID to `180472`; both retained binary SHA-256 `803431b9b2a768cf658c6110f2961938436396e9a2c92b69d3a9ddb592b7d4b1`, passed local/public health and readiness, runtime-config, console, loopback-only 8021, and post-restart log checks, and publicly returned latest/published `1.2.18`
 - [x] 19.6 Revert the unshipped server landing-link commit with `6442e264aa0cc293f057aa39608a494908f12c6d`, preserving the two existing `1.2.17` macOS DMG links and deploying no new server binary or database migration for this rollout
+
+## 20. Stable macOS 1.2.19 release authorization (2026-09-16)
+
+- [x] 20.1 Record exact stable macOS arm64 `1.2.19` scope: signed DMG/ZIP and automatic-update publication only; no Windows work, no landing change, no new Den binary deployment
+- [x] 20.2 Record separate operator authorizations to skip production notarization/stapling/Gatekeeper and the local installation/upgrade canary for `stable-1.2.19-only`, while preserving every unrelated release gate
+- [x] 20.3 Synchronize all three package versions to `1.2.19`, validate release tooling and product typechecks/tests, push dev, and fast-forward main
+- [ ] 20.4 Build exact main commit in an isolated worktree, verify Developer ID/Team, hardened runtime, target architecture, package inventory, ZIP/DMG/blockmaps, and Qiniu-only updater configuration
+- [ ] 20.5 Publish and fully verify all five immutable macOS objects, promote Stable under the macOS lock with controlled cache metadata, refresh CDN, and read back exact public bytes
+- [ ] 20.6 Expose `1.2.19` through configuration-only Den metadata in China first and overseas second; retain the existing landing links and production binaries
+- [ ] 20.7 Record final non-secret artifact, Qiniu/CDN, Stable, Den, Git, and rollback evidence; leave Windows state unchanged

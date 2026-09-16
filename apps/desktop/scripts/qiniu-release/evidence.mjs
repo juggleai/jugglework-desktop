@@ -438,8 +438,8 @@ export function assertRecordedPromotion(plan, evidence) {
 }
 
 function assertStableNotarizationException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "1.2.18"].includes(plan.version)) {
-    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, or stable 1.2.18");
+  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "1.2.18", "1.2.19"].includes(plan.version)) {
+    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, stable 1.2.18, or stable 1.2.19");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} notarization exception requires an explicit audited reason`);
@@ -448,8 +448,8 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16 or stable 1.2.18");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, or stable 1.2.19");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception requires an explicit audited reason`);
