@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CANARY_SCHEMA, EXPECTED_BUNDLE_ID, EXPECTED_TEAM_ID, LOCAL_VERIFICATION_SCHEMA, createEvidence, withEvidenceResults } from "./evidence.mjs";
-import { publicUrl } from "./constants.mjs";
+import { CHANNEL_MANIFEST_CACHE_CONTROL, publicUrl } from "./constants.mjs";
 import { metadataForBuffer } from "./metadata.mjs";
 import { preflightImmutable, promoteChannel, recoverPromotionLock, uploadVersion, verifyCdn } from "./workflow.mjs";
 
@@ -31,6 +31,7 @@ function fixturePlan(version = "1.2.15") {
 function createFakeQiniu(initial = new Map()) {
   const state = new Map(initial);
   const calls = [];
+  let putTime = 1_000;
   return {
     state, calls,
     async stat(key) { calls.push(["stat", key]); return state.get(key) ?? null; },
@@ -41,7 +42,16 @@ function createFakeQiniu(initial = new Map()) {
     },
     async uploadContent(key, content, mime, options) {
       calls.push(["uploadContent", key, content, mime, options]);
-      state.set(key, metadataForBuffer(content, key));
+      putTime += 1;
+      state.set(key, { ...metadataForBuffer(content, key), putTime: String(putTime) });
+    },
+    async setCacheControl(key, cacheControl, expected) {
+      calls.push(["setCacheControl", key, cacheControl, expected]);
+      const existing = state.get(key);
+      if (!existing || existing.size !== expected.size || existing.etag !== expected.etag || existing.putTime !== expected.putTime) throw new Error("conditional metadata mismatch");
+      const updated = { ...existing, cacheControl };
+      state.set(key, updated);
+      return updated;
     },
     async readContent(key) {
       calls.push(["readContent", key]);
@@ -193,18 +203,31 @@ test("missing machine verification or canary makes no Qiniu calls", async () => 
   }
 });
 
-test("promotion order is lock, verification, overwrite, refresh, read-back, unlock", async () => {
+test("promotion order is lock, verification, overwrite, cache metadata, refresh, read-back, unlock", async () => {
   const plan = fixturePlan();
   const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
   const qiniu = createFakeQiniu(initial);
   const events = [];
   const readBackCalls = [];
-  await promoteChannel(plan, verifiedEvidence(plan), {
+  const result = await promoteChannel(plan, verifiedEvidence(plan), {
     qiniu, refresh: async () => {}, readBack: async (...args) => { readBackCalls.push(args); return { converged: true }; }, onEvent: (event) => events.push(event.type),
   });
-  assert.deepEqual(events, ["lock-acquire", "channel-upload", "cdn-refresh", "channel-readback", "lock-release"]);
+  assert.deepEqual(events, ["lock-acquire", "channel-upload", "channel-cache-control", "cdn-refresh", "channel-readback", "lock-release"]);
   assert.equal(readBackCalls[0][2].expectedSize, plan.manifest.size);
   assert.deepEqual(qiniu.calls.find((call) => call[0] === "uploadContent" && call[1] === plan.channelManifest.key)[4], { overwrite: true });
+  assert.deepEqual(qiniu.calls.find((call) => call[0] === "setCacheControl"), [
+    "setCacheControl",
+    plan.channelManifest.key,
+    CHANNEL_MANIFEST_CACHE_CONTROL,
+    { size: plan.manifest.size, etag: plan.manifest.etag, putTime: "1002" },
+  ]);
+  assert.deepEqual(result.cacheControl, {
+    key: plan.channelManifest.key,
+    value: CHANNEL_MANIFEST_CACHE_CONTROL,
+    size: plan.manifest.size,
+    etag: plan.manifest.etag,
+    verified: true,
+  });
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
   const lockCall = qiniu.calls.find((call) => call[0] === "uploadContent" && call[1].endsWith(".lock"));
   const lock = JSON.parse(lockCall[2]);
@@ -334,10 +357,83 @@ test("failed CDN refresh or read-back fails promotion and retains the lock", asy
   }
 });
 
+test("failed channel Cache-Control mutation stops before CDN refresh and retains the lock", async () => {
+  const plan = fixturePlan();
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const qiniu = createFakeQiniu(initial);
+  qiniu.setCacheControl = async (...args) => {
+    qiniu.calls.push(["setCacheControl", ...args]);
+    throw new Error("metadata verification failed");
+  };
+  let externalCalls = 0;
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu,
+    refresh: async () => { externalCalls += 1; },
+    readBack: async () => { externalCalls += 1; },
+  }), /metadata verification failed/);
+  assert.equal(externalCalls, 0);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+});
+
+test("failed durable promotion evidence after read-back retains the lock", async () => {
+  const plan = fixturePlan();
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const qiniu = createFakeQiniu(initial);
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu,
+    refresh: async () => {},
+    readBack: async () => ({ converged: true, sha256: plan.manifest.sha256, size: plan.manifest.size, checkedAt: "2026-09-08T03:30:00.000Z" }),
+    onPromotionVerified: async () => { throw new Error("evidence persistence failed"); },
+  }), /evidence persistence failed/);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+});
+
+test("indeterminate channel upload failure retains the lock", async () => {
+  const plan = fixturePlan();
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const qiniu = createFakeQiniu(initial);
+  const originalUpload = qiniu.uploadContent;
+  qiniu.uploadContent = async (key, ...args) => {
+    await originalUpload.call(qiniu, key, ...args);
+    if (key === plan.channelManifest.key) throw new Error("upload response lost");
+  };
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu,
+    refresh: async () => {},
+    readBack: async () => ({}),
+  }), /upload response lost/);
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), true);
+  assert.equal(qiniu.state.has(plan.channelManifest.key), true);
+});
+
 test("promotion fails clearly when cache refresh is unavailable", async () => {
   const plan = fixturePlan();
   const qiniu = createFakeQiniu();
   await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), { qiniu, readBack: async () => ({}) }), /refresh operation is unavailable/);
+  assert.deepEqual(qiniu.calls, []);
+});
+
+test("promotion fails before Qiniu calls when cache metadata management is unavailable", async () => {
+  const plan = fixturePlan();
+  const qiniu = createFakeQiniu();
+  delete qiniu.setCacheControl;
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu,
+    refresh: async () => {},
+    readBack: async () => ({}),
+  }), /Cache-Control metadata operation is unavailable/);
+  assert.deepEqual(qiniu.calls, []);
+});
+
+test("cache metadata preflight fails before acquiring the promotion lock", async () => {
+  const plan = fixturePlan();
+  const qiniu = createFakeQiniu();
+  qiniu.prepareCacheControl = async () => { throw new Error("metadata credentials missing"); };
+  await assert.rejects(promoteChannel(plan, verifiedEvidence(plan), {
+    qiniu,
+    refresh: async () => {},
+    readBack: async () => ({}),
+  }), /metadata credentials missing/);
   assert.deepEqual(qiniu.calls, []);
 });
 
@@ -348,7 +444,14 @@ test("dry runs cause no Qiniu, refresh, or read-back mutation", async () => {
   const refresh = async () => { externalCalls += 1; };
   const readBack = async () => { externalCalls += 1; };
   assert.equal((await uploadVersion(plan, { qiniu, dryRun: true })).dryRun, true);
-  assert.equal((await promoteChannel(plan, verifiedEvidence(plan), { qiniu, refresh, readBack, dryRun: true })).dryRun, true);
+  const promotion = await promoteChannel(plan, verifiedEvidence(plan), { qiniu, refresh, readBack, dryRun: true });
+  assert.deepEqual(promotion.cacheControl, {
+    conditional: true,
+    value: CHANNEL_MANIFEST_CACHE_CONTROL,
+    verifiedBeforeRefresh: true,
+  });
+  assert.equal(promotion.refreshUrl, plan.channelManifest.url);
+  assert.deepEqual(promotion.readBack, { sha256: plan.manifest.sha256, size: plan.manifest.size });
   assert.deepEqual(qiniu.calls, []);
   assert.equal(externalCalls, 0);
 });

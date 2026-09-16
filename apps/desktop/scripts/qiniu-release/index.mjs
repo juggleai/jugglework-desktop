@@ -4,5 +4,6 @@ export * from "./evidence.mjs";
 export * from "./manifest.mjs";
 export * from "./metadata.mjs";
 export * from "./plan.mjs";
+export * from "./qiniu-management.mjs";
 export * from "./qshell.mjs";
 export * from "./workflow.mjs";

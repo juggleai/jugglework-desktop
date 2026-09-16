@@ -66,6 +66,34 @@ test("qshell CDN refresh sends URLs over stdin instead of shell interpolation", 
   assert.equal(calls[0].options.input, "https://downloads.jugglechat.cn/a\nhttps://downloads.jugglechat.cn/b\n");
 });
 
+test("qshell delegates conditional Cache-Control changes to the management client", async () => {
+  const calls = [];
+  const qiniu = createQshellAdapter({
+    bucket: "juggleim",
+    managementClient: {
+      async setCacheControl(...args) {
+        calls.push(args);
+        return { size: 42, etag: "etag", cacheControl: args[1] };
+      },
+    },
+  });
+  const expected = { size: 42, etag: "etag", putTime: "123" };
+  assert.deepEqual(await qiniu.setCacheControl("stable/latest.yml", "no-cache", expected), {
+    size: 42, etag: "etag", cacheControl: "no-cache",
+  });
+  assert.deepEqual(calls, [["stable/latest.yml", "no-cache", expected]]);
+});
+
+test("qshell validates direct metadata credentials during promotion preflight", async () => {
+  const qiniu = createQshellAdapter({
+    bucket: "juggleim",
+    accessKey: "",
+    secretKey: "",
+    fetchImpl: async () => { throw new Error("must not fetch"); },
+  });
+  await assert.rejects(qiniu.prepareCacheControl(), /access key is required/);
+});
+
 test("qshell reads exact channel content through checked get argv", async () => {
   const calls = [];
   const content = Buffer.from("version: 1.2.17\n");

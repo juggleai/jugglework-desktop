@@ -13,6 +13,7 @@ import {
   assertLocalVerification,
   assertNoSecrets,
   assertPromotionEvidence,
+  assertRecordedPromotion,
   createEvidence,
   redactSecrets,
   withEvidenceResults,
@@ -216,6 +217,28 @@ test("creates versioned evidence without converting absent external results into
   assert.equal(evidence.canary, null);
   assert.equal(evidence.workflow.local, null);
   assert.equal(evidence.workflow.immutable, null);
+});
+
+test("recorded promotion is bound to channel bytes, cache metadata, and public read-back", () => {
+  const releasePlan = { ...plan(), channelManifest: { key: "jugglework/releases/stable/mac/latest-mac.yml" } };
+  const evidence = withEvidenceResults(createEvidence({ plan: releasePlan, commit: "abc123", timestamps: { createdAt: "2026-09-08T00:00:00.000Z" } }), {
+    workflow: { promotion: {
+      status: "verified",
+      channelKey: releasePlan.channelManifest.key,
+      cacheControl: {
+        key: releasePlan.channelManifest.key,
+        value: "no-cache, no-store, must-revalidate",
+        size: releasePlan.manifest.size,
+        etag: releasePlan.manifest.etag,
+        verified: true,
+      },
+      readBack: { sha256: releasePlan.manifest.sha256, size: releasePlan.manifest.size, checkedAt: "2026-09-08T00:59:00.000Z" },
+      promotedAt: "2026-09-08T01:00:00.000Z",
+    } },
+  }, "2026-09-08T01:00:00.000Z");
+  assert.equal(assertRecordedPromotion(releasePlan, evidence).status, "verified");
+  evidence.workflow.promotion.cacheControl.value = "public, max-age=31536000";
+  assert.throws(() => assertRecordedPromotion(releasePlan, evidence), /Recorded promotion/);
 });
 
 test("stable promotion accepts only exact machine verification and canary contracts", () => {

@@ -229,6 +229,9 @@ jobs:
       - name: Promote serialized Qiniu channel
         if: inputs.promote
         shell: bash
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
         run: |
           set -euo pipefail
           node apps/desktop/scripts/qiniu-release/cli.mjs promote-channel \
@@ -623,6 +626,9 @@ jobs:
       - name: Promote serialized Windows Qiniu channel
         if: inputs.promote
         shell: pwsh
+        env:
+          QINIU_ACCESS_KEY: ${{ secrets.QINIU_ACCESS_KEY }}
+          QINIU_SECRET_KEY: ${{ secrets.QINIU_SECRET_KEY }}
         run: |
           node apps/desktop/scripts/qiniu-release/cli.mjs promote-channel `
             --version "$env:VERSION" --channel "$env:CHANNEL" --platform windows --arch arm64,x64 `

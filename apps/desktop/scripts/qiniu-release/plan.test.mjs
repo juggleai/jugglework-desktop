@@ -47,7 +47,8 @@ test("creates a Windows plan from per-architecture signed staging directories", 
   assert.equal(plan.manifest.path, path.join(dist, `qiniu-v${VERSION}-latest.yml`));
   assert.equal(await readFile(plan.manifest.path, "utf8"), plan.manifest.content);
   assert.doesNotMatch(plan.manifest.content, /^path:|^sha512:/m);
-  assert.equal(plan.actions.at(-5), "acquire promotion lock for stable/windows");
+  assert.equal(plan.actions.at(-6), "acquire promotion lock for stable/windows");
+  assert.equal(plan.actions.at(-4), "conditionally set and verify channel Cache-Control no-cache, no-store, must-revalidate");
 });
 
 test("fails a Windows plan when latest.yml does not match the signed EXE bytes", async (t) => {

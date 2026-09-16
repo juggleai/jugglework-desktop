@@ -6,6 +6,7 @@ export const SUPPORTED_PLATFORMS = ["mac", "windows"];
 export const SUPPORTED_CHANNELS = ["stable", "alpha"];
 export const WINDOWS_ARCHITECTURES = ["arm64", "x64"];
 export const WINDOWS_VERSION_FLOOR = "1.2.17";
+export const CHANNEL_MANIFEST_CACHE_CONTROL = "no-cache, no-store, must-revalidate";
 
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const PRERELEASE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)$/;

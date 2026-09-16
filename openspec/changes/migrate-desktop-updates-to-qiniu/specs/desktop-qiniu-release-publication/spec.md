@@ -124,7 +124,10 @@ Mutable stable/alpha manifests SHALL use short-lived or revalidation-required ca
 #### Scenario: Channel promotion
 - **WHEN** stable or alpha manifest content changes
 - **THEN** the object is updated only after all gates pass
+- **AND** while holding the promotion lock, its cache metadata is conditionally set to `no-cache, no-store, must-revalidate` against the post-upload hash, size, and `putTime`
+- **AND** the object bytes and resulting `cacheControl` are verified before refresh
 - **AND** the CDN cache is refreshed or purged and the public response is read back until the new content is observed
+- **AND** an indeterminate overwrite or failed metadata, read-back, or durable-evidence step retains the lock for audited recovery
 
 ### Requirement: Den version metadata is announced after publication
 Den SHALL NOT advertise a desktop version as published/latest before its Qiniu version feed is complete and a real client canary has installed it.

@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { parse as parseYaml } from "yaml";
 
 import {
+  CHANNEL_MANIFEST_CACHE_CONTROL,
   artifactKey,
   assertChannel,
   assertPlatform,
@@ -115,6 +116,7 @@ export async function createReleasePlan({
       `verify CDN ${manifest.url}`,
       `acquire promotion lock for ${channel}/${platform}`,
       `overwrite channel manifest ${channelManifestKey(channel, platform)}`,
+      `conditionally set and verify channel Cache-Control ${CHANNEL_MANIFEST_CACHE_CONTROL}`,
       `refresh CDN ${publicUrl(channelManifestKey(channel, platform))}`,
       "verify channel digest convergence",
       "release promotion lock",

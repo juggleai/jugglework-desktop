@@ -419,6 +419,24 @@ export function assertEvidenceMatchesPlan(plan, evidence) {
   return evidence;
 }
 
+export function assertRecordedPromotion(plan, evidence) {
+  assertEvidenceMatchesPlan(plan, evidence);
+  const promotion = evidence.workflow?.promotion;
+  if (promotion?.status !== "verified" || promotion.channelKey !== plan.channelManifest.key
+    || promotion.cacheControl?.key !== plan.channelManifest.key
+    || promotion.cacheControl?.value !== "no-cache, no-store, must-revalidate"
+    || promotion.cacheControl?.size !== plan.manifest.size
+    || promotion.cacheControl?.etag !== plan.manifest.etag
+    || promotion.cacheControl?.verified !== true
+    || promotion.readBack?.sha256 !== plan.manifest.sha256
+    || promotion.readBack?.size !== plan.manifest.size) {
+    throw new Error("Recorded promotion does not match the release plan or verified cache metadata");
+  }
+  timestamp(promotion.promotedAt, "Promotion promotedAt");
+  timestamp(promotion.readBack?.checkedAt, "Promotion readBack checkedAt");
+  return promotion;
+}
+
 function assertStableNotarizationException(plan, reason) {
   if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "1.2.18"].includes(plan.version)) {
     throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, or stable 1.2.18");

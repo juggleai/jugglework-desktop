@@ -3,6 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { createQiniuManagementClient } from "./qiniu-management.mjs";
+
 const REDACTED = "[REDACTED]";
 
 export function redactCommandOutput(value) {
@@ -53,15 +55,36 @@ function parseStatOutput(output) {
   }
 }
 
-export function createQshellAdapter({ bucket, run = defaultRun, binary = "qshell" }) {
+export function createQshellAdapter({
+  bucket,
+  run = defaultRun,
+  binary = "qshell",
+  accessKey = process.env.QINIU_ACCESS_KEY,
+  secretKey = process.env.QINIU_SECRET_KEY,
+  fetchImpl = globalThis.fetch,
+  now,
+  managementClient,
+} = {}) {
   if (!bucket) throw new Error("Qiniu bucket is required");
+  let metadataClient = managementClient;
 
   async function invoke(args, options) {
     const result = await run(binary, args, options);
     return { ...result, status: result.status ?? result.code ?? 0 };
   }
 
+  function requireMetadataClient() {
+    if (!metadataClient) {
+      metadataClient = createQiniuManagementClient({ bucket, accessKey, secretKey, fetchImpl, now });
+    }
+    return metadataClient;
+  }
+
   return {
+    async prepareCacheControl() {
+      requireMetadataClient();
+    },
+
     async stat(key) {
       const result = await invoke(["stat", bucket, key]);
       if (result.status === 0) return parseStatOutput(result.stdout);
@@ -109,6 +132,10 @@ export function createQshellAdapter({ bucket, run = defaultRun, binary = "qshell
     async delete(key) {
       const result = await invoke(["delete", bucket, key]);
       if (result.status !== 0) throw new Error(`qshell delete failed for ${key}: ${redactCommandOutput(`${result.stdout}\n${result.stderr}`)}`);
+    },
+
+    async setCacheControl(key, cacheControl, expected) {
+      return requireMetadataClient().setCacheControl(key, cacheControl, expected);
     },
 
     async refresh(urls) {

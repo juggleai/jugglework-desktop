@@ -1,5 +1,5 @@
 import { metadataForBuffer } from "./metadata.mjs";
-import { promotionLockKey } from "./constants.mjs";
+import { CHANNEL_MANIFEST_CACHE_CONTROL, promotionLockKey } from "./constants.mjs";
 import { readBackDigest, verifyCdnObject } from "./cdn.mjs";
 import { assertEvidenceMatchesPlan, assertLocalVerification, assertPromotionEvidence } from "./evidence.mjs";
 
@@ -87,6 +87,7 @@ export async function promoteChannel(plan, evidence, {
   notarizationExceptionReason = "",
   preCanaryExceptionReason = "",
   onEvent = () => {},
+  onPromotionVerified = async () => {},
 } = {}) {
   assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason });
   const notarizationException = notarizationExceptionReason
@@ -97,10 +98,20 @@ export async function promoteChannel(plan, evidence, {
     : null;
   if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
   if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
+  if (typeof qiniu?.setCacheControl !== "function") throw new Error("Qiniu Cache-Control metadata operation is unavailable");
   const lockKey = promotionLockKey(plan.channel, plan.platform);
   if (dryRun) {
-    return { dryRun: true, lockKey, channelKey: plan.channelManifest.key, overwrite: true };
+    return {
+      dryRun: true,
+      lockKey,
+      channelKey: plan.channelManifest.key,
+      overwrite: true,
+      cacheControl: { conditional: true, value: CHANNEL_MANIFEST_CACHE_CONTROL, verifiedBeforeRefresh: true },
+      refreshUrl: plan.channelManifest.url,
+      readBack: { sha256: plan.manifest.sha256, size: plan.manifest.size },
+    };
   }
+  if (typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
 
   const existingLock = await qiniu.stat(lockKey);
   if (existingLock) {
@@ -144,18 +155,36 @@ export async function promoteChannel(plan, evidence, {
       throw new Error(`Channel manifest changed after lock acquisition; refusing overwrite: ${plan.channelManifest.key}`);
     }
     onEvent({ type: "channel-upload", key: plan.channelManifest.key });
-    await qiniu.uploadContent(plan.channelManifest.key, plan.manifest.content, plan.manifest.mime, { overwrite: true });
     channelMutated = true;
+    await qiniu.uploadContent(plan.channelManifest.key, plan.manifest.content, plan.manifest.mime, { overwrite: true });
     const channelRemote = await qiniu.stat(plan.channelManifest.key);
     if (!exactRemote(channelRemote, plan.manifest)) {
       throw new Error(`Qiniu stat mismatch for promoted channel manifest ${plan.channelManifest.key}`);
     }
+    onEvent({ type: "channel-cache-control", key: plan.channelManifest.key, value: CHANNEL_MANIFEST_CACHE_CONTROL });
+    const channelMetadata = await qiniu.setCacheControl(
+      plan.channelManifest.key,
+      CHANNEL_MANIFEST_CACHE_CONTROL,
+      { size: channelRemote.size, etag: channelRemote.etag, putTime: channelRemote.putTime },
+    );
+    if (!exactRemote(channelMetadata, plan.manifest) || channelMetadata.cacheControl !== CHANNEL_MANIFEST_CACHE_CONTROL) {
+      throw new Error(`Qiniu Cache-Control metadata mismatch for promoted channel manifest ${plan.channelManifest.key}`);
+    }
+    const cacheControl = {
+      key: plan.channelManifest.key,
+      value: channelMetadata.cacheControl,
+      size: channelMetadata.size,
+      etag: channelMetadata.etag,
+      verified: true,
+    };
     onEvent({ type: "cdn-refresh", url: plan.channelManifest.url });
     await refresh([plan.channelManifest.url]);
     onEvent({ type: "channel-readback", url: plan.channelManifest.url });
     const readBackResult = await readBack(plan.channelManifest.url, plan.manifest.sha256, { fetchImpl, expectedSize: plan.manifest.size });
+    const result = { lockKey, channelKey: plan.channelManifest.key, cacheControl, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
+    await onPromotionVerified(result);
     channelVerified = true;
-    return { lockKey, channelKey: plan.channelManifest.key, readBack: readBackResult, lock: lockPayload, notarizationException, preCanaryException };
+    return result;
   } finally {
     if (lockOwnershipLost || (channelMutated && !channelVerified)) {
       onEvent({ type: "lock-retained", key: lockKey });

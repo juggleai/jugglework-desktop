@@ -19,6 +19,8 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(qiniuSource, /inputs\.ref/);
     assert.match(qiniuSource, /ref: dev/);
     assert.match(qiniuSource, /promote-channel/);
+    assert.equal((qiniuSource.match(/QINIU_ACCESS_KEY: \$\{\{ secrets\.QINIU_ACCESS_KEY \}\}/g) ?? []).length, 4);
+    assert.equal((qiniuSource.match(/QINIU_SECRET_KEY: \$\{\{ secrets\.QINIU_SECRET_KEY \}\}/g) ?? []).length, 4);
     assert.match(qiniuSource, /verify:mac-package/);
     assert.match(qiniuSource, /jugglework-mac-arm64-\$VERSION\.zip/);
     assert.match(qiniuSource, /qiniu-v\$VERSION-latest-mac\.yml/);

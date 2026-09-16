@@ -16,6 +16,7 @@ import {
   assertEvidenceMatchesPlan,
   assertLocalVerification,
   assertNoSecrets,
+  assertRecordedPromotion,
   createEvidence,
   replaceEvidence,
   withEvidenceResults,
@@ -208,19 +209,23 @@ export async function runCli(argv, {
       notarizationExceptionReason: options.notarizationExceptionReason,
       preCanaryExceptionReason: options.preCanaryExceptionReason,
       now,
+      onPromotionVerified: options.dryRun ? undefined : async (verified) => {
+        const persisted = withEvidenceResults(evidence, {
+          workflow: { promotion: {
+            status: "verified",
+            channelKey: verified.channelKey,
+            cacheControl: verified.cacheControl,
+            readBack: verified.readBack,
+            notarizationException: verified.notarizationException,
+            preCanaryException: verified.preCanaryException,
+            promotedAt: now().toISOString(),
+          } },
+        }, now().toISOString());
+        assertRecordedPromotion(plan, persisted);
+        await updateEvidence(options.evidence, persisted);
+        assertRecordedPromotion(plan, await loadEvidence(options.evidence, read));
+      },
     });
-    if (!options.dryRun) {
-      await updateEvidence(options.evidence, withEvidenceResults(evidence, {
-        workflow: { promotion: {
-          status: "verified",
-          channelKey: result.channelKey,
-          readBack: result.readBack,
-          notarizationException: result.notarizationException,
-          preCanaryException: result.preCanaryException,
-          promotedAt: now().toISOString(),
-        } },
-      }, now().toISOString()));
-    }
     output(result);
     return result;
   }
