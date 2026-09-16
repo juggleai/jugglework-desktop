@@ -64,3 +64,9 @@ test("drops an unknown video protocol while preserving explicit capability", () 
     textToVideo: true,
   })
 })
+
+test("built media generation runtime is importable without TypeScript source loading", async () => {
+  const runtime = await import("@jugglework/types/media-generation")
+  assert.deepEqual(runtime.VIDEO_RESOLUTION_PRESETS, ["480p", "720p", "1080p", "4k"])
+  assert.equal(runtime.parseImageGenerationCapabilities({ textToImage: true })?.textToImage, true)
+})

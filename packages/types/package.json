@@ -48,7 +48,7 @@
     "./media-generation": {
       "types": "./src/media-generation.ts",
       "development": "./src/media-generation.ts",
-      "default": "./src/media-generation.ts"
+      "default": "./dist/media-generation.js"
     },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
@@ -103,7 +103,7 @@
   "scripts": {
     "build": "tsup",
     "build:electron-runtime": "tsup --config tsup.electron.config.ts",
-    "test": "node --test test/*.test.ts",
+    "test": "pnpm build && node --test test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

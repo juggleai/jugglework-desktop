@@ -77,6 +77,8 @@ Exact stable macOS `1.2.18` MAY retain the promoted channel object's observed `C
 
 Exact stable macOS `1.2.19` MAY use separately audited one-time exceptions for notarization, stapling, and Gatekeeper status and for the local installation canary. Both exceptions SHALL be restricted to exact stable macOS `1.2.19`, SHALL NOT apply to Windows, and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, package inventory, artifact integrity, immutable publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
 
+Exact stable macOS arm64 `1.2.20` MAY use separately audited one-time recovery exceptions for notarization, stapling, and Gatekeeper status and for the local installation canary. Both exceptions SHALL be restricted to exact stable macOS arm64 `1.2.20`, SHALL NOT apply to Windows or later versions, and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, artifact integrity, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
+
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -121,6 +123,12 @@ Exact stable macOS `1.2.19` MAY use separately audited one-time exceptions for n
 - **THEN** tooling accepts a signed candidate only with separate audited reasons scoped to `stable-1.2.19-only`
 - **AND** it still requires every signing, package, immutable publication, CDN byte, controlled cache metadata, lock, refresh, and public read-back gate
 - **AND** it rejects the exceptions for Windows, every other version, and every other channel
+
+#### Scenario: Explicit 1.2.20 macOS recovery exceptions
+- **WHEN** an operator authorizes exact stable macOS arm64 `1.2.20` without Apple notarization or a local installation canary
+- **THEN** tooling accepts a signed arm64 candidate only with separate audited reasons scoped to `stable-1.2.20-only`
+- **AND** it still requires packaged runtime-contract, signing, package inventory, immutable publication, CDN byte, controlled cache metadata, lock, refresh, and public read-back gates
+- **AND** it rejects the exceptions for Windows, every other architecture, every other version, and every other channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.

@@ -148,25 +148,23 @@ function normalizeAsarEntries(entries) {
   return entries.map((entry) => entry.replaceAll("\\", "/"));
 }
 
-function verifyCompiledRuntimeContracts(context) {
-  const resourcesPath = resolvePackagedResourcesPath(context);
-  const archivePath = resourcesPath ? path.join(resourcesPath, "app.asar") : null;
-  if (!archivePath || !fs.existsSync(archivePath)) {
-    throw new Error(`Missing packaged app.asar at ${archivePath ?? "unknown path"}`);
-  }
-
+function verifyCompiledRuntimeContractEntries(packageEntries) {
   // @electron/asar builds its listing with path.join(), so Windows returns
   // backslash-delimited entries while the archive itself uses POSIX paths.
   // Normalize before enforcing the cross-platform package contract.
-  const entries = normalizeAsarEntries(asar.listPackage(archivePath));
+  const entries = normalizeAsarEntries(packageEntries);
   const runtimePackageRoot = "/node_modules/@jugglework/types/";
   const compiledContract = "/dist/runtime/desktop-remote-control.js";
   const automationContract = `${runtimePackageRoot}dist/automation.js`;
+  const mediaGenerationContract = `${runtimePackageRoot}dist/media-generation.js`;
   if (!entries.includes(compiledContract)) {
     throw new Error(`Missing compiled Electron runtime contract: ${compiledContract}`);
   }
   if (!entries.includes(automationContract)) {
     throw new Error(`Missing packaged automation runtime contract: ${automationContract}`);
+  }
+  if (!entries.includes(mediaGenerationContract)) {
+    throw new Error(`Missing packaged media-generation runtime contract: ${mediaGenerationContract}`);
   }
 
   const leakedSources = entries.filter((entry) => (
@@ -176,6 +174,15 @@ function verifyCompiledRuntimeContracts(context) {
   if (leakedSources.length > 0) {
     throw new Error(`TypeScript sources leaked into the packaged runtime: ${leakedSources.join(", ")}`);
   }
+}
+
+function verifyCompiledRuntimeContracts(context) {
+  const resourcesPath = resolvePackagedResourcesPath(context);
+  const archivePath = resourcesPath ? path.join(resourcesPath, "app.asar") : null;
+  if (!archivePath || !fs.existsSync(archivePath)) {
+    throw new Error(`Missing packaged app.asar at ${archivePath ?? "unknown path"}`);
+  }
+  verifyCompiledRuntimeContractEntries(asar.listPackage(archivePath));
 }
 
 function verifyBundledUiControlMcp(context) {
@@ -375,6 +382,7 @@ module.exports.pruneBetterSqlitePrebuilds = pruneBetterSqlitePrebuilds;
 module.exports.pruneNodePtyPrebuildPackages = pruneNodePtyPrebuildPackages;
 module.exports.runAfterPack = runAfterPack;
 module.exports.targetTriple = targetTriple;
+module.exports.verifyCompiledRuntimeContractEntries = verifyCompiledRuntimeContractEntries;
 module.exports.verifyPackagedMacTrayResources = verifyPackagedMacTrayResources;
 module.exports.verifyBundledUiControlMcp = verifyBundledUiControlMcp;
 module.exports.verifyBundledUiControlMcpRuntime = verifyBundledUiControlMcpRuntime;

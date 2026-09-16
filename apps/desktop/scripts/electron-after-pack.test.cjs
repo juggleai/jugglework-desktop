@@ -9,6 +9,7 @@ const {
   normalizeAsarEntries,
   runAfterPack,
   targetTriple,
+  verifyCompiledRuntimeContractEntries,
   verifyPackagedMacTrayResources,
   windowsPublisherNames,
   writePackagedUpdateConfiguration,
@@ -42,11 +43,31 @@ test("normalizes Windows ASAR listing separators before contract checks", () => 
     normalizeAsarEntries([
       "\\dist\\runtime\\desktop-remote-control.js",
       "\\node_modules\\@jugglework\\types\\dist\\automation.js",
+      "\\node_modules\\@jugglework\\types\\dist\\media-generation.js",
     ]),
     [
       "/dist/runtime/desktop-remote-control.js",
       "/node_modules/@jugglework/types/dist/automation.js",
+      "/node_modules/@jugglework/types/dist/media-generation.js",
     ],
+  );
+});
+
+test("accepts compiled runtime contracts with Windows ASAR separators", () => {
+  assert.doesNotThrow(() => verifyCompiledRuntimeContractEntries([
+    "\\dist\\runtime\\desktop-remote-control.js",
+    "\\node_modules\\@jugglework\\types\\dist\\automation.js",
+    "\\node_modules\\@jugglework\\types\\dist\\media-generation.js",
+  ]));
+});
+
+test("rejects a package missing the compiled media-generation runtime", () => {
+  assert.throws(
+    () => verifyCompiledRuntimeContractEntries([
+      "/dist/runtime/desktop-remote-control.js",
+      "/node_modules/@jugglework/types/dist/automation.js",
+    ]),
+    /Missing packaged media-generation runtime contract/,
   );
 });
 

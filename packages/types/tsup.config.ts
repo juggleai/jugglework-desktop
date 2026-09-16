@@ -10,6 +10,7 @@ export default defineConfig({
     "jugglework-affordance": "src/jugglework-affordance.ts",
     "jugglework-context": "src/jugglework-context.ts",
     "jugglework-provider": "src/jugglework-provider.ts",
+    "media-generation": "src/media-generation.ts",
     "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
     "den/desktop-policies": "src/den/desktop-policies.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",

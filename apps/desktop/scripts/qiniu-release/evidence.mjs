@@ -438,8 +438,11 @@ export function assertRecordedPromotion(plan, evidence) {
 }
 
 function assertStableNotarizationException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "1.2.18", "1.2.19"].includes(plan.version)) {
-    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, stable 1.2.18, or stable 1.2.19");
+  if (plan.channel !== "stable" || !["1.2.15", "1.2.16", "1.2.17", "1.2.18", "1.2.19", "1.2.20"].includes(plan.version)) {
+    throw new Error("The notarization exception is restricted to stable 1.2.15, stable 1.2.16, stable 1.2.17, stable 1.2.18, stable 1.2.19, or stable 1.2.20");
+  }
+  if (plan.version === "1.2.20" && !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The stable 1.2.20 notarization exception is restricted to macOS arm64");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} notarization exception requires an explicit audited reason`);
@@ -448,8 +451,11 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, or stable 1.2.19");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, or stable 1.2.20");
+  }
+  if (plan.version === "1.2.20" && !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The stable 1.2.20 pre-canary promotion exception is restricted to macOS arm64");
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception requires an explicit audited reason`);
