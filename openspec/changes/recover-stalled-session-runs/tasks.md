@@ -7,3 +7,6 @@
 - [x] Add a content-free persistent lifecycle journal.
 - [x] Integrate start, progress, abort, terminal, and reconciliation events.
 - [x] Run focused app and server tests plus type checks.
+- [x] Propagate recent delegated-child activity to the waiting parent.
+- [x] Replace root-run stall aborts with parent-verified child-only recovery.
+- [x] Add regression coverage for active, stalled, blocked, idle, and mismatched children.

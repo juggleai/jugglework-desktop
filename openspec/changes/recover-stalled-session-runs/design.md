@@ -19,6 +19,23 @@ in an input/running state is projected as an interrupted error part.
 This changes only the presentation projection. Stored OpenCode messages are not
 rewritten, so subsequent runtime upgrades can continue to own their transcript.
 
+## Delegated child recovery
+
+A parent can legitimately produce no text while one or more delegated child
+sessions continue to emit model or tool activity. The watchdog therefore reads
+the child session IDs preserved on in-flight task parts and evaluates each
+child's activity record independently.
+
+Recent child activity refreshes the waiting parent's progress clock. A child is
+eligible for destructive recovery only when the child itself has crossed the
+no-progress threshold and second-stage grace period, is still authoritative
+busy, and is not retrying, compacting, or waiting for user interaction.
+
+Recovery calls a parent-bound endpoint that verifies the child's `parentID`
+before forwarding an abort to that child. It never aborts the root session. If
+child identity or activity is unavailable, the watchdog remains non-destructive
+and relies on snapshot reconciliation.
+
 ## Stream recovery
 
 The first successful event-stream connection uses the initial snapshot already
@@ -35,7 +52,6 @@ replace the in-memory mutation coordinator.
 ## Upstream boundary
 
 Automatically resolving OpenCode's private child-task promise or replaying a
-prompt could duplicate file writes and tool calls. This change therefore stops
-at authoritative terminalization. A future OpenCode integration may add a
-supported child-run cancellation/result API and partial-success continuation.
-
+prompt could duplicate file writes and tool calls. This change uses only the
+public child-session abort operation; OpenCode remains responsible for resolving
+the task tool and continuing the parent with completed sibling results.

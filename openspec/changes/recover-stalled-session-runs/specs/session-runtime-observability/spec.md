@@ -42,3 +42,39 @@ contents, credentials, or model output in that journal.
 - **WHEN** the lifecycle journal is inspected
 - **THEN** it contains the run identity, generation, event names, and timestamps
 - **AND** it contains no prompt, tool input, file content, credential, or model output
+
+### Requirement: Delegated child activity preserves the parent run
+
+While a parent task tool waits for delegated child sessions, recent child model
+or tool activity SHALL count as progress for the parent and SHALL NOT cause the
+root session to be aborted.
+
+#### Scenario: Parent is quiet while a child is active
+
+- **GIVEN** a parent contains an in-flight task tool with a child session ID
+- **AND** the parent has produced no direct output for the stall threshold
+- **AND** the child has recent model or tool activity
+- **WHEN** the stall watchdog runs
+- **THEN** the parent progress clock is refreshed from the child activity
+- **AND** neither the parent nor the child is aborted
+
+### Requirement: Confirmed delegated stalls recover only the child
+
+The watchdog SHALL target only a delegated child whose own no-progress threshold
+and grace period have expired. It SHALL verify the child belongs to the parent
+and SHALL NOT abort the root session.
+
+#### Scenario: One sibling stalls while another completes
+
+- **GIVEN** a parent is waiting for multiple delegated children
+- **AND** one child completed successfully
+- **AND** another verified child remains busy without progress beyond both thresholds
+- **WHEN** recovery runs
+- **THEN** only the stalled child receives an abort request
+- **AND** the parent remains active to consume completed results and the child cancellation
+
+#### Scenario: Child identity or ownership is uncertain
+
+- **GIVEN** an in-flight task lacks a child session ID or names a child owned by another parent
+- **WHEN** recovery runs
+- **THEN** no destructive recovery is performed

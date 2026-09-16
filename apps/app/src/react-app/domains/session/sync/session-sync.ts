@@ -21,6 +21,7 @@ import {
 import type { JuggleWorkServerClient, JuggleWorkSessionSnapshot } from "@/app/lib/jugglework-server";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import {
+  SESSION_STALLED_AFTER_MS,
   useSessionActivityStore,
   type SessionActivityRecord,
 } from "../status/session-activity-store";
@@ -136,6 +137,84 @@ export function shouldRecoverStalledDelegatedTask(input: {
     part.toolName.trim().toLowerCase().replace(/^functions\./, "") === "task" &&
     (part.state === "input-streaming" || part.state === "input-available")
   )));
+}
+
+function inFlightDelegatedTaskChildSessionIds(messages: UIMessage[]): string[] {
+  const childSessionIds = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (
+        part.type !== "dynamic-tool" ||
+        part.toolName.trim().toLowerCase().replace(/^functions\./, "") !== "task" ||
+        (part.state !== "input-streaming" && part.state !== "input-available")
+      ) continue;
+      const opencodeMetadata = part.callProviderMetadata?.opencode;
+      if (!opencodeMetadata || typeof opencodeMetadata !== "object") continue;
+      const toolMetadata = "toolMetadata" in opencodeMetadata ? opencodeMetadata.toolMetadata : undefined;
+      if (!toolMetadata || typeof toolMetadata !== "object" || !("sessionId" in toolMetadata)) continue;
+      const childSessionId = typeof toolMetadata.sessionId === "string" ? toolMetadata.sessionId.trim() : "";
+      if (childSessionId) childSessionIds.add(childSessionId);
+    }
+  }
+  return [...childSessionIds];
+}
+
+export type DelegatedTaskStallRecoveryPlan = {
+  activeChildProgressAt: number | null;
+  stalledChildSessionIds: string[];
+};
+
+/**
+ * A quiet parent is expected while delegated children are working. Recovery
+ * decisions must therefore use each child session's own liveness rather than
+ * treating the parent's lack of text as proof that the entire run is stuck.
+ */
+export function planDelegatedTaskStallRecovery(input: {
+  record: SessionActivityRecord | undefined;
+  messages: UIMessage[];
+  recordsBySessionId: Record<string, SessionActivityRecord>;
+  now: number;
+}): DelegatedTaskStallRecoveryPlan {
+  const { record } = input;
+  if (
+    !record?.runActive ||
+    record.stalledAt === null ||
+    record.providerRetry !== null ||
+    record.waitingPermissionIds.length > 0 ||
+    record.waitingQuestionIds.length > 0
+  ) {
+    return { activeChildProgressAt: null, stalledChildSessionIds: [] };
+  }
+
+  const childRecoveryAllowed = shouldRecoverStalledDelegatedTask(input);
+  let activeChildProgressAt: number | null = null;
+  const stalledChildSessionIds: string[] = [];
+  for (const childSessionId of inFlightDelegatedTaskChildSessionIds(input.messages)) {
+    const child = input.recordsBySessionId[childSessionId];
+    // Missing or already-idle child state is not sufficient evidence for a
+    // destructive action. Snapshot reconciliation remains responsible for
+    // terminalizing stale projections in that case.
+    if (!child?.runActive) continue;
+
+    // Runtime-only events include replayed busy/status snapshots, so only
+    // model bytes and tool/message activity may extend the parent's liveness.
+    const childProgressAt = child.lastMeaningfulProgressAt ?? 0;
+    const childBlocked = child.compacting || child.providerRetry !== null ||
+      child.waitingPermissionIds.length > 0 || child.waitingQuestionIds.length > 0;
+    const childStallConfirmed = !childBlocked && child.stalledAt !== null &&
+      input.now - child.stalledAt >= DELEGATED_TASK_STALL_RECOVERY_GRACE_MS;
+
+    if (childStallConfirmed && childRecoveryAllowed) {
+      stalledChildSessionIds.push(childSessionId);
+      continue;
+    }
+
+    if (childProgressAt > 0 && input.now - childProgressAt < SESSION_STALLED_AFTER_MS) {
+      activeChildProgressAt = Math.max(activeChildProgressAt ?? 0, childProgressAt);
+    }
+  }
+
+  return { activeChildProgressAt, stalledChildSessionIds };
 }
 
 const idleStatus: SessionStatus = { type: "idle" };
@@ -1665,29 +1744,46 @@ function startSync(input: SyncOptions) {
     const records = activityStore.recordsByWorkspaceId[input.workspaceId] ?? {};
     const queryClient = getReactQueryClient();
     for (const [sessionId, record] of Object.entries(records)) {
-      if (record.stalledAt !== null && recoveringStalls.get(sessionId) === record.stalledAt) continue;
       const messages = queryClient.getQueryData<UIMessage[]>(transcriptKey(input.workspaceId, sessionId)) ?? [];
-      if (!shouldRecoverStalledDelegatedTask({ record, messages, now: Date.now() })) continue;
-      recoveringStalls.set(sessionId, record.stalledAt!);
-      try {
-        // listActiveSessionRuns performs the server's two-sample authoritative
-        // reconciliation first. Abort only if the exact fenced run is still
-        // active afterwards; otherwise a fresh idle snapshot terminalizes the
-        // stale task projection without sending a destructive command.
-        const activeRuns = await input.interactionClient.listActiveSessionRuns(input.workspaceId);
-        const run = activeRuns.items.find((item) => item.sessionId === sessionId);
-        if (run) {
-          await input.interactionClient.abortSessionRun(input.workspaceId, sessionId, run.runId, {
-            abortCommandCorrelationId: `stalled-task-${crypto.randomUUID()}`,
-          });
-        }
-      } catch {
-        // Keep the suspect state visible and retry after a later watchdog tick.
-        recoveringStalls.delete(sessionId);
-        continue;
+      const plan = planDelegatedTaskStallRecovery({
+        record,
+        messages,
+        recordsBySessionId: records,
+        now: Date.now(),
+      });
+
+      if (plan.activeChildProgressAt !== null) {
+        // Child activity is meaningful parent activity while the task tool is
+        // awaiting that child. This clears the false parent-stalled state
+        // without fabricating progress beyond the child's observed timestamp.
+        activityStore.markProgress(input.workspaceId, sessionId, plan.activeChildProgressAt);
       }
-      void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, sessionId) });
-      void queryClient.invalidateQueries({ queryKey: ["session-active-runs", input.workspaceId] });
+
+      for (const childSessionId of plan.stalledChildSessionIds) {
+        const child = records[childSessionId];
+        if (!child?.stalledAt) continue;
+        const recoveryKey = `${sessionId}\0${childSessionId}`;
+        if (recoveringStalls.get(recoveryKey) === child.stalledAt) continue;
+        recoveringStalls.set(recoveryKey, child.stalledAt);
+        try {
+          // Never abort the root because its model is correctly waiting for a
+          // delegated task. Target only the child whose own liveness window has
+          // expired; OpenCode will return that cancellation to the task tool so
+          // the parent can continue with partial results.
+          await input.interactionClient.abortDelegatedSession(
+            input.workspaceId,
+            sessionId,
+            childSessionId,
+            { abortCommandCorrelationId: `stalled-child-task-${crypto.randomUUID()}` },
+          );
+        } catch {
+          // Keep the suspect state visible and retry after a later watchdog tick.
+          recoveringStalls.delete(recoveryKey);
+          continue;
+        }
+        void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, childSessionId) });
+        void queryClient.invalidateQueries({ queryKey: snapshotKey(input.workspaceId, sessionId) });
+      }
     }
   };
 

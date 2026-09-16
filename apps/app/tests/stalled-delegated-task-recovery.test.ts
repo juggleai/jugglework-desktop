@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { UIMessage } from "ai";
 
-import { shouldRecoverStalledDelegatedTask } from "../src/react-app/domains/session/sync/session-sync";
+import {
+  planDelegatedTaskStallRecovery,
+  shouldRecoverStalledDelegatedTask,
+} from "../src/react-app/domains/session/sync/session-sync";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 
-function taskMessage(state: "input-streaming" | "output-available"): UIMessage {
+function taskMessage(
+  state: "input-streaming" | "output-available",
+  childSessionId: string | null = "child-session",
+): UIMessage {
   return {
     id: "assistant-task",
     role: "assistant",
@@ -15,6 +21,11 @@ function taskMessage(state: "input-streaming" | "output-available"): UIMessage {
       state,
       input: { description: "Review" },
       ...(state === "output-available" ? { output: "done" } : {}),
+      ...(childSessionId ? {
+        callProviderMetadata: {
+          opencode: { toolMetadata: { sessionId: childSessionId, parentSessionId: "session-a" } },
+        },
+      } : {}),
     }],
   };
 }
@@ -60,5 +71,104 @@ describe("stalled delegated task recovery", () => {
       messages: [taskMessage("input-streaming")],
       now: record.stalledAt! + 60_000,
     })).toBeFalse();
+  });
+
+  test("treats recent child activity as parent progress instead of aborting the parent", () => {
+    const record = stalledRecord();
+    // Parent liveness is refreshed immediately; destructive child recovery
+    // still waits for the second-stage grace period.
+    const now = record.stalledAt! + 10_000;
+    const child = {
+      ...record,
+      stalledAt: null,
+      lastMeaningfulProgressAt: now - 1_000,
+      lastRuntimeEventAt: now - 500,
+    };
+
+    expect(planDelegatedTaskStallRecovery({
+      record,
+      messages: [taskMessage("input-streaming")],
+      recordsBySessionId: { "child-session": child },
+      now,
+    })).toEqual({
+      activeChildProgressAt: now - 1_000,
+      stalledChildSessionIds: [],
+    });
+  });
+
+  test("keeps the parent alive at the legacy six-minute abort point when the child just streamed", () => {
+    const record = stalledRecord();
+    const now = record.stalledAt! + 60_000;
+    const child = {
+      ...record,
+      stalledAt: null,
+      lastMeaningfulProgressAt: now - 1_000,
+      lastRuntimeEventAt: now - 1_000,
+    };
+
+    expect(shouldRecoverStalledDelegatedTask({
+      record,
+      messages: [taskMessage("input-streaming")],
+      now,
+    })).toBeTrue();
+    expect(planDelegatedTaskStallRecovery({
+      record,
+      messages: [taskMessage("input-streaming")],
+      recordsBySessionId: { "child-session": child },
+      now,
+    })).toEqual({
+      activeChildProgressAt: now - 1_000,
+      stalledChildSessionIds: [],
+    });
+  });
+
+  test("targets only a child whose own stall grace period expired", () => {
+    const record = stalledRecord();
+    const now = record.stalledAt! + 60_000;
+    const stalledChild = {
+      ...record,
+      stalledAt: now - 60_000,
+      lastMeaningfulProgressAt: now - 6 * 60_000,
+      lastRuntimeEventAt: now - 6 * 60_000,
+    };
+
+    expect(planDelegatedTaskStallRecovery({
+      record,
+      messages: [taskMessage("input-streaming")],
+      recordsBySessionId: { "child-session": stalledChild },
+      now,
+    })).toEqual({
+      activeChildProgressAt: null,
+      stalledChildSessionIds: ["child-session"],
+    });
+  });
+
+  test("does not perform destructive recovery without authoritative child metadata", () => {
+    const record = stalledRecord();
+    const now = record.stalledAt! + 60_000;
+
+    expect(planDelegatedTaskStallRecovery({
+      record,
+      messages: [taskMessage("input-streaming", null)],
+      recordsBySessionId: {},
+      now,
+    })).toEqual({ activeChildProgressAt: null, stalledChildSessionIds: [] });
+  });
+
+  test("does not abort a stalled child while it is waiting for approval", () => {
+    const record = stalledRecord();
+    const now = record.stalledAt! + 60_000;
+    const waitingChild = {
+      ...record,
+      stalledAt: now - 60_000,
+      waitingPermissionIds: ["permission-a"],
+    };
+
+    expect(planDelegatedTaskStallRecovery({
+      record,
+      messages: [taskMessage("input-streaming")],
+      recordsBySessionId: { "child-session": waitingChild },
+      now,
+    }).stalledChildSessionIds).toEqual([]);
   });
 });

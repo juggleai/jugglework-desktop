@@ -757,6 +757,49 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     }
   }
 
+  async function abortDelegatedSession(
+    ctx: RequestContext,
+    input: {
+      parentSessionId: string;
+      childSessionId: string;
+      abortCommandCorrelationId: string | null;
+    },
+  ) {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const child = await readWorkspaceSession(workspace, input.childSessionId);
+    if (child.parentID !== input.parentSessionId) {
+      throw new ApiError(409, "delegated_session_parent_mismatch", "Delegated session does not belong to the parent session", {
+        parentSessionId: input.parentSessionId,
+        childSessionId: input.childSessionId,
+      });
+    }
+
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const statuses = unwrapOpencodeResult(await opencode.session.status(), "/session/status");
+    const childStatus = statuses[input.childSessionId];
+    if (!childStatus || childStatus.type === "idle") {
+      return jsonResponse({
+        childSessionId: input.childSessionId,
+        abortRequested: false,
+        status: "idle",
+        abortCommandCorrelationId: input.abortCommandCorrelationId,
+      });
+    }
+
+    const abortRequested = await dispatchSessionAbort(config, workspace, input.childSessionId);
+    if (!abortRequested) {
+      throw new ApiError(502, "opencode_abort_not_accepted", "OpenCode did not accept the delegated session abort request");
+    }
+    return jsonResponse({
+      childSessionId: input.childSessionId,
+      abortRequested: true,
+      status: "aborting",
+      abortCommandCorrelationId: input.abortCommandCorrelationId,
+    }, 202);
+  }
+
   async function observeSessionRun(
     ctx: RequestContext,
     input: { sessionId: string; runId: string; status: SessionMutationObservationStatus },
@@ -816,6 +859,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const runId = parseRunIdentifier(ctx.params.runId, "runId");
     const body = parseRunBody(abortRunBodySchema, await readJsonBody(ctx.request));
     return abortSessionRun(ctx, { sessionId, runId, ...body });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:parentSessionId/delegated-sessions/:childSessionId/abort", "client", async (ctx) => {
+    const parentSessionId = parseRunIdentifier(ctx.params.parentSessionId, "parentSessionId");
+    const childSessionId = parseRunIdentifier(ctx.params.childSessionId, "childSessionId");
+    const body = parseRunBody(abortRunBodySchema, await readJsonBody(ctx.request));
+    return abortDelegatedSession(ctx, { parentSessionId, childSessionId, ...body });
   });
 
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/runs/:runId/observations", "client", async (ctx) => {

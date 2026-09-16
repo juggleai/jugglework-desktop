@@ -44,6 +44,7 @@ function startMockOpencode() {
   const statusRequests: string[] = [];
   const disposes: Array<{ directory: string | null }> = [];
   const statuses = new Map<string, unknown>();
+  const sessions = new Map<string, { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }>();
   const heldPrompts = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldMessageIds = new Map<string, ReturnType<typeof deferred<void>>>();
   const heldAborts = new Map<string, ReturnType<typeof deferred<void>>>();
@@ -61,6 +62,12 @@ function startMockOpencode() {
       if (request.method === "GET" && url.pathname === "/session/status") {
         statusRequests.push(request.headers.get("x-opencode-directory") ?? "");
         return Response.json(Object.fromEntries(statuses));
+      }
+      const sessionMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+      if (request.method === "GET" && sessionMatch) {
+        const sessionId = decodeURIComponent(sessionMatch[1]!);
+        const session = sessions.get(sessionId);
+        return session ? Response.json(session) : Response.json({ code: "not_found" }, { status: 404 });
       }
       if (request.method === "POST" && url.pathname === "/instance/dispose") {
         disposes.push({ directory: url.searchParams.get("directory") });
@@ -143,6 +150,7 @@ function startMockOpencode() {
     statusRequests,
     disposes,
     statuses,
+    sessions,
     heldPrompts,
     heldMessageIds,
     heldAborts,
@@ -706,6 +714,94 @@ describe("authoritative session mutation APIs", () => {
 
     const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
     await expect(active.json()).resolves.toMatchObject({ items: [{ runId: replacementRun.runId }] });
+  });
+
+  test("stalled delegated recovery aborts only a verified busy child session", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set("ses_child", {
+      id: "ses_child",
+      title: "Review implementation",
+      parentID: "ses_parent",
+      directory: harness.root,
+      time: { created: Date.now(), updated: Date.now() },
+    });
+    engine.statuses.set("ses_parent", { type: "busy" });
+    engine.statuses.set("ses_child", { type: "busy" });
+
+    const response = await fetch(
+      `${harness.base}/workspace/ws_1/sessions/ses_parent/delegated-sessions/ses_child/abort`,
+      {
+        method: "POST",
+        headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ abortCommandCorrelationId: "stalled-child-task-test" }),
+      },
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      childSessionId: "ses_child",
+      abortRequested: true,
+      status: "aborting",
+      abortCommandCorrelationId: "stalled-child-task-test",
+    });
+    expect(engine.aborts).toEqual(["ses_child"]);
+  });
+
+  test("delegated recovery refuses a child from a different parent", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set("ses_child", {
+      id: "ses_child",
+      title: "Review implementation",
+      parentID: "ses_other_parent",
+      directory: harness.root,
+      time: { created: Date.now(), updated: Date.now() },
+    });
+    engine.statuses.set("ses_child", { type: "busy" });
+
+    const response = await fetch(
+      `${harness.base}/workspace/ws_1/sessions/ses_parent/delegated-sessions/ses_child/abort`,
+      {
+        method: "POST",
+        headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ abortCommandCorrelationId: "stalled-child-task-test" }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ code: "delegated_session_parent_mismatch" });
+    expect(engine.aborts).toEqual([]);
+  });
+
+  test("delegated recovery leaves an already-idle child untouched", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set("ses_child", {
+      id: "ses_child",
+      title: "Review implementation",
+      parentID: "ses_parent",
+      directory: harness.root,
+      time: { created: Date.now(), updated: Date.now() },
+    });
+    engine.statuses.set("ses_child", { type: "idle" });
+
+    const response = await fetch(
+      `${harness.base}/workspace/ws_1/sessions/ses_parent/delegated-sessions/ses_child/abort`,
+      {
+        method: "POST",
+        headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ abortCommandCorrelationId: "stalled-child-task-test" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      childSessionId: "ses_child",
+      abortRequested: false,
+      status: "idle",
+    });
+    expect(engine.aborts).toEqual([]);
   });
 
   test("delayed abort remains active until accepted and an exact idle observation clears it", async () => {

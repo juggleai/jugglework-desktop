@@ -1987,6 +1987,21 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/abort`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
       ),
+    abortDelegatedSession: (
+      workspaceId: string,
+      parentSessionId: string,
+      childSessionId: string,
+      input: { abortCommandCorrelationId: string | null },
+    ) =>
+      requestJson<{
+        childSessionId: string;
+        abortRequested: boolean;
+        status: "idle" | "aborting";
+      }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(parentSessionId)}/delegated-sessions/${encodeURIComponent(childSessionId)}/abort`,
+        { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionRead },
+      ),
     observeSessionRun: (
       workspaceId: string,
       sessionId: string,
