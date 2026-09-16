@@ -25,7 +25,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteMessagePart} DesktopRemoteMessagePart */
 /** @typedef {import("@jugglework/types/desktop-remote-control").DesktopRemoteInteraction} DesktopRemoteInteraction */
 /** @typedef {{ setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void }} ProjectorTimers */
-/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, sequence: number }} Binding */
+/** @typedef {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion: 1 | 2, connectionGeneration: number, sequenceKey: string, sequence: number }} Binding */
 /** @typedef {{ info: Record<string, any> | null, parts: Map<string, { raw: Record<string, any>, normalized: DesktopRemoteMessagePart }>, pending: Map<string, string>, fullEmitted: boolean }} MessageState */
 /** @typedef {{ messages: Map<string, MessageState>, todos: unknown[], interactions: Map<string, DesktopRemoteInteraction>, durableSequence: number | null }} SessionState */
 /** @typedef {{ key: string, workspaceId: string, sessionId: string, messageId: string, partId: string, occurredAt: string, timer: unknown }} PendingPartEmission */
@@ -96,11 +96,12 @@ function errorMessage(value) {
  *   timers: ProjectorTimers,
  *   getActiveRunId: (input: { workspaceId: string, sessionId: string }) => string | null,
  *   emit: (payload: DesktopRemoteSessionEvent) => boolean,
+ *   sequenceStore?: Map<string, number>,
  * }} options
  */
-export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25, timers, getActiveRunId, emit }) {
+export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25, timers, getActiveRunId, emit, sequenceStore = new Map() }) {
   if (typeof randomUUID !== "function" || typeof now !== "function" || typeof getActiveRunId !== "function" || typeof emit !== "function" ||
-      !timers || typeof timers.setTimeout !== "function" || typeof timers.clearTimeout !== "function" ||
+      !timers || typeof timers.setTimeout !== "function" || typeof timers.clearTimeout !== "function" || !(sequenceStore instanceof Map) ||
       !Number.isFinite(coalesceMs) || coalesceMs < 0) {
     throw new TypeError("Remote session projector dependencies are invalid.");
   }
@@ -173,7 +174,12 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       }
       return;
     }
-    if (emit(parsed.data)) binding.sequence += 1;
+    if (emit(parsed.data)) {
+      binding.sequence += 1;
+      sequenceStore.delete(binding.sequenceKey);
+      sequenceStore.set(binding.sequenceKey, binding.sequence);
+      while (sequenceStore.size > 1_000) sequenceStore.delete(sequenceStore.keys().next().value);
+    }
   }
 
   /** @param {string} workspaceId @param {string} sessionId @param {unknown} data @param {string} occurredAt */
@@ -288,7 +294,7 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
     }
   }
 
-  /** @param {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion?: 1 | 2 }} input */
+  /** @param {{ controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, payloadVersion?: 1 | 2, connectionGeneration?: number }} input */
   function bind(input) {
     if (isRecord(input) && input.payloadVersion === undefined) input = { ...input, payloadVersion: 1 };
     if (stopped || !isRecord(input) || !UUID_PATTERN.test(input.controlSessionId) || !UUID_PATTERN.test(input.deviceId) ||
@@ -304,7 +310,16 @@ export function createRemoteSessionProjector({ randomUUID, now, coalesceMs = 25,
       return true;
     }
     if (bindings.size >= MAX_BINDINGS) throw new RangeError("Remote session binding limit exceeded.");
-    bindings.set(input.controlSessionId, { ...input, payloadVersion: input.payloadVersion ?? 1, sequence: 0 });
+    const connectionGeneration = Number.isSafeInteger(input.connectionGeneration) && Number(input.connectionGeneration) > 0
+      ? Number(input.connectionGeneration) : 0;
+    const sequenceKey = `${input.controlSessionId}\u0000${connectionGeneration}`;
+    bindings.set(input.controlSessionId, {
+      ...input,
+      payloadVersion: input.payloadVersion ?? 1,
+      connectionGeneration,
+      sequenceKey,
+      sequence: sequenceStore.get(sequenceKey) ?? 0,
+    });
     return true;
   }
 

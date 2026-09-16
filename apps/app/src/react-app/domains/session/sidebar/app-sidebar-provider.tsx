@@ -5,6 +5,7 @@ import type { WorkspaceConnectionState } from "../../../../app/types";
 export type SidebarContextValue = {
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
+  visibleSessionIds: ReadonlySet<string>;
   developerMode: boolean;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;

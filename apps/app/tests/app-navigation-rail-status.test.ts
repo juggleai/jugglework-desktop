@@ -14,8 +14,8 @@ describe("local workspace rail status", () => {
 
   test("only suppresses loading and preserves empty or unread aggregate states", () => {
     expect(visibleLocalWorkspaceIndicator(null, false, "local")).toBeNull();
-    expect(visibleLocalWorkspaceIndicator("unread", false, "local")).toBe("unread");
-    expect(visibleLocalWorkspaceIndicator("unread", true, "local")).toBe("unread");
+    expect(visibleLocalWorkspaceIndicator("completed", false, "local")).toBe("completed");
+    expect(visibleLocalWorkspaceIndicator("completed", true, "local")).toBe("completed");
   });
 });
 

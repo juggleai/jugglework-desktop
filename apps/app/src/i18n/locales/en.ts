@@ -2226,6 +2226,7 @@ export default {
   "workspace_list.session_active": "Session active",
   "workspace_list.session_needs_attention": "Needs your action",
   "workspace_list.session_unread": "Unread result",
+  "workspace_list.session_completed_unseen": "Completed, not yet viewed",
   "workspace_list.session_streaming": "Session streaming",
   "workspace_list.clear_session_filter": "Clear filter",
   "workspace_list.no_matching_sessions": "No sessions match your search.",

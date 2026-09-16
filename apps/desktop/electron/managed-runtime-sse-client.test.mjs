@@ -20,6 +20,73 @@ function streamResponse(chunks) {
 }
 
 describe("managed runtime SSE client", () => {
+  it("reports connection readiness after validating the response and before reading records", async () => {
+    const controller = new AbortController();
+    const calls = [];
+    const client = createManagedRuntimeSseClient({
+      getAccess: () => access,
+      fetcher: async () => streamResponse(["data: {\"type\":\"server.connected\"}\n\n"]),
+      timers: immediateTimers,
+    });
+    await client.subscribe({
+      workspaceId: "ws_1",
+      signal: controller.signal,
+      onConnected: () => { calls.push("connected"); },
+      onReconnectGap: () => {},
+      onEvent: () => { calls.push("event"); controller.abort(); },
+    });
+    assert.deepEqual(calls, ["connected", "event"]);
+  });
+
+  it("does not report a 200 response that reaches EOF before valid SSE bytes as ready", async () => {
+    const controller = new AbortController();
+    const calls = [];
+    let requests = 0;
+    const client = createManagedRuntimeSseClient({
+      getAccess: () => access,
+      fetcher: async () => {
+        requests += 1;
+        if (requests === 1) return streamResponse([]);
+        controller.abort();
+        throw new Error("stop");
+      },
+      timers: immediateTimers,
+    });
+    await client.subscribe({
+      workspaceId: "ws_1",
+      signal: controller.signal,
+      onConnected: () => { calls.push("connected"); },
+      onReconnectGap: () => { calls.push("gap"); },
+      onEvent: () => { calls.push("event"); },
+    });
+    assert.deepEqual(calls, []);
+  });
+
+  it("buffers the first application record until asynchronous readiness completes", async () => {
+    const controller = new AbortController();
+    const calls = [];
+    let release;
+    const ready = new Promise((resolve) => { release = resolve; });
+    const client = createManagedRuntimeSseClient({
+      getAccess: () => access,
+      fetcher: async () => streamResponse(["data: {\"type\":\"todo.updated\"}\n\n"]),
+      timers: immediateTimers,
+    });
+    const subscription = client.subscribe({
+      workspaceId: "ws_1",
+      signal: controller.signal,
+      onConnected: async () => { calls.push("connecting"); await ready; calls.push("connected"); },
+      onReconnectGap: () => {},
+      onEvent: () => { calls.push("event"); controller.abort(); },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(calls.includes("event"), false);
+    /** @type {() => void} */ (release)();
+    await subscription;
+    assert.deepEqual(calls, ["connecting", "connected", "event"]);
+  });
+
   it("subscribes to the embedded server workspace OpenCode route", async () => {
     const controller = new AbortController();
     const requests = [];

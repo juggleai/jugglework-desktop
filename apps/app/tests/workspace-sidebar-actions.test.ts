@@ -79,9 +79,9 @@ describe("workspace sidebar actions", () => {
     expect(source).toMatch(/autoExpandedWorkspaceIdRef\.current = id;[\s\S]+expandWorkspace\(id\)/);
   });
 
-  test("keeps unread aggregation limited to accessible main sessions", () => {
+  test("keeps completion aggregation limited to accessible main sessions", () => {
     expect(source).toMatch(/const accessibleMainSessionIds = new Set/);
-    expect(source).toMatch(/store\.retainUnread\(accessibleMainSessionIds\)/);
+    expect(source).toMatch(/\.reconcile\([\s\S]+accessibleMainSessionIds/);
     expect(source).toMatch(/flatMap\(\(group\) => group\.sessions\.filter\(isMainSession\)\)/);
   });
 });

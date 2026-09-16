@@ -68,6 +68,7 @@ describe("desktop remote session event integration", () => {
         return new Response(new ReadableStream({
           start(controller) {
             sendUpstreamEvent = (event) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+            controller.enqueue(encoder.encode(": connected\n\n"));
           },
         }), { headers: { "Content-Type": "text/event-stream" } });
       },
@@ -139,7 +140,7 @@ describe("desktop remote session event integration", () => {
     });
     stops.push(() => bridge.stop());
 
-    expect(bridge.bind({
+    await expect(bridge.bind({
       controlSessionId: CONTROL_SESSION_ID,
       deviceId: DEVICE_ID,
       workspaceId: "ws_1",
@@ -147,9 +148,9 @@ describe("desktop remote session event integration", () => {
       rootSessionId: "ses_1",
       payloadVersion: 1,
       connectionGeneration: 7,
-    })).toBe(true);
+    })).resolves.toBe(true);
 
-    await waitFor(() => sendUpstreamEvent);
+    expect(sendUpstreamEvent).toBeDefined();
     expect(subscriptionAttempts).toBe(2);
     expect(subscriptionUrl).toBe(`http://127.0.0.1:${local.port}/workspace/ws_1/opencode/event`);
     expect(upstreamRequest).toEqual({

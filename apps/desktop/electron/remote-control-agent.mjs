@@ -159,7 +159,7 @@ const ERROR_MESSAGES = Object.freeze({
  *   oldOperationDrainTimeoutMs?: number,
  *   getActiveRuns?: () => unknown,
  *   verifySessionBinding?: (binding: { workspaceId: string, rootSessionId: string }, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>,
- *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, rootSessionId: string, rootVerified: true, payloadVersion: 1 | 2, connectionGeneration: number }) => boolean | void,
+ *   onSessionBinding?: (binding: { controlSessionId: string, deviceId: string, workspaceId: string, sessionId: string, rootSessionId: string, rootVerified: true, payloadVersion: 1 | 2, connectionGeneration: number }) => boolean | void | Promise<boolean | void>,
  *   onSessionUnbound?: (input: { controlSessionId: string, reason: "closed" | "expired" | "not_found" | "snapshot_required" }) => void,
  *   onTransportReset?: (input: { hadActiveControl: boolean, transition: number | null }) => void,
  *   onControlRevoked?: (input: { source: "local" | "cloud", transition: number }) => void,
@@ -1493,42 +1493,6 @@ export function createRemoteControlAgent(options) {
   }
 
   async function acceptCommandOnce(command, generation, activeGeneration, signal) {
-    const args = command.request.arguments;
-    const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
-    let bindingFailed = false;
-    if (isIdentifier(args.workspaceId) && isIdentifier(rootSessionId)) {
-      try {
-        const candidate = {
-          controlSessionId: command.controlSessionId, deviceId: command.deviceId,
-          workspaceId: args.workspaceId, sessionId: rootSessionId, rootSessionId,
-          rootVerified: await verifySessionBinding?.({ workspaceId: args.workspaceId, rootSessionId }, { signal }) === true,
-          payloadVersion: command.request.payloadVersion, connectionGeneration: activeGeneration,
-        };
-        const existing = remoteSessionBindings.get(command.controlSessionId);
-        const immutable = !existing || (existing.deviceId === candidate.deviceId && existing.workspaceId === candidate.workspaceId &&
-          existing.rootSessionId === candidate.rootSessionId && existing.connectionGeneration === candidate.connectionGeneration);
-        const accepted = !signal.aborted && generation === lifecycleGeneration && candidate.rootVerified && immutable;
-        if (accepted) {
-          const binding = Object.freeze({
-            ...candidate,
-            rootVerified: /** @type {true} */ (true),
-            payloadVersion: existing?.payloadVersion === 2 || candidate.payloadVersion === 2 ? 2 : 1,
-          });
-          if (onSessionBinding?.(binding) === false) {
-            bindingFailed = true;
-          } else {
-            remoteSessionBindings.set(command.controlSessionId, binding);
-            activeControlSessions.set(command.controlSessionId, boundedControllerDisplayName(command.actor.displayName));
-          }
-        } else bindingFailed = true;
-      } catch { bindingFailed = true; }
-    }
-    if (signal.aborted || generation !== lifecycleGeneration) return;
-    await handleCommandOnce(command, generation, bindingFailed, signal);
-  }
-
-  /** @param {Record<string, any>} command @param {number} generation @param {boolean} bindingFailed @param {AbortSignal} signal */
-  async function handleCommandOnce(command, generation, bindingFailed, signal) {
     const metadata = {
       commandId: command.commandId,
       deviceId: command.deviceId,
@@ -1552,6 +1516,63 @@ export function createRemoteControlAgent(options) {
       return;
     }
     if (signal.aborted || generation !== lifecycleGeneration || !contextAllowsConnection()) return;
+    if (prepared.action === "replay") {
+      if (validJournalLifecycle(prepared.lifecycle)) sendLifecycle(prepared.lifecycle, prepared.commandId);
+      return;
+    }
+    if (prepared.action === "reject") {
+      const code = Object.hasOwn(ERROR_MESSAGES, prepared.error.code)
+        ? /** @type {RemoteControlErrorCode} */ (prepared.error.code)
+        : "delivery_failed";
+      const status = code === "command_expired" ? "expired" : code === "delivery_failed" ? "failed" : "rejected";
+      sendLifecycle({
+        status,
+        occurredAt: timestamp().toISOString(),
+        result: null,
+        error: safeError(code, prepared.commandId ?? command.commandId),
+      }, prepared.commandId ?? command.commandId);
+      return;
+    }
+    const args = command.request.arguments;
+    const rootSessionId = command.request.payloadVersion === 2 ? args.rootSessionId : args.sessionId;
+    let bindingFailed = false;
+    if (isIdentifier(args.workspaceId) && isIdentifier(rootSessionId)) {
+      try {
+        const candidate = {
+          controlSessionId: command.controlSessionId, deviceId: command.deviceId,
+          workspaceId: args.workspaceId, sessionId: rootSessionId, rootSessionId,
+          rootVerified: await verifySessionBinding?.({ workspaceId: args.workspaceId, rootSessionId }, { signal }) === true,
+          payloadVersion: command.request.payloadVersion, connectionGeneration: activeGeneration,
+        };
+        const existing = remoteSessionBindings.get(command.controlSessionId);
+        const immutable = !existing || (existing.deviceId === candidate.deviceId && existing.workspaceId === candidate.workspaceId &&
+          existing.rootSessionId === candidate.rootSessionId && existing.connectionGeneration === candidate.connectionGeneration);
+        const accepted = !signal.aborted && generation === lifecycleGeneration && candidate.rootVerified && immutable;
+        if (accepted) {
+          const binding = Object.freeze({
+            ...candidate,
+            rootVerified: /** @type {true} */ (true),
+            payloadVersion: existing?.payloadVersion === 2 || candidate.payloadVersion === 2 ? 2 : 1,
+          });
+          if (await onSessionBinding?.(binding) === false) {
+            bindingFailed = true;
+          } else {
+            const current = remoteSessionBindings.get(command.controlSessionId);
+            const stillImmutable = !current || (current.deviceId === binding.deviceId && current.workspaceId === binding.workspaceId &&
+              current.rootSessionId === binding.rootSessionId && current.connectionGeneration === binding.connectionGeneration);
+            if (signal.aborted || generation !== lifecycleGeneration || !stillImmutable) return;
+            remoteSessionBindings.set(command.controlSessionId, binding);
+            activeControlSessions.set(command.controlSessionId, boundedControllerDisplayName(command.actor.displayName));
+          }
+        } else bindingFailed = true;
+      } catch { bindingFailed = true; }
+    }
+    if (signal.aborted || generation !== lifecycleGeneration) return;
+    await handleCommandOnce(command, generation, activeGeneration, bindingFailed, signal);
+  }
+
+  /** @param {Record<string, any>} command @param {number} generation @param {number} activeGeneration @param {boolean} bindingFailed @param {AbortSignal} signal */
+  async function handleCommandOnce(command, generation, activeGeneration, bindingFailed, signal) {
     if (bindingFailed) {
       const terminal = {
         status: "failed",
@@ -1581,24 +1602,23 @@ export function createRemoteControlAgent(options) {
       }
       return;
     }
-    if (prepared.action === "replay") {
-      if (validJournalLifecycle(prepared.lifecycle)) sendLifecycle(prepared.lifecycle, prepared.commandId);
-      return;
-    }
-    if (prepared.action === "reject") {
-      const code = Object.hasOwn(ERROR_MESSAGES, prepared.error.code)
-        ? /** @type {RemoteControlErrorCode} */ (prepared.error.code)
-        : "delivery_failed";
-      const status = code === "command_expired" ? "expired" : code === "delivery_failed" ? "failed" : "rejected";
-      sendLifecycle({
-        status,
+    if (signal.aborted || generation !== lifecycleGeneration || activeGeneration !== connectionGeneration || !contextAllowsConnection()) return;
+    if (Date.parse(command.expiresAt) <= timestamp().getTime()) {
+      const expired = {
+        status: "expired",
         occurredAt: timestamp().toISOString(),
         result: null,
-        error: safeError(code, prepared.commandId ?? command.commandId),
-      }, prepared.commandId ?? command.commandId);
+        error: safeError("command_expired", command.commandId),
+      };
+      try {
+        const completed = await commandJournal.complete(command.commandId, expired);
+        const persisted = isRecord(completed) && completed.action === "replay" && validJournalLifecycle(completed.lifecycle)
+          ? completed.lifecycle
+          : expired;
+        if (!signal.aborted && generation === lifecycleGeneration) sendLifecycle(persisted, command.commandId);
+      } catch {}
       return;
     }
-    if (signal.aborted || generation !== lifecycleGeneration || !contextAllowsConnection()) return;
     sendLifecycle({ status: "accepted", occurredAt: timestamp().toISOString(), result: null, error: null }, command.commandId);
     sendLifecycle({ status: "running", occurredAt: timestamp().toISOString(), result: null, error: null }, command.commandId);
 

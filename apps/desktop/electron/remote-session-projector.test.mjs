@@ -92,6 +92,15 @@ describe("remote session projector", () => {
     assert.equal(h.emitted.at(-1).sequence, 3);
   });
 
+  it("continues source sequence after same-generation unbind and rebind", () => {
+    const h = harness();
+    h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [] } });
+    h.projector.unbind(CONTROL_1);
+    h.projector.bind({ controlSessionId: CONTROL_1, deviceId: DEVICE, workspaceId: WORKSPACE, sessionId: SESSION });
+    h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [] } });
+    assert.deepEqual(h.emitted.map((event) => event.sequence), [1, 2]);
+  });
+
   it("upgrades an immutable root binding from v1 to v2 without resetting sequence", () => {
     const h = harness();
     h.projector.accept(WORKSPACE, { type: "todo.updated", properties: { sessionID: SESSION, todos: [] } });

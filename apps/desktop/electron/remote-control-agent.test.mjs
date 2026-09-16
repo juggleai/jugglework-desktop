@@ -233,7 +233,7 @@ function successLifecycle() {
   };
 }
 
-/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, issueAgentToken?: (call: number) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, revocationVerifyMaxDelayMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
+/** @param {{ enrolled?: boolean, enabled?: boolean, initialCredential?: any, credentialReadError?: Error | null, credentialDeleteError?: Error | null, capabilities?: typeof readCapabilities, operationRegistry?: any, e2eeKeyStore?: any, signingCredential?: any, prepare?: (command: unknown) => Promise<any>, dispatch?: (request: unknown, options: unknown) => Promise<any>, enrollDevice?: (input: unknown) => Promise<any>, issueAgentToken?: (call: number) => Promise<any>, tokenLifetime?: number, localStopAckTimeoutMs?: number, oldOperationDrainTimeoutMs?: number, revocationVerifyMaxDelayMs?: number, getActiveRuns?: () => unknown, verifySessionBinding?: (binding: unknown, options?: { signal?: AbortSignal }) => boolean | Promise<boolean>, onSessionBinding?: (binding: unknown) => boolean | void | Promise<boolean | void>, onSessionUnbound?: (input: unknown) => void, onTransportReset?: (input: unknown) => void, onControlRevoked?: (input: unknown) => void, onPolicyExpired?: () => void, onAuthorizationChanged?: (authorized: boolean) => void, issueTokenError?: Error }} [input] */
 function harness({
   enrolled = true,
   enabled = true,
@@ -1782,6 +1782,87 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.completeCalls[0].commandId, COMMAND_ID);
     assert.equal(fixture.completeCalls[0].lifecycle.error.code, "snapshot_required");
     assert.equal(fixture.agent.status().activeControlSessionCount, 0);
+  });
+
+  it("awaits asynchronous session readiness and fails closed without dispatch when it times out", async () => {
+    let releaseBinding = () => {};
+    const bindingGate = new Promise((resolve) => { releaseBinding = () => resolve(false); });
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.prompt", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities, onSessionBinding: () => bindingGate });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1", prompt: "go" } },
+      idempotencyKey: "prompt-readiness-1",
+    }));
+    await settle();
+    assert.deepEqual(fixture.dispatchCalls, []);
+    assert.deepEqual(frames(socket, "command.lifecycle"), []);
+
+    releaseBinding();
+    await settle();
+    assert.deepEqual(fixture.dispatchCalls, []);
+    const terminal = frames(socket, "command.lifecycle").at(-1).payload;
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.error.code, "snapshot_required");
+    assert.equal(fixture.agent.status().activeControlSessionCount, 0);
+  });
+
+  it("blocks dispatch until asynchronous session readiness succeeds", async () => {
+    let releaseBinding = () => {};
+    const bindingGate = new Promise((resolve) => { releaseBinding = () => resolve(true); });
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.prompt", payloadVersions: [1] }],
+      features: [],
+    });
+    const fixture = harness({ capabilities, onSessionBinding: () => bindingGate });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+    socket.receive(delivery({
+      request: { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1", prompt: "go" } },
+      idempotencyKey: "prompt-readiness-2",
+    }));
+    await settle();
+    assert.deepEqual(fixture.dispatchCalls, []);
+
+    releaseBinding();
+    await settle();
+    assert.equal(fixture.dispatchCalls.length, 1);
+    assert.equal(frames(socket, "command.lifecycle").at(-1).payload.status, "succeeded");
+  });
+
+  it("replays and rejects journal decisions without waiting for session readiness", async () => {
+    let readinessCalls = 0;
+    const capabilities = /** @type {typeof readCapabilities} */ ({
+      schemaVersion: 1,
+      operations: [{ operation: "session.prompt", payloadVersions: [1] }],
+      features: [],
+    });
+    const replayLifecycle = { status: "succeeded", occurredAt: new Date(NOW).toISOString(), result: { operation: "session.prompt", payloadVersion: 1, result: { workspaceId: "ws_1", sessionId: "ses_1", accepted: true } }, error: null };
+    const replay = harness({ capabilities, prepare: async () => ({ action: "replay", commandId: COMMAND_ID, lifecycle: replayLifecycle }), onSessionBinding: () => { readinessCalls += 1; return new Promise(() => {}); } });
+    const replaySocket = await connect(replay);
+    replaySocket.receive(welcome(77));
+    await settle();
+    replaySocket.receive(delivery({ idempotencyKey: "journal-replay-readiness", request: { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1", prompt: "go" } } }));
+    await settle();
+    assert.equal(readinessCalls, 0);
+    assert.equal(frames(replaySocket, "command.lifecycle").at(-1).payload.status, "succeeded");
+
+    const reject = harness({ capabilities, prepare: async () => ({ action: "reject", commandId: COMMAND_ID, error: { code: "command_expired" } }), onSessionBinding: () => { readinessCalls += 1; return new Promise(() => {}); } });
+    const rejectSocket = await connect(reject);
+    rejectSocket.receive(welcome(77));
+    await settle();
+    rejectSocket.receive(delivery({ idempotencyKey: "journal-reject-readiness", request: { operation: "session.prompt", payloadVersion: 1, arguments: { workspaceId: "ws_1", sessionId: "ses_1", prompt: "go" } } }));
+    await settle();
+    assert.equal(readinessCalls, 0);
+    assert.equal(frames(rejectSocket, "command.lifecycle").at(-1).payload.status, "expired");
   });
 
   it("fences deferred session verification before old-generation dispatch during replacement", async () => {

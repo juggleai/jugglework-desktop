@@ -2229,6 +2229,7 @@ export default {
   "workspace_list.session_active": "会话进行中",
   "workspace_list.session_needs_attention": "需要你处理",
   "workspace_list.session_unread": "有未读结果",
+  "workspace_list.session_completed_unseen": "已完成，尚未查看",
   "workspace_list.session_streaming": "会话输出中",
   "workspace_list.clear_session_filter": "清除筛选",
   "workspace_list.no_matching_sessions": "没有匹配的会话",

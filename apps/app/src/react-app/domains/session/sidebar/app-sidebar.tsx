@@ -119,11 +119,11 @@ import type { FlattenedSessionRow, SessionListItem, SessionTreeState } from "./u
 import {
   useSessionManagementStore,
   usePinnedSessionIds,
-  useUnreadSessionIds,
   useSessionOrder,
   useWorkspaceGroups,
   type SessionGroupDefinition,
 } from "./session-management-store";
+import { useSessionCompletionStore, useUnseenCompletedSessionIds } from "./session-completion-store";
 import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
 import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
@@ -169,11 +169,11 @@ interface SessionOutcomeIndicatorProps {
   className?: string;
   status?: string;
   isActiveWork: boolean;
-  isUnread: boolean;
+  isCompleted: boolean;
 }
 
-/** Right-edge outcome: orange = needs you, green = unread result, none = read/idle. */
-function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: SessionOutcomeIndicatorProps) {
+/** Right-edge outcome: orange = needs you, green = completed unseen, none = seen/idle. */
+function SessionOutcomeIndicator({ className, status, isActiveWork, isCompleted }: SessionOutcomeIndicatorProps) {
   if (isActiveWork) return null;
 
   if (isNeedsAttentionSessionStatus(status)) {
@@ -191,15 +191,15 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: 
     );
   }
 
-  if (!isUnread) return null;
+  if (!isCompleted) return null;
 
   return (
     <span
       data-session-attention-indicator
       className={cn("size-2 shrink-0 rounded-full", className)}
       style={{ backgroundColor: OUTCOME_DOT_UNREAD }}
-      title={t("workspace_list.session_unread")}
-      aria-label={t("workspace_list.session_unread")}
+      title={t("workspace_list.session_completed_unseen")}
+      aria-label={t("workspace_list.session_completed_unseen")}
     />
   );
 }
@@ -693,6 +693,7 @@ export type AppSidebarProps = {
   selectedWorkspaceId: string;
   developerMode: boolean;
   selectedSessionId: string | null;
+  visibleSessionIds?: string[];
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   connectingWorkspaceId: string | null;
@@ -753,38 +754,21 @@ export function AppSidebar(props: AppSidebarProps) {
   const [expandedSessionIds, setExpandedSessionIds] = React.useState<Set<string>>(
     () => new Set(),
   );
-  const previousSessionStatusRef = React.useRef<Record<string, string>>({});
   const autoExpandedWorkspaceIdRef = React.useRef("");
 
-  // Green unread dots: agent finished while the user was on another session.
+  const visibleSessionIds = React.useMemo(
+    () => new Set(props.visibleSessionIds ?? (props.selectedSessionId ? [props.selectedSessionId] : [])),
+    [props.selectedSessionId, props.visibleSessionIds],
+  );
+
+  // Green completion dots: agent finished while the session was not visible.
   React.useEffect(() => {
     const statuses = props.sessionStatusById ?? {};
-    const previous = previousSessionStatusRef.current;
-    const selectedId = props.selectedSessionId;
-    const store = useSessionManagementStore.getState();
     const accessibleMainSessionIds = new Set(
       props.workspaceSessionGroups.flatMap((group) => group.sessions.filter(isMainSession).map((session) => session.id)),
     );
-
-    // TIPS: 状态源还会返回子会话，但侧栏只暴露主会话。子会话若进入 unreadIds，用户没有对应
-    // item 可以点击清除，会导致导航栏绿色状态永久残留。
-    store.retainUnread(accessibleMainSessionIds);
-
-    for (const [sessionId, status] of Object.entries(statuses)) {
-      if (!accessibleMainSessionIds.has(sessionId)) continue;
-      if (sessionId === selectedId) {
-        store.clearUnread(sessionId);
-        continue;
-      }
-      const prior = previous[sessionId];
-      if (isActiveWorkSessionStatus(prior) && status === "idle") {
-        store.markUnread(sessionId);
-      }
-    }
-
-    if (selectedId) store.clearUnread(selectedId);
-    previousSessionStatusRef.current = statuses;
-  }, [props.selectedSessionId, props.sessionStatusById, props.workspaceSessionGroups]);
+    useSessionCompletionStore.getState().reconcile(statuses, accessibleMainSessionIds, visibleSessionIds);
+  }, [props.sessionStatusById, props.workspaceSessionGroups, visibleSessionIds]);
 
   const expandWorkspace = React.useCallback((workspaceId: string) => {
     const id = workspaceId.trim();
@@ -931,6 +915,7 @@ export function AppSidebar(props: AppSidebarProps) {
   const contextValue: SidebarContextValue = {
     selectedWorkspaceId: props.selectedWorkspaceId,
     selectedSessionId: props.selectedSessionId,
+    visibleSessionIds,
     developerMode: props.developerMode,
     showSessionActions: props.showSessionActions,
     sessionStatusById: props.sessionStatusById,
@@ -975,16 +960,16 @@ export function AppSidebar(props: AppSidebarProps) {
       return sessions.length ? [{ ...group, sessions }] : [];
     });
   }, [props.workspaceSessionGroups, taskScope, trimmedSessionQuery]);
-  const unreadIds = useUnreadSessionIds();
+  const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
   const localWorkspaceIndicator = React.useMemo(
     () => resolveWorkspaceSessionIndicator(
       props.workspaceSessionGroups
         .filter((group) => group.workspace.workspaceType === "local")
         .flatMap((group) => group.sessions.filter(isMainSession)),
       props.sessionStatusById,
-      unreadIds,
+      unseenCompletedSessionIds,
     ),
-    [props.sessionStatusById, props.workspaceSessionGroups, unreadIds],
+    [props.sessionStatusById, props.workspaceSessionGroups, unseenCompletedSessionIds],
   );
   React.useEffect(() => {
     useWorkspaceIndicatorStore.getState().setLocalWorkspaceIndicator(localWorkspaceIndicator);
@@ -2206,18 +2191,18 @@ function SessionMenuItem({
   showWorkspaceIcon = Boolean(workspaceName),
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
-  const unreadIds = useUnreadSessionIds();
+  const unseenCompletedSessionIds = useUnseenCompletedSessionIds();
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
   const sessionActivityStatus = ctx.sessionStatusById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
-  const isUnread = unreadIds.has(session.id) && !isSelected;
+  const isCompleted = unseenCompletedSessionIds.has(session.id) && !ctx.visibleSessionIds.has(session.id);
   const isArchived = isSessionArchived(session);
   const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
 
   const openSession = () => {
-    useSessionManagementStore.getState().clearUnread(session.id);
+    useSessionCompletionStore.getState().clear(session.id);
     ctx.onOpenSession(workspaceId, session.id);
   };
 
@@ -2245,8 +2230,8 @@ function SessionMenuItem({
     ? `${displayTitle}, ${getSessionActivityStatusLabel(sessionActivityStatus)}`
     : isNeedsAttentionSessionStatus(sessionActivityStatus)
       ? `${displayTitle}, ${t("workspace_list.session_needs_attention")}`
-      : isUnread
-        ? `${displayTitle}, ${t("workspace_list.session_unread")}`
+      : isCompleted
+        ? `${displayTitle}, ${t("workspace_list.session_completed_unseen")}`
         : itemTitle;
 
   const rowButtonClass = cn(
@@ -2275,7 +2260,7 @@ function SessionMenuItem({
         className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-has-data-popup-open/menu-sub-item:opacity-0 group-has-[:focus-visible]/menu-sub-item:opacity-0 pointer-events-none select-none"
         status={sessionActivityStatus}
         isActiveWork={resolvedActiveWork}
-        isUnread={isUnread}
+        isCompleted={isCompleted}
       />
       <SessionHoverQuickActions
         sessionId={session.id}

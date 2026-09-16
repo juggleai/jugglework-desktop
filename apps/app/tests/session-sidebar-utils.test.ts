@@ -93,7 +93,7 @@ describe("workspace session indicator", () => {
       sessions,
       { "session-a": "idle", "session-b": "idle" },
       new Set(["session-a"]),
-    )).toBe("unread");
+    )).toBe("completed");
   });
 
   test("hides the indicator after all results are read", () => {

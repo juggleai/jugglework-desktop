@@ -121,8 +121,8 @@ function RailButton({
             "absolute flex items-center justify-center",
             statusIndicator === "running" ? "right-0 top-0 size-4" : "right-0.5 top-0.5 size-2.5",
           )}
-          title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
-          aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_unread")}
+          title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
+          aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
         >
           {statusIndicator === "running" ? (
             <SessionCircularProgress />

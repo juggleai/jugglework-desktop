@@ -60,16 +60,12 @@ type SessionGroupSyncStatus = {
 
 type SessionManagementState = {
   pinnedIds: string[];
-  unreadIds: string[];
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
 
 type SessionManagementActions = {
   togglePin: (sessionId: string) => void;
-  markUnread: (sessionId: string) => void;
-  clearUnread: (sessionId: string) => void;
-  retainUnread: (sessionIds: ReadonlySet<string>) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -176,7 +172,6 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
   persist(
     (set) => ({
       pinnedIds: [],
-      unreadIds: [],
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
@@ -189,27 +184,6 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
                 ? state.pinnedIds.filter((id) => id !== sessionId)
                 : [...state.pinnedIds, sessionId],
           };
-        }),
-
-      markUnread: (sessionId) =>
-        set((state) => (
-          state.unreadIds.includes(sessionId)
-            ? state
-            : { unreadIds: [...state.unreadIds, sessionId] }
-        )),
-
-      clearUnread: (sessionId) =>
-        set((state) => (
-          state.unreadIds.includes(sessionId)
-            ? { unreadIds: state.unreadIds.filter((id) => id !== sessionId) }
-            : state
-        )),
-
-      /** 只保留当前侧栏仍可访问的主会话未读状态，清除历史、子会话和已删除会话残留。 */
-      retainUnread: (sessionIds) =>
-        set((state) => {
-          const unreadIds = state.unreadIds.filter((id) => sessionIds.has(id));
-          return unreadIds.length === state.unreadIds.length ? state : { unreadIds };
         }),
 
       reorderSessions: (workspaceId, sessionIds) =>
@@ -387,7 +361,6 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
 // ---------------------------------------------------------------------------
 
 const EMPTY_PINNED = new Set<string>();
-const EMPTY_UNREAD = new Set<string>();
 const EMPTY_ORDER: string[] = [];
 
 export function usePinnedSessionIds(): Set<string> {
@@ -395,11 +368,6 @@ export function usePinnedSessionIds(): Set<string> {
   // Derive a Set; reference-stable when the array is the same object.
   // Consumers only need membership checks so Set is ideal.
   return ids.length ? new Set(ids) : EMPTY_PINNED;
-}
-
-export function useUnreadSessionIds(): Set<string> {
-  const ids = useSessionManagementStore((s) => s.unreadIds);
-  return ids.length ? new Set(ids) : EMPTY_UNREAD;
 }
 
 export function useSessionOrder(workspaceId: string): string[] {

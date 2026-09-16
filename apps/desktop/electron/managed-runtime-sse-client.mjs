@@ -97,16 +97,23 @@ export function createManagedRuntimeSseClient({
   }
 
   /**
-   * @param {{ workspaceId: string, onEvent(raw: unknown): void | Promise<void>, onReconnectGap(reason: "sequence_gap"): void | Promise<void>, signal: AbortSignal }} input
+   * @param {{ workspaceId: string, onConnected?: () => void | Promise<void>, onEvent(raw: unknown): void | Promise<void>, onReconnectGap(reason: "sequence_gap"): void | Promise<void>, signal: AbortSignal }} input
    */
-  async function subscribe({ workspaceId, onEvent, onReconnectGap, signal }) {
-    if (!identifier(workspaceId) || typeof onEvent !== "function" || typeof onReconnectGap !== "function" || !(signal instanceof AbortSignal)) {
+  async function subscribe({ workspaceId, onConnected = () => {}, onEvent, onReconnectGap, signal }) {
+    if (!identifier(workspaceId) || typeof onConnected !== "function" || typeof onEvent !== "function" ||
+        typeof onReconnectGap !== "function" || !(signal instanceof AbortSignal)) {
       throw new TypeError("Managed runtime SSE subscription input is invalid.");
     }
     let lastEventId = "";
     let reconnects = 0;
     let serverRetryMs = 1_000;
-    let connectedOnce = false;
+    let live = false;
+
+    const disconnect = async () => {
+      if (!live) return;
+      live = false;
+      await onReconnectGap("sequence_gap");
+    };
 
     while (!signal.aborted) {
       const access = runtimeAccess(await getAccess());
@@ -146,18 +153,20 @@ export function createManagedRuntimeSseClient({
           throw new ManagedRuntimeSseClientError("timeout");
         }
         try { logger.warn?.("managed_runtime_sse_reconnect", { code: "unavailable" }); } catch {}
-        if (connectedOnce) await onReconnectGap("sequence_gap");
+        await disconnect();
         await sleep(Math.min(serverRetryMs * (2 ** Math.min(reconnects++, 5)), maxBackoffMs), signal);
         continue;
       }
       timers.clearTimeout(headerTimer);
       if (response.status >= 300 && response.status < 400) {
         signal.removeEventListener("abort", abort);
+        await disconnect();
         try { logger.warn?.("managed_runtime_sse_failed", { code: "redirect", status: response.status }); } catch {}
         throw new ManagedRuntimeSseClientError("redirect");
       }
       if ([401, 403, 404].includes(response.status)) {
         signal.removeEventListener("abort", abort);
+        await disconnect();
         const error = new ManagedRuntimeSseClientError("unauthorized");
         error.status = response.status;
         try { logger.warn?.("managed_runtime_sse_failed", { code: "unauthorized", status: response.status }); } catch {}
@@ -165,34 +174,42 @@ export function createManagedRuntimeSseClient({
       }
       if (!response.ok) {
         signal.removeEventListener("abort", abort);
-        if (connectedOnce) await onReconnectGap("sequence_gap");
+        await disconnect();
         await sleep(Math.min(serverRetryMs * (2 ** Math.min(reconnects++, 5)), maxBackoffMs), signal);
         continue;
       }
       if (!response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
         signal.removeEventListener("abort", abort);
+        await disconnect();
         try { logger.warn?.("managed_runtime_sse_failed", { code: "invalid_response", status: response.status, contentType: "other" }); } catch {}
         throw new ManagedRuntimeSseClientError("invalid_response");
       }
       const reader = response.body?.getReader();
       if (!reader) {
         signal.removeEventListener("abort", abort);
+        await disconnect();
         throw new ManagedRuntimeSseClientError("invalid_response");
       }
-      connectedOnce = true;
-      reconnects = 0;
-      try { logger.info?.("managed_runtime_sse_connected", { status: response.status, contentType: "text/event-stream" }); } catch {}
       const decoder = new TextDecoder("utf-8", { fatal: true });
       let lineBuffer = "";
       let dataLines = [];
       let recordBytes = 0;
       let recordId = null;
       let streamFailed = false;
+      let attemptConnected = false;
       /** @type {unknown} */
       let inactivityTimer = null;
       const resetWatchdog = () => {
         if (inactivityTimer !== null) timers.clearTimeout(inactivityTimer);
         inactivityTimer = timers.setTimeout(() => controller.abort(), inactivityMs);
+      };
+      const connect = async () => {
+        if (attemptConnected) return;
+        await onConnected();
+        attemptConnected = true;
+        live = true;
+        reconnects = 0;
+        try { logger.info?.("managed_runtime_sse_connected", { status: response.status, contentType: "text/event-stream" }); } catch {}
       };
       /** @param {string} line */
       const consumeLine = async (line) => {
@@ -218,13 +235,25 @@ export function createManagedRuntimeSseClient({
         }
         recordBytes += Buffer.byteLength(line, "utf8") + 1;
         if (recordBytes > maxBufferBytes) throw new ManagedRuntimeSseClientError("buffer_overflow");
-        if (line.startsWith(":")) return;
+        if (line.startsWith(":")) {
+          await connect();
+          return;
+        }
         const colon = line.indexOf(":");
         const field = colon < 0 ? line : line.slice(0, colon);
         const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
-        if (field === "data") dataLines.push(value);
-        else if (field === "id" && !value.includes("\0")) recordId = value;
-        else if (field === "retry" && /^\d+$/.test(value)) serverRetryMs = Math.max(250, Math.min(Number(value), maxBackoffMs));
+        if (field === "data") {
+          dataLines.push(value);
+          await connect();
+        } else if (field === "id" && !value.includes("\0")) {
+          recordId = value;
+          await connect();
+        } else if (field === "event") {
+          await connect();
+        } else if (field === "retry" && /^\d+$/.test(value)) {
+          serverRetryMs = Math.max(250, Math.min(Number(value), maxBackoffMs));
+          await connect();
+        }
       };
       resetWatchdog();
       try {
@@ -255,7 +284,7 @@ export function createManagedRuntimeSseClient({
         await reader.cancel().catch(() => undefined);
       }
       if (signal.aborted) break;
-      await onReconnectGap("sequence_gap");
+      await disconnect();
       await sleep(Math.min(serverRetryMs * (2 ** Math.min(reconnects++, 5)), maxBackoffMs), signal);
       void streamFailed;
     }
