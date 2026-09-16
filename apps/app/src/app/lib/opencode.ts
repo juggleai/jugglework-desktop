@@ -24,6 +24,8 @@ type FieldsResult<T> =
 
 type PromptAsyncParameters = Parameters<ReturnType<typeof createOpencodeClient>["session"]["promptAsync"]>[0] & {
   reasoning_effort?: string;
+  juggleworkDelivery?: "steer";
+  juggleworkAdmissionId?: string;
 };
 
 type CommandParameters = {
@@ -699,19 +701,29 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
 
   const promptAsyncOriginal = sessionOverrides.promptAsync.bind(session);
   sessionOverrides.promptAsync = (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
+    const {
+      sessionID,
+      directory: requestDirectory,
+      workspace: _requestWorkspace,
+      juggleworkDelivery,
+      juggleworkAdmissionId,
+      ...body
+    } = parameters;
     if (!juggleworkMount && !("reasoning_effort" in parameters)) {
-      return promptAsyncOriginal(parameters, options);
+      return promptAsyncOriginal({ sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...body }, options);
     }
-    const { sessionID, directory: requestDirectory, workspace: _requestWorkspace, ...body } = parameters;
     if (juggleworkMount && juggleworkSessionClient) {
       const url = `${juggleworkMount.baseUrl}/workspace/${encodeURIComponent(juggleworkMount.workspaceId)}/sessions/${encodeURIComponent(sessionID)}/runs/start`;
       return wrapJuggleWorkMutation(url, async () => {
         const result = await juggleworkSessionClient.startSessionRun(juggleworkMount.workspaceId, sessionID, {
           origin: "local-renderer",
-          startCommandCorrelationId: commandCorrelationId(),
+          startCommandCorrelationId: juggleworkAdmissionId ?? commandCorrelationId(),
           prompt: body,
+          ...(juggleworkDelivery === "steer" ? { whenBusy: "steer" as const } : {}),
         });
-        rememberMountedSessionRun(sessionRunKey(juggleworkMount, sessionID), result.run);
+        if ("run" in result) {
+          rememberMountedSessionRun(sessionRunKey(juggleworkMount, sessionID), result.run);
+        }
         return {};
       }, options);
     }

@@ -12,6 +12,7 @@ export type QueuedMessagesPanelProps = {
   onRemove: (id: string) => void;
   onEdit: (id: string) => void;
   onSteer: (id: string) => void;
+  canSteer?: (draft: ComposerDraft) => boolean;
   steeringId?: string | null;
   sending?: boolean;
 };
@@ -150,6 +151,7 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
       {props.drafts.map((item) => {
         const steering = props.steeringId === item.id;
         const actionsDisabled = Boolean(props.sending || props.steeringId);
+        const steerable = props.canSteer?.(item.draft) ?? true;
         return (
           <div
             key={item.id}
@@ -167,9 +169,9 @@ export function QueuedMessagesPanel(props: QueuedMessagesPanelProps) {
               <button
                 type="button"
                 onClick={() => props.onSteer(item.id)}
-                disabled={actionsDisabled}
+                disabled={actionsDisabled || !steerable}
                 className="inline-flex h-7 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-accent)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
-                title={t("composer.queued_send_now_hint")}
+                title={steerable ? t("composer.queued_send_now_hint") : t("composer.queued_send_now_unsupported")}
                 aria-label={t("composer.queued_send_now")}
               >
                 {steering ? <LoaderCircle size={13} className="animate-spin" /> : <CornerDownRight size={13} />}

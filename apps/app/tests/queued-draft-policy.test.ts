@@ -1,11 +1,24 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  canSteerQueuedDraft,
   resolveComposerSubmitAction,
   shouldDrainQueuedTask,
 } from "../src/react-app/domains/session/surface/queued-draft-policy";
 
 describe("queued draft policy", () => {
+  test("only normal prompt drafts can steer an active task", () => {
+    const prompt = {
+      mode: "prompt" as const,
+      parts: [{ type: "text" as const, text: "Change direction" }],
+      attachments: [],
+      text: "Change direction",
+    };
+    expect(canSteerQueuedDraft(prompt)).toBe(true);
+    expect(canSteerQueuedDraft({ ...prompt, command: { name: "compact", arguments: "" } })).toBe(false);
+    expect(canSteerQueuedDraft({ ...prompt, mode: "shell" })).toBe(false);
+  });
+
   test("queues every composer submission while a task is running", () => {
     expect(resolveComposerSubmitAction(true)).toBe("queue");
     expect(resolveComposerSubmitAction(false)).toBe("send");

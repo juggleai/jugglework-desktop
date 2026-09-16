@@ -145,6 +145,10 @@ export type ComposerDraft = {
   command?: { name: string; arguments: string } | undefined;
 };
 
+export type ComposerSubmissionOptions =
+  | { delivery?: "start" }
+  | { delivery: "steer"; admissionId: string };
+
 export type ArtifactItem = {
   id: string;
   name: string;

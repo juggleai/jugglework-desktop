@@ -173,9 +173,13 @@ export const getProviderModelIds = (
  * re-imported by hand. 5: source-provider catalog lookup is case-insensitive,
  * so Den's canonical `JuggleRouter` identity resolves the `jugglerouter`
  * catalog entry. 6: gateway mirror failures are no longer best-effort, so
- * existing baselines are reconciled once under the strict mirror contract.
+ * existing baselines are reconciled once under the strict mirror contract. 7:
+ * imports preserve video generation metadata. 8: imports preserve the complete
+ * organization model metadata contract, including image generation and the
+ * snake-case `structured_output`/`open_weights` fields emitted by Server
+ * Console.
  */
-export const CLOUD_PROVIDER_METADATA_VERSION = 7;
+export const CLOUD_PROVIDER_METADATA_VERSION = 8;
 
 export const isCloudProviderOutOfSync = (
   provider: DenOrgLlmProvider,
@@ -224,10 +228,12 @@ export function missingCloudProviderReloadKey(input: {
 }
 
 /**
- * Every model field the engine reads off a workspace provider block. Anything
- * missing here falls back to the engine's own defaults — `limit.context: 0`
- * (which disables context accounting and compaction), zero cost, and
- * text-only capabilities.
+ * Explicit model metadata contract shared by Server Console and Desktop.
+ * Keep this allowlist narrow enough that server-only fields cannot leak into
+ * workspace config, but complete enough to preserve every supported field.
+ * `structured_output` and `open_weights` are not currently typed by OpenCode's
+ * ProviderConfig; their snake-case names are still part of the org contract
+ * and must round-trip unchanged (do not introduce camel-case aliases).
  */
 const CLOUD_PROVIDER_MODEL_FIELDS = [
   "family",
@@ -237,9 +243,12 @@ const CLOUD_PROVIDER_MODEL_FIELDS = [
   "temperature",
   "tool_call",
   "interleaved",
+  "structured_output",
+  "open_weights",
   "cost",
   "limit",
   "modalities",
+  "imageGeneration",
   "mediaGeneration",
   "status",
   "options",

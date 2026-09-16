@@ -148,6 +148,41 @@ describe("mounted JuggleWork session mutations", () => {
     });
   });
 
+  test("routes an explicit local steer through the busy-session steer contract", async () => {
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/workspace/workspace-1/sessions/session-1/runs/start")) {
+        return jsonResponse({ disposition: "steered", admissionId: "queued-draft-1" }, 202);
+      }
+      throw new Error(`Unexpected request: ${call.method} ${call.url}`);
+    });
+
+    const result = await mountedClient().session.promptAsync({
+      sessionID: "session-1",
+      parts: [
+        { type: "text", text: "Change direction" },
+        { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///tmp/notes.txt" },
+        { type: "agent", name: "reviewer" },
+      ],
+      juggleworkDelivery: "steer",
+      juggleworkAdmissionId: "queued-draft-1",
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({
+      origin: "local-renderer",
+      startCommandCorrelationId: "queued-draft-1",
+      whenBusy: "steer",
+      prompt: {
+        parts: [
+          { type: "text", text: "Change direction" },
+          { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///tmp/notes.txt" },
+          { type: "agent", name: "reviewer" },
+        ],
+      },
+    });
+  });
+
   test("returns session_busy from a local/remote start race without direct fallback", async () => {
     const calls = mockFetch(() => jsonResponse({
       code: "session_busy",

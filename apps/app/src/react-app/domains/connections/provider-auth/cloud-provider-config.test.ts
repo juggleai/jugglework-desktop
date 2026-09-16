@@ -160,6 +160,13 @@ describe("isCloudProviderOutOfSync", () => {
     expect(isCloudProviderOutOfSync(liveProvider, importedFrom(baselineProvider))).toBe(true);
   });
 
+  test("reconciles imports from before the complete metadata allowlist", () => {
+    const provider = makeProvider([makeModel("model-a")]);
+    const imported = { ...importedFrom(provider), metadataVersion: 7 };
+
+    expect(isCloudProviderOutOfSync(provider, imported)).toBe(true);
+  });
+
   test("persists the native source and detects a source migration", () => {
     const provider = {
       ...makeProvider([makeModel("deepseek-v4-flash")]),
@@ -178,6 +185,75 @@ describe("isCloudProviderOutOfSync", () => {
 });
 
 describe("buildCloudProviderConfig", () => {
+  test("preserves provider api, options, and env", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([]),
+      providerConfig: {
+        api: "https://gateway.example.test/v1",
+        env: ["PRIMARY_KEY", "SECONDARY_KEY"],
+        options: { baseURL: "https://gateway.example.test/v1", timeout: 30_000 },
+      },
+      apiKey: null,
+      apiKeys: { PRIMARY_KEY: "primary", SECONDARY_KEY: "secondary" },
+    };
+
+    const config = buildCloudProviderConfig(provider);
+    expect(config.api).toBe("https://gateway.example.test/v1");
+    expect(config.env).toEqual(["PRIMARY_KEY", "SECONDARY_KEY"]);
+    expect(config.options).toEqual({
+      baseURL: "https://gateway.example.test/v1",
+      timeout: 30_000,
+    });
+  });
+
+  test("preserves text response provider overrides and variants", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([{
+        ...makeModel("responses-model"),
+        config: {
+          provider: { npm: "@ai-sdk/openai", api: "responses" },
+          variants: {
+            fast: { reasoningEffort: "low" },
+            thorough: { reasoningEffort: "high" },
+          },
+        },
+      }]),
+      apiKey: "test-key",
+      apiKeys: null,
+    };
+
+    const model = buildCloudProviderConfig(provider).models?.["responses-model"] as Record<string, unknown>;
+    expect(model.provider).toEqual({ npm: "@ai-sdk/openai", api: "responses" });
+    expect(model.variants).toEqual({
+      fast: { reasoningEffort: "low" },
+      thorough: { reasoningEffort: "high" },
+    });
+  });
+
+  test("preserves explicit image generation metadata", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([{
+        ...makeModel("image-model"),
+        config: {
+          imageGeneration: {
+            textToImage: true,
+            imageToImage: true,
+            outputImage: { mimeTypes: ["image/png"] },
+          },
+        },
+      }]),
+      apiKey: "test-key",
+      apiKeys: null,
+    };
+
+    const model = buildCloudProviderConfig(provider).models?.["image-model"] as Record<string, unknown>;
+    expect(model.imageGeneration).toEqual({
+      textToImage: true,
+      imageToImage: true,
+      outputImage: { mimeTypes: ["image/png"] },
+    });
+  });
+
   test("preserves explicit media generation metadata", () => {
     const provider: DenOrgLlmProviderConnection = {
       ...makeProvider([{
@@ -201,6 +277,76 @@ describe("buildCloudProviderConfig", () => {
       outputVideo: { mimeTypes: ["video/mp4"] },
     });
   });
+
+  test("preserves generation-only modalities", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([
+        {
+          ...makeModel("image-only"),
+          config: { modalities: { input: ["text"], output: ["image"] } },
+        },
+        {
+          ...makeModel("video-only"),
+          config: { modalities: { input: ["text", "image"], output: ["video"] } },
+        },
+      ]),
+      apiKey: "test-key",
+      apiKeys: null,
+    };
+
+    const models = buildCloudProviderConfig(provider).models as Record<string, Record<string, unknown>>;
+    expect(models["image-only"].modalities).toEqual({ input: ["text"], output: ["image"] });
+    expect(models["video-only"].modalities).toEqual({ input: ["text", "image"], output: ["video"] });
+  });
+
+  test("preserves advanced model metadata without inventing camel aliases", () => {
+    const provider: DenOrgLlmProviderConnection = {
+      ...makeProvider([{
+        ...makeModel("advanced-model"),
+        config: {
+          family: "advanced",
+          release_date: "2026-09-01",
+          attachment: true,
+          reasoning: true,
+          temperature: false,
+          tool_call: true,
+          interleaved: { field: "reasoning_content" },
+          structured_output: true,
+          open_weights: false,
+          cost: { input: 1, output: 2 },
+          limit: { context: 200_000, output: 32_000 },
+          status: "active",
+          options: { reasoningEffort: "high" },
+          headers: { "x-model-feature": "advanced" },
+        },
+      }]),
+      apiKey: "test-key",
+      apiKeys: null,
+    };
+
+    const model = buildCloudProviderConfig(provider).models?.["advanced-model"] as Record<string, unknown>;
+    expect(model).toEqual({
+      id: "advanced-model",
+      name: "advanced-model",
+      family: "advanced",
+      release_date: "2026-09-01",
+      attachment: true,
+      reasoning: true,
+      temperature: false,
+      tool_call: true,
+      interleaved: { field: "reasoning_content" },
+      structured_output: true,
+      open_weights: false,
+      cost: { input: 1, output: 2 },
+      limit: { context: 200_000, output: 32_000 },
+      status: "active",
+      options: { reasoningEffort: "high" },
+      headers: { "x-model-feature": "advanced" },
+    });
+    expect(model.structuredOutput).toBe(undefined);
+    expect(model.openWeights).toBe(undefined);
+  });
+
   test("keeps an empty models map for a cloud provider without models", () => {
     const provider: DenOrgLlmProviderConnection = {
       id: "lpr_catalog",
@@ -296,13 +442,17 @@ describe("buildCloudProviderConfig catalog backfill", () => {
     expect(model?.limit).toEqual({ context: 1000000, output: 128000 });
   });
 
-  test("what the org published wins over the catalog", () => {
+  test("uses catalog fallback while explicit org values win", () => {
     const model = modelConfig(
-      makeJuggleRouter({ limit: { context: 200000, output: 64000 } }),
+      makeJuggleRouter({
+        limit: { context: 200000, output: 64000 },
+        variants: { org: { reasoningEffort: "high" } },
+      }),
       CATALOG,
     );
     expect(model?.limit).toEqual({ context: 200000, output: 64000 });
     expect(model?.cost).toEqual({ input: 5, output: 25 });
+    expect(model?.variants).toEqual({ org: { reasoningEffort: "high" } });
   });
 
   test("a catalog without the provider leaves the block untouched", () => {

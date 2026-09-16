@@ -1,7 +1,13 @@
+import type { ComposerDraft } from "@/app/types";
+
 export type ComposerSubmitAction = "send" | "queue";
 
 export function resolveComposerSubmitAction(busy: boolean): ComposerSubmitAction {
   return busy ? "queue" : "send";
+}
+
+export function canSteerQueuedDraft(draft: ComposerDraft): boolean {
+  return draft.mode === "prompt" && !draft.command;
 }
 
 export function shouldDrainQueuedTask(input: {

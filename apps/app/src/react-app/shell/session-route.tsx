@@ -50,6 +50,7 @@ import {
 import type {
   ComposerDraft,
   ComposerPart,
+  ComposerSubmissionOptions,
   ModelOption,
   ModelRef,
   SlashCommandOption,
@@ -1307,13 +1308,29 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/preferences");
       },
-      onSendDraft: async (draft: ComposerDraft, sessionId: string): Promise<CloudMcpSubmissionResult> => {
+      onSendDraft: async (
+        draft: ComposerDraft,
+        sessionId: string,
+        submission: ComposerSubmissionOptions = { delivery: "start" },
+      ): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
         if (!canAcceptTask) return { outcome: "cancelled", reason: "context_changed" };
         const text = (draft.resolvedText ?? draft.text).trim();
         if (!text && draft.attachments.length === 0) {
           return { outcome: "cancelled", reason: "context_changed" };
+        }
+        if (submission.delivery === "steer" && (draft.mode !== "prompt" || draft.command)) {
+          return {
+            outcome: "blocked",
+            issue: {
+              code: "unsupported_steer_draft",
+              stage: "engine_delivery",
+              retryable: false,
+              message: "Commands and shell tasks cannot steer an active task.",
+              recommendedAction: "Edit the queued item into a normal message, then steer it again.",
+            },
+          };
         }
         // 用目标会话自己的模型发送（分屏时两个面板的会话可能用不同模型）。
         const targetChoice = resolveModelForSession(targetSessionId);
@@ -1367,6 +1384,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           send: async () => {
             captureAnalyticsEvent("task_message_sent", {
               mode: draft.mode ?? "prompt",
+              delivery: submission.delivery ?? "start",
               is_command: Boolean(draft.command),
               attachment_count: draft.attachments.length,
               text_length: text.length,
@@ -1374,7 +1392,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               provider_id: targetModel?.providerID ?? null,
               model_id: targetModel?.modelID ?? null,
             });
-            markTaskRunStart(targetSessionId);
+            if (submission.delivery !== "steer") {
+              markTaskRunStart(targetSessionId);
+            }
             // Den org adoption signals (auth-gated inside; no-op when signed out).
             // This remains inside the post-readiness send closure so a blocked
             // Cloud submission cannot create a run or report that one started.
@@ -1386,7 +1406,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
                 }]
               : undefined;
             trackSessionActive(targetSessionId, telemetryDimensions);
-            trackTaskStarted(targetSessionId, telemetryDimensions);
+            if (submission.delivery !== "steer") {
+              trackTaskStarted(targetSessionId, telemetryDimensions);
+            }
 
             if (draft.mode === "shell") {
               await shellInSession(opencodeClient, targetSessionId, text);
@@ -1425,6 +1447,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               agent: selectedAgent ?? undefined,
               ...(targetVariant ? { variant: targetVariant } : {}),
               ...(envSystemContext ? { system: envSystemContext } : {}),
+              ...(submission.delivery === "steer" ? {
+                juggleworkDelivery: "steer" as const,
+                juggleworkAdmissionId: submission.admissionId,
+              } : {}),
             });
             if (result.error) {
               if (result.error instanceof Error) throw result.error;

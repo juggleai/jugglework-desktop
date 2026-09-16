@@ -120,6 +120,7 @@ const startRunBodySchema = z.discriminatedUnion("origin", [
     origin: z.literal("local-renderer"),
     startCommandCorrelationId: runIdentifierSchema.nullable(),
     prompt: promptBodySchema,
+    whenBusy: z.enum(["reject", "steer"]).default("reject"),
   }).strict(),
   z.object({
     origin: z.literal("remote-control"),
@@ -156,6 +157,45 @@ function parseRunIdentifier(value: unknown, field: string): string {
   const parsed = runIdentifierSchema.safeParse(value);
   if (!parsed.success) throw new ApiError(400, "invalid_payload", `${field} is invalid`);
   return parsed.data;
+}
+
+function promptBodyToV2Input(prompt: Record<string, unknown>) {
+  if (!Array.isArray(prompt.parts)) {
+    throw new ApiError(400, "invalid_payload", "Steer prompt parts are required");
+  }
+
+  let text = "";
+  const files: Array<{ uri: string; name?: string }> = [];
+  const agents: Array<{ name: string }> = [];
+  for (const part of prompt.parts) {
+    if (!isRecord(part) || typeof part.type !== "string") {
+      throw new ApiError(400, "invalid_payload", "Steer prompt contains an invalid part");
+    }
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+      continue;
+    }
+    if (part.type === "file" && typeof part.url === "string") {
+      files.push({
+        uri: part.url,
+        ...(typeof part.filename === "string" && part.filename.trim() ? { name: part.filename } : {}),
+      });
+      continue;
+    }
+    if (part.type === "agent" && typeof part.name === "string" && part.name.trim()) {
+      agents.push({ name: part.name });
+      continue;
+    }
+    throw new ApiError(400, "unsupported_steer_prompt", `Steer does not support prompt part type: ${part.type}`);
+  }
+  if (!text.trim() && files.length === 0 && agents.length === 0) {
+    throw new ApiError(400, "invalid_payload", "Steer prompt must contain text, a file, or an agent");
+  }
+  return {
+    text,
+    ...(files.length ? { files } : {}),
+    ...(agents.length ? { agents } : {}),
+  };
 }
 
 function remapSessionMutationError(error: unknown): never {
@@ -664,29 +704,51 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
             status: engineStatus,
           });
         }
-          if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
-            const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
-              isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
-              ? input.prompt.parts[0].text : null;
-            if (!text || !input.startCommandCorrelationId) throw new ApiError(400, "invalid_payload", "Remote pending prompt is invalid");
-            const pending = sessionPendingOperations.create({
-              workspaceId: workspace.id,
-              sessionId: input.sessionId,
-              mode: input.whenBusy,
-              prompt: text,
-              commandCorrelationId: input.startCommandCorrelationId,
-            });
-            if (input.whenBusy === "enqueue") {
-              const position = sessionPendingOperations.list(workspace.id, input.sessionId)
-                .filter((item) => item.mode === "enqueue" && item.state === "pending" && item.queueSequence <= pending.queueSequence).length;
-              return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position }, 202);
-            }
-            // Return the durable ID while it is still pending/cancellable. The
-            // lifecycle pump claims and submits it asynchronously as steer.
-            void sessionPendingOperationPump.wake();
-            return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position: 1 }, 202);
+        if (input.origin === "local-renderer" && input.whenBusy === "steer") {
+          if (!input.startCommandCorrelationId) {
+            throw new ApiError(400, "invalid_payload", "Local steer requires an admission id");
           }
-          throw new SessionMutationError(
+          const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
+            sessionID: input.sessionId,
+            id: input.startCommandCorrelationId,
+            prompt: promptBodyToV2Input(input.prompt),
+            delivery: "steer",
+          });
+          const admitted = result.data?.data;
+          if (
+            result.error !== undefined ||
+            !admitted ||
+            admitted.id !== input.startCommandCorrelationId ||
+            admitted.sessionID !== input.sessionId ||
+            admitted.delivery !== "steer"
+          ) {
+            throw new ApiError(502, "opencode_invalid_response", "OpenCode did not accept the steer prompt");
+          }
+          return jsonResponse({ disposition: "steered", admissionId: admitted.id }, 202);
+        }
+        if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
+          const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
+            isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
+            ? input.prompt.parts[0].text : null;
+          if (!text || !input.startCommandCorrelationId) throw new ApiError(400, "invalid_payload", "Remote pending prompt is invalid");
+          const pending = sessionPendingOperations.create({
+            workspaceId: workspace.id,
+            sessionId: input.sessionId,
+            mode: input.whenBusy,
+            prompt: text,
+            commandCorrelationId: input.startCommandCorrelationId,
+          });
+          if (input.whenBusy === "enqueue") {
+            const position = sessionPendingOperations.list(workspace.id, input.sessionId)
+              .filter((item) => item.mode === "enqueue" && item.state === "pending" && item.queueSequence <= pending.queueSequence).length;
+            return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position }, 202);
+          }
+          // Return the durable ID while it is still pending/cancellable. The
+          // lifecycle pump claims and submits it asynchronously as steer.
+          void sessionPendingOperationPump.wake();
+          return jsonResponse({ disposition: "enqueued", pendingOperationId: pending.id, position: 1 }, 202);
+        }
+        throw new SessionMutationError(
             "session_busy",
             sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null,
           );

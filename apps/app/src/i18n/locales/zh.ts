@@ -152,6 +152,7 @@ export default {
   "composer.queued_edit_requires_empty": "请先清空或排队当前草稿，再编辑排队任务。",
   "composer.queued_send_now": "引导",
   "composer.queued_send_now_hint": "立即用这条消息引导当前任务",
+  "composer.queued_send_now_unsupported": "命令和终端任务不能用于引导，请编辑为普通消息",
   "composer.escape_to_stop": "再按一次 Esc 可停止智能体",
   "composer.skill_source": "Skill",
   "composer.stop": "停止",

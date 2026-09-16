@@ -227,6 +227,72 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("busy local-renderer steer is admitted through OpenCode v2 without starting a second run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_local_steer", { type: "busy" });
+
+    const response = await fetch(`${runPath(harness.base, "ses_local_steer")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "queued-draft-1",
+        whenBusy: "steer",
+        prompt: {
+          parts: [
+            { type: "text", text: "Change direction" },
+            { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///tmp/notes.txt" },
+            { type: "agent", name: "reviewer" },
+          ],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ disposition: "steered", admissionId: "queued-draft-1" });
+    expect(engine.v2Prompts).toEqual([{
+      sessionId: "ses_local_steer",
+      body: {
+        id: "queued-draft-1",
+        delivery: "steer",
+        prompt: {
+          text: "Change direction",
+          files: [{ uri: "file:///tmp/notes.txt", name: "notes.txt" }],
+          agents: [{ name: "reviewer" }],
+        },
+      },
+      directory: harness.root,
+    }]);
+    const pending = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_local_steer/pending`, {
+      headers: harness.collaboratorHeaders,
+    });
+    await expect(pending.json()).resolves.toEqual({ items: [] });
+  });
+
+  test("busy local-renderer steer rejects unsupported prompt parts without losing the active run", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_unsupported_steer", { type: "busy" });
+
+    const response = await fetch(`${runPath(harness.base, "ses_unsupported_steer")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "unsupported-steer-1",
+        whenBusy: "steer",
+        prompt: {
+          parts: [{ type: "subtask", prompt: "delegate", description: "delegate", agent: "reviewer" }],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "unsupported_steer_prompt" });
+    expect(engine.v2Prompts).toHaveLength(0);
+  });
+
   test("busy steer is durably admitted through the OpenCode v2 steer delivery", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

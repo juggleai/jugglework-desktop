@@ -149,6 +149,10 @@ export type JuggleWorkSessionRun = {
   abortRequestedAt: number | null;
 };
 
+export type JuggleWorkSessionStartResult =
+  | { disposition: "started"; run: JuggleWorkSessionRun }
+  | { disposition: "steered"; admissionId: string };
+
 export type JuggleWorkSessionPrompt = {
   messageID?: string;
   model?: { providerID: string; modelID: string };
@@ -1968,8 +1972,9 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         origin: JuggleWorkSessionRunOrigin;
         startCommandCorrelationId: string | null;
         prompt: JuggleWorkSessionPrompt;
+        whenBusy?: "reject" | "steer";
       },
-    ) => requestJson<{ run: JuggleWorkSessionRun }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/start`, {
+    ) => requestJson<JuggleWorkSessionStartResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/runs/start`, {
       token,
       hostToken,
       method: "POST",

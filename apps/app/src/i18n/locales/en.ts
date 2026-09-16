@@ -149,6 +149,7 @@ export default {
   "composer.queued_edit_requires_empty": "Clear or queue the current draft before editing a queued task.",
   "composer.queued_send_now": "Steer",
   "composer.queued_send_now_hint": "Steer the active task with this message now",
+  "composer.queued_send_now_unsupported": "Commands and shell tasks cannot steer; edit this into a normal message",
   "composer.escape_to_stop": "Hit Escape again to stop the agent",
   "composer.skill_source": "Skill",
   "composer.stop": "Stop",

@@ -24,6 +24,7 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
+  ComposerSubmissionOptions,
   McpServerEntry,
   McpStatusMap,
   ModelRef,
@@ -77,7 +78,7 @@ import { useFullAccessPermissionPromptGate } from "./full-access-permission-prom
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
-import { shouldDrainQueuedTask } from "./queued-draft-policy";
+import { canSteerQueuedDraft, shouldDrainQueuedTask } from "./queued-draft-policy";
 import { deriveOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
@@ -200,7 +201,11 @@ export type SessionSurfaceProps = {
   contextWindowTokens: number;
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef) => void;
-  onSendDraft: (draft: ComposerDraft, sessionId: string) => Promise<CloudMcpSubmissionResult>;
+  onSendDraft: (
+    draft: ComposerDraft,
+    sessionId: string,
+    options?: ComposerSubmissionOptions,
+  ) => Promise<CloudMcpSubmissionResult>;
   onCreateNewSession: () => Promise<string | null>;
   cloudMcpSubmissionState: CloudMcpSubmissionGateState;
   onOpenConnect: () => void;
@@ -1042,7 +1047,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Core sender shared by initial send and steered follow-ups. OpenCode
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
-  const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
+  const sendDraft = useCallback(async (
+    nextDraft: ComposerDraft,
+    submission: ComposerSubmissionOptions = { delivery: "start" },
+  ) => {
     const workspaceId = props.workspaceId;
     const sessionId = props.sessionId;
     const surfaceIdentity = `${workspaceId}:${sessionId}`;
@@ -1061,9 +1069,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // Progress belongs to the task that produced it. Hide stale progress as
     // soon as the next task is submitted (including a drained queued task);
     // fresh todo.updated events will populate the panel for the new run.
-    clearSessionTodos(workspaceId, sessionId);
+    if (submission.delivery !== "steer") {
+      clearSessionTodos(workspaceId, sessionId);
+    }
     try {
-      const result = await props.onSendDraft(nextDraft, sessionId);
+      const result = await props.onSendDraft(nextDraft, sessionId, submission);
       if (result.outcome === "blocked" || result.outcome === "cancelled") return result;
       // Only report a run after the pre-send gate released the exact queued
       // submission and the route accepted or sent it.
@@ -1118,7 +1128,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
-  const handleSend = useCallback(async () => {
+  const submitComposerDraft = useCallback(async (
+    submission: ComposerSubmissionOptions = { delivery: "start" },
+  ) => {
     if (props.taskSubmissionDisabled) return;
     const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
     const originalDraft = draft;
@@ -1141,7 +1153,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
 
       const compactCommand = isCompactSessionCommand(nextDraft.command);
-      const pendingSend = sendDraft(nextDraft);
+      const pendingSend = sendDraft(nextDraft, submission);
       // `/compact` is an action rather than conversational input. Clear it as
       // soon as the compaction run starts so the composer does not keep showing
       // a command that is already executing during the potentially long request.
@@ -1174,10 +1186,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
   }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft]);
 
+  const handleSend = useCallback(async () => {
+    await submitComposerDraft();
+  }, [submitComposerDraft]);
+
   const handleSteer = useCallback(async () => {
     setSteering(true);
-    await handleSend();
-  }, [handleSend]);
+    await submitComposerDraft({ delivery: "steer", admissionId: `local-steer-${crypto.randomUUID()}` });
+  }, [submitComposerDraft]);
 
   const handleRetryCloudSubmission = useCallback(() => {
     if (draft.trim() || attachments.length > 0) {
@@ -1224,6 +1240,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const currentQueue = getComposerQueuedDrafts(useComposerStateStore.getState(), props.sessionId);
     const originalIndex = currentQueue.findIndex((item) => item.id === id);
     if (originalIndex < 0) return;
+    if (!canSteerQueuedDraft(currentQueue[originalIndex]!.draft)) return;
 
     const previouslyWaitingForIdle = queueWaitsForIdleRef.current;
     drainingQueueRef.current = true;
@@ -1242,7 +1259,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
     let accepted = false;
     try {
-      const result = await sendDraft(claimed.draft);
+      const result = await sendDraft(claimed.draft, { delivery: "steer", admissionId: claimed.id });
       if (result.outcome === "blocked") {
         cloudQueueBlockedRef.current = true;
         restoreQueuedDraft(props.sessionId, claimed, originalIndex);
@@ -2352,6 +2369,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onRemove={removeQueuedDraft}
                     onEdit={editQueuedDraft}
                     onSteer={(id) => void steerQueuedDraft(id)}
+                    canSteer={canSteerQueuedDraft}
                     steeringId={steeringQueuedDraftId}
                     sending={drainingQueueRef.current}
                   />
