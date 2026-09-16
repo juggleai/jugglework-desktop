@@ -71,6 +71,23 @@ test("discovers the regional RS endpoint, signs conditional chgm, and verifies c
   assert.match(calls[2].url.pathname, /^\/stat\//);
 });
 
+test("accepts the official qbox.me regional RS endpoint returned by production discovery", async () => {
+  const calls = [];
+  const client = createQiniuManagementClient({
+    bucket: "juggleim",
+    accessKey: "test-access",
+    secretKey: "test-secret",
+    fetchImpl: async (input) => {
+      const url = new URL(input);
+      calls.push(url);
+      if (url.hostname === "uc.qiniuapi.com") return response(200, JSON.stringify({ hosts: [{ rs: { domains: ["rs-z2.qbox.me"] } }] }));
+      return response(200, JSON.stringify({ fsize: 1, hash: "etag", putTime: "1" }));
+    },
+  });
+  assert.deepEqual(await client.stat("stable/latest.yml"), { size: 1, etag: "etag", putTime: "1" });
+  assert.equal(calls[1].hostname, "rs-z2.qbox.me");
+});
+
 test("fails closed when the condition is rejected and does not stat after chgm", async () => {
   const calls = [];
   const client = createQiniuManagementClient({
@@ -89,18 +106,20 @@ test("fails closed when the condition is rejected and does not stat after chgm",
 });
 
 test("rejects unapproved region endpoints before sending an authenticated request", async () => {
-  let calls = 0;
-  const client = createQiniuManagementClient({
-    bucket: "juggleim",
-    accessKey: "test-access",
-    secretKey: "test-secret",
-    fetchImpl: async () => {
-      calls += 1;
-      return response(200, JSON.stringify({ hosts: [{ rs: { domains: ["attacker.example"] } }] }));
-    },
-  });
-  await assert.rejects(client.stat("key"), /unapproved RS endpoint/);
-  assert.equal(calls, 1);
+  for (const hostname of ["attacker.example", "qbox.me.attacker.example", "evilqbox.me", "qiniuapi.com.attacker.example"]) {
+    let calls = 0;
+    const client = createQiniuManagementClient({
+      bucket: "juggleim",
+      accessKey: "test-access",
+      secretKey: "test-secret",
+      fetchImpl: async () => {
+        calls += 1;
+        return response(200, JSON.stringify({ hosts: [{ rs: { domains: [hostname] } }] }));
+      },
+    });
+    await assert.rejects(client.stat("key"), /unapproved RS endpoint/);
+    assert.equal(calls, 1);
+  }
 });
 
 test("rejects a caller-supplied region discovery origin", () => {
