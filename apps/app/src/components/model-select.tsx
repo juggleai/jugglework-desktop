@@ -21,7 +21,7 @@ import {
   useCheckDesktopRestriction,
   useDesktopAllowedModels,
 } from "@/react-app/domains/cloud/desktop-config-provider";
-import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { getChatSelectableModelEntries, getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import {
   Command,
   CommandCollection,
@@ -87,7 +87,7 @@ function useModelOptions(open: boolean) {
 
     const options = getConnectedProviderItems(data)
       .flatMap((provider) =>
-        Object.entries(provider.models).map(([id, model]) => ({
+        getChatSelectableModelEntries(provider.models).map(([id, model]) => ({
           providerID: provider.id,
           modelID: id,
           title: model.name,

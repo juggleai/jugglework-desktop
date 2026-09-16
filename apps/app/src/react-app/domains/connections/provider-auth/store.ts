@@ -90,6 +90,8 @@ import {
 } from "./gateway-mirror";
 import {
   buildCustomProviderConfig,
+  customProviderCredentialEnvEntry,
+  customProviderInputFromConfigContent,
   formatConfigWithCustomProvider,
   formatConfigWithoutCustomProvider,
   normalizeCustomProviderInput,
@@ -1543,6 +1545,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       const apiKey = input.apiKey.trim();
       if (apiKey) {
+        const envEntry = customProviderCredentialEnvEntry(normalized, apiKey);
+        if (envEntry) {
+          const target = await resolveJuggleWorkConfigTarget("write");
+          if (!target.canUseJuggleWorkServer || !target.juggleworkClient) {
+            throw new Error("JuggleWork server unavailable. Connect to store the media provider credential.");
+          }
+          await target.juggleworkClient.upsertUserEnv([envEntry]);
+        }
         await c.auth.set({
           providerID: normalized.providerId,
           auth: { type: "api", key: apiKey },
@@ -1561,6 +1571,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     } finally {
       setStateField("providerAuthBusy", false);
     }
+  }
+
+  /**
+   * Read the editable custom-provider source from raw JSONC. ProviderList is a
+   * runtime projection and intentionally drops JuggleWork-only fields such as
+   * mediaGeneration, so it must never be used as the edit round-trip source.
+   */
+  async function readCustomProviderInput(providerId: string): Promise<CustomProviderInput | null> {
+    const resolved = providerId.trim();
+    if (!resolved) return null;
+    const globalConfigFile = (await readGlobalConfigFile()) as { content?: string } | null;
+    const runtimeProvider = options.providers().find((provider) => provider.id === resolved);
+    return customProviderInputFromConfigContent(
+      String(globalConfigFile?.content ?? "{}"),
+      resolved,
+      runtimeProvider,
+    );
   }
 
   const removeCustomProviderConfigFrom = async (
@@ -2451,6 +2478,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     completeProviderAuthOAuth,
     submitProviderApiKey,
     connectCustomProvider,
+    readCustomProviderInput,
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,

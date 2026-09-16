@@ -4,6 +4,12 @@ import en from "../src/i18n/locales/en";
 import zh from "../src/i18n/locales/zh";
 import {
   buildCustomProviderConfig,
+  CUSTOM_PROVIDER_NPM,
+  CUSTOM_PROVIDER_RESPONSES_NPM,
+  customProviderCredentialEnv,
+  customProviderCredentialEnvEntry,
+  customProviderModelType,
+  customProviderInputFromConfigContent,
   customProviderInputFromProvider,
   formatConfigWithCustomProvider,
   formatConfigWithoutCustomProvider,
@@ -23,11 +29,77 @@ const baseInput = (overrides: Partial<CustomProviderInput> = {}): CustomProvider
     ...overrides,
   });
 
+describe("custom provider raw config edit source", () => {
+  test("keeps video metadata when the runtime provider projection drops it", () => {
+    const draft = customProviderInputFromConfigContent(`{
+      "provider": {
+        "huoshan": {
+          "npm": "@ai-sdk/openai-compatible",
+          "name": "huoshan",
+          "env": ["CUSTOM_HUOSHAN_API_KEY"],
+          "options": { "baseURL": "https://ark.cn-beijing.volces.com/api/v3" },
+          "models": {
+            "doubao-seedance-2-0-260128": {
+              "name": "seedance2.0",
+              "modalities": { "input": ["text", "image"], "output": ["video"] },
+              "mediaGeneration": {
+                "protocol": "volcengine-ark-v3",
+                "textToVideo": true,
+                "imageToVideo": true,
+                "outputVideo": { "mimeTypes": ["video/mp4"], "resolutions": ["480p", "720p", "1080p", "4k"] }
+              }
+            }
+          }
+        }
+      }
+    }`, "huoshan", {
+      id: "huoshan",
+      name: "huoshan",
+      models: {
+        "doubao-seedance-2-0-260128": {
+          id: "doubao-seedance-2-0-260128",
+          name: "seedance2.0",
+          api: { npm: CUSTOM_PROVIDER_NPM },
+        },
+      },
+    });
+    expect(draft?.models[0]).toEqual({
+      id: "doubao-seedance-2-0-260128",
+      name: "seedance2.0",
+      chat: false,
+      mediaGeneration: {
+        protocol: "volcengine-ark-v3",
+        textToVideo: true,
+        imageToVideo: true,
+        outputVideo: { mimeTypes: ["video/mp4"], resolutions: ["480p", "720p", "1080p", "4k"] },
+      },
+    });
+  });
+});
+
 describe("normalizeCustomProviderId", () => {
   test("folds a display name into a config-safe key", () => {
     expect(normalizeCustomProviderId("  My Relay 中转 ")).toBe("my-relay");
     expect(normalizeCustomProviderId("Foo//Bar")).toBe("foo-bar");
     expect(normalizeCustomProviderId("--edge--")).toBe("edge");
+  });
+});
+
+describe("customProviderModelType", () => {
+  test("defaults models without generation metadata to text", () => {
+    expect(customProviderModelType({})).toBe("text");
+  });
+
+  test("recognizes image and video generation models", () => {
+    expect(customProviderModelType({ imageGeneration: { textToImage: true } })).toBe("image");
+    expect(customProviderModelType({ mediaGeneration: { textToVideo: true } })).toBe("video");
+  });
+
+  test("prefers video when a legacy model contains mixed generation metadata", () => {
+    expect(customProviderModelType({
+      imageGeneration: { textToImage: true },
+      mediaGeneration: { textToVideo: true },
+    })).toBe("video");
   });
 });
 
@@ -81,13 +153,11 @@ describe("customProviderInputFromProvider", () => {
       providerId: "my-relay",
       name: "My Relay",
       baseUrl: "https://api.example.com/v1",
-      models: [{ id: "gpt-4o", name: "GPT-4o" }],
-      contextLimit: 200000,
-      outputLimit: 32000,
+      models: [{ id: "gpt-4o", name: "GPT-4o", contextLimit: 200000, outputLimit: 32000 }],
     });
   });
 
-  test("rejects model groups the shared form cannot edit without data loss", () => {
+  test("preserves different per-model limits in the structured editor", () => {
     expect(customProviderInputFromProvider({
       id: "mixed-limits",
       name: "Mixed limits",
@@ -106,7 +176,10 @@ describe("customProviderInputFromProvider", () => {
           limit: { context: 2000, output: 100 },
         },
       },
-    })).toBe(null);
+    })?.models).toEqual([
+      { id: "first", name: "First", contextLimit: 1000, outputLimit: 100 },
+      { id: "second", name: "Second", contextLimit: 2000, outputLimit: 100 },
+    ]);
   });
 });
 
@@ -209,10 +282,14 @@ describe("buildCustomProviderConfig", () => {
     });
   });
 
-  test("adds reasoning effort variants to manually added GPT-5.6 models", () => {
+  test("writes only explicitly selected reasoning effort variants", () => {
     const config = buildCustomProviderConfig(
       baseInput({
-        models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+        models: [{
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          reasoningDepths: ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+        }],
         contextLimit: 1_000_000,
         outputLimit: 120_000,
       }),
@@ -222,13 +299,55 @@ describe("buildCustomProviderConfig", () => {
       name: "GPT-5.6 Sol",
       reasoning: true,
       variants: {
+        none: {},
         low: { reasoningEffort: "low" },
         medium: { reasoningEffort: "medium" },
         high: { reasoningEffort: "high" },
         xhigh: { reasoningEffort: "xhigh" },
+        max: { reasoningEffort: "max" },
+        ultra: { reasoningEffort: "ultra" },
       },
       limit: { context: 1_000_000, output: 120_000 },
     });
+  });
+
+  test("writes none as an empty variant rather than reasoningEffort none", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{ id: "optional-reasoning", name: "Optional reasoning", reasoningDepths: ["none", "high"] }],
+    }));
+    expect(config.models?.["optional-reasoning"]?.variants).toEqual({
+      none: {},
+      high: { reasoningEffort: "high" },
+    });
+  });
+
+  test("does not infer reasoning support from a GPT model id when none is configured", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+    }));
+    expect(config.models?.["gpt-5.6-sol"]).toEqual({ name: "GPT-5.6 Sol" });
+  });
+
+  test("round-trips supported reasoning depths in canonical order", () => {
+    const draft = customProviderInputFromProvider({
+      id: "reasoning",
+      name: "Reasoning",
+      options: { baseURL: "https://api.example.com/v1" },
+      models: {
+        model: {
+          id: "model",
+          name: "Model",
+          api: { npm: CUSTOM_PROVIDER_NPM },
+          variants: {
+            ultra: { reasoningEffort: "ultra" },
+            none: {},
+            low: { reasoningEffort: "low" },
+            max: { reasoningEffort: "max" },
+          },
+        },
+      },
+    });
+    expect(draft?.models[0]?.reasoningDepths).toEqual(["none", "low", "max", "ultra"]);
   });
 
   test("does not invent reasoning variants for unknown custom models", () => {
@@ -258,6 +377,200 @@ describe("buildCustomProviderConfig", () => {
         outputVideo: { mimeTypes: ["video/mp4"], maxDurationSeconds: 8 },
       },
     });
+    expect(config.env).toEqual(["CUSTOM_MY_RELAY_API_KEY"]);
+  });
+
+  test("derives a non-reserved credential environment key for video adapters", () => {
+    expect(customProviderCredentialEnv("Acme.video-gateway")).toBe("CUSTOM_ACME_VIDEO_GATEWAY_API_KEY");
+  });
+
+  test("builds a trimmed credential mirror only when both key and value exist", () => {
+    expect(customProviderCredentialEnvEntry({ credentialEnv: " ACME_VIDEO_KEY " }, " secret ")).toEqual({
+      key: "ACME_VIDEO_KEY",
+      value: "secret",
+    });
+    expect(customProviderCredentialEnvEntry({ credentialEnv: "ACME_VIDEO_KEY" }, "  ")).toBeNull();
+    expect(customProviderCredentialEnvEntry({ credentialEnv: null }, "secret")).toBeNull();
+  });
+
+  test("marks generation-only models as video output instead of chat models", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{
+        id: "motion-only",
+        name: "Motion only",
+        chat: false,
+        mediaGeneration: { textToVideo: true, outputVideo: { mimeTypes: ["video/mp4"] } },
+      }],
+    }));
+    expect(config.models?.["motion-only"]).toEqual({
+      name: "Motion only",
+      modalities: { input: ["text"], output: ["video"] },
+      mediaGeneration: { textToVideo: true, outputVideo: { mimeTypes: ["video/mp4"] } },
+    });
+  });
+
+  test("preserves the per-model Volcengine Ark V3 video protocol", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{
+        id: "seedance",
+        name: "Seedance",
+        chat: false,
+        mediaGeneration: {
+          protocol: "volcengine-ark-v3",
+          textToVideo: true,
+          outputVideo: { mimeTypes: ["video/mp4"] },
+        },
+      }],
+    }));
+    expect(config.models?.seedance?.mediaGeneration).toEqual({
+      protocol: "volcengine-ark-v3",
+      textToVideo: true,
+      outputVideo: { mimeTypes: ["video/mp4"] },
+    });
+    const draft = customProviderInputFromProvider({
+      id: "ark", name: "Ark", env: ["ARK_API_KEY"], options: { baseURL: "https://ark.cn-beijing.volces.com/api/v3" },
+      models: { seedance: { id: "seedance", name: "Seedance", api: { npm: CUSTOM_PROVIDER_NPM }, modalities: { input: ["text"], output: ["video"] }, mediaGeneration: config.models?.seedance?.mediaGeneration } },
+    });
+    expect(draft?.models[0]?.mediaGeneration?.protocol).toBe("volcengine-ark-v3");
+  });
+
+  test("preserves the declared credential key and video metadata when editing", () => {
+    const draft = customProviderInputFromProvider({
+      id: "acme-video",
+      name: "Acme Video",
+      env: ["ACME_VIDEO_KEY"],
+      options: { baseURL: "https://video.example.com/v1" },
+      models: {
+        motion: {
+          id: "motion",
+          name: "Motion",
+          api: { npm: CUSTOM_PROVIDER_NPM },
+          mediaGeneration: {
+            textToVideo: true,
+            imageToVideo: true,
+            inputImage: { mimeTypes: ["image/png"], maxBytes: 5_000_000, maxCount: 1 },
+            outputVideo: { mimeTypes: ["video/mp4"], maxDurationSeconds: 10, resolutions: ["720p"] },
+          },
+        },
+      },
+    });
+
+    expect(draft?.credentialEnv).toBe("ACME_VIDEO_KEY");
+    expect(draft?.models[0]?.mediaGeneration).toEqual({
+      textToVideo: true,
+      imageToVideo: true,
+      inputImage: { mimeTypes: ["image/png"], maxBytes: 5_000_000, maxCount: 1 },
+      outputVideo: { mimeTypes: ["video/mp4"], maxDurationSeconds: 10, resolutions: ["720p"] },
+    });
+  });
+
+  test("preserves different capabilities for each model in one provider", () => {
+    const draft = customProviderInputFromProvider({
+      id: "mixed-video",
+      name: "Mixed Video",
+      env: ["MIXED_VIDEO_KEY"],
+      options: { baseURL: "https://video.example.com/v1" },
+      models: {
+        t2v: {
+          id: "t2v", name: "T2V", api: { npm: CUSTOM_PROVIDER_NPM },
+          mediaGeneration: { textToVideo: true },
+        },
+        i2v: {
+          id: "i2v", name: "I2V", api: { npm: CUSTOM_PROVIDER_NPM },
+          mediaGeneration: { imageToVideo: true },
+        },
+      },
+    });
+    expect(draft?.models).toEqual([
+      { id: "t2v", name: "T2V", mediaGeneration: { textToVideo: true } },
+      { id: "i2v", name: "I2V", mediaGeneration: { imageToVideo: true } },
+    ]);
+  });
+
+  test("keeps text and video models independent in one provider config", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [
+        { id: "chat", name: "Chat" },
+        {
+          id: "motion",
+          name: "Motion",
+          chat: false,
+          mediaGeneration: { textToVideo: true, outputVideo: { mimeTypes: ["video/mp4"] } },
+        },
+      ],
+    }));
+    expect(config.models?.chat).toEqual({ name: "Chat" });
+    expect(config.models?.motion).toEqual({
+      name: "Motion",
+      modalities: { input: ["text"], output: ["video"] },
+      mediaGeneration: { textToVideo: true, outputVideo: { mimeTypes: ["video/mp4"] } },
+    });
+  });
+
+  test("stores text-to-image, image-to-image, and multi-image capabilities per model", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [{
+        id: "image-model",
+        name: "Image model",
+        chat: false,
+        imageGeneration: {
+          protocol: "openai",
+          textToImage: true,
+          imageToImage: true,
+          multiImageToImage: true,
+          inputImage: { mimeTypes: ["image/png", "image/jpeg", "image/webp"], maxBytes: 25_000_000, maxCount: 16 },
+          outputImage: { mimeTypes: ["image/png", "image/jpeg", "image/webp"] },
+        },
+      }],
+    }));
+    expect(config.models?.["image-model"]).toEqual({
+      name: "Image model",
+      modalities: { input: ["text", "image"], output: ["image"] },
+      imageGeneration: {
+        protocol: "openai",
+        textToImage: true,
+        imageToImage: true,
+        multiImageToImage: true,
+        inputImage: { mimeTypes: ["image/png", "image/jpeg", "image/webp"], maxBytes: 25_000_000, maxCount: 16 },
+        outputImage: { mimeTypes: ["image/png", "image/jpeg", "image/webp"] },
+      },
+    });
+    const draft = customProviderInputFromProvider({
+      id: "images", name: "Images", env: ["IMAGES_KEY"], options: { baseURL: "https://api.example.com/v1" },
+      models: { "image-model": { id: "image-model", name: "Image model", api: { npm: CUSTOM_PROVIDER_NPM }, ...(config.models?.["image-model"] ?? {}) } },
+    });
+    expect(draft?.models[0]?.imageGeneration?.multiImageToImage).toBe(true);
+  });
+
+  test("writes independent Chat and Responses adapters for text models", () => {
+    const config = buildCustomProviderConfig(baseInput({
+      models: [
+        { id: "chat-model", name: "Chat model", textProtocol: "chat-completions" },
+        { id: "response-model", name: "Response model", textProtocol: "responses" },
+      ],
+    }));
+    expect(config.npm).toBe(CUSTOM_PROVIDER_NPM);
+    expect(config.models?.["chat-model"]).toEqual({ name: "Chat model" });
+    expect(config.models?.["response-model"]).toEqual({
+      name: "Response model",
+      provider: { npm: CUSTOM_PROVIDER_RESPONSES_NPM },
+    });
+  });
+
+  test("round-trips model-level Responses adapter without changing Chat siblings", () => {
+    const draft = customProviderInputFromProvider({
+      id: "mixed-text",
+      name: "Mixed text",
+      options: { baseURL: "https://api.example.com/v1" },
+      models: {
+        chat: { id: "chat", name: "Chat", api: { npm: CUSTOM_PROVIDER_NPM } },
+        responses: { id: "responses", name: "Responses", api: { npm: CUSTOM_PROVIDER_RESPONSES_NPM } },
+      },
+    });
+    expect(draft?.models).toEqual([
+      { id: "chat", name: "Chat" },
+      { id: "responses", name: "Responses", textProtocol: "responses" },
+    ]);
   });
 });
 

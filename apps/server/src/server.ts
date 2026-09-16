@@ -1036,10 +1036,16 @@ export async function startServer(config: ServerConfig, options: {
     return matches[0];
   };
   const resolveMediaRuntime = async (workspace: WorkspaceInfo) => {
-    const runtimeConfig = await readRuntimeOpencodeConfig(config, workspace.id);
+    const runtimePatch = await readRuntimeOpencodeConfig(config, workspace.id);
+    const { data: globalConfig } = await readJsoncFile(
+      resolveGlobalOpenCodeConfigPath(),
+      {} as Record<string, unknown>,
+      { allowInvalid: true, maxBytes: 1024 * 1024, regularFileOnly: true },
+    );
+    const runtimeConfig = mergeOpencodeConfigs(globalConfig, runtimePatch);
     const adapters = openAiCompatibleVideoAdapters(runtimeConfig, env);
     const credentials = await credentialReadiness(env);
-    const providerRecords = runtimeConfig.provider ?? {};
+    const providerRecords = ensurePlainObject(runtimeConfig.provider);
     const catalog: ProviderCatalogSnapshot = {
       connected: Object.keys(providerRecords),
       all: Object.entries(providerRecords).map(([id, raw]) => {
@@ -1055,7 +1061,7 @@ export async function startServer(config: ServerConfig, options: {
     return { adapters, catalog, credentialReady };
   };
   const workerVideoAdapters = (await Promise.all(config.workspaces.map(async (workspace) =>
-    openAiCompatibleVideoAdapters(await readRuntimeOpencodeConfig(config, workspace.id), env)))).flat();
+    (await resolveMediaRuntime(workspace)).adapters))).flat();
   const mediaGenerationWorker = new MediaGenerationWorker({
     repository: mediaGenerationRepository,
     adapters: workerVideoAdapters,
@@ -1093,7 +1099,12 @@ export async function startServer(config: ServerConfig, options: {
           timestamp: Date.now(),
         }); },
       });
-      const job = await service.submit({ workspace, sessionId: typeof context.sessionID === "string" ? context.sessionID : undefined, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
+      const sessionId = typeof context.sessionID === "string"
+        ? context.sessionID
+        : typeof context.sessionId === "string"
+          ? context.sessionId
+          : undefined;
+      const job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
       return { job };
     },
     async getJob(jobId: string, context: Record<string, unknown>) {

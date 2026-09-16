@@ -12,6 +12,7 @@ const WELL_KNOWN_VARIANT_ORDER = [
   "high",
   "xhigh",
   "max",
+  "ultra",
 ] as const;
 
 const VARIANT_DEFAULT_TARGET = 3;
@@ -23,6 +24,7 @@ const VARIANT_DEFAULT_SCORE: Record<string, number> = {
   high: 4,
   xhigh: 5,
   max: 6,
+  ultra: 7,
 };
 
 function defaultBehaviorOption(): ModelBehaviorOption {
@@ -153,7 +155,7 @@ const getVariantDescription = (
   if (key === "high") return family === "anthropic"
     ? t("model_behavior.desc_high_anthropic")
     : t("model_behavior.desc_high");
-  if (key === "xhigh" || key === "max") return family === "anthropic"
+  if (key === "xhigh" || key === "max" || key === "ultra") return family === "anthropic"
     ? t("model_behavior.desc_max_anthropic")
     : t("model_behavior.desc_max");
   return t("model_behavior.desc_generic", { label: label.toLowerCase() });

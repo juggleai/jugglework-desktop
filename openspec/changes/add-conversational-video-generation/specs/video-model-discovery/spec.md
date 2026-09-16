@@ -4,6 +4,88 @@ Defines how JuggleWork discovers executable video-generation models from the pro
 
 ## ADDED Requirements
 
+### Requirement: Desktop-configured typed model groups
+The desktop SHALL let a member select exactly one text, image, or video type for each model ID while creating or editing a local OpenAI-compatible model group, SHALL show only fields applicable to the selected type, and SHALL write normalized capability metadata only on the corresponding model.
+
+#### Scenario: Member reviews configured models
+- **WHEN** a custom model group contains one or more configured models
+- **THEN** the desktop shows a model list containing each model ID and its text, text-to-video, and image-to-video capability labels
+
+#### Scenario: Member adds a model
+- **WHEN** the member clicks Add model below the list
+- **THEN** the desktop opens a single-model editor below the list for model ID and display name, defaults the model type to text, and shows context/output limits, text protocol, and reasoning depth
+
+#### Scenario: Member selects an image model
+- **WHEN** the member selects image as the model type
+- **THEN** the desktop hides text and video fields and shows a generation-mode multi-select with text-to-image, image-to-image, and multi-image-to-image all selected by default
+
+#### Scenario: Member selects a video model
+- **WHEN** the member selects video as the model type
+- **THEN** the desktop hides text and image fields and shows video protocol, a mode multi-select with text-to-video and image-to-video both selected by default, maximum duration, and supported resolutions
+
+#### Scenario: Member edits legacy mixed metadata
+- **WHEN** an existing model contains multiple historical model-type metadata blocks
+- **THEN** the editor resolves video before image before text and saving retains only the explicitly selected model type
+
+#### Scenario: Provider mixes Chat and Responses text models
+- **WHEN** one custom provider contains text models using both Chat Completions and Responses API
+- **THEN** the desktop preserves each model's protocol independently, displays the protocol in the model list, and writes the matching OpenCode model-level provider adapter
+
+#### Scenario: Provider mixes OpenAI and Ark V3 video models
+- **WHEN** one custom provider contains video models using OpenAI asynchronous video routes and Volcengine Ark V3 task routes
+- **THEN** the desktop preserves and displays each model's video protocol independently and model discovery selects the matching adapter
+
+#### Scenario: Member selects supported video resolutions
+- **WHEN** a member configures a video model's supported resolutions
+- **THEN** the desktop provides a multi-select dropdown limited to 480P, 720P, 1080P, and 4K and persists the canonical `480p`, `720p`, `1080p`, and `4k` values
+
+#### Scenario: Member configures reasoning depths for a text model
+- **WHEN** a member enables text capability and selects one or more of none, low, medium, high, xhigh, max, and ultra
+- **THEN** the desktop writes matching model variants and the session reasoning selector offers exactly those values
+
+#### Scenario: Member makes no-reasoning selectable
+- **WHEN** a member selects the `none` reasoning depth
+- **THEN** the desktop writes an empty `none` variant and the session can explicitly disable deep reasoning without sending `reasoningEffort: "none"`
+
+#### Scenario: Member leaves reasoning depths unconfigured
+- **WHEN** a text model has no selected reasoning depths
+- **THEN** the desktop writes no reasoning variants and treats the model as not supporting configurable reasoning depth
+
+#### Scenario: Member edits or deletes a model
+- **WHEN** the member selects edit or delete for one configured model
+- **THEN** only that model's configuration is changed or removed and all other model definitions remain unchanged
+
+#### Scenario: Member creates a text-to-video model group
+- **WHEN** a member adds a custom model group containing a chat model and a text-to-video model
+- **THEN** only the video model contains validated `mediaGeneration.textToVideo` metadata and the configured video output constraints
+
+#### Scenario: Member edits an existing video model group
+- **WHEN** a member opens and saves a local model group that already contains video capability metadata
+- **THEN** the model list and single-model editor restore and preserve that model's limits and capability metadata instead of silently stripping it
+
+#### Scenario: Runtime provider projection omits video metadata
+- **WHEN** OpenCode's runtime provider list omits custom `mediaGeneration` fields that remain present in the raw global JSONC
+- **THEN** the desktop uses the raw JSONC provider block for editing and continues to show the model as video-capable
+
+#### Scenario: Runtime projection exposes a video-only output capability
+- **WHEN** OpenCode reports a model with `capabilities.output.video=true` and `capabilities.output.text=false`
+- **THEN** the desktop excludes that model from the session chat picker and does not retain or choose it as the default chat model
+
+#### Scenario: Models have incompatible capability metadata
+- **WHEN** an existing model group contains different video capability metadata for different models
+- **THEN** the desktop restores the corresponding independent controls for every model and preserves the differences after save
+
+### Requirement: Desktop credential readiness
+Saving a local video model group with an API key SHALL store the credential in OpenCode authentication and in the JuggleWork user environment under the provider's declared credential key, without writing the credential into provider configuration.
+
+#### Scenario: New video model group includes an API key
+- **WHEN** a member saves a video-capable custom provider with a non-empty API key
+- **THEN** the provider declares a valid non-reserved environment key, the environment store contains the credential under that key, and video model discovery can report the provider as credential-ready
+
+#### Scenario: Existing key is left unchanged during edit
+- **WHEN** a member edits a video model group and leaves the API key field blank
+- **THEN** neither the OpenCode credential nor the mirrored environment credential is deleted or replaced
+
 ### Requirement: Normalize video-generation capabilities
 The system SHALL represent text-to-video and image-to-video as explicit, independently queryable model capabilities, including provider-reported input and output constraints that JuggleWork can validate.
 

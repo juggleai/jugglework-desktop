@@ -67,7 +67,6 @@ import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-a
 import { getCurrentCloudManagedProviderIds } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import ProviderAuthModal from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
 import {
-  customProviderInputFromProvider,
   type CustomProviderInput,
 } from "@/react-app/domains/connections/provider-auth/custom-provider-config";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
@@ -211,7 +210,6 @@ import {
 import {
   buildLocalProviderConfig,
   OPENAI_IMAGE_EXTENSION_ID,
-  OPENAI_IMAGE_MODEL,
   type LocalProviderInstallInput,
 } from "@/react-app/domains/settings/openai-image-extension";
 
@@ -1180,7 +1178,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       const path = typeof result === "object" && result !== null && "path" in result && typeof result.path === "string"
         ? result.path
         : "an artifact";
-      setImageGenerationStatus(`Generated ${path} with ${OPENAI_IMAGE_MODEL}.`);
+      setImageGenerationStatus(`Generated ${path}.`);
     } catch (error) {
       setImageGenerationError(describeRouteError(error));
     } finally {
@@ -2507,9 +2505,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 });
                 return;
               }
-              const provider = providers.find((item) => item.id === providerId) ??
-                providerDisplayCacheRef.current.get(providerId.trim().toLowerCase());
-              const draft = provider ? customProviderInputFromProvider(provider) : null;
+              const draft = await providerAuthStore.readCustomProviderInput(providerId);
               if (!draft) {
                 setProviderDisconnectError(t("providers.custom_edit_unsupported"));
                 return;

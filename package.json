@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "JUGGLEWORK_DEV_MODE=1 JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT=${JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823} pnpm --filter @jugglework/desktop dev",
-    "dev:electron": "JUGGLEWORK_DEV_MODE=1 pnpm --filter @jugglework/desktop dev:electron",
+    "dev": "JUGGLEWORK_DEV_MODE=1 JUGGLEWORK_VIDEO_GENERATION_ENABLED=${JUGGLEWORK_VIDEO_GENERATION_ENABLED:-1} JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT=${JUGGLEWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823} pnpm --filter @jugglework/desktop dev",
+    "dev:electron": "JUGGLEWORK_DEV_MODE=1 JUGGLEWORK_VIDEO_GENERATION_ENABLED=${JUGGLEWORK_VIDEO_GENERATION_ENABLED:-1} pnpm --filter @jugglework/desktop dev:electron",
     "dev:electron:two": "JUGGLEWORK_DEV_MODE=1 node scripts/dev-two-electron-demo.mjs",
     "demo:electron": "JUGGLEWORK_DEV_MODE=1 node scripts/dev-two-electron-demo.mjs --reset",
     "demo:electron:build": "node scripts/build-two-electron-demo.mjs",

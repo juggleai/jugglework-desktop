@@ -4,6 +4,7 @@ import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
 import { dispatchNewProviders } from "../../app/lib/provider-events";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import { parseNormalizedModelCapabilities } from "@jugglework/types/media-generation";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
@@ -96,8 +97,34 @@ export function isModelAvailableInConnectedProviders(
 ) {
   if (!model?.providerID || !model.modelID) return true;
   return getConnectedProviderItems(value).some(
-    (provider) => provider.id === model.providerID && Boolean(provider.models?.[model.modelID]),
+    (provider) =>
+      provider.id === model.providerID &&
+      Boolean(provider.models?.[model.modelID]) &&
+      isChatSelectableProviderModel(provider.models?.[model.modelID]),
   );
+}
+
+export function isChatSelectableProviderModel(model: unknown): boolean {
+  if (model && typeof model === "object" && "capabilities" in model) {
+    const capabilities = (model as { capabilities?: unknown }).capabilities;
+    if (capabilities && typeof capabilities === "object" && "output" in capabilities) {
+      const output = (capabilities as { output?: unknown }).output;
+      if (output && typeof output === "object" && !Array.isArray(output)) {
+        const normalized = output as Record<string, unknown>;
+        if (normalized.video === true && normalized.text !== true) return false;
+        if (normalized.image === true && normalized.text !== true) return false;
+      }
+    }
+  }
+  const capabilities = parseNormalizedModelCapabilities(model);
+  const output = capabilities?.modalities?.output ?? [];
+  return !((output.includes("video") || output.includes("image")) && !output.includes("text"));
+}
+
+export function getChatSelectableModelEntries<T>(
+  models: Record<string, T> | null | undefined,
+): Array<[string, T]> {
+  return Object.entries(models ?? {}).filter(([, model]) => isChatSelectableProviderModel(model));
 }
 
 /**
@@ -116,14 +143,22 @@ export function resolveConnectedProviderModel(
   const isAllowed = options?.isAllowed ?? (() => true);
   if (preferred) {
     const provider = providers.find((item) => item.id === preferred.providerID);
-    if (provider?.models?.[preferred.modelID] && isAllowed({ provider, model: preferred })) {
+    if (
+      provider?.models?.[preferred.modelID] &&
+      isChatSelectableProviderModel(provider.models[preferred.modelID]) &&
+      isAllowed({ provider, model: preferred })
+    ) {
       return preferred;
     }
   }
   for (const provider of providers) {
     for (const modelID of Object.keys(provider.models ?? {})) {
       const model = { providerID: provider.id, modelID };
-      if (modelID.trim() && isAllowed({ provider, model })) return model;
+      if (
+        modelID.trim() &&
+        isChatSelectableProviderModel(provider.models?.[modelID]) &&
+        isAllowed({ provider, model })
+      ) return model;
     }
   }
   return null;

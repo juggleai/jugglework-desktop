@@ -7,6 +7,7 @@ import type { VideoModelRef } from "@jugglework/types/media-generation";
 
 type OpenAiCompatibleVideoAdapterOptions = {
   providerID: string;
+  modelIDs?: string[];
   baseURL: string;
   envKeys: string[];
   env: EnvService;
@@ -15,6 +16,19 @@ type OpenAiCompatibleVideoAdapterOptions = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const OPENAI_VIDEO_SIZE_BY_PRESET: Record<string, string> = {
+  "480p": "854x480",
+  "720p": "1280x720",
+  "1080p": "1920x1080",
+  "4k": "3840x2160",
+};
+
+export function openAiVideoSize(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return OPENAI_VIDEO_SIZE_BY_PRESET[normalized] ?? (/^\d{2,5}x\d{2,5}$/.test(normalized) ? normalized : undefined);
+}
 
 function providerMessage(payload: unknown, fallback: string): string {
   const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
@@ -28,11 +42,13 @@ function providerMessage(payload: unknown, fallback: string): string {
 export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
   readonly id: string;
   private readonly fetch: typeof externalFetch;
+  private readonly modelIDs: Set<string> | null;
   constructor(private readonly options: OpenAiCompatibleVideoAdapterOptions) {
     this.id = `openai-compatible:${options.providerID}`;
     this.fetch = options.fetch ?? externalFetch;
+    this.modelIDs = options.modelIDs ? new Set(options.modelIDs) : null;
   }
-  matches(model: VideoModelRef) { return model.providerID === this.options.providerID; }
+  matches(model: VideoModelRef) { return model.providerID === this.options.providerID && (!this.modelIDs || this.modelIDs.has(model.modelID)); }
 
   private async apiKey(): Promise<string> {
     const records = await this.options.env.list();
@@ -60,7 +76,7 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
     let body: BodyInit;
     let headers: HeadersInit | undefined = { "Content-Type": "application/json", "Idempotency-Key": input.clientRequestId };
     const seconds = input.options.durationSeconds;
-    const size = input.options.resolution;
+    const size = openAiVideoSize(input.options.resolution);
     if (input.mode === "image-to-video") {
       if (!input.sourceImagePath) throw new Error("video_source_image_required");
       const form = new FormData();

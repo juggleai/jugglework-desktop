@@ -13,6 +13,7 @@ import {
 } from "@/react-app/domains/cloud/desktop-config-provider";
 import {
   getConnectedProviderItems,
+  getChatSelectableModelEntries,
   useProviderListQuery,
 } from "@/react-app/infra/provider-list-query";
 import {
@@ -127,10 +128,9 @@ export function useModelPicker(input: UseModelPickerInput) {
 
     const next: ModelOption[] = [];
     for (const provider of getConnectedProviderItems(data)) {
-      const modelIds = Object.keys(provider.models);
       const isNew = !seenIds.has(provider.id) || recentProviderIds.has(provider.id);
-      for (const id of modelIds) {
-        const model = provider.models[id];
+      for (const [id, model] of getChatSelectableModelEntries(provider.models)) {
+        const capabilities = parseNormalizedModelCapabilities(model);
         next.push({
           providerID: provider.id,
           modelID: id,
@@ -144,7 +144,7 @@ export function useModelPicker(input: UseModelPickerInput) {
           isConnected: true,
           isRecommended: isNew,
           providerSource: provider.source,
-          capabilities: parseNormalizedModelCapabilities(model),
+          capabilities,
           source:
             /^lpr_/i.test(provider.id) || provider.id.trim().toLowerCase() === "jugglework"
               ? ("cloud" as const)

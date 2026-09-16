@@ -5,9 +5,21 @@ description: "How to connect a custom provider with JuggleWork"
 
 ### From the app
 
-Open **Connect providers** (Settings → Providers, or the model picker) and pick **Custom provider**. Fill in a name, the OpenAI-compatible base URL, your API key and the model IDs the endpoint serves — one per line, optionally as `model-id = Display name`. JuggleWork writes the provider block into the global OpenCode config and stores the key in OpenCode's local credential store, so the config file itself carries no secret. The model group is available in every workspace on that runtime. In Settings, locally added groups carry a **Local** badge; select one to edit its endpoint and models. Works with any OpenAI-shaped gateway, relay or self-hosted proxy.
+Open **Connect providers** (Settings → Providers, or the model picker) and pick **Custom provider**. Fill in a name, the OpenAI-compatible base URL, and your API key. Under **Models**, use **Add model** for each model the endpoint serves, then enter its model ID and display name and select exactly one model type: text, image, or video. Text is the default. Text models independently select either Chat Completions (`/chat/completions`) or Responses API (`/responses`), so both styles can coexist behind one provider URL. The configured-model list shows every model ID and its protocol or generation-mode labels, and each row can be edited or deleted independently. JuggleWork writes the provider block into the global OpenCode config and stores the key in OpenCode's local credential store, so the config file itself carries no secret. The model group is available in every workspace on that runtime. In Settings, locally added groups carry a **Local** badge; select one to edit its endpoint and models. Works with any OpenAI-shaped gateway, relay or self-hosted proxy.
 
-The optional context/output limits enable context tracking and auto-compaction for those models; leave them empty to use the engine defaults.
+For each text model, **Reasoning depths** is an optional multi-select with `none`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. Select `none` when sessions should be able to explicitly disable deep reasoning; JuggleWork stores it as an empty variant rather than sending `reasoningEffort: "none"`. Leave all values unselected (`Unsupported`) when the endpoint does not support configurable reasoning depth. JuggleWork writes only selected values and does not infer reasoning support from the model name.
+
+The optional per-model context/output limits enable context tracking and auto-compaction for that model; leave both empty to use the engine defaults.
+
+### Add a video model group
+
+For a video endpoint, use the same **Custom provider** form and select **Video model** for that model ID. Text-to-video and image-to-video are both selected by default and remain independently configurable. Each video model also selects either the OpenAI asynchronous video protocol (`/videos`) or Volcengine Ark V3 task protocol (`/contents/generations/tasks`). You can declare each video model's maximum duration and supported resolutions using the fixed 480P, 720P, 1080P, and 4K multi-select defined by Ark V3. A video model is kept out of the normal chat model picker.
+
+Selecting **Image model** enables text-to-image, image-to-image, and multi-image-to-image by default; the modes remain independently configurable. OpenAI-style text-to-image calls `/images/generations`; single- and multi-reference edits call `/images/edits`, with multi-image mode accepting 2–16 validated workspace PNG, JPEG, or WebP files. Image models are kept out of the chat picker, and generated images are validated before JuggleWork writes them to the workspace `artifacts/` directory.
+
+JuggleWork stores the API key in OpenCode authentication and mirrors it into a provider-specific local environment variable for the video worker; the key is never written to `opencode.jsonc`. OpenAI-style endpoints must implement `POST /videos`, `GET /videos/:id`, and `GET /videos/:id/content`; image-to-video uses multipart `input_reference`. Ark V3 endpoints use `POST /contents/generations/tasks`, `GET /contents/generations/tasks/:id`, base64 image data URLs for image-to-video, and a short-lived `content.video_url` result that JuggleWork immediately validates and stores in the workspace.
+
+For Ark V3, set the provider base URL to the regional API root, for example `https://ark.cn-beijing.volces.com/api/v3`. Ark V3 currently has no documented provider-side cancellation endpoint, so JuggleWork cancellation remains local/best-effort while the remote task may continue.
 
 ### By hand
 

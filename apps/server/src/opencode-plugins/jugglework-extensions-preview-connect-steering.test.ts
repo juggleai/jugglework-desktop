@@ -27,7 +27,7 @@ const originalServerUrl = process.env.JUGGLEWORK_SERVER_URL;
 const originalServerToken = process.env.JUGGLEWORK_SERVER_TOKEN;
 
 const UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION =
-  "If the user asks for something you cannot do with obvious built-in tools, check JuggleWork extensions before saying the capability is unavailable. Use jugglework_query with id extension.actions to inspect available extension actions, then jugglework_execute with id extension.call for the matching action.";
+  "If the user asks for something you cannot do with obvious built-in tools, check JuggleWork extensions before saying the capability is unavailable. For image generation, always call jugglework_image_models_list and then jugglework_image_generate before any Cloud search, skill, Pillow, SVG, canvas, or other fallback. For video generation, always call jugglework_video_models_list and then jugglework_video_generate before Cloud search or generic fallbacks. Submit exactly once per user request. Poll only a submitted or running job with jugglework_video_job_get; if video_generate returns failed, stop and report that failure without resubmitting. Use jugglework_video_job_cancel when cancellation is requested. Never bypass these tools with bash, curl, direct provider HTTP requests, or handcrafted media. Never read credential stores, environment-value files, API keys, or tokens to diagnose media failures, and never place credential values in tool output or transcripts. These direct local media tools use the models configured in this workspace. For other local extensions, use jugglework_query with id extension.actions and jugglework_execute with id extension.call. Configured provider IDs, model IDs, model display names, and generation aliases are models, not skills: never derive a skill name from them and never call the skill tool for names such as doubao-image-gen or seedream. The skill tool may only receive an exact name present in the system-provided available_skills list. Do not silently replace a requested configured model generation with Pillow, ffmpeg, SVG, canvas, or another handcrafted artifact; if no ready configured model exists, report that explicit result and ask before using a synthetic fallback.";
 
 beforeEach(() => {
   resetJuggleWorkExtensionDiscoveryInstructionCacheForTests();
@@ -113,6 +113,17 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
     expect(composeJuggleWorkExtensionDiscoveryInstruction({ ...state(null), connectCatalogEnabled: false })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
 
+  test("routes configured media models through extensions rather than invented skills", () => {
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("models, not skills");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("never call the skill tool for names such as doubao-image-gen or seedream");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("jugglework_image_generate");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("jugglework_video_generate");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("jugglework_video_job_get");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("Submit exactly once per user request");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("Never read credential stores");
+    expect(JUGGLEWORK_EXTENSION_DISCOVERY_INSTRUCTION).toContain("Never bypass these tools with bash, curl");
+  });
+
   test("keeps fallback when only legacy Google Workspace is configured", () => {
     expect(composeJuggleWorkExtensionDiscoveryInstruction({ ...state(null), googleWorkspace: { legacyConfigured: true } })).toBe(UNCHANGED_EXTENSION_DISCOVERY_INSTRUCTION);
   });
@@ -128,7 +139,9 @@ describe("composeJuggleWorkExtensionDiscoveryInstruction", () => {
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
-    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("jugglework_image_models_list");
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("jugglework_video_models_list");
+    expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("before Cloud search");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
     expect(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
     expect(composeJuggleWorkExtensionDiscoveryInstruction(state(health()))).toBe(JUGGLEWORK_CLOUD_CONNECTION_INSTRUCTION);

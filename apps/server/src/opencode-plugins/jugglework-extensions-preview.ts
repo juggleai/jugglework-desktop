@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
 import { z } from "zod";
@@ -37,6 +38,56 @@ const callArgsSchema = z.object({
   action: z.string().describe("Action id from extension.actions."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the action."),
 });
+
+const imageModelsListArgsSchema = z.object({
+  mode: z.enum(["text-to-image", "image-to-image", "multi-image-to-image"]).optional()
+    .describe("Optional image generation mode to filter configured ready models."),
+});
+
+const imageGenerateArgsSchema = z.object({
+  prompt: z.string().trim().min(1).describe("Image generation or editing prompt."),
+  mode: z.enum(["text-to-image", "image-to-image", "multi-image-to-image"]).default("text-to-image")
+    .describe("Generation mode. Reference images are required for edit modes."),
+  model: z.object({ providerID: z.string().trim().min(1), modelID: z.string().trim().min(1) }).optional()
+    .describe("Optional exact configured model. Omit to use the first ready compatible model."),
+  sourceImagePaths: z.array(z.string().trim().min(1)).max(16).optional()
+    .describe("Workspace-relative reference image paths; one for image-to-image, 2-16 for multi-image-to-image."),
+  size: z.string().optional().describe("Optional provider-supported output size, such as auto or 1024x1024."),
+  filename: z.string().trim().max(100).optional().describe("Optional output filename stem."),
+});
+
+const videoModelsListArgsSchema = z.object({
+  mode: z.enum(["text-to-video", "image-to-video"]).optional(),
+});
+
+const videoGenerateArgsSchema = z.object({
+  prompt: z.string().trim().min(1),
+  mode: z.enum(["text-to-video", "image-to-video"]),
+  model: z.object({ providerID: z.string().trim().min(1), modelID: z.string().trim().min(1) }).optional(),
+  sourceImagePath: z.string().trim().min(1).optional(),
+  durationSeconds: z.number().int().positive().optional(),
+  resolution: z.string().optional(),
+  filename: z.string().trim().max(100).optional(),
+  clientRequestId: z.string().trim().min(1).optional(),
+});
+
+const videoJobArgsSchema = z.object({
+  jobId: z.string().trim().min(1).describe("Video job id returned by jugglework_video_generate."),
+});
+
+async function callLocalExtension(
+  extensionId: string,
+  action: string,
+  args: Record<string, unknown>,
+  context: OpenCodeContext,
+) {
+  return postJson("/experimental/extensions/call", {
+    extensionId,
+    action,
+    args,
+    context: contextPayload(context),
+  });
+}
 
 const juggleworkAffordanceRequestSchema = z.object({
   id: z.string().trim().min(1).describe("Semantic affordance id from jugglework_context."),
@@ -897,6 +948,55 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
     output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
+    jugglework_image_models_list: {
+      description: "List locally configured ready image-generation models. Use this before Cloud search, skills, Pillow, SVG, canvas, or other fallbacks for image generation requests.",
+      args: imageModelsListArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const args = imageModelsListArgsSchema.parse(rawArgs);
+        return JSON.stringify(await callLocalExtension("openai-image-generation", "image_models_list", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
+    jugglework_image_generate: {
+      description: "Generate or edit an image with a locally configured image model and save a validated artifact in the active workspace. This is the primary tool for requests like 'generate an image'. Do not replace it with an invented skill or Pillow fallback.",
+      args: imageGenerateArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const args = imageGenerateArgsSchema.parse(rawArgs);
+        return JSON.stringify(await callLocalExtension("openai-image-generation", "image_generate", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
+    jugglework_video_models_list: {
+      description: "List locally configured ready video-generation models before Cloud search or generic fallbacks.",
+      args: videoModelsListArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const args = videoModelsListArgsSchema.parse(rawArgs);
+        return JSON.stringify(await callLocalExtension("media-generation", "video_models_list", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
+    jugglework_video_generate: {
+      description: "Submit exactly one video-generation request with a locally configured model. Returns a job: poll submitted/running jobs with jugglework_video_job_get, but if the returned job is failed, stop and report it. Never resubmit automatically, invoke the provider with bash/curl, or inspect credential stores.",
+      args: videoGenerateArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const parsed = videoGenerateArgsSchema.parse(rawArgs);
+        const args = { ...parsed, clientRequestId: parsed.clientRequestId ?? randomUUID() };
+        return JSON.stringify(await callLocalExtension("media-generation", "video_generate", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
+    jugglework_video_job_get: {
+      description: "Get progress or completed artifact metadata for a job returned by jugglework_video_generate. Use this direct local tool to poll until the job reaches a terminal state.",
+      args: videoJobArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const args = videoJobArgsSchema.parse(rawArgs);
+        return JSON.stringify(await callLocalExtension("media-generation", "video_job_get", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
+    jugglework_video_job_cancel: {
+      description: "Request cancellation of a local video-generation job. Cancellation is best effort and does not delete a completed artifact.",
+      args: videoJobArgsSchema.shape,
+      async execute(rawArgs: unknown, context: OpenCodeContext) {
+        const args = videoJobArgsSchema.parse(rawArgs);
+        return JSON.stringify(await callLocalExtension("media-generation", "video_job_cancel", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+      },
+    },
     jugglework_context: {
       description: "Read one semantic snapshot of JuggleWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},

@@ -58,6 +58,7 @@ const model: ProviderModel = {
     high: {},
     xhigh: {},
     max: {},
+    ultra: {},
   },
 };
 
@@ -72,6 +73,7 @@ describe("model behavior options", () => {
       { value: "high", label: "High" },
       { value: "xhigh", label: "Xhigh" },
       { value: "max", label: "Max" },
+      { value: "ultra", label: "Ultra" },
     ]);
   });
 });

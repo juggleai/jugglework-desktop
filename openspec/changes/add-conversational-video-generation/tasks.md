@@ -5,6 +5,20 @@
 - [x] 1.3 Project normalized media capabilities into desktop model options without changing existing chat-model selection behavior.
 - [x] 1.4 Implement workspace-aware video model discovery that combines provider connection state, credential readiness, mode compatibility, and registered adapter support.
 - [x] 1.5 Add discovery tests for ready, missing-credential, unsupported-adapter, workspace-hidden, T2V-only, I2V-only, and no-model results.
+- [x] 1.6 Add per-model desktop custom-model-group controls for chat/T2V/I2V capabilities and normalized input/output constraints.
+- [x] 1.7 Preserve heterogeneous per-model video metadata and provider credential environment declarations across local model-group edits.
+- [x] 1.8 Mirror newly entered custom-provider credentials into the JuggleWork environment key used by video adapter readiness, and add focused persistence tests.
+- [x] 1.9 Replace the custom provider model textarea with a configured-model list and add/edit/delete single-model editor.
+- [x] 1.10 Store and round-trip context/output limits per model while preserving existing model groups.
+- [x] 1.11 Add per-model Chat Completions/Responses protocol selection, model-level adapter persistence, list labels, and round-trip tests.
+- [x] 1.12 Add per-model OpenAI/Volcengine Ark V3 video protocol selection, metadata persistence, and list labels.
+- [x] 1.13 Replace free-form video resolutions with the Ark-defined 480P/720P/1080P/4K multi-select and normalize adapter payloads.
+- [x] 1.14 Read local custom-provider edits from raw JSONC so runtime provider projection cannot strip video metadata.
+- [x] 1.15 Exclude runtime-normalized video-only models from the session picker and chat default resolution.
+- [x] 1.16 Apply the shared video-only filter to both the compact composer picker and full model picker.
+- [x] 1.17 Add per-text-model none/low/medium/high/xhigh/max/ultra reasoning-depth multi-select, explicit variant persistence, and round-trip tests.
+- [x] 1.18 Add per-model text-to-image, image-to-image, and multi-image-to-image controls, metadata round-trip, list labels, and chat-picker filtering.
+- [x] 1.19 Replace mixed capability switches with one text/image/video model-type selector and type-specific text fields or image/video mode multi-selects.
 
 ## 2. Persistent Generation Jobs
 
@@ -20,6 +34,12 @@
 - [x] 3.3 Implement the first adapter's text-to-video submit, poll, cancel when available, error normalization, and result retrieval flows.
 - [x] 3.4 Implement `MediaGenerationService` request validation, model resolution, workspace policy checks, job creation, adapter dispatch, and sanitized errors.
 - [x] 3.5 Add adapter contract tests and mocked first-provider tests for success, timeout, rate limit, safety refusal, malformed responses, and credential failure.
+- [x] 3.6 Implement and test the Volcengine Ark V3 create/query/result adapter for T2V and base64 I2V.
+- [x] 3.7 Upgrade the image extension to discover configured OpenAI-style models, invoke generation/edit routes, validate reference images, and securely publish image artifacts.
+- [x] 3.8 Steer configured media generation through local extension actions and forbid treating provider/model aliases as skills or silently substituting handcrafted artifacts.
+- [x] 3.9 Expose direct image/video model-list and generation tools so agents do not need to infer the generic two-step extension protocol.
+- [x] 3.10 Keep the complete asynchronous video lifecycle on direct local tools for model discovery, submission, polling, and cancellation before any Cloud search or handcrafted fallback.
+- [x] 3.11 Stop after a failed video submission, forbid direct provider/credential diagnostics, and preserve the session identifier in persisted jobs.
 
 ## 4. Extension Actions and Agent Integration
 

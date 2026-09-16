@@ -3,8 +3,10 @@ import {
   CheckCircle2,
   ChevronRight,
   Loader2,
+  Pencil,
   Plus,
   Search,
+  Trash2,
 } from "lucide-react";
 import {
   useEffect,
@@ -24,20 +26,30 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/sonner";
+import { VIDEO_RESOLUTION_PRESETS, type VideoApiProtocol, type VideoResolutionPreset } from "@jugglework/types/media-generation";
 import { t } from "@/i18n";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
 import { isProviderHiddenFromConnectUi } from "@/app/cloud/desktop-app-restrictions";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { TextInput } from "../../../design-system/text-input";
 import {
   normalizeCustomProviderId,
   normalizeCustomProviderInput,
-  parseCustomProviderModels,
+  customProviderModelType,
   validateCustomProviderInput,
+  type CustomProviderModel,
   type CustomProviderInput,
+  type CustomProviderModelType,
+  CUSTOM_REASONING_DEPTHS,
+  type CustomReasoningDepth,
+  type CustomProviderTextProtocol,
 } from "./custom-provider-config";
 import type {
   ProviderAuthMethod,
@@ -63,9 +75,23 @@ type CustomProviderForm = {
   providerId: string;
   baseUrl: string;
   apiKey: string;
-  models: string;
+  models: CustomProviderModel[];
+};
+
+type CustomModelEditorForm = {
+  originalId: string | null;
+  id: string;
+  name: string;
   contextLimit: string;
   outputLimit: string;
+  modelType: CustomProviderModelType;
+  textProtocol: CustomProviderTextProtocol;
+  reasoningDepths: CustomReasoningDepth[];
+  videoModes: Array<"text-to-video" | "image-to-video">;
+  videoProtocol: VideoApiProtocol;
+  videoMaxDuration: string;
+  videoResolutions: VideoResolutionPreset[];
+  imageModes: Array<"text-to-image" | "image-to-image" | "multi-image-to-image">;
 };
 
 const EMPTY_CUSTOM_FORM: CustomProviderForm = {
@@ -73,22 +99,209 @@ const EMPTY_CUSTOM_FORM: CustomProviderForm = {
   providerId: "",
   baseUrl: "",
   apiKey: "",
-  models: "",
-  contextLimit: "",
-  outputLimit: "",
+  models: [],
 };
 
-const customProviderFormFromInput = (input: CustomProviderInput): CustomProviderForm => ({
-  name: input.name,
-  providerId: input.providerId,
-  baseUrl: input.baseUrl,
-  apiKey: "",
-  models: input.models
-    .map((model) => model.name === model.id ? model.id : `${model.id} = ${model.name}`)
-    .join("\n"),
-  contextLimit: input.contextLimit ? String(input.contextLimit) : "",
-  outputLimit: input.outputLimit ? String(input.outputLimit) : "",
-});
+const EMPTY_MODEL_EDITOR: CustomModelEditorForm = {
+  originalId: null,
+  id: "",
+  name: "",
+  contextLimit: "",
+  outputLimit: "",
+  modelType: "text",
+  textProtocol: "chat-completions",
+  reasoningDepths: [],
+  videoModes: ["text-to-video", "image-to-video"],
+  videoProtocol: "openai",
+  videoMaxDuration: "20",
+  videoResolutions: ["720p"],
+  imageModes: ["text-to-image", "image-to-image", "multi-image-to-image"],
+};
+
+const customProviderFormFromInput = (input: CustomProviderInput): CustomProviderForm => {
+  return {
+    name: input.name,
+    providerId: input.providerId,
+    baseUrl: input.baseUrl,
+    apiKey: "",
+    models: input.models,
+  };
+};
+
+const customModelEditorFromModel = (model: CustomProviderModel): CustomModelEditorForm => {
+  const media = model.mediaGeneration;
+  const image = model.imageGeneration;
+  const videoModes: CustomModelEditorForm["videoModes"] = [
+    ...(media?.textToVideo ? ["text-to-video" as const] : []),
+    ...(media?.imageToVideo ? ["image-to-video" as const] : []),
+  ];
+  const imageModes: CustomModelEditorForm["imageModes"] = [
+    ...(image?.textToImage ? ["text-to-image" as const] : []),
+    ...(image?.imageToImage ? ["image-to-image" as const] : []),
+    ...(image?.multiImageToImage ? ["multi-image-to-image" as const] : []),
+  ];
+  return {
+    originalId: model.id,
+    id: model.id,
+    name: model.name,
+    contextLimit: model.contextLimit ? String(model.contextLimit) : "",
+    outputLimit: model.outputLimit ? String(model.outputLimit) : "",
+    modelType: customProviderModelType(model),
+    textProtocol: model.textProtocol ?? "chat-completions",
+    reasoningDepths: model.reasoningDepths ?? [],
+    videoModes: videoModes.length ? videoModes : ["text-to-video", "image-to-video"],
+    videoProtocol: media?.protocol ?? "openai",
+    videoMaxDuration: media?.outputVideo?.maxDurationSeconds ? String(media.outputVideo.maxDurationSeconds) : "20",
+    videoResolutions: media?.outputVideo?.resolutions ?? ["720p"],
+    imageModes: imageModes.length ? imageModes : ["text-to-image", "image-to-image", "multi-image-to-image"],
+  };
+};
+
+const IMAGE_MODE_OPTIONS = [
+  { value: "text-to-image", labelKey: "providers.custom_image_t2i" },
+  { value: "image-to-image", labelKey: "providers.custom_image_i2i" },
+  { value: "multi-image-to-image", labelKey: "providers.custom_image_multi_i2i" },
+] as const;
+
+const VIDEO_MODE_OPTIONS = [
+  { value: "text-to-video", labelKey: "providers.custom_video_t2v" },
+  { value: "image-to-video", labelKey: "providers.custom_video_i2v" },
+] as const;
+
+function GenerationModeMultiSelect<T extends string>({
+  label,
+  placeholder,
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  placeholder: string;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  value: T[];
+  onChange: (value: T[]) => void;
+  disabled?: boolean;
+}) {
+  const summary = value.length
+    ? options.filter((option) => value.includes(option.value)).map((option) => option.label).join(", ")
+    : placeholder;
+  return (
+    <div className="space-y-1">
+      <div className="text-xs font-medium text-dls-secondary">{label}</div>
+      <Popover>
+        <PopoverTrigger disabled={disabled} className="flex h-9 w-full items-center rounded-lg border border-dls-border bg-dls-surface px-3 text-left text-sm text-dls-text disabled:cursor-not-allowed disabled:opacity-50">
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+          <ChevronRight className="size-4 rotate-90 text-dls-secondary" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-(--anchor-width) min-w-56 gap-1 rounded-xl p-2">
+          {options.map((option) => {
+            const checked = value.includes(option.value);
+            return (
+              <label key={option.value} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-dls-hover">
+                <Checkbox
+                  checked={checked}
+                  onCheckedChange={(next) => onChange(next
+                    ? options.filter((item) => item.value === option.value || value.includes(item.value)).map((item) => item.value)
+                    : value.filter((item) => item !== option.value))}
+                />
+                <span>{option.label}</span>
+              </label>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+const VIDEO_RESOLUTION_LABELS: Record<VideoResolutionPreset, string> = {
+  "480p": "480P",
+  "720p": "720P",
+  "1080p": "1080P",
+  "4k": "4K",
+};
+
+function VideoResolutionMultiSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: VideoResolutionPreset[];
+  onChange: (value: VideoResolutionPreset[]) => void;
+  disabled?: boolean;
+}) {
+  const label = value.length
+    ? VIDEO_RESOLUTION_PRESETS.filter((preset) => value.includes(preset)).map((preset) => VIDEO_RESOLUTION_LABELS[preset]).join(", ")
+    : t("providers.custom_video_resolutions_placeholder");
+  return (
+    <div className="space-y-1">
+      <div className="text-xs font-medium text-dls-secondary">{t("providers.custom_video_resolutions")}</div>
+      <Popover>
+        <PopoverTrigger
+          disabled={disabled}
+          className="flex h-9 w-full items-center rounded-lg border border-dls-border bg-dls-surface px-3 text-left text-sm text-dls-text disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <ChevronRight className="size-4 rotate-90 text-dls-secondary" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-(--anchor-width) min-w-56 gap-1 rounded-xl p-2">
+          {VIDEO_RESOLUTION_PRESETS.map((preset) => {
+            const checked = value.includes(preset);
+            return (
+              <label key={preset} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-dls-hover">
+                <Checkbox
+                  checked={checked}
+                  onCheckedChange={(next) => onChange(
+                    next
+                      ? VIDEO_RESOLUTION_PRESETS.filter((item) => item === preset || value.includes(item))
+                      : value.filter((item) => item !== preset),
+                  )}
+                />
+                <span>{VIDEO_RESOLUTION_LABELS[preset]}</span>
+              </label>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+function ReasoningDepthMultiSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: CustomReasoningDepth[];
+  onChange: (value: CustomReasoningDepth[]) => void;
+  disabled?: boolean;
+}) {
+  const label = value.length ? value.join(", ") : t("providers.custom_reasoning_unsupported");
+  return (
+    <div className="space-y-1">
+      <div className="text-xs font-medium text-dls-secondary">{t("providers.custom_reasoning_depths")}</div>
+      <Popover>
+        <PopoverTrigger disabled={disabled} className="flex h-9 w-full items-center rounded-lg border border-dls-border bg-dls-surface px-3 text-left text-sm text-dls-text disabled:cursor-not-allowed disabled:opacity-50">
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          <ChevronRight className="size-4 rotate-90 text-dls-secondary" />
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-(--anchor-width) min-w-56 gap-1 rounded-xl p-2">
+          {CUSTOM_REASONING_DEPTHS.map((depth) => {
+            const checked = value.includes(depth);
+            return (
+              <label key={depth} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-dls-hover">
+                <Checkbox checked={checked} onCheckedChange={(next) => onChange(next ? CUSTOM_REASONING_DEPTHS.filter((item) => item === depth || value.includes(item)) : value.filter((item) => item !== depth))} />
+                <span>{depth}</span>
+              </label>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
+      <div className="text-[11px] text-gray-9">{t("providers.custom_reasoning_hint")}</div>
+    </div>
+  );
+}
 
 /**
  * Words that should surface the custom-provider card while filtering. The
@@ -170,6 +383,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
   const [customForm, setCustomForm] = useState(EMPTY_CUSTOM_FORM);
+  const [modelEditor, setModelEditor] = useState<CustomModelEditorForm | null>(null);
   const [customIdEdited, setCustomIdEdited] = useState(false);
   const [customProviderEditing, setCustomProviderEditing] = useState(false);
 
@@ -270,10 +484,91 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const errorMessage = localError ?? props.error;
 
   const customEntryEnabled = Boolean(props.onConnectCustomProvider);
-  const customModels = useMemo(
-    () => parseCustomProviderModels(customForm.models),
-    [customForm.models],
-  );
+  const customModels = customForm.models;
+  const updateModelEditor = (update: Partial<CustomModelEditorForm>) => {
+    setModelEditor((current) => current ? { ...current, ...update } : current);
+    if (localError) setLocalError(null);
+  };
+  const saveModelEditor = () => {
+    if (!modelEditor) return;
+    const id = modelEditor.id.trim();
+    if (!id) {
+      setLocalError(t("providers.custom_model_id_required"));
+      return;
+    }
+    if (
+      (modelEditor.modelType === "image" && modelEditor.imageModes.length === 0) ||
+      (modelEditor.modelType === "video" && modelEditor.videoModes.length === 0)
+    ) {
+      setLocalError(t("providers.custom_model_capability_required"));
+      return;
+    }
+    if (customForm.models.some((model) => model.id === id && model.id !== modelEditor.originalId)) {
+      setLocalError(t("providers.custom_model_id_duplicate"));
+      return;
+    }
+    const contextLimit = modelEditor.modelType === "text" ? readOptionalCount(modelEditor.contextLimit) : null;
+    const outputLimit = modelEditor.modelType === "text" ? readOptionalCount(modelEditor.outputLimit) : null;
+    if ((contextLimit === null) !== (outputLimit === null)) {
+      setLocalError(t("providers.custom_limits_incomplete"));
+      return;
+    }
+    const maxDurationSeconds = readOptionalCount(modelEditor.videoMaxDuration) ?? undefined;
+    const resolutions = modelEditor.videoResolutions;
+    const textToVideo = modelEditor.videoModes.includes("text-to-video");
+    const imageToVideo = modelEditor.videoModes.includes("image-to-video");
+    const mediaGeneration: CustomProviderModel["mediaGeneration"] = modelEditor.modelType === "video" ? {
+      protocol: modelEditor.videoProtocol,
+      ...(textToVideo ? { textToVideo: true } : {}),
+      ...(imageToVideo ? {
+        imageToVideo: true,
+        inputImage: {
+          mimeTypes: ["image/jpeg", "image/png", "image/webp"],
+          maxBytes: 25_000_000,
+          maxCount: 1,
+        },
+      } : {}),
+      asyncJob: true,
+      outputVideo: {
+        mimeTypes: ["video/mp4"],
+        ...(maxDurationSeconds && maxDurationSeconds > 0 ? { maxDurationSeconds } : {}),
+        ...(resolutions.length ? { resolutions } : {}),
+      },
+    } : undefined;
+    const imageGeneration: CustomProviderModel["imageGeneration"] = modelEditor.modelType === "image" ? {
+      protocol: "openai",
+      ...(modelEditor.imageModes.includes("text-to-image") ? { textToImage: true } : {}),
+      ...(modelEditor.imageModes.includes("image-to-image") ? { imageToImage: true } : {}),
+      ...(modelEditor.imageModes.includes("multi-image-to-image") ? { multiImageToImage: true } : {}),
+      ...(modelEditor.imageModes.some((mode) => mode !== "text-to-image") ? {
+        inputImage: {
+          mimeTypes: ["image/jpeg", "image/png", "image/webp"],
+          maxBytes: 25_000_000,
+          maxCount: modelEditor.imageModes.includes("multi-image-to-image") ? 16 : 1,
+        },
+      } : {}),
+      outputImage: { mimeTypes: ["image/png", "image/jpeg", "image/webp"] },
+    } : undefined;
+    const model: CustomProviderModel = {
+      id,
+      name: modelEditor.name.trim() || id,
+      contextLimit,
+      outputLimit,
+      ...(modelEditor.modelType === "text" ? {} : { chat: false }),
+      ...(modelEditor.modelType === "text" && modelEditor.textProtocol === "responses" ? { textProtocol: "responses" } : {}),
+      ...(modelEditor.modelType === "text" && modelEditor.reasoningDepths.length ? { reasoningDepths: modelEditor.reasoningDepths } : {}),
+      ...(mediaGeneration ? { mediaGeneration } : {}),
+      ...(imageGeneration ? { imageGeneration } : {}),
+    };
+    setCustomForm((current) => ({
+      ...current,
+      models: current.models.some((item) => item.id === modelEditor.originalId)
+        ? current.models.map((item) => item.id === modelEditor.originalId ? model : item)
+        : [...current.models, model],
+    }));
+    setModelEditor(null);
+    setLocalError(null);
+  };
   const hasCustomProviderDraft = Boolean(props.customProviderDraft);
   const isViewingCustomProvider = hasCustomProviderDraft && !customProviderEditing;
   const isEditingCustomProvider = hasCustomProviderDraft && customProviderEditing;
@@ -347,6 +642,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
     setCustomForm(EMPTY_CUSTOM_FORM);
+    setModelEditor(null);
     setCustomIdEdited(false);
     setCustomProviderEditing(false);
   };
@@ -666,9 +962,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       providerId: customProviderId,
       name: customForm.name,
       baseUrl: customForm.baseUrl,
+      credentialEnv: props.customProviderDraft?.credentialEnv,
       models: customModels,
-      contextLimit: readOptionalCount(customForm.contextLimit),
-      outputLimit: readOptionalCount(customForm.outputLimit),
     });
 
     const validationError = validateCustomProviderInput(input);
@@ -1159,63 +1454,88 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     />
                   ) : null}
 
-                  <label className="block">
-                    <div className="mb-1 text-xs font-medium text-dls-secondary">
-                      {t("providers.custom_models_label")}
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-gray-12">{t("providers.custom_models_label")}</div>
+                    <div className="overflow-hidden rounded-xl border border-gray-6/60">
+                      {customModels.length ? customModels.map((model) => {
+                        const types = [
+                          model.chat !== false
+                            ? `${t("providers.custom_model_type_text")} · ${t(model.textProtocol === "responses" ? "providers.custom_text_protocol_responses_short" : "providers.custom_text_protocol_chat_short")}`
+                            : null,
+                          model.mediaGeneration?.textToVideo ? `${t("providers.custom_video_t2v")} · ${t(model.mediaGeneration.protocol === "volcengine-ark-v3" ? "providers.custom_video_protocol_volc_short" : "providers.custom_video_protocol_openai_short")}` : null,
+                          model.mediaGeneration?.imageToVideo ? `${t("providers.custom_video_i2v")} · ${t(model.mediaGeneration.protocol === "volcengine-ark-v3" ? "providers.custom_video_protocol_volc_short" : "providers.custom_video_protocol_openai_short")}` : null,
+                          model.imageGeneration?.textToImage ? t("providers.custom_image_t2i") : null,
+                          model.imageGeneration?.imageToImage ? t("providers.custom_image_i2i") : null,
+                          model.imageGeneration?.multiImageToImage ? t("providers.custom_image_multi_i2i") : null,
+                        ].filter((value): value is string => Boolean(value));
+                        return (
+                          <div key={model.id} className="flex items-center gap-3 border-b border-gray-6/50 px-3 py-2.5 last:border-b-0">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-mono text-xs text-gray-12">{model.id}</div>
+                              <div className="mt-1 flex flex-wrap gap-1">{types.map((type) => <span key={type} className="rounded bg-gray-4 px-1.5 py-0.5 text-[10px] text-gray-10">{type}</span>)}</div>
+                            </div>
+                            {!isViewingCustomProvider ? <>
+                              <Button type="button" variant="ghost" size="icon" aria-label={t("common.edit")} onClick={() => setModelEditor(customModelEditorFromModel(model))}><Pencil className="size-3.5" /></Button>
+                              <Button type="button" variant="ghost" size="icon" aria-label={t("common.delete")} onClick={() => setCustomForm((current) => ({ ...current, models: current.models.filter((item) => item.id !== model.id) }))}><Trash2 className="size-3.5" /></Button>
+                            </> : null}
+                          </div>
+                      );
+                      }) : <div className="px-3 py-4 text-center text-xs text-gray-9">{t("providers.custom_models_empty")}</div>}
                     </div>
-                    <textarea
-                      rows={4}
-                      placeholder={"gpt-4o\nclaude-sonnet-4-5 = Claude Sonnet 4.5"}
-                      value={customForm.models}
-                      onChange={(event) => {
-                        const models = event.currentTarget.value;
-                        setCustomForm((current) => ({ ...current, models }));
-                        if (localError) setLocalError(null);
-                      }}
-                      autoComplete="off"
-                      autoCapitalize="off"
-                      spellCheck={false}
-                      disabled={actionDisabled || isViewingCustomProvider}
-                      className="w-full resize-y rounded-lg bg-dls-surface px-3 py-2 font-mono text-xs text-dls-text placeholder:text-dls-secondary border border-dls-border shadow-sm focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-                    />
-                    <div className="mt-1 text-xs text-dls-secondary">
-                      {t("providers.custom_models_hint")}{" "}
-                      {t("providers.custom_models_detected", { count: customModels.length })}
-                    </div>
-                  </label>
+                    {!isViewingCustomProvider ? <Button type="button" variant="outline" className="w-full" onClick={() => setModelEditor({ ...EMPTY_MODEL_EDITOR })}><Plus className="size-4" />{t("providers.custom_model_add")}</Button> : null}
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <TextInput
-                      label={t("providers.custom_context_limit_label")}
-                      inputMode="numeric"
-                      placeholder="200000"
-                      value={customForm.contextLimit}
-                      onChange={(event) => {
-                        const contextLimit = event.currentTarget.value;
-                        setCustomForm((current) => ({ ...current, contextLimit }));
-                        if (localError) setLocalError(null);
-                      }}
-                      autoComplete="off"
-                      spellCheck={false}
-                      disabled={actionDisabled || isViewingCustomProvider}
-                    />
-                    <TextInput
-                      label={t("providers.custom_output_limit_label")}
-                      inputMode="numeric"
-                      placeholder="32000"
-                      value={customForm.outputLimit}
-                      onChange={(event) => {
-                        const outputLimit = event.currentTarget.value;
-                        setCustomForm((current) => ({ ...current, outputLimit }));
-                        if (localError) setLocalError(null);
-                      }}
-                      autoComplete="off"
-                      spellCheck={false}
-                      disabled={actionDisabled || isViewingCustomProvider}
-                    />
-                  </div>
-                  <div className="text-[11px] text-gray-9">
-                    {t("providers.custom_limits_hint")}
+                    {modelEditor ? (
+                      <div className="rounded-xl border border-gray-6/60 bg-gray-2/40 p-3 space-y-3">
+                        <div className="text-xs font-medium text-gray-12">{modelEditor.originalId ? t("providers.custom_model_edit") : t("providers.custom_model_add")}</div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <TextInput label={t("providers.custom_model_id_label")} value={modelEditor.id} onChange={(event) => updateModelEditor({ id: event.currentTarget.value })} disabled={actionDisabled} />
+                          <TextInput label={t("providers.custom_model_name_label")} value={modelEditor.name} onChange={(event) => updateModelEditor({ name: event.currentTarget.value })} disabled={actionDisabled} />
+                        </div>
+                        <div className="space-y-2 border-t border-gray-6/40 pt-3">
+                          <div className="text-xs font-medium text-dls-secondary">{t("providers.custom_model_type_label")}</div>
+                          <RadioGroup className="grid grid-cols-3 gap-2" value={modelEditor.modelType} onValueChange={(value) => updateModelEditor({ modelType: value as CustomProviderModelType })} disabled={actionDisabled}>
+                            {(["text", "image", "video"] as const).map((modelType) => (
+                              <label key={modelType} className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-6/60 px-3 py-2 text-xs text-gray-11 has-data-checked:border-primary/50 has-data-checked:bg-primary/5">
+                                <RadioGroupItem value={modelType} />
+                                <span>{t(`providers.custom_model_type_${modelType}`)}</span>
+                              </label>
+                            ))}
+                          </RadioGroup>
+                        </div>
+                        {modelEditor.modelType === "text" ? <div className="space-y-3 border-t border-gray-6/40 pt-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <TextInput label={t("providers.custom_context_limit_label")} inputMode="numeric" placeholder="200000" value={modelEditor.contextLimit} onChange={(event) => updateModelEditor({ contextLimit: event.currentTarget.value })} disabled={actionDisabled} />
+                            <TextInput label={t("providers.custom_output_limit_label")} inputMode="numeric" placeholder="32000" value={modelEditor.outputLimit} onChange={(event) => updateModelEditor({ outputLimit: event.currentTarget.value })} disabled={actionDisabled} />
+                          </div>
+                          <div className="space-y-1"><div className="text-xs font-medium text-dls-secondary">{t("providers.custom_text_protocol_label")}</div><Select value={modelEditor.textProtocol} onValueChange={(value) => updateModelEditor({ textProtocol: value as CustomProviderTextProtocol })} disabled={actionDisabled}><SelectTrigger className="w-full rounded-lg"><SelectValue /></SelectTrigger><SelectContent align="start"><SelectItem value="chat-completions">{t("providers.custom_text_protocol_chat")}</SelectItem><SelectItem value="responses">{t("providers.custom_text_protocol_responses")}</SelectItem></SelectContent></Select><div className="text-[11px] text-gray-9">{t("providers.custom_text_protocol_hint")}</div></div>
+                          <ReasoningDepthMultiSelect value={modelEditor.reasoningDepths} onChange={(reasoningDepths) => updateModelEditor({ reasoningDepths })} disabled={actionDisabled} />
+                        </div> : null}
+                        {modelEditor.modelType === "image" ? <div className="space-y-3 border-t border-gray-6/40 pt-3">
+                          <GenerationModeMultiSelect
+                            label={t("providers.custom_image_modes")}
+                            placeholder={t("providers.custom_image_modes_placeholder")}
+                            options={IMAGE_MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
+                            value={modelEditor.imageModes}
+                            onChange={(imageModes) => updateModelEditor({ imageModes })}
+                            disabled={actionDisabled}
+                          />
+                        </div> : null}
+                        {modelEditor.modelType === "video" ? <div className="space-y-3 border-t border-gray-6/40 pt-3">
+                          <div className="space-y-1"><div className="text-xs font-medium text-dls-secondary">{t("providers.custom_video_protocol_label")}</div><Select value={modelEditor.videoProtocol} onValueChange={(value) => updateModelEditor({ videoProtocol: value as VideoApiProtocol })} disabled={actionDisabled}><SelectTrigger className="w-full rounded-lg"><SelectValue /></SelectTrigger><SelectContent align="start"><SelectItem value="openai">{t("providers.custom_video_protocol_openai")}</SelectItem><SelectItem value="volcengine-ark-v3">{t("providers.custom_video_protocol_volc")}</SelectItem></SelectContent></Select></div>
+                          <GenerationModeMultiSelect
+                            label={t("providers.custom_video_modes")}
+                            placeholder={t("providers.custom_video_modes_placeholder")}
+                            options={VIDEO_MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
+                            value={modelEditor.videoModes}
+                            onChange={(videoModes) => updateModelEditor({ videoModes })}
+                            disabled={actionDisabled}
+                          />
+                          <TextInput label={t("providers.custom_video_duration")} inputMode="numeric" value={modelEditor.videoMaxDuration} onChange={(event) => updateModelEditor({ videoMaxDuration: event.currentTarget.value })} disabled={actionDisabled} />
+                          <VideoResolutionMultiSelect value={modelEditor.videoResolutions} onChange={(videoResolutions) => updateModelEditor({ videoResolutions })} disabled={actionDisabled} />
+                        </div> : null}
+                        <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setModelEditor(null)}>{t("common.cancel")}</Button><Button type="button" onClick={saveModelEditor}>{t("common.save")}</Button></div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex items-center justify-between gap-3">

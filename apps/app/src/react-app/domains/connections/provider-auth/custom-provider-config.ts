@@ -1,6 +1,6 @@
 import { applyEdits, modify, parse } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
-import { parseMediaGenerationCapabilities, type MediaGenerationCapabilities } from "@jugglework/types/media-generation";
+import { parseImageGenerationCapabilities, parseMediaGenerationCapabilities, type ImageGenerationCapabilities, type MediaGenerationCapabilities } from "@jugglework/types/media-generation";
 
 import { isCloudManagedProviderKey } from "./cloud-provider-config";
 
@@ -18,50 +18,57 @@ import { isCloudManagedProviderKey } from "./cloud-provider-config";
  */
 
 export const CUSTOM_PROVIDER_NPM = "@ai-sdk/openai-compatible";
+export const CUSTOM_PROVIDER_RESPONSES_NPM = "@ai-sdk/openai";
+export type CustomProviderTextProtocol = "chat-completions" | "responses";
+export type CustomProviderModelType = "text" | "image" | "video";
+export const CUSTOM_REASONING_DEPTHS = ["none", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export type CustomReasoningDepth = (typeof CUSTOM_REASONING_DEPTHS)[number];
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 export type CustomProviderModel = {
   id: string;
   name: string;
+  contextLimit?: number | null;
+  outputLimit?: number | null;
+  /** Defaults to true; false marks a generation-only model. */
+  chat?: boolean;
+  textProtocol?: CustomProviderTextProtocol;
+  reasoningDepths?: CustomReasoningDepth[];
   mediaGeneration?: MediaGenerationCapabilities;
+  imageGeneration?: ImageGenerationCapabilities;
 };
-
-const OPENAI_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 
 /**
- * Model metadata that the OpenCode provider catalog cannot discover from a
- * generic OpenAI-compatible `/v1/models` response. Keep this allowlist narrow:
- * an unknown relay model is safer without a non-functional thinking selector
- * than with options its upstream API may ignore.
+ * The structured editor presents one mutually exclusive model type. Older raw
+ * configs may contain mixed capability metadata, so editing resolves those
+ * deterministically instead of guessing from the model id.
  */
-const inferCustomProviderModelMetadata = (modelId: string) => {
-  const normalized = modelId.trim().toLowerCase();
-  const isGpt56 = /(?:^|\/)gpt-5\.6(?:$|[-.:])/.test(normalized);
-  if (!isGpt56) return {};
-
-  return {
-    reasoning: true,
-    variants: Object.fromEntries(
-      OPENAI_REASONING_EFFORTS.map((effort) => [effort, { reasoningEffort: effort }]),
-    ),
-  };
-};
+export const customProviderModelType = (model: Pick<CustomProviderModel, "mediaGeneration" | "imageGeneration">): CustomProviderModelType =>
+  model.mediaGeneration ? "video" : model.imageGeneration ? "image" : "text";
 
 export type CustomProviderInput = {
   providerId: string;
   name: string;
   baseUrl: string;
+  /** Credential key consumed by server-side provider adapters. */
+  credentialEnv?: string | null;
   models: CustomProviderModel[];
-  /**
-   * Optional per-model limits applied to every model in the block. Without
-   * them the engine falls back to `limit.context: 0`, which disables context
-   * accounting and compaction — fine for a quick trial, painful for real use,
-   * so the form offers them and this module passes them straight through.
-   */
+  /** Legacy group-level defaults accepted for migration and programmatic callers. */
   contextLimit?: number | null;
   outputLimit?: number | null;
 };
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export const customProviderCredentialEnv = (providerId: string) => {
+  const suffix = normalizeCustomProviderId(providerId)
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return suffix ? `CUSTOM_${suffix}_API_KEY` : "CUSTOM_PROVIDER_API_KEY";
+};
 
 /** Config-safe id: lowercase, with anything else folded into `-`. */
 export const normalizeCustomProviderId = (value: string) =>
@@ -100,17 +107,36 @@ export const normalizeCustomProviderInput = (
   input: CustomProviderInput,
 ): CustomProviderInput => {
   const providerId = normalizeCustomProviderId(input.providerId);
+  const models = input.models.flatMap((model) => {
+    const id = model.id.trim();
+    const mediaGeneration = parseMediaGenerationCapabilities(model.mediaGeneration);
+    const imageGeneration = parseImageGenerationCapabilities(model.imageGeneration);
+    return id ? [{
+      id,
+      name: model.name.trim() || id,
+      ...((model.contextLimit ?? input.contextLimit) != null
+        ? { contextLimit: model.contextLimit ?? input.contextLimit }
+        : {}),
+      ...((model.outputLimit ?? input.outputLimit) != null
+        ? { outputLimit: model.outputLimit ?? input.outputLimit }
+        : {}),
+      ...(model.chat === false ? { chat: false } : {}),
+      ...((model.textProtocol ?? "chat-completions") === "responses" ? { textProtocol: "responses" as const } : {}),
+      ...(model.chat !== false && model.reasoningDepths?.length
+        ? { reasoningDepths: CUSTOM_REASONING_DEPTHS.filter((depth) => model.reasoningDepths?.includes(depth)) }
+        : {}),
+      ...(mediaGeneration ? { mediaGeneration } : {}),
+      ...(imageGeneration ? { imageGeneration } : {}),
+    }] : [];
+  });
+  const needsAdapterCredential = models.some((model) => model.mediaGeneration || model.imageGeneration);
   return {
     providerId,
     name: input.name.trim() || providerId,
     baseUrl: normalizeCustomProviderBaseUrl(input.baseUrl),
-    models: input.models.flatMap((model) => {
-      const id = model.id.trim();
-      const mediaGeneration = parseMediaGenerationCapabilities(model.mediaGeneration);
-      return id ? [{ id, name: model.name.trim() || id, ...(mediaGeneration ? { mediaGeneration } : {}) }] : [];
-    }),
-    contextLimit: input.contextLimit ?? null,
-    outputLimit: input.outputLimit ?? null,
+    credentialEnv:
+      input.credentialEnv?.trim() || (needsAdapterCredential ? customProviderCredentialEnv(providerId) : null),
+    models,
   };
 };
 
@@ -125,7 +151,9 @@ export type CustomProviderValidationKey =
   | "providers.custom_id_reserved"
   | "providers.custom_base_url_required"
   | "providers.custom_base_url_invalid"
+  | "providers.custom_credential_env_invalid"
   | "providers.custom_models_required"
+  | "providers.custom_model_capability_required"
   | "providers.custom_limits_incomplete"
   | "providers.custom_limits_invalid";
 
@@ -148,17 +176,23 @@ export const validateCustomProviderInput = (
   if (!/^https?:\/\/\S+$/i.test(input.baseUrl)) {
     return "providers.custom_base_url_invalid";
   }
+  if (input.credentialEnv && !ENV_KEY_PATTERN.test(input.credentialEnv)) {
+    return "providers.custom_credential_env_invalid";
+  }
   if (input.models.length === 0) {
     return "providers.custom_models_required";
   }
-
-  const hasContext = typeof input.contextLimit === "number";
-  const hasOutput = typeof input.outputLimit === "number";
-  if (hasContext !== hasOutput) {
-    return "providers.custom_limits_incomplete";
+  if (input.models.some((model) => model.chat === false && !model.mediaGeneration && !model.imageGeneration)) {
+    return "providers.custom_model_capability_required";
   }
-  if (hasContext && !(input.contextLimit! > 0 && input.outputLimit! > 0)) {
-    return "providers.custom_limits_invalid";
+
+  for (const model of input.models) {
+    const hasContext = typeof model.contextLimit === "number";
+    const hasOutput = typeof model.outputLimit === "number";
+    if (hasContext !== hasOutput) return "providers.custom_limits_incomplete";
+    if (hasContext && !(model.contextLimit! > 0 && model.outputLimit! > 0)) {
+      return "providers.custom_limits_invalid";
+    }
   }
 
   return null;
@@ -167,24 +201,50 @@ export const validateCustomProviderInput = (
 export const buildCustomProviderConfig = (
   input: CustomProviderInput,
 ): ProviderConfig => {
-  const limit =
-    typeof input.contextLimit === "number" && typeof input.outputLimit === "number"
-      ? { context: input.contextLimit, output: input.outputLimit }
-      : null;
-
+  const credentialEnv = input.credentialEnv?.trim() ||
+    (input.models.some((model) => parseMediaGenerationCapabilities(model.mediaGeneration) || parseImageGenerationCapabilities(model.imageGeneration))
+      ? customProviderCredentialEnv(input.providerId)
+      : null);
   return {
     npm: CUSTOM_PROVIDER_NPM,
     name: input.name,
+    ...(credentialEnv ? { env: [credentialEnv] } : {}),
     options: { baseURL: input.baseUrl },
     models: Object.fromEntries(
       input.models.map((model) => [
         model.id,
-        {
+        (() => {
+          const limit = typeof model.contextLimit === "number" && typeof model.outputLimit === "number"
+            ? { context: model.contextLimit, output: model.outputLimit }
+            : null;
+          return {
           name: model.name,
-          ...inferCustomProviderModelMetadata(model.id),
+          ...(model.reasoningDepths?.length ? {
+            reasoning: true,
+            variants: Object.fromEntries(
+              model.reasoningDepths.map((depth) => [
+                depth,
+                depth === "none" ? {} : { reasoningEffort: depth },
+              ]),
+            ),
+          } : {}),
+          ...(model.chat !== false && model.textProtocol === "responses"
+            ? { provider: { npm: CUSTOM_PROVIDER_RESPONSES_NPM } }
+            : {}),
+          ...(model.chat === false ? {
+            modalities: {
+              input: (model.mediaGeneration?.imageToVideo || model.imageGeneration?.imageToImage || model.imageGeneration?.multiImageToImage ? ["text", "image"] : ["text"]) as ("text" | "image")[],
+              output: [
+                ...(model.mediaGeneration ? ["video"] : []),
+                ...(model.imageGeneration ? ["image"] : []),
+              ] as ("video" | "image")[],
+            },
+          } : {}),
           ...(model.mediaGeneration ? { mediaGeneration: model.mediaGeneration } : {}),
+          ...(model.imageGeneration ? { imageGeneration: model.imageGeneration } : {}),
           ...(limit ? { limit } : {}),
-        },
+          };
+        })(),
       ]),
     ),
   };
@@ -200,12 +260,17 @@ export const customProviderInputFromProvider = (
   provider: {
     id: string;
     name: string;
+    env?: string[];
     options: Record<string, unknown>;
     models: Record<string, {
       id: string;
       name: string;
       api?: { npm?: string };
       limit?: { context?: number; output?: number };
+      mediaGeneration?: unknown;
+      imageGeneration?: unknown;
+      modalities?: { input?: string[]; output?: string[] };
+      variants?: Record<string, unknown>;
     }>;
   },
 ): CustomProviderInput | null => {
@@ -213,23 +278,18 @@ export const customProviderInputFromProvider = (
     ? provider.options.baseURL.trim()
     : "";
   const models = Object.values(provider.models ?? {});
+  const capabilities = models.map((model) => parseMediaGenerationCapabilities(model.mediaGeneration));
+  const imageCapabilities = models.map((model) => parseImageGenerationCapabilities(model.imageGeneration));
+  const chatModes = models.map((model) => !Array.isArray(model.modalities?.output) || model.modalities.output.includes("text"));
   if (
     !baseUrl ||
     models.length === 0 ||
-    models.some((model) => model.api?.npm !== CUSTOM_PROVIDER_NPM)
+    models.some((model) => ![CUSTOM_PROVIDER_NPM, CUSTOM_PROVIDER_RESPONSES_NPM].includes(model.api?.npm ?? ""))
   ) {
     return null;
   }
 
-  const [firstModel] = models;
-  const firstContext = firstModel.limit?.context ?? 0;
-  const firstOutput = firstModel.limit?.output ?? 0;
-  const hasConsistentLimits = models.every(
-    (model) =>
-      (model.limit?.context ?? 0) === firstContext &&
-      (model.limit?.output ?? 0) === firstOutput,
-  );
-  if (!hasConsistentLimits || (firstContext > 0) !== (firstOutput > 0)) {
+  if (models.some((model) => ((model.limit?.context ?? 0) > 0) !== ((model.limit?.output ?? 0) > 0))) {
     return null;
   }
 
@@ -237,14 +297,100 @@ export const customProviderInputFromProvider = (
     providerId: provider.id,
     name: provider.name,
     baseUrl,
-    models: Object.values(provider.models).map((model) => ({
+    ...(provider.env?.find((entry) => typeof entry === "string" && entry.trim())?.trim() || capabilities[0]
+      ? {
+          credentialEnv:
+            provider.env?.find((entry) => typeof entry === "string" && entry.trim())?.trim() ||
+            customProviderCredentialEnv(provider.id),
+        }
+      : {}),
+    models: Object.values(provider.models).map((model, index) => ({
       id: model.id,
       name: model.name || model.id,
+      ...((model.limit?.context ?? 0) > 0 ? { contextLimit: model.limit!.context! } : {}),
+      ...((model.limit?.output ?? 0) > 0 ? { outputLimit: model.limit!.output! } : {}),
+      ...(chatModes[index] === false ? { chat: false } : {}),
+      ...(chatModes[index] !== false && model.api?.npm === CUSTOM_PROVIDER_RESPONSES_NPM
+        ? { textProtocol: "responses" as const }
+        : {}),
+      ...(chatModes[index] !== false && CUSTOM_REASONING_DEPTHS.some((depth) =>
+        Object.prototype.hasOwnProperty.call(model.variants ?? {}, depth),
+      )
+        ? {
+            reasoningDepths: CUSTOM_REASONING_DEPTHS.filter((depth) =>
+              Object.prototype.hasOwnProperty.call(model.variants ?? {}, depth),
+            ),
+          }
+        : {}),
+      ...(capabilities[index] ? { mediaGeneration: capabilities[index] } : {}),
+      ...(imageCapabilities[index] ? { imageGeneration: imageCapabilities[index] } : {}),
     })),
-    contextLimit: firstContext > 0 ? firstContext : null,
-    outputLimit: firstOutput > 0 ? firstOutput : null,
   };
 };
+
+/**
+ * Build an editable provider from raw JSONC. Runtime ProviderList output is a
+ * lossy projection and omits custom mediaGeneration metadata.
+ */
+export function customProviderInputFromConfigContent(
+  content: string,
+  providerId: string,
+  runtimeProvider?: {
+    id: string;
+    name: string;
+    models: Record<string, {
+      id: string;
+      name: string;
+      api?: { npm?: string };
+      limit?: { context?: number; output?: number };
+      modalities?: { input?: string[]; output?: string[] };
+      mediaGeneration?: unknown;
+      imageGeneration?: unknown;
+    }>;
+  } | null,
+): CustomProviderInput | null {
+  const resolved = providerId.trim();
+  if (!resolved) return null;
+  const parsed = parse(content || "{}") as unknown;
+  const root = isRecord(parsed) ? parsed : {};
+  const providers = isRecord(root.provider) ? root.provider : {};
+  const rawProvider = providers[resolved];
+  if (!isRecord(rawProvider)) return null;
+  const rawModels = isRecord(rawProvider.models) ? rawProvider.models : {};
+  const models = Object.fromEntries(Object.entries(rawModels).flatMap(([modelID, modelRaw]) => {
+    if (!isRecord(modelRaw)) return [];
+    const runtimeModel = runtimeProvider?.models?.[modelID];
+    return [[modelID, {
+      ...runtimeModel,
+      ...modelRaw,
+      id: typeof modelRaw.id === "string" && modelRaw.id.trim() ? modelRaw.id : modelID,
+      name: typeof modelRaw.name === "string" && modelRaw.name.trim() ? modelRaw.name : modelID,
+      api: isRecord(modelRaw.provider)
+        ? { npm: typeof modelRaw.provider.npm === "string" ? modelRaw.provider.npm : CUSTOM_PROVIDER_NPM }
+        : { npm: CUSTOM_PROVIDER_NPM },
+    }]];
+  }));
+  return customProviderInputFromProvider({
+    ...runtimeProvider,
+    ...rawProvider,
+    id: resolved,
+    name: typeof rawProvider.name === "string" && rawProvider.name.trim()
+      ? rawProvider.name
+      : runtimeProvider?.name ?? resolved,
+    options: isRecord(rawProvider.options) ? rawProvider.options : {},
+    env: Array.isArray(rawProvider.env) ? rawProvider.env.filter((item): item is string => typeof item === "string") : [],
+    models,
+  });
+}
+
+export function customProviderCredentialEnvEntry(
+  input: Pick<CustomProviderInput, "credentialEnv">,
+  apiKey: string,
+): { key: string; value: string } | null {
+  const key = input.credentialEnv?.trim() ?? "";
+  const value = apiKey.trim();
+  return key && value ? { key, value } : null;
+}
 
 /**
  * Upsert the provider block in an `opencode.jsonc`. The whole block is

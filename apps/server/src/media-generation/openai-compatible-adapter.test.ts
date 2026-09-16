@@ -1,9 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { OpenAiCompatibleVideoAdapter } from "./openai-compatible-adapter.js";
+import { OpenAiCompatibleVideoAdapter, openAiVideoSize } from "./openai-compatible-adapter.js";
 
 const env = { list: async () => [{ key: "VIDEO_KEY", value: "secret-value" }] } as never;
 
 describe("OpenAiCompatibleVideoAdapter", () => {
+  test("maps canonical video presets to OpenAI-style pixel dimensions", () => {
+    expect(openAiVideoSize("480p")).toBe("854x480");
+    expect(openAiVideoSize("720p")).toBe("1280x720");
+    expect(openAiVideoSize("1080p")).toBe("1920x1080");
+    expect(openAiVideoSize("4k")).toBe("3840x2160");
+    expect(openAiVideoSize("720x1280")).toBe("720x1280");
+    expect(openAiVideoSize("other")).toBeUndefined();
+  });
   test("submits and polls the official asynchronous videos shape", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
     const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", env, envKeys: ["VIDEO_KEY"], fetch: (async (url: string, init: RequestInit) => {

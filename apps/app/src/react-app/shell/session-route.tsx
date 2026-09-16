@@ -201,6 +201,7 @@ import {
   ensureProviderListQuery,
   getConnectedProviderItems,
   getProviderSource,
+  isChatSelectableProviderModel,
   isModelAvailableInConnectedProviders,
   refreshProviderListQueries,
   resolveConnectedProviderModel,
@@ -245,7 +246,7 @@ function findReplacementCloudModel(
     (provider) =>
       provider.id !== model.providerID &&
       isCloudManagedProviderKey(provider.id) &&
-      Boolean(provider.models?.[model.modelID]),
+      isChatSelectableProviderModel(provider.models?.[model.modelID]),
   );
   if (candidates.length !== 1) return null;
 

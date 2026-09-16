@@ -202,6 +202,9 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } =
           ],
         });
       }
+      if (url.pathname === "/experimental/extensions/call") {
+        return Response.json({ ok: true, received: record.body });
+      }
 
       return Response.json({ message: "Not found" }, { status: 404 });
     },
@@ -538,11 +541,21 @@ describe("JuggleWorkExtensionsPreview session tools", () => {
 });
 
 describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
-  test("exposes only the three semantic tools", async () => {
+  test("exposes semantic UI tools and direct configured media tools", async () => {
     const plugin = await JuggleWorkExtensionsPreview();
     const tools = Object.keys(plugin.tool).sort();
 
-    expect(tools).toEqual(["jugglework_context", "jugglework_execute", "jugglework_query"]);
+    expect(tools).toEqual([
+      "jugglework_context",
+      "jugglework_execute",
+      "jugglework_image_generate",
+      "jugglework_image_models_list",
+      "jugglework_query",
+      "jugglework_video_generate",
+      "jugglework_video_job_cancel",
+      "jugglework_video_job_get",
+      "jugglework_video_models_list",
+    ]);
 
     const system = await transformedSystem(plugin);
     expect(system).not.toContain("## Default Skill: skill-creator");
@@ -554,5 +567,56 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
     expect(system).toContain("Use jugglework_context");
     expect(system).toContain("session.search");
     expect(system).toContain("browser.open_url");
+  });
+
+  test("routes direct image generation to the configured local extension", async () => {
+    const fake = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive" });
+    const output = JSON.parse(await plugin.tool.jugglework_image_generate.execute({
+      prompt: "a puppy",
+      mode: "text-to-image",
+    }, { directory: "/tmp/archive", sessionID: "ses_archive" }));
+    expect(output.ok).toBe(true);
+    expect(fake.requests.at(-1)).toMatchObject({
+      pathname: "/experimental/extensions/call",
+      method: "POST",
+      body: {
+        extensionId: "openai-image-generation",
+        action: "image_generate",
+        args: { prompt: "a puppy", mode: "text-to-image" },
+      },
+    });
+  });
+
+  test("routes the complete direct video job lifecycle to the configured local extension", async () => {
+    const fake = startFakeJuggleWorkServer();
+    const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await plugin.tool.jugglework_video_generate.execute({
+      prompt: "a cat chasing a mouse",
+      mode: "text-to-video",
+      durationSeconds: 5,
+      resolution: "480p",
+    }, { directory: "/tmp/archive", sessionID: "ses_archive" });
+    expect(fake.requests.at(-1)).toMatchObject({
+      pathname: "/experimental/extensions/call",
+      method: "POST",
+      body: {
+        extensionId: "media-generation",
+        action: "video_generate",
+        args: {
+          prompt: "a cat chasing a mouse",
+          mode: "text-to-video",
+          durationSeconds: 5,
+          resolution: "480p",
+        },
+      },
+    });
+
+    await plugin.tool.jugglework_video_job_get.execute({ jobId: "video-job-1" }, { directory: "/tmp/archive" });
+    expect(fake.requests.at(-1)).toMatchObject({ body: { extensionId: "media-generation", action: "video_job_get", args: { jobId: "video-job-1" } } });
+
+    await plugin.tool.jugglework_video_job_cancel.execute({ jobId: "video-job-1" }, { directory: "/tmp/archive" });
+    expect(fake.requests.at(-1)).toMatchObject({ body: { extensionId: "media-generation", action: "video_job_cancel", args: { jobId: "video-job-1" } } });
   });
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { VideoGenerationMode } from "@jugglework/types/media-generation";
+import { VIDEO_RESOLUTION_PRESETS } from "@jugglework/types/media-generation";
 
 export const MEDIA_GENERATION_EXTENSION_ID = "media-generation";
 
@@ -12,7 +13,10 @@ const generateSchema = z.object({
   sourceImagePath: z.string().trim().min(1).optional(),
   sourceImageMimeType: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   durationSeconds: z.number().int().positive().max(20).optional(),
-  resolution: z.string().regex(/^\d{2,5}x\d{2,5}$/).optional(),
+  resolution: z.union([
+    z.enum(VIDEO_RESOLUTION_PRESETS),
+    z.string().regex(/^\d{2,5}x\d{2,5}$/),
+  ]).optional(),
   filename: z.string().trim().min(1).max(100).optional(),
   clientRequestId: z.string().trim().min(1).max(200),
 }).strict().superRefine((value, context) => {
@@ -26,7 +30,7 @@ const listSchema = z.object({ mode: modeSchema.optional() }).strict();
 export const MEDIA_GENERATION_EXTENSION_ACTIONS = [
   { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "status", title: "Video generation status", description: "Check whether video submission is enabled and list non-secret readiness diagnostics. This action never generates a video.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "video_models_list", title: "List video generation models", description: "Call before generation. Lists only configured models with explicit text-to-video or image-to-video capability and reports whether they are executable. If none are ready, report no_video_model_available; never guess from a model name.", inputSchema: { type: "object", properties: { mode: { type: "string", enum: ["text-to-video", "image-to-video"] } }, additionalProperties: false } },
-  { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "video_generate", title: "Start asynchronous video generation", description: "Create one asynchronous video job and return immediately. A reference image requires image-to-video mode and must never be silently ignored. Poll video_job_get; never automatically resubmit a failed paid job.", inputSchema: { type: "object", required: ["prompt", "mode", "clientRequestId"], properties: { prompt: { type: "string" }, mode: { type: "string", enum: ["text-to-video", "image-to-video"] }, model: { type: "object", properties: { providerID: { type: "string" }, modelID: { type: "string" } }, required: ["providerID", "modelID"], additionalProperties: false }, sourceImagePath: { type: "string" }, sourceImageMimeType: { type: "string", enum: ["image/jpeg", "image/png", "image/webp"] }, durationSeconds: { type: "integer", minimum: 1, maximum: 20 }, resolution: { type: "string" }, filename: { type: "string" }, clientRequestId: { type: "string" } }, additionalProperties: false } },
+  { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "video_generate", title: "Start asynchronous video generation", description: "Create one asynchronous video job and return immediately. A reference image requires image-to-video mode and must never be silently ignored. Poll video_job_get; never automatically resubmit a failed paid job.", inputSchema: { type: "object", required: ["prompt", "mode", "clientRequestId"], properties: { prompt: { type: "string" }, mode: { type: "string", enum: ["text-to-video", "image-to-video"] }, model: { type: "object", properties: { providerID: { type: "string" }, modelID: { type: "string" } }, required: ["providerID", "modelID"], additionalProperties: false }, sourceImagePath: { type: "string" }, sourceImageMimeType: { type: "string", enum: ["image/jpeg", "image/png", "image/webp"] }, durationSeconds: { type: "integer", minimum: 1, maximum: 20 }, resolution: { anyOf: [{ type: "string", enum: [...VIDEO_RESOLUTION_PRESETS] }, { type: "string", pattern: "^\\d{2,5}x\\d{2,5}$" }] }, filename: { type: "string" }, clientRequestId: { type: "string" } }, additionalProperties: false } },
   { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "video_job_get", title: "Get video job", description: "Read current progress and completed artifact metadata for an existing video job.", inputSchema: { type: "object", required: ["jobId"], properties: { jobId: { type: "string" } }, additionalProperties: false } },
   { extensionId: MEDIA_GENERATION_EXTENSION_ID, action: "video_job_cancel", title: "Cancel video job", description: "Request cancellation. OpenAI-compatible video APIs may not support provider-side cancellation, so cancellation is best effort and never deletes completed output.", inputSchema: { type: "object", required: ["jobId"], properties: { jobId: { type: "string" } }, additionalProperties: false } },
 ] as const;
