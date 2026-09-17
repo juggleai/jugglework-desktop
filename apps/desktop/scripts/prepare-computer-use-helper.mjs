@@ -3,6 +3,8 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync }
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { computerUseHelperInfoPlist } from "./computer-use-helper-plist.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
@@ -91,38 +93,6 @@ function signHelperApp() {
   }
 }
 
-function infoPlist() {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleDisplayName</key>
-  <string>JuggleWork Computer Use</string>
-  <key>CFBundleExecutable</key>
-  <string>${helperExecutableName}</string>
-  <key>CFBundleIdentifier</key>
-  <string>${bundleIdentifier}</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>JuggleWork Computer Use</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
-  <key>CFBundleVersion</key>
-  <string>1</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>14.0</string>
-</dict>
-</plist>
-`;
-}
-
 if (process.platform !== "darwin") {
   process.stdout.write(JSON.stringify({ ok: true, skipped: true, reason: "computer-use-helper-is-macos-only" }, null, 2) + "\n");
   process.exit(0);
@@ -146,7 +116,10 @@ if (!existsSync(builtExecutable)) {
 rmSync(appPath, { recursive: true, force: true });
 mkdirSync(join(appPath, "Contents", "MacOS"), { recursive: true });
 mkdirSync(join(appPath, "Contents", "Resources"), { recursive: true });
-writeFileSync(join(appPath, "Contents", "Info.plist"), infoPlist(), "utf8");
+writeFileSync(join(appPath, "Contents", "Info.plist"), computerUseHelperInfoPlist({
+  executableName: helperExecutableName,
+  bundleIdentifier,
+}), "utf8");
 writeFileSync(join(appPath, "Contents", "PkgInfo"), "APPL????", "utf8");
 copyFileSync(builtExecutable, join(appPath, "Contents", "MacOS", helperExecutableName));
 if (existsSync(iconPath)) {

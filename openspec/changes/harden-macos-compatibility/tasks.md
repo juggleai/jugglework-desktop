@@ -34,3 +34,8 @@
 - [x] 7.1 Normalize electron-builder numeric and string architecture values in the post-pack hook.
 - [x] 7.2 Add hook regression tests for sidecar selection, helper processing, and unsupported architectures.
 - [x] 7.3 Run OpenSpec validation, dependency checks, desktop tests, packaging smoke tests, and review the final diff.
+
+## 8. Background Computer Use Activation
+
+- [x] 8.1 Generate the Computer Use helper bundle as an `LSUIElement` application so MCP subprocesses never register as transient Dock applications, while preserving the explicit permission setup path's runtime promotion to a regular application.
+- [x] 8.2 Add a source-level plist regression test and include it in the Desktop test suite; defer packaged-app Dock acceptance as requested.

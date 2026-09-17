@@ -84,3 +84,15 @@ Electron post-pack processing SHALL resolve electron-builder's architecture repr
 #### Scenario: electron-builder supplies an architecture enum
 - **WHEN** the post-pack hook receives electron-builder's numeric architecture value
 - **THEN** it resolves the corresponding target triple and executes architecture-specific processing
+
+### Requirement: Background Computer Use instances stay out of the Dock
+The Computer Use helper SHALL register as a UI-element application before macOS LaunchServices creates its process identity, so background MCP and permission-check instances do not create transient Dock icons. When the user explicitly opens Computer Use permission setup, the helper MAY promote itself to a regular application so its configuration window remains visible and interactive.
+
+#### Scenario: Computer Use MCP starts in the background
+- **WHEN** a local workspace starts the bundled Computer Use MCP helper
+- **THEN** macOS does not add or animate a Computer Use icon in the Dock
+- **AND** the MCP helper remains available over stdio
+
+#### Scenario: User opens Computer Use permission setup
+- **WHEN** the user explicitly opens the Computer Use permission helper
+- **THEN** the helper changes to a regular application and presents its setup window
