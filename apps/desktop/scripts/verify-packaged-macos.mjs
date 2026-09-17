@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +18,9 @@ import { pathToFileURL } from "node:url";
 import { extractFile } from "@electron/asar";
 import { verifyJuggleWorkUiMcp } from "./verify-jugglework-ui-mcp.mjs";
 import { inspectArtifact } from "./qiniu-release/metadata.mjs";
+
+const require = createRequire(import.meta.url);
+const { hasNotaryCredentials } = require("./macos-notary.cjs");
 
 const EXPECTED_APP_ID = "com.juggleai.jugglework";
 const EXPECTED_TEAM_ID = "H7PDHSK3C7";
@@ -223,9 +227,38 @@ export function verifyAppleTrust(appPath) {
   };
 }
 
+export function verifyDmgTrust(dmgPath) {
+  const resolved = path.resolve(dmgPath);
+  if (!existsSync(resolved)) fail(`DMG not found: ${resolved}`);
+  const signature = commandAssessment("codesign", ["--verify", "--verbose=4", resolved]);
+  const signatureDetails = commandAssessment("codesign", ["--display", "--verbose=4", resolved]);
+  const signatureOutput = signatureDetails.detail;
+  const teamIdentifier = signatureOutput.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim();
+  const staple = commandAssessment("xcrun", ["stapler", "validate", resolved]);
+  const gatekeeper = commandAssessment("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", resolved]);
+  const image = commandAssessment("hdiutil", ["verify", resolved]);
+  return {
+    signature: {
+      status: signature.accepted && signatureDetails.accepted && teamIdentifier === EXPECTED_TEAM_ID && !signatureOutput.includes("Signature=adhoc")
+        ? "accepted"
+        : "unavailable",
+      teamIdentifier: teamIdentifier || null,
+    },
+    notarization: { status: staple.accepted ? "accepted" : "unavailable" },
+    staple: { status: staple.accepted ? "validated" : "unavailable" },
+    gatekeeper: { status: gatekeeper.accepted ? "accepted" : "unavailable" },
+    image: { status: image.accepted ? "verified" : "unavailable" },
+    diagnostics: {
+      signature: signature.accepted && signatureDetails.accepted ? "accepted" : signature.error || signature.detail || signatureDetails.error || signatureDetails.detail,
+      staple: staple.accepted ? "accepted" : staple.error || staple.detail || `status ${staple.status}`,
+      gatekeeper: gatekeeper.accepted ? "accepted" : gatekeeper.error || gatekeeper.detail || `status ${gatekeeper.status}`,
+      image: image.accepted ? "accepted" : image.error || image.detail || `status ${image.status}`,
+    },
+  };
+}
+
 function notarizationCredentialState(environment = process.env) {
-  const required = ["APPLE_API_KEY_PATH", "APPLE_API_KEY", "APPLE_API_ISSUER"];
-  return environment.MACOS_NOTARIZE === "true" && required.every((name) => Boolean(environment[name]))
+  return environment.MACOS_NOTARIZE === "true" && hasNotaryCredentials(environment)
     ? "available"
     : "missing";
 }
@@ -235,9 +268,11 @@ export function createLocalVerificationRecord({
   architectures,
   signature,
   trust,
+  dmgTrust = null,
   artifacts = [],
   manifest = null,
   notarizationReceipt = null,
+  dmgNotarizationReceipt = null,
   environment = process.env,
   verifiedAt = new Date().toISOString(),
 }) {
@@ -251,11 +286,27 @@ export function createLocalVerificationRecord({
     && notarizationReceipt.staple === "validated"
     && typeof notarizationReceipt.submissionId === "string"
     && notarizationReceipt.submissionId.length > 0;
+  const dmgReceiptMatches = dmgNotarizationReceipt?.schema === "com.juggleai.jugglework.macos-dmg-notarization-receipt"
+    && dmgNotarizationReceipt.schemaVersion === 1
+    && dmgNotarizationReceipt.producer === "finalize-macos-artifacts"
+    && dmgNotarizationReceipt.version === version
+    && dmgNotarizationReceipt.teamIdentifier === signature.teamIdentifier
+    && dmgNotarizationReceipt.status === "accepted"
+    && dmgNotarizationReceipt.staple === "validated"
+    && dmgNotarizationReceipt.gatekeeper === "accepted"
+    && typeof dmgNotarizationReceipt.submissionId === "string"
+    && dmgNotarizationReceipt.submissionId.length > 0;
   const releaseReady = credentialState === "available"
     && receiptMatches
+    && dmgReceiptMatches
     && trust.notarization.status === "accepted"
     && trust.staple.status === "validated"
-    && trust.gatekeeper.status === "accepted";
+    && trust.gatekeeper.status === "accepted"
+    && dmgTrust?.signature?.status === "accepted"
+    && dmgTrust?.notarization?.status === "accepted"
+    && dmgTrust?.staple?.status === "validated"
+    && dmgTrust?.gatekeeper?.status === "accepted"
+    && dmgTrust?.image?.status === "verified";
   return {
     schema: LOCAL_VERIFICATION_SCHEMA,
     schemaVersion: 1,
@@ -277,6 +328,21 @@ export function createLocalVerificationRecord({
       : { status: "unavailable" },
     staple: trust.staple,
     gatekeeper: trust.gatekeeper,
+    dmg: releaseReady
+      ? {
+          signature: dmgTrust.signature,
+          notarization: { status: "accepted", submissionId: dmgNotarizationReceipt.submissionId },
+          staple: dmgTrust.staple,
+          gatekeeper: dmgTrust.gatekeeper,
+          image: dmgTrust.image,
+        }
+      : {
+          signature: dmgTrust?.signature ?? { status: "unavailable" },
+          notarization: { status: "unavailable" },
+          staple: dmgTrust?.staple ?? { status: "unavailable" },
+          gatekeeper: dmgTrust?.gatekeeper ?? { status: "unavailable" },
+          image: dmgTrust?.image ?? { status: "unavailable" },
+        },
     artifacts,
     manifest,
   };
@@ -474,6 +540,7 @@ export async function main() {
   const dmgPath = readArg("--dmg");
   const manifestPath = readArg("--manifest");
   const notarizationReceiptPath = readArg("--notarization-receipt");
+  const dmgNotarizationReceiptPath = readArg("--dmg-notarization-receipt");
   const architecture = verifyMachOArchitectures(appPath, requestedArch);
   const metadata = verifyBundleMetadata(appPath, version || null);
   const updater = verifyPackagedUpdaterConfiguration(appPath);
@@ -482,8 +549,9 @@ export async function main() {
   const expectedContainer = { expectedArch: requestedArch, expectedVersion: version || null };
   const zip = zipPath ? verifyZipBundle(zipPath, expectedContainer) : null;
   const dmg = dmgPath ? verifyDmgBundle(dmgPath, expectedContainer) : null;
-  if (verificationOutput && (!version || !zipPath || !dmgPath || !manifestPath)) {
-    fail("--verification-output requires --version, --zip, --dmg, and --manifest");
+  const dmgTrust = dmgPath ? verifyDmgTrust(dmgPath) : null;
+  if (verificationOutput && (!version || !zipPath || !dmgPath || !manifestPath || !notarizationReceiptPath || !dmgNotarizationReceiptPath)) {
+    fail("--verification-output requires --version, --zip, --dmg, --manifest, --notarization-receipt, and --dmg-notarization-receipt");
   }
   const verifiedArtifacts = verificationOutput
     ? await Promise.all([zipPath, dmgPath, `${zipPath}.blockmap`, `${dmgPath}.blockmap`].map(async (filePath) => ({
@@ -497,15 +565,20 @@ export async function main() {
   const notarizationReceipt = notarizationReceiptPath
     ? JSON.parse(readFileSync(path.resolve(notarizationReceiptPath), "utf8"))
     : null;
+  const dmgNotarizationReceipt = dmgNotarizationReceiptPath
+    ? JSON.parse(readFileSync(path.resolve(dmgNotarizationReceiptPath), "utf8"))
+    : null;
   const localVerification = verificationOutput
     ? createLocalVerificationRecord({
         version,
         architectures: [requestedArch === "x86_64" ? "x64" : requestedArch],
         signature,
         trust,
+        dmgTrust,
         artifacts: verifiedArtifacts,
         manifest: verifiedManifest,
         notarizationReceipt,
+        dmgNotarizationReceipt,
       })
     : null;
   const tray = verifyMacTrayResources(appPath);
@@ -515,7 +588,7 @@ export async function main() {
     const outputPath = path.resolve(verificationOutput);
     writeFileSync(outputPath, `${JSON.stringify(localVerification, null, 2)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   }
-  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, trust, zip, dmg, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, appPath, architecture, metadata, updater, signature, trust, zip, dmg, dmgTrust, verificationOutput: verificationOutput || null, localVerification, tray, nativeModules, uiControlMcp }, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

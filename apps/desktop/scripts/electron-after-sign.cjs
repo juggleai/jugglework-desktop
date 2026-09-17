@@ -3,6 +3,8 @@ const { existsSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
+const { resolveNotaryArguments } = require("./macos-notary.cjs");
+
 const computerUseHelperAppName = "JuggleWork Computer Use.app";
 
 function run(command, args) {
@@ -38,14 +40,6 @@ async function runWithRetry(command, args, attempts, baseDelayMs = 30_000) {
     );
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-}
-
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is required to notarize the Electron macOS app`);
-  }
-  return value;
 }
 
 function computerUseHelperPath(appPath) {
@@ -85,9 +79,7 @@ async function afterSign(context) {
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "jugglework-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
-  const keyPath = requireEnv("APPLE_API_KEY_PATH");
-  const keyId = requireEnv("APPLE_API_KEY");
-  const issuer = requireEnv("APPLE_API_ISSUER");
+  const notaryArguments = resolveNotaryArguments(process.env);
 
   try {
     run("ditto", ["-c", "-k", "--keepParent", appPath, notaryZipPath]);
@@ -95,12 +87,7 @@ async function afterSign(context) {
       "notarytool",
       "submit",
       notaryZipPath,
-      "--key",
-      keyPath,
-      "--key-id",
-      keyId,
-      "--issuer",
-      issuer,
+      ...notaryArguments,
       "--wait",
       "--output-format",
       "json",

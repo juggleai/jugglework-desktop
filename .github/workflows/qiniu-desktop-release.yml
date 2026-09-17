@@ -150,6 +150,12 @@ jobs:
           pnpm --dir apps/desktop exec electron-builder \
             --config electron-builder.yml --mac dmg zip --arm64 --publish never
 
+      - name: Notarize and finalize outer DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --dir apps/desktop finalize:mac-artifacts -- --version "$VERSION" --arch arm64
+
       - name: Generate normalized immutable manifest
         shell: bash
         run: |
@@ -169,6 +175,7 @@ jobs:
             --dmg "dist-electron/jugglework-mac-arm64-$VERSION.dmg" \
             --manifest "dist-electron/qiniu-v$VERSION-latest-mac.yml" \
             --notarization-receipt "dist-electron/mac-arm64/jugglework-notarization-receipt.json" \
+            --dmg-notarization-receipt "dist-electron/mac-arm64/jugglework-dmg-notarization-receipt.json" \
             --verification-output "$LOCAL_VERIFICATION"
           node -e 'const fs=require("node:fs");const v=JSON.parse(fs.readFileSync(process.env.LOCAL_VERIFICATION));if(v.releaseState!=="release")throw new Error("Stable-capable release verification was not produced")'
 

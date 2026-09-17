@@ -16,6 +16,9 @@
     "build:electron": "node ./scripts/electron-build.mjs",
     "package:electron": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
+    "package:mac-release": "node ./scripts/package-macos-release.mjs",
+    "finalize:mac-artifacts": "node ./scripts/finalize-macos-artifacts.mjs",
+    "test:mac-release": "node --test scripts/macos-notary.test.cjs scripts/finalize-macos-artifacts.test.mjs scripts/verify-packaged-macos.test.mjs",
     "electron": "pnpm exec electron ./electron/main.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --filter @jugglework/types build:electron-runtime && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
@@ -46,7 +49,7 @@
   "devDependencies": {
     "@electron/asar": "^3.4.1",
     "electron": "44.0.0",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "26.15.3",
     "electron-devtools-installer": "^4.0.0",
     "esbuild": "0.27.2"
   },

@@ -218,3 +218,10 @@
 - [x] 24.3 Freeze the standard electron-builder NSIS template and GUID, expose accidental `build/installer.nsi` files to git status, and add an exact fail-closed migration from the one-off `1.2.18` registry/path identity through marked temporary standard-key bridges and the legacy uninstaller before replacement extraction; interrupted attempts clear only marked bridges and revalidate the source
 - [x] 24.4 Pass focused updater, quit-cleanup, close behavior, runtime shutdown, and packaging configuration tests plus Electron typechecking; compile a standard x64 NSIS installer from the existing prepackaged payload to validate the migration macros without publishing or treating that compile-only artifact as a release candidate
 - [ ] 24.5 Build a higher trusted-signed Windows version and pass physical x64 and ARM64 `1.2.18` upgrade canaries, including legacy install-location/registry migration, sidecar startup under Code Integrity, relaunch, user data, workspace authorization, and a subsequent standard-GUID update
+
+## 25. Local macOS notarized packaging hardening (2026-09-17)
+
+- [x] 25.1 Support a local `notarytool` keychain profile, defaulting to `JUGGLEWORK_NOTARY_PROFILE`, while retaining the existing private CI API-key fallback and excluding credential/profile details from receipts
+- [x] 25.2 Make the repository after-sign hook the sole `.app` notarization owner, have electron-builder sign the outer DMG, then submit, staple, validate, and Gatekeeper-assess the final DMG after packaging
+- [x] 25.3 Regenerate the DMG blockmap and `latest-mac.yml` only after stapling freezes final DMG bytes; require distinct `.app` and DMG receipts in stable release verification
+- [x] 25.4 Add the local `package:mac-release` entry point, focused tests, workflow ordering checks, runbook guidance, and workspace release-skill guidance

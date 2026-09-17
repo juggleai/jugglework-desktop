@@ -50,6 +50,9 @@ mac:
   category: public.app-category.developer-tools
   minimumSystemVersion: "14.0"
   hardenedRuntime: true
+  # The repository afterSign hook owns .app notarization so it can support a
+  # local notarytool keychain profile and retain the Apple submission ID.
+  notarize: false
   gatekeeperAssess: false
   # apps/desktop/scripts/electron-after-sign.cjs is the explicit
   # environment-gated notarization path. It submits and staples only when
@@ -86,6 +89,10 @@ mac:
   target:
     - dmg
     - zip
+dmg:
+  # Sign the outer DMG while electron-builder still has access to the selected
+  # Developer ID identity. The local finalizer notarizes/staples it afterwards.
+  sign: true
 linux:
   icon: resources/icons/icon.png
   executableName: jugglework

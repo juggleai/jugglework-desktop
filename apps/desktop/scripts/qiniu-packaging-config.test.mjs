@@ -26,6 +26,8 @@ describe("Qiniu packaged updater configuration", () => {
 
   it("preserves ZIP and DMG updater inventory", () => {
     assert.deepEqual(config.mac.target, ["dmg", "zip"]);
+    assert.equal(config.mac.notarize, false);
+    assert.equal(config.dmg.sign, true);
   });
 
   it("contains no active GitHub update publisher", () => {

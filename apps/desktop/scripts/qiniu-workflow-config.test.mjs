@@ -22,6 +22,9 @@ describe("Qiniu release workflow policy", () => {
     assert.equal((qiniuSource.match(/QINIU_ACCESS_KEY: \$\{\{ secrets\.QINIU_ACCESS_KEY \}\}/g) ?? []).length, 4);
     assert.equal((qiniuSource.match(/QINIU_SECRET_KEY: \$\{\{ secrets\.QINIU_SECRET_KEY \}\}/g) ?? []).length, 4);
     assert.match(qiniuSource, /verify:mac-package/);
+    assert.match(qiniuSource, /finalize:mac-artifacts/);
+    assert.ok(qiniuSource.indexOf("finalize:mac-artifacts") < qiniuSource.indexOf("Generate normalized immutable manifest"));
+    assert.match(qiniuSource, /--dmg-notarization-receipt/);
     assert.match(qiniuSource, /jugglework-mac-arm64-\$VERSION\.zip/);
     assert.match(qiniuSource, /qiniu-v\$VERSION-latest-mac\.yml/);
   });
@@ -73,5 +76,6 @@ describe("Qiniu release workflow policy", () => {
     assert.doesNotMatch(stableSource, /gh release upload.*jugglework-/);
     assert.doesNotMatch(stableSource, /publish-electron-assets/);
     assert.match(stableSource, /desktop updater publication is Qiniu-only/i);
+    assert.match(stableSource, /finalize:mac-artifacts/);
   });
 });

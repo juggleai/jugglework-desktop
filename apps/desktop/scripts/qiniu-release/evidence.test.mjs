@@ -43,6 +43,13 @@ function localVerification(releasePlan = plan(), overrides = {}) {
     notarization: { status: "accepted", submissionId: "submission-id" },
     staple: { status: "validated" },
     gatekeeper: { status: "accepted" },
+    dmg: {
+      signature: { status: "accepted", teamIdentifier: EXPECTED_TEAM_ID },
+      notarization: { status: "accepted", submissionId: "dmg-submission-id" },
+      staple: { status: "validated" },
+      gatekeeper: { status: "accepted" },
+      image: { status: "verified" },
+    },
     artifacts: releasePlan.objects.map((object) => ({
       name: object.name,
       size: object.size,

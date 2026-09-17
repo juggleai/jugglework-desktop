@@ -152,6 +152,14 @@ function assertMacLocalVerification(plan, verification, { stable }) {
     if (verification.staple?.status !== "validated" || verification.gatekeeper?.status !== "accepted") {
       throw new Error("Stable promotion requires a validated stapled ticket and accepted Gatekeeper assessment");
     }
+    if (verification.dmg?.signature?.status !== "accepted" || verification.dmg.signature.teamIdentifier !== EXPECTED_TEAM_ID) {
+      throw new Error("Stable promotion requires an outer DMG signed by the expected Developer ID Team");
+    }
+    if (verification.dmg?.notarization?.status !== "accepted" || typeof verification.dmg.notarization.submissionId !== "string"
+      || !verification.dmg.notarization.submissionId || verification.dmg?.staple?.status !== "validated"
+      || verification.dmg?.gatekeeper?.status !== "accepted" || verification.dmg?.image?.status !== "verified") {
+      throw new Error("Stable promotion requires accepted DMG notarization, staple, Gatekeeper, and disk-image verification");
+    }
   }
   return verification;
 }

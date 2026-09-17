@@ -13,6 +13,13 @@ const acceptedTrust = {
   staple: { status: "validated" },
   gatekeeper: { status: "accepted" },
 };
+const acceptedDmgTrust = {
+  signature: { status: "accepted", teamIdentifier: "H7PDHSK3C7" },
+  notarization: { status: "accepted" },
+  staple: { status: "validated" },
+  gatekeeper: { status: "accepted" },
+  image: { status: "verified" },
+};
 const artifacts = [
   { name: "app.zip", size: 1, sha256: "a".repeat(64), sha512: "zip", etag: "etag-zip" },
 ];
@@ -27,6 +34,17 @@ const receipt = {
   status: "accepted",
   staple: "validated",
 };
+const dmgReceipt = {
+  schema: "com.juggleai.jugglework.macos-dmg-notarization-receipt",
+  schemaVersion: 1,
+  producer: "finalize-macos-artifacts",
+  version: "1.2.15",
+  teamIdentifier: "H7PDHSK3C7",
+  submissionId: "dmg-notary-submission",
+  status: "accepted",
+  staple: "validated",
+  gatekeeper: "accepted",
+};
 
 describe("macOS local release verification evidence", () => {
   it("emits release evidence only with credentials and all trust gates", () => {
@@ -35,14 +53,14 @@ describe("macOS local release verification evidence", () => {
       architectures: ["arm64"],
       signature,
       trust: acceptedTrust,
+      dmgTrust: acceptedDmgTrust,
       artifacts,
       manifest,
       notarizationReceipt: receipt,
+      dmgNotarizationReceipt: dmgReceipt,
       environment: {
         MACOS_NOTARIZE: "true",
-        APPLE_API_KEY_PATH: "/private/notary-key",
-        APPLE_API_KEY: "configured",
-        APPLE_API_ISSUER: "configured",
+        APPLE_NOTARY_KEYCHAIN_PROFILE: "local-profile",
       },
       verifiedAt: "2026-09-08T00:00:00.000Z",
     });
@@ -51,7 +69,8 @@ describe("macOS local release verification evidence", () => {
     assert.equal(record.identity.teamIdentifier, "H7PDHSK3C7");
     assert.deepEqual(record.artifacts, artifacts);
     assert.deepEqual(record.manifest, manifest);
-    assert.equal(JSON.stringify(record).includes("/private/notary-key"), false);
+    assert.equal(JSON.stringify(record).includes("local-profile"), false);
+    assert.equal(record.dmg.notarization.submissionId, "dmg-notary-submission");
   });
 
   it("emits candidate-only evidence when notarization credentials are absent", () => {
@@ -60,6 +79,7 @@ describe("macOS local release verification evidence", () => {
       architectures: ["arm64"],
       signature,
       trust: acceptedTrust,
+      dmgTrust: acceptedDmgTrust,
       artifacts,
       manifest,
       notarizationReceipt: null,
@@ -75,15 +95,33 @@ describe("macOS local release verification evidence", () => {
       architectures: ["arm64"],
       signature,
       trust: { ...acceptedTrust, gatekeeper: { status: "unavailable" } },
+      dmgTrust: acceptedDmgTrust,
       artifacts,
       manifest,
       notarizationReceipt: receipt,
+      dmgNotarizationReceipt: dmgReceipt,
       environment: {
         MACOS_NOTARIZE: "true",
         APPLE_API_KEY_PATH: "configured",
         APPLE_API_KEY: "configured",
         APPLE_API_ISSUER: "configured",
       },
+    });
+    assert.equal(record.releaseState, "candidate");
+  });
+
+  it("emits candidate-only evidence when the outer DMG is not notarized", () => {
+    const record = createLocalVerificationRecord({
+      version: "1.2.15",
+      architectures: ["arm64"],
+      signature,
+      trust: acceptedTrust,
+      dmgTrust: { ...acceptedDmgTrust, staple: { status: "unavailable" } },
+      artifacts,
+      manifest,
+      notarizationReceipt: receipt,
+      dmgNotarizationReceipt: dmgReceipt,
+      environment: { MACOS_NOTARIZE: "true", JUGGLEWORK_NOTARY_PROFILE: "configured" },
     });
     assert.equal(record.releaseState, "candidate");
   });
