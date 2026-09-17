@@ -123,5 +123,9 @@ win:
     - provider: generic
       url: https://downloads.jugglechat.cn/jugglework/releases/stable/windows
 nsis:
+  # Keep the standard electron-builder installer even if an accidental
+  # build/installer.nsi exists, and freeze the deployed registry identity.
+  script: null
+  guid: 6fbd4568-b529-5610-b7ba-24eb7d10b064
   include: build/installer.nsh
 artifactName: jugglework-${os}-${arch}-${version}.${ext}

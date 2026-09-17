@@ -25,7 +25,7 @@ import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager } from "./runtime.mjs";
 import { createRuntimeIpcHandlers } from "./runtime-ipc.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
-import { waitForQuitCleanup } from "./quit-cleanup.mjs";
+import { createJoinableCleanup, waitForQuitCleanup } from "./quit-cleanup.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
@@ -1467,12 +1467,11 @@ function createMainRemoteSessionEventBridge() {
   });
 }
 
-let runtimeDisposedForQuit = false;
-let runtimeDisposeInProgress = false;
 let quitCleanupComplete = false;
 let quitCleanupInProgress = false;
 let updaterInstallQuitRequested = false;
 let runtimeBootstrapPromise = null;
+const disposeRuntimeBeforeQuit = createJoinableCleanup(() => runtimeManager.dispose());
 
 function showShutdownScreen() {
   const win = mainWindow;
@@ -1503,17 +1502,6 @@ function showShutdownScreen() {
 </html>`)}`);
   } catch {
     // Ignore renderer teardown races during quit.
-  }
-}
-
-async function disposeRuntimeBeforeQuit() {
-  if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
-  runtimeDisposeInProgress = true;
-  try {
-    await runtimeManager.dispose().catch(() => undefined);
-    runtimeDisposedForQuit = true;
-  } finally {
-    runtimeDisposeInProgress = false;
   }
 }
 
@@ -3118,7 +3106,11 @@ const { ensureAutoUpdater } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,
-  onInstallAndRestart: () => {
+  onInstallAndRestart: async () => {
+    await disposeRuntimeBeforeQuit();
+    // Keep ordinary close-to-tray behavior active while shutdown is pending.
+    // Set intent only after critical cleanup, immediately before the native
+    // updater is invoked and may close the window itself.
     updaterInstallQuitRequested = true;
   },
   onInstallAndRestartFailed: () => {

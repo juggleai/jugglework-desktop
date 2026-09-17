@@ -330,6 +330,147 @@ describe("Electron managed runtime", () => {
       { workspacePath: "/workspace", sandboxBackend: "docker" },
     ]);
   });
+
+  it("waits for managed shutdown and rejects lifecycle starts after disposal begins", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "jugglework-runtime-dispose-"));
+    const workspacePath = path.join(root, "workspace");
+    const servers = [];
+    let stopStarted = () => {};
+    const started = new Promise((resolve) => { stopStarted = () => resolve(undefined); });
+    let finishStop = () => {};
+    const stopBarrier = new Promise((resolve) => { finishStop = () => resolve(undefined); });
+    let managedAlive = true;
+    const manager = createRuntimeManager({
+      app: {
+        isPackaged: false,
+        getPath(name) {
+          if (name === "userData") return path.join(root, "user-data");
+          if (name === "home") return root;
+          if (name === "exe") return path.join(root, "JuggleWork");
+          throw new Error(`Unexpected app path: ${name}`);
+        },
+      },
+      desktopRoot: path.join(root, "desktop"),
+      listLocalWorkspacePaths: async () => [workspacePath],
+      readDenBaseUrl: () => null,
+      startEmbeddedServer: async () => {
+        const server = http.createServer((request, response) => {
+          response.setHeader("Content-Type", "application/json");
+          if (request.url === "/tokens" && request.method === "POST") {
+            response.end(JSON.stringify({ token: "owner-token" }));
+            return;
+          }
+          if (request.url === "/workspaces") {
+            response.end(JSON.stringify({ items: [] }));
+            return;
+          }
+          response.statusCode = 404;
+          response.end("{}");
+        });
+        servers.push(server);
+        const port = await listen(server);
+        return {
+          port,
+          url: `http://127.0.0.1:${port}`,
+          managedOpencodeExecution: null,
+          managedOpencode: { pid: 12345, isAlive: () => managedAlive },
+          stop: async () => {
+            stopStarted();
+            await stopBarrier;
+            managedAlive = false;
+            await closeServer(server);
+          },
+        };
+      },
+    });
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await manager.engineStart(workspacePath, { workspacePaths: [workspacePath] });
+      const disposal = manager.dispose();
+      await started;
+      await assert.rejects(
+        manager.engineStart(workspacePath, { workspacePaths: [workspacePath] }),
+        /Runtime is shutting down/,
+      );
+      let disposalSettled = false;
+      void disposal.finally(() => { disposalSettled = true; });
+      await Promise.resolve();
+      assert.equal(disposalSettled, false);
+      finishStop();
+      await disposal;
+      assert.equal(managedAlive, false);
+      assert.equal((await manager.runtimeStatus()).juggleworkServer.running, false);
+    } finally {
+      finishStop();
+      await manager.dispose().catch(() => undefined);
+      for (const server of servers) {
+        if (server.listening) await closeServer(server).catch(() => undefined);
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects disposal when managed OpenCode remains alive", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "jugglework-runtime-stuck-"));
+    const workspacePath = path.join(root, "workspace");
+    const servers = [];
+    let stops = 0;
+    const manager = createRuntimeManager({
+      app: {
+        isPackaged: false,
+        getPath(name) {
+          if (name === "userData") return path.join(root, "user-data");
+          if (name === "home") return root;
+          if (name === "exe") return path.join(root, "JuggleWork");
+          throw new Error(`Unexpected app path: ${name}`);
+        },
+      },
+      desktopRoot: path.join(root, "desktop"),
+      listLocalWorkspacePaths: async () => [workspacePath],
+      readDenBaseUrl: () => null,
+      startEmbeddedServer: async () => {
+        const server = http.createServer((request, response) => {
+          response.setHeader("Content-Type", "application/json");
+          if (request.url === "/tokens" && request.method === "POST") {
+            response.end(JSON.stringify({ token: "owner-token" }));
+            return;
+          }
+          if (request.url === "/workspaces") {
+            response.end(JSON.stringify({ items: [] }));
+            return;
+          }
+          response.statusCode = 404;
+          response.end("{}");
+        });
+        servers.push(server);
+        const port = await listen(server);
+        return {
+          port,
+          url: `http://127.0.0.1:${port}`,
+          managedOpencodeExecution: null,
+          managedOpencode: { pid: 12346, isAlive: () => true },
+          stop: async () => {
+            stops += 1;
+            if (server.listening) await closeServer(server);
+          },
+        };
+      },
+    });
+
+    try {
+      await mkdir(workspacePath, { recursive: true });
+      await manager.engineStart(workspacePath, { workspacePaths: [workspacePath] });
+      await assert.rejects(manager.dispose(), /Managed OpenCode did not exit/);
+      await assert.rejects(manager.dispose(), /Managed OpenCode did not exit/);
+      assert.equal(stops, 2);
+    } finally {
+      for (const server of servers) {
+        if (server.listening) await closeServer(server).catch(() => undefined);
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("embeddedServerImportUrl", () => {

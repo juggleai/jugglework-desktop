@@ -14,7 +14,8 @@ apps/*/dist/
 apps/desktop/release-staging/
 
 # Local Windows release outputs (keep committed build templates in this directory)
-apps/desktop/build/installer.nsi
+# Do not ignore installer.nsi: electron-builder auto-discovers that filename,
+# so an accidental local script must remain visible to git status.
 apps/desktop/build/*.exe
 apps/desktop/build/*.exe.blockmap
 apps/desktop/build/latest*.yml

@@ -624,6 +624,7 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   // managed runtime, and the prior call then observes a stopped server.
   /** @type {Promise<unknown>} */
   let runtimeLifecycleQueue = Promise.resolve();
+  let runtimeShutdownRequested = false;
   /** @type {"idle" | "cleaning" | "starting" | "healthy" | "error" | "stopping"} */
   let lifecycleState = "idle";
   /**
@@ -634,7 +635,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
    * @param {() => Promise<T>} fn
    * @returns {Promise<T>}
    */
-  function withRuntimeLifecycle(fn) {
+  function withRuntimeLifecycle(fn, { allowDuringShutdown = false } = {}) {
+    if (runtimeShutdownRequested && !allowDuringShutdown) {
+      return Promise.reject(new Error("Runtime is shutting down."));
+    }
     const next = runtimeLifecycleQueue.then(fn, fn);
     runtimeLifecycleQueue = next.catch(() => {});
     return next;
@@ -1257,16 +1261,32 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
   }
 
   async function stopAllRuntimeChildren() {
+    const errors = [];
     // Stop the in-process server (and its managed OpenCode child) if running.
     if (inProcessServer) {
-      try { await inProcessServer.stop(); } catch { /* ignore */ }
-      inProcessServer = null;
+      const server = inProcessServer;
+      let serverStopped = false;
+      try {
+        await server.stop();
+        serverStopped = true;
+      } catch (error) {
+        errors.push(error);
+      }
+      const managedOpencodeAlive = server.managedOpencode?.isAlive?.() === true;
+      if (managedOpencodeAlive) {
+        errors.push(new Error("Managed OpenCode did not exit during runtime shutdown."));
+      }
+      // Retain an incomplete handle so a retry cannot falsely report success
+      // and launch an updater while an orphan may still own packaged files.
+      if (serverStopped && !managedOpencodeAlive) inProcessServer = null;
     }
-    await stopChild(juggleworkServerState);
-    await stopChild(engineState);
+    try { await stopChild(juggleworkServerState); } catch (error) { errors.push(error); }
+    try { await stopChild(engineState); } catch (error) { errors.push(error); }
 
     Object.assign(engineState, createEngineState());
     Object.assign(juggleworkServerState, createJuggleWorkServerState());
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Failed to stop runtime children");
   }
 
   async function prepareFreshRuntime() {
@@ -1511,7 +1531,10 @@ export function createRuntimeManager({ app, desktopRoot, listLocalWorkspacePaths
     engineStop: () => withRuntimeLifecycle(() => engineStop()),
     engineRestart: (options) => withRuntimeLifecycle(() => engineRestart(options)),
     prepareFreshRuntime: () => withRuntimeLifecycle(() => prepareFreshRuntime()),
-    dispose: () => withRuntimeLifecycle(() => stopAllRuntimeChildren()),
+    dispose: () => {
+      runtimeShutdownRequested = true;
+      return withRuntimeLifecycle(() => stopAllRuntimeChildren(), { allowDuringShutdown: true });
+    },
     runtimeStatus,
     engineInfo,
     engineDoctor,

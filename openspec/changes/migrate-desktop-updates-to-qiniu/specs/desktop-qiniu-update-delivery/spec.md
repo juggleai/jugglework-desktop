@@ -132,8 +132,14 @@ The desktop updater SHALL keep automatic installation on application quit disabl
 
 #### Scenario: User explicitly installs and restarts
 - **WHEN** the renderer submits the current valid installation identity through `Install and restart`
-- **THEN** Main marks explicit update-quit intent before invoking the native installer
+- **THEN** Main waits for the managed runtime and packaged sidecars to stop before the native installer is launched
+- **AND** Main marks explicit update-quit intent immediately before invoking the native installer
 - **AND** ordinary close-to-tray handling does not block that installer-owned exit and restart
+
+#### Scenario: Pre-install runtime shutdown fails
+- **WHEN** the managed runtime cannot be stopped before the native installer is launched
+- **THEN** Main does not invoke the native installer
+- **AND** it restores the downloaded candidate so the user can retry the explicit installation request
 
 ### Requirement: Installation requests are fenced by update identity
 Main SHALL issue an opaque, process-local, single-use `updateId` for an available update and bind it to the selected channel or target version, manifest identity, version, architecture, and payload identity. Download and `Install and restart` requests SHALL carry the matching ID. Main MUST reject a missing, unknown, stale, mismatched, or consumed ID without quitting or invoking the installer.
@@ -154,6 +160,29 @@ Main SHALL issue an opaque, process-local, single-use `updateId` for an availabl
 #### Scenario: Install request is replayed
 - **WHEN** an already-consumed `updateId` is submitted again
 - **THEN** Main rejects the replay and does not invoke the installer a second time
+
+### Requirement: Windows upgrades preserve the deployed installer identity
+The Windows package SHALL use electron-builder's standard NSIS installer with the frozen application GUID `6fbd4568-b529-5610-b7ba-24eb7d10b064`. A machine containing only the exact one-off Windows `1.2.18` installation under `%LOCALAPPDATA%\Programs\JuggleWork` SHALL be migrated in place through its legacy uninstaller before the replacement is extracted. The migration MUST NOT accept a different version, path, incomplete installation, or an already-present standard installation as the legacy source.
+
+#### Scenario: Exact legacy 1.2.18 installation is upgraded
+- **WHEN** the legacy uninstall and private registry keys both identify version `1.2.18` at `%LOCALAPPDATA%\Programs\JuggleWork` and the expected executable and uninstaller exist
+- **THEN** the standard installer creates marked temporary bridge values, removes that installation through its uninstaller, installs the replacement at the same location under the frozen standard GUID, and removes the migration markers after standard registration
+- **AND** user data outside the installation directory remains preserved
+
+#### Scenario: Legacy identity is ambiguous or incomplete
+- **WHEN** the legacy version, registry paths, uninstall command, executable, or uninstaller does not exactly match the recognized `1.2.18` layout, or the standard GUID already has an installation location
+- **THEN** the installer does not treat that path as the legacy migration source
+- **AND** it does not recursively remove a registry-supplied arbitrary directory
+
+#### Scenario: Legacy migration is interrupted before standard registration
+- **WHEN** an installer attempt leaves its marked temporary bridge values but does not complete replacement installation
+- **THEN** the next installer attempt removes only those marked bridge values before evaluating the legacy identity again
+- **AND** registry changes made after the interruption cannot bypass the exact legacy validation
+
+#### Scenario: Migration marker remains after standard registration
+- **WHEN** standard registration wrote its `DisplayVersion` before an installer interruption left the migration marker behind
+- **THEN** the next installer removes only the stale marker
+- **AND** it preserves the completed standard installation location and uninstall command
 
 ### Requirement: Manual replacement downloads use the Qiniu release inventory
 Architecture replacement and manual fallback actions SHALL resolve the appropriate signed DMG from the Qiniu manifest instead of constructing a GitHub release URL.

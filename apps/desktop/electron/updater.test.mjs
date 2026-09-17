@@ -195,26 +195,56 @@ describe("Windows update inventory", () => {
 });
 
 describe("installAndRestart", () => {
-  it("announces update quit intent before invoking the native installer", () => {
+  it("waits for update quit preparation before invoking the native installer", async () => {
     const calls = [];
-    triggerUpdaterInstall(
+    let finishPreparation = () => {};
+    const preparationBarrier = new Promise((resolve) => { finishPreparation = () => resolve(undefined); });
+    const installing = triggerUpdaterInstall(
       { quitAndInstall: (...args) => calls.push(["quitAndInstall", ...args]) },
-      () => calls.push(["intent"]),
+      async () => {
+        calls.push(["prepare:start"]);
+        await preparationBarrier;
+        calls.push(["prepare:end"]);
+      },
     );
+    await Promise.resolve();
+    assert.deepEqual(calls, [["prepare:start"]]);
+    finishPreparation();
+    await installing;
     assert.deepEqual(calls, [
-      ["intent"],
+      ["prepare:start"],
+      ["prepare:end"],
       ["quitAndInstall", false, true],
     ]);
   });
 
-  it("reverts update quit intent when quitAndInstall throws synchronously", () => {
+  it("reverts update quit intent when quitAndInstall throws synchronously", async () => {
     const calls = [];
-    assert.throws(() => triggerUpdaterInstall(
-      { quitAndInstall: () => { throw new Error("native install failed"); } },
-      () => calls.push("intent"),
-      () => calls.push("revert"),
-    ), /native install failed/);
+    await assert.rejects(
+      triggerUpdaterInstall(
+        { quitAndInstall: () => { throw new Error("native install failed"); } },
+        () => calls.push("intent"),
+        () => calls.push("revert"),
+      ),
+      /native install failed/,
+    );
     assert.deepEqual(calls, ["intent", "revert"]);
+  });
+
+  it("reverts update quit intent without invoking the installer when preparation fails", async () => {
+    const calls = [];
+    await assert.rejects(
+      triggerUpdaterInstall(
+        { quitAndInstall: () => calls.push("install") },
+        async () => {
+          calls.push("prepare");
+          throw new Error("runtime shutdown failed");
+        },
+        () => calls.push("revert"),
+      ),
+      /runtime shutdown failed/,
+    );
+    assert.deepEqual(calls, ["prepare", "revert"]);
   });
 
   it("refuses to invoke the installer before an update is downloaded", async () => {
@@ -472,6 +502,78 @@ describe("updater IPC hardening", () => {
     }
   });
 
+  it("does not invoke the native installer until async IPC preparation completes", async () => {
+    const calls = [];
+    let preparationStarted = () => {};
+    const started = new Promise((resolve) => { preparationStarted = () => resolve(undefined); });
+    let finishPreparation = () => {};
+    const preparationBarrier = new Promise((resolve) => { finishPreparation = () => resolve(undefined); });
+    const harness = await updaterHarness({
+      updater: {
+        quitAndInstall: () => calls.push("install"),
+      },
+      onInstallAndRestart: async () => {
+        calls.push("prepare:start");
+        preparationStarted();
+        await preparationBarrier;
+        calls.push("prepare:end");
+      },
+    });
+    try {
+      const checked = await harness.handlers.get("jugglework:updater:check")();
+      await harness.handlers.get("jugglework:updater:download")(null, checked.updateId);
+      const installing = harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+      );
+      await started;
+      assert.deepEqual(calls, ["prepare:start"]);
+      finishPreparation();
+      const result = await installing;
+      assert.equal(result.ok, true);
+      assert.deepEqual(calls, ["prepare:start", "prepare:end", "install"]);
+    } finally {
+      finishPreparation();
+      await harness.cleanup();
+    }
+  });
+
+  it("restores the downloaded candidate when async IPC preparation fails", async () => {
+    const calls = [];
+    let preparationShouldFail = true;
+    const harness = await updaterHarness({
+      updater: {
+        quitAndInstall: () => calls.push("install"),
+      },
+      onInstallAndRestart: async () => {
+        calls.push("prepare");
+        if (preparationShouldFail) throw new Error("runtime shutdown failed");
+      },
+      onInstallAndRestartFailed: () => calls.push("revert"),
+    });
+    try {
+      const checked = await harness.handlers.get("jugglework:updater:check")();
+      await harness.handlers.get("jugglework:updater:download")(null, checked.updateId);
+      const failed = await harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+      );
+      assert.equal(failed.ok, false);
+      assert.match(failed.reason, /runtime shutdown failed/);
+      assert.deepEqual(calls, ["prepare", "revert"]);
+
+      preparationShouldFail = false;
+      const retry = await harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+      );
+      assert.equal(retry.ok, true);
+      assert.deepEqual(calls, ["prepare", "revert", "prepare", "install"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it("invalidates checked and downloaded IDs on download failure", async () => {
     const harness = await updaterHarness({
       updater: { downloadUpdate: async () => { throw new Error("download failed"); } },
@@ -527,6 +629,47 @@ describe("updater IPC hardening", () => {
       const replay = await harness.handlers.get("jugglework:updater:installAndRestart")(null, checked.updateId);
       assert.equal(replay.code, "stale-update-candidate");
     } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("does not launch the installer when an updater error invalidates async preparation", async () => {
+    const calls = [];
+    let preparationStarted = () => {};
+    const started = new Promise((resolve) => { preparationStarted = () => resolve(undefined); });
+    let finishPreparation = () => {};
+    const barrier = new Promise((resolve) => { finishPreparation = () => resolve(undefined); });
+    const harness = await updaterHarness({
+      updater: { quitAndInstall: () => calls.push("install") },
+      onInstallAndRestart: async () => {
+        calls.push("prepare");
+        preparationStarted();
+        await barrier;
+      },
+      onInstallAndRestartFailed: () => calls.push("revert"),
+    });
+    try {
+      const checked = await harness.handlers.get("jugglework:updater:check")();
+      await harness.handlers.get("jugglework:updater:download")(null, checked.updateId);
+      const installing = harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+      );
+      await started;
+      harness.updater.emit("error", new Error("install invalidated"));
+      finishPreparation();
+      const result = await installing;
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /invalidated while preparing/);
+      assert.deepEqual(calls, ["prepare", "revert"]);
+      const replay = await harness.handlers.get("jugglework:updater:installAndRestart")(
+        null,
+        checked.updateId,
+      );
+      assert.equal(replay.reason, "update-not-downloaded");
+      assert.deepEqual(calls, ["prepare", "revert"]);
+    } finally {
+      finishPreparation();
       await harness.cleanup();
     }
   });

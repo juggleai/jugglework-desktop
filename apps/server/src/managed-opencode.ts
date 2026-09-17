@@ -116,7 +116,13 @@ export async function createManagedOpencodeServer(options: {
         }
         await Promise.race([exited, new Promise<void>((resolve) => setTimeout(() => resolve(), 500))]);
       }
-    })();
+      if (child.exitCode === null && child.signalCode === null) {
+        throw new Error("Managed OpenCode did not exit after SIGKILL.");
+      }
+    })().catch((error) => {
+      closePromise = null;
+      throw error;
+    });
     return closePromise;
   };
 
@@ -165,7 +171,7 @@ export async function createManagedOpencodeServer(options: {
       env: injectedEnv,
     },
     isAlive() {
-      return child.exitCode === null && child.signalCode === null && !child.killed;
+      return child.exitCode === null && child.signalCode === null;
     },
     close,
   };

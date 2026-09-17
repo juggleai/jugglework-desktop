@@ -278,9 +278,20 @@ export function preventPendingUpdaterInstall(updater) {
   if (updater) updater.autoInstallOnAppQuit = false;
 }
 
-export function triggerUpdaterInstall(updater, onInstallAndRestart, onInstallAndRestartFailed) {
-  onInstallAndRestart?.();
+export async function triggerUpdaterInstall(
+  updater,
+  onInstallAndRestart,
+  onInstallAndRestartFailed,
+  canStartInstall = () => true,
+) {
   try {
+    // electron-updater starts the Windows NSIS process before it asks Electron
+    // to quit. Finish critical async cleanup first so packaged sidecars cannot
+    // still hold files when the installer begins replacing the application.
+    await onInstallAndRestart?.();
+    if (!canStartInstall()) {
+      throw new Error("The update was invalidated while preparing to install.");
+    }
     updater.quitAndInstall(false, true);
   } catch (error) {
     onInstallAndRestartFailed?.();
@@ -627,6 +638,7 @@ export function registerUpdaterIpc({
       return staleCandidateResult();
     }
     const consumedCandidate = downloadedCandidate;
+    const operationGeneration = candidateGeneration;
     downloadedCandidate = null;
     const updater = await ensureAutoUpdater();
     if (!updater) {
@@ -639,19 +651,30 @@ export function registerUpdaterIpc({
       // defaults domain may have been wiped when stale state was cleaned.
       await enableSquirrelDirectContentsWrite();
       // On macOS the native updater closes the window before Electron emits
-      // `before-quit`. Tell the desktop shell about the update intent first so
-      // close-to-tray does not intercept that native close and leave ShipIt
-      // waiting forever for a process that never quits.
+      // `before-quit`. Preparation marks intent immediately before the native
+      // call so close-to-tray cannot intercept the updater-owned window close.
       updater.autoInstallOnAppQuit = false;
       installIntentActive = true;
-      triggerUpdaterInstall(updater, onInstallAndRestart, failInstallIntent);
+      await triggerUpdaterInstall(
+        updater,
+        onInstallAndRestart,
+        failInstallIntent,
+        () => installIntentActive
+          && consumedUpdateIds.has(updateId)
+          && candidateGeneration === operationGeneration,
+      );
       if (!installIntentActive) {
         return { ok: false, reason: "The native updater failed to start." };
       }
       return { ok: true, updateId: consumedCandidate.updateId };
     } catch (error) {
       consumedUpdateIds.delete(updateId);
-      downloadedCandidate = consumedCandidate;
+      // A concurrent updater error/new check changed the generation and made
+      // this candidate unsafe to reuse. Restore only failures local to this
+      // install attempt (cleanup or native installer launch).
+      if (candidateGeneration === operationGeneration) {
+        downloadedCandidate = consumedCandidate;
+      }
       failInstallIntent();
       return { ok: false, reason: String(error?.message ?? error) };
     }

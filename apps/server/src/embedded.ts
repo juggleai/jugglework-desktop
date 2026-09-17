@@ -89,10 +89,10 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
     }
 
     const opencode = managedOpencode;
-    managedOpencode = null;
     if (opencode) {
       try {
         await opencode.close();
+        managedOpencode = null;
       } catch (error) {
         errors.push(error);
       }
@@ -125,7 +125,10 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   };
 
   const stop = (): Promise<void> => {
-    stopPromise ??= releaseResources();
+    stopPromise ??= releaseResources().catch((error) => {
+      stopPromise = null;
+      throw error;
+    });
     return stopPromise;
   };
 
