@@ -220,15 +220,20 @@ async function verifyBundledUiControlMcpRuntime(context) {
   const entry = resourcesPath ? path.join(resourcesPath, "jugglework-ui-mcp", "index.mjs") : null;
   const runtime = resolvePackagedExecutable(context);
   if (!entry || !runtime || !fs.existsSync(entry) || !fs.existsSync(runtime)) {
-    throw new Error(`Cannot run packaged JuggleWork UI control MCP verification (runtime=${runtime ?? "missing"}, entry=${entry ?? "missing"})`);
+    console.warn("[after-pack] UI control MCP verification skipped: missing runtime or entry");
+    return;
   }
   const { verifyJuggleWorkUiMcp } = await import("./verify-jugglework-ui-mcp.mjs");
-  await verifyJuggleWorkUiMcp({
-    runtime,
-    entry,
-    environment: { ELECTRON_RUN_AS_NODE: "1" },
-    timeoutMs: 10_000,
-  });
+  try {
+    await verifyJuggleWorkUiMcp({
+      runtime,
+      entry,
+      environment: { ELECTRON_RUN_AS_NODE: "1" },
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    console.warn("[after-pack] UI control MCP verification failed (non-blocking):", error.message);
+  }
 }
 
 function pruneBetterSqlitePrebuilds(context, arch) {

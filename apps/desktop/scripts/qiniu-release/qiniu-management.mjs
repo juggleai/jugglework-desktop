@@ -34,8 +34,10 @@ function normalizeRsEndpoint(value) {
     throw new Error("Qiniu region discovery returned an invalid RS endpoint");
   }
   const hostname = url.hostname.toLowerCase();
-  const approvedDomain = ["qiniuapi.com", "qbox.me"].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
-  if (!approvedDomain) {
+  if (/^rs(?:-[a-z0-9]+)?\.qbox\.me$/.test(hostname)) {
+    return `https://${hostname.replace(/\.qbox\.me$/, ".qiniuapi.com")}`;
+  }
+  if (hostname !== "qiniuapi.com" && !hostname.endsWith(".qiniuapi.com")) {
     throw new Error("Qiniu region discovery returned an unapproved RS endpoint");
   }
   return url.origin;

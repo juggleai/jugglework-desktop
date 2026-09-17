@@ -71,7 +71,7 @@ test("discovers the regional RS endpoint, signs conditional chgm, and verifies c
   assert.match(calls[2].url.pathname, /^\/stat\//);
 });
 
-test("accepts the official qbox.me regional RS endpoint returned by production discovery", async () => {
+test("accepts and normalizes the official qbox.me regional RS endpoint returned by production discovery", async () => {
   const calls = [];
   const client = createQiniuManagementClient({
     bucket: "juggleim",
@@ -85,7 +85,7 @@ test("accepts the official qbox.me regional RS endpoint returned by production d
     },
   });
   assert.deepEqual(await client.stat("stable/latest.yml"), { size: 1, etag: "etag", putTime: "1" });
-  assert.equal(calls[1].hostname, "rs-z2.qbox.me");
+  assert.equal(calls[1].hostname, "rs-z2.qiniuapi.com");
 });
 
 test("fails closed when the condition is rejected and does not stat after chgm", async () => {

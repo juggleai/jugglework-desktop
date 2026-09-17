@@ -7,12 +7,12 @@
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
-      "default": "./src/index.ts"
+      "default": "./dist/index.js"
     },
     "./agent-context-diagnostics": {
       "types": "./src/agent-context-diagnostics.ts",
       "development": "./src/agent-context-diagnostics.ts",
-      "default": "./src/agent-context-diagnostics.ts"
+      "default": "./dist/agent-context-diagnostics.js"
     },
     "./desktop-remote-control": {
       "types": "./src/desktop-remote-control.ts",
@@ -33,17 +33,17 @@
     "./jugglework-affordance": {
       "types": "./src/jugglework-affordance.ts",
       "development": "./src/jugglework-affordance.ts",
-      "default": "./src/jugglework-affordance.ts"
+      "default": "./dist/jugglework-affordance.js"
     },
     "./jugglework-context": {
       "types": "./src/jugglework-context.ts",
       "development": "./src/jugglework-context.ts",
-      "default": "./src/jugglework-context.ts"
+      "default": "./dist/jugglework-context.js"
     },
     "./jugglework-provider": {
       "types": "./src/jugglework-provider.ts",
       "development": "./src/jugglework-provider.ts",
-      "default": "./src/jugglework-provider.ts"
+      "default": "./dist/jugglework-provider.js"
     },
     "./media-generation": {
       "types": "./src/media-generation.ts",

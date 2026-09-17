@@ -11,6 +11,13 @@ out/
 dist/
 packages/*/dist/
 apps/*/dist/
+apps/desktop/release-staging/
+
+# Local Windows release outputs (keep committed build templates in this directory)
+apps/desktop/build/installer.nsi
+apps/desktop/build/*.exe
+apps/desktop/build/*.exe.blockmap
+apps/desktop/build/latest*.yml
 tmp/
 
 # Local git worktrees
