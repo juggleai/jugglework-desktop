@@ -13,6 +13,8 @@ import {
   readCloudMcpUserState,
 } from "./cloud-mcp-user-state";
 import {
+  assessCloudMcpSubmissionReadiness,
+  createCloudMcpSubmissionReadyCache,
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
   ensureCloudMcpSubmissionReadiness,
@@ -27,6 +29,9 @@ import {
 import {
   syncCloudControlMcpInBackground,
 } from "./use-session-mcp-maintenance";
+
+const cloudMcpSubmissionReadyCache = createCloudMcpSubmissionReadyCache();
+const cloudMcpBackgroundRevalidations = new Map<string, Promise<void>>();
 
 type CloudMcpSubmitReadinessClient = Pick<
   JuggleWorkServerClient,
@@ -155,7 +160,10 @@ export function useCloudMcpSubmitReadiness(
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const handleSettingsChanged = () => setSettingsVersion((version) => version + 1);
+    const handleSettingsChanged = () => {
+      cloudMcpSubmissionReadyCache.clear();
+      setSettingsVersion((version) => version + 1);
+    };
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
     return () => window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged);
   }, []);
@@ -303,6 +311,93 @@ export function useCloudMcpSubmitReadiness(
             }),
           };
         }
+        const readinessCacheKey = JSON.stringify([
+          baseScopeKey,
+          providerModel.provider.trim(),
+          providerModel.model.trim(),
+        ]);
+        const cached = cloudMcpSubmissionReadyCache.read(readinessCacheKey);
+        if (cached) {
+          const cachedAssessment = assessCloudMcpSubmissionReadiness({
+            health: cached.health,
+            providerModel,
+          });
+          if (cachedAssessment.ready) {
+            recordInspectorEvent("cloud_mcp.submission_cache", {
+              workspaceId: activeWorkspaceId,
+              provider: providerModel.provider,
+              model: providerModel.model,
+              outcome: "hit",
+              ageMs: cached.ageMs,
+              backgroundRefresh: cached.refreshRecommended,
+            });
+            if (cached.refreshRecommended && !cloudMcpBackgroundRevalidations.has(readinessCacheKey)) {
+              const revalidation = (async () => {
+                recordInspectorEvent("cloud_mcp.submission_cache_revalidation", {
+                  workspaceId: activeWorkspaceId,
+                  provider: providerModel.provider,
+                  model: providerModel.model,
+                  outcome: "started",
+                });
+                const result = await ensureCloudMcpSubmissionReadiness({
+                  providerModel,
+                  check: () => client.getJuggleWorkCloudMcpHealth(activeWorkspaceId, providerModel, { probe: true }),
+                  repair: async () => {
+                    const repaired = await syncCloudControlMcpInBackground({
+                      client,
+                      workspaceId: activeWorkspaceId,
+                      providerModel,
+                      settings,
+                      isScopeCurrent: accountIsCurrent,
+                    });
+                    return repaired.health;
+                  },
+                  // Background refresh gets one repair opportunity and never
+                  // delays the submission that consumed the cached evidence.
+                  retryDelaysMs: [0],
+                });
+                if (!accountIsCurrent() || result.outcome !== "ready") {
+                  cloudMcpSubmissionReadyCache.invalidate(readinessCacheKey);
+                  recordInspectorEvent("cloud_mcp.submission_cache_revalidation", {
+                    workspaceId: activeWorkspaceId,
+                    provider: providerModel.provider,
+                    model: providerModel.model,
+                    outcome: accountIsCurrent() ? result.outcome : "context_changed",
+                    code: result.outcome === "failed" ? result.issue.code : null,
+                  });
+                  return;
+                }
+                cloudMcpSubmissionReadyCache.write(readinessCacheKey, result.health);
+                recordInspectorEvent("cloud_mcp.submission_cache_revalidation", {
+                  workspaceId: activeWorkspaceId,
+                  provider: providerModel.provider,
+                  model: providerModel.model,
+                  outcome: "ready",
+                });
+              })().catch((error) => {
+                cloudMcpSubmissionReadyCache.invalidate(readinessCacheKey);
+                recordInspectorEvent("cloud_mcp.submission_cache_revalidation", {
+                  workspaceId: activeWorkspaceId,
+                  provider: providerModel.provider,
+                  model: providerModel.model,
+                  outcome: "failed",
+                  errorName: error instanceof Error ? error.name : "unknown",
+                });
+              }).finally(() => {
+                cloudMcpBackgroundRevalidations.delete(readinessCacheKey);
+              });
+              cloudMcpBackgroundRevalidations.set(readinessCacheKey, revalidation);
+            }
+            return { outcome: "ready" };
+          }
+          cloudMcpSubmissionReadyCache.invalidate(readinessCacheKey);
+        }
+        recordInspectorEvent("cloud_mcp.submission_cache", {
+          workspaceId: activeWorkspaceId,
+          provider: providerModel.provider,
+          model: providerModel.model,
+          outcome: "miss",
+        });
         const result = await ensureCloudMcpSubmissionReadiness({
           providerModel,
           // 发送前必须验证 Cloud endpoint，而不是仅信任 OpenCode 的历史 connected 状态。
@@ -355,9 +450,14 @@ export function useCloudMcpSubmitReadiness(
           },
         });
         if (!accountIsCurrent()) {
+          cloudMcpSubmissionReadyCache.invalidate(readinessCacheKey);
           return { outcome: "cancelled", reason: "context_changed" };
         }
-        if (result.outcome === "ready") return { outcome: "ready" };
+        if (result.outcome === "ready") {
+          cloudMcpSubmissionReadyCache.write(readinessCacheKey, result.health);
+          return { outcome: "ready" };
+        }
+        cloudMcpSubmissionReadyCache.invalidate(readinessCacheKey);
         if (result.outcome === "bypass") return { outcome: "bypass" };
         return { outcome: "failed", issue: result.issue };
       };

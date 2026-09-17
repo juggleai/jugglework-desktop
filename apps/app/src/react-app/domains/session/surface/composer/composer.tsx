@@ -88,6 +88,7 @@ type ComposerProps = {
   busy: boolean;
   steering: boolean;
   submissionPreparing: boolean;
+  submissionPreparingLabel: string | null;
   submissionDisabled: boolean;
   queuedCount: number;
   disabled: boolean;
@@ -2013,7 +2014,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                         ? "bg-gray-4 text-gray-10"
                         : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
                     }`}
-                    title={props.submissionPreparing ? "Preparing connected service tools…" : t("composer.run_task")}
+                    title={props.submissionPreparingLabel ?? t("composer.run_task")}
                   >
                     {props.submissionPreparing ? <LoaderCircle size={15} className="animate-spin" /> : <ArrowUp size={15} />}
                   </button>

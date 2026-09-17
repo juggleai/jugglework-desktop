@@ -5,6 +5,7 @@ import type {
   JuggleWorkCloudMcpHealth,
 } from "../src/app/lib/jugglework-server";
 import {
+  createCloudMcpSubmissionReadyCache,
   createCloudMcpSubmissionCoordinator,
   decideCloudMcpSubmissionGate,
   assessCloudMcpSubmissionReadiness,
@@ -157,6 +158,52 @@ function preparation(input: {
 }
 
 describe("Cloud MCP pre-send readiness", () => {
+  test("reuses fresh positive readiness and recommends a background refresh as it ages", () => {
+    let now = 1_000;
+    const cache = createCloudMcpSubmissionReadyCache({
+      ttlMs: 30_000,
+      refreshAfterMs: 10_000,
+      now: () => now,
+    });
+    cache.write("workspace/model", health());
+
+    expect(cache.read("workspace/model")).toMatchObject({
+      ageMs: 0,
+      refreshRecommended: false,
+    });
+    now += 10_000;
+    expect(cache.read("workspace/model")).toMatchObject({
+      ageMs: 10_000,
+      refreshRecommended: true,
+    });
+  });
+
+  test("expires, isolates, invalidates, and bounds readiness evidence", () => {
+    let now = 0;
+    const cache = createCloudMcpSubmissionReadyCache({
+      ttlMs: 100,
+      refreshAfterMs: 50,
+      maxEntries: 2,
+      now: () => now,
+    });
+    cache.write("workspace-a/model-a", health());
+    cache.write("workspace-b/model-a", health());
+    expect(cache.read("workspace-a/model-a")).not.toBeNull();
+    expect(cache.read("workspace-a/model-b")).toBeNull();
+
+    // Reading A makes it newest, so adding C evicts B.
+    cache.write("workspace-c/model-a", health());
+    expect(cache.size()).toBe(2);
+    expect(cache.read("workspace-b/model-a")).toBeNull();
+    expect(cache.read("workspace-a/model-a")).not.toBeNull();
+
+    cache.invalidate("workspace-a/model-a");
+    expect(cache.read("workspace-a/model-a")).toBeNull();
+    now = 101;
+    expect(cache.read("workspace-c/model-a")).toBeNull();
+    expect(cache.size()).toBe(0);
+  });
+
   test("ready projected tools send immediately", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const decision = requiredDecision();

@@ -9,6 +9,9 @@ import { isCloudMcpAuthTokenFailureCode } from "./cloud-mcp-reconciler";
 export const CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS = [1_000, 3_000];
 export const CLOUD_MCP_SUBMISSION_ATTEMPT_TIMEOUT_MS = 12_000;
 export const CLOUD_MCP_AUTH_RESOLUTION_TIMEOUT_MS = 12_000;
+export const CLOUD_MCP_SUBMISSION_READY_CACHE_TTL_MS = 30_000;
+export const CLOUD_MCP_SUBMISSION_READY_CACHE_REFRESH_AFTER_MS = 10_000;
+export const CLOUD_MCP_SUBMISSION_READY_CACHE_MAX_ENTRIES = 64;
 
 const REQUIRED_DIRECT_TOOL_IDS = ["search_capabilities", "execute_capability"];
 const REQUIRED_PROJECTED_TOOL_IDS = [
@@ -80,12 +83,89 @@ export type CloudMcpSubmissionGateState = {
   maxAttempts: number;
 };
 
+export type CloudMcpSubmissionReadyCacheHit = {
+  health: JuggleWorkCloudMcpHealth;
+  ageMs: number;
+  refreshRecommended: boolean;
+};
+
+export type CloudMcpSubmissionReadyCache = {
+  read: (key: string) => CloudMcpSubmissionReadyCacheHit | null;
+  write: (key: string, health: JuggleWorkCloudMcpHealth) => void;
+  invalidate: (key: string) => void;
+  clear: () => void;
+  size: () => number;
+};
+
 export const IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE: CloudMcpSubmissionGateState = {
   status: "idle",
   issue: null,
   attempt: 0,
   maxAttempts: 1 + CLOUD_MCP_SUBMISSION_RETRY_DELAYS_MS.length,
 };
+
+/**
+ * Stores only positive readiness evidence. The cache is intentionally short
+ * lived and bounded: it removes repeated probes during a burst of prompts but
+ * never turns a previous failure into a bypass.
+ */
+export function createCloudMcpSubmissionReadyCache(input?: {
+  ttlMs?: number;
+  refreshAfterMs?: number;
+  maxEntries?: number;
+  now?: () => number;
+}): CloudMcpSubmissionReadyCache {
+  const ttlMs = Math.max(1, input?.ttlMs ?? CLOUD_MCP_SUBMISSION_READY_CACHE_TTL_MS);
+  const refreshAfterMs = Math.min(
+    ttlMs,
+    Math.max(0, input?.refreshAfterMs ?? CLOUD_MCP_SUBMISSION_READY_CACHE_REFRESH_AFTER_MS),
+  );
+  const maxEntries = Math.max(1, input?.maxEntries ?? CLOUD_MCP_SUBMISSION_READY_CACHE_MAX_ENTRIES);
+  const now = input?.now ?? Date.now;
+  const entries = new Map<string, { health: JuggleWorkCloudMcpHealth; verifiedAt: number }>();
+
+  return {
+    read(key) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) return null;
+      const entry = entries.get(normalizedKey);
+      if (!entry) return null;
+      const ageMs = Math.max(0, now() - entry.verifiedAt);
+      if (ageMs >= ttlMs) {
+        entries.delete(normalizedKey);
+        return null;
+      }
+      // Refresh insertion order so pruning behaves like a small LRU cache.
+      entries.delete(normalizedKey);
+      entries.set(normalizedKey, entry);
+      return {
+        health: entry.health,
+        ageMs,
+        refreshRecommended: ageMs >= refreshAfterMs,
+      };
+    },
+    write(key, health) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) return;
+      entries.delete(normalizedKey);
+      entries.set(normalizedKey, { health, verifiedAt: now() });
+      while (entries.size > maxEntries) {
+        const oldestKey = entries.keys().next().value;
+        if (typeof oldestKey !== "string") break;
+        entries.delete(oldestKey);
+      }
+    },
+    invalidate(key) {
+      entries.delete(key.trim());
+    },
+    clear() {
+      entries.clear();
+    },
+    size() {
+      return entries.size;
+    },
+  };
+}
 
 function normalize(value: string | null | undefined): string {
   return value?.trim().replace(/\/+$/, "") ?? "";

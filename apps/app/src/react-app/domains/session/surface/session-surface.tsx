@@ -3,7 +3,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import type { UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
-import { Check, Minimize2 } from "lucide-react";
+import { Check, LoaderCircle, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { captureAnalyticsEvent } from "@/app/lib/analytics";
@@ -582,6 +582,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [steering, setSteering] = useState(false);
   const [steeringQueuedDraftId, setSteeringQueuedDraftId] = useState<string | null>(null);
+  const [submissionPendingIdentity, setSubmissionPendingIdentity] = useState<string | null>(null);
   const connectInventoryCacheRef = useRef<{
     scope: string;
     promise: Promise<ConnectCapabilityInventory>;
@@ -743,8 +744,18 @@ export function SessionSurface(props: SessionSurfaceProps) {
   });
   const liveStatus = statusState ?? snapshot?.status ?? IDLE_STATUS;
   const coordinatorRun = activeRunsQuery.data?.items.find((run) => run.sessionId === props.sessionId) ?? null;
-  const preparingCloudTools = props.cloudMcpSubmissionState.status === "checking" ||
-    props.cloudMcpSubmissionState.status === "repairing";
+  const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
+  const localSubmissionPreparing = submissionPendingIdentity === surfaceIdentity;
+  const submissionPreparationLabel = !localSubmissionPreparing
+    ? null
+    : props.cloudMcpSubmissionState.status === "repairing"
+      ? t("composer.restoring_connections")
+      : props.cloudMcpSubmissionState.status === "checking"
+        ? t("composer.checking_connections")
+        : props.cloudMcpSubmissionState.status === "sending"
+          ? t("composer.submitting_task")
+          : t("composer.preparing_task");
+  const submissionPreparing = submissionPreparationLabel !== null;
   const chatStreaming = effectiveSessionRunning({
     sending,
     liveStatus: liveStatus.type,
@@ -875,6 +886,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     messageCount: renderedMessages.length,
     liveStatus: liveStatus.type,
     sending,
+    submissionPreparing,
     pendingSessionLoad,
     showAssistantWaitState,
     showAssistantRespondingState,
@@ -1153,6 +1165,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
 
       const compactCommand = isCompactSessionCommand(nextDraft.command);
+      setSubmissionPendingIdentity(surfaceIdentity);
+      recordInspectorEvent("task_submission.preparation", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        delivery: submission.delivery ?? "start",
+        phase: "started",
+      });
       const pendingSend = sendDraft(nextDraft, submission);
       // `/compact` is an action rather than conversational input. Clear it as
       // soon as the compaction run starts so the composer does not keep showing
@@ -1183,6 +1202,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (activeSurfaceIdentityRef.current === surfaceIdentity) {
         setError(parseSessionError(nextError));
       }
+    } finally {
+      setSubmissionPendingIdentity((current) => current === surfaceIdentity ? null : current);
+      recordInspectorEvent("task_submission.preparation", {
+        workspaceId: props.workspaceId,
+        sessionId: props.sessionId,
+        delivery: submission.delivery ?? "start",
+        phase: "finished",
+      });
     }
   }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft]);
 
@@ -2273,6 +2300,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </button>
           </div>
         ) : null}
+        {submissionPreparationLabel ? (
+          <div
+            className="mx-auto mb-2 flex w-full max-w-[800px] items-center gap-2 px-4 text-xs text-dls-secondary"
+            data-testid="task-submission-preparing"
+            aria-live="polite"
+          >
+            <LoaderCircle size={13} className="animate-spin" />
+            <span>{submissionPreparationLabel}</span>
+          </div>
+        ) : null}
         {error && renderedMessages.length > 0 ? (
           <SessionErrorCard
             error={error}
@@ -2291,7 +2328,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onStop={handleAbort}
         busy={chatStreaming}
         steering={steering}
-        submissionPreparing={preparingCloudTools}
+        submissionPreparing={submissionPreparing}
+        submissionPreparingLabel={submissionPreparationLabel}
         submissionDisabled={Boolean(props.taskSubmissionDisabled)}
         queuedCount={queuedDrafts.length}
         disabled={model.transitionState !== "idle" || Boolean(props.modelUnavailable)}

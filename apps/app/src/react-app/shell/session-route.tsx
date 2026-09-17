@@ -1378,7 +1378,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           });
         }
 
+        const requiresCloudMcpReadiness = draft.parts.some((part) => (
+          part.type === "capability" &&
+          (part.kind === "cloud-skill" || part.kind === "cloud-mcp" || part.kind === "extension")
+        ));
         return submitWithCloudMcpReadiness({
+          // Ordinary coding/chat tasks must not wait for a Connect probe they
+          // did not request. Explicit Cloud capabilities keep the strict gate.
+          skipGate: !requiresCloudMcpReadiness,
           sessionId: targetSessionId,
           providerModel: targetModel ? { provider: targetModel.providerID, model: targetModel.modelID } : undefined,
           send: async () => {
