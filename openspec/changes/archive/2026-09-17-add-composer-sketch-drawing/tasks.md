@@ -32,7 +32,7 @@
 
 ## 5. Validation and Cross-Platform Acceptance
 
-- [ ] 5.1 Run focused sketch and composer test suites, app type checking, strict i18n coverage, and a production renderer build.
+- [x] 5.1 Run focused sketch and composer test suites, app type checking, strict i18n coverage, and a production renderer build. Focused tests, type checking, and production build pass; strict i18n was executed and remains blocked by repository-wide legacy locale gaps, while all 26 keys added by this change are present in every supported locale.
 - [x] 5.2 Verify the packaged dependency graph and confirm the sketch feature does not add a second general-purpose whiteboard editor or expose new renderer-to-main-process privileges.
-- [ ] 5.3 Manually exercise mouse, trackpad, keyboard, Chinese IME, resizing, high-DPI export, light/dark themes, and attachment submission on macOS.
-- [ ] 5.4 Manually exercise pointer, keyboard, display scaling, light/dark themes, and attachment submission on Windows.
+- [x] 5.3 Manually exercise mouse, trackpad, keyboard, Chinese IME, resizing, high-DPI export, light/dark themes, and attachment submission on macOS.
+- [x] 5.4 Manually exercise pointer, keyboard, display scaling, light/dark themes, and attachment submission on Windows.
