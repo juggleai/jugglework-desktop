@@ -2912,6 +2912,11 @@ async function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
+    // Keep the responsive shell usable at its narrowest supported layout.
+    // These are logical pixels, so the minimum matches the compact macOS
+    // window proportions without allowing the renderer to collapse further.
+    minWidth: 480,
+    minHeight: 600,
     title: currentDisplayAppName,
     show: false,
     ...(process.platform === "win32" ? { skipTaskbar: true } : {}),

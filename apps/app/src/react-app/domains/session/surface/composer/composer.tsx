@@ -1,8 +1,8 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, LoaderCircle, Paperclip, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
@@ -36,6 +36,10 @@ import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
 import { ContextUsage } from "./context-usage";
 
+const SketchDialog = lazy(() =>
+  import("./sketch/sketch-dialog").then((module) => ({ default: module.SketchDialog })),
+);
+
 type MentionItem = {
   id: string;
   kind: ComposerMentionKind;
@@ -61,6 +65,7 @@ type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:$
  */
 type PlusMenuEntry =
   | { kind: "file"; id: "file"; label: string }
+  | { kind: "sketch"; id: "sketch"; label: string }
   | { kind: "agent"; id: string; label: string; name: string | null }
   | { kind: "tools"; id: string; label: string; section: ToolMenuSection };
 
@@ -366,6 +371,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [slashOpen, setSlashOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [plusMenuIndex, setPlusMenuIndex] = useState(0);
+  const [sketchOpen, setSketchOpen] = useState(false);
   const plusItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
@@ -506,6 +512,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const plusMenuEntries = useMemo<PlusMenuEntry[]>(() => [
     { kind: "file", id: "file", label: t("composer.plus_menu_file") },
+    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_sketch") },
     ...plusMenuAgentEntries.map((entry) => ({
       kind: "agent" as const,
       id: entry.name ? `agent:${entry.name}` : "agent:",
@@ -523,13 +530,30 @@ export function ReactSessionComposer(props: ComposerProps) {
       section,
     })),
   ], [plusMenuAgentEntries, pluginSections]);
+  const plusMenuToolStartIndex = plusMenuEntries.findIndex((entry) => entry.kind === "tools");
+  const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex);
+  const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex);
 
   // 普通函数（非 useCallback）：需要始终读取当前渲染的 fileInput 绑定，
   // 与下方 applyCommandSelection 等处理器保持同一模式。
   const activatePlusEntry = (entry: PlusMenuEntry) => {
     if (entry.kind === "file") {
+      if (!props.attachmentsEnabled) {
+        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
+        return;
+      }
       setPlusMenuOpen(false);
-      if (props.attachmentsEnabled) fileInput?.click();
+      fileInput?.click();
+      return;
+    }
+    if (entry.kind === "sketch") {
+      if (!props.attachmentsEnabled) {
+        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
+        return;
+      }
+      setPlusMenuOpen(false);
+      setToolMenuOpen(false);
+      setSketchOpen(true);
       return;
     }
     if (entry.kind === "agent") {
@@ -1229,10 +1253,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   };
 
   const addAttachments = async (inputFiles: File[]) => {
-    if (!inputFiles.length) return;
+    if (!inputFiles.length) return false;
     if (!props.attachmentsEnabled) {
       toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
-      return;
+      return false;
     }
 
     const accepted: File[] = [];
@@ -1258,7 +1282,7 @@ export function ReactSessionComposer(props: ComposerProps) {
           : `${oversize.length} files exceed the 8MB limit.`,
       );
     }
-
+    return accepted.length === inputFiles.length;
   };
 
   const activeMcpItems = mcpServers.map((entry) => ({
@@ -1614,40 +1638,30 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {t("composer.plus_menu_section_add")}
                         </div>
                         <div className="grid gap-0.5 pt-1">
-                          <button
-                            ref={(element) => {
-                              plusItemRefs.current[0] = element;
-                            }}
-                            type="button"
-                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors ${plusMenuIndex === 0 ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"} ${!props.attachmentsEnabled ? "cursor-not-allowed opacity-60" : ""}`}
-                            disabled={!props.attachmentsEnabled}
-                            onMouseEnter={() => setPlusMenuIndex(0)}
-                            onClick={() => {
-                              activatePlusEntry(plusMenuEntries[0]);
-                            }}
-                          >
-                            <Paperclip size={14} className="shrink-0 text-gray-9" />
-                            <span className="min-w-0 flex-1 truncate">{t("composer.plus_menu_file")}</span>
-                          </button>
-                          {plusMenuAgentEntries.map((entry, index) => {
-                            const flatIndex = 1 + index;
-                            const selected = entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name;
+                          {plusMenuAddEntries.map((entry, flatIndex) => {
+                            const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
+                            const selected = entry.kind === "agent"
+                              ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
+                              : false;
+                            const disabled = attachmentAction ? !props.attachmentsEnabled : props.busy;
                             return (
                               <button
-                                key={entry.name ?? "default"}
+                                key={entry.id}
                                 ref={(element) => {
                                   plusItemRefs.current[flatIndex] = element;
                                 }}
                                 type="button"
-                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${selected || plusMenuIndex === flatIndex ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"} ${props.busy ? "cursor-not-allowed opacity-60" : ""}`}
-                                disabled={props.busy}
+                                className={`flex w-full items-center justify-between gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors ${selected || plusMenuIndex === flatIndex ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                                disabled={disabled}
+                                title={attachmentAction && disabled ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable") : undefined}
                                 onMouseEnter={() => setPlusMenuIndex(flatIndex)}
-                                onMouseDown={(event) => {
-                                  event.preventDefault();
-                                  activatePlusEntry(plusMenuEntries[flatIndex]);
-                                }}
+                                onClick={() => activatePlusEntry(entry)}
                               >
-                                <span className="min-w-0 truncate">{entry.label}</span>
+                                <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                                  {entry.kind === "file" ? <Paperclip size={14} className="shrink-0 text-gray-9" /> : null}
+                                  {entry.kind === "sketch" ? <PenLine size={14} className="shrink-0 text-gray-9" /> : null}
+                                  <span className="min-w-0 truncate">{entry.label}</span>
+                                </span>
                                 {selected ? <Check size={14} className="shrink-0 text-gray-10" /> : null}
                               </button>
                             );
@@ -1657,9 +1671,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                           {t("composer.plus_menu_section_plugins")}
                         </div>
                         <div className="grid gap-0.5 pt-1">
-                          {plusMenuEntries.slice(1 + plusMenuAgentEntries.length).map((entry, index) => {
+                          {plusMenuToolEntries.map((entry, index) => {
                             if (entry.kind !== "tools") return null;
-                            const flatIndex = 1 + plusMenuAgentEntries.length + index;
+                            const flatIndex = plusMenuToolStartIndex + index;
                             // 激活态：右侧二级面板正打开在该分区上。
                             const sectionActive = toolMenuOpen && toolMenuSection === entry.section;
                             return (
@@ -2009,6 +2023,18 @@ export function ReactSessionComposer(props: ComposerProps) {
           </div>
         </div>
 
+        {sketchOpen ? (
+          <Suspense fallback={null}>
+            <SketchDialog
+              open
+              onOpenChange={setSketchOpen}
+              onComplete={async (file) => {
+                const attached = await addAttachments([file]);
+                if (!attached) throw new Error("Sketch attachment was rejected.");
+              }}
+            />
+          </Suspense>
+        ) : null}
       </div>
     </div>
   );
