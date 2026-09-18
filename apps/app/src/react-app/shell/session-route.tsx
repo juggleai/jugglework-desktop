@@ -25,6 +25,7 @@ import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand,
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { mergeImageGenerationSystemContext } from "@/react-app/domains/session/surface/composer/image-generation";
+import { mergeVideoGenerationSystemContext } from "@/react-app/domains/session/surface/composer/video-generation";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -1448,7 +1449,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               cacheKey: targetSessionId,
               runtimeKey: environmentRuntimeKey,
             });
-            const systemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
+            const imageSystemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
+            const systemContext = mergeVideoGenerationSystemContext(draft, imageSystemContext);
             const result = await opencodeClient.session.promptAsync({
               sessionID: targetSessionId,
               parts,

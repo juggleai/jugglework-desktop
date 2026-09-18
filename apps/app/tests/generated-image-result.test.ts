@@ -81,7 +81,7 @@ describe("generated image transcript results", () => {
     }])
   })
 
-  test("renders persistent preview, download, and save-as affordances", () => {
+  test("renders persistent preview and download without a save-as affordance", () => {
     const noop = () => {}
     const result = generatedImageResultFromToolPart(imageToolPart(JSON.stringify({
       ok: true,
@@ -113,6 +113,6 @@ describe("generated image transcript results", () => {
     expect(html).toContain('data-testid="generated-image-result"')
     expect(html).toContain('data-generated-image-path="artifacts/lake.png"')
     expect(html).toContain("Download")
-    expect(html).toContain("Save as")
+    expect(html).not.toContain("Save as")
   })
 })

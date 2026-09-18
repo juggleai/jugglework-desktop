@@ -7,6 +7,7 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools";
 import { generatedImageResultFromToolPart } from "@/components/chat/generated-image-result";
+import { generatedVideoJobFromToolPart } from "@/components/chat/generated-video-result";
 import { useOpenTargets } from "@/lib/target-provider";
 import { isCollectibleArtifactTarget, isOpenableFileTarget, type OpenTarget, type OpenTargetPreview } from "@/react-app/domains/session/artifacts/open-target";
 
@@ -265,6 +266,12 @@ function getArtifactPathsFromMessage(message: UIMessage) {
     const generatedImage = generatedImageResultFromToolPart(part);
     if (generatedImage) {
       paths.push(generatedImage.path);
+      continue;
+    }
+
+    const generatedVideo = generatedVideoJobFromToolPart(part);
+    if (generatedVideo?.artifact) {
+      paths.push(generatedVideo.artifact.path);
       continue;
     }
 

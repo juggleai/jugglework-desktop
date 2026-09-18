@@ -6,7 +6,7 @@ import {
   type DesktopNotificationPreference,
 } from "@/react-app/kernel/desktop-notification-preferences";
 import { LOCAL_PREFERENCES_KEY } from "@/react-app/kernel/local-preferences-storage";
-import { t } from "@/i18n";
+import { currentLocale, t } from "@/i18n";
 
 type DesktopNotificationImportance = "important" | "routine";
 
@@ -15,6 +15,8 @@ export type DesktopNotificationEvent =
   | { type: "task.failed"; sessionId: string; errorText?: string }
   | { type: "permission.asked"; sessionId: string; detail?: string }
   | { type: "question.asked"; sessionId: string; question?: string }
+  | { type: "video.completed"; sessionId: string; detail?: string }
+  | { type: "video.failed"; sessionId: string; detail?: string }
   | { type: "automation.succeeded"; automationName: string; href: string }
   | { type: "automation.failed"; automationName: string; errorText?: string; href: string };
 
@@ -79,6 +81,18 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
       return {
         title: "Question needs your answer",
         body: event.question?.trim() || "A session is waiting for your answer.",
+        importance: "important",
+      };
+    case "video.completed":
+      return {
+        title: currentLocale() === "zh" ? "视频生成完成" : "Video generation completed",
+        body: event.detail?.trim() || (currentLocale() === "zh" ? "视频已保存到工作区。" : "The video was saved to the workspace."),
+        importance: "routine",
+      };
+    case "video.failed":
+      return {
+        title: currentLocale() === "zh" ? "视频生成失败" : "Video generation failed",
+        body: event.detail?.trim() || (currentLocale() === "zh" ? "打开会话查看详情。" : "Open the session for details."),
         importance: "important",
       };
     case "automation.succeeded":

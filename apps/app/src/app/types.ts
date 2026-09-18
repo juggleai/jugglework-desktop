@@ -143,6 +143,8 @@ export type ComposerDraft = {
   resolvedText?: string;
   /** Optional image-generation mode selected in the composer. */
   imageGeneration?: ComposerImageGenerationOptions;
+  /** Optional video-generation mode selected in the composer. */
+  videoGeneration?: ComposerVideoGenerationOptions;
   /** When set, draft is a slash command invocation */
   command?: { name: string; arguments: string } | undefined;
 };
@@ -157,6 +159,16 @@ export type ComposerImageGenerationOptions = {
   providerName: string;
   aspectRatio: ComposerImageAspectRatio;
   style: ComposerImageStyle;
+};
+
+export type ComposerVideoAspectRatio = "auto" | "3:4" | "4:3" | "9:16" | "16:9" | "1:1" | "21:9";
+
+export type ComposerVideoGenerationOptions = {
+  model: ModelRef;
+  modelName: string;
+  providerName: string;
+  aspectRatio: ComposerVideoAspectRatio;
+  durationSeconds: number;
 };
 
 export type ComposerSubmissionOptions =

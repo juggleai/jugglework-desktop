@@ -89,6 +89,58 @@ async function callLocalExtension(
   });
 }
 
+const TERMINAL_VIDEO_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const VIDEO_JOB_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function videoJobFromExtensionResponse(value: unknown): Record<string, unknown> | null {
+  const envelope = objectRecord(value);
+  const result = objectRecord(envelope?.result);
+  const job = objectRecord(result?.job);
+  return job && typeof job.id === "string" && typeof job.status === "string" ? job : null;
+}
+
+function waitForDelay(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Video generation wait was cancelled.", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Video generation wait was cancelled.", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForVideoJob(
+  initialResponse: unknown,
+  context: OpenCodeContext,
+  pollIntervalMs = 5_000,
+) {
+  let response = initialResponse;
+  let job = videoJobFromExtensionResponse(response);
+  if (!job || TERMINAL_VIDEO_JOB_STATUSES.has(String(job.status))) return response;
+  const deadline = Date.now() + VIDEO_JOB_WAIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    response = await callLocalExtension("media-generation", "video_job_get", { jobId: String(job.id) }, context);
+    job = videoJobFromExtensionResponse(response);
+    if (!job || TERMINAL_VIDEO_JOB_STATUSES.has(String(job.status))) return response;
+    await waitForDelay(pollIntervalMs, context.abort);
+  }
+  throw new Error("video_generation_wait_timeout");
+}
+
 const juggleworkAffordanceRequestSchema = z.object({
   id: z.string().trim().min(1).describe("Semantic affordance id from jugglework_context."),
   args: z.record(z.string(), z.unknown()).optional().describe("JSON arguments for the affordance."),
@@ -973,12 +1025,14 @@ export const JuggleWorkExtensionsPreview = async (factoryInput?: unknown) => {
       },
     },
     jugglework_video_generate: {
-      description: "Submit exactly one video-generation request with a locally configured model. Returns a job: poll submitted/running jobs with jugglework_video_job_get, but if the returned job is failed, stop and report it. Never resubmit automatically, invoke the provider with bash/curl, or inspect credential stores.",
+      description: "Submit exactly one video-generation request with a locally configured model and wait for its terminal state. The tool returns only after completion, failure, cancellation, or timeout, so summarize the final result immediately and never ask the user to check back. Never resubmit automatically, invoke the provider with bash/curl, or inspect credential stores.",
       args: videoGenerateArgsSchema.shape,
       async execute(rawArgs: unknown, context: OpenCodeContext) {
         const parsed = videoGenerateArgsSchema.parse(rawArgs);
         const args = { ...parsed, clientRequestId: parsed.clientRequestId ?? randomUUID() };
-        return JSON.stringify(await callLocalExtension("media-generation", "video_generate", args, { ...factoryContext, ...normalizeOpenCodeContext(context) }), null, 2);
+        const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context), abort: context.abort };
+        const submitted = await callLocalExtension("media-generation", "video_generate", args, mergedContext);
+        return JSON.stringify(await waitForVideoJob(submitted, mergedContext), null, 2);
       },
     },
     jugglework_video_job_get: {

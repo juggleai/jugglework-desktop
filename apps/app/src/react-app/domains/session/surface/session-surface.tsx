@@ -26,6 +26,7 @@ import type {
   ComposerImageGenerationOptions,
   ComposerPart,
   ComposerSubmissionOptions,
+  ComposerVideoGenerationOptions,
   McpServerEntry,
   McpStatusMap,
   ModelRef,
@@ -56,6 +57,13 @@ import {
   parseComposerImageModels,
   type ComposerImageModelOption,
 } from "./composer/image-generation";
+import {
+  buildVideoGenerationInstruction,
+  parseComposerVideoModels,
+  videoModelKey,
+  VIDEO_DURATION_DEFAULT_SECONDS,
+  type ComposerVideoModelOption,
+} from "./composer/video-generation";
 import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
 import {
   classifyTaskProgress,
@@ -588,12 +596,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const [imageGenerationBySession, setImageGenerationBySession] = useState<Record<string, ComposerImageGenerationOptions | null>>({});
+  const [videoGenerationBySession, setVideoGenerationBySession] = useState<Record<string, ComposerVideoGenerationOptions | null>>({});
   const [steering, setSteering] = useState(false);
   const [steeringQueuedDraftId, setSteeringQueuedDraftId] = useState<string | null>(null);
   const [submissionPendingIdentity, setSubmissionPendingIdentity] = useState<string | null>(null);
   const imageGeneration = imageGenerationBySession[props.sessionId] ?? null;
+  const videoGeneration = videoGenerationBySession[props.sessionId] ?? null;
   const setImageGeneration = useCallback((value: ComposerImageGenerationOptions | null) => {
     setImageGenerationBySession((current) => ({
+      ...current,
+      [props.sessionId]: value,
+    }));
+  }, [props.sessionId]);
+  const setVideoGeneration = useCallback((value: ComposerVideoGenerationOptions | null) => {
+    setVideoGenerationBySession((current) => ({
       ...current,
       [props.sessionId]: value,
     }));
@@ -676,6 +692,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         }))
       : imageGenerationModels[0];
     if (!selected) return;
+    setVideoGeneration(null);
     setImageGeneration({
       model: { providerID: selected.providerID, modelID: selected.modelID },
       modelName: selected.modelName,
@@ -683,7 +700,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       aspectRatio: imageGeneration?.aspectRatio ?? "auto",
       style: imageGeneration?.style ?? "auto",
     });
-  }, [imageGeneration, imageGenerationModels, setImageGeneration]);
+  }, [imageGeneration, imageGenerationModels, setImageGeneration, setVideoGeneration]);
   useEffect(() => {
     if (!imageGeneration || imageGenerationModelsQuery.isFetching) return;
     const selectedKey = imageModelKey({
@@ -712,6 +729,92 @@ export function SessionSurface(props: SessionSurfaceProps) {
       providerName: fallback.providerName,
     } : null);
   }, [imageGeneration, imageGenerationModels, imageGenerationModelsQuery.isFetching, setImageGeneration]);
+  const videoGenerationModelsQuery = useQuery({
+    queryKey: ["composer-video-generation-models", props.workspaceId, props.workspaceRoot],
+    queryFn: async () => {
+      const context = {
+        workspaceId: props.workspaceId,
+        directory: props.workspaceRoot,
+      };
+      const [modelsResponse, statusResponse] = await Promise.all([
+        props.client.callExtensionAction({
+          extensionId: "media-generation",
+          action: "video_models_list",
+          args: { mode: "text-to-video" },
+          context,
+        }),
+        props.client.callExtensionAction({
+          extensionId: "media-generation",
+          action: "status",
+          args: {},
+          context,
+        }),
+      ]);
+      if (!modelsResponse.ok) throw new Error(modelsResponse.message);
+      if (!statusResponse.ok) throw new Error(statusResponse.message);
+      const status = statusResponse.result && typeof statusResponse.result === "object"
+        ? statusResponse.result as Record<string, unknown>
+        : null;
+      if (status?.submissionEnabled !== true) return [];
+      return parseComposerVideoModels(modelsResponse.result);
+    },
+    staleTime: 30_000,
+    retry: 1,
+    refetchOnWindowFocus: true,
+  });
+  const videoGenerationModels = useMemo<ComposerVideoModelOption[]>(
+    () => videoGenerationModelsQuery.data ?? [],
+    [videoGenerationModelsQuery.data],
+  );
+  const refreshVideoGenerationModels = useCallback(
+    () => videoGenerationModelsQuery.refetch(),
+    [videoGenerationModelsQuery.refetch],
+  );
+  const enableVideoGeneration = useCallback(() => {
+    const selected = videoGeneration
+      ? videoGenerationModels.find((model) => videoModelKey(model) === videoModelKey({
+          providerID: videoGeneration.model.providerID,
+          modelID: videoGeneration.model.modelID,
+        }))
+      : videoGenerationModels[0];
+    if (!selected) return;
+    setImageGeneration(null);
+    setVideoGeneration({
+      model: { providerID: selected.providerID, modelID: selected.modelID },
+      modelName: selected.modelName,
+      providerName: selected.providerName,
+      aspectRatio: videoGeneration?.aspectRatio ?? "auto",
+      durationSeconds: videoGeneration?.durationSeconds ?? VIDEO_DURATION_DEFAULT_SECONDS,
+    });
+  }, [setImageGeneration, setVideoGeneration, videoGeneration, videoGenerationModels]);
+  useEffect(() => {
+    if (!videoGeneration || videoGenerationModelsQuery.isFetching) return;
+    const selectedKey = videoModelKey({
+      providerID: videoGeneration.model.providerID,
+      modelID: videoGeneration.model.modelID,
+    });
+    const selected = videoGenerationModels.find((model) => videoModelKey(model) === selectedKey);
+    if (selected) {
+      if (
+        selected.modelName !== videoGeneration.modelName
+        || selected.providerName !== videoGeneration.providerName
+      ) {
+        setVideoGeneration({
+          ...videoGeneration,
+          modelName: selected.modelName,
+          providerName: selected.providerName,
+        });
+      }
+      return;
+    }
+    const fallback = videoGenerationModels[0];
+    setVideoGeneration(fallback ? {
+      ...videoGeneration,
+      model: { providerID: fallback.providerID, modelID: fallback.modelID },
+      modelName: fallback.modelName,
+      providerName: fallback.providerName,
+    } : null);
+  }, [setVideoGeneration, videoGeneration, videoGenerationModels, videoGenerationModelsQuery.isFetching]);
   const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
@@ -1112,9 +1215,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
     }
     const slashCommand = parseSlashCommandInvocation(resolved);
     const includeImageGeneration = Boolean(imageGeneration && resolved.trim() && !slashCommand);
-    const resolvedForSubmission = includeImageGeneration && imageGeneration
-      ? buildImageGenerationInstruction(resolved.trim(), imageGeneration)
-      : resolved;
+    const includeVideoGeneration = Boolean(videoGeneration && resolved.trim() && !slashCommand);
+    const resolvedForSubmission = includeVideoGeneration && videoGeneration
+      ? buildVideoGenerationInstruction(resolved.trim(), videoGeneration)
+      : includeImageGeneration && imageGeneration
+        ? buildImageGenerationInstruction(resolved.trim(), imageGeneration)
+        : resolved;
     return {
       mode: "prompt",
       parts,
@@ -1122,9 +1228,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       text,
       resolvedText: resolvedForSubmission,
       ...(includeImageGeneration && imageGeneration ? { imageGeneration } : {}),
+      ...(includeVideoGeneration && videoGeneration ? { videoGeneration } : {}),
       command: slashCommand ?? undefined,
     };
-  }, [capabilities, imageGeneration, mentions, pasteParts]);
+  }, [capabilities, imageGeneration, mentions, pasteParts, videoGeneration]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -2446,6 +2553,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onImageGenerationChange={setImageGeneration}
         onDisableImageGeneration={() => setImageGeneration(null)}
         onRefreshImageGenerationModels={refreshImageGenerationModels}
+        videoGenerationModels={videoGenerationModels}
+        videoGenerationLoading={videoGenerationModelsQuery.isPending}
+        videoGeneration={videoGeneration}
+        onEnableVideoGeneration={enableVideoGeneration}
+        onVideoGenerationChange={setVideoGeneration}
+        onDisableVideoGeneration={() => setVideoGeneration(null)}
+        onRefreshVideoGenerationModels={refreshVideoGenerationModels}
          modelVariantLabel={props.modelVariantLabel}
          modelVariant={props.modelVariant}
          modelBehaviorOptions={props.modelBehaviorOptions}

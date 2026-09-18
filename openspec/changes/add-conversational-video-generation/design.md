@@ -132,6 +132,20 @@ Submission retains the member's visible prompt as the user turn and adds structu
 
 **Alternative considered:** make members edit raw JSON and duplicate the API key under Settings → Environment. Rejected because it makes the normal model-group form destructive on subsequent edits and leaves a configured video model in `missing_credentials` after an apparently successful connection.
 
+### 11. Add an explicit video-generation composer mode
+
+The composer add menu includes Video generation immediately below Image generation only when submission is enabled and workspace-scoped discovery returns at least one ready `text-to-video` model. A disabled rollout flag, loading, discovery failure, missing credentials, unsupported adapters, and an empty ready-model list all omit the entry rather than presenting a dead action. Image and video generation are mutually exclusive composer modes, while the ordinary chat-model picker remains unchanged.
+
+Enabling video generation adds a compact strip above the prompt editor with a removable mode chip, an explicit model picker, and a combined settings popover. The popover stays at a compact 368-pixel desktop width (bounded by the viewport), uses a four-column ratio grid, and follows the desktop design with Auto, `3:4`, `4:3`, `9:16`, `16:9`, `1:1`, and `21:9` ratios plus a discrete 4–15 second duration control defaulting to 10 seconds. The desktop settings trigger and changing duration readout reserve stable widths, so selecting a differently sized ratio label or moving between one- and two-digit durations does not move the open popover. When the window narrows below the compact breakpoint, the inline settings label collapses to an overflow icon. Opening the overflow first reveals a compact current-value row such as `Auto · 10s`; activating that row opens the viewport-contained ratio/duration popover. Non-auto ratios map to deterministic dimensions with a 720-pixel short-edge baseline; Auto omits resolution so the provider chooses it.
+
+Submission preserves the member's text as the visible user turn and injects a model-locked system instruction for the direct `jugglework_video_generate` tool. The instruction fixes text-to-video mode, provider/model, duration, and optional resolution; requires exactly one paid submission; and keeps the direct tool active while it observes the persisted job without automatically resubmitting failures. The structured video options remain on queued drafts so direct send, queue, and steering use the same parameters.
+
+The direct video tool owns terminal waiting after its single submission instead of relying on the language model to issue shell sleeps or remember a later poll. It returns only after completion, failure, cancellation, or a bounded timeout, allowing the same assistant turn to summarize the result. Independently, the transcript video card polls non-terminal jobs so UI status continues after an interrupted model turn. A terminal transition creates an in-app notification-center entry, an immediate success/error toast, and a preference-respecting desktop notification when the app is in the background.
+
+Completed cards load the workspace-confined artifact through the authenticated file endpoint and render an inline metadata-preloaded video player. The card provides download and expanded-dialog playback controls; it never renders the provider result URL.
+
+**Alternative considered:** submit the video job directly from the renderer. Rejected because it would bypass the conversation turn, agent summary, existing tool transcript, and queued/steered draft semantics.
+
 ## Risks / Trade-offs
 
 - **[Provider metadata may be incomplete or stale]** → Require an adapter match and live readiness validation in addition to catalog metadata; expose diagnostic states without making them selectable.

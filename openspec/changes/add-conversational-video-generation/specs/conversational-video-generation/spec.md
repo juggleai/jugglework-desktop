@@ -57,11 +57,53 @@ The system SHALL render queued, running, failed, cancelled, and completed genera
 
 #### Scenario: Generation completes
 - **WHEN** an associated video job transitions to completed
-- **THEN** the conversation displays a video player and identifies the artifact path and model used
+- **THEN** the conversation displays a playable inline video card and identifies the artifact path and model used
+- **AND** the member can open an enlarged player and download the workspace artifact
+- **AND** the application surfaces completion through in-app notification state and a preference-respecting desktop notification
+
+#### Scenario: Direct video tool waits for terminal completion
+- **WHEN** the agent submits a video through the direct configured video tool
+- **THEN** the tool submits exactly once and remains active until completion, failure, cancellation, or bounded timeout
+- **AND** the agent immediately summarizes the terminal result in the same turn without requiring the member to ask for status
+
+#### Scenario: Agent turn is interrupted after submission
+- **WHEN** the direct tool output contains a non-terminal persisted job and the transcript remains available
+- **THEN** the video card continues polling that job independently and surfaces its terminal result without another paid submission
 
 #### Scenario: Generation fails
 - **WHEN** an associated video job reaches a failed state
 - **THEN** the conversation displays a non-secret, actionable error and a retry option when the failure is classified as retryable
+
+### Requirement: Composer video-generation mode
+The desktop composer SHALL expose text-to-video generation as an explicit add-menu mode, SHALL discover ready text-to-video models in the active workspace, and SHALL carry the selected model, aspect ratio, and duration into the video-generation tool request without changing the normal chat-model selection.
+
+#### Scenario: Ready video model enables the menu entry
+- **WHEN** the active workspace has at least one configured, credential-ready text-to-video model
+- **THEN** the add menu displays Video generation immediately below Image generation
+- **AND** activating it shows a removable mode chip, model picker, aspect-ratio picker, and duration control above the prompt editor
+
+#### Scenario: No ready video model hides the menu entry
+- **WHEN** video submission is disabled, video-model discovery is loading or fails, or discovery returns no ready text-to-video models
+- **THEN** the add menu does not display the Video generation entry
+
+#### Scenario: Selected video parameters are submitted deterministically
+- **WHEN** a member submits a prompt while Video generation is active
+- **THEN** the generated request names the selected provider and model, maps the selected aspect ratio to a normalized size, includes the selected duration, and routes exactly one submission through `jugglework_video_generate`
+- **AND** the job is polled through `jugglework_video_job_get` without automatic resubmission after failure
+
+#### Scenario: Member exits video generation
+- **WHEN** the member closes the Video generation chip
+- **THEN** the video parameter controls disappear and subsequent prompts resume the ordinary chat submission path
+
+#### Scenario: Narrow window uses staged video settings
+- **WHEN** the composer is displayed below the compact window breakpoint
+- **THEN** the inline video settings control is replaced by an overflow button
+- **AND** opening overflow first displays the current aspect ratio and duration
+- **AND** activating that current-value row opens the ratio and duration picker
+
+#### Scenario: Changing video settings keeps the picker stable
+- **WHEN** the ratio and duration picker is open and the member chooses another ratio or adjusts duration
+- **THEN** the open picker remains anchored at the same position and retains the same outer dimensions
 
 ### Requirement: Protect credentials, paths, and temporary media
 The system MUST NOT persist or expose provider credentials, authorization headers, signed result URLs, or complete base64 media in conversation messages, workspace preference files, job diagnostics, or normal logs. The system SHALL confine input and output file operations to authorized workspace locations and SHALL clean temporary media according to the configured retention policy.

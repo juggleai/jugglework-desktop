@@ -62,6 +62,8 @@
 - [x] 6.3 Add playback with metadata-only preload plus artifact open/download controls and selected provider/model details.
 - [x] 6.4 Implement cancel and explicit retry interactions while preserving idempotency and preventing automatic duplicate charges.
 - [ ] 6.5 Add UI tests for no-model feedback, progress updates, sanitized failures, cancellation, retry, and completed video playback.
+- [x] 6.6 Make the direct video tool wait for the persisted job terminal state so the initiating assistant turn actively reports completion without shell sleeps or user follow-up.
+- [x] 6.7 Add transcript-side polling, completion notifications, inline playback, expanded preview, download, artifact-list integration, and focused parsing tests.
 
 ## 7. Image-to-Video Input
 
@@ -95,3 +97,11 @@
 - [x] 10.4 Add focused parsing, parameter mapping, deterministic instruction, visibility-state, and composer integration tests.
 - [x] 10.5 Render completed image artifacts inline with click-to-preview, download, native Save as, artifact-list integration, and focused parsing tests.
 - [ ] 10.6 Manually verify image generation with at least one configured provider and validate generated artifact rendering on macOS and Windows.
+
+## 11. Composer Video Generation
+
+- [x] 11.1 Discover credential-ready text-to-video models for the active workspace and hide the add-menu entry while unavailable.
+- [x] 11.2 Add a removable video-generation strip with explicit model selection and a combined aspect-ratio/duration popover.
+- [x] 11.3 Preserve the ordinary chat model and visible prompt while carrying deterministic video parameters into one `jugglework_video_generate` submission and job polling.
+- [x] 11.4 Add focused model parsing, ratio mapping, instruction, visibility, and composer integration tests.
+- [ ] 11.5 Manually verify the composer flow against at least one configured provider on macOS and Windows.

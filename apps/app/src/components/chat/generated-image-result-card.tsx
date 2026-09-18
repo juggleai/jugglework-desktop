@@ -1,34 +1,16 @@
 import * as React from "react"
-import { Download, ImageIcon, LoaderCircle, Save } from "lucide-react"
+import { Download, ImageIcon, LoaderCircle } from "lucide-react"
 
-import { saveFileContent } from "@/app/lib/desktop"
-import { isElectronRuntime } from "@/app/utils"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { toast } from "@/components/ui/sonner"
 import { t } from "@/i18n"
 import { formatFileSize } from "@/lib/utils"
 import { useMessageList } from "@/components/chat/message-list-provider"
 import type { GeneratedImageResult } from "@/components/chat/generated-image-result"
-
-function arrayBufferToBase64(data: ArrayBuffer) {
-  const bytes = new Uint8Array(data)
-  let binary = ""
-  const chunkSize = 0x8000
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
-  }
-  return btoa(binary)
-}
-
-function extensionOf(name: string) {
-  const extension = name.split(".").at(-1)?.trim().toLowerCase()
-  return extension && /^[a-z0-9]+$/.test(extension) ? extension : "png"
-}
 
 function downloadObjectUrl(url: string, name: string) {
   const anchor = document.createElement("a")
@@ -40,10 +22,8 @@ function downloadObjectUrl(url: string, name: string) {
 export function GeneratedImageResultCard({ result }: { result: GeneratedImageResult }) {
   const { client, workspaceId } = useMessageList()
   const [open, setOpen] = React.useState(false)
-  const [data, setData] = React.useState<ArrayBuffer | null>(null)
   const [objectUrl, setObjectUrl] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
     let active = true
@@ -52,12 +32,10 @@ export function GeneratedImageResultCard({ result }: { result: GeneratedImageRes
       return
     }
 
-    setData(null)
     setObjectUrl(null)
     setError(null)
     void client.downloadWorkspaceFile(workspaceId, result.path).then((download) => {
       if (!active) return
-      setData(download.data)
       const contentType = download.contentType?.toLowerCase().startsWith("image/")
         ? download.contentType
         : result.mimeType
@@ -84,29 +62,6 @@ export function GeneratedImageResultCard({ result }: { result: GeneratedImageRes
     if (objectUrl) downloadObjectUrl(objectUrl, result.name)
   }, [objectUrl, result.name])
 
-  const saveAs = React.useCallback(async () => {
-    if (!data || !objectUrl) return
-    if (!isElectronRuntime()) {
-      downloadObjectUrl(objectUrl, result.name)
-      return
-    }
-
-    setSaving(true)
-    try {
-      const destination = await saveFileContent({
-        title: t("session.generated_image_save_as"),
-        defaultPath: result.name,
-        filters: [{ name: t("session.generated_image_file"), extensions: [extensionOf(result.name)] }],
-        dataBase64: arrayBufferToBase64(data),
-      })
-      if (destination) toast.success(t("session.generated_image_saved"))
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : t("session.generated_image_save_failed"))
-    } finally {
-      setSaving(false)
-    }
-  }, [data, objectUrl, result.name])
-
   const modelLabel = [result.model?.providerID, result.model?.modelID].filter(Boolean).join("/")
 
   return (
@@ -127,28 +82,16 @@ export function GeneratedImageResultCard({ result }: { result: GeneratedImageRes
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={!objectUrl}
-            onClick={download}
-          >
-            <Download className="size-4" />
-            {t("session.generated_image_download")}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            disabled={!data || saving}
-            onClick={() => void saveAs()}
-          >
-            {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {t("session.generated_image_save_as")}
-          </Button>
-        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={!objectUrl}
+          onClick={download}
+        >
+          <Download className="size-4" />
+          {t("session.generated_image_download")}
+        </Button>
       </div>
 
       {objectUrl ? (
@@ -187,16 +130,10 @@ export function GeneratedImageResultCard({ result }: { result: GeneratedImageRes
           </div>
           <div className="flex items-center justify-between gap-3 border-t bg-background px-4 py-3">
             <span className="min-w-0 truncate text-sm text-muted-foreground">{result.path}</span>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={download} disabled={!objectUrl}>
-                <Download className="size-4" />
-                {t("session.generated_image_download")}
-              </Button>
-              <Button type="button" size="sm" onClick={() => void saveAs()} disabled={!data || saving}>
-                {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-                {t("session.generated_image_save_as")}
-              </Button>
-            </div>
+            <Button type="button" variant="outline" size="sm" onClick={download} disabled={!objectUrl}>
+              <Download className="size-4" />
+              {t("session.generated_image_download")}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

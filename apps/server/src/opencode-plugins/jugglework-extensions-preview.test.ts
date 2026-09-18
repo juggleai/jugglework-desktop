@@ -203,6 +203,23 @@ function startFakeJuggleWorkServer(options: { createSkillAvailable?: boolean } =
         });
       }
       if (url.pathname === "/experimental/extensions/call") {
+        const body = record.body as { extensionId?: string; action?: string } | undefined;
+        if (body?.extensionId === "media-generation" && body.action === "video_generate") {
+          return Response.json({ ok: true, result: { job: { id: "video-job-1", status: "submitted", revision: 1 } } });
+        }
+        if (body?.extensionId === "media-generation" && body.action === "video_job_get") {
+          return Response.json({
+            ok: true,
+            result: {
+              job: {
+                id: "video-job-1",
+                status: "completed",
+                revision: 2,
+                artifact: { path: "artifacts/video-job-1.mp4", mimeType: "video/mp4", bytes: 2048 },
+              },
+            },
+          });
+        }
         return Response.json({ ok: true, received: record.body });
       }
 
@@ -592,13 +609,14 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
     const fake = startFakeJuggleWorkServer();
     const plugin = await JuggleWorkExtensionsPreview({ directory: "/tmp/archive" });
 
-    await plugin.tool.jugglework_video_generate.execute({
+    const completed = JSON.parse(await plugin.tool.jugglework_video_generate.execute({
       prompt: "a cat chasing a mouse",
       mode: "text-to-video",
       durationSeconds: 5,
       resolution: "480p",
-    }, { directory: "/tmp/archive", sessionID: "ses_archive" });
-    expect(fake.requests.at(-1)).toMatchObject({
+    }, { directory: "/tmp/archive", sessionID: "ses_archive" }));
+    expect(completed.result.job.status).toBe("completed");
+    expect(fake.requests.at(-2)).toMatchObject({
       pathname: "/experimental/extensions/call",
       method: "POST",
       body: {
@@ -611,6 +629,9 @@ describe("JuggleWorkExtensionsPreview semantic tool surface", () => {
           resolution: "480p",
         },
       },
+    });
+    expect(fake.requests.at(-1)).toMatchObject({
+      body: { extensionId: "media-generation", action: "video_job_get", args: { jobId: "video-job-1" } },
     });
 
     await plugin.tool.jugglework_video_job_get.execute({ jobId: "video-job-1" }, { directory: "/tmp/archive" });
