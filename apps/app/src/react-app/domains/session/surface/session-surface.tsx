@@ -23,6 +23,7 @@ import type {
 import type {
   ComposerAttachment,
   ComposerDraft,
+  ComposerImageGenerationOptions,
   ComposerPart,
   ComposerSubmissionOptions,
   McpServerEntry,
@@ -49,6 +50,12 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import {
+  buildImageGenerationInstruction,
+  imageModelKey,
+  parseComposerImageModels,
+  type ComposerImageModelOption,
+} from "./composer/image-generation";
 import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
 import {
   classifyTaskProgress,
@@ -580,9 +587,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatus, setToolMcpStatus] = useState<string | null>(null);
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
+  const [imageGenerationBySession, setImageGenerationBySession] = useState<Record<string, ComposerImageGenerationOptions | null>>({});
   const [steering, setSteering] = useState(false);
   const [steeringQueuedDraftId, setSteeringQueuedDraftId] = useState<string | null>(null);
   const [submissionPendingIdentity, setSubmissionPendingIdentity] = useState<string | null>(null);
+  const imageGeneration = imageGenerationBySession[props.sessionId] ?? null;
+  const setImageGeneration = useCallback((value: ComposerImageGenerationOptions | null) => {
+    setImageGenerationBySession((current) => ({
+      ...current,
+      [props.sessionId]: value,
+    }));
+  }, [props.sessionId]);
   const connectInventoryCacheRef = useRef<{
     scope: string;
     promise: Promise<ConnectCapabilityInventory>;
@@ -626,6 +641,77 @@ export function SessionSurface(props: SessionSurfaceProps) {
     refetchOnWindowFocus: true,
     refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
   });
+  const imageGenerationModelsQuery = useQuery({
+    queryKey: ["composer-image-generation-models", props.workspaceId, props.workspaceRoot],
+    queryFn: async () => {
+      const response = await props.client.callExtensionAction({
+        extensionId: "openai-image-generation",
+        action: "image_models_list",
+        args: { mode: "text-to-image" },
+        context: {
+          workspaceId: props.workspaceId,
+          directory: props.workspaceRoot,
+        },
+      });
+      if (!response.ok) throw new Error(response.message);
+      return parseComposerImageModels(response.result);
+    },
+    staleTime: 30_000,
+    retry: 1,
+    refetchOnWindowFocus: true,
+  });
+  const imageGenerationModels = useMemo<ComposerImageModelOption[]>(
+    () => imageGenerationModelsQuery.data ?? [],
+    [imageGenerationModelsQuery.data],
+  );
+  const refreshImageGenerationModels = useCallback(
+    () => imageGenerationModelsQuery.refetch(),
+    [imageGenerationModelsQuery.refetch],
+  );
+  const enableImageGeneration = useCallback(() => {
+    const selected = imageGeneration
+      ? imageGenerationModels.find((model) => imageModelKey(model) === imageModelKey({
+          providerID: imageGeneration.model.providerID,
+          modelID: imageGeneration.model.modelID,
+        }))
+      : imageGenerationModels[0];
+    if (!selected) return;
+    setImageGeneration({
+      model: { providerID: selected.providerID, modelID: selected.modelID },
+      modelName: selected.modelName,
+      providerName: selected.providerName,
+      aspectRatio: imageGeneration?.aspectRatio ?? "auto",
+      style: imageGeneration?.style ?? "auto",
+    });
+  }, [imageGeneration, imageGenerationModels, setImageGeneration]);
+  useEffect(() => {
+    if (!imageGeneration || imageGenerationModelsQuery.isFetching) return;
+    const selectedKey = imageModelKey({
+      providerID: imageGeneration.model.providerID,
+      modelID: imageGeneration.model.modelID,
+    });
+    const selected = imageGenerationModels.find((model) => imageModelKey(model) === selectedKey);
+    if (selected) {
+      if (
+        selected.modelName !== imageGeneration.modelName
+        || selected.providerName !== imageGeneration.providerName
+      ) {
+        setImageGeneration({
+          ...imageGeneration,
+          modelName: selected.modelName,
+          providerName: selected.providerName,
+        });
+      }
+      return;
+    }
+    const fallback = imageGenerationModels[0];
+    setImageGeneration(fallback ? {
+      ...imageGeneration,
+      model: { providerID: fallback.providerID, modelID: fallback.modelID },
+      modelName: fallback.modelName,
+      providerName: fallback.providerName,
+    } : null);
+  }, [imageGeneration, imageGenerationModels, imageGenerationModelsQuery.isFetching, setImageGeneration]);
   const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
@@ -1025,15 +1111,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
     const slashCommand = parseSlashCommandInvocation(resolved);
+    const includeImageGeneration = Boolean(imageGeneration && resolved.trim() && !slashCommand);
+    const resolvedForSubmission = includeImageGeneration && imageGeneration
+      ? buildImageGenerationInstruction(resolved.trim(), imageGeneration)
+      : resolved;
     return {
       mode: "prompt",
       parts,
       attachments: nextAttachments,
       text,
-      resolvedText: resolved,
+      resolvedText: resolvedForSubmission,
+      ...(includeImageGeneration && imageGeneration ? { imageGeneration } : {}),
       command: slashCommand ?? undefined,
     };
-  }, [capabilities, mentions, pasteParts]);
+  }, [capabilities, imageGeneration, mentions, pasteParts]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -2220,6 +2311,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onApplyChanges={props.onApplyEnvironmentChanges}
                   >
                     <MessageListProvider
+                      client={props.client}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}
@@ -2347,6 +2439,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onRemoveAttachment={handleRemoveAttachment}
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
+        imageGenerationModels={imageGenerationModels}
+        imageGenerationLoading={imageGenerationModelsQuery.isPending}
+        imageGeneration={imageGeneration}
+        onEnableImageGeneration={enableImageGeneration}
+        onImageGenerationChange={setImageGeneration}
+        onDisableImageGeneration={() => setImageGeneration(null)}
+        onRefreshImageGenerationModels={refreshImageGenerationModels}
          modelVariantLabel={props.modelVariantLabel}
          modelVariant={props.modelVariant}
          modelBehaviorOptions={props.modelBehaviorOptions}

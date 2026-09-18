@@ -1,6 +1,7 @@
 "use memo";
 
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
+import type { JuggleWorkServerClient } from "@/app/lib/jugglework-server"
 import type {
   ChatToolReconnectAction,
   ChatToolReconnectProgress,
@@ -9,6 +10,7 @@ import type {
 import * as React from "react"
 
 interface MessageListContextValue {
+  client: JuggleWorkServerClient | null
   workspaceId: string
   sessionId: string
   showThinking: boolean
@@ -33,6 +35,7 @@ const MessageListContext = React.createContext<MessageListContextValue | null>(n
 
 interface MessageListProviderProps {
   children: React.ReactNode
+  client?: JuggleWorkServerClient | null
   workspaceId: string
   sessionId: string
   showThinking: boolean
@@ -61,6 +64,7 @@ export interface DispatchAction {
 
 export function MessageListProvider({
   children,
+  client = null,
   workspaceId,
   sessionId,
   showThinking,
@@ -79,6 +83,7 @@ export function MessageListProvider({
 }: MessageListProviderProps) {
   const value = React.useMemo(
     () => ({
+      client,
       workspaceId,
       sessionId,
       showThinking,
@@ -96,6 +101,7 @@ export function MessageListProvider({
       onMcpRetry,
     }),
     [
+      client,
       workspaceId,
       sessionId,
       showThinking,

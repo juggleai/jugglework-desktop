@@ -120,6 +120,16 @@ Configured provider/model names are never skills. Agent steering routes image/vi
 
 Because text models can ignore a two-step generic extension protocol in favor of more salient Cloud or shell tools, the OpenCode plugin also exposes direct `jugglework_image_*` and `jugglework_video_*` tools. Their names and descriptions match the user's intent and internally route to the same local extension actions, making configured media generation the mechanically obvious first choice rather than relying only on prompt steering.
 
+### 10. Add an explicit image-generation composer mode
+
+The composer add menu includes Image generation immediately below Draw when the local image extension discovers at least one ready `text-to-image` model in the active workspace. The entry is omitted while discovery is loading, after discovery fails, and whenever no configured model is executable. Enabling it adds a compact, horizontally scrollable parameter strip above the prompt editor with a removable mode chip, explicit image-model picker, normalized aspect-ratio picker, and provider-neutral style picker. The ordinary chat-model picker remains unchanged because image-only models do not implement the chat completion contract.
+
+Submission retains the member's visible prompt as the user turn and adds structured image-generation options plus a resolved tool instruction. The resolved instruction is merged into the per-request system context rather than replacing the visible user part, so the transcript stays faithful while the ordinary chat model is required to call the image tool. That instruction locks the provider/model, maps `1:1`, `3:2`, and `2:3` to normalized pixel sizes, expresses style as a prompt constraint rather than a provider-specific API field, and calls the direct `jugglework_image_generate` tool. This keeps direct send, queue, and steering semantics aligned while avoiding unsupported `style` fields on OpenAI-compatible image endpoints.
+
+**Alternative considered:** put image-only models into the existing chat model picker. Rejected because selecting a generation endpoint as the session LLM would send it an incompatible chat request and would couple image parameters to chat-model state.
+
+**Alternative considered:** call the image extension directly from the renderer and skip the session. Rejected for this increment because it would create an artifact without a corresponding conversational turn or agent summary; the direct agent tool preserves transcript and artifact behavior while honoring explicit UI selections.
+
 **Alternative considered:** make members edit raw JSON and duplicate the API key under Settings → Environment. Rejected because it makes the normal model-group form destructive on subsequent edits and leaves a configured video model in `missing_credentials` after an apparently successful connection.
 
 ## Risks / Trade-offs

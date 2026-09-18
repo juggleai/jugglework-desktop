@@ -86,3 +86,12 @@
 - [x] 9.3 Add redaction regression tests covering normal logs, job records, action responses, transcript content, and workspace preference storage.
 - [x] 9.4 Gate generation submission behind a feature flag while leaving safe job status reconciliation available during rollback.
 - [ ] 9.5 Run focused server, desktop, database migration, extension action, and UI tests; manually canary one T2V and one I2V flow against configured providers before enabling the feature broadly.
+
+## 10. Composer Image Generation
+
+- [x] 10.1 Discover credential-ready text-to-image models for the active workspace and hide the add-menu entry when none are available.
+- [x] 10.2 Add a removable image-generation mode strip above the prompt editor with model, aspect-ratio, and style selectors.
+- [x] 10.3 Preserve the ordinary chat model while carrying the explicit image provider/model and normalized parameters into `jugglework_image_generate`.
+- [x] 10.4 Add focused parsing, parameter mapping, deterministic instruction, visibility-state, and composer integration tests.
+- [x] 10.5 Render completed image artifacts inline with click-to-preview, download, native Save as, artifact-list integration, and focused parsing tests.
+- [ ] 10.6 Manually verify image generation with at least one configured provider and validate generated artifact rendering on macOS and Windows.

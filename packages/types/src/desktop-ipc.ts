@@ -709,6 +709,15 @@ export type DesktopCommandMap = {
     args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
     result: string | null;
   };
+  saveFileContent: {
+    args: [options: {
+      title?: string;
+      defaultPath?: string;
+      filters?: { name: string; extensions: string[] }[];
+      dataBase64: string;
+    }];
+    result: string | null;
+  };
 
   // Skills
   importSkill: {

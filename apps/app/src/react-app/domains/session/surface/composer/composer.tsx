@@ -2,13 +2,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, Lightbulb, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, ImagePlus, Lightbulb, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
-import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
+import type { ComposerAttachment, ComposerImageGenerationOptions, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
@@ -35,6 +35,8 @@ import {
 import { FILE_URL_RE, HTTP_URL_RE } from "./pasted-text";
 import { resolveComposerSubmitAction } from "../queued-draft-policy";
 import { ContextUsage } from "./context-usage";
+import { ImageGenerationControls } from "./image-generation-controls";
+import type { ComposerImageModelOption } from "./image-generation";
 
 const SketchDialog = lazy(() =>
   import("./sketch/sketch-dialog").then((module) => ({ default: module.SketchDialog })),
@@ -66,6 +68,7 @@ type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:$
 type PlusMenuEntry =
   | { kind: "file"; id: "file"; label: string }
   | { kind: "sketch"; id: "sketch"; label: string }
+  | { kind: "image-generation"; id: "image-generation"; label: string }
   | { kind: "agent"; id: string; label: string; name: string | null }
   | { kind: "tools"; id: string; label: string; section: ToolMenuSection };
 
@@ -117,6 +120,13 @@ type ComposerProps = {
   onRemoveAttachment: (id: string) => void;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
+  imageGenerationModels: ComposerImageModelOption[];
+  imageGenerationLoading: boolean;
+  imageGeneration: ComposerImageGenerationOptions | null;
+  onEnableImageGeneration: () => void;
+  onImageGenerationChange: (value: ComposerImageGenerationOptions) => void;
+  onDisableImageGeneration: () => void;
+  onRefreshImageGenerationModels: () => void | Promise<unknown>;
   modelVariantLabel: string;
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
@@ -511,7 +521,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   );
 
   // 统一加号菜单（合并原附件按钮、工具菜单按钮、Agent 选择器）。
-  // 「添加」区：文件 + 绘图 + 可选智能体（选中带对号）。
+  // 「添加」区：文件 + 绘图 + 可用时的图片生成 + 可选智能体（选中带对号）。
   // 默认智能体和 OpenCode 内置 Build 不作为显式选项展示。
   // 「插件」区：命令 / 技能 / Extensions / MCP / 云端导入插件，点击后
   // 加号菜单保持不变，右侧弹出对应分区的二级内容面板。
@@ -529,6 +539,9 @@ export function ReactSessionComposer(props: ComposerProps) {
   const plusMenuEntries = useMemo<PlusMenuEntry[]>(() => [
     { kind: "file", id: "file", label: t("composer.plus_menu_file") },
     { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw") },
+    ...(props.imageGenerationModels.length > 0
+      ? [{ kind: "image-generation" as const, id: "image-generation" as const, label: t("composer.image_generation") }]
+      : []),
     ...plusMenuAgentEntries.map((entry) => ({
       kind: "agent" as const,
       id: entry.name ? `agent:${entry.name}` : "agent:",
@@ -545,7 +558,7 @@ export function ReactSessionComposer(props: ComposerProps) {
       label: plugin.name,
       section,
     })),
-  ], [plusMenuAgentEntries, pluginSections]);
+  ], [plusMenuAgentEntries, pluginSections, props.imageGenerationModels.length]);
   const plusMenuToolStartIndex = plusMenuEntries.findIndex((entry) => entry.kind === "tools");
   const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex);
   const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex);
@@ -570,6 +583,13 @@ export function ReactSessionComposer(props: ComposerProps) {
       setPlusMenuOpen(false);
       setToolMenuOpen(false);
       setSketchOpen(true);
+      return;
+    }
+    if (entry.kind === "image-generation") {
+      if (props.imageGenerationLoading || props.imageGenerationModels.length === 0) return;
+      setPlusMenuOpen(false);
+      setToolMenuOpen(false);
+      props.onEnableImageGeneration();
       return;
     }
     if (entry.kind === "agent") {
@@ -605,8 +625,9 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     if (!plusMenuOpen) return;
+    void props.onRefreshImageGenerationModels();
     void props.listAgents().then(setAgents).catch(() => setAgents([]));
-  }, [plusMenuOpen, props.listAgents]);
+  }, [plusMenuOpen, props.listAgents, props.onRefreshImageGenerationModels]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1469,6 +1490,16 @@ export function ReactSessionComposer(props: ComposerProps) {
           ) : null}
 
           <div className="px-4 pt-3 pb-2">
+            {props.imageGeneration ? (
+              <ImageGenerationControls
+                models={props.imageGenerationModels}
+                value={props.imageGeneration}
+                disabled={props.imageGenerationLoading}
+                onChange={props.onImageGenerationChange}
+                onClose={props.onDisableImageGeneration}
+              />
+            ) : null}
+
             {/* 附件行：文件独占区域，位于输入框上方，可横向滚动。 */}
             {props.attachments.length > 0 ? (
               <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -1523,7 +1554,7 @@ export function ReactSessionComposer(props: ComposerProps) {
               mentions={props.mentions}
               pastedText={pastedTextTokens}
               disabled={props.disabled}
-              placeholder={t("composer.placeholder")}
+              placeholder={props.imageGeneration ? t("composer.image_generation_placeholder") : t("composer.placeholder")}
               onChange={handleEditorDraftChange}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
@@ -1658,8 +1689,15 @@ export function ReactSessionComposer(props: ComposerProps) {
                             const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
                             const selected = entry.kind === "agent"
                               ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
-                              : false;
-                            const disabled = attachmentAction ? !props.attachmentsEnabled : props.busy;
+                              : entry.kind === "image-generation" && Boolean(props.imageGeneration);
+                            const disabled = entry.kind === "image-generation"
+                              ? false
+                              : attachmentAction
+                                ? !props.attachmentsEnabled
+                                : props.busy;
+                            const disabledTitle = attachmentAction && disabled
+                                ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
+                                : undefined;
                             return (
                               <button
                                 key={entry.id}
@@ -1669,13 +1707,14 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 type="button"
                                 className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === flatIndex ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
                                 disabled={disabled}
-                                title={attachmentAction && disabled ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable") : undefined}
+                                title={disabledTitle}
                                 onMouseEnter={() => setPlusMenuIndex(flatIndex)}
                                 onClick={() => activatePlusEntry(entry)}
                               >
                                 <span className="flex min-w-0 flex-1 items-center gap-3">
                                   {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
                                   {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
                                   {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
                                   <span className="min-w-0 flex-1 truncate font-medium text-gray-12">{entry.label}</span>
                                 </span>

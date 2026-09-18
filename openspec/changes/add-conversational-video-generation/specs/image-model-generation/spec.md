@@ -44,3 +44,37 @@ Generated images SHALL be validated by MIME type, file signature, size, workspac
 #### Scenario: Provider returns an unsafe URL or malformed image
 - **WHEN** the result URL is non-HTTPS or the bytes do not match an allowed image signature
 - **THEN** JuggleWork rejects the result without publishing an artifact
+
+### Requirement: Composer image-generation mode
+The desktop composer SHALL expose image generation as an explicit add-menu mode, SHALL discover ready text-to-image models in the active workspace, and SHALL carry the selected model and normalized generation parameters into the image-generation tool request without changing the normal chat-model selection.
+
+#### Scenario: Ready image model enables the menu entry
+- **WHEN** the active workspace has at least one configured, credential-ready text-to-image model
+- **THEN** the add menu enables Image generation and activating it shows model, aspect-ratio, and style controls above the prompt editor
+
+#### Scenario: No ready image model hides the menu entry
+- **WHEN** image-model discovery is loading, fails, or returns no ready text-to-image models
+- **THEN** the add menu does not display the Image generation entry
+
+#### Scenario: Selected parameters are submitted deterministically
+- **WHEN** a member submits a prompt while Image generation is active
+- **THEN** the generated request names the selected provider and model, maps the selected aspect ratio to a normalized size, applies the selected style instruction, and routes generation through `jugglework_image_generate`
+
+#### Scenario: Member exits image generation
+- **WHEN** the member closes the Image generation chip
+- **THEN** the parameter controls disappear and subsequent prompts resume the ordinary chat submission path
+
+### Requirement: Generated image result presentation
+The desktop SHALL present a successfully generated workspace image as a persistent inline transcript preview and SHALL let the member download it or save a copy to a chosen location.
+
+#### Scenario: Image generation completes successfully
+- **WHEN** `jugglework_image_generate` returns a validated image artifact
+- **THEN** the completed task displays a thumbnail with the generated filename and model, clicking the thumbnail opens a larger preview, and the image also appears in the task artifact list
+
+#### Scenario: Member exports a generated image
+- **WHEN** the member chooses Download or Save as from the generated-image result
+- **THEN** the desktop downloads the original artifact bytes or opens a native save dialog and writes an identical copy to the selected location
+
+#### Scenario: Persisted artifact can no longer be loaded
+- **WHEN** a transcript references a generated image that is missing or unreadable
+- **THEN** the result shows a bounded load error without breaking the rest of the conversation

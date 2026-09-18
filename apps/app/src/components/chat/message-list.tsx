@@ -59,6 +59,8 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
+import { GeneratedImageResultCard } from "@/components/chat/generated-image-result-card"
+import { generatedImageResultsFromMessages } from "@/components/chat/generated-image-result"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -1083,6 +1085,19 @@ function MessageArtifacts(props: { message: UIMessage }) {
   return <ArtifactList messages={[props.message]} includeTargetFallbacks={false} />;
 }
 
+function GeneratedImageResultList({ messages }: { messages: UIMessage[] }) {
+  const results = React.useMemo(() => generatedImageResultsFromMessages(messages), [messages])
+  if (results.length === 0) return null
+
+  return (
+    <div className="mx-auto mt-4 grid w-full max-w-5xl gap-3 px-3 md:px-8">
+      {results.map((result) => (
+        <GeneratedImageResultCard key={result.path} result={result} />
+      ))}
+    </div>
+  )
+}
+
 interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
   messages: UIMessage[]
@@ -1234,6 +1249,7 @@ function MessageGroup({
       )}>
         {summaryItems.map((item, groupIndex) => renderItem(item, processItems.length + groupIndex, "summary"))}
       </div>
+      <GeneratedImageResultList messages={items.map((item) => item.message)} />
       {/* 用分组级 isLiveGroup 而非列表级 isStreaming：流式期间历史任务块
           仍要能 hover 出复制/分支/撤销/时间，只有正在输出的块隐藏操作栏。 */}
       {lastTextMessage && !isLiveGroup && (
@@ -1337,6 +1353,7 @@ export function MessageList({ messages, status, activityStatus = "idle", retryAc
               isLastStep={isLastStep}
             />
             <MessageArtifacts message={item.message} />
+            <GeneratedImageResultList messages={[item.message]} />
           </div>
         )
       })}

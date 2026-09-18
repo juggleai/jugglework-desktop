@@ -15,11 +15,13 @@ describe("composer sketch integration", () => {
     const entriesIndex = source.indexOf("const plusMenuEntries");
     const fileIndex = source.indexOf('kind: "file"', entriesIndex);
     const sketchIndex = source.indexOf('kind: "sketch"', entriesIndex);
+    const imageGenerationIndex = source.indexOf('kind: "image-generation"', entriesIndex);
     const agentIndex = source.indexOf('kind: "agent" as const');
 
     expect(fileIndex).toBeGreaterThan(-1);
     expect(sketchIndex).toBeGreaterThan(fileIndex);
-    expect(agentIndex).toBeGreaterThan(sketchIndex);
+    expect(imageGenerationIndex).toBeGreaterThan(sketchIndex);
+    expect(agentIndex).toBeGreaterThan(imageGenerationIndex);
     expect(source).toContain('findIndex((entry) => entry.kind === "tools")');
     expect(source).toContain("const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex)");
     expect(source).toContain("const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex)");

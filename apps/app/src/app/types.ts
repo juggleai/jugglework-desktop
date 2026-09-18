@@ -141,8 +141,22 @@ export type ComposerDraft = {
    * this includes the full pasted text instead.
    */
   resolvedText?: string;
+  /** Optional image-generation mode selected in the composer. */
+  imageGeneration?: ComposerImageGenerationOptions;
   /** When set, draft is a slash command invocation */
   command?: { name: string; arguments: string } | undefined;
+};
+
+export type ComposerImageAspectRatio = "auto" | "1:1" | "3:2" | "2:3";
+
+export type ComposerImageStyle = "auto" | "photographic" | "illustration" | "anime" | "3d";
+
+export type ComposerImageGenerationOptions = {
+  model: ModelRef;
+  modelName: string;
+  providerName: string;
+  aspectRatio: ComposerImageAspectRatio;
+  style: ComposerImageStyle;
 };
 
 export type ComposerSubmissionOptions =

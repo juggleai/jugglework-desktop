@@ -2457,6 +2457,25 @@ const desktopCommandHandlers = {
       });
       return result.canceled ? null : (result.filePath ?? null);
   },
+  "saveFileContent": async (event, ...args) => {
+      const options = args[0] ?? {};
+      const dataBase64 = typeof options.dataBase64 === "string" ? options.dataBase64.trim() : "";
+      if (!dataBase64 || dataBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64)) {
+        throw new Error("File content must be valid base64 data.");
+      }
+      const data = Buffer.from(dataBase64, "base64");
+      if (data.byteLength === 0 || data.byteLength > 50 * 1024 * 1024) {
+        throw new Error("File content must be between 1 byte and 50 MB.");
+      }
+      const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
+        title: options.title,
+        defaultPath: options.defaultPath,
+        filters: options.filters,
+      });
+      if (result.canceled || !result.filePath) return null;
+      await writeFile(result.filePath, data);
+      return result.filePath;
+  },
   "importSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();
       const sourceDir = String(args[1] ?? "").trim();

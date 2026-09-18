@@ -24,6 +24,7 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
+import { mergeImageGenerationSystemContext } from "@/react-app/domains/session/surface/composer/image-generation";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -1447,13 +1448,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               cacheKey: targetSessionId,
               runtimeKey: environmentRuntimeKey,
             });
+            const systemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
             const result = await opencodeClient.session.promptAsync({
               sessionID: targetSessionId,
               parts,
               model: targetModel ?? undefined,
               agent: selectedAgent ?? undefined,
               ...(targetVariant ? { variant: targetVariant } : {}),
-              ...(envSystemContext ? { system: envSystemContext } : {}),
+              ...(systemContext ? { system: systemContext } : {}),
               ...(submission.delivery === "steer" ? {
                 juggleworkDelivery: "steer" as const,
                 juggleworkAdmissionId: submission.admissionId,
