@@ -1185,6 +1185,8 @@ export default {
   "settings.remote_control.reregister_success": "ลงทะเบียนและเปิดใช้งานการควบคุมระยะไกลใหม่แล้ว",
   "settings.remote_control.reregister_failed": "ไม่สามารถลงทะเบียนการควบคุมระยะไกลใหม่ได้ โปรดขอสิทธิ์ใหม่แล้วลองอีกครั้ง",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "วาดภาพ",
+  "composer.agent_plan_mode": "โหมดวางแผน",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

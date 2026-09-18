@@ -1298,6 +1298,8 @@ export default {
   "settings.remote_control.reregister_success": "Удалённое управление повторно зарегистрировано и включено.",
   "settings.remote_control.reregister_failed": "Не удалось повторно зарегистрировать удалённое управление. Получите новую авторизацию и повторите попытку.",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Рисование",
+  "composer.agent_plan_mode": "Режим планирования",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

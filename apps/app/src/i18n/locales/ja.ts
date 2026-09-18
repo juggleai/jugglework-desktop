@@ -1184,6 +1184,8 @@ export default {
   "settings.remote_control.reregister_success": "リモートコントロールを再登録して有効にしました。",
   "settings.remote_control.reregister_failed": "リモートコントロールを再登録できませんでした。新しい認証を取得して再試行してください。",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "描画",
+  "composer.agent_plan_mode": "計画モード",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

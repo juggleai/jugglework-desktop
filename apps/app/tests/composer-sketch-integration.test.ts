@@ -12,8 +12,9 @@ const sessionSurfacePath = fileURLToPath(
 describe("composer sketch integration", () => {
   test("places sketch directly below file and derives menu offsets from both entries", () => {
     const source = readFileSync(composerPath, "utf8");
-    const fileIndex = source.indexOf('{ kind: "file", id: "file"');
-    const sketchIndex = source.indexOf('{ kind: "sketch", id: "sketch"');
+    const entriesIndex = source.indexOf("const plusMenuEntries");
+    const fileIndex = source.indexOf('kind: "file"', entriesIndex);
+    const sketchIndex = source.indexOf('kind: "sketch"', entriesIndex);
     const agentIndex = source.indexOf('kind: "agent" as const');
 
     expect(fileIndex).toBeGreaterThan(-1);
@@ -22,6 +23,28 @@ describe("composer sketch integration", () => {
     expect(source).toContain('findIndex((entry) => entry.kind === "tools")');
     expect(source).toContain("const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex)");
     expect(source).toContain("const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex)");
+  });
+
+  test("keeps the default agent implicit in the add menu", () => {
+    const source = readFileSync(composerPath, "utf8");
+    const agentEntries = source.slice(
+      source.indexOf("const plusMenuAgents"),
+      source.indexOf("const plusMenuEntries"),
+    );
+
+    expect(agentEntries).toContain("isNonDefaultAgent(agent)");
+    expect(agentEntries).not.toContain('t("composer.default_agent")');
+    expect(agentEntries).toContain('agent.name.trim().toLowerCase() !== "build"');
+  });
+
+  test("uses a dedicated plan affordance without horizontal overflow", () => {
+    const source = readFileSync(composerPath, "utf8");
+
+    expect(source).toContain('normalizedName === "plan"');
+    expect(source).toContain("return <Lightbulb");
+    expect(source).toContain('t("composer.agent_plan_mode")');
+    expect(source).toContain('t("composer.plus_menu_draw")');
+    expect(source).toContain("overflow-x-hidden overflow-y-auto");
   });
 
   test("opens the editor only when attachments are enabled", () => {

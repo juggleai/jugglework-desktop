@@ -1192,6 +1192,8 @@ export default {
   "settings.remote_control.reregister_success": "O controle remoto foi registrado novamente e ativado.",
   "settings.remote_control.reregister_failed": "Não foi possível registrar o controle remoto novamente. Solicite uma nova autorização e tente de novo.",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Desenhar",
+  "composer.agent_plan_mode": "Modo de planejamento",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

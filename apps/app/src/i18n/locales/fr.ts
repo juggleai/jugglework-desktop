@@ -1201,6 +1201,8 @@ export default {
   "settings.remote_control.reregister_success": "Le contrôle à distance a été réinscrit et activé.",
   "settings.remote_control.reregister_failed": "Le contrôle à distance n'a pas pu être réinscrit. Demandez une nouvelle autorisation et réessayez.",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Dessiner",
+  "composer.agent_plan_mode": "Mode planification",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

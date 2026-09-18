@@ -150,6 +150,8 @@ export default {
   "composer.plus_menu_section_add": "添加",
   "composer.plus_menu_file": "文件",
   "composer.plus_menu_sketch": "绘制草图",
+  "composer.plus_menu_draw": "绘图",
+  "composer.agent_plan_mode": "计划模式",
   "composer.plus_menu_section_plugins": "插件",
   "composer.send_options": "更多发送选项",
   "composer.queued_attachments_only": "{count}个附件",

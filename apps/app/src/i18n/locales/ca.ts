@@ -1201,6 +1201,8 @@ export default {
   "settings.remote_control.reregister_success": "El control remot s'ha tornat a registrar i s'ha activat.",
   "settings.remote_control.reregister_failed": "No s'ha pogut tornar a registrar el control remot. Sol·licita una autorització nova i torna-ho a provar.",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Dibuixa",
+  "composer.agent_plan_mode": "Mode de planificació",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

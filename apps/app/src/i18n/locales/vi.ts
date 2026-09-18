@@ -1185,6 +1185,8 @@ export default {
   "settings.remote_control.reregister_success": "Điều khiển từ xa đã được đăng ký lại và bật.",
   "settings.remote_control.reregister_failed": "Không thể đăng ký lại điều khiển từ xa. Hãy yêu cầu quyền mới và thử lại.",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Vẽ",
+  "composer.agent_plan_mode": "Chế độ lập kế hoạch",
   "sketch.title": "Draw sketch",
   "sketch.description": "Draw a sketch and attach it to the current conversation.",
   "sketch.close": "Close sketch editor",

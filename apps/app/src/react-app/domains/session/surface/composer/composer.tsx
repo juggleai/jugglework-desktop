@@ -2,7 +2,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, Lightbulb, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
@@ -68,6 +68,14 @@ type PlusMenuEntry =
   | { kind: "sketch"; id: "sketch"; label: string }
   | { kind: "agent"; id: string; label: string; name: string | null }
   | { kind: "tools"; id: string; label: string; section: ToolMenuSection };
+
+function plusMenuAgentIcon(name: string | null) {
+  const normalizedName = name?.trim().toLowerCase();
+  if (normalizedName === "plan") {
+    return <Lightbulb size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" />;
+  }
+  return <Zap size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" />;
+}
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
   const hasSessionSurface = entry.extensionManifest?.contributions?.some((contribution) =>
@@ -488,7 +496,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   const mentionMatch = props.draft.match(/@([^\s@]*)$/);
   const mentionOpenNext = Boolean(mentionMatch);
   const mentionQuery = mentionMatch?.[1] ?? "";
-  const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
+  const plusMenuAgents = useMemo(
+    () => agents.filter((agent) => isNonDefaultAgent(agent) && agent.name.trim().toLowerCase() !== "build"),
+    [agents],
+  );
 
   // 云端导入插件分区（文件数 > 0 才显示），与四个固定插件分区一起出现在
   // 加号菜单的「插件」分组里，点击在右侧弹出该插件的文件列表。
@@ -500,20 +511,24 @@ export function ReactSessionComposer(props: ComposerProps) {
   );
 
   // 统一加号菜单（合并原附件按钮、工具菜单按钮、Agent 选择器）。
-  // 「添加」区：文件 + 默认智能体/非默认智能体（选中带对号）。
+  // 「添加」区：文件 + 绘图 + 可选智能体（选中带对号）。
+  // 默认智能体和 OpenCode 内置 Build 不作为显式选项展示。
   // 「插件」区：命令 / 技能 / Extensions / MCP / 云端导入插件，点击后
   // 加号菜单保持不变，右侧弹出对应分区的二级内容面板。
-  const plusMenuAgentEntries = useMemo(() => [
-    { name: null as string | null, label: t("composer.default_agent") },
-    ...nonDefaultAgents.map((agent) => ({
-      name: agent.name as string | null,
-      label: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
-    })),
-  ], [nonDefaultAgents]);
+  const plusMenuAgentEntries = useMemo(() =>
+    plusMenuAgents.map((agent) => {
+      const normalizedName = agent.name.trim().toLowerCase();
+      return {
+        name: agent.name as string | null,
+        label: normalizedName === "plan"
+          ? t("composer.agent_plan_mode")
+          : agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+      };
+    }), [plusMenuAgents]);
 
   const plusMenuEntries = useMemo<PlusMenuEntry[]>(() => [
     { kind: "file", id: "file", label: t("composer.plus_menu_file") },
-    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_sketch") },
+    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw") },
     ...plusMenuAgentEntries.map((entry) => ({
       kind: "agent" as const,
       id: entry.name ? `agent:${entry.name}` : "agent:",
@@ -1629,16 +1644,16 @@ export function ReactSessionComposer(props: ComposerProps) {
                     <Plus size={16} />
                   </button>
                   {plusMenuOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-3 w-64 overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                    <div className="absolute bottom-full left-0 z-40 mb-3 w-72 overflow-hidden rounded-[20px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                       <div
                         role="presentation"
-                        className="max-h-80 overflow-y-auto p-2"
+                        className="max-h-[24rem] overflow-x-hidden overflow-y-auto p-2"
                         onMouseDown={(event) => event.preventDefault()}
                       >
-                        <div className="border-b border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
+                        <div className="px-3 pb-1.5 pt-2 text-sm font-medium text-gray-10">
                           {t("composer.plus_menu_section_add")}
                         </div>
-                        <div className="grid gap-0.5 pt-1">
+                        <div className="grid gap-0.5">
                           {plusMenuAddEntries.map((entry, flatIndex) => {
                             const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
                             const selected = entry.kind === "agent"
@@ -1652,26 +1667,27 @@ export function ReactSessionComposer(props: ComposerProps) {
                                   plusItemRefs.current[flatIndex] = element;
                                 }}
                                 type="button"
-                                className={`flex w-full items-center justify-between gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors ${selected || plusMenuIndex === flatIndex ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+                                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === flatIndex ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
                                 disabled={disabled}
                                 title={attachmentAction && disabled ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable") : undefined}
                                 onMouseEnter={() => setPlusMenuIndex(flatIndex)}
                                 onClick={() => activatePlusEntry(entry)}
                               >
-                                <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                                  {entry.kind === "file" ? <Paperclip size={14} className="shrink-0 text-gray-9" /> : null}
-                                  {entry.kind === "sketch" ? <PenLine size={14} className="shrink-0 text-gray-9" /> : null}
-                                  <span className="min-w-0 truncate">{entry.label}</span>
+                                <span className="flex min-w-0 flex-1 items-center gap-3">
+                                  {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
+                                  <span className="min-w-0 flex-1 truncate font-medium text-gray-12">{entry.label}</span>
                                 </span>
-                                {selected ? <Check size={14} className="shrink-0 text-gray-10" /> : null}
+                                {selected ? <Check size={16} className="shrink-0 text-gray-10" /> : null}
                               </button>
                             );
                           })}
                         </div>
-                        <div className="mt-2 border-t border-dls-border px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-10">
+                        <div className="mx-3 mt-2 border-t border-dls-border px-0 pb-1.5 pt-3 text-sm font-medium text-gray-10">
                           {t("composer.plus_menu_section_plugins")}
                         </div>
-                        <div className="grid gap-0.5 pt-1">
+                        <div className="grid gap-0.5">
                           {plusMenuToolEntries.map((entry, index) => {
                             if (entry.kind !== "tools") return null;
                             const flatIndex = plusMenuToolStartIndex + index;
@@ -1685,14 +1701,21 @@ export function ReactSessionComposer(props: ComposerProps) {
                                 }}
                                 type="button"
                                 aria-expanded={sectionActive}
-                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${sectionActive || plusMenuIndex === flatIndex ? "bg-gray-2 text-gray-12" : "text-gray-11 hover:bg-gray-2/70"}`}
+                                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${sectionActive || plusMenuIndex === flatIndex ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"}`}
                                 onMouseEnter={() => setPlusMenuIndex(flatIndex)}
                                 onClick={() => {
                                   activatePlusEntry(entry);
                                 }}
                               >
-                                <span className="min-w-0 truncate">{entry.label}</span>
-                                <ChevronRight size={14} className={`shrink-0 transition-transform ${sectionActive ? "rotate-90 text-gray-11" : "text-gray-9"}`} />
+                                <span className="flex min-w-0 flex-1 items-center gap-3">
+                                  {entry.section === "commands" ? <Terminal size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.section === "skills" ? <Zap size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.section === "extensions" ? <AppWindowMac size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.section === "mcps" ? <Plug size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  {entry.section.startsWith("plugin:") ? <FileText size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
+                                  <span className="min-w-0 truncate font-medium text-gray-12">{entry.label}</span>
+                                </span>
+                                <ChevronRight size={16} className={`shrink-0 transition-transform ${sectionActive ? "rotate-90 text-gray-11" : "text-gray-9"}`} />
                               </button>
                             );
                           })}
@@ -1701,10 +1724,10 @@ export function ReactSessionComposer(props: ComposerProps) {
                     </div>
                   ) : null}
                   {/* 二级内容面板：加号菜单保持打开，此面板锚定在加号菜单
-                      右侧（left-16.5rem = 菜单宽度 16rem + 0.5rem 间距），
+                      右侧（left-18.5rem = 菜单宽度 18rem + 0.5rem 间距），
                       展示当前选中分区（命令/技能/Extensions/MCP/插件）的内容。 */}
                   {toolMenuOpen ? (
-                    <div className="absolute bottom-full left-[16.5rem] z-40 mb-3 w-[min(calc(100vw-20rem),26rem)] overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+                    <div className="absolute bottom-full left-[18.5rem] z-40 mb-3 w-[min(calc(100vw-22rem),26rem)] overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
                       <div className="subtle-scrollbar m-2 max-h-[19.5rem] min-w-0 overflow-x-hidden overflow-y-auto">
                         <div role="presentation" onMouseDown={(event) => event.preventDefault()}>
                           {toolMenuSection === "commands" ? (

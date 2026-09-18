@@ -147,6 +147,8 @@ export default {
   "composer.plus_menu_section_add": "Add",
   "composer.plus_menu_file": "File",
   "composer.plus_menu_sketch": "Draw sketch",
+  "composer.plus_menu_draw": "Draw",
+  "composer.agent_plan_mode": "Plan mode",
   "composer.plus_menu_section_plugins": "Plugins",
   "composer.send_options": "More send options",
   "composer.queued_attachments_only": "{count} attachment(s)",
