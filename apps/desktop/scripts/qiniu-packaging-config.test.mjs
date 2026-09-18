@@ -6,6 +6,7 @@ import { parse } from "yaml";
 
 const config = parse(readFileSync(new URL("../electron-builder.yml", import.meta.url), "utf8"));
 const installerInclude = readFileSync(new URL("../build/installer.nsh", import.meta.url), "utf8");
+const macReleaseWrapper = readFileSync(new URL("./package-macos-release.mjs", import.meta.url), "utf8");
 
 describe("Qiniu packaged updater configuration", () => {
   it("uses a platform-specific generic feed without a top-level publisher", () => {
@@ -28,6 +29,13 @@ describe("Qiniu packaged updater configuration", () => {
     assert.deepEqual(config.mac.target, ["dmg", "zip"]);
     assert.equal(config.mac.notarize, false);
     assert.equal(config.dmg.sign, true);
+  });
+
+  it("passes an unprefixed certificate name to electron-builder while keeping the full helper identity", () => {
+    assert.match(macReleaseWrapper, /CSC_NAME:\s*electronBuilderIdentity/);
+    assert.match(macReleaseWrapper, /electronBuilderIdentity !== EXPECTED_CERTIFICATE_NAME/);
+    assert.match(macReleaseWrapper, /JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY:[\s\S]*\|\| EXPECTED_IDENTITY/);
+    assert.match(macReleaseWrapper, /replace\(\/\^Developer ID Application:/);
   });
 
   it("contains no active GitHub update publisher", () => {

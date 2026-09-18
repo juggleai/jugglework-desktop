@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const EXPECTED_IDENTITY = "Developer ID Application: Beijing Qiyilu Technology Co., Ltd (H7PDHSK3C7)";
+const EXPECTED_CERTIFICATE_NAME = "Beijing Qiyilu Technology Co., Ltd (H7PDHSK3C7)";
+const EXPECTED_IDENTITY = `Developer ID Application: ${EXPECTED_CERTIFICATE_NAME}`;
 const DEFAULT_NOTARY_PROFILE = "JUGGLEWORK_NOTARY_PROFILE";
 
 function fail(message) {
@@ -22,6 +23,17 @@ function normalizeArch(input) {
   if (value === "arm64" || value === "aarch64") return "arm64";
   if (value === "x64" || value === "x86_64") return "x64";
   fail(`Unsupported architecture: ${input}`);
+}
+
+function normalizeElectronBuilderIdentity(input) {
+  const value = String(input ?? "").trim();
+  if (!value) return EXPECTED_CERTIFICATE_NAME;
+  return value.replace(/^Developer ID Application:\s*/, "");
+}
+
+const electronBuilderIdentity = normalizeElectronBuilderIdentity(process.env.CSC_NAME);
+if (electronBuilderIdentity !== EXPECTED_CERTIFICATE_NAME) {
+  fail(`Unexpected Developer ID signing identity: ${electronBuilderIdentity}`);
 }
 
 function run(command, args, options) {
@@ -58,13 +70,13 @@ const environment = {
   ...process.env,
   MACOS_NOTARIZE: "true",
   APPLE_NOTARY_KEYCHAIN_PROFILE: process.env.APPLE_NOTARY_KEYCHAIN_PROFILE || DEFAULT_NOTARY_PROFILE,
-  CSC_NAME: process.env.CSC_NAME || EXPECTED_IDENTITY,
-  JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY: process.env.JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY || process.env.CSC_NAME || EXPECTED_IDENTITY,
+  CSC_NAME: electronBuilderIdentity,
+  JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY: process.env.JUGGLEWORK_COMPUTER_USE_CODESIGN_IDENTITY || EXPECTED_IDENTITY,
 };
 
 const identities = capture("security", ["find-identity", "-v", "-p", "codesigning"], { cwd: desktopRoot, env: environment });
-if (!identities.includes(`\"${environment.CSC_NAME}\"`)) {
-  fail(`Expected Developer ID signing identity is unavailable: ${environment.CSC_NAME}`);
+if (!identities.includes(`\"${EXPECTED_IDENTITY}\"`)) {
+  fail(`Expected Developer ID signing identity is unavailable: ${EXPECTED_IDENTITY}`);
 }
 
 capture("xcrun", [
