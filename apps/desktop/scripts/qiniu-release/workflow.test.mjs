@@ -69,6 +69,13 @@ function verifiedEvidence(plan) {
     identity: { bundleIdentifier: EXPECTED_BUNDLE_ID, teamIdentifier: EXPECTED_TEAM_ID },
     codesign: { status: "accepted", deep: true, strict: true }, hardenedRuntime: { status: "enabled" },
     notarization: { status: "accepted", submissionId: "notary-id" }, staple: { status: "validated" }, gatekeeper: { status: "accepted" },
+    dmg: {
+      signature: { status: "accepted", teamIdentifier: EXPECTED_TEAM_ID },
+      notarization: { status: "accepted", submissionId: "dmg-notary-id" },
+      staple: { status: "validated" },
+      gatekeeper: { status: "accepted" },
+      image: { status: "verified" },
+    },
     artifacts: plan.objects.map((item) => ({ name: item.name, size: item.size, sha256: item.sha256, sha512: item.sha512, etag: item.etag })),
     manifest: { name: "latest-mac.yml", size: plan.manifest.size, sha256: plan.manifest.sha256, sha512: plan.manifest.sha512, etag: plan.manifest.etag },
   };

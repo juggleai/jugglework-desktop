@@ -225,3 +225,12 @@
 - [x] 25.2 Make the repository after-sign hook the sole `.app` notarization owner, have electron-builder sign the outer DMG, then submit, staple, validate, and Gatekeeper-assess the final DMG after packaging
 - [x] 25.3 Regenerate the DMG blockmap and `latest-mac.yml` only after stapling freezes final DMG bytes; require distinct `.app` and DMG receipts in stable release verification
 - [x] 25.4 Add the local `package:mac-release` entry point, focused tests, workflow ordering checks, runbook guidance, and workspace release-skill guidance
+
+## 26. Publish notarized macOS arm64 1.2.21 (2026-09-18)
+
+- [x] 26.1 Confirm exact stable `1.2.21` scope: macOS arm64 only, normal Developer ID and Apple notarization/stapling/Gatekeeper gates, Qiniu immutable upload and Stable promotion, and no Windows release
+- [x] 26.2 Synchronize app, Desktop, and embedded Server versions to `1.2.21`; run release-critical tests and strict OpenSpec validation; commit/push dev and fast-forward main without including unrelated local changes
+- [ ] 26.3 Build exact committed `1.2.21` with the local release wrapper; notarize/staple the `.app` and outer DMG, regenerate final DMG blockmap/manifest, and pass complete packaged verification
+- [ ] 26.4 Publish and fully verify all five immutable `v1.2.21/mac` objects on Qiniu without overwrite
+- [ ] 26.5 Complete a real isolated lower-version macOS arm64 update canary against the exact immutable manifest, including discovery, download, install, relaunch, installed version, user data, workspace access, and permissions
+- [ ] 26.6 Promote and read back Stable under its macOS lock with controlled cache metadata, then update landing and expose `1.2.21` in China first and overseas second

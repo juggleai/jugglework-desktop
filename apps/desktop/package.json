@@ -1,7 +1,7 @@
 {
   "name": "@jugglework/desktop",
   "private": true,
-  "version": "1.2.20",
+  "version": "1.2.21",
   "description": "JuggleWork desktop shell",
   "author": {
     "name": "JuggleWork",
