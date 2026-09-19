@@ -2204,12 +2204,16 @@ export function createRemoteControlAgent(options) {
       const session = encryptedControlSessions.get(parsed.data.controlSessionId);
       if (!session) return reject("encryption_session_missing", eventType);
       const occurredAt = new Date(parsed.data.occurredAt).toISOString();
+      const lifecycleStatus = eventType === "session.status" || eventType === "run.status"
+        ? parsed.data.data.status
+        : undefined;
       const routing = {
         kind: "session-event", eventId: parsed.data.eventId, controlSessionId: parsed.data.controlSessionId,
         deviceId: parsed.data.deviceId, workspaceId: parsed.data.workspaceId, sessionId: parsed.data.sessionId,
         sourceSequence: parsed.data.sequence, eventType: parsed.data.data.type, occurredAt,
         desktopKeyId: session.desktopKeyId, desktopStatementHash: session.desktopStatementHash,
         controllerKeyId: session.controllerKeyId,
+        ...(lifecycleStatus !== undefined && lifecycleStatus !== "started" ? { status: lifecycleStatus } : {}),
       };
       const payload = encryptRemoteControlPayload({
         key: session.outboundKey,

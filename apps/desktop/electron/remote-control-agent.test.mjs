@@ -1590,6 +1590,31 @@ describe("remote-control agent command handling", () => {
       aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...terminal.routing }),
       payload: terminal.payload,
     }).result.result, { sessionId: "ses_created" });
+
+    const lifecycleEvent = {
+      schemaVersion: 1, payloadVersion: 1, eventId: "66666666-6666-4666-8666-666666666666",
+      controlSessionId: CONTROL_ID, deviceId: DEVICE_ID, workspaceId: "ws_1", sessionId: "ses_created",
+      sequence: 1, occurredAt: new Date(NOW + 1_000).toISOString(),
+      data: { type: "session.status", status: "completed", run: null },
+    };
+    assert.equal(fixture.agent.publishSessionEvent(lifecycleEvent, { connectionGeneration: 78 }), true);
+    const encryptedEvent = frames(socket, "encrypted.payload").at(-1);
+    assert.equal(encryptedEvent.routing.eventType, "session.status");
+    assert.equal(encryptedEvent.routing.status, "completed");
+    assert.equal("title" in encryptedEvent.routing, false);
+    assert.equal("content" in encryptedEvent.routing, false);
+    assert.deepEqual(decryptRemoteControlPayload({
+      key: outboundKey,
+      aad: canonicalRemoteControlAAD({ protocolVersion: 1, payloadVersion: 1, ...encryptedEvent.routing }),
+      payload: encryptedEvent.payload,
+    }), lifecycleEvent.data);
+    assert.throws(() => decryptRemoteControlPayload({
+      key: outboundKey,
+      aad: canonicalRemoteControlAAD({
+        protocolVersion: 1, payloadVersion: 1, ...encryptedEvent.routing, status: "failed",
+      }),
+      payload: encryptedEvent.payload,
+    }));
   });
 
   it("exposes only a bounded actor identity from a validated accepted session binding", async () => {
