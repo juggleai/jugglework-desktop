@@ -1,0 +1,45 @@
+{
+  "name": "@jugglework/cli",
+  "version": "1.2.21",
+  "description": "Interactive command-line client for JuggleWork",
+  "type": "module",
+  "bin": {
+    "jugglework": "bin/jugglework.mjs"
+  },
+  "scripts": {
+    "dev": "pnpm --filter jugglework-server build && bun src/cli.ts",
+    "build": "pnpm --filter jugglework-server build && bun ./script/build.ts --outdir dist/bin",
+    "build:bin": "pnpm --filter jugglework-server build && bun ./script/build.ts --outdir dist/bin",
+    "build:bin:all": "pnpm --filter jugglework-server build && bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
+    "pretypecheck": "pnpm --filter jugglework-server build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter jugglework-server build",
+    "test": "bun test",
+    "prepack": "pnpm build"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "jugglework-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juggleai/jugglework-desktop.git",
+    "directory": "apps/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@11.4.0"
+}

@@ -139,6 +139,24 @@ async function logLines(path: string): Promise<string[]> {
 }
 
 describe("embedded server lifecycle", () => {
+  test.serial("passes an embedded logger without changing process-global logging", async () => {
+    const fixture = await createFixture();
+    const previousSilent = process.env.JUGGLEWORK_LOG_SILENT;
+    const lines: string[] = [];
+    try {
+      const options = managedOptions(fixture, "embedded-logger");
+      options.logger = { log: (_level, message) => lines.push(message) };
+      await mkdir(options.opencodeCwd ?? "", { recursive: true });
+      const handle = await startEmbeddedServer(options);
+      fixture.handles.push(handle);
+      await fetch(`${handle.url}/health`).then((response) => response.text());
+      expect(process.env.JUGGLEWORK_LOG_SILENT).toBe(previousSilent);
+      expect(lines.some((line) => line.includes("GET /health 200"))).toBe(true);
+    } finally {
+      await fixture.restore();
+    }
+  });
+
   test.serial("injects the authoritative bound Server URL into managed OpenCode", async () => {
     const fixture = await createFixture();
     try {

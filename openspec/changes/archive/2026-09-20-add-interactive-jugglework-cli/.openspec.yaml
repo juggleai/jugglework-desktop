@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-09-20
+goal: Let users start, observe, steer, resume, and stop JuggleWork tasks from a
+  terminal with the current directory as the default workspace.

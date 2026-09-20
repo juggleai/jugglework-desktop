@@ -724,7 +724,7 @@ type LogLevel = "info" | "warn" | "error";
 
 type LogAttributes = Record<string, unknown>;
 
-type ServerLogger = {
+export type ServerLogger = {
   log: (level: LogLevel, message: string, attributes?: LogAttributes) => void;
 };
 
@@ -881,12 +881,13 @@ function parseSessionExecutionStartProxyRequest(method: string, proxyPath: strin
 
 export async function startServer(config: ServerConfig, options: {
   interactionResolutions?: InteractionResolutionCoordinator;
+  logger?: ServerLogger;
 } = {}): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
-  const logger = createServerLogger(config);
+  const logger = options.logger ?? createServerLogger(config);
   let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const dispatchInternalReloadRequired = async (workspaceId: string, reasons: ReloadReason[] = []) => {
     // Internal repairs write the same files watched below. Advance the

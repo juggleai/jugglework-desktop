@@ -14,6 +14,7 @@ import {
   registerTrustedOpencodeProcess,
   startServer,
   syncAllWorkspacesRuntimeMcpToEngine,
+  type ServerLogger,
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
@@ -38,6 +39,8 @@ export type EmbeddedServerOptions = CliArgs & {
    * back to the public JuggleWork mirror.
    */
   modelsUrl?: string;
+  /** Optional logger for embedded callers that own output formatting. */
+  logger?: ServerLogger;
 };
 
 export type EmbeddedServerHandle = {
@@ -156,7 +159,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // legitimately replace port 0 (or an address-in-use preferred port) with an
   // OS-assigned port, and the engine plugin must receive that authoritative
   // callback URL rather than the requested port.
-  server = await duringStartup(() => startServer(config));
+  server = await duringStartup(() => startServer(config, { logger: options.logger }));
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 
