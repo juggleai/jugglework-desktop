@@ -448,6 +448,31 @@ describe("authoritative session mutation APIs", () => {
     expect(engine.v2Prompts[1]?.body).toMatchObject({ id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_queue", source: "remote-pending", id: queued[1]!.pendingOperationId }), delivery: "queue", prompt: { text: "Second" } });
   });
 
+  test("preserves safe attachment parts for idle starts and rejects them while busy", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const parts = [
+      { type: "text", text: "Inspect " },
+      { type: "file", mime: "application/pdf", filename: "brief.pdf", url: "data:application/pdf;base64,JVBERg==" },
+      { type: "text", text: " now" },
+    ];
+    engine.statuses.set("ses_attachment", { type: "idle" });
+    const started = await fetch(`${runPath(harness.base, "ses_attachment")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_attachment", prompt: { parts } }),
+    });
+    expect(started.status).toBe(202);
+    expect((engine.prompts.at(-1)?.body as { parts?: unknown[] } | undefined)?.parts).toEqual(parts);
+
+    engine.statuses.set("ses_attachment_busy", { type: "busy" });
+    const busy = await fetch(`${runPath(harness.base, "ses_attachment_busy")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_attachment_busy", whenBusy: "enqueue", prompt: { parts } }),
+    });
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toMatchObject({ code: "session_busy" });
+  });
+
   test("failed queue promotion rolls back its local reservation", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

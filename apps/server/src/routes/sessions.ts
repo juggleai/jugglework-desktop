@@ -1,4 +1,5 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { desktopRemotePromptPartSchema } from "@jugglework/types/desktop-remote-control";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { admitOpencodePrompt } from "../opencode-admission.js";
@@ -109,13 +110,15 @@ const promptBodySchema = z.object({
   reasoning_effort: z.string().max(256).optional(),
 }).strict().refine((value) => JSON.stringify(value).length <= 16 * 1024 * 1024, "prompt payload is too large");
 const remotePromptBodySchema = z.object({
-  parts: z.tuple([z.object({
-    type: z.literal("text"),
-    text: z.string().min(1)
-      .refine((value) => value.trim().length > 0)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= 200_000),
-  }).strict()]),
-}).strict();
+  parts: z.array(desktopRemotePromptPartSchema).min(1).max(1_000),
+}).strict().superRefine((prompt, context) => {
+  const files = prompt.parts.filter((part) => part.type === "file");
+  const text = prompt.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+  if (files.length > 3) context.addIssue({ code: "custom", message: "too many files" });
+  if (Buffer.byteLength(text, "utf8") > 200_000) context.addIssue({ code: "custom", message: "prompt text is too large" });
+  if (!text.trim() && files.length === 0) context.addIssue({ code: "custom", message: "prompt is empty" });
+  if (Buffer.byteLength(JSON.stringify(prompt.parts), "utf8") > 1_300_000) context.addIssue({ code: "custom", message: "prompt is too large" });
+});
 const startRunBodySchema = z.discriminatedUnion("origin", [
   z.object({
     origin: z.literal("local-renderer"),
@@ -832,9 +835,13 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           return jsonResponse({ disposition: "steered", admissionId: input.startCommandCorrelationId }, 202);
         }
         if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
-          const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&
-            isRecord(input.prompt.parts[0]) && input.prompt.parts[0].type === "text" && typeof input.prompt.parts[0].text === "string"
-            ? input.prompt.parts[0].text : null;
+          const promptParts = isRecord(input.prompt) && Array.isArray(input.prompt.parts) ? input.prompt.parts : [];
+          const hasFiles = promptParts.some((part) => isRecord(part) && part.type === "file");
+          if (hasFiles) {
+            throw new SessionMutationError("session_busy", sessionMutations.getActive(workspace.id, input.sessionId)?.runId ?? null);
+          }
+          const text = promptParts.every((part) => isRecord(part) && part.type === "text" && typeof part.text === "string")
+            ? promptParts.map((part) => String(part.text)).join("") : null;
           if (!text || !input.startCommandCorrelationId) throw new ApiError(400, "invalid_payload", "Remote pending prompt is invalid");
           const pending = sessionPendingOperations.create({
             workspaceId: workspace.id,
