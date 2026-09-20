@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import {
   desktopRemoteCapabilityAdvertisementSchema,
+  desktopRemoteOperationRequestSchema,
   desktopRemoteSessionEventSchema,
 } from "../dist/runtime/desktop-remote-control.js";
 import { RemoteControlCloudError } from "./remote-control-cloud-client.mjs";
@@ -399,6 +400,9 @@ function validRequest(value) {
     !OPERATION_NAMES.has(value.operation) || ![1, 2].includes(value.payloadVersion) || !isRecord(value.arguments)) return false;
   const args = value.arguments;
   if (value.payloadVersion === 2) {
+    if (value.operation === "session.prompt") {
+      return desktopRemoteOperationRequestSchema.safeParse(value).success;
+    }
     if (value.operation === "session.snapshot") {
       return hasExactKeys(args, ["workspaceId", "rootSessionId"]) && isIdentifier(args.workspaceId) && isIdentifier(args.rootSessionId);
     }
