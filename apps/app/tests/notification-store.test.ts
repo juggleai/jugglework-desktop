@@ -21,10 +21,11 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
 });
 
-const { useNotificationStore } = await import("../src/react-app/kernel/notification-store");
+const { PERSISTED_NOTIFICATION_STORE_KEY, useNotificationStore } = await import("../src/react-app/kernel/notification-store");
+const { notifyPendingCloudPluginChanges } = await import("../src/react-app/domains/settings/state/extensions-store");
 
 function reset() {
-  useNotificationStore.setState({ notifications: [] });
+  useNotificationStore.setState({ notifications: [], sourceVersions: {} });
   storage.clear();
 }
 
@@ -116,5 +117,137 @@ describe("notification store", () => {
     const notifications = useNotificationStore.getState().notifications;
     expect(notifications).toHaveLength(100);
     expect(notifications[0].title).toBe("Entry 109");
+  });
+
+  test("source-aware add remains idempotent after read and clear", () => {
+    const source = { key: "workspace:org:member:marketplace:plugin", version: 3 };
+    const { add, markAllRead, clearAll } = useNotificationStore.getState();
+    add({ kind: "cloud", title: "Removed", source });
+    markAllRead();
+    add({ kind: "cloud", title: "Removed again", source });
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
+
+    clearAll();
+    add({ kind: "cloud", title: "Removed after clear", source });
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+
+    add({ kind: "cloud", title: "Later removal", source: { ...source, version: 4 } });
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
+    expect(useNotificationStore.getState().sourceVersions[source.key]?.version).toBe(4);
+  });
+
+  test("source cursors survive persisted rehydration independently of visible rows", async () => {
+    const source = { key: "workspace:org:member:marketplace:plugin", version: 7 };
+    useNotificationStore.getState().add({ kind: "cloud", title: "Removed", source });
+    useNotificationStore.getState().clearAll();
+    const persisted = storage.get(PERSISTED_NOTIFICATION_STORE_KEY);
+    expect(persisted).toBeTruthy();
+
+    useNotificationStore.setState({ notifications: [], sourceVersions: {} });
+    storage.set(PERSISTED_NOTIFICATION_STORE_KEY, persisted!);
+    await useNotificationStore.persist.rehydrate();
+    useNotificationStore.getState().add({ kind: "cloud", title: "Duplicate", source });
+
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+    expect(useNotificationStore.getState().sourceVersions[source.key]?.version).toBe(7);
+  });
+
+  test("migrates an existing legacy removal notification into a source cursor without notifying again", () => {
+    const { add } = useNotificationStore.getState();
+    add({
+      kind: "cloud",
+      title: "Extension removed by admin",
+      dedupeKey: "plugin-removed:plugin_1",
+    });
+    const legacyNotificationId = useNotificationStore.getState().notifications[0]?.id;
+
+    add({
+      kind: "cloud",
+      title: "Extension removed by admin",
+      dedupeKey: "scoped-removal:7",
+      source: {
+        key: "workspace:org:member:marketplace:plugin_1",
+        version: 7,
+        legacyDedupeKeys: ["plugin-removed:plugin_1"],
+      },
+    });
+
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
+    expect(useNotificationStore.getState().notifications[0]?.id).toBe(legacyNotificationId);
+    expect(useNotificationStore.getState().sourceVersions["workspace:org:member:marketplace:plugin_1"]?.version).toBe(7);
+  });
+
+  test("bounds persisted source cursors", () => {
+    const { add } = useNotificationStore.getState();
+    for (let index = 0; index < 1_010; index += 1) {
+      add({
+        kind: "cloud",
+        title: `Source ${index}`,
+        source: { key: `source:${index}`, version: 1 },
+      });
+    }
+    expect(Object.keys(useNotificationStore.getState().sourceVersions)).toHaveLength(1_000);
+  });
+
+  test("cloud plugin producer scopes and delivers each occurrence once", () => {
+    const installedPlugins = {
+      plugin_1: {
+        pluginId: "plugin_1",
+        marketplaceId: "market_1",
+        name: "Plugin One",
+        description: null,
+        updatedAt: "2026-01-01",
+        files: [],
+        importedAt: 1,
+      },
+    };
+    const removal = (changeVersion: number) => ({
+      id: "plugin_1",
+      kind: "removed" as const,
+      resourceKind: "plugin" as const,
+      changeVersion,
+      marketplaceId: "market_1",
+      previousLastUpdatedAt: "2026-01-01",
+      nextLastUpdatedAt: null,
+      queuedAt: changeVersion,
+    });
+    const notify = (changeVersion: number) => notifyPendingCloudPluginChanges({
+      workspaceId: "workspace_1",
+      organizationId: "org_1",
+      orgMemberId: "member_1",
+      changes: [removal(changeVersion)],
+      installedPlugins,
+      pending: { plugin_1: "removed" },
+    });
+
+    notify(1);
+    notify(1);
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
+    const sourceKey = Object.keys(useNotificationStore.getState().sourceVersions)[0];
+    expect(JSON.parse(sourceKey!)).toEqual([
+      "desktop-cloud-resource",
+      "workspace_1",
+      "org_1",
+      "member_1",
+      "plugin",
+      "market_1",
+      "plugin_1",
+    ]);
+
+    notifyPendingCloudPluginChanges({
+      workspaceId: "workspace_2",
+      organizationId: "org_1",
+      orgMemberId: "member_1",
+      changes: [removal(1)],
+      installedPlugins,
+      pending: { plugin_1: "removed" },
+    });
+    expect(useNotificationStore.getState().notifications).toHaveLength(2);
+
+    useNotificationStore.getState().clearAll();
+    notify(1);
+    expect(useNotificationStore.getState().notifications).toHaveLength(0);
+    notify(2);
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
   });
 });

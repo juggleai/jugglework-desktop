@@ -8,6 +8,7 @@ import type { JuggleWorkDesktopCloudSyncChange } from "../src/app/lib/jugglework
 
 function change(input: Partial<JuggleWorkDesktopCloudSyncChange> & Pick<JuggleWorkDesktopCloudSyncChange, "id" | "kind" | "resourceKind">): JuggleWorkDesktopCloudSyncChange {
   return {
+    changeVersion: 1,
     marketplaceId: undefined,
     pluginId: undefined,
     previousLastUpdatedAt: null,
@@ -134,6 +135,7 @@ describe("readPendingCloudSyncChanges", () => {
               id: "plugin-1",
               kind: "modified",
               resourceKind: "plugin",
+              changeVersion: 7,
               previousLastUpdatedAt: "2026-01-01",
               nextLastUpdatedAt: "2026-02-01",
               queuedAt: 1,
@@ -146,13 +148,14 @@ describe("readPendingCloudSyncChanges", () => {
         broken: null,
       },
       updatedAt: 1,
-      version: 1,
-    });
+      version: 2,
+    }, { organizationId: "org", orgMemberId: "member" });
     expect(changes).toEqual([
       {
         id: "plugin-1",
         kind: "modified",
         resourceKind: "plugin",
+        changeVersion: 7,
         marketplaceId: undefined,
         pluginId: undefined,
         previousLastUpdatedAt: "2026-01-01",
@@ -160,5 +163,22 @@ describe("readPendingCloudSyncChanges", () => {
         queuedAt: 1,
       },
     ]);
+  });
+
+  test("reads only the requested organization-member context", () => {
+    const changes = readPendingCloudSyncChanges({
+      entries: {
+        "org-a::member-a": {
+          pendingChanges: [change({ id: "plugin-a", kind: "removed", resourceKind: "plugin" })],
+        },
+        "org-b::member-b": {
+          pendingChanges: [change({ id: "plugin-b", kind: "removed", resourceKind: "plugin" })],
+        },
+      },
+      updatedAt: 1,
+      version: 2,
+    }, { organizationId: "org-b", orgMemberId: "member-b" });
+
+    expect(changes.map((entry) => entry.id)).toEqual(["plugin-b"]);
   });
 });

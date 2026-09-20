@@ -337,6 +337,7 @@ export type JuggleWorkDesktopCloudSyncChange = {
   id: string;
   kind: "new" | "modified" | "removed";
   resourceKind: "llmProvider" | "marketplace" | "plugin" | "configItem";
+  changeVersion: number;
   marketplaceId?: string;
   pluginId?: string;
   previousLastUpdatedAt: string | null;
@@ -347,7 +348,7 @@ export type JuggleWorkDesktopCloudSyncChange = {
 export type JuggleWorkDesktopCloudSyncState = {
   entries: Record<string, unknown>;
   updatedAt: number;
-  version: 1;
+  version: 1 | 2;
 };
 
 export type JuggleWorkDesktopCloudSyncResult = {

@@ -35,6 +35,10 @@ function readSyncChange(value: unknown): JuggleWorkDesktopCloudSyncChange | null
     id,
     kind,
     resourceKind,
+    changeVersion: typeof value.changeVersion === "number" &&
+      Number.isSafeInteger(value.changeVersion) && value.changeVersion > 0
+      ? value.changeVersion
+      : 0,
     marketplaceId: typeof value.marketplaceId === "string" ? value.marketplaceId : undefined,
     pluginId: typeof value.pluginId === "string" ? value.pluginId : undefined,
     previousLastUpdatedAt: typeof value.previousLastUpdatedAt === "string" ? value.previousLastUpdatedAt : null,
@@ -43,14 +47,19 @@ function readSyncChange(value: unknown): JuggleWorkDesktopCloudSyncChange | null
   };
 }
 
-/** Read all pending changes from a persisted desktop-cloud-sync state (GET response). */
-export function readPendingCloudSyncChanges(state: JuggleWorkDesktopCloudSyncState): JuggleWorkDesktopCloudSyncChange[] {
-  return Object.values(state.entries).flatMap((entry) => {
-    if (!isRecord(entry) || !Array.isArray(entry.pendingChanges)) return [];
-    return entry.pendingChanges.flatMap((change) => {
-      const parsed = readSyncChange(change);
-      return parsed ? [parsed] : [];
-    });
+/** Read pending changes for one organization-member context from a persisted GET response. */
+export function readPendingCloudSyncChanges(
+  state: JuggleWorkDesktopCloudSyncState,
+  context: { organizationId: string; orgMemberId: string },
+): JuggleWorkDesktopCloudSyncChange[] {
+  const organizationId = context.organizationId.trim();
+  const orgMemberId = context.orgMemberId.trim();
+  if (!organizationId || !orgMemberId) return [];
+  const entry = state.entries[[organizationId, orgMemberId].join("::")];
+  if (!isRecord(entry) || !Array.isArray(entry.pendingChanges)) return [];
+  return entry.pendingChanges.flatMap((change) => {
+    const parsed = readSyncChange(change);
+    return parsed ? [parsed] : [];
   });
 }
 
@@ -100,27 +109,64 @@ export function derivePendingCloudPluginChanges(input: {
 
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 
-async function runDesktopCloudSync(input: {
-  juggleworkClient: JuggleWorkServerClient;
-  workspaceId: string;
-}): Promise<JuggleWorkDesktopCloudSyncResult | null> {
+export type DesktopCloudSyncRefreshResult = JuggleWorkDesktopCloudSyncResult & {
+  organizationId: string;
+  orgMemberId: string;
+};
+
+async function readCurrentResourceSnapshot() {
   const settings = readDenSettings();
   const token = settings.authToken?.trim() ?? "";
   const activeOrgId = settings.activeOrgId?.trim() ?? "";
   if (!token || !activeOrgId) return null;
-
-  const snapshot = await createDenClient({
+  return createDenClient({
     baseUrl: settings.baseUrl,
     token,
   }).getResourceSnapshot(activeOrgId);
+}
 
-  return input.juggleworkClient.syncDesktopCloud(input.workspaceId, snapshot);
+async function runDesktopCloudSync(input: {
+  juggleworkClient: JuggleWorkServerClient;
+  workspaceId: string;
+}): Promise<DesktopCloudSyncRefreshResult | null> {
+  const snapshot = await readCurrentResourceSnapshot();
+  if (!snapshot) return null;
+  let result: JuggleWorkDesktopCloudSyncResult;
+  try {
+    result = await input.juggleworkClient.syncDesktopCloud(input.workspaceId, snapshot);
+  } catch {
+    const state = await input.juggleworkClient.getDesktopCloudSync(input.workspaceId);
+    result = {
+      changes: readPendingCloudSyncChanges(state, snapshot),
+      state,
+    };
+  }
+  return {
+    ...result,
+    organizationId: snapshot.organizationId,
+    orgMemberId: snapshot.orgMemberId,
+  };
+}
+
+export async function readCurrentDesktopCloudSync(input: {
+  juggleworkClient: JuggleWorkServerClient;
+  workspaceId: string;
+}): Promise<DesktopCloudSyncRefreshResult | null> {
+  const snapshot = await readCurrentResourceSnapshot();
+  if (!snapshot) return null;
+  const state = await input.juggleworkClient.getDesktopCloudSync(input.workspaceId);
+  return {
+    changes: readPendingCloudSyncChanges(state, snapshot),
+    state,
+    organizationId: snapshot.organizationId,
+    orgMemberId: snapshot.orgMemberId,
+  };
 }
 
 export function refreshDesktopCloudSync(input: {
   juggleworkClient: JuggleWorkServerClient | null | undefined;
   workspaceId: string | null | undefined;
-}): Promise<JuggleWorkDesktopCloudSyncResult | null> {
+}): Promise<DesktopCloudSyncRefreshResult | null> {
   const juggleworkClient = input.juggleworkClient ?? null;
   const workspaceId = input.workspaceId?.trim() ?? "";
   if (!juggleworkClient || !workspaceId) return Promise.resolve(null);

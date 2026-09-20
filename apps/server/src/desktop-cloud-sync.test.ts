@@ -42,6 +42,7 @@ describe("desktop cloud sync", () => {
         id: "lpr_existing",
         kind: "modified",
         resourceKind: "llmProvider",
+        changeVersion: 1,
         previousLastUpdatedAt: "2026-06-01T00:00:00.000Z",
         nextLastUpdatedAt: "2026-06-02T00:00:00.000Z",
         queuedAt: 1780442400000,
@@ -50,6 +51,7 @@ describe("desktop cloud sync", () => {
         id: "lpr_removed",
         kind: "removed",
         resourceKind: "llmProvider",
+        changeVersion: 2,
         previousLastUpdatedAt: "2026-06-01T00:00:00.000Z",
         nextLastUpdatedAt: null,
         queuedAt: 1780442400000,
@@ -58,6 +60,102 @@ describe("desktop cloud sync", () => {
 
     const state = readDesktopCloudSyncState(result.jugglework);
     expect(state.entries["org_1::member_1"]?.pendingChanges).toHaveLength(2);
+    expect(state.entries["org_1::member_1"]?.nextChangeVersion).toBe(3);
+  });
+
+  test("preserves a removal occurrence, clears it on reappearance, and versions a later removal", () => {
+    const installedAt = "2026-06-01T00:00:00.000Z";
+    const jugglework = {
+      cloudImports: {
+        plugins: {
+          plugin_1: {
+            pluginId: "plugin_1",
+            marketplaceId: "market_1",
+            updatedAt: installedAt,
+            files: [],
+          },
+        },
+      },
+    };
+    const absent: ResourceSnapshot = {
+      organizationId: "org_1",
+      orgMemberId: "member_1",
+      teamIds: [],
+      resources: { llmProviders: {}, marketplaces: {} },
+    };
+    const present: ResourceSnapshot = {
+      ...absent,
+      resources: {
+        llmProviders: {},
+        marketplaces: {
+          market_1: {
+            lastUpdatedAt: installedAt,
+            plugins: [{ pluginId: "plugin_1", lastUpdatedAt: installedAt, configItems: [] }],
+          },
+        },
+      },
+    };
+
+    const first = syncDesktopCloudResources({ now: 10, jugglework, snapshot: absent });
+    const repeated = syncDesktopCloudResources({ now: 20, jugglework: first.jugglework, snapshot: absent });
+    expect(repeated.changes).toEqual(first.changes);
+    expect(repeated.changes[0]).toMatchObject({ changeVersion: 1, queuedAt: 10 });
+
+    const reappeared = syncDesktopCloudResources({ now: 30, jugglework: repeated.jugglework, snapshot: present });
+    expect(reappeared.changes).toEqual([]);
+    expect(reappeared.state.entries["org_1::member_1"]?.pendingChanges).toEqual([]);
+
+    const removedAgain = syncDesktopCloudResources({ now: 40, jugglework: reappeared.jugglework, snapshot: absent });
+    expect(removedAgain.changes[0]).toMatchObject({ changeVersion: 2, queuedAt: 40 });
+  });
+
+  test("migrates legacy pending changes deterministically in persisted order", () => {
+    const snapshot: ResourceSnapshot = {
+      organizationId: "org_1",
+      orgMemberId: "member_1",
+      teamIds: [],
+      resources: { llmProviders: {}, marketplaces: {} },
+    };
+    const state = readDesktopCloudSyncState({
+      desktopCloudSync: {
+        version: 1,
+        updatedAt: 5,
+        entries: {
+          "org_1::member_1": {
+            contextKey: "org_1::member_1",
+            fetchedAt: 5,
+            organizationId: "org_1",
+            orgMemberId: "member_1",
+            snapshot,
+            teamIds: [],
+            pendingChanges: [
+              {
+                id: "plugin_a",
+                kind: "removed",
+                resourceKind: "plugin",
+                marketplaceId: "market_1",
+                previousLastUpdatedAt: "2026-01-01",
+                nextLastUpdatedAt: null,
+                queuedAt: 1,
+              },
+              {
+                id: "plugin_b",
+                kind: "removed",
+                resourceKind: "plugin",
+                marketplaceId: "market_1",
+                previousLastUpdatedAt: "2026-01-01",
+                nextLastUpdatedAt: null,
+                queuedAt: 2,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(state.version).toBe(2);
+    expect(state.entries["org_1::member_1"]?.pendingChanges.map((change) => change.changeVersion)).toEqual([1, 2]);
+    expect(state.entries["org_1::member_1"]?.nextChangeVersion).toBe(3);
   });
 
   test("syncs large provider snapshots within an interactive budget", () => {

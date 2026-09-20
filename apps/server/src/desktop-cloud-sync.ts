@@ -31,6 +31,7 @@ export type DesktopCloudSyncChange = {
   id: string;
   kind: DesktopCloudSyncChangeKind;
   resourceKind: DesktopCloudSyncResourceKind;
+  changeVersion: number;
   marketplaceId?: string;
   pluginId?: string;
   previousLastUpdatedAt: string | null;
@@ -41,6 +42,7 @@ export type DesktopCloudSyncChange = {
 export type DesktopCloudSyncEntry = {
   contextKey: string;
   fetchedAt: number;
+  nextChangeVersion: number;
   organizationId: string;
   orgMemberId: string;
   pendingChanges: DesktopCloudSyncChange[];
@@ -51,7 +53,7 @@ export type DesktopCloudSyncEntry = {
 export type DesktopCloudSyncState = {
   entries: Record<string, DesktopCloudSyncEntry>;
   updatedAt: number;
-  version: 1;
+  version: 2;
 };
 
 type CloudImportedProvider = {
@@ -258,15 +260,20 @@ function readChange(value: unknown): DesktopCloudSyncChange | null {
     value.resourceKind === "configItem"
     ? value.resourceKind
     : null;
+  const changeVersion = typeof value.changeVersion === "number" &&
+    Number.isSafeInteger(value.changeVersion) && value.changeVersion > 0
+    ? value.changeVersion
+    : 0;
   const queuedAt = typeof value.queuedAt === "number" && Number.isFinite(value.queuedAt)
     ? value.queuedAt
-    : Date.now();
+    : 0;
   if (!id || !kind || !resourceKind) return null;
 
   return {
     id,
     kind,
     resourceKind,
+    changeVersion,
     marketplaceId: readString(value.marketplaceId) ?? undefined,
     pluginId: readString(value.pluginId) ?? undefined,
     previousLastUpdatedAt: readString(value.previousLastUpdatedAt),
@@ -275,22 +282,49 @@ function readChange(value: unknown): DesktopCloudSyncChange | null {
   };
 }
 
-function readDesktopCloudSyncEntry(contextKey: string, value: unknown): DesktopCloudSyncEntry | null {
+function readDesktopCloudSyncEntry(
+  contextKey: string,
+  value: unknown,
+  legacyState: boolean,
+): DesktopCloudSyncEntry | null {
   if (!isRecord(value)) return null;
   const snapshot = normalizeResourceSnapshot(value.snapshot);
   if (!snapshot) return null;
 
+  const pendingChanges = Array.isArray(value.pendingChanges)
+    ? value.pendingChanges.flatMap((entry) => {
+        const change = readChange(entry);
+        return change ? [change] : [];
+      })
+    : [];
+  const usedVersions = new Set<number>();
+  let nextAssignedVersion = 1;
+  for (const change of pendingChanges) {
+    const persistedVersion = legacyState ? 0 : change.changeVersion;
+    if (persistedVersion > 0 && !usedVersions.has(persistedVersion)) {
+      change.changeVersion = persistedVersion;
+      usedVersions.add(persistedVersion);
+      nextAssignedVersion = Math.max(nextAssignedVersion, persistedVersion + 1);
+      continue;
+    }
+    while (usedVersions.has(nextAssignedVersion)) nextAssignedVersion += 1;
+    change.changeVersion = nextAssignedVersion;
+    usedVersions.add(nextAssignedVersion);
+    nextAssignedVersion += 1;
+  }
+  const persistedNextChangeVersion = !legacyState &&
+    typeof value.nextChangeVersion === "number" &&
+    Number.isSafeInteger(value.nextChangeVersion) && value.nextChangeVersion > 0
+    ? value.nextChangeVersion
+    : 1;
+
   return {
     contextKey,
     fetchedAt: typeof value.fetchedAt === "number" && Number.isFinite(value.fetchedAt) ? value.fetchedAt : 0,
+    nextChangeVersion: Math.max(persistedNextChangeVersion, nextAssignedVersion),
     organizationId: readString(value.organizationId) ?? snapshot.organizationId,
     orgMemberId: readString(value.orgMemberId) ?? snapshot.orgMemberId,
-    pendingChanges: Array.isArray(value.pendingChanges)
-      ? value.pendingChanges.flatMap((entry) => {
-          const change = readChange(entry);
-          return change ? [change] : [];
-        })
-      : [],
+    pendingChanges,
     snapshot,
     teamIds: readStringArray(value.teamIds),
   };
@@ -298,18 +332,19 @@ function readDesktopCloudSyncEntry(contextKey: string, value: unknown): DesktopC
 
 export function readDesktopCloudSyncState(jugglework: Record<string, unknown>): DesktopCloudSyncState {
   const raw = isRecord(jugglework.desktopCloudSync) ? jugglework.desktopCloudSync : {};
+  const legacyState = raw.version !== 2;
   const rawEntries = isRecord(raw.entries) ? raw.entries : {};
   const entries: Record<string, DesktopCloudSyncEntry> = {};
   for (const [key, entry] of Object.entries(rawEntries)) {
     const contextKey = key.trim();
-    const parsed = contextKey ? readDesktopCloudSyncEntry(contextKey, entry) : null;
+    const parsed = contextKey ? readDesktopCloudSyncEntry(contextKey, entry, legacyState) : null;
     if (parsed) entries[contextKey] = parsed;
   }
 
   return {
     entries,
     updatedAt: typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
-    version: 1,
+    version: 2,
   };
 }
 
@@ -317,17 +352,39 @@ function contextKey(snapshot: ResourceSnapshot): string {
   return [snapshot.organizationId, snapshot.orgMemberId].join("::");
 }
 
-function changeKey(change: Pick<DesktopCloudSyncChange, "id" | "marketplaceId" | "pluginId" | "resourceKind">) {
-  return [change.resourceKind, change.marketplaceId ?? "", change.pluginId ?? "", change.id].join("::");
+function changeFingerprint(change: DesktopCloudSyncChange) {
+  return JSON.stringify([
+    change.resourceKind,
+    change.marketplaceId ?? "",
+    change.pluginId ?? "",
+    change.id,
+    change.kind,
+    change.previousLastUpdatedAt,
+    change.nextLastUpdatedAt,
+  ]);
 }
 
-function mergePendingChanges(previous: DesktopCloudSyncChange[], next: DesktopCloudSyncChange[]) {
-  if (next.length === 0) return previous;
-  const nextKeys = new Set(next.map(changeKey));
-  return [
-    ...previous.filter((change) => !nextKeys.has(changeKey(change))),
-    ...next,
-  ];
+function reconcilePendingChanges(
+  previous: DesktopCloudSyncChange[],
+  next: DesktopCloudSyncChange[],
+  nextChangeVersion: number,
+) {
+  const previousByFingerprint = new Map(previous.map((change) => [changeFingerprint(change), change]));
+  let version = nextChangeVersion;
+  const changes = next.map((change) => {
+    const existing = previousByFingerprint.get(changeFingerprint(change));
+    if (existing) {
+      return {
+        ...change,
+        changeVersion: existing.changeVersion,
+        queuedAt: existing.queuedAt,
+      };
+    }
+    const reconciled = { ...change, changeVersion: version };
+    version += 1;
+    return reconciled;
+  });
+  return { changes, nextChangeVersion: version };
 }
 
 function findRemotePlugin(snapshot: ResourceSnapshot, input: { marketplaceId?: string | null; pluginId: string }) {
@@ -360,6 +417,7 @@ function queueInstalledChange(input: {
       id: input.id,
       kind: "removed",
       resourceKind: input.resourceKind,
+      changeVersion: 0,
       marketplaceId: input.marketplaceId,
       pluginId: input.pluginId,
       previousLastUpdatedAt: input.installedLastUpdatedAt,
@@ -374,6 +432,7 @@ function queueInstalledChange(input: {
       id: input.id,
       kind: "new",
       resourceKind: input.resourceKind,
+      changeVersion: 0,
       marketplaceId: input.marketplaceId,
       pluginId: input.pluginId,
       previousLastUpdatedAt: null,
@@ -388,6 +447,7 @@ function queueInstalledChange(input: {
       id: input.id,
       kind: "modified",
       resourceKind: input.resourceKind,
+      changeVersion: 0,
       marketplaceId: input.marketplaceId,
       pluginId: input.pluginId,
       previousLastUpdatedAt: input.installedLastUpdatedAt,
@@ -465,13 +525,19 @@ export function syncDesktopCloudResources(input: {
   const state = readDesktopCloudSyncState(input.jugglework);
   const key = contextKey(input.snapshot);
   const previousEntry = state.entries[key] ?? null;
-  const changes = diffInstalledCloudResources(readWorkspaceCloudImports(input.jugglework), input.snapshot, now);
+  const observedChanges = diffInstalledCloudResources(readWorkspaceCloudImports(input.jugglework), input.snapshot, now);
+  const reconciled = reconcilePendingChanges(
+    previousEntry?.pendingChanges ?? [],
+    observedChanges,
+    previousEntry?.nextChangeVersion ?? 1,
+  );
   const entry: DesktopCloudSyncEntry = {
     contextKey: key,
     fetchedAt: now,
+    nextChangeVersion: reconciled.nextChangeVersion,
     organizationId: input.snapshot.organizationId,
     orgMemberId: input.snapshot.orgMemberId,
-    pendingChanges: mergePendingChanges(previousEntry?.pendingChanges ?? [], changes),
+    pendingChanges: reconciled.changes,
     snapshot: input.snapshot,
     teamIds: input.snapshot.teamIds,
   };
@@ -481,11 +547,11 @@ export function syncDesktopCloudResources(input: {
       [key]: entry,
     },
     updatedAt: now,
-    version: 1,
+    version: 2,
   };
 
   return {
-    changes,
+    changes: reconciled.changes,
     jugglework: {
       ...input.jugglework,
       desktopCloudSync: nextState,

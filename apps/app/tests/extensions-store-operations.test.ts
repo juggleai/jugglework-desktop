@@ -95,7 +95,7 @@ function createStore(input: {
 const emptySyncState: JuggleWorkDesktopCloudSyncState = {
   entries: {},
   updatedAt: 1,
-  version: 1,
+  version: 2,
 };
 
 describe("extensions store cloud operation safety", () => {

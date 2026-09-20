@@ -11,6 +11,7 @@ export const PERSISTED_NOTIFICATION_STORE_KEY = "jugglework:notifications:v1";
 
 const MAX_NOTIFICATIONS = 100;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_SOURCE_VERSIONS = 1_000;
 
 export type NotificationSeverity = "info" | "success" | "warning" | "error";
 
@@ -52,10 +53,22 @@ export type NotificationInput = {
   dedupeKey?: string;
   action?: NotificationAction;
   actionLabel?: string;
+  source?: {
+    key: string;
+    version: number;
+    /** Old presentation keys that already prove this source event was shown. */
+    legacyDedupeKeys?: string[];
+  };
+};
+
+type NotificationSourceVersion = {
+  version: number;
+  updatedAt: number;
 };
 
 type NotificationStore = {
   notifications: AppNotification[];
+  sourceVersions: Record<string, NotificationSourceVersion>;
   add: (input: NotificationInput) => void;
   markAllRead: () => void;
   clearAll: () => void;
@@ -70,6 +83,20 @@ function prune(notifications: AppNotification[]): AppNotification[] {
 
 function createId(now: number): string {
   return `ntf_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function pruneSourceVersions(
+  sourceVersions: Record<string, NotificationSourceVersion>,
+): Record<string, NotificationSourceVersion> {
+  return Object.fromEntries(
+    Object.entries(sourceVersions)
+      .map((entry, index) => ({ entry, index }))
+      .sort((left, right) => (
+        right.entry[1].updatedAt - left.entry[1].updatedAt || right.index - left.index
+      ))
+      .slice(0, MAX_SOURCE_VERSIONS)
+      .map(({ entry }) => entry),
+  );
 }
 
 const SEVERITIES: NotificationSeverity[] = ["info", "success", "warning", "error"];
@@ -135,13 +162,55 @@ function sanitizeNotifications(value: unknown): AppNotification[] {
   return notifications;
 }
 
+function sanitizeSourceVersions(value: unknown): Record<string, NotificationSourceVersion> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const sourceVersions: Record<string, NotificationSourceVersion> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (!key.trim() || typeof entry !== "object" || entry === null) continue;
+    const version = Reflect.get(entry, "version");
+    const updatedAt = Reflect.get(entry, "updatedAt");
+    if (!Number.isSafeInteger(version) || version <= 0 || typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
+      continue;
+    }
+    sourceVersions[key] = { version, updatedAt };
+  }
+  return pruneSourceVersions(sourceVersions);
+}
+
 export const useNotificationStore = create<NotificationStore>()(
   persist(
     (set) => ({
       notifications: [],
+      sourceVersions: {},
       add: (input) =>
         set((state) => {
           const now = Date.now();
+          const sourceKey = input.source?.key.trim() ?? "";
+          const sourceVersion = input.source?.version ?? 0;
+          if (sourceKey && Number.isSafeInteger(sourceVersion) && sourceVersion > 0) {
+            if ((state.sourceVersions[sourceKey]?.version ?? 0) >= sourceVersion) return state;
+          }
+          const sourceVersions = sourceKey && Number.isSafeInteger(sourceVersion) && sourceVersion > 0
+            ? pruneSourceVersions({
+                ...Object.fromEntries(
+                  Object.entries(state.sourceVersions).filter(([key]) => key !== sourceKey),
+                ),
+                [sourceKey]: { version: sourceVersion, updatedAt: now },
+              })
+            : state.sourceVersions;
+          if (
+            sourceKey &&
+            !state.sourceVersions[sourceKey] &&
+            input.source?.legacyDedupeKeys?.some((key) =>
+              state.notifications.some((notification) => notification.dedupeKey === key)
+            )
+          ) {
+            // Before source cursors existed, cloud Plugin removals were stored
+            // under `plugin-removed:<id>`. Treat that persisted notification as
+            // delivery evidence so upgrading does not announce the same old
+            // tombstone one final time merely to seed the new cursor.
+            return { sourceVersions };
+          }
           if (input.dedupeKey) {
             const existing = state.notifications.find(
               (notification) =>
@@ -159,6 +228,7 @@ export const useNotificationStore = create<NotificationStore>()(
                 updatedAt: now,
               };
               return {
+                sourceVersions,
                 notifications: prune([
                   merged,
                   ...state.notifications.filter((notification) => notification.id !== existing.id),
@@ -180,7 +250,7 @@ export const useNotificationStore = create<NotificationStore>()(
             action: input.action,
             actionLabel: input.actionLabel,
           };
-          return { notifications: prune([notification, ...state.notifications]) };
+          return { sourceVersions, notifications: prune([notification, ...state.notifications]) };
         }),
       markAllRead: () =>
         set((state) => {
@@ -199,7 +269,10 @@ export const useNotificationStore = create<NotificationStore>()(
     {
       name: PERSISTED_NOTIFICATION_STORE_KEY,
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ notifications: state.notifications }),
+      partialize: (state) => ({
+        notifications: state.notifications,
+        sourceVersions: state.sourceVersions,
+      }),
       merge: (persistedState, currentState) => ({
         ...currentState,
         notifications: prune(
@@ -208,6 +281,11 @@ export const useNotificationStore = create<NotificationStore>()(
               ? Reflect.get(persistedState, "notifications")
               : null,
           ),
+        ),
+        sourceVersions: sanitizeSourceVersions(
+          typeof persistedState === "object" && persistedState !== null
+            ? Reflect.get(persistedState, "sourceVersions")
+            : null,
         ),
       }),
     },

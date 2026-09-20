@@ -40,6 +40,7 @@ import {
   type JuggleWorkClaudePluginPreview,
   type JuggleWorkCloudPluginInstallResult,
   type JuggleWorkCloudPluginMutations,
+  type JuggleWorkDesktopCloudSyncChange,
   type JuggleWorkServerCapabilities,
   type JuggleWorkServerClient,
   type JuggleWorkServerStatus,
@@ -60,7 +61,7 @@ import {
 } from "../../../../app/cloud/import-state";
 import {
   derivePendingCloudPluginChanges,
-  readPendingCloudSyncChanges,
+  readCurrentDesktopCloudSync,
   refreshDesktopCloudSync,
   type PendingCloudPluginChange,
 } from "../../../../app/cloud/desktop-cloud-sync";
@@ -165,6 +166,58 @@ export type WorkspacePluginOperationState = {
   operation: "install" | "remove";
   message: string | null;
 };
+
+export function notifyPendingCloudPluginChanges(input: {
+  workspaceId: string;
+  organizationId: string;
+  orgMemberId: string;
+  changes: JuggleWorkDesktopCloudSyncChange[];
+  installedPlugins: Record<string, CloudImportedPlugin>;
+  pending: Record<string, PendingCloudPluginChange>;
+}) {
+  for (const [pluginId, change] of Object.entries(input.pending)) {
+    const installed = input.installedPlugins[pluginId];
+    const pluginLabel = installed?.name ?? pluginId;
+    const occurrences = input.changes.filter((entry) => (
+      change === "removed"
+        ? entry.resourceKind === "plugin" && entry.id === pluginId && entry.kind === "removed"
+        : (entry.resourceKind === "plugin" && entry.id === pluginId) ||
+          (entry.resourceKind === "configItem" && entry.pluginId === pluginId)
+    ));
+    const occurrence = occurrences.sort((left, right) => right.changeVersion - left.changeVersion)[0];
+    if (!occurrence?.changeVersion) continue;
+    const marketplaceId = occurrence.marketplaceId?.trim() || installed?.marketplaceId?.trim() || "";
+    const sourceKey = JSON.stringify([
+      "desktop-cloud-resource",
+      input.workspaceId,
+      input.organizationId,
+      input.orgMemberId,
+      "plugin",
+      marketplaceId,
+      pluginId,
+    ]);
+    const notification = {
+      kind: "cloud" as const,
+      severity: change === "modified" ? "info" as const : "warning" as const,
+      title: change === "modified"
+        ? t("notifications.extension_update_available")
+        : t("notifications.extension_removed_by_admin"),
+      body: change === "modified"
+        ? `${pluginLabel} has been updated`
+        : `${pluginLabel} is no longer available`,
+      dedupeKey: `${sourceKey}:${occurrence.changeVersion}`,
+      source: {
+        key: sourceKey,
+        version: occurrence.changeVersion,
+        legacyDedupeKeys: change === "removed" ? [`plugin-removed:${pluginId}`] : [],
+      },
+      action: { type: "open-extensions-marketplace" as const },
+    };
+    notifyEvent(change === "modified"
+      ? { ...notification, actionLabel: "View updates" }
+      : notification);
+  }
+}
 
 /**
  * 解析服务端插件变更的结构化状态。
@@ -545,8 +598,6 @@ export function createExtensionsStore(options: {
   let importedCloudPluginsContextKey = "";
   let workspacePluginOperationSequence = 0;
   const latestWorkspacePluginOperationSequence = new Map<string, number>();
-  /** Plugin IDs the user has already been notified about. Prevents repeated
-   *  "new extension available" notifications across sync cycles. */
   const seenMarketplacePluginIds = new Set<string>();
 
   let state: MutableState = {
@@ -863,48 +914,31 @@ export function createExtensionsStore(options: {
         return;
       }
       const syncResult = optionsOverride?.mutateDesktopCloudSync === false
-        ? null
+        ? await readCurrentDesktopCloudSync({
+            juggleworkClient: operation.client,
+            workspaceId: operation.workspaceId,
+          }).catch(() => null)
         : await refreshDesktopCloudSync({
             juggleworkClient: operation.client,
             workspaceId: operation.workspaceId,
           }).catch(() => null);
-      const changes = syncResult
-        ? syncResult.changes
-        : readPendingCloudSyncChanges(await operation.client.getDesktopCloudSync(operation.workspaceId));
+      if (!syncResult) return;
+      const changes = syncResult.changes;
       if (!isCurrentWorkspacePluginContext(operation)) return;
       const pending = derivePendingCloudPluginChanges({
         changes,
         installedPlugins: installedPlugins ?? snapshot.importedCloudPlugins,
       });
-      const previousPending = snapshot.pendingCloudPluginChanges;
       setStateField("pendingCloudPluginChanges", pending);
 
-      // Notify about newly detected plugin updates or removals.
-      for (const [pluginId, change] of Object.entries(pending)) {
-        if (previousPending[pluginId] === change) continue;
-        const installed = (installedPlugins ?? snapshot.importedCloudPlugins)[pluginId];
-        const pluginLabel = installed?.name ?? pluginId;
-        if (change === "modified") {
-          notifyEvent({
-            kind: "cloud",
-            severity: "info",
-            title: t("notifications.extension_update_available"),
-            body: `${pluginLabel} has been updated`,
-            dedupeKey: `plugin-update:${pluginId}`,
-            action: { type: "open-extensions-marketplace" },
-            actionLabel: "View updates",
-          });
-        } else if (change === "removed") {
-          notifyEvent({
-            kind: "cloud",
-            severity: "warning",
-            title: t("notifications.extension_removed_by_admin"),
-            body: `${pluginLabel} is no longer available`,
-            dedupeKey: `plugin-removed:${pluginId}`,
-            action: { type: "open-extensions-marketplace" },
-          });
-        }
-      }
+      notifyPendingCloudPluginChanges({
+        workspaceId: operation.workspaceId,
+        organizationId: syncResult.organizationId,
+        orgMemberId: syncResult.orgMemberId,
+        changes,
+        installedPlugins: installedPlugins ?? snapshot.importedCloudPlugins,
+        pending,
+      });
     } catch {
       // keep previous pending state on failure
     }
