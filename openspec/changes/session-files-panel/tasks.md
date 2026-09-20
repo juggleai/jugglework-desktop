@@ -57,3 +57,9 @@
 - [x] 8.2 文件和目录右键菜单增加复制相对路径、复制原生绝对路径与文件管理器定位
 - [x] 8.3 按 macOS Finder、Windows Explorer、Linux 通用文件管理器区分文案与定位行为
 - [x] 8.4 补充测试并运行类型检查、构建与 OpenSpec 校验
+
+## 9. HTML 预览安全隔离
+
+- [x] 9.1 HTML 预览改为仅通过 `srcDoc` 渲染，并移除 `allow-same-origin` 及二进制/blob URL 执行路径
+- [x] 9.2 在不可信 HTML 前注入限制性 CSP 与 no-referrer 元数据，禁止网络、表单、弹窗、嵌套内容、worker 和顶层导航
+- [x] 9.3 增加安全契约测试，覆盖父 Renderer/Electron bridge 隔离、网络与导航限制，并运行类型检查、构建和 OpenSpec 校验

@@ -84,6 +84,12 @@ git 可用性用 `GET /vcs` 判定：非 git 目录返回 `{branch: null}`（不
 - Mermaid 仅在检测到 `mermaid` 围栏时动态加载。渲染采用 `securityLevel: strict`，并串行调用全局 Mermaid 实例，避免多个预览的主题配置相互覆盖；单图失败降级为错误提示和源码。
 - 普通代码块复用聊天 Markdown 的原生按钮、复制与两秒成功反馈契约；`MarkdownPreview` 显式启用，其他 surface Markdown 消费方保持原行为。
 
+### HTML 预览使用不透明来源沙箱
+
+- 工作区和会话产物中的 HTML 属于不可信输入。HTML 仅通过 `srcDoc` 渲染，iframe 只保留 `allow-scripts`，不授予 `allow-same-origin`、表单、弹窗或顶层导航能力；即使文档脚本运行，其来源也是独立的不透明来源，不能读取父 Renderer 的 DOM、`localStorage` 或 `window.__JUGGLEWORK_ELECTRON__`。
+- 在产物 HTML 之前注入 Content Security Policy 和 `no-referrer` 元数据。策略默认拒绝全部资源，禁止网络连接、表单提交、嵌套 frame、object、worker、base URL 和导航，仅允许自包含预览所需的内联脚本/样式以及 `data:`/`blob:` 图片、字体和媒体；不允许 `unsafe-eval`。
+- 不再支持直接把二进制/blob URL 作为 HTML iframe 来源。正常 `.html`/`.htm` 已按 UTF-8 文本读取；无效 UTF-8 或二进制 HTML 按不可预览处理，避免未来绕过 `srcDoc` 的策略注入和来源隔离。
+
 ### 文件树右键菜单
 
 - 相对路径直接使用文件树统一的 `/` 分隔工作区路径；绝对路径通过桌面端 `path.join` IPC 生成，因此 Windows 复制 `\\` 分隔路径，macOS/Linux 复制 `/` 分隔路径。

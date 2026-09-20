@@ -48,26 +48,47 @@ export function MarkdownPreview({ content, className, ...props }: MarkdownPrevie
   );
 }
 
-interface TextHTMLPreviewProps {
-  type: "text";
+interface HTMLPreviewProps {
   title: string;
   content: string;
+  className?: string;
 }
 
-interface BinaryHTMLPreviewProps {
-  type: "binary";
-  title: string;
-  url: string;
+export const HTML_PREVIEW_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "worker-src 'none'",
+  "script-src 'unsafe-inline' blob:",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data: blob:",
+  "media-src data: blob:",
+  "navigate-to 'none'",
+].join("; ");
+
+function escapeHTMLAttribute(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
-type HTMLPreviewProps = { className?: string } & (TextHTMLPreviewProps | BinaryHTMLPreviewProps);
+export function createHTMLPreviewDocument(content: string) {
+  const policy = escapeHTMLAttribute(HTML_PREVIEW_CSP);
+  return `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer">${content}`;
+}
 
-export function HTMLPreview({ className, ...props }: HTMLPreviewProps) {
-  if (props.type === "text") {
-    return <iframe srcDoc={props.content} title={props.title} className={cn("h-full w-full border-0", className)} sandbox="allow-scripts allow-same-origin" />;
-  }
-
-  return <iframe src={props.url} title={props.title} className={cn("h-full w-full border-0", className)} sandbox="allow-scripts allow-same-origin" />;
+export function HTMLPreview({ className, title, content }: HTMLPreviewProps) {
+  return (
+    <iframe
+      srcDoc={createHTMLPreviewDocument(content)}
+      title={title}
+      className={cn("h-full w-full border-0", className)}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+    />
+  );
 }
 
 interface PdfPreviewProps {

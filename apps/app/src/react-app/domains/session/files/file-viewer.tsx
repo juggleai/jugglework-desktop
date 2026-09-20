@@ -210,7 +210,7 @@ export function FileViewer({ client, workspaceId, sessionId, path, name, draft }
         ) : null}
         {data?.presentation === "image" && objectUrl ? <ImagePreview src={objectUrl} alt={name} /> : null}
         {data?.presentation === "pdf" && objectUrl ? <PdfPreview url={objectUrl} title={name} /> : null}
-        {data?.presentation === "html" ? <HTMLPreview type="text" title={name} content={data.text ?? ""} /> : null}
+        {data?.presentation === "html" ? <HTMLPreview title={name} content={data.text ?? ""} /> : null}
         {data?.presentation === "binary" ? <PreviewUnavailable /> : null}
       </div>
     </div>

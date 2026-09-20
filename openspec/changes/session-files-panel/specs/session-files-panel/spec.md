@@ -77,6 +77,8 @@ Markdown 文件 SHALL 默认展示格式化预览，并提供切换到源码编�
 
 Markdown 预览中的普通围栏代码块 SHALL 在右上角提供复制图标，点击或键盘激活后 MUST 将保留缩进与换行的代码原文写入剪贴板，并展示短暂的成功反馈；渲染为图形的 Mermaid 代码块不展示代码复制按钮。
 
+HTML 文件预览 MUST 使用不透明来源的 sandbox iframe，MUST NOT 授予 `allow-same-origin`、表单、弹窗或顶层导航能力，并 MUST 在产物内容解析前应用限制性 Content Security Policy。预览脚本 MUST NOT 能读取父 Renderer DOM、父页面持久化存储或 Electron bridge，MUST NOT 能连接外部或本地网络、提交表单、创建嵌套 frame/object/worker 或导航父页面。无效 UTF-8 或二进制 HTML MUST 安全降级为不可预览，不得通过 object/blob URL 执行。
+
 #### Scenario: 预览并编辑 Markdown 文件
 - **WHEN** 用户从文件目录打开 Markdown 文件
 - **THEN** 默认显示格式化预览；点击编辑入口后显示源码编辑器，保存成功后返回最新预览
@@ -92,6 +94,14 @@ Markdown 预览中的普通围栏代码块 SHALL 在右上角提供复制图标�
 #### Scenario: 复制 Markdown 代码片段
 - **WHEN** 用户点击 Markdown 普通代码块右上角的复制图标
 - **THEN** 代码原文写入剪贴板，复制图标短暂切换为成功状态
+
+#### Scenario: 隔离不可信 HTML
+- **WHEN** 用户预览包含脚本、网络请求、表单、弹窗、父页面访问或 Electron bridge 调用的 HTML 文件
+- **THEN** 自包含脚本只能在不透明来源沙箱内运行，不能访问父页面或 bridge，网络、表单、弹窗、嵌套内容与父页面导航均被阻止
+
+#### Scenario: 二进制 HTML 安全降级
+- **WHEN** `.html` 或 `.htm` 文件不是有效 UTF-8 文本
+- **THEN** 文件面板显示不可预览提示，不以 URL 或 blob 形式执行该内容
 
 ### Requirement: 文件树条目快捷操作
 文件树中的文件与目录条目 SHALL 提供右键菜单，支持复制工作区相对路径、复制宿主平台原生格式的绝对路径，以及在桌面文件管理器中定位。定位文案在 macOS 使用 Finder、Windows 使用 Explorer、Linux 使用通用文件管理器名称；Linux 的选中能力为桌面环境支持下的尽力行为，至少 MUST 打开包含目标的目录。目录定位 SHALL 与文件一致，优先在父目录中选中目标目录。
