@@ -557,21 +557,6 @@ export type DesktopRemoteSessionStatus = z.infer<
   typeof desktopRemoteSessionStatusSchema
 >
 
-export const desktopRemoteLifecycleRoutingStatusSchema = z.enum([
-  "idle",
-  "running",
-  "waiting",
-  "retrying",
-  "aborting",
-  "completed",
-  "failed",
-  "cancelled",
-  "aborted",
-])
-export type DesktopRemoteLifecycleRoutingStatus = z.infer<
-  typeof desktopRemoteLifecycleRoutingStatusSchema
->
-
 export const desktopRemoteWorkspaceSummarySchema = z
   .object({
     id: identifierSchema,
@@ -1537,18 +1522,9 @@ const encryptedPayloadEnvelopeSchema = z
       z.object({
         kind: z.literal("session-event"), eventId: z.string().uuid(), controlSessionId: z.string().uuid(),
         deviceId: z.string().uuid(), workspaceId: identifierSchema, sessionId: identifierSchema,
-        sourceSequence: z.number().int().positive(), eventType: identifierSchema,
-        status: desktopRemoteLifecycleRoutingStatusSchema.optional(), occurredAt: dateTimeSchema,
+        sourceSequence: z.number().int().positive(), eventType: identifierSchema, occurredAt: dateTimeSchema,
         desktopKeyId: p256KeyIdSchema, desktopStatementHash: sha256Schema, controllerKeyId: p256KeyIdSchema,
-      }).strict().superRefine((routing, context) => {
-        if (routing.status !== undefined && routing.eventType !== "session.status" && routing.eventType !== "run.status") {
-          context.addIssue({
-            code: "custom",
-            message: "encrypted session event status is only valid for lifecycle events",
-            path: ["status"],
-          })
-        }
-      }),
+      }).strict(),
     ]),
     payload: z
       .object({

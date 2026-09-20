@@ -286,22 +286,6 @@ describe("desktop remote-control contracts", () => {
       eventType: "todos.replace", occurredAt: "2026-08-08T12:00:00.123Z", desktopKeyId, desktopStatementHash, controllerKeyId,
     } }
     assert.equal(desktopRemoteWssEnvelopeSchema.safeParse(event).success, true)
-    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({
-      ...event,
-      routing: { ...event.routing, eventType: "session.status", status: "completed" },
-    }).success, true)
-    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({
-      ...event,
-      routing: { ...event.routing, eventType: "run.status", status: "aborted" },
-    }).success, true)
-    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({
-      ...event,
-      routing: { ...event.routing, status: "completed" },
-    }).success, false)
-    assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({
-      ...event,
-      routing: { ...event.routing, eventType: "session.status", status: "starting" },
-    }).success, false)
     assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...event, routing: { ...event.routing, sequence: 7 } }).success, false)
     assert.equal(desktopRemoteWssEnvelopeSchema.safeParse({ ...base, encryption: { mode: "e2ee-v1", keyId: controllerKeyId }, routing: commandRouting }).success, false)
   })
