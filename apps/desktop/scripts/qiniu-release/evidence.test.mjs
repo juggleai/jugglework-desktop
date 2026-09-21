@@ -383,7 +383,7 @@ test("stable 1.2.18 accepts both audited macOS exceptions and rejects them elsew
   }), /Canary schema|machine-generated macOS update canary/);
   assert.throws(() => assertPromotionEvidence(plan("1.2.21"), promotionEvidence(plan("1.2.21")), {
     preCanaryExceptionReason: preCanaryReason,
-  }), /restricted to stable 1\.2\.16, stable 1\.2\.18, stable 1\.2\.19, or stable 1\.2\.20/);
+  }), /restricted to stable 1\.2\.16, stable 1\.2\.18, stable 1\.2\.19, stable 1\.2\.20, or stable 1\.2\.22/);
 });
 
 test("stable 1.2.19 accepts both audited macOS exceptions and preserves all other gates", () => {
@@ -437,6 +437,24 @@ test("stable 1.2.20 accepts the authorized recovery exceptions and fails closed 
     notarizationExceptionReason: notarizationReason,
     preCanaryExceptionReason: preCanaryReason,
   }), /restricted to macOS arm64/);
+});
+
+test("stable macOS arm64 1.2.22 accepts only the audited pre-canary exception", () => {
+  const releasePlan = plan("1.2.22");
+  const evidence = promotionEvidence(releasePlan);
+  evidence.canary = null;
+  const reason = "Operator explicitly authorized stable macOS arm64 1.2.22 without a local upgrade canary";
+  assert.equal(assertPromotionEvidence(releasePlan, evidence, {
+    preCanaryExceptionReason: reason,
+  }).schemaVersion, 2);
+  const x64Plan = { ...releasePlan, architectures: ["x64"] };
+  const x64Evidence = { ...evidence, architectures: ["x64"], localVerification: { ...evidence.localVerification, architectures: ["x64"] } };
+  assert.throws(() => assertPromotionEvidence(x64Plan, x64Evidence, {
+    preCanaryExceptionReason: reason,
+  }), /restricted to macOS arm64/);
+  assert.throws(() => assertPromotionEvidence(plan("1.2.23"), promotionEvidence(plan("1.2.23")), {
+    preCanaryExceptionReason: reason,
+  }), /restricted to stable/);
 });
 
 test("accepted notarization without an Apple submission ID cannot authorize stable promotion", () => {

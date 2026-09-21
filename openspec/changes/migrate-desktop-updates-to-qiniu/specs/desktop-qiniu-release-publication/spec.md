@@ -81,6 +81,8 @@ Exact stable macOS arm64 `1.2.20` MAY use separately audited one-time recovery e
 
 Exact stable macOS arm64 `1.2.21` MAY retain the promoted channel object's observed `Cache-Control: public, max-age=31536000` under a separately audited operator exception. This exception SHALL apply only to `stable/mac/latest-mac.yml` carrying the exact verified `1.2.21` immutable-manifest bytes and SHALL NOT bypass Developer ID identity, notarization, stapling, Gatekeeper, immutable byte verification, a real lower-version canary, promotion locking, prior-channel digest comparison, CDN refresh, exact public digest/length read-back, mutable Stable-feed discovery, or serialized Den exposure.
 
+Exact stable macOS arm64 `1.2.22` MAY use a separately audited one-time exception for the local real-client upgrade canary. This exception SHALL be restricted to exact stable macOS arm64 `1.2.22` and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
+
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
 - **THEN** the candidate may proceed to version-feed canary and stable promotion
@@ -137,6 +139,13 @@ Exact stable macOS arm64 `1.2.21` MAY retain the promoted channel object's obser
 - **THEN** the promoted mutable object MAY retain the observed one-year public cache header
 - **AND** the system still requires the exact verified manifest bytes, promotion lock, prior-digest race check, CDN refresh, digest and length convergence, mutable Stable-feed discovery, and China-then-overseas Den read-back
 - **AND** the exception is invalid for every other coordinate
+
+#### Scenario: Explicit 1.2.22 macOS ARM64 pre-canary exception
+
+- **WHEN** an operator authorizes exact stable macOS ARM64 `1.2.22` without a local real-client upgrade canary
+- **THEN** tooling accepts the fully signed, notarized, stapled, and Gatekeeper-accepted candidate only with an audited reason scoped to `stable-1.2.22-only`
+- **AND** it still requires packaged verification, immutable publication, CDN byte verification, controlled cache metadata, promotion locking, refresh, public read-back, and serialized Den exposure
+- **AND** it rejects the exception for Windows, x64, Alpha, every other version, and every other channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.
