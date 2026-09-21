@@ -10,9 +10,9 @@ const sessionSurfacePath = fileURLToPath(
 );
 
 describe("composer sketch integration", () => {
-  test("places sketch directly below file and derives menu offsets from both entries", () => {
+  test("places sketch directly below file and keeps flat menu groups in keyboard order", () => {
     const source = readFileSync(composerPath, "utf8");
-    const entriesIndex = source.indexOf("const plusMenuEntries");
+    const entriesIndex = source.indexOf("const plusMenuAddEntries");
     const fileIndex = source.indexOf('kind: "file"', entriesIndex);
     const sketchIndex = source.indexOf('kind: "sketch"', entriesIndex);
     const imageGenerationIndex = source.indexOf('kind: "image-generation"', entriesIndex);
@@ -22,9 +22,10 @@ describe("composer sketch integration", () => {
     expect(sketchIndex).toBeGreaterThan(fileIndex);
     expect(imageGenerationIndex).toBeGreaterThan(sketchIndex);
     expect(agentIndex).toBeGreaterThan(imageGenerationIndex);
-    expect(source).toContain('findIndex((entry) => entry.kind === "tools")');
-    expect(source).toContain("const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex)");
-    expect(source).toContain("const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex)");
+    expect(source).toContain("const plusMenuPluginEntries");
+    expect(source).toContain("const plusMenuMcpEntries");
+    expect(source).toContain("const plusMenuEntries = [...plusMenuAddEntries, ...plusMenuPluginEntries, ...plusMenuMcpEntries]");
+    expect(source).not.toContain("plusMenuToolEntries");
   });
 
   test("keeps the default agent implicit in the add menu", () => {

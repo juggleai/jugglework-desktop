@@ -2,7 +2,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, ChevronRight, FileText, ImagePlus, Lightbulb, LoaderCircle, Paperclip, PenLine, Plus, Plug, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Minimize2, Paperclip, PenLine, Plus, Plug, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
@@ -58,22 +58,19 @@ type PastedTextChip = {
   lines: number;
 };
 
-type ToolMenuSection = "commands" | "skills" | "mcps" | "extensions" | `plugin:${string}`;
-
 /**
  * 统一加号菜单的条目。
- * - file：打开文件选择器（原附件按钮）。
- * - agent：选择智能体（原 Agent 选择器，选中项带对号，菜单保持打开）。
- * - tools：在加号菜单右侧弹出对应分区的二级内容面板（命令/技能/
- *   Extensions/MCP/云端导入插件），加号菜单本身保持打开。
+ * 所有能力均在同一层展示；插件和 MCP 不再打开右侧二级面板。
  */
 type PlusMenuEntry =
-  | { kind: "file"; id: "file"; label: string }
-  | { kind: "sketch"; id: "sketch"; label: string }
-  | { kind: "image-generation"; id: "image-generation"; label: string }
-  | { kind: "video-generation"; id: "video-generation"; label: string }
-  | { kind: "agent"; id: string; label: string; name: string | null }
-  | { kind: "tools"; id: string; label: string; section: ToolMenuSection };
+  | { kind: "file"; id: "file"; label: string; description: string }
+  | { kind: "sketch"; id: "sketch"; label: string; description: string }
+  | { kind: "image-generation"; id: "image-generation"; label: string; description: string }
+  | { kind: "video-generation"; id: "video-generation"; label: string; description: string }
+  | { kind: "agent"; id: string; label: string; description: string; name: string | null }
+  | { kind: "extension"; id: string; label: string; description: string; extension: McpDirectoryInfo }
+  | { kind: "plugin-file"; id: string; label: string; description: string; file: CloudImportedPluginFile }
+  | { kind: "mcp"; id: string; label: string; description: string; entry: McpServerEntry; status: McpServerStatus; detail: McpStatus | undefined };
 
 function plusMenuAgentIcon(name: string | null) {
   const normalizedName = name?.trim().toLowerCase();
@@ -81,6 +78,46 @@ function plusMenuAgentIcon(name: string | null) {
     return <Lightbulb size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" />;
   }
   return <Zap size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" />;
+}
+
+type BuiltinSlashCommandName = "new" | "compact" | "init" | "review";
+
+function builtinSlashCommandName(name: string): BuiltinSlashCommandName | null {
+  const normalizedName = name.trim().toLowerCase();
+  if (normalizedName === "new" || normalizedName === "compact" || normalizedName === "init" || normalizedName === "review") {
+    return normalizedName;
+  }
+  return null;
+}
+
+function slashCommandLabel(command: ComposerSlashCommandOption, isSkill: boolean) {
+  if (isSkill) return command.name;
+  const builtin = builtinSlashCommandName(command.name);
+  if (builtin) return t(`composer.command_${builtin}_label`);
+  return `/${command.name}`;
+}
+
+function slashCommandDescription(command: ComposerSlashCommandOption, isSkill: boolean) {
+  if (isSkill) return command.description || t("composer.skill_description_fallback");
+  const builtin = builtinSlashCommandName(command.name);
+  if (builtin) return t(`composer.command_${builtin}_description`);
+  return command.description || t("composer.command_description_fallback");
+}
+
+function slashCommandIcon(command: ComposerSlashCommandOption, isSkill: boolean) {
+  if (isSkill) return <Zap size={18} strokeWidth={1.8} />;
+  switch (builtinSlashCommandName(command.name)) {
+    case "new":
+      return <MessageCirclePlus size={18} strokeWidth={1.8} />;
+    case "compact":
+      return <Minimize2 size={18} strokeWidth={1.8} />;
+    case "init":
+      return <FileCog size={18} strokeWidth={1.8} />;
+    case "review":
+      return <ScanSearch size={18} strokeWidth={1.8} />;
+    default:
+      return <Terminal size={18} strokeWidth={1.8} />;
+  }
 }
 
 function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
@@ -350,10 +387,6 @@ function mcpStatusBadgeClass(status: McpServerStatus) {
   }
 }
 
-function isLocalCapability(origin: SkillCard["origin"] | McpServerEntry["origin"]) {
-  return origin !== "jugglework-connect";
-}
-
 function extensionIcon(entry: McpDirectoryInfo, size = 16) {
   const serviceUrl = typeof entry.url === "string" ? entry.url : undefined;
   const iconUrl = resolveExtensionIconUrl({ iconSrc: entry.iconSrc, iconSlug: entry.iconSlug, serviceUrl });
@@ -393,17 +426,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   const [skills, setSkills] = useState<SkillCard[]>(props.skills ?? []);
   const [mcpLoading, setMcpLoading] = useState(false);
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>(props.mcpServers ?? []);
-  const [mcpStatus, setMcpStatus] = useState<string | null>(props.mcpStatus ?? null);
   const [mcpStatuses, setMcpStatuses] = useState<McpStatusMap>(props.mcpStatuses ?? {});
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>(props.importedPlugins ?? []);
-  const [pluginsLoading, setPluginsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [plusMenuIndex, setPlusMenuIndex] = useState(0);
   const [sketchOpen, setSketchOpen] = useState(false);
   const plusItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -416,20 +445,11 @@ export function ReactSessionComposer(props: ComposerProps) {
   const listSkillsRef = useRef(props.listSkills);
   const listMcpRef = useRef(props.listMcp);
   const listImportedPluginsRef = useRef(props.listImportedPlugins);
-  const toolMenuLoadRef = useRef({
-    openId: 0,
-    commands: false,
-    skills: false,
-    mcps: false,
-    plugins: false,
-  });
   const [commandsLoaded, setCommandsLoaded] = useState(false);
-  const [skillsLoaded, setSkillsLoaded] = useState(Boolean(props.skills));
-  const [mcpLoaded, setMcpLoaded] = useState(Boolean(props.mcpServers));
-  const [pluginsLoaded, setPluginsLoaded] = useState(Boolean(props.importedPlugins));
   const [, setExtensionStateVersion] = useState(0);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const plusMenuRef = useRef<HTMLDivElement | null>(null);
+  const plusMenuPopupRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
@@ -521,20 +541,8 @@ export function ReactSessionComposer(props: ComposerProps) {
     [agents],
   );
 
-  // 云端导入插件分区（文件数 > 0 才显示），与四个固定插件分区一起出现在
-  // 加号菜单的「插件」分组里，点击在右侧弹出该插件的文件列表。
-  const pluginSections = useMemo(
-    () => importedPlugins
-      .filter((plugin) => plugin.files.length > 0)
-      .map((plugin) => ({ section: `plugin:${plugin.pluginId}` as const, plugin })),
-    [importedPlugins],
-  );
-
-  // 统一加号菜单（合并原附件按钮、工具菜单按钮、Agent 选择器）。
-  // 「添加」区：文件 + 绘图 + 可用时的图片/视频生成 + 可选智能体（选中带对号）。
+  // 统一加号菜单：「添加 / 插件 / MCP」三组都在同一层展示。
   // 默认智能体和 OpenCode 内置 Build 不作为显式选项展示。
-  // 「插件」区：命令 / 技能 / Extensions / MCP / 云端导入插件，点击后
-  // 加号菜单保持不变，右侧弹出对应分区的二级内容面板。
   const plusMenuAgentEntries = useMemo(() =>
     plusMenuAgents.map((agent) => {
       const normalizedName = agent.name.trim().toLowerCase();
@@ -543,98 +551,75 @@ export function ReactSessionComposer(props: ComposerProps) {
         label: normalizedName === "plan"
           ? t("composer.agent_plan_mode")
           : agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
+        description: normalizedName === "plan"
+          ? t("composer.plus_menu_plan_description")
+          : agent.description?.trim() || t("composer.plus_menu_agent_description"),
       };
     }), [plusMenuAgents]);
 
-  const plusMenuEntries = useMemo<PlusMenuEntry[]>(() => [
-    { kind: "file", id: "file", label: t("composer.plus_menu_file") },
-    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw") },
+  const composerExtensions = JUGGLEWORK_EXTENSION_CATALOG.filter((entry) =>
+    !builtInExtensionsDisabled &&
+    !isJuggleWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
+  );
+  const activeMcpItems = mcpServers.map((entry) => ({
+    entry,
+    status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
+    detail: mcpStatuses[entry.id ?? entry.name],
+  }));
+
+  const plusMenuAddEntries = useMemo<PlusMenuEntry[]>(() => [
+    { kind: "file", id: "file", label: t("composer.plus_menu_file"), description: t("composer.plus_menu_file_description") },
+    { kind: "sketch", id: "sketch", label: t("composer.plus_menu_draw"), description: t("composer.plus_menu_draw_description") },
     ...(props.imageGenerationModels.length > 0
-      ? [{ kind: "image-generation" as const, id: "image-generation" as const, label: t("composer.image_generation") }]
+      ? [{ kind: "image-generation" as const, id: "image-generation" as const, label: t("composer.image_generation"), description: t("composer.plus_menu_image_description") }]
       : []),
     ...(props.videoGenerationModels.length > 0
-      ? [{ kind: "video-generation" as const, id: "video-generation" as const, label: t("composer.video_generation") }]
+      ? [{ kind: "video-generation" as const, id: "video-generation" as const, label: t("composer.video_generation"), description: t("composer.plus_menu_video_description") }]
       : []),
     ...plusMenuAgentEntries.map((entry) => ({
       kind: "agent" as const,
       id: entry.name ? `agent:${entry.name}` : "agent:",
       label: entry.label,
+      description: entry.description,
       name: entry.name,
     })),
-    { kind: "tools", id: "tools:commands", label: t("dashboard.commands"), section: "commands" as const },
-    { kind: "tools", id: "tools:skills", label: t("dashboard.skills"), section: "skills" as const },
-    { kind: "tools", id: "tools:extensions", label: "Extensions", section: "extensions" as const },
-    { kind: "tools", id: "tools:mcps", label: t("composer.mcps_label"), section: "mcps" as const },
-    ...pluginSections.map(({ section, plugin }) => ({
-      kind: "tools" as const,
-      id: `tools:${section}`,
-      label: plugin.name,
-      section,
+  ], [plusMenuAgentEntries, props.imageGenerationModels.length, props.videoGenerationModels.length]);
+  const plusMenuPluginEntries: PlusMenuEntry[] = [
+    ...composerExtensions.map((extension) => ({
+      kind: "extension" as const,
+      id: `extension:${extension.id ?? extension.serverName ?? extension.name}`,
+      label: extension.name,
+      description: extension.description,
+      extension,
     })),
-  ], [plusMenuAgentEntries, pluginSections, props.imageGenerationModels.length, props.videoGenerationModels.length]);
-  const plusMenuToolStartIndex = plusMenuEntries.findIndex((entry) => entry.kind === "tools");
-  const plusMenuAddEntries = plusMenuEntries.slice(0, plusMenuToolStartIndex);
-  const plusMenuToolEntries = plusMenuEntries.slice(plusMenuToolStartIndex);
-
-  // 普通函数（非 useCallback）：需要始终读取当前渲染的 fileInput 绑定，
-  // 与下方 applyCommandSelection 等处理器保持同一模式。
-  const activatePlusEntry = (entry: PlusMenuEntry) => {
-    if (entry.kind === "file") {
-      if (!props.attachmentsEnabled) {
-        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
-        return;
-      }
-      setPlusMenuOpen(false);
-      fileInput?.click();
-      return;
-    }
-    if (entry.kind === "sketch") {
-      if (!props.attachmentsEnabled) {
-        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
-        return;
-      }
-      setPlusMenuOpen(false);
-      setToolMenuOpen(false);
-      setSketchOpen(true);
-      return;
-    }
-    if (entry.kind === "image-generation") {
-      if (props.imageGenerationLoading || props.imageGenerationModels.length === 0) return;
-      setPlusMenuOpen(false);
-      setToolMenuOpen(false);
-      props.onEnableImageGeneration();
-      return;
-    }
-    if (entry.kind === "video-generation") {
-      if (props.videoGenerationLoading || props.videoGenerationModels.length === 0) return;
-      setPlusMenuOpen(false);
-      setToolMenuOpen(false);
-      props.onEnableVideoGeneration();
-      return;
-    }
-    if (entry.kind === "agent") {
-      // 选择智能体后菜单保持打开：选中态由 props.selectedAgent 驱动，
-      // 对号随选择移动，方便连续查看/切换；点击菜单外部或 Esc 关闭。
-      if (props.busy) return;
-      props.onSelectAgent(entry.name);
-      return;
-    }
-    // 插件分区：加号菜单保持打开，右侧弹出（或收起）对应分区的二级面板。
-    // 注意：此路径由 onClick 触发（勿用 onMouseDown）——mousedown 激活会在
-    // click 派发前改动 DOM，导致 click 重定向误触其他按钮。
-    if (toolMenuOpen && toolMenuSection === entry.section) {
-      setToolMenuOpen(false);
-      return;
-    }
-    setMentionOpen(false);
-    setMentionItems([]);
-    setSlashOpen(false);
-    setToolMenuSection(entry.section);
-    setToolMenuOpen(true);
-  };
+    ...importedPlugins.flatMap((plugin) => plugin.files.map((file) => ({
+      kind: "plugin-file" as const,
+      id: `plugin-file:${plugin.pluginId}:${file.configObjectId}:${file.path}`,
+      label: file.title,
+      description: [plugin.name, formatPluginObjectType(file.objectType)].filter(Boolean).join(" · "),
+      file,
+    }))),
+  ];
+  const plusMenuMcpEntries: PlusMenuEntry[] = activeMcpItems.map(({ entry, status, detail }) => ({
+    kind: "mcp" as const,
+    id: `mcp:${entry.id ?? entry.name}`,
+    label: entry.name,
+    description: entry.origin === "jugglework-connect"
+      ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ") || entry.config.url || "Remote MCP"
+      : entry.config.type === "remote"
+        ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
+        : entry.config.command?.join(" ") ?? "Local MCP",
+    entry,
+    status,
+    detail,
+  }));
+  const plusMenuEntries = [...plusMenuAddEntries, ...plusMenuPluginEntries, ...plusMenuMcpEntries];
 
   useEffect(() => {
     setSlashOpen(slashOpenNext);
+    if (slashOpenNext) {
+      setPlusMenuOpen(false);
+    }
     setMenuIndex(0);
   }, [slashOpenNext, slashQuery]);
 
@@ -668,9 +653,8 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   useEffect(() => {
     setMcpServers(props.mcpServers ?? []);
-    setMcpStatus(props.mcpStatus ?? null);
     setMcpStatuses(props.mcpStatuses ?? {});
-  }, [props.mcpServers, props.mcpStatus, props.mcpStatuses]);
+  }, [props.mcpServers, props.mcpStatuses]);
 
   useEffect(() => {
     setImportedPlugins(props.importedPlugins ?? []);
@@ -752,31 +736,13 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, []);
 
   useEffect(() => {
-    if (!toolMenuOpen) return;
-    toolMenuLoadRef.current = {
-      openId: toolMenuLoadRef.current.openId + 1,
-      commands: false,
-      skills: false,
-      mcps: false,
-      plugins: false,
-    };
-    setCommandsLoaded(false);
-    setSkillsLoaded(Boolean(props.skills));
-    setMcpLoaded(Boolean(props.mcpServers));
-    setPluginsLoaded(Boolean(props.importedPlugins));
-  }, [toolMenuOpen]);
-
-  useEffect(() => {
-    if (!slashOpen && !toolMenuOpen) return;
-    const openId = toolMenuLoadRef.current.openId;
-    if (toolMenuOpen && toolMenuLoadRef.current.commands) return;
-    if (toolMenuOpen) toolMenuLoadRef.current.commands = true;
+    if (!slashOpen) return;
     let cancelled = false;
     const cached = commandsCacheRef.current;
     if (cached !== null) {
       setCommands(cached);
       setCommandsLoading(false);
-      if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
+      setCommandsLoaded(true);
       return () => {
         cancelled = true;
       };
@@ -786,13 +752,13 @@ export function ReactSessionComposer(props: ComposerProps) {
       .then((next) => {
         if (!cancelled) {
           setCommands(next);
-          if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
+          setCommandsLoaded(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setCommands([]);
-          if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) setCommandsLoaded(true);
+          setCommandsLoaded(true);
         }
       })
       .finally(() => {
@@ -801,7 +767,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     return () => {
       cancelled = true;
     };
-  }, [slashOpen, toolMenuOpen, loadCommands]);
+  }, [slashOpen, loadCommands]);
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -828,128 +794,133 @@ export function ReactSessionComposer(props: ComposerProps) {
   }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
 
   useEffect(() => {
-    if (!toolMenuOpen && !plusMenuOpen) return;
+    if (!plusMenuOpen) return;
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (plusMenuRef.current?.contains(target)) return;
-      setToolMenuOpen(false);
+      if (plusMenuPopupRef.current?.contains(target)) return;
       setPlusMenuOpen(false);
     };
     window.addEventListener("mousedown", handlePointerDown);
     return () => {
       window.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [toolMenuOpen, plusMenuOpen]);
+  }, [plusMenuOpen]);
 
   useEffect(() => {
-    if (!plusMenuOpen && !toolMenuOpen) return;
-    const openId = toolMenuLoadRef.current.openId;
+    if (!plusMenuOpen) return;
     const listImportedPlugins = listImportedPluginsRef.current;
-    if (listImportedPlugins && !toolMenuLoadRef.current.plugins) {
+    if (listImportedPlugins) {
       let cancelled = false;
-      toolMenuLoadRef.current.plugins = true;
-      setPluginsLoading(true);
       void listImportedPlugins()
         .then((next) => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
-            setImportedPlugins(next);
-            setPluginsLoaded(true);
-          }
+          if (!cancelled) setImportedPlugins(next);
         })
         .catch(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) {
-            setImportedPlugins([]);
-            setPluginsLoaded(true);
-          }
-        })
-        .finally(() => {
-          if (!cancelled && toolMenuLoadRef.current.openId === openId) setPluginsLoading(false);
+          if (!cancelled) setImportedPlugins([]);
         });
       return () => {
         cancelled = true;
       };
     }
     return undefined;
-  }, [plusMenuOpen, toolMenuOpen]);
+  }, [plusMenuOpen]);
 
   useEffect(() => {
-    if (!slashOpen && !toolMenuOpen) return;
-    const openId = toolMenuLoadRef.current.openId;
-    if ((slashOpen || toolMenuSection === "skills") && (!toolMenuOpen || !toolMenuLoadRef.current.skills)) {
+    if (slashOpen) {
       let cancelled = false;
-      if (toolMenuOpen) toolMenuLoadRef.current.skills = true;
       setSkillsLoading(true);
       void loadSkills()
         .then((next) => {
-          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
-            setSkills(next);
-            setSkillsLoaded(true);
-          }
+          if (!cancelled) setSkills(next);
         })
         .catch(() => {
-          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) {
-            setSkills([]);
-            setSkillsLoaded(true);
-          }
+          if (!cancelled) setSkills([]);
         })
         .finally(() => {
-          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) setSkillsLoading(false);
+          if (!cancelled) setSkillsLoading(false);
         });
       return () => {
         cancelled = true;
-        if (toolMenuOpen && toolMenuLoadRef.current.openId === openId) {
-          toolMenuLoadRef.current.skills = false;
-        }
       };
     }
     return undefined;
-  }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
+  }, [loadSkills, slashOpen]);
 
   useEffect(() => {
-    if (!slashOpen && !toolMenuOpen) return;
-    const openId = toolMenuLoadRef.current.openId;
+    if (!plusMenuOpen) return;
     const listMcp = listMcpRef.current;
-    // fix(L3): 斜杠菜单与工具菜单必须消费同一份 MCP 清单。
-    // before: 只有展开 MCP 分区才加载；after: 输入 `/` 时也加载并参与提示。
-    if ((slashOpen || toolMenuSection === "mcps") && listMcp && (!toolMenuOpen || !toolMenuLoadRef.current.mcps)) {
+    if (listMcp) {
       let cancelled = false;
-      if (toolMenuOpen) toolMenuLoadRef.current.mcps = true;
       setMcpLoading(true);
       void listMcp()
         .then((next) => {
-          if (cancelled || (toolMenuOpen && toolMenuLoadRef.current.openId !== openId)) return;
+          if (cancelled) return;
           setMcpServers(next.servers);
           setMcpStatuses(next.statuses);
-          setMcpStatus(next.status);
-          setMcpLoaded(true);
         })
         .catch(() => {
-          if (cancelled || (toolMenuOpen && toolMenuLoadRef.current.openId !== openId)) return;
+          if (cancelled) return;
           setMcpServers([]);
           setMcpStatuses({});
-          setMcpLoaded(true);
         })
         .finally(() => {
-          if (!cancelled && (!toolMenuOpen || toolMenuLoadRef.current.openId === openId)) setMcpLoading(false);
+          if (!cancelled) setMcpLoading(false);
         });
       return () => {
         cancelled = true;
       };
     }
     return undefined;
-  }, [slashOpen, toolMenuOpen, toolMenuSection]);
+  }, [plusMenuOpen]);
 
-  // MCP 只在工具菜单里作只读展示，不进斜杠菜单，也不可选中注入。
-  const slashItems = useMemo<ComposerSlashCommandOption[]>(
-    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
-    [commands, skills],
+  const toolCommandItems = commands.filter((command) => !command.source || command.source === "command");
+  const toolSkillItems = commands.filter((command) => command.source === "skill");
+  const localCommandSkillNames = new Set(toolSkillItems.map((command) => command.name));
+  const skillMenuItems: SkillCard[] = [
+    ...toolSkillItems.map((command) => ({
+      name: command.name,
+      path: `command://${command.id}`,
+      description: command.description,
+      origin: "local" as const,
+    })),
+    ...skills.filter((skill) =>
+      skill.origin === "jugglework-connect" || !localCommandSkillNames.has(skill.name)
+    ),
+  ];
+  const slashSkillItems = useMemo<ComposerSlashCommandOption[]>(() => [
+    ...skillMenuItems.map((skill) => ({
+      id: `skill:${skill.origin ?? "local"}:${skill.path || skill.name}`,
+      name: skillMenuSlashCommandName(skill),
+      description: skill.description,
+      source: "skill" as const,
+      origin: skill.origin,
+      marketplaceName: skill.marketplaceName,
+      pluginName: skill.pluginName,
+      connectCapabilityName: skill.connectCapabilityName,
+      skill,
+    })),
+    ...connectSkillSlashCommandOptions(skills).filter((candidate) =>
+      !skillMenuItems.some((skill) => skill.name === candidate.skill?.name && skill.origin === candidate.skill?.origin)
+    ),
+  ], [skillMenuItems, skills]);
+  const filterSlashItems = useCallback((items: ComposerSlashCommandOption[]) => {
+    if (!slashQuery) return items;
+    return fuzzysort.go(slashQuery, items, { keys: ["name", "description"], limit: 40 }).map((entry) => entry.obj);
+  }, [slashQuery]);
+  const slashCommandFiltered = useMemo(
+    () => slashOpen ? filterSlashItems(toolCommandItems) : [],
+    [filterSlashItems, slashOpen, toolCommandItems],
   );
-  const slashFiltered = useMemo(() => {
-    if (!slashOpen) return [];
-    if (!slashQuery) return slashItems.slice(0, 8);
-    return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [slashItems, slashOpen, slashQuery]);
+  const slashSkillFiltered = useMemo(
+    () => slashOpen ? filterSlashItems(slashSkillItems) : [],
+    [filterSlashItems, slashOpen, slashSkillItems],
+  );
+  const slashFiltered = useMemo(
+    () => [...slashCommandFiltered, ...slashSkillFiltered],
+    [slashCommandFiltered, slashSkillFiltered],
+  );
   const mentionFiltered = useMemo(() => {
     if (!mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
@@ -968,36 +939,7 @@ export function ReactSessionComposer(props: ComposerProps) {
 
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
   const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
-  const toolCommandItems = commands.filter((command) => !command.source || command.source === "command");
-  const toolSkillItems = commands.filter((command) => command.source === "skill");
-  const toolMcpItems = commands.filter((command) => command.source === "mcp");
-  void toolMcpItems;
-  const localCommandSkillNames = new Set(toolSkillItems.map((command) => command.name));
-  const skillMenuItems: SkillCard[] = [
-    ...toolSkillItems.map((command) => ({
-      name: command.name,
-      path: `command://${command.id}`,
-      description: command.description,
-      origin: "local" as const,
-    })),
-    ...skills.filter((skill) =>
-      skill.origin === "jugglework-connect" || !localCommandSkillNames.has(skill.name)
-    ),
-  ];
-  const activePlugin = toolMenuSection.startsWith("plugin:")
-    ? pluginSections.find((entry) => entry.section === toolMenuSection)?.plugin ?? null
-    : null;
-  const composerExtensions = JUGGLEWORK_EXTENSION_CATALOG.filter((entry) =>
-    !builtInExtensionsDisabled &&
-    !isJuggleWorkExtensionHidden(entry) && isComposerExtensionAvailable(entry)
-  );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
-
-  useEffect(() => {
-    if (!toolMenuSection.startsWith("plugin:")) return;
-    if (activePlugin) return;
-    setToolMenuSection("commands");
-  }, [activePlugin, toolMenuSection]);
 
   useEffect(() => {
     if (!activeItems.length) {
@@ -1024,7 +966,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       props.onDraftChange(options?.replaceSkillDraft ? prompt : `${props.draft}${separator}${prompt}`);
       setSlashOpen(false);
       setPlusMenuOpen(false);
-      setToolMenuOpen(false);
       return;
     }
     if (command.skill) {
@@ -1038,7 +979,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     props.onDraftChange(`/${command.name} `);
     setSlashOpen(false);
     setPlusMenuOpen(false);
-    setToolMenuOpen(false);
   };
 
   /**
@@ -1072,7 +1012,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
     setSlashOpen(false);
     setPlusMenuOpen(false);
-    setToolMenuOpen(false);
   };
 
   const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
@@ -1110,7 +1049,6 @@ export function ReactSessionComposer(props: ComposerProps) {
     }
     props.onInsertMention("file", file.path);
     setPlusMenuOpen(false);
-    setToolMenuOpen(false);
   };
 
   const applyExtensionSelection = (entry: McpDirectoryInfo) => {
@@ -1128,6 +1066,55 @@ export function ReactSessionComposer(props: ComposerProps) {
     if (status !== "connected") return;
     const selection = resolveMcpCapabilitySelection(entry);
     insertCapabilityTag(selection.kind, entry.name, selection.prompt);
+  };
+
+  // 普通函数（非 useCallback）：需要始终读取当前渲染的 fileInput 绑定。
+  const activatePlusEntry = (entry: PlusMenuEntry) => {
+    if (entry.kind === "file") {
+      if (!props.attachmentsEnabled) {
+        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
+        return;
+      }
+      setPlusMenuOpen(false);
+      fileInput?.click();
+      return;
+    }
+    if (entry.kind === "sketch") {
+      if (!props.attachmentsEnabled) {
+        toast.warning(props.attachmentsDisabledReason ?? t("composer.attachments_unavailable"));
+        return;
+      }
+      setPlusMenuOpen(false);
+      setSketchOpen(true);
+      return;
+    }
+    if (entry.kind === "image-generation") {
+      if (props.imageGenerationLoading || props.imageGenerationModels.length === 0) return;
+      setPlusMenuOpen(false);
+      props.onEnableImageGeneration();
+      return;
+    }
+    if (entry.kind === "video-generation") {
+      if (props.videoGenerationLoading || props.videoGenerationModels.length === 0) return;
+      setPlusMenuOpen(false);
+      props.onEnableVideoGeneration();
+      return;
+    }
+    if (entry.kind === "agent") {
+      if (props.busy) return;
+      props.onSelectAgent(entry.name);
+      setPlusMenuOpen(false);
+      return;
+    }
+    if (entry.kind === "extension") {
+      applyExtensionSelection(entry.extension);
+      return;
+    }
+    if (entry.kind === "plugin-file") {
+      applyPluginFileSelection(entry.file);
+      return;
+    }
+    applyMcpSelection(entry.entry, entry.status);
   };
 
   const acceptActiveItem = () => {
@@ -1194,7 +1181,7 @@ export function ReactSessionComposer(props: ComposerProps) {
     // Escape-to-stop while the agent is busy. Only when no menu is open so
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
-    const anyMenuOpen = plusMenuOpen || toolMenuOpen || Boolean(activeMenu);
+    const anyMenuOpen = plusMenuOpen || Boolean(activeMenu);
     if (event.key === "Escape" && props.busy && !anyMenuOpen) {
       event.preventDefault();
       if (escapeArmed) {
@@ -1231,20 +1218,9 @@ export function ReactSessionComposer(props: ComposerProps) {
       }
       if (event.key === "Escape") {
         event.preventDefault();
-        // 分层关闭：二级内容面板开着先收起，加号菜单保持；再按才关菜单。
-        if (toolMenuOpen) {
-          setToolMenuOpen(false);
-        } else {
-          setPlusMenuOpen(false);
-        }
+        setPlusMenuOpen(false);
         return;
       }
-    }
-
-    if (toolMenuOpen && event.key === "Escape") {
-      event.preventDefault();
-      setToolMenuOpen(false);
-      return;
     }
 
     // Input history recall (#2012). Only when no menu is consuming the
@@ -1253,7 +1229,6 @@ export function ReactSessionComposer(props: ComposerProps) {
       (event.key === "ArrowUp" || event.key === "ArrowDown") &&
       !imeActive &&
       !plusMenuOpen &&
-      !toolMenuOpen &&
       (!activeMenu || !activeItems.length)
     ) {
       const history = props.inputHistory ?? [];
@@ -1343,77 +1318,184 @@ export function ReactSessionComposer(props: ComposerProps) {
     return accepted.length === inputFiles.length;
   };
 
-  const activeMcpItems = mcpServers.map((entry) => ({
-    entry,
-    status: toReactMcpStatus(entry.id ?? entry.name, entry, mcpStatuses),
-    detail: mcpStatuses[entry.id ?? entry.name],
-  }));
-
   const panelRoundedClass =
-    mentionOpen || slashOpen
+    mentionOpen
       ? "rounded-t-[18px] border-t-transparent"
       : "";
 
+  const renderPlusMenu = () => {
+    if (!plusMenuOpen) return null;
+    const groups = [
+      { id: "add", label: t("composer.plus_menu_section_add"), entries: plusMenuAddEntries },
+      { id: "plugins", label: t("composer.plus_menu_section_plugins"), entries: plusMenuPluginEntries },
+      { id: "mcp", label: t("composer.plus_menu_section_mcp"), entries: plusMenuMcpEntries },
+    ];
+    let flatIndex = 0;
+
+    return (
+      <div
+        ref={plusMenuPopupRef}
+        className="absolute bottom-[calc(100%+8px)] left-[-1px] right-[-1px] z-40 overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]"
+      >
+        <div
+          role="menu"
+          aria-label={t("composer.plus_label")}
+          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-2.5"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {groups.map((group, groupIndex) => (
+            <section key={group.id} className={groupIndex > 0 ? "mt-2" : undefined}>
+              <div className="px-3 pb-1.5 pt-1.5 text-[13px] font-medium text-gray-9">
+                {group.label}
+              </div>
+              <div className="grid gap-0.5">
+                {group.entries.map((entry) => {
+                  const index = flatIndex++;
+                  const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
+                  const unavailableMcp = entry.kind === "mcp" && (entry.status !== "connected" || entry.entry.workspaceEnabled === false);
+                  const disabled = unavailableMcp || (
+                    entry.kind === "image-generation" || entry.kind === "video-generation"
+                      ? false
+                      : attachmentAction
+                        ? !props.attachmentsEnabled
+                        : entry.kind === "agent" && props.busy
+                  );
+                  const selected = entry.kind === "agent"
+                    ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
+                    : entry.kind === "image-generation"
+                      ? Boolean(props.imageGeneration)
+                      : entry.kind === "video-generation" && Boolean(props.videoGeneration);
+                  const disabledTitle = attachmentAction && disabled
+                    ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
+                    : entry.kind === "mcp" && disabled
+                      ? entry.entry.workspaceEnabled === false
+                        ? t("connect.workspace_disabled_here")
+                        : mcpStatusTooltip(entry.status, entry.detail)
+                      : undefined;
+                  return (
+                    <button
+                      key={entry.id}
+                      ref={(element) => {
+                        plusItemRefs.current[index] = element;
+                      }}
+                      type="button"
+                      role="menuitem"
+                      disabled={disabled}
+                      title={disabledTitle ?? entry.description}
+                      className={`flex min-h-11 w-full min-w-0 items-center gap-3 rounded-[15px] px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === index ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                      onMouseEnter={() => setPlusMenuIndex(index)}
+                      onClick={() => activatePlusEntry(entry)}
+                    >
+                      <span className="flex size-6 shrink-0 items-center justify-center text-gray-10">
+                        {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "video-generation" ? <SquarePlay size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
+                        {entry.kind === "extension" ? extensionIcon(entry.extension, 18) : null}
+                        {entry.kind === "plugin-file" ? <FileText size={18} strokeWidth={1.8} /> : null}
+                        {entry.kind === "mcp" ? <Plug size={18} strokeWidth={1.8} /> : null}
+                      </span>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                        <span className="shrink-0 text-sm font-medium text-gray-12">{entry.label}</span>
+                        <span className="min-w-0 truncate text-sm text-gray-9">{entry.description}</span>
+                      </span>
+                      {selected ? <Check size={16} className="shrink-0 text-gray-10" /> : null}
+                      {entry.kind === "mcp" ? (
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(entry.status)}`}>
+                          {entry.entry.workspaceEnabled === false ? t("connect.workspace_disabled_here") : formatMcpStatusLabel(entry.status)}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                {group.entries.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-9">
+                    {group.id === "mcp" && mcpLoading
+                      ? t("composer.plus_menu_loading_mcp")
+                      : group.id === "mcp"
+                        ? t("composer.plus_menu_no_mcp")
+                        : t("composer.plus_menu_no_plugins")}
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const renderSlashMenu = () => {
     if (!slashOpen) return null;
+    const groups = [
+      { id: "commands", label: t("composer.slash_section_commands"), entries: slashCommandFiltered },
+      { id: "skills", label: t("composer.slash_section_skills"), entries: slashSkillFiltered },
+    ].filter((group) => group.entries.length > 0);
+    let flatIndex = 0;
     return (
-      <div className="absolute bottom-full left-[-1px] right-[-1px] z-30">
-          <div className="overflow-hidden rounded-t-[20px] border border-dls-border border-b-0 bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-            <div
-              role="presentation"
-              className="max-h-64 overflow-y-auto p-2"
-              onMouseDown={(event) => event.preventDefault()}
-          >
-            {slashFiltered.length > 0 ? (
-              <div className="grid gap-1">
-                {slashFiltered.map((command, index) => (
-                  <button
-                    key={command.id}
-                    ref={(element) => {
-                      menuItemRefs.current[index] = element;
-                    }}
-                    type="button"
-                    className={`flex w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left transition-colors hover:bg-gray-2/70 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
-                    onMouseEnter={() => setMenuIndex(index)}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      applyCommandSelection(command, { replaceSkillDraft: true });
-                    }}
-                    onClick={(event) => {
-                      if (event.detail === 0) applyCommandSelection(command, { replaceSkillDraft: true });
-                    }}
-                  >
-                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="truncate text-xs font-semibold">/{command.name}</div>
-                        {command.origin === "jugglework-connect" ? (
-                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                            {t("composer.source_cloud")}
-                          </span>
-                        ) : command.source && command.source !== "command" ? (
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${command.source === "skill" ? "bg-violet-3/40 text-violet-11" : "bg-cyan-3/40 text-cyan-11"}`}>
-                            {command.source === "skill" ? t("composer.skill_source") : t("composer.mcps_label")}
-                          </span>
-                        ) : null}
-                      </div>
-                      {command.description ? <div className="truncate text-xs text-gray-10">{command.description}</div> : null}
-                      {command.origin === "jugglework-connect" ? (
-                        <div className="truncate text-[10px] text-gray-9">
-                          {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
-                        </div>
-                      ) : null}
-                    </div>
-                  </button>
-                ))}
+      <div className="absolute bottom-[calc(100%+8px)] left-[-1px] right-[-1px] z-30 overflow-hidden rounded-[22px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+        <div
+          role="menu"
+          aria-label={t("composer.slash_menu_label")}
+          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-2.5"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {groups.length > 0 ? groups.map((group, groupIndex) => (
+            <section key={group.id} className={groupIndex > 0 ? "mt-2" : undefined}>
+              <div className="px-3 pb-1.5 pt-1.5 text-[13px] font-medium text-gray-9">{group.label}</div>
+              <div className="grid gap-0.5">
+                {group.entries.map((command) => {
+                  const index = flatIndex++;
+                  const isSkill = group.id === "skills";
+                  const scope = command.skill?.scope === "global"
+                    ? t("composer.scope_personal")
+                    : command.skill?.scope === "project"
+                      ? t("composer.scope_workspace")
+                      : command.origin === "jugglework-connect"
+                        ? t("composer.source_cloud")
+                        : null;
+                  return (
+                    <button
+                      key={command.id}
+                      ref={(element) => {
+                        menuItemRefs.current[index] = element;
+                      }}
+                      type="button"
+                      role="menuitem"
+                      className={`flex min-h-11 w-full min-w-0 items-center gap-3 rounded-[15px] px-3 py-2 text-left outline-none transition-colors hover:bg-gray-2/70 focus-visible:ring-2 focus-visible:ring-gray-7 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
+                      onMouseEnter={() => setMenuIndex(index)}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        applyCommandSelection(command, { replaceSkillDraft: true });
+                      }}
+                      onClick={(event) => {
+                        if (event.detail === 0) applyCommandSelection(command, { replaceSkillDraft: true });
+                      }}
+                    >
+                      <span className="flex size-6 shrink-0 items-center justify-center text-gray-10">
+                        {slashCommandIcon(command, isSkill)}
+                      </span>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                        <span className="shrink-0 text-sm font-medium text-gray-12">
+                          {slashCommandLabel(command, isSkill)}
+                        </span>
+                        <span className="min-w-0 truncate text-sm text-gray-9">
+                          {slashCommandDescription(command, isSkill)}
+                        </span>
+                      </span>
+                      {scope ? <span className="shrink-0 text-xs text-gray-9">{scope}</span> : null}
+                    </button>
+                  );
+                })}
               </div>
-            ) : (
-              <div className="px-3 py-2 text-xs text-gray-10">
-                {(!commandsLoaded && commandsLoading) || skillsLoading || mcpLoading ? t("composer.loading_commands") : t("composer.no_commands")}
-              </div>
-            )}
-          </div>
+            </section>
+          )) : (
+            <div className="px-3 py-3 text-sm text-gray-10">
+              {(!commandsLoaded && commandsLoading) || skillsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1473,7 +1555,7 @@ export function ReactSessionComposer(props: ComposerProps) {
   return (
     <div
       ref={rootRef}
-      className={`sticky bottom-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8`}
+      className={`sticky bottom-0 ${plusMenuOpen || slashOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-2 md:px-8`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
       onCompositionStart={() => {
@@ -1490,6 +1572,7 @@ export function ReactSessionComposer(props: ComposerProps) {
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
+          {renderPlusMenu()}
           {renderMentionMenu()}
           {renderSlashMenu()}
 
@@ -1694,342 +1777,19 @@ export function ReactSessionComposer(props: ComposerProps) {
                 >
                   <button
                     type="button"
-                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${plusMenuOpen || toolMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
+                    className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-md transition-colors ${plusMenuOpen ? "bg-gray-3 text-gray-12" : "text-gray-10 hover:bg-gray-3"}`}
                     onClick={() => {
                       setMentionOpen(false);
                       setMentionItems([]);
                       setSlashOpen(false);
-                      setToolMenuOpen(false);
                       setPlusMenuOpen((value) => !value);
                     }}
                     aria-expanded={plusMenuOpen}
-                    aria-haspopup="dialog"
+                    aria-haspopup="menu"
                     title={t("composer.plus_label")}
                   >
                     <Plus size={16} />
                   </button>
-                  {plusMenuOpen ? (
-                    <div className="absolute bottom-full left-0 z-40 mb-3 w-72 overflow-hidden rounded-[20px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div
-                        role="presentation"
-                        className="max-h-[24rem] overflow-x-hidden overflow-y-auto p-2"
-                        onMouseDown={(event) => event.preventDefault()}
-                      >
-                        <div className="px-3 pb-1.5 pt-2 text-sm font-medium text-gray-10">
-                          {t("composer.plus_menu_section_add")}
-                        </div>
-                        <div className="grid gap-0.5">
-                          {plusMenuAddEntries.map((entry, flatIndex) => {
-                            const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
-                            const selected = entry.kind === "agent"
-                              ? entry.name === null ? !props.selectedAgent : props.selectedAgent === entry.name
-                              : entry.kind === "image-generation"
-                                ? Boolean(props.imageGeneration)
-                                : entry.kind === "video-generation" && Boolean(props.videoGeneration);
-                            const disabled = entry.kind === "image-generation" || entry.kind === "video-generation"
-                              ? false
-                              : attachmentAction
-                                ? !props.attachmentsEnabled
-                                : props.busy;
-                            const disabledTitle = attachmentAction && disabled
-                                ? props.attachmentsDisabledReason ?? t("composer.attachments_unavailable")
-                                : undefined;
-                            return (
-                              <button
-                                key={entry.id}
-                                ref={(element) => {
-                                  plusItemRefs.current[flatIndex] = element;
-                                }}
-                                type="button"
-                                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === flatIndex ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
-                                disabled={disabled}
-                                title={disabledTitle}
-                                onMouseEnter={() => setPlusMenuIndex(flatIndex)}
-                                onClick={() => activatePlusEntry(entry)}
-                              >
-                                <span className="flex min-w-0 flex-1 items-center gap-3">
-                                  {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.kind === "video-generation" ? <SquarePlay size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.kind === "agent" ? plusMenuAgentIcon(entry.name) : null}
-                                  <span className="min-w-0 flex-1 truncate font-medium text-gray-12">{entry.label}</span>
-                                </span>
-                                {selected ? <Check size={16} className="shrink-0 text-gray-10" /> : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div className="mx-3 mt-2 border-t border-dls-border px-0 pb-1.5 pt-3 text-sm font-medium text-gray-10">
-                          {t("composer.plus_menu_section_plugins")}
-                        </div>
-                        <div className="grid gap-0.5">
-                          {plusMenuToolEntries.map((entry, index) => {
-                            if (entry.kind !== "tools") return null;
-                            const flatIndex = plusMenuToolStartIndex + index;
-                            // 激活态：右侧二级面板正打开在该分区上。
-                            const sectionActive = toolMenuOpen && toolMenuSection === entry.section;
-                            return (
-                              <button
-                                key={entry.id}
-                                ref={(element) => {
-                                  plusItemRefs.current[flatIndex] = element;
-                                }}
-                                type="button"
-                                aria-expanded={sectionActive}
-                                className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${sectionActive || plusMenuIndex === flatIndex ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"}`}
-                                onMouseEnter={() => setPlusMenuIndex(flatIndex)}
-                                onClick={() => {
-                                  activatePlusEntry(entry);
-                                }}
-                              >
-                                <span className="flex min-w-0 flex-1 items-center gap-3">
-                                  {entry.section === "commands" ? <Terminal size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.section === "skills" ? <Zap size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.section === "extensions" ? <AppWindowMac size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.section === "mcps" ? <Plug size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  {entry.section.startsWith("plugin:") ? <FileText size={18} strokeWidth={1.8} className="shrink-0 text-gray-10" /> : null}
-                                  <span className="min-w-0 truncate font-medium text-gray-12">{entry.label}</span>
-                                </span>
-                                <ChevronRight size={16} className={`shrink-0 transition-transform ${sectionActive ? "rotate-90 text-gray-11" : "text-gray-9"}`} />
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                  {/* 二级内容面板：加号菜单保持打开，此面板锚定在加号菜单
-                      右侧（left-18.5rem = 菜单宽度 18rem + 0.5rem 间距），
-                      展示当前选中分区（命令/技能/Extensions/MCP/插件）的内容。 */}
-                  {toolMenuOpen ? (
-                    <div className="absolute bottom-full left-[18.5rem] z-40 mb-3 w-[min(calc(100vw-22rem),26rem)] overflow-hidden rounded-[18px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
-                      <div className="subtle-scrollbar m-2 max-h-[19.5rem] min-w-0 overflow-x-hidden overflow-y-auto">
-                        <div role="presentation" onMouseDown={(event) => event.preventDefault()}>
-                          {toolMenuSection === "commands" ? (
-                            toolCommandItems.length > 0 ? (
-                              <div className="grid min-w-0 gap-1">
-                                {toolCommandItems.map((command) => (
-                                  <button
-                                    key={command.id}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyCommandSelection(command)}
-                                  >
-                                    <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex min-w-0 items-center gap-2">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={`/${command.name}`}>
-                                          /{command.name}
-                                        </div>
-                                        {command.origin === "jugglework-connect" ? (
-                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                            {t("composer.source_cloud")}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      {command.description ? (
-                                        <div className="truncate text-xs text-gray-10" title={command.description}>{command.description}</div>
-                                      ) : null}
-                                      {command.origin === "jugglework-connect" ? (
-                                        <div
-                                          className="truncate text-[10px] text-gray-9"
-                                          title={[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
-                                        >
-                                          {[command.marketplaceName, command.pluginName].filter(Boolean).join(" · ")}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!commandsLoaded && commandsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "skills" ? (
-                            skillMenuItems.length > 0 ? (
-                              <div className="grid min-w-0 gap-1">
-                                {skillMenuItems.map((skill) => (
-                                  <button
-                                    key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applySkillSelection(skill)}
-                                  >
-                                    <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex min-w-0 items-center justify-between gap-3">
-                                        <div
-                                          className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11"
-                                          title={`/${skillMenuSlashCommandName(skill)}`}
-                                        >
-                                          /{skillMenuSlashCommandName(skill)}
-                                        </div>
-                                        {isLocalCapability(skill.origin) ? (
-                                          <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                            {t("composer.source_local")}
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      {skill.description ? (
-                                        <div className="truncate text-xs text-gray-10" title={skill.description}>{skill.description}</div>
-                                      ) : null}
-                                      {skill.origin === "jugglework-connect" ? (
-                                        <div
-                                          className="truncate text-[10px] text-gray-9"
-                                          title={[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
-                                        >
-                                          {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "mcps" ? (
-                            activeMcpItems.length > 0 ? (
-                              <div className="grid min-w-0 gap-1">
-                                {activeMcpItems.map(({ entry, status, detail }) => {
-                                  // 输入栏 loader 已严格筛选为当前工作区可用且连接成功；这里保留
-                                  // 防御性检查，避免异步状态变化期间插入不可执行的 MCP。
-                                  const selectable = status === "connected" && entry.workspaceEnabled !== false;
-                                  const description = entry.origin === "jugglework-connect"
-                                    ? [entry.marketplaceName, entry.pluginName].filter(Boolean).join(" · ")
-                                      || entry.config.url
-                                      || "Remote MCP"
-                                    : entry.config.type === "remote"
-                                      ? entry.config.url ?? entry.config.command?.join(" ") ?? "Remote MCP"
-                                      : entry.config.command?.join(" ") ?? "Local MCP";
-                                  return (
-                                  <button
-                                    key={entry.id ?? entry.name}
-                                    type="button"
-                                    disabled={!selectable}
-                                    aria-disabled={!selectable}
-                                    title={selectable ? undefined : entry.workspaceEnabled === false
-                                      ? t("connect.workspace_disabled_here")
-                                      : mcpStatusTooltip(status, detail)}
-                                    className={`flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors ${
-                                      selectable ? "hover:bg-gray-2/70" : "cursor-default opacity-60"
-                                    }`}
-                                    onClick={() => applyMcpSelection(entry, status)}
-                                  >
-                                    <Plug size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex min-w-0 items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11">{entry.name}</div>
-                                        <div className="flex shrink-0 items-center gap-1">
-                                          {isLocalCapability(entry.origin) ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {t("composer.source_local")}
-                                            </span>
-                                          ) : null}
-                                          {entry.source ? (
-                                            <span className="rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                              {entry.source === "config.global" ? t("project_extensions.scope_global") : t("project_extensions.scope_workspace")}
-                                            </span>
-                                          ) : null}
-                                          <span
-                                            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${mcpStatusBadgeClass(status)}`}
-                                            title={mcpStatusTooltip(status, detail)}
-                                          >
-                                            {entry.workspaceEnabled === false ? t("connect.workspace_disabled_here") : formatMcpStatusLabel(status)}
-                                          </span>
-                                        </div>
-                                      </div>
-                                      <div
-                                        className="w-full truncate text-xs text-gray-10"
-                                        title={description}
-                                      >
-                                        {description}
-                                      </div>
-                                    </div>
-                                  </button>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">
-                                {!mcpLoaded && mcpLoading ? t("composer.loading_commands") : (mcpStatus ?? t("context_panel.no_mcp"))}
-                              </div>
-                            )
-                          ) : null}
-                          {toolMenuSection === "extensions" ? (
-                            composerExtensions.length > 0 ? (
-                              <div className="grid min-w-0 gap-1">
-                                {composerExtensions.map((entry) => (
-                                  <button
-                                    key={entry.id ?? entry.serverName ?? entry.name}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyExtensionSelection(entry)}
-                                  >
-                                    <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-white shadow-sm">
-                                      {extensionIcon(entry, 16)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex min-w-0 items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={entry.name}>
-                                          {entry.name}
-                                        </div>
-                                        {entry.defaultEnabled ? (
-                                          <span className="shrink-0 rounded-full bg-green-3 px-2 py-0.5 text-[10px] font-medium text-green-11">Enabled</span>
-                                        ) : null}
-                                      </div>
-                                      <div className="truncate text-xs text-gray-10" title={entry.description}>{entry.description}</div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No extensions enabled. Open Extensions to enable them.</div>
-                            )
-                          ) : null}
-                          {activePlugin ? (
-                            activePlugin.files.length > 0 ? (
-                              <div className="grid min-w-0 gap-1">
-                                {activePlugin.files.map((file) => (
-                                  <button
-                                    key={`${file.configObjectId}:${file.path}`}
-                                    type="button"
-                                    className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
-                                    onClick={() => applyPluginFileSelection(file)}
-                                  >
-                                    <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex min-w-0 items-center justify-between gap-3">
-                                        <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-11" title={file.title}>
-                                          {file.title}
-                                        </div>
-                                        <span className="shrink-0 rounded-full bg-gray-3 px-2 py-0.5 text-[10px] font-medium text-gray-11">
-                                          {formatPluginObjectType(file.objectType)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="px-3 py-2 text-xs text-gray-10">No plugin files imported yet.</div>
-                            )
-                          ) : toolMenuSection.startsWith("plugin:") ? (
-                            <div className="px-3 py-2 text-xs text-gray-10">
-                              {!pluginsLoaded && pluginsLoading ? t("composer.loading_commands") : "Plugin files are unavailable."}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
 
                 {/* Agent selection moved into the unified add menu above; the
