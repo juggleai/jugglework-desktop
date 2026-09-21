@@ -279,6 +279,22 @@ describe("remote session event bridge", () => {
     assert.deepEqual(h.notificationEvents, []);
   });
 
+  it("clears a mirrored run missing from the authoritative list after reconnect", async () => {
+    let listCalls = 0;
+    const serverRun = { workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1", origin: "remote-control" };
+    const h = harness({
+      listActiveRuns: async () => ({ items: listCalls++ === 0 ? [serverRun] : [] }),
+    });
+    await h.bridge.bind(h.binding);
+    assert.equal(h.getRunId(), "run_1");
+
+    await h.subscriptions[0].onReconnectGap("sequence_gap");
+    await h.subscriptions[0].onConnected();
+
+    assert.deepEqual(h.terminalCalls, [{ workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1" }]);
+    assert.equal(h.getRunId(), null);
+  });
+
   it("hydrates a queued run only after authoritative admission produces a status event", async () => {
     const admitted = { workspaceId: "ws_1", sessionId: "ses_1", runId: "run_admitted", origin: "remote-control" };
     let listCalls = 0;

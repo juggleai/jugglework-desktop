@@ -119,9 +119,15 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
       if (isRecord(run) && identifier(run.sessionId)) activeSessionIds.add(run.sessionId);
       try { coordinator.recordServerRun(run); } catch {}
     }
-    if (sessionId && !activeSessionIds.has(sessionId)) {
-      const staleRunId = coordinator.getActiveRunId({ workspaceId, sessionId });
-      if (staleRunId) coordinator.clearTerminalRun({ workspaceId, sessionId, runId: staleRunId });
+    const reconciledSessionIds = sessionId
+      ? [sessionId]
+      : [...new Set([...bindings.values()]
+        .filter((binding) => binding.workspaceId === workspaceId)
+        .map((binding) => binding.sessionId))];
+    for (const reconciledSessionId of reconciledSessionIds) {
+      if (activeSessionIds.has(reconciledSessionId)) continue;
+      const staleRunId = coordinator.getActiveRunId({ workspaceId, sessionId: reconciledSessionId });
+      if (staleRunId) coordinator.clearTerminalRun({ workspaceId, sessionId: reconciledSessionId, runId: staleRunId });
     }
     return response;
   }
