@@ -5,8 +5,10 @@ minimumReleaseAgeExclude:
   # and should not wait for the normal three-day release cooling period.
   - "fast-uri@3.1.5"
   - "ip-address@10.3.1"
+  - "next@16.3.3"
   - "postcss@8.5.23"
   - "socket.io-parser@4.2.7"
+  - "tar@7.5.19"
   - "undici@6.28.0"
   - mermaid@11.17.2
 
@@ -27,8 +29,10 @@ preferWorkspacePackages: true
 overrides:
   fast-uri: 3.1.5
   ip-address: 10.3.1
+  next: 16.3.3
   postcss: 8.5.23
   socket.io-parser: 4.2.7
+  tar: 7.5.19
   undici@6: 6.28.0
 allowBuilds:
   "@sentry/cli": true
