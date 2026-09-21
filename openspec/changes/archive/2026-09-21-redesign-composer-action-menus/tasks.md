@@ -15,4 +15,4 @@
 
 - [x] 3.1 Add English and Chinese copy for new menu labels and descriptions.
 - [x] 3.2 Run application typecheck and production build.
-- [ ] 3.3 Complete manual visual verification in light/dark themes and a narrow application window.
+- [x] 3.3 Complete manual visual verification in light/dark themes and a narrow application window.
