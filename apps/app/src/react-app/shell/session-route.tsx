@@ -26,6 +26,7 @@ import { isNewSessionCommand } from "@/react-app/domains/session/surface/compose
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
 import { mergeImageGenerationSystemContext } from "@/react-app/domains/session/surface/composer/image-generation";
 import { mergeVideoGenerationSystemContext } from "@/react-app/domains/session/surface/composer/video-generation";
+import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -275,12 +276,6 @@ function describeTaskCreateError(error: unknown) {
 
 function taskCreateUnavailableToastId(workspaceId: string) {
   return `opencode-unavailable:${workspaceId}`;
-}
-
-function focusPromptSoon() {
-  if (typeof window === "undefined") return;
-  const focus = () => window.dispatchEvent(new Event("jugglework:focusPrompt"));
-  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
@@ -1200,7 +1195,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     // 跨工作区切换先导航、再后台同步服务端 active-workspace 注册。
     // 读会话走目标工作区自己的 OpenCode 连接，不依赖它先成为 active。
     navigateToWorkspaceSession(workspaceId, sessionId);
-    focusPromptSoon();
+    requestComposerFocus(sessionId, "session-switch");
     if (workspaceAlreadyReady) return;
     void activateWorkspaceForNavigation(workspaceId);
   }, [activateWorkspaceForNavigation, activatingWorkspaceId, navigateToWorkspaceSession, selectedWorkspaceId, setLegacySelectedWorkspaceId, workspaceActivationErrorId]);
@@ -2345,7 +2340,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           });
         }
         navigateToWorkspaceSession(targetWorkspaceId, session?.id ?? null, { replace: true });
-        if (session?.id) focusPromptSoon();
+        if (session?.id) requestComposerFocus(session.id, "session-created");
       }
     } catch (error) {
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
@@ -2870,10 +2865,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       target={modelPickerTargetSessionId ? "session" : "default"}
       current={resolveModelForSession(modelPickerTargetSessionId).model ?? ({ providerID: "", modelID: "" } satisfies ModelRef)}
       onSelect={(next: ModelRef) => {
+        const focusSessionId = modelPickerTargetSessionId ?? selectedSessionId;
         applyModelSelection(next, modelPickerTargetSessionId);
         setModelPickerSessionId(null);
         modelPicker.setOpen(false);
-        focusPromptSoon();
+        if (focusSessionId) requestComposerFocus(focusSessionId, "model-picker");
       }}
       disabledProviders={disabledProviderIds}
       onBehaviorChange={() => {}}

@@ -39,6 +39,11 @@ import { ImageGenerationControls } from "./image-generation-controls";
 import type { ComposerImageModelOption } from "./image-generation";
 import { VideoGenerationControls } from "./video-generation-controls";
 import type { ComposerVideoModelOption } from "./video-generation";
+import {
+  COMPOSER_FOCUS_REQUEST_EVENT,
+  completeComposerFocusRequest,
+  getPendingComposerFocusRequest,
+} from "./focus-request";
 
 const SketchDialog = lazy(() =>
   import("./sketch/sketch-dialog").then((module) => ({ default: module.SketchDialog })),
@@ -129,6 +134,8 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
 }
 
 type ComposerProps = {
+  sessionId: string;
+  focusEligible: boolean;
   draft: string;
   mentions: Record<string, ComposerMentionKind>;
   onDraftChange: (value: string) => void;
@@ -219,7 +226,6 @@ type ComposerProps = {
 };
 
 const FLUSH_PROMPT_EVENT = "jugglework:flushPromptDraft";
-const FOCUS_PROMPT_EVENT = "jugglework:focusPrompt";
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
@@ -1135,16 +1141,32 @@ export function ReactSessionComposer(props: ComposerProps) {
     return false;
   };
 
-  // Listen for cross-app focus + draft flush events. The Solid shell uses
-  // these from deep-link handlers, the command palette, and the browser
-  // pagehide/beforeunload cycle so no in-flight draft is lost.
+  // Focus requests are scoped to one session and remain pending until that
+  // composer's editor is mounted and editable. This avoids the old global
+  // broadcast behavior where every mounted split/retained composer focused
+  // itself and fixed-delay retries could steal focus from newer user input.
   useEffect(() => {
     const handleFocus = () => {
+      const request = getPendingComposerFocusRequest();
+      if (!request || request.sessionId !== props.sessionId) return;
+      if (!props.focusEligible || props.disabled) return;
       const root = rootRef.current;
       if (!root) return;
       const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
-      editable?.focus();
+      if (!editable || !editable.isConnected || editable.getClientRects().length === 0) return;
+      editable.focus({ preventScroll: true });
+      if (document.activeElement === editable) {
+        completeComposerFocusRequest(request.id, props.sessionId);
+      }
     };
+    window.addEventListener(COMPOSER_FOCUS_REQUEST_EVENT, handleFocus);
+    handleFocus();
+    return () => window.removeEventListener(COMPOSER_FOCUS_REQUEST_EVENT, handleFocus);
+  }, [props.disabled, props.focusEligible, props.sessionId]);
+
+  // Listen for draft flush events. The shell uses these from the browser
+  // pagehide/beforeunload cycle so no in-flight draft is lost.
+  useEffect(() => {
     const handleFlush = () => {
       // onDraftChange always runs synchronously on every keystroke, so this
       // listener is effectively a hook for the shell to signal "we're about
@@ -1152,12 +1174,10 @@ export function ReactSessionComposer(props: ComposerProps) {
       // draft so downstream stores can checkpoint it.
       props.onDraftChange(draftRef.current);
     };
-    window.addEventListener(FOCUS_PROMPT_EVENT, handleFocus);
     window.addEventListener(FLUSH_PROMPT_EVENT, handleFlush);
     window.addEventListener("beforeunload", handleFlush);
     window.addEventListener("pagehide", handleFlush);
     return () => {
-      window.removeEventListener(FOCUS_PROMPT_EVENT, handleFocus);
       window.removeEventListener(FLUSH_PROMPT_EVENT, handleFlush);
       window.removeEventListener("beforeunload", handleFlush);
       window.removeEventListener("pagehide", handleFlush);

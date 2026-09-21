@@ -35,17 +35,12 @@ import { writeActiveWorkspaceId, writeLastSessionFor, writeWorkspaceProjectDimen
 import { workspaceSessionRoute } from "./workspace-routes";
 import { ensureDesktopLocalJuggleWorkConnection } from "./desktop-local-jugglework";
 import { saveControlPlaneUrl } from "../domains/settings/cloud/control-plane-url";
+import { requestComposerFocus } from "../domains/session/surface/composer/focus-request";
 
 function folderNameFromPath(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? "workspace";
-}
-
-function focusPromptSoon() {
-  if (typeof window === "undefined") return;
-  const focus = () => window.dispatchEvent(new Event("jugglework:focusPrompt"));
-  [0, 80, 240, 600].forEach((delay) => window.setTimeout(focus, delay));
 }
 
 type WelcomeState = {
@@ -355,7 +350,7 @@ export function WelcomeRoute() {
   const finishOnboarding = useCallback(() => {
     markOnboardingComplete();
     navigate(state.pendingRoute ?? "/session", { replace: true });
-    if (state.pendingSessionId) focusPromptSoon();
+    if (state.pendingSessionId) requestComposerFocus(state.pendingSessionId, "onboarding");
   }, [markOnboardingComplete, navigate, state.pendingRoute, state.pendingSessionId]);
 
   const handleAttributionSubmit = useCallback(

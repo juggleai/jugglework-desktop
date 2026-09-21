@@ -55,7 +55,11 @@ export function deriveSessionRenderModel(input: {
   return {
     intendedSessionId: input.intendedSessionId,
     renderedSessionId: input.renderedSessionId,
-    transitionState: input.isFetching ? "switching" : "idle",
-    renderSource: "live",
+    // Once the intended session already has renderable data, a query fetch is
+    // only a background refresh. Treating every refetch as a navigation
+    // transition temporarily disabled the composer and repeatedly dropped the
+    // user's caret while SSE reconciliation or window-focus refreshes ran.
+    transitionState: "idle",
+    renderSource: input.isFetching ? "cache" : "live",
   };
 }

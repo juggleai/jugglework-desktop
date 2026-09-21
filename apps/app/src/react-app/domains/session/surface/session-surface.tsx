@@ -51,6 +51,7 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { requestComposerFocus } from "./composer/focus-request";
 import {
   buildImageGenerationInstruction,
   imageModelKey,
@@ -1773,7 +1774,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
 
   const typeComposerText = useCallback(async (text: string) => {
-    window.dispatchEvent(new Event("jugglework:focusPrompt"));
+    requestComposerFocus(props.sessionId, "control");
     setComposerDraft(props.sessionId, text);
     await waitForControl(40);
   }, [props.sessionId, setComposerDraft]);
@@ -2518,6 +2519,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
           />
         ) : null}
         <ReactSessionComposer
+          sessionId={props.sessionId}
+          focusEligible={props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}
