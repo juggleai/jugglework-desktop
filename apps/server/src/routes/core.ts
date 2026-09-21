@@ -61,6 +61,7 @@ interface RegisterCoreRoutesOptions {
   resolveToyUiEnabled: () => boolean;
   resolveDevLogPath: () => string | null;
   createOpenAiRealtimeVoiceSession: (env: EnvService, input: unknown) => Promise<unknown>;
+  getVoiceRealtimeStatus: (env: EnvService) => Promise<unknown>;
   mediaGeneration?: MediaGenerationExtensionRuntime;
 }
 
@@ -120,6 +121,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    getVoiceRealtimeStatus,
   } = options;
   const googleWorkspaceConnectFlows = createGoogleWorkspaceConnectFlowManager(config);
   const envPendingChangesByRuntime = new Map<string, boolean>();
@@ -547,5 +549,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   addRoute(routes, "POST", "/voice/realtime/session", "host", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     return jsonResponse(await createOpenAiRealtimeVoiceSession(env, body));
+  });
+
+  addRoute(routes, "GET", "/voice/realtime/status", "host", async () => {
+    return jsonResponse(await getVoiceRealtimeStatus(env));
   });
 }

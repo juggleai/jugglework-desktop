@@ -2,12 +2,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
-import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Minimize2, Paperclip, PenLine, Plus, Plug, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, ArrowUp, Check, FileCog, FileText, ImagePlus, Lightbulb, LoaderCircle, MessageCirclePlus, Mic, Minimize2, Paperclip, PenLine, Plus, Plug, ScanSearch, Square, SquarePlay, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { JUGGLEWORK_EXTENSION_CATALOG, type McpDirectoryInfo } from "@/app/constants";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
-import type { JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
+import type { JuggleWorkServerClient, JuggleWorkSessionMessage } from "@/app/lib/jugglework-server";
 import type { ComposerAttachment, ComposerImageGenerationOptions, ComposerVideoGenerationOptions, McpServerEntry, McpStatus, McpStatusMap, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
 import { isJuggleWorkExtensionEnabled, isJuggleWorkExtensionHidden, JUGGLEWORK_EXTENSION_STATE_CHANGED } from "@/react-app/domains/settings/extension-state";
@@ -44,6 +45,11 @@ import {
   completeComposerFocusRequest,
   getPendingComposerFocusRequest,
 } from "./focus-request";
+import {
+  VoiceDictationController,
+  type VoiceDictationErrorCode,
+  type VoiceDictationSnapshot,
+} from "./voice-dictation";
 
 const SketchDialog = lazy(() =>
   import("./sketch/sketch-dialog").then((module) => ({ default: module.SketchDialog })),
@@ -135,6 +141,9 @@ function isComposerExtensionAvailable(entry: McpDirectoryInfo) {
 
 type ComposerProps = {
   sessionId: string;
+  createVoiceRealtimeSession: JuggleWorkServerClient["createVoiceRealtimeSession"] | null;
+  getVoiceRealtimeStatus: JuggleWorkServerClient["getVoiceRealtimeStatus"] | null;
+  onOpenVoiceSettings?: () => void;
   focusEligible: boolean;
   draft: string;
   mentions: Record<string, ComposerMentionKind>;
@@ -457,6 +466,10 @@ export function ReactSessionComposer(props: ComposerProps) {
   const plusMenuRef = useRef<HTMLDivElement | null>(null);
   const plusMenuPopupRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
+  const voiceDictationRef = useRef<VoiceDictationController | null>(null);
+  const onOpenVoiceSettingsRef = useRef(props.onOpenVoiceSettings);
+  const [voiceDictation, setVoiceDictation] = useState<VoiceDictationSnapshot>({ phase: "idle" });
+  const [voiceServiceAvailability, setVoiceServiceAvailability] = useState<"checking" | "available" | "unavailable">("checking");
   // IME composition guard: while an IME composition is active, we must not
   // treat Enter as a submit. Three signals keep this reliable across WebKit,
   // Chrome, and Safari: event.isComposing, event.keyCode === 229, and the
@@ -467,6 +480,138 @@ export function ReactSessionComposer(props: ComposerProps) {
   useEffect(() => {
     draftRef.current = props.draft;
   }, [props.draft]);
+  useEffect(() => {
+    onOpenVoiceSettingsRef.current = props.onOpenVoiceSettings;
+  }, [props.onOpenVoiceSettings]);
+
+  useEffect(() => {
+    const getVoiceRealtimeStatus = props.getVoiceRealtimeStatus;
+    if (!getVoiceRealtimeStatus || !props.createVoiceRealtimeSession) {
+      setVoiceServiceAvailability("unavailable");
+      return;
+    }
+
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const status = await getVoiceRealtimeStatus();
+        if (!disposed) setVoiceServiceAvailability(status.configured ? "available" : "unavailable");
+      } catch {
+        // A status probe failure should not disable a service that may still be
+        // usable (for example while reconnecting to an older remote server).
+        if (!disposed) setVoiceServiceAvailability("available");
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+
+    setVoiceServiceAvailability("checking");
+    void refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [props.createVoiceRealtimeSession, props.getVoiceRealtimeStatus]);
+
+  useEffect(() => {
+    const createVoiceRealtimeSession = props.createVoiceRealtimeSession;
+    if (!createVoiceRealtimeSession) {
+      voiceDictationRef.current?.dispose();
+      voiceDictationRef.current = null;
+      setVoiceDictation({ phase: "idle" });
+      return;
+    }
+
+    const errorMessage = (code: VoiceDictationErrorCode) => {
+      switch (code) {
+        case "microphone_busy": return t("composer.voice_busy");
+        case "permission_denied": return t("composer.voice_permission_denied");
+        case "service_unavailable": return t("composer.voice_unavailable");
+        case "transcription_timeout": return t("composer.voice_timeout");
+        default: return t("composer.voice_failed");
+      }
+    };
+    const controller = new VoiceDictationController({
+      sessionId: props.sessionId,
+      createSession: () => createVoiceRealtimeSession({ purpose: "dictation" }),
+      onSnapshot: (snapshot) => {
+        setVoiceDictation(snapshot);
+        if (snapshot.phase === "error" && snapshot.errorCode) {
+          toast.error(errorMessage(snapshot.errorCode), snapshot.errorCode === "service_unavailable" && onOpenVoiceSettingsRef.current
+            ? {
+              action: {
+                label: t("composer.voice_open_settings"),
+                onClick: () => onOpenVoiceSettingsRef.current?.(),
+              },
+            }
+            : undefined);
+        }
+      },
+      onTranscript: (text) => {
+        if (editorRef.current) {
+          editorRef.current.insertTextAtSelection(text);
+          return;
+        }
+        props.onDraftChange(`${draftRef.current}${text}`);
+      },
+      onEmpty: () => toast.info(t("composer.voice_empty")),
+    });
+    voiceDictationRef.current = controller;
+
+    const cancel = () => controller.cancel();
+    window.addEventListener("pagehide", cancel);
+    window.addEventListener("beforeunload", cancel);
+    return () => {
+      window.removeEventListener("pagehide", cancel);
+      window.removeEventListener("beforeunload", cancel);
+      controller.dispose();
+      if (voiceDictationRef.current === controller) voiceDictationRef.current = null;
+    };
+  }, [props.createVoiceRealtimeSession, props.onDraftChange, props.sessionId]);
+
+  const toggleVoiceDictation = useCallback(() => {
+    const controller = voiceDictationRef.current;
+    if (!controller) {
+      toast.error(t("composer.voice_unavailable"), onOpenVoiceSettingsRef.current
+        ? {
+          action: {
+            label: t("composer.voice_open_settings"),
+            onClick: () => onOpenVoiceSettingsRef.current?.(),
+          },
+        }
+        : undefined);
+      return;
+    }
+    const phase = controller.getSnapshot().phase;
+    if (phase === "recording") {
+      void controller.stop();
+      return;
+    }
+    if (phase === "requesting-permission" || phase === "connecting") {
+      controller.cancel();
+      return;
+    }
+    if (phase === "idle" || phase === "error") void controller.start();
+  }, []);
+  const voiceDictationLabel = voiceDictation.phase === "recording"
+    ? t("composer.voice_stop")
+    : voiceDictation.phase === "requesting-permission" || voiceDictation.phase === "connecting"
+      ? t("composer.voice_connecting")
+      : voiceDictation.phase === "transcribing"
+        ? t("composer.voice_transcribing")
+        : t("composer.voice_start");
+  const voiceServiceUnavailable = voiceServiceAvailability === "unavailable";
+  const voiceServiceChecking = voiceServiceAvailability === "checking";
+  const voiceServiceDisabled = voiceServiceAvailability !== "available";
+  const voiceButtonLabel = voiceServiceUnavailable
+    ? t("composer.voice_configure_hint")
+    : voiceServiceChecking
+      ? t("composer.voice_checking")
+      : voiceDictationLabel;
 
   // Follow-up message UX (only relevant while the agent is busy):
   // - Every submit queues the message to run after the current task.
@@ -1862,6 +2007,34 @@ export function ReactSessionComposer(props: ComposerProps) {
                   to stop the agent" prompt.
               */}
               <div className="ml-auto flex shrink-0 items-end gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger render={<span className={`inline-flex ${voiceServiceDisabled ? "cursor-not-allowed" : ""}`} />}>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={toggleVoiceDictation}
+                      disabled={voiceDictation.phase === "transcribing" || voiceServiceDisabled}
+                      aria-pressed={voiceDictation.phase === "recording"}
+                      aria-label={voiceButtonLabel}
+                      className={`inline-flex h-9 max-h-9 w-9 items-center justify-center rounded-full transition-colors active:scale-[0.98] disabled:pointer-events-none ${
+                        voiceServiceDisabled
+                          ? "text-gray-7 opacity-70"
+                          : voiceDictation.phase === "recording"
+                            ? "bg-red-3 text-red-10 motion-safe:animate-pulse"
+                            : "text-gray-11 hover:bg-gray-3 hover:text-gray-12"
+                      }`}
+                    >
+                      {voiceDictation.phase === "requesting-permission" ||
+                      voiceDictation.phase === "connecting" ||
+                      voiceDictation.phase === "transcribing" ? (
+                        <LoaderCircle size={17} className="animate-spin" />
+                      ) : (
+                        <Mic size={18} strokeWidth={1.9} />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{voiceButtonLabel}</TooltipContent>
+                </Tooltip>
                 {props.busy ? (
                   <>
                     {escapeArmed ? (

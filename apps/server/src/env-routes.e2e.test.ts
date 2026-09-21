@@ -337,6 +337,12 @@ describe("env routes", () => {
       const url = String(input);
       if (url === "https://api.openai.com/v1/realtime/client_secrets") {
         expect(init?.headers).toMatchObject({ Authorization: "Bearer sk-test" });
+        const request = JSON.parse(String(init?.body)) as {
+          session: { output_modalities: string[]; audio: { input: { transcription: { language?: string } } }; tools: unknown[] };
+        };
+        expect(request.session.output_modalities).toEqual(["audio"]);
+        expect(request.session.audio.input.transcription.language).toBe("en");
+        expect(request.session.tools.length).toBeGreaterThan(0);
         return Promise.resolve(new Response(JSON.stringify({ client_secret: { value: "rt-secret", expires_at: 123 } }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -367,7 +373,64 @@ describe("env routes", () => {
     });
   });
 
-  test("voice realtime session prefers JuggleWork Models broker when configured", async () => {
+  test("voice realtime status reports configured providers without exposing credentials", async () => {
+    process.env.OPENAI_API_KEY = "sk-status-secret";
+    const { base } = await boot();
+
+    const response = await fetch(`${base}/voice/realtime/status`, { headers: hostAuth() });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ configured: true, source: "openai" });
+  });
+
+  test("voice realtime dictation disables replies, tools, VAD, and fixed language", async () => {
+    process.env.OPENAI_API_KEY = "sk-dictation";
+    globalThis.fetch = ((input, init) => {
+      const url = String(input);
+      if (url === "https://api.openai.com/v1/realtime/client_secrets") {
+        const request = JSON.parse(String(init?.body)) as {
+          session: {
+            output_modalities: string[];
+            audio: { input: { transcription: { model: string; language?: string }; turn_detection: unknown } };
+            tool_choice: string;
+            tools: unknown[];
+          };
+        };
+        expect(request.session.output_modalities).toEqual(["text"]);
+        expect(request.session.audio.input.transcription).toEqual({ model: "gpt-4o-transcribe" });
+        expect(request.session.audio.input.transcription.language).toBeUndefined();
+        expect(request.session.audio.input.turn_detection).toBeNull();
+        expect(request.session.tool_choice).toBe("none");
+        expect(request.session.tools).toEqual([]);
+        return Promise.resolve(new Response(JSON.stringify({
+          client_secret: { value: "dictation-secret", expires_at: 321 },
+        }), { status: 200, headers: { "content-type": "application/json" } }));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+
+    const { base } = await boot();
+    const issued = await fetch(`${base}/tokens`, {
+      method: "POST",
+      headers: hostAuth(),
+      body: JSON.stringify({ scope: "owner", label: "dictation owner" }),
+    });
+    const tokenBody = (await issued.json()) as { token: string };
+    const response = await fetch(`${base}/voice/realtime/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ purpose: "dictation", sessionContext: "must not become an assistant prompt" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      clientSecret: "dictation-secret",
+      tools: [],
+    });
+  });
+
+  test("voice realtime session forwards dictation purpose to JuggleWork Models broker", async () => {
     process.env.OPENAI_API_KEY = "sk-should-not-be-used";
     const { base } = await boot();
 
@@ -387,13 +450,14 @@ describe("env routes", () => {
       const url = String(input);
       if (url === "https://inference.example.test/voice/realtime/session") {
         expect(init?.headers).toMatchObject({ Authorization: "Bearer ow_inf_test" });
+        expect(JSON.parse(String(init?.body))).toMatchObject({ purpose: "dictation" });
         return Promise.resolve(new Response(JSON.stringify({
           ok: true,
           clientSecret: "managed-rt-secret",
           expiresAt: 456,
           model: "gpt-realtime-2",
           transcriptionModel: "gpt-4o-transcribe",
-          tools: ["jugglework_snapshot"],
+          tools: [],
           source: "jugglework-models",
         }), {
           status: 200,
@@ -416,7 +480,7 @@ describe("env routes", () => {
     const response = await fetch(`${base}/voice/realtime/session`, {
       method: "POST",
       headers: { authorization: `Bearer ${tokenBody.token}`, "content-type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ purpose: "dictation" }),
     });
 
     expect(response.status).toBe(200);

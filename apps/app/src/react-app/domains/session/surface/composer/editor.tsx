@@ -45,6 +45,7 @@ import {
 } from "./capability-tags";
 import { shouldCollapsePastedText } from "./pasted-text";
 import { insertStyledPastedText } from "./pasted-text-insertion";
+import { insertTextAtSelection } from "./editor-insertion";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -75,6 +76,7 @@ type EditorProps = {
 
 export type LexicalPromptEditorHandle = {
   insertSkillAtSelection: (skillName: string, kind?: ComposerCapabilityKind) => void;
+  insertTextAtSelection: (text: string) => void;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -1126,6 +1128,15 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   useImperativeHandle(props.editorRef, () => ({
     insertSkillAtSelection(skillName: string, kind: ComposerCapabilityKind = "skill") {
       editor.update(() => insertSkillAtSelection(skillName, kind));
+      editor.focus();
+    },
+    insertTextAtSelection(text: string) {
+      if (!text) return;
+      editor.update(() => insertTextAtSelection(text, {
+        getSelection: $getSelection,
+        isRangeSelection: $isRangeSelection,
+        selectEnd: () => { $getRoot().selectEnd(); },
+      }), { tag: "composer-voice-dictation" });
       editor.focus();
     },
   }), [editor]);

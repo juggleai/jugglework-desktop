@@ -12,6 +12,7 @@ import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { publishInspectorSlice, recordInspectorEvent } from "@/app/lib/app-inspector";
 import { useControlAction, type JuggleWorkControlAction } from "../../../shell/control/control-provider";
+import { acquireMicrophone, releaseMicrophone, requestMicrophoneAccess } from "./microphone";
 
 type VoiceStatus = "idle" | "connecting" | "listening" | "muted" | "speaking" | "error";
 
@@ -54,6 +55,7 @@ const TOOL_LABELS: Record<string, string> = {
   jugglework_list_actions: "Listing controls",
   jugglework_execute_action: "Running UI action",
 };
+const VOICE_MODE_MICROPHONE_OWNER = "voice-mode";
 
 const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
   status: "idle",
@@ -248,16 +250,6 @@ function setRealtimeDiagnostics(text: string) {
   setVoiceRuntimeSnapshot((current) => ({ ...current, realtimeDiagnostics: text }));
 }
 
-async function requestMacMicrophoneAccess() {
-  const ask = window.__JUGGLEWORK_ELECTRON__?.system?.askMicrophoneAccess;
-  if (!ask) return true;
-  const result = await ask();
-  if (result.platform !== "darwin") return true;
-  const status = result.after ?? result.before ?? result.status ?? "unknown";
-  setVoiceRuntimeSnapshot((current) => ({ ...current, micDiagnostics: `macOS microphone permission is ${status}.` }));
-  return result.granted;
-}
-
 async function executeJuggleWorkTool(name: string, args: Record<string, unknown>) {
   const control = window.__juggleworkControl;
   if (!control) return { ok: false, error: "JuggleWork control surface is not available." };
@@ -414,6 +406,7 @@ export function VoicePanel(props: VoicePanelProps) {
     voiceRealtime.responseInProgress = false;
     voiceRealtime.pendingResponse = false;
     voiceRealtime.micMuted = false;
+    releaseMicrophone(VOICE_MODE_MICROPHONE_OWNER);
     setVoiceRuntimeSnapshot((current) => ({
       ...current,
       micMuted: false,
@@ -425,6 +418,10 @@ export function VoicePanel(props: VoicePanelProps) {
     if (!silent) addEntry("system", "Voice session stopped.");
     recordInspectorEvent("voice.disconnected", { sessionId: props.sessionId });
   }, [addEntry, props.sessionId, setRuntimeStatus]);
+
+  useEffect(() => () => {
+    disconnectRealtime(true);
+  }, [disconnectRealtime]);
 
   useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -532,6 +529,10 @@ export function VoicePanel(props: VoicePanelProps) {
     if (audioInput && !navigator.mediaDevices?.getUserMedia) throw new Error("Microphone capture is unavailable in this runtime.");
 
     disconnectRealtime(true);
+    if (audioInput) {
+      const lease = acquireMicrophone(VOICE_MODE_MICROPHONE_OWNER);
+      if (!lease.ok) throw new Error("Microphone is already in use by another voice feature.");
+    }
     setRuntimeStatus("connecting", "Minting Realtime session...");
     const sessionContext = await loadVoiceSessionContext(client, props.workspaceId, props.sessionId);
     const realtimeSession = await client.createVoiceRealtimeSession({ sessionContext });
@@ -540,8 +541,12 @@ export function VoicePanel(props: VoicePanelProps) {
     voiceRealtime.peer = peer;
     if (audioInput) {
       setRuntimeStatus("connecting", "Requesting microphone...");
-      const macPermissionGranted = await requestMacMicrophoneAccess();
-      if (!macPermissionGranted) throw new Error("macOS denied microphone access. Enable JuggleWork in System Settings > Privacy & Security > Microphone, then restart JuggleWork.");
+      const microphonePermission = await requestMicrophoneAccess();
+      setVoiceRuntimeSnapshot((current) => ({
+        ...current,
+        micDiagnostics: `${microphonePermission.platform} microphone permission is ${microphonePermission.status}.`,
+      }));
+      if (!microphonePermission.granted) throw new Error("macOS denied microphone access. Enable JuggleWork in System Settings > Privacy & Security > Microphone, then restart JuggleWork.");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });

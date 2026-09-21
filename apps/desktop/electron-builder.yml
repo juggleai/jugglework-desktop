@@ -63,7 +63,7 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: JuggleWork uses the microphone when you start Voice Mode so you can speak commands to your agent.
+    NSMicrophoneUsageDescription: JuggleWork uses the microphone for Voice Mode and task dictation when you choose to speak.
     NSScreenCaptureUsageDescription: JuggleWork uses screen recording only when you ask Computer Use to inspect or interact with your screen.
   extraResources:
     # Dedicated monochrome macOS menu-bar template image. Keep the 1x and

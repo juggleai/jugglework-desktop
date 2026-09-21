@@ -2520,6 +2520,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         ) : null}
         <ReactSessionComposer
           sessionId={props.sessionId}
+          createVoiceRealtimeSession={props.client.createVoiceRealtimeSession}
+          getVoiceRealtimeStatus={props.client.getVoiceRealtimeStatus}
+          onOpenVoiceSettings={props.onOpenSettingsSection ? () => props.onOpenSettingsSection?.("providers") : undefined}
           focusEligible={props.isControlTarget && !props.modelPickerOpen}
           draft={draft}
           mentions={mentions}

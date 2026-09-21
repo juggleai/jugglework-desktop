@@ -2755,7 +2755,11 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.config,
       }),
 
-    createVoiceRealtimeSession: (payload?: { model?: string; sessionContext?: string }) =>
+    createVoiceRealtimeSession: (payload?: {
+      purpose?: "assistant" | "dictation";
+      model?: string;
+      sessionContext?: string;
+    }) =>
       requestJson<{
         ok: true;
         clientSecret: string;
@@ -2769,6 +2773,16 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         hostToken,
         method: "POST",
         body: payload ?? {},
+        timeoutMs: timeouts.config,
+      }),
+
+    getVoiceRealtimeStatus: () =>
+      requestJson<{
+        configured: boolean;
+        source: "jugglework-models" | "openai" | null;
+      }>(baseUrl, "/voice/realtime/status", {
+        token,
+        hostToken,
         timeoutMs: timeouts.config,
       }),
   };

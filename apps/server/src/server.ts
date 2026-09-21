@@ -521,6 +521,16 @@ async function resolveJuggleWorkModelsVoiceConfig(env: EnvService): Promise<{ ba
   return { apiKey, baseUrl: baseUrl.replace(/\/+$/, "") };
 }
 
+async function getVoiceRealtimeStatus(env: EnvService) {
+  if (await resolveJuggleWorkModelsVoiceConfig(env)) {
+    return { configured: true, source: "jugglework-models" as const };
+  }
+  if (await resolveOpenAiRealtimeApiKey(env)) {
+    return { configured: true, source: "openai" as const };
+  }
+  return { configured: false, source: null };
+}
+
 function juggleworkVoiceRealtimeInstructions(sessionContext: string) {
   const trimmedContext = sessionContext.trim();
   const contextSection = trimmedContext
@@ -655,6 +665,8 @@ async function createManagedVoiceSession(config: { baseUrl: string; apiKey: stri
 async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
   const model = readStringField(input, "model") || JUGGLEWORK_VOICE_REALTIME_MODEL;
   const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
+  const purpose = readStringField(input, "purpose") === "dictation" ? "dictation" : "assistant";
+  const dictation = purpose === "dictation";
   const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
@@ -665,23 +677,29 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
       session: {
         type: "realtime",
         model,
-        output_modalities: ["audio"],
+        output_modalities: dictation ? ["text"] : ["audio"],
         audio: {
           input: {
-            transcription: { model: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.58,
-              silence_duration_ms: 320,
-              prefix_padding_ms: 300,
-              create_response: true,
-              interrupt_response: true,
-            },
+            transcription: dictation
+              ? { model: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL }
+              : { model: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
+            turn_detection: dictation
+              ? null
+              : {
+                type: "server_vad",
+                threshold: 0.58,
+                silence_duration_ms: 320,
+                prefix_padding_ms: 300,
+                create_response: true,
+                interrupt_response: true,
+              },
           },
         },
-        instructions: juggleworkVoiceRealtimeInstructions(sessionContext),
-        tool_choice: "auto",
-        tools: JUGGLEWORK_VOICE_REALTIME_TOOLS,
+        instructions: dictation
+          ? "Transcribe the user's microphone audio accurately. Do not answer or take actions."
+          : juggleworkVoiceRealtimeInstructions(sessionContext),
+        tool_choice: dictation ? "none" : "auto",
+        tools: dictation ? [] : JUGGLEWORK_VOICE_REALTIME_TOOLS,
       },
     }),
   });
@@ -711,7 +729,7 @@ async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
     expiresAt,
     model,
     transcriptionModel: JUGGLEWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: JUGGLEWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
+    tools: dictation ? [] : JUGGLEWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
   };
 }
 
@@ -2128,6 +2146,7 @@ function createRoutes(
     resolveToyUiEnabled,
     resolveDevLogPath,
     createOpenAiRealtimeVoiceSession,
+    getVoiceRealtimeStatus,
     mediaGeneration,
   });
 
