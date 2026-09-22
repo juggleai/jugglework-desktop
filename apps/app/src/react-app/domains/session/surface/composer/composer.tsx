@@ -1505,15 +1505,15 @@ export function ReactSessionComposer(props: ComposerProps) {
         <div
           role="menu"
           aria-label={t("composer.plus_label")}
-          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-2.5"
+          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-1"
           onMouseDown={(event) => event.preventDefault()}
         >
           {groups.map((group, groupIndex) => (
-            <section key={group.id} className={groupIndex > 0 ? "mt-2" : undefined}>
-              <div className="px-3 pb-1.5 pt-1.5 text-[13px] font-medium text-gray-9">
+            <section key={group.id} className={groupIndex > 0 ? "mt-1" : undefined}>
+              <div className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-gray-9">
                 {group.label}
               </div>
-              <div className="grid gap-0.5">
+              <div className="grid gap-0">
                 {group.entries.map((entry) => {
                   const index = flatIndex++;
                   const attachmentAction = entry.kind === "file" || entry.kind === "sketch";
@@ -1547,11 +1547,11 @@ export function ReactSessionComposer(props: ComposerProps) {
                       role="menuitem"
                       disabled={disabled}
                       title={disabledTitle ?? entry.description}
-                      className={`flex min-h-11 w-full min-w-0 items-center gap-3 rounded-[15px] px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === index ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                      className={`flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded-[13px] px-1.5 py-1 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-gray-7 ${selected || plusMenuIndex === index ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2/80"} ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                       onMouseEnter={() => setPlusMenuIndex(index)}
                       onClick={() => activatePlusEntry(entry)}
                     >
-                      <span className="flex size-6 shrink-0 items-center justify-center text-gray-10">
+                      <span className="flex size-5 shrink-0 items-center justify-center text-gray-10">
                         {entry.kind === "file" ? <Paperclip size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "sketch" ? <PenLine size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "image-generation" ? <ImagePlus size={18} strokeWidth={1.8} /> : null}
@@ -1561,9 +1561,9 @@ export function ReactSessionComposer(props: ComposerProps) {
                         {entry.kind === "plugin-file" ? <FileText size={18} strokeWidth={1.8} /> : null}
                         {entry.kind === "mcp" ? <Plug size={18} strokeWidth={1.8} /> : null}
                       </span>
-                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                        <span className="shrink-0 text-sm font-medium text-gray-12">{entry.label}</span>
-                        <span className="min-w-0 truncate text-sm text-gray-9">{entry.description}</span>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span className="shrink-0 text-[13px] font-medium text-gray-12">{entry.label}</span>
+                        <span className="min-w-0 truncate text-[13px] text-gray-9">{entry.description}</span>
                       </span>
                       {selected ? <Check size={16} className="shrink-0 text-gray-10" /> : null}
                       {entry.kind === "mcp" ? (
@@ -1575,7 +1575,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                   );
                 })}
                 {group.entries.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-gray-9">
+                  <div className="px-2.5 py-1.5 text-[13px] text-gray-9">
                     {group.id === "mcp" && mcpLoading
                       ? t("composer.plus_menu_loading_mcp")
                       : group.id === "mcp"
@@ -1603,13 +1603,13 @@ export function ReactSessionComposer(props: ComposerProps) {
         <div
           role="menu"
           aria-label={t("composer.slash_menu_label")}
-          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-2.5"
+          className="subtle-scrollbar max-h-[min(30rem,calc(100vh-12rem))] overflow-x-hidden overflow-y-auto p-1"
           onMouseDown={(event) => event.preventDefault()}
         >
           {groups.length > 0 ? groups.map((group, groupIndex) => (
-            <section key={group.id} className={groupIndex > 0 ? "mt-2" : undefined}>
-              <div className="px-3 pb-1.5 pt-1.5 text-[13px] font-medium text-gray-9">{group.label}</div>
-              <div className="grid gap-0.5">
+            <section key={group.id} className={groupIndex > 0 ? "mt-1" : undefined}>
+              <div className="px-2.5 pb-1 pt-1.5 text-xs font-medium text-gray-9">{group.label}</div>
+              <div className="grid gap-0">
                 {group.entries.map((command) => {
                   const index = flatIndex++;
                   const isSkill = group.id === "skills";
@@ -1628,7 +1628,7 @@ export function ReactSessionComposer(props: ComposerProps) {
                       }}
                       type="button"
                       role="menuitem"
-                      className={`flex min-h-11 w-full min-w-0 items-center gap-3 rounded-[15px] px-3 py-2 text-left outline-none transition-colors hover:bg-gray-2/70 focus-visible:ring-2 focus-visible:ring-gray-7 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
+                      className={`flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded-[13px] px-1.5 py-1 text-left outline-none transition-colors hover:bg-gray-2/70 focus-visible:ring-2 focus-visible:ring-gray-7 ${activeMenu === "slash" && slashFiltered[menuIndex]?.id === command.id ? "bg-gray-3 text-gray-12" : "text-gray-11"}`}
                       onMouseEnter={() => setMenuIndex(index)}
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -1639,25 +1639,25 @@ export function ReactSessionComposer(props: ComposerProps) {
                         if (event.detail === 0) applyCommandSelection(command, { replaceSkillDraft: true });
                       }}
                     >
-                      <span className="flex size-6 shrink-0 items-center justify-center text-gray-10">
+                      <span className="flex size-5 shrink-0 items-center justify-center text-gray-10">
                         {slashCommandIcon(command, isSkill)}
                       </span>
-                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                        <span className="shrink-0 text-sm font-medium text-gray-12">
+                      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span className="shrink-0 text-[13px] font-medium text-gray-12">
                           {slashCommandLabel(command, isSkill)}
                         </span>
-                        <span className="min-w-0 truncate text-sm text-gray-9">
+                        <span className="min-w-0 truncate text-[13px] text-gray-9">
                           {slashCommandDescription(command, isSkill)}
                         </span>
                       </span>
-                      {scope ? <span className="shrink-0 text-xs text-gray-9">{scope}</span> : null}
+                      {scope ? <span className="shrink-0 text-[11px] text-gray-9">{scope}</span> : null}
                     </button>
                   );
                 })}
               </div>
             </section>
           )) : (
-            <div className="px-3 py-3 text-sm text-gray-10">
+            <div className="px-2.5 py-1.5 text-[13px] text-gray-10">
               {(!commandsLoaded && commandsLoading) || skillsLoading ? t("composer.loading_commands") : t("composer.no_commands")}
             </div>
           )}

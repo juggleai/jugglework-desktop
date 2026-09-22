@@ -27,6 +27,26 @@ describe("composer action menus", () => {
     expect(plusMenu).toContain("entry.description");
   });
 
+  test("keeps add and slash menu rows compact while preserving clear group rhythm", () => {
+    const source = readFileSync(composerPath, "utf8");
+    const plusMenu = source.slice(source.indexOf("const renderPlusMenu"), source.indexOf("const renderSlashMenu"));
+    const slashMenu = source.slice(source.indexOf("const renderSlashMenu"), source.indexOf("const renderMentionMenu"));
+
+    expect(plusMenu).toContain("overflow-y-auto p-1");
+    expect(plusMenu).toContain('groupIndex > 0 ? "mt-1"');
+    expect(plusMenu).toContain('className="grid gap-0"');
+    expect(plusMenu).toContain("min-h-8 w-full min-w-0 items-center gap-1.5 rounded-[13px] px-1.5 py-1");
+    expect(plusMenu).toContain('text-[13px] font-medium text-gray-12');
+    expect(plusMenu).toContain('truncate text-[13px] text-gray-9');
+    expect(slashMenu).toContain("overflow-y-auto p-1");
+    expect(slashMenu).toContain('groupIndex > 0 ? "mt-1"');
+    expect(slashMenu).toContain('className="grid gap-0"');
+    expect(slashMenu).toContain("min-h-8 w-full min-w-0 items-center gap-1.5 rounded-[13px] px-1.5 py-1");
+    expect(slashMenu).toContain('text-[13px] font-medium text-gray-12');
+    expect(slashMenu).toContain('truncate text-[13px] text-gray-9');
+    expect(slashMenu).toContain('text-[11px] text-gray-9');
+  });
+
   test("groups slash results into commands and skills while preserving one keyboard order", () => {
     const source = readFileSync(composerPath, "utf8");
     const slashMenu = source.slice(source.indexOf("const renderSlashMenu"), source.indexOf("const renderMentionMenu"));
