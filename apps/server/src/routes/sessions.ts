@@ -323,17 +323,17 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
   ) {
     try {
       const opencode = createWorkspaceOpencodeClient(config, workspace);
-      return buildSessionList(
-        unwrapOpencodeResult(
-          await opencode.session.list({
-            roots: input.roots,
-            start: input.start,
-            search: input.search,
-            limit: input.limit,
-          }),
-          "/session",
-        ),
-      );
+      const [sessions, statuses] = await Promise.all([
+        opencode.session.list({
+          roots: input.roots,
+          start: input.start,
+          search: input.search,
+          limit: input.limit,
+        }).then((result) => unwrapOpencodeResult(result, "/session")),
+        opencode.session.status()
+          .then((result) => unwrapOpencodeResult(result, "/session/status")),
+      ]);
+      return buildSessionList(sessions, statuses);
     } catch (error) {
       remapSessionReadError(error);
     }

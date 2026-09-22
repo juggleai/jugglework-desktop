@@ -114,14 +114,21 @@ export type JuggleWorkSessionMessage = {
   parts: Part[];
 };
 
+export type JuggleWorkSessionStatus =
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number };
+
+export type JuggleWorkSessionListItem = Session & {
+  /** Added by current JuggleWork servers; optional for older remote workers. */
+  status?: JuggleWorkSessionStatus;
+};
+
 export type JuggleWorkSessionSnapshot = {
   session: Session;
   messages: JuggleWorkSessionMessage[];
   todos: Todo[];
-  status:
-    | { type: "idle" }
-    | { type: "busy" }
-    | { type: "retry"; attempt: number; message: string; next: number };
+  status: JuggleWorkSessionStatus;
 };
 
 export type JuggleWorkSessionRunOrigin = "local-renderer" | "remote-control";
@@ -1884,7 +1891,7 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
       if (options?.search?.trim()) query.set("search", options.search.trim());
       if (typeof options?.limit === "number") query.set("limit", String(options.limit));
       const suffix = query.size ? `?${query.toString()}` : "";
-      return requestJson<{ items: Session[] }>(
+      return requestJson<{ items: JuggleWorkSessionListItem[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions${suffix}`,
         { token, hostToken, timeoutMs: timeouts.sessionRead },

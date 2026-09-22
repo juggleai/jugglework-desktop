@@ -92,6 +92,7 @@ const sessionSnapshotSchema = z.object({
 });
 
 export type SessionInfoReadModel = z.infer<typeof sessionInfoSchema>;
+export type SessionListItemReadModel = SessionInfoReadModel & { status: SessionStatusReadModel };
 export type SessionMessageReadModel = z.infer<typeof sessionMessageSchema>;
 export type SessionTodoReadModel = z.infer<typeof sessionTodoSchema>;
 export type SessionStatusReadModel = z.infer<typeof sessionStatusSchema>;
@@ -107,8 +108,29 @@ function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, label: string): T
   });
 }
 
-export function buildSessionList(value: SessionListResponse): SessionInfoReadModel[] {
-  return parseOrThrow(sessionListSchema, value, "session list");
+export function buildSessionList(
+  value: SessionListResponse,
+  statusValue: SessionStatusResponse,
+): SessionListItemReadModel[] {
+  const sessions = parseOrThrow(sessionListSchema, value, "session list");
+  if (!statusValue || typeof statusValue !== "object" || Array.isArray(statusValue)) {
+    throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session statuses");
+  }
+  return sessions.map((session) => {
+    const rawStatus = Object.prototype.hasOwnProperty.call(statusValue, session.id)
+      ? statusValue[session.id]
+      : undefined;
+    return {
+      ...session,
+      // OpenCode omits idle sessions from /session/status. An absent entry is
+      // therefore authoritative idle, while a present malformed entry remains
+      // an upstream contract error. Ignore unrelated entries so pagination is
+      // not poisoned by a future status attached to an off-page session.
+      status: rawStatus === undefined
+        ? IDLE_STATUS
+        : parseOrThrow(sessionStatusSchema, rawStatus, "session status"),
+    };
+  });
 }
 
 export function buildSession(value: SessionGetResponse): SessionInfoReadModel {

@@ -39,6 +39,7 @@ function startMockOpencode(input?: {
   invalidList?: boolean;
   holdCommand?: Promise<void>;
   config?: Record<string, unknown>;
+  statuses?: unknown;
 }) {
   const requests: Array<{ pathname: string; search: string; directory: string | null; method: string; body?: unknown }> = [];
   let config = input?.config ?? {};
@@ -91,7 +92,7 @@ function startMockOpencode(input?: {
       }
 
       if (url.pathname === "/session/status") {
-        return Response.json({ ses_1: { type: "busy" } });
+        return Response.json(input && "statuses" in input ? input.statuses : { ses_1: { type: "busy" } });
       }
 
       if (url.pathname === "/session/ses_1") {
@@ -302,6 +303,7 @@ describe("workspace session read APIs", () => {
           slug: "hostname-check",
           directory: workspaceRoot,
           time: { created: 100, updated: 200 },
+          status: { type: "busy" },
         },
       ],
     });
@@ -346,6 +348,58 @@ describe("workspace session read APIs", () => {
     expect(listRequest?.search).toContain("search=host");
     expect(listRequest?.search).toContain("start=10");
 
+  });
+
+  test("treats sessions omitted from the authoritative status map as idle", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode({ statuses: {} });
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+    });
+
+    const response = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions`, {
+      headers: auth(jugglework.token),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      items: [{ id: "ses_1", status: { type: "idle" } }],
+    });
+  });
+
+  test("rejects a malformed target status but ignores malformed statuses outside the listed page", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const invalidTarget = startMockOpencode({ statuses: { ses_1: { type: "future" } } });
+    const firstServer = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${invalidTarget.server.port}`,
+    });
+
+    const rejected = await fetch(`http://127.0.0.1:${firstServer.server.port}/workspace/ws_1/sessions`, {
+      headers: auth(firstServer.token),
+    });
+    expect(rejected.status).toBe(502);
+    await expect(rejected.json()).resolves.toMatchObject({
+      code: "opencode_invalid_response",
+      message: "OpenCode returned invalid session status",
+    });
+
+    const unrelated = startMockOpencode({
+      statuses: { ses_1: { type: "idle" }, ses_other: { type: "future" } },
+    });
+    const secondWorkspaceRoot = await createWorkspaceRoot();
+    const secondServer = await startJuggleWorkServer({
+      workspaceRoot: secondWorkspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${unrelated.server.port}`,
+    });
+    const accepted = await fetch(`http://127.0.0.1:${secondServer.server.port}/workspace/ws_1/sessions`, {
+      headers: auth(secondServer.token),
+    });
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toMatchObject({
+      items: [{ id: "ses_1", status: { type: "idle" } }],
+    });
   });
 
   test("accepts guest-side rem_ workspace aliases for session reads", async () => {
