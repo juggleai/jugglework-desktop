@@ -9,9 +9,11 @@ import {
   getMessagesText,
   getTaskTiming,
   groupMessages,
+  isTaskStoppedMessage,
   isMessageGroup,
   mergeAssistantProcessItems,
   splitAssistantTaskMessages,
+  wasTaskStopped,
 } from "../src/components/chat/utils"
 import { reconcileRunCompletionDiagnostic } from "../src/react-app/domains/session/sync/run-completion-diagnostics"
 import {
@@ -80,6 +82,24 @@ describe("task message presentation", () => {
     expect(getTaskTiming(messages, 0, false)).toEqual({
       startedAt,
       endedAt: completedAt,
+      running: false,
+    })
+  })
+
+  test("identifies a manually stopped task from assistant timing metadata", () => {
+    const startedAt = 1_700_000_000_000
+    const stopped = message("assistant-stopped", "assistant", startedAt + 1_000, [], startedAt + 2_000)
+    stopped.metadata = { opencode: { created: startedAt + 1_000, completed: startedAt + 2_000, stopped: true } }
+    const messages = [
+      message("user-1", "user", startedAt, [{ type: "text", text: "Do it" }]),
+      stopped,
+    ]
+
+    expect(isTaskStoppedMessage(stopped)).toBe(true)
+    expect(wasTaskStopped(messages, 0)).toBe(true)
+    expect(getTaskTiming(messages, 0, false)).toEqual({
+      startedAt,
+      endedAt: startedAt + 2_000,
       running: false,
     })
   })

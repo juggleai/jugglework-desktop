@@ -1,10 +1,7 @@
 import type {
   Agent,
-  AgentPartInput,
   FilePartInput,
   Session,
-  SubtaskPartInput,
-  TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
 import { t } from "../../../../i18n";
@@ -31,12 +28,11 @@ import type {
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, saveSessionDraft } from "./draft-store";
-import { firstLineLocalFileParts } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
+import { composerDraftToPromptParts } from "./composer-prompt-parts";
 import { classifyProviderLimit } from "./provider-limit-classify";
 import { classifyProviderError, extractProviderErrorSignals } from "./provider-error-classify";
 import { resolveRedoHistoryStep } from "./history-position";
-import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
   applyPendingSessionChoice: (sessionId: string) => void;
@@ -138,54 +134,6 @@ export function createSessionActionsStore(options: {
     emitChange();
   };
 
-  type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
-
-  const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
-    const parts: PartInput[] = [];
-    const text = draft.resolvedText ?? draft.text;
-    parts.push({ type: "text", text } as TextPartInput);
-
-    const root = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
-    const toAbsolutePath = (path: string) => {
-      const trimmed = path.trim();
-      if (!trimmed) return "";
-      if (trimmed.startsWith("/")) return trimmed;
-      if (/^[a-zA-Z]:\\/.test(trimmed)) return trimmed;
-      if (!root) return "";
-      return (root + "/" + trimmed).replace("//", "/");
-    };
-    const filenameFromPath = (path: string) => {
-      const normalized = path.replace(/\\/g, "/");
-      const segments = normalized.split("/").filter(Boolean);
-      return segments[segments.length - 1] ?? "file";
-    };
-
-    for (const part of draft.parts) {
-      if (part.type === "agent") {
-        parts.push({ type: "agent", name: part.name } as AgentPartInput);
-        continue;
-      }
-      if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) } as TextPartInput);
-        continue;
-      }
-      if (part.type === "file") {
-        const absolute = toAbsolutePath(part.path);
-        if (!absolute) continue;
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: `file://${absolute}`,
-          filename: filenameFromPath(part.path),
-        } as FilePartInput);
-      }
-    }
-
-    parts.push(...firstLineLocalFileParts(text, root));
-    parts.push(...(await Promise.all(draft.attachments.map(composerAttachmentToFilePart))));
-    return parts;
-  };
-
   const buildCommandFileParts = async (draft: ComposerDraft): Promise<FilePartInput[]> => {
     const parts: FilePartInput[] = [];
     const root = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
@@ -278,8 +226,12 @@ export function createSessionActionsStore(options: {
       code,
       text: [raw, response].filter(Boolean).join("\n"),
     });
+    const providerError = classifyProviderError(error);
     const heading = (() => {
-      if (classifyProviderError(error) === "ip_not_authorized") return t("app.error_ip_authorization");
+      if (providerError === "ip_not_authorized") return t("app.error_ip_authorization");
+      if (providerError === "gateway_credential_invalid") return t("app.error_gateway_credential");
+      if (providerError === "request_too_large") return t("app.error_request_too_large");
+      if (providerError === "tls_verification_failed") return t("app.error_tls_verification");
       if (status === 401 || status === 403) return t("app.error_auth_failed");
       // Hard account limits (quota/plan/spending) are terminal even when the
       // provider reports them as 429 (for example Anthropic
@@ -293,8 +245,14 @@ export function createSessionActionsStore(options: {
     })();
 
     const lines = [heading];
-    if (classifyProviderError(error) === "ip_not_authorized") {
-      lines.push(t("app.error_ip_authorization_hint"));
+    if (providerError) {
+      const hintKey = {
+        ip_not_authorized: "app.error_ip_authorization_hint",
+        gateway_credential_invalid: "app.error_gateway_credential_hint",
+        request_too_large: "app.error_request_too_large_hint",
+        tls_verification_failed: "app.error_tls_verification_hint",
+      }[providerError] as Parameters<typeof t>[0];
+      lines.push(t(hintKey));
     }
     if (limit) {
       lines.push(limit === "usage_limit" ? t("app.error_usage_limit_hint") : t("app.error_context_overflow_hint"));
@@ -303,7 +261,9 @@ export function createSessionActionsStore(options: {
     if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
     if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);
     if (code) lines.push(`Code: ${code}`);
-    if (response) lines.push(`Response: ${response}`);
+    if (response && !(providerError === "request_too_large" && /^\s*</.test(response))) {
+      lines.push(`Response: ${response}`);
+    }
     if (lines.length > 1) return lines.join("\n");
 
     if (raw && !generic) return raw;
@@ -552,7 +512,8 @@ export function createSessionActionsStore(options: {
 
       const model = options.selectedSessionModel();
       const agent = selectedSessionAgent();
-      const parts = await buildPromptParts(resolvedDraft);
+      const root = options.runtimeWorkspaceRoot().trim() || options.selectedWorkspaceRoot().trim();
+      const parts = await composerDraftToPromptParts(resolvedDraft, root);
       const selectedVariant = options.sanitizeModelVariantForRef(model, options.modelVariant()) ?? undefined;
       const reasoningEffort = options.resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;

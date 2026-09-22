@@ -3,7 +3,17 @@ import { JuggleWorkContextOverflow } from "./jugglework-context-overflow.js";
 
 const originalFetch = globalThis.fetch;
 let nextResponse = new Response("ok");
-const fakeBase = Object.assign(async (): Promise<Response> => nextResponse, originalFetch);
+let nextError: unknown = null;
+let fetchCalls = 0;
+const fakeBase = Object.assign(async (): Promise<Response> => {
+  fetchCalls += 1;
+  if (nextError) {
+    const error = nextError;
+    nextError = null;
+    throw error;
+  }
+  return nextResponse;
+}, originalFetch);
 let patchedFetch: typeof fetch;
 
 beforeAll(async () => {
@@ -18,6 +28,34 @@ afterAll(() => {
 });
 
 describe("JuggleWorkContextOverflow fetch patch", () => {
+  test("retries one transient TLS handshake failure without exposing the destination path", async () => {
+    fetchCalls = 0;
+    nextResponse = new Response("ok", { status: 200 });
+    nextError = Object.assign(new Error("unknown certificate verification error"), {
+      cause: { code: "CERT_HAS_EXPIRED" },
+    });
+    const response = await patchedFetch("https://provider.test/secret/path?token=secret", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "hello" }),
+    });
+    expect(response.status).toBe(200);
+    expect(fetchCalls).toBe(2);
+  });
+
+  test("does not retry non-replayable streaming request bodies", async () => {
+    fetchCalls = 0;
+    nextError = Object.assign(new Error("unknown certificate verification error"), {
+      code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    });
+    const body = new ReadableStream({ start(controller) { controller.close(); } });
+    await expect(patchedFetch("https://provider.test/v1/chat/completions", {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit)).rejects.toThrow("unknown certificate verification error");
+    expect(fetchCalls).toBe(1);
+  });
+
   test("normalizes a plain context overflow response", async () => {
     nextResponse = new Response("Your input exceeds the context window of this model.", {
       status: 400,

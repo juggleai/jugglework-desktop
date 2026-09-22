@@ -1,4 +1,8 @@
-export type ProviderErrorKind = "ip_not_authorized";
+export type ProviderErrorKind =
+  | "ip_not_authorized"
+  | "gateway_credential_invalid"
+  | "request_too_large"
+  | "tls_verification_failed";
 
 export type ProviderErrorSignals = {
   status: number | null;
@@ -114,7 +118,41 @@ export function classifyProviderError(error: unknown): ProviderErrorKind | null 
     normalize(signals.type) === "authentication_error" &&
     normalize(signals.code) === "invalid_api_key";
 
-  return hasExpectedShape && text.includes("your ip is not authorized to make this request")
-    ? "ip_not_authorized"
-    : null;
+  if (hasExpectedShape && text.includes("your ip is not authorized to make this request")) {
+    return "ip_not_authorized";
+  }
+
+  if (
+    signals.status === 401
+    && text.includes("gateway credential")
+    && ["missing", "revoked", "expired"].some((token) => text.includes(token))
+  ) {
+    return "gateway_credential_invalid";
+  }
+
+  if (
+    signals.status === 413
+    || text.includes("413 request entity too large")
+    || text.includes("request entity too large")
+    || text.includes("payload too large")
+  ) {
+    return "request_too_large";
+  }
+
+  const code = normalize(signals.code);
+  if (
+    code.startsWith("err_tls_cert_")
+    || code.includes("cert_has_expired")
+    || code.includes("certificate_verify_failed")
+    || code.includes("self_signed_cert")
+    || code.includes("unable_to_verify_leaf_signature")
+    || text.includes("unknown certificate verification error")
+    || text.includes("certificate verification failed")
+    || text.includes("unable to verify the first certificate")
+    || text.includes("self signed certificate")
+  ) {
+    return "tls_verification_failed";
+  }
+
+  return null;
 }

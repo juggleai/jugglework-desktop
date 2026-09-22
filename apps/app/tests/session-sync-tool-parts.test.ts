@@ -1407,6 +1407,11 @@ describe("tool part mapper", () => {
 
       expect(useSessionActivityStore.getState().getStatus("workspace-abort", "session-abort")).toBe("idle");
       expect(getReactQueryClient().getQueryData(statusKey("workspace-abort", "session-abort"))).toEqual({ type: "idle" });
+      expect(getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-abort", "session-abort")))
+        .toEqual([expect.objectContaining({
+          id: "msg-abort",
+          metadata: { opencode: expect.objectContaining({ stopped: true }) },
+        })]);
 
       // 折叠工作区后侧栏仍在重放运行期间的 busy 列表快照，loading 不能因此回来。
       activity.seedWorkspaceSessions("workspace-abort", [{ id: "session-abort", status: { type: "busy" } }]);

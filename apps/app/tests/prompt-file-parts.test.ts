@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { firstLineLocalFileParts } from "../src/react-app/domains/session/sync/prompt-file-parts";
+import { composerDraftToPromptParts } from "../src/react-app/domains/session/sync/composer-prompt-parts";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
@@ -11,82 +11,36 @@ import {
   withBuiltinSlashCommands,
 } from "../src/react-app/domains/session/surface/composer/slash-command";
 
-describe("first-line local file parts", () => {
-  test("detects tilde paths in the first line", () => {
-    const parts = firstLineLocalFileParts(
-      "check ~/code/research/jugglework-users/list.csv\nits a list of unique email domains",
-      "/Users/omar/code/jugglework",
-    );
+describe("composer prompt file parts", () => {
+  test("keeps path-like prompt text as text unless a file was explicitly attached", async () => {
+    for (const text of [
+      "帮我添加忽略 /docs/assets/ai-memory/",
+      "check ~/code/research/list.csv",
+      "check C:\\Users\\omar\\list.csv",
+      "check file:///Users/omar/list.csv",
+    ]) {
+      await expect(composerDraftToPromptParts({
+        mode: "prompt",
+        text,
+        parts: [{ type: "text", text }],
+        attachments: [],
+      }, "/Users/omar/code/jugglework")).resolves.toEqual([{ type: "text", text }]);
+    }
+  });
 
-    expect(parts).toEqual([
+  test("keeps an explicit file mention as a file part", async () => {
+    await expect(composerDraftToPromptParts({
+      mode: "prompt",
+      text: "check @docs/report.md",
+      parts: [{ type: "file", path: "docs/report.md" }],
+      attachments: [],
+    }, "/Users/omar/code/jugglework")).resolves.toEqual([
+      { type: "text", text: "check @docs/report.md" },
       {
         type: "file",
         mime: "text/plain",
-        url: "file:///Users/omar/code/research/jugglework-users/list.csv",
-        filename: "list.csv",
-      },
-    ]);
-  });
-
-  test("only detects paths from the first line", () => {
-    const parts = firstLineLocalFileParts(
-      "summarize this\n~/code/research/jugglework-users/list.csv",
-      "/Users/omar/code/jugglework",
-    );
-
-    expect(parts).toEqual([]);
-  });
-
-  test("does not treat URL paths as local files", () => {
-    const parts = firstLineLocalFileParts(
-      "check https://example.com/research/list.csv",
-      "/Users/omar/code/jugglework",
-    );
-
-    expect(parts).toEqual([]);
-  });
-
-  test("does not treat /apps API routes as local files", () => {
-    const parts = firstLineLocalFileParts(
-      "补齐 /apps/wsurl/set、/apps/appurl/set、/apps/apiurl/set，参考 /apps/alias/set 的实现",
-      "/Users/omar/code/jugglework",
-    );
-
-    expect(parts).toEqual([]);
-  });
-
-  test("keeps /apps paths that are inside the selected workspace", () => {
-    const parts = firstLineLocalFileParts(
-      "check /apps/jugglework/src/server.ts",
-      "/apps/jugglework",
-    );
-
-    expect(parts).toEqual([
-      {
-        type: "file",
-        mime: "text/plain",
-        url: "file:///apps/jugglework/src/server.ts",
-        filename: "server.ts",
-      },
-    ]);
-  });
-
-  test("detects Windows absolute paths in the first line", () => {
-    expect(firstLineLocalFileParts("check C:\\Users\\omar\\list.csv", "C:/Users/omar/code/jugglework")).toEqual([
-      {
-        type: "file",
-        mime: "text/plain",
-        url: "file:///C:/Users/omar/list.csv",
-        filename: "list.csv",
-      },
-    ]);
-
-    expect(firstLineLocalFileParts("check C:/Users/omar/list.csv", "C:/Users/omar/code/jugglework")).toEqual([
-      {
-        type: "file",
-        mime: "text/plain",
-        url: "file:///C:/Users/omar/list.csv",
-        filename: "list.csv",
+        url: "file:///Users/omar/code/jugglework/docs/report.md",
+        filename: "report.md",
       },
     ]);
   });

@@ -118,7 +118,7 @@ import { buildJuggleWorkEnvSystemContext } from "@/react-app/domains/session/syn
 import {
   applySessionRevert,
 } from "@/react-app/domains/session/sync/session-sync";
-import { firstLineLocalFileParts, joinWorkspaceRelativePath, toFileUrl } from "@/react-app/domains/session/sync/prompt-file-parts";
+import { joinWorkspaceRelativePath, toFileUrl } from "@/react-app/domains/session/sync/prompt-file-parts";
 import { composerAttachmentsToWorkspaceFileParts } from "@/react-app/domains/session/sync/attachment-file-part";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
@@ -197,7 +197,7 @@ import {
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
-import { legacySessionRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
+import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
@@ -452,8 +452,6 @@ async function draftToParts(
       }
     }
   }
-
-  parts.push(...firstLineLocalFileParts(draft.resolvedText ?? draft.text, root));
 
   return parts;
 }
@@ -1524,10 +1522,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
             const forked = await forkSession(opencodeClient, targetSessionId, messageId ?? undefined);
             writeLastSessionFor(selectedWorkspaceId, forked.id);
             rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
-            setSessionsByWorkspaceId((current) => ({
-              ...current,
-              [selectedWorkspaceId]: [forked, ...(current[selectedWorkspaceId] ?? [])],
-            }));
+            setSessionsByWorkspaceId((current) => {
+              const next = {
+                ...current,
+                [selectedWorkspaceId]: mergeWorkspaceRouteSession(current[selectedWorkspaceId] ?? [], forked),
+              };
+              sessionsByWorkspaceIdRef.current = next;
+              return next;
+            });
             navigateToWorkspaceSession(selectedWorkspaceId, forked.id);
             void refreshRouteState();
           } catch (error) {
@@ -1775,7 +1777,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       setSessionsByWorkspaceId((current) => {
         const next = {
           ...current,
-          [workspaceId]: [session, ...(current[workspaceId] ?? [])],
+          [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
         };
         sessionsByWorkspaceIdRef.current = next;
         return next;
@@ -2333,7 +2335,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           setSessionsByWorkspaceId((current) => {
             const next = {
               ...current,
-              [targetWorkspaceId]: [session, ...(current[targetWorkspaceId] ?? [])],
+              [targetWorkspaceId]: mergeWorkspaceRouteSession(current[targetWorkspaceId] ?? [], session),
             };
             sessionsByWorkspaceIdRef.current = next;
             return next;
@@ -2658,7 +2660,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               rememberPendingCreatedSession(workspaceId, session.id);
               setSessionsByWorkspaceId((current) => ({
                 ...current,
-                [workspaceId]: [session, ...(current[workspaceId] ?? [])],
+                [workspaceId]: mergeWorkspaceRouteSession(current[workspaceId] ?? [], session),
               }));
               openSessionForNavigation(workspaceId, session.id);
             } catch {

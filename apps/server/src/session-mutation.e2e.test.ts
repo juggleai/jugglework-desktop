@@ -1020,7 +1020,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(second.json()).resolves.toEqual({ items: [] });
   });
 
-  test("engine reload is blocked until the authoritative active run clears", async () => {
+  test("engine reload in another workspace is blocked until the authoritative active run clears", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);
     const started = await fetch(`${runPath(harness.base, "ses_reload_gate")}/start`, {
@@ -1034,12 +1034,13 @@ describe("authoritative session mutation APIs", () => {
     });
     const { run } = await started.json() as { run: { runId: string } };
 
-    const blocked = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+    const blocked = await fetch(`${harness.base}/workspace/ws_2/engine/reload`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
     });
     expect(blocked.status).toBe(409);
     await expect(blocked.json()).resolves.toMatchObject({ code: "engine_reload_blocked_active_runs" });
+    expect(engine.disposes).toEqual([]);
 
     const terminal = await fetch(`${runPath(harness.base, "ses_reload_gate")}/${run.runId}/observations`, {
       method: "POST",
@@ -1048,7 +1049,7 @@ describe("authoritative session mutation APIs", () => {
     });
     expect(terminal.status).toBe(200);
 
-    const reloaded = await fetch(`${harness.base}/workspace/ws_1/engine/reload`, {
+    const reloaded = await fetch(`${harness.base}/workspace/ws_2/engine/reload`, {
       method: "POST",
       headers: harness.collaboratorHeaders,
     });

@@ -106,6 +106,13 @@ describe("workspace route session hydration", () => {
     ]);
   });
 
+  test("deduplicates a create response that races the session.created event", () => {
+    const fromEvent = { id: "session-new", title: "New Session" };
+    const fromCreateResponse = { id: "session-new", title: "New Session" };
+
+    expect(mergeWorkspaceRouteSession([fromEvent], fromCreateResponse)).toEqual([fromCreateResponse]);
+  });
+
   test("preserves the active hydrated session across capped list refreshes", () => {
     const hydrated = { id: "session-010", title: "Deep link" };
     const current = [hydrated, { id: "session-200", title: "Recent" }];

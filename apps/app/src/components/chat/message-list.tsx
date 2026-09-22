@@ -113,7 +113,7 @@ import {
   type ComposerCapabilityKind,
 } from "@/react-app/domains/session/surface/composer/capability-tags"
 import { currentLocale, t } from "@/i18n"
-import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCreated, formatMessageTimestamp, formatTaskDuration, getTaskTiming, splitAssistantTaskMessages, mergeAssistantProcessItems, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, isTaskStoppedMessage, wasTaskStopped } from "./utils"
 import {
   getSessionCompactionFromMessage,
   type SessionCompactionPresentation,
@@ -162,7 +162,10 @@ function TaskDuration({ messages, userMessageIndex, isStreaming }: {
 
   const endedAt = timing.running ? Math.max(timing.startedAt, now) : timing.endedAt
   const locale = currentLocale() === "zh" ? "zh" : "en"
-  const label = locale === "zh" ? "耗时" : "Elapsed"
+  const stopped = !timing.running && wasTaskStopped(messages, userMessageIndex)
+  const label = stopped
+    ? (locale === "zh" ? "你已停止，耗时" : "You stopped after")
+    : (locale === "zh" ? "耗时" : "Elapsed")
   const duration = formatTaskDuration(endedAt - timing.startedAt, locale)
 
   return (
@@ -1022,7 +1025,7 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
 RetryMessage.displayName = "RetryMessage"
 
 const isMessageEmptyGroup = (messages: UIMessageWithIndex[]) =>
-  messages.every(message => isEmptyMessage(message.message));
+  messages.every(message => isEmptyMessage(message.message) && !isTaskStoppedMessage(message.message));
 
 const getRenderableMessages = (messages: UIMessageWithIndex[]) =>
   messages.flatMap((item) => {

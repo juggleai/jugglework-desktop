@@ -30,6 +30,10 @@ function defaultErrorMessage(name: string | null, fallback: string) {
   return fallback;
 }
 
+export function isMessageAbortedError(error: unknown): boolean {
+  return extractProviderErrorSignals(error).type?.trim().toLowerCase() === "messageabortederror";
+}
+
 /**
  * Unsupported file parts live in server-side session history, so the same
  * provider error replays on every later prompt. Tell the user how to escape.
@@ -70,16 +74,33 @@ function describeLimitedError(kind: ProviderLimitKind, detail: string | null, fa
   return withSessionErrorHints(lines.join("\n"));
 }
 
+function providerErrorHeadingAndHint(kind: NonNullable<ReturnType<typeof classifyProviderError>>): [string, string] {
+  switch (kind) {
+    case "ip_not_authorized":
+      return [t("app.error_ip_authorization"), t("app.error_ip_authorization_hint")];
+    case "gateway_credential_invalid":
+      return [t("app.error_gateway_credential"), t("app.error_gateway_credential_hint")];
+    case "request_too_large":
+      return [t("app.error_request_too_large"), t("app.error_request_too_large_hint")];
+    case "tls_verification_failed":
+      return [t("app.error_tls_verification"), t("app.error_tls_verification_hint")];
+  }
+}
+
 export function describeOpencodeSessionError(error: unknown, fallback = "Session failed") {
   const providerError = classifyProviderError(error);
   const signals = extractProviderErrorSignals(error);
-  if (providerError === "ip_not_authorized") {
-    const lines = [t("app.error_ip_authorization"), t("app.error_ip_authorization_hint")];
+  if (providerError) {
+    const lines = providerErrorHeadingAndHint(providerError);
     if (signals.message && !lines.includes(signals.message)) lines.push(signals.message);
     if (signals.status) lines.push(`Status: ${signals.status}`);
     if (signals.provider) lines.push(`Provider: ${signals.provider}`);
     if (signals.code) lines.push(`Code: ${signals.code}`);
-    if (signals.responseBody && signals.responseBody !== signals.message) {
+    if (
+      signals.responseBody
+      && signals.responseBody !== signals.message
+      && !(providerError === "request_too_large" && /^\s*</.test(signals.responseBody))
+    ) {
       lines.push(`Response: ${signals.responseBody}`);
     }
     return lines.join("\n");
@@ -261,6 +282,8 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     const completed = message.info.time && "completed" in message.info.time
       ? message.info.time.completed
       : undefined;
+    const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
+    const stopped = isMessageAbortedError(error);
     const timingMetadata = {
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
@@ -270,6 +293,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
       ...(message.info.role === "assistant" && message.info.summary === true
         ? { summary: true }
         : {}),
+      ...(stopped ? { stopped: true } : {}),
     };
     const boundary = message.parts.findLast((part) => part.type === "compaction");
     if (boundary?.type === "compaction") {
@@ -350,8 +374,7 @@ export function snapshotToUIMessages(snapshot: JuggleWorkSessionSnapshot): UIMes
     // reconcile to one message instead of duplicating — while a later turn's
     // error still gets its own message. An empty assistant carcass for the
     // errored turn is dropped so the error reads as that turn's outcome.
-    const error = message.info.role === "assistant" && "error" in message.info ? message.info.error : undefined;
-    if (!error) {
+    if (!error || stopped) {
       // OpenCode persists compaction boundaries as otherwise-empty user
       // messages. Their mode has already been transferred to the following
       // summary above; retaining the empty message here would split one

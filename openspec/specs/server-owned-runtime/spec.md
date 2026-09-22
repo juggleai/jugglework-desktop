@@ -27,6 +27,10 @@ Server SHALL clean up every acquired runtime resource when startup fails and SHA
 - **WHEN** multiple callers invoke stop concurrently or sequentially
 - **THEN** they observe one shared cleanup operation and each resource is released at most once
 
+#### Scenario: Another workspace requests a shared engine reload during an active task
+- **WHEN** any workspace has an active task and a different workspace requests an explicit managed-engine reload
+- **THEN** Server rejects or defers the reload without disposing the shared engine until every active task has reached a terminal state
+
 ### Requirement: Managed OpenCode receives valid runtime endpoints
 Server SHALL inject the actual reachable JuggleWork Server URL and current runtime configuration into managed OpenCode.
 

@@ -182,3 +182,56 @@ describe("IP authorization provider errors", () => {
     expect(text).toContain("通常无需更换你的 API Key");
   });
 });
+
+describe("gateway transport provider errors", () => {
+  beforeEach(() => setLocale("en"));
+  afterEach(() => setLocale("en"));
+
+  test("classifies and explains an expired JuggleWork gateway credential", () => {
+    const error = {
+      statusCode: 401,
+      responseBody: JSON.stringify({
+        error: {
+          code: "unauthorized",
+          message: "The gateway credential is missing, revoked, or expired.",
+          type: "unauthorized",
+        },
+      }),
+    };
+    expect(classifyProviderError(error)).toBe("gateway_credential_invalid");
+    const text = describeOpencodeSessionError(error);
+    expect(text).toContain("JuggleWork gateway sign-in expired");
+    expect(text).toContain("sign in to JuggleWork again");
+    expect(text).toContain("Status: 401");
+  });
+
+  test("turns an nginx 413 HTML response into actionable size guidance", () => {
+    const html = "<html><head><title>413 Request Entity Too Large</title></head><body>nginx</body></html>";
+    const error = { statusCode: 413, responseBody: html, message: "Request failed" };
+    expect(classifyProviderError(error)).toBe("request_too_large");
+    const text = describeOpencodeSessionError(error);
+    expect(text).toContain("Request is too large for the gateway");
+    expect(text).toContain("Remove or split large attachments");
+    expect(text).toContain("/compact");
+    expect(text).not.toContain("<html>");
+  });
+
+  test("preserves a TLS cause code and recommends a bounded retry", () => {
+    const error = {
+      message: "fetch failed",
+      cause: {
+        code: "CERT_HAS_EXPIRED",
+        message: "unknown certificate verification error",
+      },
+    };
+    expect(classifyProviderError(error)).toBe("tls_verification_failed");
+    const text = describeOpencodeSessionError(error);
+    expect(text).toContain("Secure connection verification failed");
+    expect(text).toContain("Retry once");
+    expect(text).toContain("Code: CERT_HAS_EXPIRED");
+  });
+
+  test("does not reclassify a generic unauthorized provider response as a gateway credential", () => {
+    expect(classifyProviderError({ statusCode: 401, message: "Unauthorized" })).toBe(null);
+  });
+});

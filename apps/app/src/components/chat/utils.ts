@@ -165,6 +165,21 @@ export function getMessageCompleted(message: UIMessage): number | null {
   return typeof completed === "number" ? completed : null
 }
 
+export function isTaskStoppedMessage(message: UIMessage): boolean {
+  const metadata: unknown = message.metadata
+  if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return false
+  const opencode: unknown = metadata.opencode
+  return Boolean(opencode && typeof opencode === "object" && "stopped" in opencode && opencode.stopped === true)
+}
+
+export function wasTaskStopped(messages: UIMessage[], userMessageIndex: number): boolean {
+  let nextUserIndex = messages.findIndex(
+    (message, index) => index > userMessageIndex && message.role === "user",
+  )
+  if (nextUserIndex === -1) nextUserIndex = messages.length
+  return messages.slice(userMessageIndex + 1, nextUserIndex).some(isTaskStoppedMessage)
+}
+
 function normalizeTimestamp(timestamp: number): number {
   return timestamp < 1e12 ? timestamp * 1000 : timestamp
 }

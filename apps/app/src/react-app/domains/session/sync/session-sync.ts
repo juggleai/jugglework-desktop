@@ -11,6 +11,7 @@ import {
   createSessionErrorUIMessage,
   describeOpencodeSessionError,
   isCompactionContinuePart,
+  isMessageAbortedError,
   snapshotToUIMessages,
 } from "./usechat-adapter";
 import {
@@ -1090,7 +1091,30 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.error") {
     const sessionId = sessionIdFromProperties(event.properties);
     if (sessionId) {
-      const errorText = describeOpencodeSessionError(sessionErrorFromProperties(event.properties));
+      const sessionError = sessionErrorFromProperties(event.properties);
+      if (isMessageAbortedError(sessionError)) {
+        useSessionActivityStore.getState().setRunStatus(workspaceId, sessionId, idleStatus);
+        if (isTrackedSession(entry, sessionId)) {
+          queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => {
+            const latestAssistantIndex = current.findLastIndex((message) => message.role === "assistant");
+            if (latestAssistantIndex < 0) return current;
+            return current.map((message, index) => {
+              if (index !== latestAssistantIndex) return message;
+              const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+              const opencode = "opencode" in metadata && metadata.opencode && typeof metadata.opencode === "object"
+                ? metadata.opencode
+                : {};
+              return {
+                ...message,
+                metadata: { ...metadata, opencode: { ...opencode, stopped: true, completed: Date.now() } },
+              };
+            });
+          });
+        }
+        settleTerminalSessionStatus(entry, workspaceId, sessionId);
+        return;
+      }
+      const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
         captureAnalyticsEvent("task_run_errored", {
@@ -1309,13 +1333,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       } else messageActivityStore.markRuntimeEvent(workspaceId, info.sessionID);
     }
     if (!isTrackedSession(entry, info.sessionID)) return;
+    const stopped = info.role === "assistant" && isMessageAbortedError(info.error);
     const created = info.time?.created;
-    const completed = info.time?.completed;
+    const completed = info.time?.completed ?? (stopped ? Date.now() : undefined);
     const timingMetadata = {
       ...(typeof created === "number" ? { created } : {}),
       ...(typeof completed === "number" ? { completed } : {}),
       ...(info.role === "assistant" && typeof info.finish === "string" ? { finish: info.finish } : {}),
       ...(info.role === "assistant" && info.summary === true ? { summary: true } : {}),
+      ...(stopped ? { stopped: true } : {}),
     };
     const next = {
       id: info.id,

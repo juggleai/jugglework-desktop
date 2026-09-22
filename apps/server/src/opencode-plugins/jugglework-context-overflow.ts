@@ -8,6 +8,83 @@
  */
 
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const TLS_RETRY_DELAY_MS = 150;
+
+function errorRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function transientTlsFailure(error: unknown): { code: string | null } | null {
+  const records: Record<string, unknown>[] = [];
+  let current = errorRecord(error);
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    records.push(current);
+    current = errorRecord(current.cause);
+  }
+  const code = records
+    .map((record) => typeof record.code === "string" ? record.code.trim().toUpperCase() : "")
+    .find(Boolean) ?? null;
+  const text = records
+    .map((record) => typeof record.message === "string" ? record.message : "")
+    .join("\n")
+    .toLowerCase();
+  if (
+    code?.startsWith("ERR_TLS_CERT_")
+    || code === "CERT_HAS_EXPIRED"
+    || code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+    || code === "SELF_SIGNED_CERT_IN_CHAIN"
+    || text.includes("unknown certificate verification error")
+    || text.includes("unable to verify the first certificate")
+  ) {
+    return { code };
+  }
+  return null;
+}
+
+function canReplayBody(body: BodyInit | null | undefined): boolean {
+  if (body == null || typeof body === "string") return true;
+  if (body instanceof URLSearchParams || body instanceof Blob || body instanceof FormData) return true;
+  if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return true;
+  return false;
+}
+
+function sanitizedHost(input: Parameters<typeof fetch>[0]): string {
+  try {
+    return new URL(input instanceof Request ? input.url : String(input)).host;
+  } catch {
+    return "unknown";
+  }
+}
+
+async function fetchWithTransientTlsRetry(
+  base: typeof fetch,
+  input: Parameters<typeof fetch>[0],
+  init?: RequestInit,
+): Promise<Response> {
+  let retryInput: Parameters<typeof fetch>[0] = input;
+  if (input instanceof Request) {
+    try {
+      retryInput = input.clone();
+    } catch {
+      // A consumed request cannot be replayed safely.
+    }
+  }
+  const replayable = input instanceof Request ? retryInput !== input : canReplayBody(init?.body);
+  try {
+    return await base(input, init);
+  } catch (error) {
+    const tls = transientTlsFailure(error);
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
+    if (!tls || !replayable || signal?.aborted) throw error;
+    console.warn("JuggleWork provider TLS handshake failed; retrying once", {
+      host: sanitizedHost(input),
+      code: tls.code ?? "certificate_verification_error",
+    });
+    await new Promise((resolve) => setTimeout(resolve, TLS_RETRY_DELAY_MS));
+    if (signal?.aborted) throw error;
+    return base(retryInput, init);
+  }
+}
 
 function contextOverflowMessage(text: string): string | null {
   const normalized = text.trim();
@@ -85,7 +162,7 @@ function installContextOverflowFetchPatch(): void {
   installed = true;
   const base = globalThis.fetch;
   const patched = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-    return normalizedOverflowResponse(await base(input, init));
+    return normalizedOverflowResponse(await fetchWithTransientTlsRetry(base, input, init));
   };
   globalThis.fetch = Object.assign(patched, base);
 }
