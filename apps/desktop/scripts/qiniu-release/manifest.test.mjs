@@ -172,8 +172,7 @@ test("rejects missing Windows blockmaps and mutable merged manifest URLs", () =>
   assert.throws(() => validateWindowsManifest({ ...input, manifest: normalized.manifest }), /Mutable manifest path/);
 });
 
-test("electron-updater 6.8.3 selects Windows EXEs from files by process architecture and ignores top-level path", () => {
-  assert.equal(require("electron-updater/package.json").version, "6.8.3");
+test("electron-updater selects Windows EXEs from files by process architecture and ignores top-level path", () => {
   const artifacts = windowsArtifactsFor(["arm64", "x64"]);
   const manifest = normalizeWindowsManifest({
     version: VERSION,

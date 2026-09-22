@@ -57,7 +57,7 @@
     "@jugglework/types": "workspace:*",
     "@opencode-ai/sdk": "1.18.15",
     "better-sqlite3": "^13.0.3",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.2",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
     "yaml": "^2.6.1",
