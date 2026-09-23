@@ -189,6 +189,7 @@ export default {
   "session.generated_image_saved": "Image saved",
   "session.generated_image_save_failed": "Could not save the image.",
   "composer.agent_plan_mode": "Plan mode",
+  "composer.agent_plan_mode_close": "Exit plan mode",
   "composer.plus_menu_section_plugins": "Plugins",
   "composer.plus_menu_section_mcp": "MCP",
   "composer.plus_menu_no_plugins": "No plugins are available in this workspace",

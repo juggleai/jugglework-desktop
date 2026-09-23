@@ -1759,6 +1759,24 @@ export function ReactSessionComposer(props: ComposerProps) {
           ) : null}
 
           <div className="px-4 pt-3 pb-2">
+            {props.selectedAgent?.trim().toLowerCase() === "plan" ? (
+              <div className="mb-2 flex min-w-0 items-center" data-testid="composer-plan-mode-control">
+                <div className="flex h-8 items-center gap-1.5 rounded-xl bg-gray-3 px-2.5 text-xs font-medium text-gray-11">
+                  <Lightbulb size={15} strokeWidth={1.8} />
+                  <span>{t("composer.agent_plan_mode")}</span>
+                  <button
+                    type="button"
+                    className="-mr-1 inline-flex size-6 items-center justify-center rounded-lg text-gray-9 transition-colors hover:bg-gray-4 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-7"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => props.onSelectAgent(null)}
+                    aria-label={t("composer.agent_plan_mode_close")}
+                    title={t("composer.agent_plan_mode_close")}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {props.imageGeneration ? (
               <ImageGenerationControls
                 models={props.imageGenerationModels}
