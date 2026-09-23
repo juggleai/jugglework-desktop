@@ -115,7 +115,7 @@ export async function promoteChannel(plan, evidence, {
       readBack: { sha256: plan.manifest.sha256, size: plan.manifest.size },
     };
   }
-  if (typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
+  if (!cacheException && typeof qiniu.prepareCacheControl === "function") await qiniu.prepareCacheControl();
 
   const existingLock = await qiniu.stat(lockKey);
   if (existingLock) {
