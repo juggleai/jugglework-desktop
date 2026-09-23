@@ -63,6 +63,7 @@ export type DenAuthStatus =
 
 export const DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS = 5_000;
 export const DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS = 30_000;
+export const DEN_ACCOUNT_REFRESH_TTL_MS = 60_000;
 
 export function resolveDenAuthFailureStatus(
   error: unknown,
@@ -162,6 +163,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [tenantAccount, setTenantAccount] = useState<DenTenantAccount | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const accountSnapshotRef = useRef(false);
+  const accountLastRefreshAtRef = useRef(0);
+  const accountRefreshGenerationRef = useRef(0);
+  const accountRefreshInFlightRef = useRef<Promise<void> | null>(null);
   // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
   const statusRef = useRef<DenAuthStatus>("checking");
@@ -176,25 +181,43 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   }, []);
 
   const clearAccountState = useCallback(() => {
+    accountRefreshGenerationRef.current += 1;
+    accountRefreshInFlightRef.current = null;
+    accountSnapshotRef.current = false;
+    accountLastRefreshAtRef.current = 0;
     setOrganizations([]);
     setActiveOrganization(null);
     setTenantAccount(null);
     setAccountError(null);
   }, []);
 
-  const refreshAccount = useCallback(async () => {
+  const refreshAccount = useCallback((): Promise<void> => {
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
     if (!token) {
       clearAccountState();
-      return;
+      return Promise.resolve();
     }
+    const now = Date.now();
+    if (
+      accountSnapshotRef.current
+      && now - accountLastRefreshAtRef.current < DEN_ACCOUNT_REFRESH_TTL_MS
+    ) {
+      return Promise.resolve();
+    }
+    if (accountRefreshInFlightRef.current) return accountRefreshInFlightRef.current;
 
-    setAccountBusy(true);
+    const generation = ++accountRefreshGenerationRef.current;
+    // A passive refresh must not invalidate a usable account snapshot. The
+    // previous implementation reused accountBusy for every menu-open refresh,
+    // which disabled Sign out and temporarily removed Chat/Contacts.
+    const blocksAccountUi = !accountSnapshotRef.current;
+    if (blocksAccountUi) setAccountBusy(true);
     setAccountError(null);
-    try {
+    const run = (async () => {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       const response = await client.listOrgs();
+      if (generation !== accountRefreshGenerationRef.current) return;
       const active = resolveDenDefaultOrganization(response.orgs, {
         rememberedOrgId: readDenLastOrganization(readDenUserId()),
         currentOrgId: settings.activeOrgId,
@@ -206,6 +229,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       setActiveOrganization(active);
       if (!active) {
         setTenantAccount(null);
+        accountSnapshotRef.current = true;
+        accountLastRefreshAtRef.current = Date.now();
         return;
       }
       writeDenSettings({
@@ -218,12 +243,24 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       // Older Den deployments may not expose tenant accounts yet. Keep the
       // identity and organization menu usable while tier/balance degrades to
       // the directory summary or an em dash.
-      setTenantAccount(await client.getTenantAccount(active.id).catch(() => null));
-    } catch (nextError) {
+      const account = await client.getTenantAccount(active.id).catch(() => null);
+      if (generation !== accountRefreshGenerationRef.current) return;
+      setTenantAccount(account);
+      accountSnapshotRef.current = true;
+      accountLastRefreshAtRef.current = Date.now();
+    })().catch((nextError) => {
+      if (generation !== accountRefreshGenerationRef.current) return;
       setAccountError(nextError instanceof Error ? nextError.message : t("den.error_load_orgs"));
-    } finally {
-      setAccountBusy(false);
-    }
+    }).finally(() => {
+      if (generation === accountRefreshGenerationRef.current) {
+        accountRefreshInFlightRef.current = null;
+      }
+      if (generation === accountRefreshGenerationRef.current && blocksAccountUi) {
+        setAccountBusy(false);
+      }
+    });
+    accountRefreshInFlightRef.current = run;
+    return run;
   }, [clearAccountState]);
 
   const switchOrganization = useCallback(async (organizationId: string) => {
@@ -233,6 +270,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const token = settings.authToken?.trim() ?? "";
     if (!token) throw new Error(t("den.signed_out"));
 
+    accountRefreshGenerationRef.current += 1;
+    accountRefreshInFlightRef.current = null;
     setAccountBusy(true);
     setAccountError(null);
     try {
@@ -253,6 +292,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       writeDenLastOrganization(readDenUserId(), next.id);
       setActiveOrganization(next);
       setTenantAccount(await client.getTenantAccount(next.id).catch(() => null));
+      accountSnapshotRef.current = true;
+      accountLastRefreshAtRef.current = Date.now();
       await ensureDenActiveOrganization({ forceServerSync: true }).catch(() => null);
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : t("den.error_load_orgs");
@@ -271,6 +312,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
     clearDenSession();
     clearAccountState();
+    setAccountBusy(false);
     setUser(null);
     setError(null);
     updateStatus("signed_out");

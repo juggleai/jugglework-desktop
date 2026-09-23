@@ -192,6 +192,7 @@ export default {
   "session.generated_image_saved": "图片已保存",
   "session.generated_image_save_failed": "无法保存图片。",
   "composer.agent_plan_mode": "计划模式",
+  "composer.agent_plan_badge": "计划",
   "composer.agent_plan_mode_close": "退出计划模式",
   "composer.plus_menu_section_plugins": "插件",
   "composer.plus_menu_section_mcp": "MCP",

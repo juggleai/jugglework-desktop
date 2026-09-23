@@ -22,13 +22,11 @@ export function visibleLocalWorkspaceIndicator(
 
 export function isIMNavigationVisible(input: {
   authStatus: DenAuthStatus;
-  accountBusy: boolean;
   activeOrganizationId: string | null | undefined;
   im: DenIMLoginBootstrap | null;
 }): boolean {
   return (
     (input.authStatus === "signed_in" || input.authStatus === "unavailable") &&
-    !input.accountBusy &&
     Boolean(input.activeOrganizationId?.trim()) &&
     input.im !== null
   );

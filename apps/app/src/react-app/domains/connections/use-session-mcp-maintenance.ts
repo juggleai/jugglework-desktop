@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   mintCloudControlMcpToken,
@@ -17,7 +17,10 @@ import type {
 import { unwrap } from "../../../app/lib/opencode";
 import type { Client, McpServerEntry, McpStatusMap } from "../../../app/types";
 import { attemptSilentMcpReauth } from "./mcp-silent-reauth";
-import { recordCloudMcpMaintenanceOutcome } from "./cloud-mcp-maintenance-outcome";
+import {
+  readCloudMcpMaintenanceOutcome,
+  recordCloudMcpMaintenanceOutcome,
+} from "./cloud-mcp-maintenance-outcome";
 import {
   CLOUD_MCP_SERVER_NAME,
   readCloudMcpUserState,
@@ -90,6 +93,39 @@ type CloudMcpMaintenanceClient = CloudMcpClient & Pick<JuggleWorkServerClient, "
 const runtimeObjectIds = new WeakMap<object, number>();
 let nextRuntimeObjectId = 0;
 
+/**
+ * A workspace transport check is shared by every conversation in that
+ * workspace. Keep the most recent start in module scope so a route remount or
+ * two browser resume events cannot immediately launch the same expensive
+ * probe again.
+ */
+const sessionMcpMaintenanceLastStartedAt = new Map<string, number>();
+
+export function shouldRunSessionMcpMaintenance(input: {
+  targetKey: string;
+  now: number;
+  force?: boolean;
+  freshnessMs?: number;
+}): boolean {
+  if (input.force) return true;
+  const freshnessMs = Math.max(0, input.freshnessMs ?? SESSION_MCP_MAINTENANCE_INTERVAL_MS);
+  const lastStartedAt = sessionMcpMaintenanceLastStartedAt.get(input.targetKey);
+  const lastOutcome = readCloudMcpMaintenanceOutcome(input.targetKey);
+  const lastOutcomeAt = lastOutcome?.status === "ok" ? lastOutcome.at : undefined;
+  const lastActivityAt = Math.max(lastStartedAt ?? 0, lastOutcomeAt ?? 0);
+  return lastActivityAt <= 0 || input.now - lastActivityAt >= freshnessMs;
+}
+
+function markSessionMcpMaintenanceStarted(targetKey: string, now = Date.now()): void {
+  sessionMcpMaintenanceLastStartedAt.delete(targetKey);
+  sessionMcpMaintenanceLastStartedAt.set(targetKey, now);
+  while (sessionMcpMaintenanceLastStartedAt.size > 64) {
+    const oldestKey = sessionMcpMaintenanceLastStartedAt.keys().next().value;
+    if (typeof oldestKey !== "string") break;
+    sessionMcpMaintenanceLastStartedAt.delete(oldestKey);
+  }
+}
+
 function runtimeObjectId(value: object): number {
   const existing = runtimeObjectIds.get(value);
   if (existing !== undefined) return existing;
@@ -140,6 +176,41 @@ const IDLE_CLOUD_MCP_MAINTENANCE_STATE: SessionCloudMcpMaintenanceState = {
   maxAttempts: 1 + CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS.length,
 };
 
+const CHECKING_CLOUD_MCP_MAINTENANCE_STATE: SessionCloudMcpMaintenanceState = {
+  ...IDLE_CLOUD_MCP_MAINTENANCE_STATE,
+  status: "checking",
+};
+
+export function resolveCachedSessionMcpMaintenanceState(input: {
+  cloudSignedIn: boolean;
+  engineReloadBusy: boolean;
+  inputsValid: boolean;
+  maintenanceScopeKey: string | null;
+}): SessionCloudMcpMaintenanceState {
+  if (input.engineReloadBusy) {
+    return input.cloudSignedIn
+      ? {
+          ...CHECKING_CLOUD_MCP_MAINTENANCE_STATE,
+          // Honest description while the reload owns the engine: this is a
+          // wait state, not an active check.
+          issue: {
+            code: "cloud_mcp_waiting_engine_reload",
+            stage: "engine_delivery",
+            retryable: true,
+            recommendedAction: "Waiting for the engine reload to finish.",
+            message: "Waiting for the engine reload to finish.",
+          },
+        }
+      : IDLE_CLOUD_MCP_MAINTENANCE_STATE;
+  }
+  if (!input.inputsValid || !input.maintenanceScopeKey || !input.cloudSignedIn) {
+    return IDLE_CLOUD_MCP_MAINTENANCE_STATE;
+  }
+  return readCloudMcpMaintenanceOutcome(input.maintenanceScopeKey)?.status === "ok"
+    ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "ready" }
+    : CHECKING_CLOUD_MCP_MAINTENANCE_STATE;
+}
+
 function genericCloudMcpMaintenanceIssue(input?: {
   code?: string;
   message?: string;
@@ -174,6 +245,7 @@ export function getSessionMcpMaintenanceTargetKey(input: {
   denBaseUrl?: string | null;
   orgId?: string | null;
   workspaceId: string;
+  /** @deprecated Maintenance is workspace-transport scoped; intentionally ignored. */
   providerModel?: JuggleWorkCloudMcpProviderModelContext;
 }): string {
   return JSON.stringify([
@@ -181,13 +253,12 @@ export function getSessionMcpMaintenanceTargetKey(input: {
     input.client.baseUrl.trim().replace(/\/+$/, ""),
     input.workspaceId.trim(),
     input.cloudSignedIn ? input.orgId?.trim() ?? "" : "local-only",
-    input.providerModel?.provider.trim() ?? "",
-    input.providerModel?.model.trim() ?? "",
   ]);
 }
 
 export async function runSessionMcpMaintenanceTask(input: {
   targetKey: string;
+  outcomeKey?: string;
   task: () => Promise<void>;
   timeoutMs?: number;
 }): Promise<SessionMcpMaintenanceRun> {
@@ -197,12 +268,13 @@ export async function runSessionMcpMaintenanceTask(input: {
     timeoutMs: input.timeoutMs ?? SESSION_MCP_MAINTENANCE_TIMEOUT_MS,
   });
   if (run.started) {
+    const outcomeKey = input.outcomeKey ?? input.targetKey;
     if (run.completion.status === "timed_out") {
-      recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "timed_out" });
+      recordCloudMcpMaintenanceOutcome(outcomeKey, { status: "timed_out" });
     } else if (run.completion.status === "error") {
-      recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "error", detail: run.completion.detail });
+      recordCloudMcpMaintenanceOutcome(outcomeKey, { status: "error", detail: run.completion.detail });
     } else {
-      recordCloudMcpMaintenanceOutcome(input.targetKey, { status: "ok" });
+      recordCloudMcpMaintenanceOutcome(outcomeKey, { status: "ok" });
     }
   }
   return run;
@@ -377,12 +449,9 @@ export function useSessionMcpMaintenance(input: {
   opencodeClient: Client | null;
   directory: string;
   engineReloadBusy?: boolean;
-  providerModel?: JuggleWorkCloudMcpProviderModelContext;
 }): SessionCloudMcpMaintenance {
-  const [cloudMcpState, setCloudMcpState] = useState<SessionCloudMcpMaintenanceState>(
-    IDLE_CLOUD_MCP_MAINTENANCE_STATE,
-  );
   const [settingsVersion, setSettingsVersion] = useState(0);
+  const handledSettingsVersionRef = useRef(0);
   const engineReloadEpochRef = useRef(0);
   const nonTerminalSinceRef = useRef<number | null>(null);
   const previousEngineReloadBusyRef = useRef(Boolean(input.engineReloadBusy));
@@ -390,7 +459,72 @@ export function useSessionMcpMaintenance(input: {
     engineReloadEpochRef.current += 1;
   }
   previousEngineReloadBusyRef.current = Boolean(input.engineReloadBusy);
+  const workspaceId = input.workspaceId?.trim() ?? "";
+  const directory = input.directory.trim();
+  const client = input.client;
+  const opencodeClient = input.opencodeClient;
+  const settings = readDenSettings();
+  const inputsValid = Boolean(client && opencodeClient && workspaceId && directory);
+  const maintenanceScopeKey = inputsValid && client
+    ? JSON.stringify([
+        getSessionMcpMaintenanceTargetKey({
+          client,
+          cloudSignedIn: input.cloudSignedIn,
+          denBaseUrl: settings.baseUrl,
+          orgId: settings.activeOrgId,
+          workspaceId,
+        }),
+        directory,
+        engineReloadEpochRef.current,
+      ])
+    : null;
+  const executionTargetKey = maintenanceScopeKey && opencodeClient
+    ? JSON.stringify([maintenanceScopeKey, runtimeObjectId(opencodeClient)])
+    : null;
+  // React effects run after paint. Key the render state synchronously so a
+  // cross-workspace navigation cannot display the previous workspace's
+  // checking/idle state for one frame before the target cache is restored.
+  const displayScopeKey = maintenanceScopeKey ?? JSON.stringify([
+    "unavailable",
+    input.cloudSignedIn,
+    Boolean(input.engineReloadBusy),
+    client?.baseUrl ?? "",
+    workspaceId,
+    directory,
+    engineReloadEpochRef.current,
+  ]);
+  const cachedCloudMcpState = useMemo(
+    () => resolveCachedSessionMcpMaintenanceState({
+      cloudSignedIn: input.cloudSignedIn,
+      engineReloadBusy: Boolean(input.engineReloadBusy),
+      inputsValid,
+      maintenanceScopeKey,
+    }),
+    [displayScopeKey, input.cloudSignedIn, input.engineReloadBusy, inputsValid, maintenanceScopeKey],
+  );
+  const [scopedCloudMcpState, setScopedCloudMcpState] = useState<{
+    scopeKey: string;
+    state: SessionCloudMcpMaintenanceState;
+  }>(() => ({ scopeKey: displayScopeKey, state: cachedCloudMcpState }));
+  const cloudMcpState = scopedCloudMcpState.scopeKey === displayScopeKey
+    ? scopedCloudMcpState.state
+    : cachedCloudMcpState;
+  const setCloudMcpState = useCallback((
+    update: SessionCloudMcpMaintenanceState
+      | ((current: SessionCloudMcpMaintenanceState) => SessionCloudMcpMaintenanceState),
+  ) => {
+    setScopedCloudMcpState((current) => {
+      const currentState = current.scopeKey === displayScopeKey ? current.state : cachedCloudMcpState;
+      return {
+        scopeKey: displayScopeKey,
+        state: typeof update === "function" ? update(currentState) : update,
+      };
+    });
+  }, [cachedCloudMcpState, displayScopeKey]);
   const targetKeyRef = useRef<string | null>(null);
+  // Update this during render as well as in the effect. A send immediately
+  // after navigation must never wait for the previous workspace's run.
+  targetKeyRef.current = input.engineReloadBusy ? null : executionTargetKey;
   const waitForResumeMaintenance = useCallback((timeoutMs = SESSION_MCP_RESUME_SEND_WAIT_TIMEOUT_MS) => {
     const targetKey = targetKeyRef.current;
     if (!targetKey) return Promise.resolve<SessionMcpResumeWaitResult>({ outcome: "not_running" });
@@ -405,53 +539,21 @@ export function useSessionMcpMaintenance(input: {
 
   useEffect(() => {
     if (input.engineReloadBusy) {
-      setCloudMcpState(input.cloudSignedIn
-        ? {
-            ...IDLE_CLOUD_MCP_MAINTENANCE_STATE,
-            status: "checking",
-            // Honest description while the reload owns the engine: this is a
-            // wait state, not an active check.
-            issue: {
-              code: "cloud_mcp_waiting_engine_reload",
-              stage: "engine_delivery",
-              retryable: true,
-              recommendedAction: "Waiting for the engine reload to finish.",
-              message: "Waiting for the engine reload to finish.",
-            },
-          }
-        : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
+      setCloudMcpState(cachedCloudMcpState);
       return;
     }
-    const workspaceId = input.workspaceId?.trim() ?? "";
-    const directory = input.directory.trim();
-    const client = input.client;
-    const opencodeClient = input.opencodeClient;
-    if (!client || !opencodeClient || !workspaceId || !directory) {
+    if (!client || !opencodeClient || !workspaceId || !directory || !maintenanceScopeKey || !executionTargetKey) {
       setCloudMcpState(IDLE_CLOUD_MCP_MAINTENANCE_STATE);
       return;
     }
-    const settings = readDenSettings();
-    const targetKey = JSON.stringify([
-      getSessionMcpMaintenanceTargetKey({
-      client,
-      cloudSignedIn: input.cloudSignedIn,
-      denBaseUrl: settings.baseUrl,
-      orgId: settings.activeOrgId,
-      workspaceId,
-      // Resume repair is transport/workspace scoped. Model projection remains
-      // part of normal health reporting, but must not couple split-pane sends.
-      providerModel: undefined,
-      }),
-      directory,
-      runtimeObjectId(opencodeClient),
-      engineReloadEpochRef.current,
-    ]);
-    targetKeyRef.current = targetKey;
+    const settingsChanged = handledSettingsVersionRef.current !== settingsVersion;
+    handledSettingsVersionRef.current = settingsVersion;
+    targetKeyRef.current = executionTargetKey;
 
     let cancelled = false;
-    setCloudMcpState(input.cloudSignedIn
-      ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
-      : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
+    const previousOutcome = readCloudMcpMaintenanceOutcome(maintenanceScopeKey);
+    const hasPreviousReadyOutcome = previousOutcome?.status === "ok";
+    setCloudMcpState(cachedCloudMcpState);
 
     const recordCloudAttempt = (attemptInput: {
       result: CloudMcpBackgroundSyncResult;
@@ -486,12 +588,18 @@ export function useSessionMcpMaintenance(input: {
       });
     };
 
-    const tick = (reason: "background" | "resume" = "background"): Promise<SessionMcpMaintenanceRun> => {
+    const tick = (options?: { force?: boolean }): Promise<SessionMcpMaintenanceRun> => {
       if (cancelled) {
         return Promise.resolve({ started: false, completion: { status: "ok" } });
       }
+      const now = Date.now();
+      if (!shouldRunSessionMcpMaintenance({ targetKey: maintenanceScopeKey, now, force: options?.force })) {
+        return Promise.resolve({ started: false, completion: { status: "ok" } });
+      }
+      markSessionMcpMaintenanceStarted(maintenanceScopeKey, now);
       return runSessionMcpMaintenanceTask({
-        targetKey,
+        targetKey: executionTargetKey,
+        outcomeKey: maintenanceScopeKey,
         task: async () => {
           let cloudFailure: CloudMcpMaintenanceIssue | null = null;
           if (input.cloudSignedIn) {
@@ -499,8 +607,12 @@ export function useSessionMcpMaintenance(input: {
               attempt: () => syncCloudControlMcpInBackground({
                 client,
                 workspaceId,
-                providerModel: reason === "resume" ? undefined : input.providerModel,
-                isScopeCurrent: () => !cancelled && targetKeyRef.current === targetKey,
+                // Background maintenance only keeps the workspace transport
+                // authenticated and connected. Provider/model projection is
+                // verified on the actual submission path; coupling it here
+                // made every conversation/model switch restart this check.
+                providerModel: undefined,
+                isScopeCurrent: () => !cancelled && targetKeyRef.current === executionTargetKey,
               }),
               onAttempt: recordCloudAttempt,
             });
@@ -544,16 +656,22 @@ export function useSessionMcpMaintenance(input: {
       });
     };
 
-    void tick();
-    const handleOnline = () => void tick();
+    // A successful workspace result is rendered stale-while-revalidate and
+    // does not launch a probe merely because navigation selected this
+    // workspace again. The interval/focus paths refresh it later, while
+    // missing, failed, reconfigured, or reloaded scopes still check now.
+    if (settingsChanged || !hasPreviousReadyOutcome) {
+      void tick({ force: true });
+    }
+    const handleOnline = () => void tick({ force: true });
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();
     };
     const handleVisibilityResume = createSessionMcpVisibilityResumeHandler({
       visibilityState: () => document.visibilityState,
       run: () => {
-        const resumeTask = tick("resume");
-        trackSessionMcpResumeMaintenance(targetKey, resumeTask);
+        const resumeTask = tick();
+        trackSessionMcpResumeMaintenance(executionTargetKey, resumeTask);
       },
     });
     window.addEventListener("online", handleOnline);
@@ -566,18 +684,20 @@ export function useSessionMcpMaintenance(input: {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityResume);
       window.clearInterval(interval);
-      if (targetKeyRef.current === targetKey) targetKeyRef.current = null;
+      if (targetKeyRef.current === executionTargetKey) targetKeyRef.current = null;
     };
   }, [
-    input.client,
+    cachedCloudMcpState,
+    client,
+    directory,
+    executionTargetKey,
     input.cloudSignedIn,
-    input.directory,
     input.engineReloadBusy,
-    input.opencodeClient,
-    input.providerModel?.model,
-    input.providerModel?.provider,
+    maintenanceScopeKey,
+    opencodeClient,
+    setCloudMcpState,
     settingsVersion,
-    input.workspaceId,
+    workspaceId,
   ]);
 
   // Track when the state last entered a non-terminal status (idle/checking/

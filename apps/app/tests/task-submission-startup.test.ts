@@ -46,4 +46,16 @@ describe("task submission startup feedback", () => {
     expect(sessionRoute).toContain('part.kind === "extension"');
     expect(sessionRoute).toContain("skipGate: !requiresCloudMcpReadiness");
   });
+
+  test("does not make the composer unavailable during background workspace activation", () => {
+    const readinessStart = sessionRoute.indexOf("const canAcceptTask = Boolean(");
+    const readinessEnd = sessionRoute.indexOf("const showPreparingStatus", readinessStart);
+    const preparingEnd = sessionRoute.indexOf("useEffect(() =>", readinessEnd);
+    const readinessBlock = sessionRoute.slice(readinessStart, readinessEnd);
+    const preparingBlock = sessionRoute.slice(readinessEnd, preparingEnd);
+
+    expect(readinessBlock).not.toContain("!activatingWorkspaceId");
+    expect(preparingBlock).not.toContain("Boolean(activatingWorkspaceId)");
+    expect(readinessBlock).toContain("workspaceActivationErrorId !== selectedWorkspaceId");
+  });
 });

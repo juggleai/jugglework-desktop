@@ -30,11 +30,7 @@ export type LocalPreferences = {
   showThinking: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
-  /**
-   * Name of the opencode agent used for new prompts (null = the server's
-   * default, usually "build"). Persisted so a reload does not silently
-   * fall back to the default agent (#2101).
-   */
+  /** Legacy global choice, retained only for one-time migration to a session. */
   selectedAgent: string | null;
   /**
    * Release channel the desktop app is subscribed to. Defaults to

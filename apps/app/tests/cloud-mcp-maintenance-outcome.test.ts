@@ -25,6 +25,18 @@ afterAll(() => {
 describe("cloud MCP maintenance watchdog", () => {
   beforeEach(() => installStorageStub());
 
+  test("records reusable readiness under a stable workspace scope while locking per runtime", async () => {
+    const run = await runSessionMcpMaintenanceTask({
+      targetKey: "workspace-a:runtime-2",
+      outcomeKey: "workspace-a",
+      task: async () => {},
+    });
+
+    expect(run).toMatchObject({ started: true, completion: { status: "ok" } });
+    expect(readCloudMcpMaintenanceOutcome("workspace-a")?.status).toBe("ok");
+    expect(readCloudMcpMaintenanceOutcome("workspace-a:runtime-2")).toBeNull();
+  });
+
   test("a hung tick releases the lock after the timeout and records timed_out", async () => {
     const targetKey = "target-hung";
     let secondRan = false;

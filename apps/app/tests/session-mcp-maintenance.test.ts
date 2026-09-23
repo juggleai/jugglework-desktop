@@ -9,9 +9,15 @@ import {
 } from "../src/react-app/domains/connections/cloud-mcp-user-state";
 import { cleanupJuggleWorkCloudMcpAfterSignOut } from "../src/react-app/domains/connections/cloud-mcp-reconciler";
 import {
+  __setCloudMcpMaintenanceOutcomeStorageForTest,
+  recordCloudMcpMaintenanceOutcome,
+} from "../src/react-app/domains/connections/cloud-mcp-maintenance-outcome";
+import {
   getSessionMcpMaintenanceTargetKey,
+  resolveCachedSessionMcpMaintenanceState,
   runCloudMcpMaintenanceWithRetry,
   runSessionMcpMaintenanceTask,
+  shouldRunSessionMcpMaintenance,
   syncCloudControlMcpInBackground,
 } from "../src/react-app/domains/connections/use-session-mcp-maintenance";
 
@@ -91,19 +97,88 @@ function retryableCloudHealth(): JuggleWorkCloudMcpHealth {
 
 function installStorageStub() {
   const values = new Map<string, string>();
-  __setCloudMcpUserStateStorageForTest({
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, value),
-    removeItem: (key) => values.delete(key),
-  });
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  };
+  __setCloudMcpUserStateStorageForTest(storage);
+  __setCloudMcpMaintenanceOutcomeStorageForTest(storage);
 }
 
 afterAll(() => {
   __setCloudMcpUserStateStorageForTest(null);
+  __setCloudMcpMaintenanceOutcomeStorageForTest(null);
 });
 
 describe("session MCP maintenance", () => {
   beforeEach(() => installStorageStub());
+
+  test("keeps background maintenance scoped to the workspace when conversations use different models", () => {
+    const common = {
+      client: { baseUrl: "https://worker.jugglework.test" },
+      cloudSignedIn: true,
+      denBaseUrl: SETTINGS.baseUrl,
+      orgId: SETTINGS.activeOrgId,
+      workspaceId: WORKSPACE_ID,
+    };
+
+    expect(getSessionMcpMaintenanceTargetKey({
+      ...common,
+      providerModel: { provider: "openai", model: "gpt-5" },
+    })).toBe(getSessionMcpMaintenanceTargetKey({
+      ...common,
+      providerModel: { provider: "anthropic", model: "claude-sonnet" },
+    }));
+  });
+
+  test("reuses a fresh successful maintenance result but does not cache failures as ready", () => {
+    const targetKey = "workspace-transport-freshness";
+    recordCloudMcpMaintenanceOutcome(targetKey, { status: "ok" }, NOW);
+
+    expect(shouldRunSessionMcpMaintenance({
+      targetKey,
+      now: NOW + 10_000,
+      freshnessMs: 60_000,
+    })).toBe(false);
+    expect(shouldRunSessionMcpMaintenance({
+      targetKey,
+      now: NOW + 60_000,
+      freshnessMs: 60_000,
+    })).toBe(true);
+
+    recordCloudMcpMaintenanceOutcome(targetKey, { status: "error", detail: "offline" }, NOW + 70_000);
+    expect(shouldRunSessionMcpMaintenance({
+      targetKey,
+      now: NOW + 70_001,
+      freshnessMs: 60_000,
+    })).toBe(true);
+  });
+
+  test("restores each workspace readiness from its own cache on the navigation render", () => {
+    const readyScope = "workspace-ready-scope";
+    const uncheckedScope = "workspace-unchecked-scope";
+    recordCloudMcpMaintenanceOutcome(readyScope, { status: "ok" }, NOW);
+
+    expect(resolveCachedSessionMcpMaintenanceState({
+      cloudSignedIn: true,
+      engineReloadBusy: false,
+      inputsValid: true,
+      maintenanceScopeKey: readyScope,
+    })).toMatchObject({ status: "ready", issue: null });
+    expect(resolveCachedSessionMcpMaintenanceState({
+      cloudSignedIn: true,
+      engineReloadBusy: false,
+      inputsValid: true,
+      maintenanceScopeKey: uncheckedScope,
+    })).toMatchObject({ status: "checking", issue: null });
+    expect(resolveCachedSessionMcpMaintenanceState({
+      cloudSignedIn: false,
+      engineReloadBusy: false,
+      inputsValid: true,
+      maintenanceScopeKey: readyScope,
+    })).toMatchObject({ status: "idle" });
+  });
 
   test("mints and hot-updates the Cloud MCP without opening Settings", async () => {
     const writes: Array<{ workspaceId: string; payload: JuggleWorkCloudMcpReconcilePayload }> = [];

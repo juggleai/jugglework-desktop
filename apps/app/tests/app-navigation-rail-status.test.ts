@@ -28,11 +28,15 @@ describe("chat unread reminder", () => {
 
   test("shows Chat and Contacts only with current IM bootstrap availability", () => {
     const im = { provider: "juggleim", websocketUrl: "wss://im.example.com", appKey: "app", imUserId: "user", token: "token" };
-    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: "org", im })).toBe(true);
-    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: "org", im: null })).toBe(false);
-    expect(isIMNavigationVisible({ authStatus: "checking", accountBusy: false, activeOrganizationId: "org", im })).toBe(false);
-    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: true, activeOrganizationId: "org", im })).toBe(false);
-    expect(isIMNavigationVisible({ authStatus: "signed_in", accountBusy: false, activeOrganizationId: null, im })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", activeOrganizationId: "org", im })).toBe(true);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", activeOrganizationId: "org", im: null })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "checking", activeOrganizationId: "org", im })).toBe(false);
+    expect(isIMNavigationVisible({ authStatus: "signed_in", activeOrganizationId: null, im })).toBe(false);
+  });
+
+  test("keeps Chat and Contacts visible while account details refresh", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-status.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("accountBusy");
   });
 
   test("gates the Chat and Contacts buttons as one block", () => {

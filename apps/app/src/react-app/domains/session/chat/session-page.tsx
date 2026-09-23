@@ -205,6 +205,8 @@ export type SessionPageSurfaceProps = Omit<
    * @returns 覆盖到 SessionSurface 上的模型 props
    */
   resolveSessionModelProps?: (sessionId: string) => SessionModelSurfaceProps;
+  /** Resolve agent controls for the session shown by each pane. */
+  resolveSessionAgentProps?: (sessionId: string) => Pick<SessionSurfaceProps, "selectedAgent" | "agentLabel" | "onSelectAgent">;
 };
 
 export type SessionPageProps = {
@@ -1431,6 +1433,7 @@ export function SessionPage(props: SessionPageProps) {
                         // SessionRoute, not from anything in `surface`.
                         {...props.surface!}
                         {...(props.surface!.resolveSessionModelProps?.(props.selectedSessionId!) ?? {})}
+                        {...(props.surface!.resolveSessionAgentProps?.(props.selectedSessionId!) ?? {})}
                         client={props.juggleworkServerClient!}
                         environmentClient={props.environmentClient}
                         workspaceId={props.runtimeWorkspaceId!}
@@ -1459,6 +1462,7 @@ export function SessionPage(props: SessionPageProps) {
                         <SessionSurface
                           {...props.surface!}
                           {...(props.surface!.resolveSessionModelProps?.(splitSessionId!) ?? {})}
+                          {...(props.surface!.resolveSessionAgentProps?.(splitSessionId!) ?? {})}
                           client={props.juggleworkServerClient!}
                           environmentClient={props.environmentClient}
                           workspaceId={props.runtimeWorkspaceId!}

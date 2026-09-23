@@ -92,6 +92,12 @@ import {
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { useLocal } from "@/react-app/kernel/local-provider";
+import {
+  migrateLegacyAgentChoice,
+  readSessionAgentChoice,
+  setSessionAgentChoice,
+  useSessionAgentChoices,
+} from "@/react-app/kernel/session-agent-store";
 import { rememberModelVariant } from "@/react-app/kernel/model-config";
 import {
   clearSessionModelChoice,
@@ -547,6 +553,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   // 会话级模型：每个会话可以固定自己的模型/推理档位，没有单独选过的会话才回落到
   // 全局默认模型。这样在一个会话里换模型不会波及其他会话。
   const sessionModelChoices = useSessionModelChoices(selectedWorkspaceId);
+  const sessionAgentChoices = useSessionAgentChoices(selectedWorkspaceId);
   /**
    * 解析某个会话实际生效的模型与推理档位
    * @param sessionId 会话 id，null 表示还没有选中会话
@@ -604,7 +611,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     opencodeClient,
     directory: selectedWorkspaceRoot,
     engineReloadBusy: reloadCoordinator.reloadBusy,
-    providerModel: cloudMcpProviderModel,
   });
   const waitForSessionMcpResumeMaintenance = sessionMcpMaintenance.waitForResumeMaintenance;
   const {
@@ -617,14 +623,33 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
-  // Agent selection is persisted in local prefs (like the model variant) so
-  // it survives reloads instead of silently falling back to "build" (#2101).
-  const selectedAgent = local.prefs.selectedAgent;
-  const setSelectedAgent = useCallback(
-    (agent: string | null) => {
-      local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+  // The former global preference belongs only to the session open at upgrade
+  // time. Clear it after migration so other and newly created sessions default
+  // to the engine agent instead of inheriting Plan (#2101).
+  const legacySelectedAgent = local.prefs.selectedAgent;
+  useEffect(() => {
+    if (!legacySelectedAgent || loading) return;
+    if (selectedWorkspaceId && selectedSessionId) {
+      migrateLegacyAgentChoice(selectedWorkspaceId, selectedSessionId, legacySelectedAgent);
+    }
+    local.setPrefs((previous) => ({ ...previous, selectedAgent: null }));
+  }, [legacySelectedAgent, loading, local.setPrefs, selectedSessionId, selectedWorkspaceId]);
+  const resolveAgentForSession = useCallback(
+    (sessionId: string | null): string | null => {
+      if (!sessionId) return null;
+      return Object.prototype.hasOwnProperty.call(sessionAgentChoices, sessionId)
+        ? sessionAgentChoices[sessionId]
+        : null;
     },
-    [local.setPrefs],
+    [sessionAgentChoices],
+  );
+  const selectedAgent = resolveAgentForSession(selectedSessionId);
+  const setSelectedAgent = useCallback(
+    (agent: string | null, sessionId = selectedSessionId) => {
+      if (!sessionId) return;
+      setSessionAgentChoice(selectedWorkspaceId, sessionId, agent);
+    },
+    [selectedSessionId, selectedWorkspaceId],
   );
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
@@ -697,6 +722,11 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   );
   const splitRuntimeSessionId = useWorkbenchStore((state) =>
     state.workspaceId === selectedWorkspaceId ? state.splitSessionId : null,
+  );
+  const paletteSessionId = useWorkbenchStore((state) =>
+    state.workspaceId === selectedWorkspaceId && state.focusedPane === "secondary" && state.splitSessionId
+      ? state.splitSessionId
+      : selectedSessionId,
   );
   const trackedSelectedWorkspaceSessionIds = useMemo(
     () => Array.from(new Set([
@@ -1016,7 +1046,9 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   );
   const canAcceptTask = Boolean(
     canCreateTask &&
-    !activatingWorkspaceId &&
+    // Cross-workspace activation only updates the server registry. Session
+    // reads and sends already use the target workspace's own endpoint, so a
+    // background activation must not make the composer look unavailable.
     workspaceActivationErrorId !== selectedWorkspaceId &&
     !startupWorkspaceActivationFailed &&
     // A *pending* reload no longer blocks task preparation: it is a queued
@@ -1029,7 +1061,6 @@ export function SessionRoute(props: SessionRouteProps = {}) {
 
   const showPreparingStatus =
     effectiveLoading ||
-    Boolean(activatingWorkspaceId) ||
     (!canAcceptTask && !routeError && !selectedWorkspaceError);
 
   useEffect(() => {
@@ -1299,6 +1330,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           onModelVariantChange: (value: string | null) => applyModelVariantSelection(value, paneSessionId),
         };
       },
+      resolveSessionAgentProps: (paneSessionId: string) => {
+        const agent = resolveAgentForSession(paneSessionId);
+        return {
+          agentLabel: agent ? agent.charAt(0).toUpperCase() + agent.slice(1) : t("session.default_agent"),
+          selectedAgent: agent,
+          onSelectAgent: (next: string | null) => setSelectedAgent(next, paneSessionId),
+        };
+      },
       providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
       onOpenSettingsSection: (section: "commands" | "skills" | "mcps" | "plugins" | "providers") => {
         handleOpenSettings(section === "skills" ? "/settings/extensions/skills" : section === "mcps" ? "/settings/extensions/mcp" : section === "plugins" ? "/settings/extensions/plugins" : section === "providers" ? "/settings/ai" : "/settings/preferences");
@@ -1448,7 +1487,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               sessionID: targetSessionId,
               parts,
               model: targetModel ?? undefined,
-              agent: selectedAgent ?? undefined,
+              agent: readSessionAgentChoice(selectedWorkspaceId, targetSessionId) ?? undefined,
               ...(targetVariant ? { variant: targetVariant } : {}),
               ...(systemContext ? { system: systemContext } : {}),
               ...(submission.delivery === "steer" ? {
@@ -1571,12 +1610,14 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     modelVariantValue,
     navigate,
     resolveModelForSession,
+    resolveAgentForSession,
     opencodeBaseUrl,
     opencodeClient,
     providerConnectedIds,
     providers,
     sessionProviderAuthSnapshot.cloudOrgProviders,
     selectedAgent,
+    setSelectedAgent,
     selectedSessionId,
     selectedModelUnavailable,
     selectedManagedModelPreparing,
@@ -2440,7 +2481,10 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         interactionClient={selectedWorkspaceEndpoint.client}
         onSessionCreated={handleRuntimeSessionCreated}
         onSessionUpdated={handleRuntimeSessionUpdated}
-        onSessionDeleted={handleRuntimeSessionDeleted}
+        onSessionDeleted={(sessionId) => {
+          setSessionAgentChoice(selectedWorkspaceId, sessionId, null);
+          handleRuntimeSessionDeleted(sessionId);
+        }}
       />
     ) : null}
     <SessionPage
@@ -2752,6 +2796,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               if (!endpoint) return;
               await endpoint.client.deleteSession(endpoint.workspaceId, sessionId);
               clearSessionModelChoice(selectedWorkspaceId, sessionId);
+              setSessionAgentChoice(selectedWorkspaceId, sessionId, null);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }
@@ -2847,8 +2892,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
       extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
-      selectedAgent={selectedAgent}
-      onSelectAgent={setSelectedAgent}
+      selectedAgent={resolveAgentForSession(paletteSessionId)}
+      onSelectAgent={(agent) => setSelectedAgent(agent, paletteSessionId)}
     />
     <SessionSearchDialog
       open={sessionSearchOpen}

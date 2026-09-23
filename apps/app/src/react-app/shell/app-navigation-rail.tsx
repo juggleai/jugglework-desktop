@@ -197,7 +197,6 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   const upgradeContext = membershipUpgradeContext(tenantAccount, activeOrganization);
   const imNavigationVisible = isIMNavigationVisible({
     authStatus,
-    accountBusy,
     activeOrganizationId: activeOrganization?.id,
     im: readDenIMLoginBootstrap(),
   });
