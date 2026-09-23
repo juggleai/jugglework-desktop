@@ -3,7 +3,9 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export type CloudProfile = { token: string; organizationId?: string; user?: { id: string; name?: string; email?: string } };
-type ProfileFile = { version: 1; profiles: Record<string, CloudProfile> };
+type ProfileFile = { version: 1; profiles: Record<string, CloudProfile>; lastOrganizationByUser: Record<string, Record<string, string>> };
+
+const emptyFile = (): ProfileFile => ({ version: 1, profiles: {}, lastOrganizationByUser: {} });
 
 export class CloudProfileStore {
   constructor(readonly path: string) {}
@@ -12,9 +14,16 @@ export class CloudProfileStore {
     return (await this.read()).profiles[origin] ?? null;
   }
 
+  async rememberedOrganization(origin: string, userId: string): Promise<string | null> {
+    return (await this.read()).lastOrganizationByUser[origin]?.[userId] ?? null;
+  }
+
   async set(origin: string, profile: CloudProfile): Promise<void> {
     const data = await this.read();
     data.profiles[origin] = profile;
+    if (profile.user?.id && profile.organizationId) {
+      (data.lastOrganizationByUser[origin] ??= {})[profile.user.id] = profile.organizationId;
+    }
     await this.write(data);
   }
 
@@ -24,6 +33,9 @@ export class CloudProfileStore {
     if (!profile) throw new Error("Sign in before selecting an organization.");
     if (organizationId) profile.organizationId = organizationId;
     else delete profile.organizationId;
+    if (organizationId && profile.user?.id) {
+      (data.lastOrganizationByUser[origin] ??= {})[profile.user.id] = organizationId;
+    }
     await this.write(data);
   }
 
@@ -36,9 +48,9 @@ export class CloudProfileStore {
   private async read(): Promise<ProfileFile> {
     try {
       const value: unknown = JSON.parse(await readFile(this.path, "utf8"));
-      if (!value || typeof value !== "object" || Array.isArray(value)) return { version: 1, profiles: {} };
+      if (!value || typeof value !== "object" || Array.isArray(value)) return emptyFile();
       const profiles = (value as { profiles?: unknown }).profiles;
-      if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return { version: 1, profiles: {} };
+      if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return emptyFile();
       const valid: Record<string, CloudProfile> = {};
       for (const [origin, profileValue] of Object.entries(profiles as Record<string, unknown>)) {
         if (!profileValue || typeof profileValue !== "object" || Array.isArray(profileValue)) continue;
@@ -52,9 +64,19 @@ export class CloudProfileStore {
             : {}),
         };
       }
-      return { version: 1, profiles: valid };
+      const remembered = (value as { lastOrganizationByUser?: unknown }).lastOrganizationByUser;
+      const lastOrganizationByUser: ProfileFile["lastOrganizationByUser"] = {};
+      if (remembered && typeof remembered === "object" && !Array.isArray(remembered)) {
+        for (const [origin, users] of Object.entries(remembered as Record<string, unknown>)) {
+          if (!users || typeof users !== "object" || Array.isArray(users)) continue;
+          lastOrganizationByUser[origin] = Object.fromEntries(Object.entries(users as Record<string, unknown>)
+            .filter(([userId, orgId]) => userId.trim() && typeof orgId === "string" && orgId.trim())
+            .map(([userId, orgId]) => [userId.trim(), (orgId as string).trim()]));
+        }
+      }
+      return { version: 1, profiles: valid, lastOrganizationByUser };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return { version: 1, profiles: {} };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return emptyFile();
       throw error;
     }
   }

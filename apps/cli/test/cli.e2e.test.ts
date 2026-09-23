@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -61,6 +61,16 @@ async function startMockServer(scenario: Scenario = "complete") {
     assert.equal(request.headers.authorization, "Bearer test-token");
     const url = new URL(request.url ?? "/", "http://mock");
     if (request.method === "GET" && url.pathname === "/health") return send(response, { ok: true, version: "test" });
+    if (request.method === "GET" && url.pathname === "/status") return send(response, { ok: true });
+    if (request.method === "GET" && url.pathname === "/workspace/ws_1/config") return send(response, { opencode: { model: "openai/gpt-5" } });
+    if (request.method === "GET" && url.pathname === "/w/ws_1/provider") return send(response, {
+      all: [{ id: "openai", name: "OpenAI", models: {
+        "gpt-5": { name: "GPT-5", variants: { low: {}, high: {} } },
+        "gpt-6": { name: "GPT-6", variants: { low: {}, high: {} } },
+      } }],
+      connected: ["openai"],
+      default: { openai: "gpt-5" },
+    });
     if (request.method === "GET" && url.pathname === "/workspaces") {
       return send(response, { activeId: "ws_1", items: [{ id: "ws_1", path: process.cwd(), name: "test" }] });
     }
@@ -478,5 +488,51 @@ test("server failures redact reflected bearer and host token values", async () =
     assert.match(String(records(result)[0]?.message), /\[REDACTED\]/);
   } finally {
     await new Promise<void>((done, reject) => server.close((error) => error ? reject(error) : done()));
+  }
+});
+
+test("interactive TTY supports slash arrow selection, model picker, and footer", { timeout: 20_000 }, async () => {
+  if (spawnSync("which", ["expect"]).status !== 0) return;
+  const mock = await startMockServer();
+  try {
+    const script = `
+set timeout 5
+proc require {pattern} {
+  expect {
+    -exact $pattern {}
+    timeout { puts stderr "Timed out waiting for: $pattern"; exit 2 }
+    eof { puts stderr "Unexpected EOF waiting for: $pattern"; exit 2 }
+  }
+}
+set server $env(JUGGLEWORK_TEST_SERVER)
+set bun $env(JUGGLEWORK_TEST_BUN)
+spawn $bun src/cli.ts --server $server --token test-token --workspace-id ws_1
+require "Type a task or /help"
+require "openai/gpt-5 · default reasoning"
+send "/"
+require "Commands"
+send "\\033\\[B\\033\\[B\\033\\[B\\r"
+require "Active runs: 0"
+send "/model\\r"
+require "Models"
+send "\\033\\[B\\r"
+require "Reasoning effort"
+send "\\033\\[B\\033\\[B\\r"
+require "Reasoning effort: high"
+require "openai/gpt-6 · high reasoning"
+send "/exit\\r"
+expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 } }
+`;
+    const result = await collect(spawn("expect", ["-c", script], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, JUGGLEWORK_TEST_SERVER: mock.url, JUGGLEWORK_TEST_BUN: process.execPath },
+    }));
+    assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /Timed out|Unexpected EOF/);
+    assert.match(result.stdout, /Active runs: 0/);
+    assert.match(result.stdout, /openai\/gpt-6 · high reasoning/);
+  } finally {
+    await mock.close();
   }
 });

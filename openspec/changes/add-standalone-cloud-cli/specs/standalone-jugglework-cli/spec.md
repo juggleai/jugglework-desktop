@@ -61,18 +61,27 @@ The CLI SHALL keep Cloud credentials separate from runtime Server tokens, SHALL 
 - **THEN** output may include the deployment, request class, HTTP status, and reference identifier
 - **AND** excludes bearer tokens, one-time grants, API keys, and provider credential values
 
-### Requirement: The CLI selects an organization explicitly
+### Requirement: The CLI selects an account-scoped default organization
 
-After login, the CLI SHALL list organizations available to the current account, SHALL allow selection by an unambiguous identifier or slug, and SHALL persist the selected organization per Cloud profile. Organization-scoped requests SHALL fail clearly rather than guess when the selection is missing or ambiguous.
+After login, the CLI SHALL select a valid organization using the account's Cloud active choice, then the account's remembered local choice, then the first organization returned by Cloud. The CLI SHALL list available organizations, allow explicit selection by an unambiguous identifier or slug, and synchronize explicit changes with Cloud so Desktop and CLI see the same active organization. Local organization history SHALL be scoped by confirmed user and retained across logout without retaining credentials.
+
+#### Scenario: First login
+- **WHEN** a user logs in and neither Cloud nor that account's local history identifies a valid organization
+- **THEN** the CLI selects the first organization returned by Cloud and persists it
+
+#### Scenario: Returning account
+- **WHEN** a user logs in again and the Cloud account reports a valid active organization
+- **THEN** the CLI selects that organization even when a different account used the same deployment previously
 
 #### Scenario: Select organization
 - **WHEN** the user runs `jugglework org use <id-or-slug>` with one unambiguous match
 - **THEN** subsequent provider and model commands use that organization
+- **AND** the selected organization is updated through Cloud's active-organization API
 
 #### Scenario: Selected membership was removed
 - **WHEN** the persisted organization is no longer present in the current user's memberships
 - **THEN** the CLI clears or ignores that selection
-- **AND** asks the human user to select an available organization or fails in non-interactive mode
+- **AND** falls back to the first available organization unless an explicit invalid override was requested
 
 ### Requirement: Organization provider and model inventory is truthful
 
@@ -127,6 +136,31 @@ Bare `jugglework` SHALL open the interactive experience, `jugglework [prompt]` S
 - **WHEN** the user runs `jugglework` in a capable terminal and has completed or explicitly skipped any sign-in choice
 - **THEN** the CLI opens an interactive session for the current workspace
 - **AND** exposes contextual commands for model, organization, status, permissions, sessions, Connect, skills, extensions, diagnostics, and exit
+
+#### Scenario: Slash command discovery
+- **WHEN** the user types `/` at the interactive prompt
+- **THEN** the CLI immediately lists the commands it actually supports, with short descriptions
+- **AND** Up/Down selects a listed command, Enter executes it, and continued typing filters the list
+
+#### Scenario: Model selection
+- **WHEN** the user runs `/model` without arguments in the interactive prompt
+- **THEN** the CLI lists connected chat-capable models from the active workspace runtime
+- **AND** the user can select a model and one of its reported reasoning variants with Up/Down and Enter
+- **AND** cancelling either picker leaves the current model unchanged
+
+#### Scenario: Model context
+- **WHEN** the CLI enters an interactive workspace with a configured model
+- **THEN** it shows the provider, model, and requested reasoning effort from CLI selection or workspace configuration
+- **AND** the active model and reasoning effort remain directly below the input cursor while composing
+- **AND** labels values not reported by the Server as runtime defaults rather than inventing them
+
+#### Scenario: Interactive task in progress
+- **WHEN** a user submits a task in the interactive session
+- **THEN** the CLI shows the submitted instruction, elapsed working state, and the configured model and workspace context
+- **AND** Escape requests cancellation of the active Server run
+- **AND** streaming output remains visible while the task runs
+- **AND** the prompt returns only after the task finishes or stops, so no inactive input field is presented as usable
+- **AND** tool status and assistant text appear as distinct terminal-readable output
 
 #### Scenario: Explicit execution mode
 - **WHEN** the user runs `jugglework exec "run focused tests"`

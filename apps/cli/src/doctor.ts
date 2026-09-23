@@ -5,6 +5,7 @@ import type { CliOptions } from "./args.js";
 import { JuggleWorkApiClient } from "./api.js";
 import { CloudClient, CloudHttpError } from "./cloud-client.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
+import { resolveCloudOrganization } from "./cloud-organization.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
 import { chooseWorkspace } from "./controller.js";
 import type { CliRenderer } from "./render.js";
@@ -52,7 +53,8 @@ export async function buildDoctorReport(options: CliOptions): Promise<DoctorRepo
   let publishedProviders: CloudProvider[] | null = null;
   const urls = normalizeCloudUrl(options.cloudUrl);
   const cloud = new CloudClient(urls);
-  const profile = await new CloudProfileStore(cloudProfilePath(options.configPath)).get(urls.origin);
+  const profileStore = new CloudProfileStore(cloudProfilePath(options.configPath));
+  const profile = options.cloudToken ? null : await profileStore.get(urls.origin);
   const token = options.cloudToken ?? profile?.token ?? null;
   checks.push({ id: "cloud_profile", status: "pass", message: "Cloud deployment profile resolved.", details: { origin: urls.origin, source: options.cloudToken ? "environment" : profile ? "profile" : "default", tokenPresent: Boolean(token) } });
   try {
@@ -71,8 +73,13 @@ export async function buildDoctorReport(options: CliOptions): Promise<DoctorRepo
     try {
       const user = await cloud.currentUser(token);
       checks.push({ id: "cloud_login", status: "pass", message: "Cloud login is valid.", details: { authenticated: true, userId: user.id } });
-      const organizations = await cloud.organizations(token);
-      const organization = organizations.find((item) => item.id === organizationId || item.slug === organizationId);
+      const organizationState = await cloud.organizationState(token);
+      const organizations = organizationState.items;
+      const organization = resolveCloudOrganization(organizationState, {
+        explicit: options.cloudOrg,
+        remembered: profile?.user?.id ? await profileStore.rememberedOrganization(urls.origin, profile.user.id) : null,
+        current: profile?.organizationId,
+      });
       if (!organization) {
         organizationId = null;
         checks.push({ id: "organization", status: "warning", message: "No valid organization is selected.", details: { selected: false, available: organizations.length } });

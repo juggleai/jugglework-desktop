@@ -45,6 +45,9 @@
 - [x] 6.3 Add workspace command foundations and a compact searchable contextual slash-command palette for model, organization, permissions, status, planning, sessions, workspace, Connect, MCP, skills, extensions, compact, copy, doctor, logout, and exit.
 - [x] 6.4 Preserve explicit sandbox and approval dimensions, fail closed in non-interactive runs, and add conspicuously named expert-only bypass flags subject to Server policy.
 - [x] 6.5 Add completion generation, hierarchical help snapshots, contextual command-availability tests, terminal/no-terminal behavior tests, and stable exit-code tests.
+- [x] 6.6 Show an interactive submitted-task row, elapsed working state, model/workspace context, and working Escape cancellation without changing exec or JSON output.
+- [x] 6.7 Show the slash palette on `/`, report provider/model/reasoning context, separate tool and assistant output, and restore the account's active organization with first-org fallback.
+- [x] 6.8 Make the interactive slash menu keyboard-selectable, browse connected runtime models and reasoning variants through `/model`, and keep the active model/effort directly below the composer.
 
 ## 7. Diagnostics, Documentation, and Release
 

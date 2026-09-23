@@ -39,3 +39,20 @@ test("profile store recovers from malformed files on the next atomic write", asy
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("last organization survives logout and is isolated by account", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-cloud-history-"));
+  const store = new CloudProfileStore(join(root, "profiles.json"));
+  try {
+    await store.set("https://cloud.example", { token: "token-a", user: { id: "user-a" }, organizationId: "org-a" });
+    await store.remove("https://cloud.example");
+    assert.equal(await store.get("https://cloud.example"), null);
+    assert.equal(await store.rememberedOrganization("https://cloud.example", "user-a"), "org-a");
+    assert.equal(await store.rememberedOrganization("https://cloud.example", "user-b"), null);
+    await store.set("https://cloud.example", { token: "token-b", user: { id: "user-b" }, organizationId: "org-b" });
+    assert.equal(await store.rememberedOrganization("https://cloud.example", "user-a"), "org-a");
+    assert.equal(await store.rememberedOrganization("https://cloud.example", "user-b"), "org-b");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

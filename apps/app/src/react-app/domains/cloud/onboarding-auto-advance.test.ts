@@ -52,11 +52,11 @@ describe("autoAdvanceOrganization", () => {
     expect(autoAdvanceOrganization([org("a"), org("b")], "b")?.id).toBe("b");
   });
 
-  test("defaults to the personal organization without a remembered choice", () => {
+  test("defaults to the first organization without a remembered choice", () => {
     expect(autoAdvanceOrganization([
       org("team"),
       { ...org("mine"), kind: "personal" },
-    ])?.id).toBe("mine");
+    ])?.id).toBe("team");
   });
 
   test("uses the first organization defensively when personal is unavailable", () => {

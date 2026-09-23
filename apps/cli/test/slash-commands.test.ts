@@ -4,7 +4,7 @@ import { searchSlashCommands } from "../src/cli.js";
 
 const expected = [
   "model", "org", "permissions", "status", "plan", "new", "sessions", "resume", "fork",
-  "workspace", "connect", "mcp", "skills", "extensions", "compact", "copy", "doctor", "logout", "exit",
+  "workspace", "connect", "mcp", "skills", "extensions", "compact", "copy", "doctor", "logout", "help", "stop", "exit",
 ];
 
 test("slash palette stays compact, complete, and searchable", () => {

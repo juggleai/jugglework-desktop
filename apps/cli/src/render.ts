@@ -28,6 +28,18 @@ function safeTerminalText(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f-\u009f\u200e-\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function safeTerminalBody(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200e-\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+}
+
+function safeComposerText(value: string): string {
+  return safeTerminalBody(value).replace(/\s/g, " ");
+}
+
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const WIDE_GRAPHEME = /[\u1100-\u115f\u2329-\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff01-\uff60\uffe0-\uffe6]|\p{Extended_Pictographic}/u;
 
@@ -55,6 +67,8 @@ export class CliRenderer {
   private workingTimer: NodeJS.Timeout | null = null;
   private workingStartedAt = 0;
   private workingVisible = false;
+  private composerMenuRows = 0;
+  private composerActive = false;
   private readonly secretValues = new Set<string>();
   constructor(private readonly options: RendererOptions) {}
 
@@ -86,28 +100,36 @@ export class CliRenderer {
   private drawWorkingLine(): void {
     if (!this.workingTimer || this.lineOpen) return;
     const seconds = Math.floor((Date.now() - this.workingStartedAt) / 1000);
-    const message = `● Working (${seconds}s · esc to interrupt)`;
-    const fitted = fitTerminalText(message, Math.max(4, (process.stdout.columns || 80) - 1));
+    const width = Math.max(4, (process.stdout.columns || 80) - 1);
+    const full = `● Working (${seconds}s · esc to interrupt)`;
+    const compact = `● Working (${seconds}s · esc to stop)`;
+    const fitted = fitTerminalText(displayWidth(full) <= width ? full : compact, width);
     if (this.workingVisible && process.stdout.isTTY) process.stdout.write("\r\u001b[2K");
     process.stdout.write(this.style(fitted, ANSI.dim));
     this.workingVisible = true;
   }
 
-  submittedPrompt(prompt: string): void {
+  submittedPrompt(prompt: string, replaceInputLine = false): void {
     if (this.options.json || this.options.exec) return;
     this.ensureLine();
     const width = Math.max(4, process.stdout.columns || 80);
     const text = fitTerminalText(`› ${safeTerminalText(this.redactText(prompt))}`, width);
+    if (replaceInputLine && process.stdout.isTTY) {
+      if (displayWidth(`› ${prompt}`) >= width) return;
+      process.stdout.write("\u001b[1A\r\u001b[2K");
+    }
     const row = `${text}${" ".repeat(Math.max(0, width - displayWidth(text)))}`;
     process.stdout.write(`${this.style(row, ANSI.promptBackground)}\n`);
   }
 
-  taskContext(model: string | null, workspace: WorkspaceInfo): void {
+  taskContext(modelLabel: string, workspace: WorkspaceInfo): void {
     if (this.options.json || this.options.exec) return;
     const location = workspace.path || workspace.directory || workspace.displayName || workspace.name || workspace.id;
-    const label = `${model ?? "runtime default"} · ${safeTerminalText(this.redactText(location))}`;
     const width = Math.max(4, (process.stdout.columns || 80) - 1);
-    process.stdout.write(`${this.style(fitTerminalText(label, width, true), ANSI.dim)}\n`);
+    const fittedModel = fitTerminalText(safeTerminalText(this.redactText(modelLabel)), width);
+    const remaining = width - displayWidth(fittedModel) - displayWidth(" · ");
+    const pathLabel = remaining > 1 ? ` · ${fitTerminalText(safeTerminalText(this.redactText(location)), remaining, true)}` : "";
+    process.stdout.write(`${this.style(`${fittedModel}${pathLabel}`, ANSI.dim)}\n`);
   }
 
   startWorking(): void {
@@ -191,8 +213,10 @@ export class CliRenderer {
 
   session(session: SessionInfo): void {
     if (this.options.json) return this.event("session", { session });
+    this.ensureLine();
     const stream = this.options.exec ? process.stderr : process.stdout;
     stream.write(`${this.style("session", ANSI.dim)} ${this.redactText(session.id)} ${this.redactText(session.title ?? "")}\n`);
+    this.drawWorkingLine();
   }
 
   sessions(items: SessionInfo[]): void {
@@ -215,7 +239,7 @@ export class CliRenderer {
     this.info(`Status: ${snapshot.status.type}; messages: ${snapshot.messages.length}; todos: ${snapshot.todos.length}`);
     for (const message of snapshot.messages) {
       const text = message.parts.filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n");
-      process.stdout.write(`${this.style(message.info.role, ANSI.cyan)}${text ? `  ${this.redactText(text)}` : ""}\n`);
+      process.stdout.write(`${this.style(message.info.role, ANSI.cyan)}${text ? `  ${safeTerminalBody(this.redactText(text))}` : ""}\n`);
     }
   }
 
@@ -283,15 +307,26 @@ export class CliRenderer {
     if (this.options.json || this.options.exec) return;
     this.ensureLine();
     this.clearWorkingLine();
-    process.stdout.write(`${this.style("assistant › ", ANSI.cyan)}`);
-    this.lineOpen = true;
+    process.stdout.write(`${this.style("● JuggleWork", ANSI.cyan)}\n`);
+    this.lineOpen = false;
+  }
+
+  tool(name: string, status: string): void {
+    if (this.options.json) return this.event("tool", { name, status });
+    this.ensureLine();
+    const stream = this.options.exec ? process.stderr : process.stdout;
+    const label = safeTerminalText(this.redactText(name));
+    const state = safeTerminalText(status);
+    stream.write(`${this.style("•", ANSI.cyan)} ${label} ${this.style(state, ANSI.dim)}\n`);
+    this.drawWorkingLine();
   }
 
   delta(text: string, messageId?: string, partId?: string): void {
     if (!text) return;
     if (this.options.json) return this.event("delta", { text, messageId, partId });
     if (this.options.exec) return;
-    const safeText = this.redactText(text);
+    this.clearWorkingLine();
+    const safeText = safeTerminalBody(this.redactText(text));
     process.stdout.write(safeText);
     this.lineOpen = !safeText.endsWith("\n");
     if (!this.lineOpen) this.drawWorkingLine();
@@ -317,6 +352,51 @@ export class CliRenderer {
 
   promptLabel(): string {
     return this.style("› ", ANSI.bold);
+  }
+
+  composerFrame(input: string, cursorText: string, menu: Array<{ label: string; detail?: string; selected?: boolean }>, footer: string, title?: string): void {
+    if (this.options.json || this.options.exec) return;
+    const stream = process.stdout;
+    if (this.composerActive) stream.write(`\r${this.composerMenuRows ? `\u001b[${this.composerMenuRows}A` : ""}\u001b[J`);
+    const width = Math.max(8, (stream.columns || 80) - 1);
+    const rows: string[] = [];
+    if (menu.length) {
+      rows.push(this.style(fitTerminalText(title || "Choose · ↑↓ select · Enter confirm", width), ANSI.dim));
+      for (const item of menu) {
+        const prefix = item.selected ? "› " : "  ";
+        const label = safeTerminalText(this.redactText(item.label));
+        const detail = item.detail ? `  ${safeTerminalText(this.redactText(item.detail))}` : "";
+        const text = fitTerminalText(`${prefix}${label}${detail}`, width);
+        rows.push(item.selected ? this.style(`${text}${" ".repeat(Math.max(0, width - displayWidth(text)))}`, "\u001b[48;5;75m\u001b[30m") : this.style(text, ANSI.dim));
+      }
+    }
+    if (rows.length) stream.write(`${rows.join("\n")}\n`);
+    const safeInput = fitTerminalText(safeComposerText(this.redactText(input)), Math.max(1, width - 2), true);
+    stream.write(`${this.promptLabel()}${safeInput}\n${this.style(fitTerminalText(safeTerminalText(this.redactText(footer)), width), ANSI.dim)}\n`);
+    this.composerMenuRows = rows.length;
+    this.composerActive = true;
+    const cursorColumn = Math.min(width, 2 + displayWidth(safeComposerText(this.redactText(cursorText))));
+    stream.write(`\u001b[2A\r${cursorColumn ? `\u001b[${cursorColumn}C` : ""}`);
+  }
+
+  clearComposer(): void {
+    if (!this.composerActive) return;
+    process.stdout.write(`\r${this.composerMenuRows ? `\u001b[${this.composerMenuRows}A` : ""}\u001b[J`);
+    this.composerMenuRows = 0;
+    this.composerActive = false;
+  }
+
+  slashPalette(commands: Array<{ name: string; summary: string }>): void {
+    if (this.options.json || this.options.exec) return;
+    if (process.stdout.isTTY) process.stdout.write("\r\u001b[2K");
+    process.stdout.write(`${this.style("Commands", ANSI.bold)} ${this.style("· type a name and press Enter", ANSI.dim)}\n`);
+    const width = Math.max(4, (process.stdout.columns || 80) - 2);
+    for (const { name, summary } of commands) {
+      const command = `/${name}`.padEnd(15);
+      const remaining = width - displayWidth(command);
+      const suffix = remaining > 0 ? fitTerminalText(safeTerminalText(summary), remaining) : "";
+      process.stdout.write(`${this.style(command, ANSI.cyan)}${this.style(suffix, ANSI.dim)}\n`);
+    }
   }
 }
 

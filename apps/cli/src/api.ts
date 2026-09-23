@@ -41,6 +41,16 @@ export type RuntimeProviderStatus = {
   }>;
 };
 
+export type RuntimeProviderList = {
+  all: Array<{
+    id: string;
+    name?: string;
+    models?: Record<string, { name?: string; variants?: Record<string, unknown>; capabilities?: { output?: { text?: boolean; image?: boolean; video?: boolean } } }>;
+  }>;
+  connected: string[];
+  default?: Record<string, string>;
+};
+
 export type SessionInfo = {
   id: string;
   title?: string | null;
@@ -191,6 +201,8 @@ export class JuggleWorkApiClient {
     });
   }
   runtimeConfig(workspaceId: string) { return this.request<JsonRecord>(`/workspace/${encodeURIComponent(workspaceId)}/runtime-config`); }
+  providerList(workspaceId: string) { return this.request<RuntimeProviderList>(`/w/${encodeURIComponent(workspaceId)}/provider`); }
+  workspaceConfig(workspaceId: string) { return this.request<{ opencode?: JsonRecord; jugglework?: JsonRecord }>(`/workspace/${encodeURIComponent(workspaceId)}/config`); }
   listSessions(workspaceId: string, limit = 20) {
     return this.request<{ items: SessionInfo[] }>(`/workspace/${encodeURIComponent(workspaceId)}/sessions?roots=false&limit=${limit}`);
   }

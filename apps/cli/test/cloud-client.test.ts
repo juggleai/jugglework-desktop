@@ -27,6 +27,26 @@ test("organization inventory sends bearer and both organization headers", async 
   assert.equal(headers!.get("x-jugglework-legacy-org-id"), "org_123");
 });
 
+test("organization state preserves the Cloud active choice and switching uses the Desktop endpoint", async () => {
+  const requests: Array<{ url: string; method: string; authorization: string | null; body: string | null }> = [];
+  const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async (input, init) => {
+    requests.push({ url: String(input), method: init?.method ?? "GET", authorization: new Headers(init?.headers).get("authorization"), body: typeof init?.body === "string" ? init.body : null });
+    return Response.json(requests.length === 1
+      ? { orgs: [{ id: "org-a", slug: "a", name: "A" }], activeOrgId: "org-a", activeOrgSlug: "a" }
+      : { ok: true });
+  }) as typeof fetch);
+  const state = await client.organizationState("session-secret");
+  assert.equal(state.activeOrgId, "org-a");
+  assert.equal(state.items[0]?.id, "org-a");
+  await client.setActiveOrganization("session-secret", "org-a");
+  assert.deepEqual(requests[1], {
+    url: "https://cloud.example/jwork/api/v1/me/active-organization",
+    method: "POST",
+    authorization: "Bearer session-secret",
+    body: '{"organizationId":"org-a"}',
+  });
+});
+
 test("Cloud errors are normalized without reflecting response secrets", async () => {
   const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async () => Response.json({
     error: "grant_expired",

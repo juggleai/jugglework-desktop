@@ -244,7 +244,7 @@ describe("desktop Den bootstrap settings", () => {
     expect(readDenLastOrganization("user-a")).toBe("org-team-a");
   });
 
-  test("resolves remembered org before personal and personal before server active", () => {
+  test("prefers the account's Cloud active org, then local history, then the first org", () => {
     const orgs = [
       { id: "org-team", name: "Team", slug: "team", role: "member" as const, kind: "organization" as const },
       { id: "org-personal", name: "Personal", slug: "personal", role: "owner" as const, kind: "personal" as const },
@@ -254,11 +254,11 @@ describe("desktop Den bootstrap settings", () => {
     expect(resolveDenDefaultOrganization(orgs, {
       rememberedOrgId: "org-other",
       serverActiveOrgId: "org-team",
-    })?.id).toBe("org-other");
+    })?.id).toBe("org-team");
     expect(resolveDenDefaultOrganization(orgs, {
-      rememberedOrgId: "missing",
-      serverActiveOrgId: "org-team",
-    })?.id).toBe("org-personal");
+      rememberedOrgId: "org-other",
+    })?.id).toBe("org-other");
+    expect(resolveDenDefaultOrganization(orgs)?.id).toBe("org-team");
   });
 
   test("reprovisions missing IM credentials even when the active organization already matches", async () => {

@@ -7,6 +7,7 @@ import type { CliOptions } from "./args.js";
 import { JuggleWorkApiClient, JuggleWorkApiError, type JsonRecord, type RuntimeProviderStatus } from "./api.js";
 import { CloudClient } from "./cloud-client.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
+import { resolveCloudOrganization } from "./cloud-organization.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
 import type { CliRenderer } from "./render.js";
 import { createRuntime, type RuntimeConnection } from "./runtime.js";
@@ -84,20 +85,22 @@ export async function removeProvider(input: { runtime: RuntimeApi; workspaceId: 
 
 async function selectedCloud(options: CliOptions): Promise<{ cloud: CloudClient; token: string; organizationId: string }> {
   const urls = normalizeCloudUrl(options.cloudUrl);
-  const profile = await new CloudProfileStore(cloudProfilePath(options.configPath)).get(urls.origin);
+  const store = new CloudProfileStore(cloudProfilePath(options.configPath));
+  const profile = options.cloudToken ? null : await store.get(urls.origin);
   const token = options.cloudToken ?? profile?.token ?? null;
-  const organizationId = options.cloudOrg ?? profile?.organizationId ?? null;
   if (!token) throw new Error("Not signed in to JuggleWork Cloud. Run 'jugglework login'.");
-  if (!organizationId) throw new Error("No organization is selected. Run 'jugglework org use <id-or-slug>'.");
   const cloud = new CloudClient(urls);
-  const organizations = await cloud.organizations(token);
-  const selected = organizations.find((organization) => organization.id === organizationId || organization.slug === organizationId);
+  const selected = resolveCloudOrganization(await cloud.organizationState(token), {
+    explicit: options.cloudOrg,
+    remembered: profile?.user?.id ? await store.rememberedOrganization(urls.origin, profile.user.id) : null,
+    current: profile?.organizationId,
+  });
   if (!selected) {
-    if (!options.cloudOrg && !options.cloudToken && profile?.organizationId) {
-      await new CloudProfileStore(cloudProfilePath(options.configPath)).selectOrganization(urls.origin, null);
-    }
-    throw new Error("The selected organization is no longer available. Run 'jugglework org use <id-or-slug>'.");
+    throw new Error(options.cloudOrg
+      ? `No organization exactly matches '${options.cloudOrg}'.`
+      : "This account has no available organizations.");
   }
+  if (!options.cloudToken && profile && profile.organizationId !== selected.id) await store.selectOrganization(urls.origin, selected.id);
   return { cloud, token, organizationId: selected.id };
 }
 

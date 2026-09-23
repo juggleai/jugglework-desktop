@@ -35,7 +35,7 @@ function snapshot(
 }
 
 function createRenderer() {
-  const output = { deltas: [] as string[], info: [] as string[], warnings: [] as string[], finals: [] as string[] };
+  const output = { deltas: [] as string[], info: [] as string[], warnings: [] as string[], finals: [] as string[], tools: [] as string[] };
   const renderer = {
     event() {},
     info(value: string) { output.info.push(value); },
@@ -48,6 +48,7 @@ function createRenderer() {
     sessionMutation() {},
     sessionQueued() {},
     assistantStart() {},
+    tool(name: string, status: string) { output.tools.push(`${name}:${status}`); },
     delta(value: string) { output.deltas.push(value); },
     final(value: string) { output.finals.push(value); },
     ensureLine() {},
@@ -120,6 +121,29 @@ test("streaming assistant growth emits only appended deltas", async () => {
   assert.deepEqual(output.deltas, ["hel", "lo"]);
 });
 
+test("tool progress is concise and emitted only when its status changes", async () => {
+  let snapshots = 0;
+  const toolMessage = (status: string): SessionMessage => ({
+    info: { id: "msg_tool", sessionID: "ses_1", role: "assistant" },
+    parts: [{ id: "part_tool", type: "tool", tool: "read", state: { status, input: { filePath: "/private/path" } } }],
+  });
+  const api = baseApi({
+    getSnapshot: async () => {
+      snapshots += 1;
+      if (snapshots === 1) return snapshot([]);
+      if (snapshots <= 3) return snapshot([toolMessage("running")], { type: "busy" });
+      return snapshot([toolMessage("completed")]);
+    },
+    observeRun: async (_workspaceId: string, _sessionId: string, _runId: string, status: string) => ({
+      cleared: status === "idle", run: status === "idle" ? null : run, terminalStatus: status === "idle" ? "completed" : null,
+    }),
+  });
+  const { renderer, output } = createRenderer();
+  await new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, null).runPrompt("read a file");
+  assert.deepEqual(output.tools, ["read:running", "read:completed"]);
+  assert.deepEqual(output.deltas, []);
+});
+
 test("fast completion uses idle reconciliation when active state was never observed", async () => {
   const observations: string[] = [];
   let snapshots = 0;
@@ -190,6 +214,23 @@ test("steering preserves growth from assistant parts present in the baseline", a
   assert.equal(result.text, " plus more");
   assert.deepEqual(output.deltas, [" plus", " more"]);
   assert.equal(activeReads, 1);
+});
+
+test("steered tool updates from an existing assistant message remain visible", async () => {
+  let snapshots = 0;
+  const toolMessage = (status: string): SessionMessage => ({
+    info: { id: "msg_existing", sessionID: "ses_1", role: "assistant" },
+    parts: [{ id: "tool_existing", type: "tool", tool: "bash", state: { status } }],
+  });
+  const api = baseApi({
+    getSnapshot: async () => snapshot([toolMessage(++snapshots === 1 ? "running" : "completed")], snapshots === 1 ? { type: "busy" } : { type: "idle" }),
+    observeRun: async () => ({ cleared: true, run: null, terminalStatus: "completed" }),
+  });
+  const { renderer, output } = createRenderer();
+  const controller = new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, null);
+  await controller.useSession({ id: "ses_1" });
+  await controller.runPrompt("follow up");
+  assert.deepEqual(output.tools, ["bash:completed"]);
 });
 
 test("start admission is bounded by the configured run timeout", async () => {

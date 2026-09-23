@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFile, writeFile } from "node:fs/promises";
 import { createInterface, type Interface } from "node:readline/promises";
+import { emitKeypressEvents, type Key } from "node:readline";
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
 import {
@@ -26,6 +27,9 @@ import { executeDoctor } from "./doctor.js";
 import { executeProviderCommand } from "./provider-command.js";
 import { cloudWelcomeLabel, hasCloudLogin } from "./welcome.js";
 import { chooseCloudOnboarding, isOnboardingEntry } from "./onboarding.js";
+import { modelContextLabel, parseModelContext, resolveModelContext, type ModelContext } from "./model-context.js";
+import { chooseComposerItem, readCommandComposer } from "./composer.js";
+import { loadAvailableModels } from "./model-catalog.js";
 
 const CLEANUP_TIMEOUT_MS = 5_000;
 const ABORT_TIMEOUT_MS = 1_500;
@@ -84,8 +88,8 @@ async function readOutputSchema(path: string | null): Promise<Record<string, unk
 }
 
 const SLASH_COMMANDS = [
-  ["model", "Show the configured model and selection guidance"],
-  ["org", "List Cloud organizations (read-only)"],
+  ["model", "Show or select model and reasoning effort"],
+  ["org", "Show or switch Cloud organization"],
   ["permissions", "Show or change Server-authoritative approval mode"],
   ["status", "Show runtime and task status"],
   ["plan", "Show the current runtime task plan"],
@@ -102,6 +106,8 @@ const SLASH_COMMANDS = [
   ["copy", "Print the last response as copy-ready text"],
   ["doctor", "Show the diagnostic command to run"],
   ["logout", "Sign out from JuggleWork Cloud"],
+  ["help", "Search all available commands"],
+  ["stop", "Stop the active task"],
   ["exit", "Exit JuggleWork"],
 ] as const;
 
@@ -115,21 +121,51 @@ export function searchSlashCommands(query = ""): Array<{ name: string; summary: 
 function printInteractiveHelp(query = ""): void {
   const needle = query.trim().toLowerCase();
   const matches = searchSlashCommands(query);
-  stdout.write(`Commands${needle ? ` matching '${needle}'` : ""}:\n${matches.map(({ name, summary }) => `  /${name.padEnd(13)} ${summary}`).join("\n")}\n  /help [search] Search this compact command palette\n  /stop          Stop the active task\n`);
+  stdout.write(`Commands${needle ? ` matching '${needle}'` : ""}:\n${matches.map(({ name, summary }) => `  /${name.padEnd(13)} ${summary}`).join("\n")}\n`);
 }
 
-async function repl(controller: SessionController, renderer: CliRenderer, rl: Interface, options: CliOptions): Promise<void> {
+async function repl(controller: SessionController, renderer: CliRenderer, options: CliOptions, initialModel: ModelContext, setTaskKeyCapture: (active: boolean) => void, onInterrupt: () => void): Promise<void> {
+  let modelContext = initialModel;
   renderer.info("Type a task or /help for commands.");
   while (true) {
-    let input: string;
-    try {
-      input = (await rl.question(renderer.promptLabel())).trim();
-    } catch {
-      break;
+    const entered = await readCommandComposer(renderer, modelContextLabel(modelContext),
+      SLASH_COMMANDS.map(([name, summary]) => ({ value: `/${name}`, label: `/${name}`, detail: summary })), onInterrupt);
+    if (entered === null) break;
+    const input = entered.trim();
+    if (!input || input === "/") {
+      continue;
     }
-    if (!input) continue;
     if (!input.startsWith("/")) {
-      try { await controller.runPrompt(input); } catch (error) { renderer.error(error instanceof Error ? error.message : String(error)); }
+      renderer.submittedPrompt(input);
+      renderer.taskContext(modelContextLabel(modelContext), controller.workspace);
+      renderer.startWorking();
+      let finished = false;
+      let stopRequested = false;
+      const onKeypress = (_character: string, key: Key) => {
+        if (key.ctrl && key.name === "c") {
+          onInterrupt();
+          return;
+        }
+        if (key.name !== "escape" || stopRequested) return;
+        stopRequested = true;
+        void (async () => {
+          while (!finished && !controller.currentRun) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+          if (!finished) await controller.abortCurrentRun();
+        })().catch((error) => renderer.error(error instanceof Error ? error.message : String(error)));
+      };
+      emitKeypressEvents(stdin);
+      setTaskKeyCapture(true);
+      stdin.on("keypress", onKeypress);
+      try {
+        await controller.runPrompt(input);
+      } catch (error) {
+        renderer.error(error instanceof Error ? error.message : String(error));
+      } finally {
+        finished = true;
+        stdin.off("keypress", onKeypress);
+        setTaskKeyCapture(false);
+        renderer.stopWorking();
+      }
       continue;
     }
     const [command, ...rest] = input.slice(1).split(/\s+/);
@@ -137,10 +173,39 @@ async function repl(controller: SessionController, renderer: CliRenderer, rl: In
       switch (command?.toLowerCase()) {
         case "help": printInteractiveHelp(rest.join(" ")); break;
         case "model":
-          renderer.info(`Model: ${options.model ?? "runtime default"}. Use --model provider/model when starting the CLI to change it.`);
+          if (rest.length > 0) {
+            if (!/^[^\s/]+\/.+$/.test(rest[0]!) || rest.length > 2) throw new Error("Usage: /model [provider/model [reasoning-effort]]");
+            options.model = rest[0]!;
+            options.reasoningEffort = rest[1] ?? null;
+            modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+          } else {
+            const models = await loadAvailableModels(controller.api, controller.workspace);
+            if (!models.length) {
+              renderer.warn("No connected chat models are available in this workspace.");
+              break;
+            }
+            const selectedModel = await chooseComposerItem(renderer, modelContextLabel(modelContext), "Models · ↑↓ select · Enter choose · Esc cancel",
+              models.map((model) => ({ value: model.id, label: model.id, detail: model.label === model.model ? "" : model.label })),
+              modelContext.provider && modelContext.model ? `${modelContext.provider}/${modelContext.model}` : undefined);
+            if (!selectedModel) break;
+            const model = models.find((item) => item.id === selectedModel)!;
+            const effortChoices = [{ value: "", label: "Default", detail: "Use the model default" }, ...model.variants.map((variant) => ({ value: variant, label: variant, detail: "" }))];
+            const effort = model.variants.length
+              ? await chooseComposerItem(renderer, `${model.id} · reasoning effort`, "Reasoning effort · ↑↓ select · Enter choose · Esc cancel", effortChoices,
+                model.id === `${modelContext.provider}/${modelContext.model}` ? modelContext.reasoningEffort ?? "" : "")
+              : "";
+            if (effort === null) break;
+            options.model = model.id;
+            options.reasoningEffort = effort || null;
+            modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+          }
+          renderer.info(`Provider: ${modelContext.provider ?? "runtime default (not reported)"}`);
+          renderer.info(`Model: ${modelContext.model ?? "runtime default (not reported)"}`);
+          renderer.info(`Reasoning effort: ${modelContext.reasoningEffort ?? "runtime default"}`);
+          renderer.info(`Source: ${modelContext.source === "cli" ? "CLI selection" : modelContext.source === "workspace" ? "workspace configuration" : "runtime default"}`);
           break;
         case "org":
-          await executeCloudCommand({ ...options, command: { group: "org", action: "list", target: null } }, renderer);
+          await executeCloudCommand({ ...options, command: rest.length ? { group: "org", action: "use", target: rest[0]! } : { group: "org", action: "list", target: null } }, renderer);
           break;
         case "permissions": {
           const requested = rest[0]?.toLowerCase();
@@ -202,7 +267,9 @@ async function repl(controller: SessionController, renderer: CliRenderer, rl: In
 async function execute(options: CliOptions, renderer: CliRenderer): Promise<number> {
   let runtime: RuntimeConnection | null = null;
   let rl: Interface | null = null;
+  const closeQuestion = () => rl?.close();
   let controller: SessionController | null = null;
+  let taskKeyCapture = false;
   let resolveShutdown!: (exitCode: number) => void;
   const shutdown = new Promise<number>((resolvePromise) => { resolveShutdown = resolvePromise; });
   const signalController = createSignalController({
@@ -237,8 +304,19 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
   try {
     const execMode = options.command.group === "runtime" && options.command.action === "exec";
     const interactive = !execMode && isInteractiveCli(options, stdin.isTTY === true, stdout.isTTY === true);
-    if (interactive) rl = createInterface({ input: stdin, output: stdout, terminal: true });
-    const ask: Ask | null = rl ? (question) => rl!.question(question) : null;
+    const ask: Ask | null = interactive ? async (question) => {
+      const questionRl = createInterface({ input: stdin, output: stdout, terminal: true });
+      rl = questionRl;
+      questionRl.on("SIGINT", signalHandlers.SIGINT);
+      try {
+        return await questionRl.question(question);
+      } finally {
+        questionRl.off("SIGINT", signalHandlers.SIGINT);
+        questionRl.close();
+        if (rl === questionRl) rl = null;
+        if (taskKeyCapture && stdin.isTTY) stdin.setRawMode(true);
+      }
+    } : null;
 
     runtime = await createRuntime(options);
     const api = new JuggleWorkApiClient(runtime.url, runtime.token, runtime.hostToken);
@@ -267,10 +345,11 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
       return 0;
     }
     const workspace = await chooseWorkspace(api, options, ask);
+    const modelContext = await resolveModelContext(api, workspace, options);
     if (interactive && !options.prompt && options.command.group === "runtime" && options.command.action !== "status" && options.command.action !== "sessions") {
       renderer.welcome({
         workspace,
-        model: options.model,
+        model: modelContextLabel(modelContext),
         sandbox: options.sandbox,
         approval: options.approval,
         cloud: await cloudWelcomeLabel(options),
@@ -282,7 +361,6 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
     controller = new SessionController(api, workspace, options, renderer, ask);
     const activeController = controller;
 
-    rl?.on("SIGINT", signalHandlers.SIGINT);
     const command = async (): Promise<number> => {
       const groupedResume = options.command.group === "session" && options.command.action === "resume";
       if (options.command.group === "session" && !groupedResume) {
@@ -331,7 +409,10 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
       if (!interactive) {
         throw new Error("No prompt was provided. Pass a prompt argument, pipe text on stdin, or run in an interactive terminal.");
       }
-      await repl(activeController, renderer, rl!, options);
+      await repl(activeController, renderer, options, modelContext, (active) => {
+        taskKeyCapture = active;
+        if (stdin.isTTY) stdin.setRawMode(active);
+      }, signalHandlers.SIGINT);
       return signalController.isShuttingDown() ? 130 : 0;
     };
     return await Promise.race([command(), shutdown]);
@@ -339,8 +420,7 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
     process.off("SIGINT", signalHandlers.SIGINT);
     process.off("SIGTERM", signalHandlers.SIGTERM);
     process.off("SIGHUP", signalHandlers.SIGHUP);
-    rl?.off("SIGINT", signalHandlers.SIGINT);
-    rl?.close();
+    closeQuestion();
     if (runtime && !await settleWithin(runtime.stop(), CLEANUP_TIMEOUT_MS)) {
       renderer.warn(`Runtime cleanup exceeded ${CLEANUP_TIMEOUT_MS / 1000} seconds; exiting.`);
     }

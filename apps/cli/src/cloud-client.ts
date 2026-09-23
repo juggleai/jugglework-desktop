@@ -5,6 +5,7 @@ export type { CloudProvider, CloudProviderModel } from "@jugglework/cloud-provid
 
 export type CloudUser = { id: string; name?: string; email?: string };
 export type CloudOrganization = { id: string; name: string; slug: string; role?: string };
+export type CloudOrganizations = { items: CloudOrganization[]; activeOrgId: string | null; activeOrgSlug: string | null };
 export class CloudHttpError extends Error {
   constructor(
     message: string,
@@ -114,16 +115,25 @@ export class CloudClient {
     return user;
   }
 
-  async organizations(token: string): Promise<CloudOrganization[]> {
+  async organizationState(token: string): Promise<CloudOrganizations> {
     const payload = record(await this.request("/v1/me/orgs", { token }));
     const values = Array.isArray(payload?.orgs) ? payload.orgs : Array.isArray(payload?.organizations) ? payload.organizations : [];
-    return values.flatMap((value) => {
+    const items = values.flatMap((value) => {
       const item = record(value);
       const id = safeString(item?.id);
       const name = safeString(item?.name);
       const slug = safeString(item?.slug);
       return id && name && slug ? [{ id, name, slug, ...(safeString(item?.role) ? { role: safeString(item?.role)! } : {}) }] : [];
     });
+    return { items, activeOrgId: safeString(payload?.activeOrgId), activeOrgSlug: safeString(payload?.activeOrgSlug) };
+  }
+
+  async organizations(token: string): Promise<CloudOrganization[]> {
+    return (await this.organizationState(token)).items;
+  }
+
+  async setActiveOrganization(token: string, organizationId: string): Promise<void> {
+    await this.request("/v1/me/active-organization", { method: "POST", token, body: { organizationId } });
   }
 
   async providers(token: string, organizationId: string): Promise<CloudProvider[]> {

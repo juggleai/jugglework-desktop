@@ -391,6 +391,10 @@ export class SessionController {
     const baselineErrors = new Map(before.item.messages.map((message) => [message.info.id, JSON.stringify(message.info.error ?? null)]));
     const baselineParts = new Map(assistantTextParts(before.item.messages)
       .map((part) => [textPartKey(part.messageId, part.partId), part.text]));
+    const baselineTools = new Map(before.item.messages.flatMap((message) => message.info.role !== "assistant" ? [] : message.parts.flatMap((part) =>
+      part.type === "tool" && typeof part.state?.status === "string"
+        ? [[textPartKey(message.info.id, part.id), part.state.status as string] as const]
+        : [])));
     const context = input.context?.trim();
     const promptBody: Record<string, unknown> = {
       parts: [
@@ -421,6 +425,7 @@ export class SessionController {
     this.renderer.event("run_started", { sessionId: session.id, runId: this.currentRunValue?.runId ?? null });
 
     const printed = new Map(baselineParts);
+    const toolStates = new Map<string, string>(baselineTools);
     const seenInteractions = new Set<string>();
     let assistantStarted = false;
     let lastRetryAttempt = -1;
@@ -438,6 +443,18 @@ export class SessionController {
         ));
         const failure = messageFailure(messages);
         if (failure) throw new Error(failure);
+
+        for (const message of snapshot.item.messages) {
+          if (message.info.role !== "assistant") continue;
+          for (const part of message.parts) {
+            if (part.type !== "tool" || !part.tool || !part.state) continue;
+            const status = typeof part.state.status === "string" ? part.state.status : "pending";
+            const key = textPartKey(message.info.id, part.id);
+            if (toolStates.get(key) === status) continue;
+            toolStates.set(key, status);
+            this.renderer.tool(part.tool, status);
+          }
+        }
 
         const textParts = assistantTextParts(snapshot.item.messages).filter((part) => {
           const baseline = baselineParts.get(textPartKey(part.messageId, part.partId));

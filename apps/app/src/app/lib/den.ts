@@ -1111,8 +1111,8 @@ export function writeDenLastOrganization(
 
 /**
  * Resolve the organization used during bootstrap without asking the member.
- * A remembered choice is account-scoped; currentOrgId exists for explicit
- * prepared-bootstrap selections that arrive before an account has history.
+ * The Cloud account's active organization is shared with other clients. A
+ * remembered choice is the local fallback when the Cloud does not report one.
  */
 export function resolveDenDefaultOrganization(
   orgs: readonly DenOrgSummary[] | null | undefined,
@@ -1134,13 +1134,11 @@ export function resolveDenDefaultOrganization(
     return slug ? list.find((org) => org.slug === slug) ?? null : null;
   };
   return (
+    byId(input?.serverActiveOrgId) ??
+    bySlug(input?.serverActiveOrgSlug) ??
     byId(input?.rememberedOrgId) ??
     byId(input?.currentOrgId) ??
     bySlug(input?.currentOrgSlug) ??
-    list.find((org) => org.kind === "personal") ??
-    list.find((org) => org.slug.trim().toLowerCase() === "personal") ??
-    byId(input?.serverActiveOrgId) ??
-    bySlug(input?.serverActiveOrgSlug) ??
     list[0] ??
     null
   );

@@ -88,6 +88,12 @@ Cloud. The grant/link input is hidden. This menu does not interrupt one-shot,
 `exec`, JSON, non-TTY, or explicitly connected Server commands. JuggleWork
 does not currently offer a device-code or direct API-key login flow.
 
+In the interactive REPL, a submitted task is shown on a shaded line with a
+live elapsed-time indicator and the selected model/workspace context. Press
+Escape to request cancellation of the active Server run; the session is kept.
+The next prompt appears when the task finishes or stops. This display is not
+used by `exec`, JSON, or non-TTY commands.
+
 ```bash
 # Interactive mode in the current directory
 jugglework
@@ -142,7 +148,7 @@ jugglework completion fish
 jugglework completion powershell
 ```
 
-With no prompt, the line-oriented REPL is available only when both stdin and stdout are TTYs and `--json` is not set. Ordinary lines submit follow-up tasks to the selected session. `/help [search]` searches the compact contextual palette.
+With no prompt, the interactive REPL is available only when both stdin and stdout are TTYs and `--json` is not set. Ordinary lines submit follow-up tasks to the selected session. Typing `/` opens the supported command list; use Up/Down to select, Enter to run, or keep typing to filter. The current model and reasoning effort remain directly below the input line. `/help [search]` searches the palette. Tool status and assistant text are separated for terminal reading.
 
 | Command | Behavior |
 | --- | --- |
@@ -151,8 +157,8 @@ With no prompt, the line-oriented REPL is available only when both stdin and std
 | `/sessions` | List recent root sessions. |
 | `/resume <id>` | Select an existing session. |
 | `/status` | Show workspace, session, active-run, and Server status. |
-| `/model` | Show the configured model; restart with `--model provider/model` to change it. |
-| `/org` | List Cloud organizations without changing the selection. |
+| `/model [provider/model [reasoning-effort]]` | Browse connected chat models and their available reasoning variants with Up/Down and Enter, or specify a model explicitly; show the active provider, model, reasoning effort, and source. |
+| `/org [id-or-slug]` | List Cloud organizations or switch the account's active organization. |
 | `/permissions [request-approval\|full-access]` | Show or change the selected session's Server-authoritative mode. Full access requires typed acknowledgement and remains policy-gated. |
 | `/plan` | Show runtime-reported task items for the selected session. |
 | `/workspace` | List workspaces and show the supported top-level mutation commands. |
@@ -236,10 +242,10 @@ Precedence from highest to lowest is:
 
 Supported environment variables are `JUGGLEWORK_SERVER_URL`, `JUGGLEWORK_TOKEN`, `JUGGLEWORK_HOST_TOKEN`, `JUGGLEWORK_CLOUD_URL`, `JUGGLEWORK_CLOUD_TOKEN`, `JUGGLEWORK_CLOUD_ORG`, `JUGGLEWORK_WORKSPACE`, `JUGGLEWORK_WORKSPACE_ID`, `JUGGLEWORK_OPENCODE_BIN`, `JUGGLEWORK_EXTENSIONS_PLUGIN_DIR`, `JUGGLEWORK_MODEL`, `JUGGLEWORK_AGENT`, `JUGGLEWORK_SANDBOX`, and `JUGGLEWORK_APPROVAL`. `JUGGLEWORK_REASONING_EFFORT` is also supported. The Cloud token is an ephemeral override and is never persisted.
 
-Cloud commands default to `https://work.jugglechat.cn`; this is independent from the runtime `--server` URL. `jugglework login` opens the Cloud sign-in page where possible and always prints it. After sign-in, paste the resulting `jugglework-cli://den-auth?...` link or raw one-time grant into the hidden prompt. The bare interactive sign-in menu offers the same handoff with a paste-only choice for remote terminals. On SSH or another non-interactive terminal, pipe the result to `jugglework login --grant-stdin`. Account, organization, catalog, provider-list, and model-list commands do not start the local runtime.
+Cloud commands default to `https://work.jugglechat.cn`; this is independent from the runtime `--server` URL. `jugglework login` opens the Cloud sign-in page where possible and always prints it. After sign-in, paste the resulting `jugglework-cli://den-auth?...` link or raw one-time grant into the hidden prompt. The bare interactive sign-in menu offers the same handoff with a paste-only choice for remote terminals. On SSH or another non-interactive terminal, pipe the result to `jugglework login --grant-stdin`. Login restores the account's Cloud active organization, falls back to that account's remembered choice, then selects the first available organization. `/org` changes are synchronized to Cloud. Account, organization, catalog, provider-list, and model-list commands do not start the local runtime.
 
 A typical first run is `jugglework login`, `jugglework org list`,
-`jugglework org use <id-or-slug>`, `jugglework provider list`, and
+an optional `jugglework org use <id-or-slug>`, `jugglework provider list`, and
 `jugglework provider import <publication-id>`. Provider import starts or connects
 to the runtime because it writes the selected organization's provider into that
 runtime; inventory and account commands remain Cloud-only.

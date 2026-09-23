@@ -137,9 +137,18 @@ for (const failure of ["grant_expired", "grant_replayed"] as const) {
 }
 
 test("successful grant login persists atomically while environment tokens remain non-persistent", async () => {
+  const switches: string[] = [];
   const cloud = await mockCloud((request, response) => {
     if (request.url?.endsWith("/desktop-handoff/exchange")) return send(response, { token: "persisted-session", user: { id: "user_1" } });
     if (request.url?.endsWith("/v1/me")) return send(response, { user: { id: "user_1", email: "person@example.test" } });
+    if (request.url?.endsWith("/v1/me/orgs")) return send(response, { orgs: [
+      { id: "org_first", slug: "first", name: "First" },
+      { id: "org_second", slug: "second", name: "Second" },
+    ] });
+    if (request.url?.endsWith("/v1/me/active-organization") && request.method === "POST") {
+      switches.push(request.headers.authorization ?? "");
+      return send(response, { ok: true });
+    }
     send(response, { error: "not_found" }, 404);
   });
   const root = await mkdtemp(join(tmpdir(), "jugglework-cloud-login-success-"));
@@ -149,9 +158,22 @@ test("successful grant login persists atomically while environment tokens remain
     assert.equal(result.code, 0, result.stdout);
     const profileText = await readFile(join(root, "cloud-profiles.json"), "utf8");
     assert.match(profileText, /persisted-session/);
+    assert.match(profileText, /"organizationId": "org_first"/);
+    assert.equal(switches.length, 1);
     assert.doesNotMatch(result.stdout, /persisted-session|valid_grant_12345/);
+    const switched = await run(["--cloud-url", cloud.url, "--config", config, "org", "use", "second"]);
+    assert.equal(switched.code, 0, switched.stdout);
+    const loggedOut = await run(["--cloud-url", cloud.url, "--config", config, "logout"]);
+    assert.equal(loggedOut.code, 0, loggedOut.stdout);
+    const again = await run(["--cloud-url", cloud.url, "--config", config, "--grant-stdin", "login"], {}, "valid_grant_12345\n");
+    assert.equal(again.code, 0, again.stdout);
+    assert.match(await readFile(join(root, "cloud-profiles.json"), "utf8"), /"organizationId": "org_second"/);
+    assert.equal(switches.length, 3);
     const status = await run(["--cloud-url", cloud.url, "--config", config, "login", "status"], { JUGGLEWORK_CLOUD_TOKEN: "environment-only-token" });
     assert.equal(status.code, 0);
+    const environmentOrgs = await run(["--cloud-url", cloud.url, "--config", config, "org", "list"], { JUGGLEWORK_CLOUD_TOKEN: "environment-only-token" });
+    assert.equal(environmentOrgs.code, 0, environmentOrgs.stdout);
+    assert.equal(record(environmentOrgs).selectedId, "org_first");
     assert.doesNotMatch(await readFile(join(root, "cloud-profiles.json"), "utf8"), /environment-only-token/);
   } finally {
     await cloud.close();

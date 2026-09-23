@@ -6,6 +6,7 @@ import { filterImportableCloudOrgProviders, getCloudManagedProviderId } from "@j
 import type { CliOptions } from "./args.js";
 import { CloudClient, CloudHttpError, type CloudOrganization } from "./cloud-client.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
+import { resolveCloudOrganization } from "./cloud-organization.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
 import type { CliRenderer } from "./render.js";
 
@@ -147,8 +148,16 @@ export async function executeCloudCommand(options: CliOptions, renderer: CliRend
     const exchange = await client.exchangeHandoff(grant);
     renderer.registerSecretValues([exchange.token]);
     const user = await client.currentUser(exchange.token);
-    await store.set(urls.origin, { token: exchange.token, user });
+    const state = await client.organizationState(exchange.token);
+    const selected = resolveCloudOrganization(state, {
+      remembered: await store.rememberedOrganization(urls.origin, user.id),
+      current: persisted?.user?.id === user.id ? persisted.organizationId : null,
+    });
+    if (selected && state.activeOrgId !== selected.id) await client.setActiveOrganization(exchange.token, selected.id);
+    await store.set(urls.origin, { token: exchange.token, user, ...(selected ? { organizationId: selected.id } : {}) });
     renderer.account("signed_in", user, urls.origin);
+    if (selected) renderer.organizationSelected(selected, false);
+    else renderer.warn("This account has no available organizations yet.");
     return 0;
   }
 
@@ -181,33 +190,39 @@ export async function executeCloudCommand(options: CliOptions, renderer: CliRend
   }
 
   if (!token) throw new Error("Not signed in to JuggleWork Cloud. Run 'jugglework login'.");
-  const organizations = await client.organizations(token);
-  let selectedId = options.cloudOrg ?? persisted?.organizationId ?? null;
-  if (selectedId && !organizations.some((organization) => organization.id === selectedId || organization.slug === selectedId)) {
-    if (!options.cloudToken && persisted?.organizationId) await store.selectOrganization(urls.origin, null);
-    selectedId = null;
-  }
-
-  if (options.command.group === "org" && options.command.action === "list") {
-    renderer.organizations(organizations, selectedId);
-    return 0;
-  }
-
+  const state = await client.organizationState(token);
+  const organizations = state.items;
   if (options.command.group === "org" && options.command.action === "use") {
     const target = options.command.target;
-    let matches = target ? organizations.filter((organization) => organization.id === target || organization.slug === target) : organizations;
+    const matches = target ? organizations.filter((organization) => organization.id === target || organization.slug === target) : organizations;
     let selected: CloudOrganization;
     if (matches.length === 1) selected = matches[0]!;
     else if (stdin.isTTY && stdout.isTTY && !options.json && matches.length > 0) selected = await chooseOrganization(matches);
     else if (!target) throw new Error("org use requires an organization ID or slug in non-interactive mode.");
     else if (matches.length === 0) throw new Error(`No organization exactly matches '${target}'.`);
     else throw new Error(`Organization '${target}' is ambiguous.`);
+    await client.setActiveOrganization(token, selected.id);
     if (!options.cloudToken) await store.selectOrganization(urls.origin, selected.id);
     renderer.organizationSelected(selected, options.cloudToken !== null);
     return 0;
   }
+  const accountProfile = options.cloudToken ? null : persisted;
+  const selected = resolveCloudOrganization(state, {
+    explicit: options.cloudOrg,
+    remembered: accountProfile?.user?.id ? await store.rememberedOrganization(urls.origin, accountProfile.user.id) : null,
+    current: accountProfile?.organizationId,
+  });
+  if (options.cloudOrg && !selected) throw new Error(`No organization exactly matches '${options.cloudOrg}'.`);
+  if (selected && accountProfile && accountProfile.organizationId !== selected.id) {
+    await store.selectOrganization(urls.origin, selected.id);
+  }
 
-  const organization = organizations.find((item) => item.id === selectedId || item.slug === selectedId);
+  if (options.command.group === "org" && options.command.action === "list") {
+    renderer.organizations(organizations, selected?.id ?? null);
+    return 0;
+  }
+
+  const organization = selected;
   if (!organization) throw new Error("No organization is selected. Run 'jugglework org use <id-or-slug>'.");
   const providers = filterImportableCloudOrgProviders(await client.providers(token, organization.id));
   if (options.command.group === "provider") {
