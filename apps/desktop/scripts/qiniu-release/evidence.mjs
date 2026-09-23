@@ -430,6 +430,22 @@ export function assertEvidenceMatchesPlan(plan, evidence) {
 export function assertRecordedPromotion(plan, evidence) {
   assertEvidenceMatchesPlan(plan, evidence);
   const promotion = evidence.workflow?.promotion;
+  const cacheException = promotion?.cacheException;
+  const cacheExceptionAllowed = cacheException?.scope === `stable-${plan.version}-only`
+    && typeof cacheException.reason === "string"
+    && cacheException.reason.length >= 20
+    && sameArray(plan.architectures, ["arm64"])
+    && plan.version === "1.2.23";
+  if (cacheExceptionAllowed) {
+    if (promotion?.status !== "verified" || promotion.channelKey !== plan.channelManifest.key
+      || promotion.channelObject?.size !== plan.manifest.size
+      || promotion.channelObject?.etag !== plan.manifest.etag
+      || promotion.channelObject?.verified !== true) {
+      throw new Error("Recorded cache-exception promotion does not match the release plan");
+    }
+    timestamp(promotion.promotedAt, "Promotion promotedAt");
+    return promotion;
+  }
   if (promotion?.status !== "verified" || promotion.channelKey !== plan.channelManifest.key
     || promotion.cacheControl?.key !== plan.channelManifest.key
     || promotion.cacheControl?.value !== "no-cache, no-store, must-revalidate"
@@ -459,10 +475,10 @@ function assertStableNotarizationException(plan, reason) {
 }
 
 function assertStablePreCanaryException(plan, reason) {
-  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22"].includes(plan.version)) {
-    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, or stable 1.2.22");
+  if (plan.channel !== "stable" || !["1.2.16", "1.2.18", "1.2.19", "1.2.20", "1.2.22", "1.2.23"].includes(plan.version)) {
+    throw new Error("The pre-canary promotion exception is restricted to stable 1.2.16, stable 1.2.18, stable 1.2.19, stable 1.2.20, stable 1.2.22, or stable 1.2.23");
   }
-  if (["1.2.20", "1.2.22"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
+  if (["1.2.20", "1.2.22", "1.2.23"].includes(plan.version) && !sameArray(plan.architectures, ["arm64"])) {
     throw new Error(`The stable ${plan.version} pre-canary promotion exception is restricted to macOS arm64`);
   }
   if (typeof reason !== "string" || reason.trim().length < 20) {
@@ -471,9 +487,20 @@ function assertStablePreCanaryException(plan, reason) {
   return reason.trim();
 }
 
+function assertStableCacheException(plan, reason) {
+  if (plan.channel !== "stable" || plan.version !== "1.2.23" || !sameArray(plan.architectures, ["arm64"])) {
+    throw new Error("The cache exception is restricted to stable macOS arm64 1.2.23");
+  }
+  if (typeof reason !== "string" || reason.trim().length < 20) {
+    throw new Error("The stable 1.2.23 cache exception requires an explicit audited reason");
+  }
+  return reason.trim();
+}
+
 export function assertPromotionEvidence(plan, evidence, {
   notarizationExceptionReason = "",
   preCanaryExceptionReason = "",
+  cacheExceptionReason = "",
 } = {}) {
   assertEvidenceMatchesPlan(plan, evidence);
   if (plan.platform !== "mac" && (notarizationExceptionReason || preCanaryExceptionReason)) {
@@ -491,6 +518,7 @@ export function assertPromotionEvidence(plan, evidence, {
   } else {
     assertCanary(plan, evidence.canary);
   }
+  if (cacheExceptionReason) assertStableCacheException(plan, cacheExceptionReason);
   const objects = [...plan.objects, plan.manifest];
   if (evidence.workflow?.immutable?.status !== "verified") throw new Error("Workflow-recorded immutable verification is required");
   if (evidence.workflow?.cdn?.status !== "verified") throw new Error("Workflow-recorded CDN verification is required");

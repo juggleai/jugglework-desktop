@@ -86,19 +86,23 @@ export async function promoteChannel(plan, evidence, {
   actor = process.env.CI_JOB_ID || process.env.GITHUB_RUN_ID || "manual",
   notarizationExceptionReason = "",
   preCanaryExceptionReason = "",
+  cacheExceptionReason = "",
   onEvent = () => {},
   onPromotionVerified = async () => {},
 } = {}) {
-  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason });
+  assertPromotionEvidence(plan, evidence, { notarizationExceptionReason, preCanaryExceptionReason, cacheExceptionReason });
   const notarizationException = notarizationExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: notarizationExceptionReason.trim() }
     : null;
   const preCanaryException = preCanaryExceptionReason
     ? { scope: `stable-${plan.version}-only`, reason: preCanaryExceptionReason.trim() }
     : null;
-  if (typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
-  if (typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
-  if (typeof qiniu?.setCacheControl !== "function") throw new Error("Qiniu Cache-Control metadata operation is unavailable");
+  const cacheException = cacheExceptionReason
+    ? { scope: `stable-${plan.version}-only`, reason: cacheExceptionReason.trim() }
+    : null;
+  if (!cacheException && typeof refresh !== "function") throw new Error("CDN cache refresh operation is unavailable");
+  if (!cacheException && typeof readBack !== "function") throw new Error("CDN read-back operation is unavailable");
+  if (!cacheException && typeof qiniu?.setCacheControl !== "function") throw new Error("Qiniu Cache-Control metadata operation is unavailable");
   const lockKey = promotionLockKey(plan.channel, plan.platform);
   if (dryRun) {
     return {
@@ -160,6 +164,12 @@ export async function promoteChannel(plan, evidence, {
     const channelRemote = await qiniu.stat(plan.channelManifest.key);
     if (!exactRemote(channelRemote, plan.manifest)) {
       throw new Error(`Qiniu stat mismatch for promoted channel manifest ${plan.channelManifest.key}`);
+    }
+    if (cacheException) {
+      const result = { lockKey, channelKey: plan.channelManifest.key, channelObject: { size: channelRemote.size, etag: channelRemote.etag, verified: true }, lock: lockPayload, notarizationException, preCanaryException, cacheException };
+      await onPromotionVerified(result);
+      channelVerified = true;
+      return result;
     }
     onEvent({ type: "channel-cache-control", key: plan.channelManifest.key, value: CHANNEL_MANIFEST_CACHE_CONTROL });
     const channelMetadata = await qiniu.setCacheControl(

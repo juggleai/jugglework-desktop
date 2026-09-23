@@ -39,7 +39,7 @@ const COMMANDS = new Set([
 ]);
 const OPTIONS = new Set([
   "version", "channel", "platform", "arch", "dist", "evidence", "bucket", "releaseDate", "actor", "reason",
-  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason",
+  "audit", "commit", "localVerification", "canary", "notarizationExceptionReason", "preCanaryExceptionReason", "cacheExceptionReason",
 ]);
 
 export function parseArguments(argv) {
@@ -208,6 +208,7 @@ export async function runCli(argv, {
       actor: options.actor,
       notarizationExceptionReason: options.notarizationExceptionReason,
       preCanaryExceptionReason: options.preCanaryExceptionReason,
+      cacheExceptionReason: options.cacheExceptionReason,
       now,
       onPromotionVerified: options.dryRun ? undefined : async (verified) => {
         const persisted = withEvidenceResults(evidence, {
@@ -218,6 +219,8 @@ export async function runCli(argv, {
             readBack: verified.readBack,
             notarizationException: verified.notarizationException,
             preCanaryException: verified.preCanaryException,
+            cacheException: verified.cacheException,
+            channelObject: verified.channelObject,
             promotedAt: now().toISOString(),
           } },
         }, now().toISOString());
@@ -233,7 +236,7 @@ export async function runCli(argv, {
 }
 
 export function usage() {
-  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple exceptions are macOS-only: notarization exceptions are restricted to stable 1.2.15/1.2.16/1.2.17/1.2.18/1.2.19/1.2.20 and pre-canary exceptions to stable 1.2.16/1.2.18/1.2.19/1.2.20, plus stable macOS arm64 1.2.22.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
+  return `Usage: node cli.mjs <command> --version VERSION --channel stable|alpha --platform mac|windows --arch ARCH[,ARCH] --dist PATH --evidence PATH [options] [-- argv...]\n\nmac architectures: arm64, x64, universal (universal must be used alone). windows architectures: exactly arm64,x64; input order is normalized and VERSION must be greater than 1.2.17. Stable requires X.Y.Z; alpha also accepts SemVer prereleases. build executes argv after -- without a shell. Windows immutable upload requires persisted, passed local-verification evidence. recover-lock additionally requires --reason TEXT and --audit PATH and recovers only the selected --platform lock. Audited Apple pre-canary exceptions include stable macOS arm64 1.2.22 and 1.2.23. The cache exception is restricted to stable macOS arm64 1.2.23 and skips only Cache-Control, CDN refresh, and public Stable-manifest convergence validation.\nCommands: plan, build, verify-local, upload-version, verify-cdn, promote-channel, verify-only, resume, recover-lock\n`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
