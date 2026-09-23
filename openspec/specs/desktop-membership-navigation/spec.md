@@ -23,6 +23,15 @@ Desktop SHALL NOT render or submit its own membership tier-selection dialog. It 
 - **WHEN** the server returns a `lite_team` organization account, a six-plan `membership-cny-v2` catalog, or a Lite Team organization order
 - **THEN** Desktop accepts the contract while preserving tenant-kind and financial validation
 
+#### Scenario: Lite Team Owner chooses Upgrade
+- **WHEN** a Lite Team organization Owner with billing permission clicks Upgrade
+- **THEN** Desktop opens `/jwork/console/dashboard/?membership=team` on the configured server
+- **AND** Desktop does not render a local plan selector
+
+#### Scenario: Lite Team non-Owner opens the account menu
+- **WHEN** a Lite Team organization Admin or Member opens the Desktop account menu
+- **THEN** no membership Upgrade action is shown
+
 #### Scenario: Team non-Owner opens the account menu
 - **WHEN** an organization Admin or Member opens the Desktop account menu
 - **THEN** no membership Upgrade action is shown
