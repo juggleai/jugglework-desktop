@@ -169,6 +169,7 @@ describe("Electron managed runtime", () => {
     const userDataPath = path.join(root, "user-data");
     const homePath = path.join(root, "home");
     const sidecarDir = path.join(desktopRoot, "resources", "sidecars");
+    const opencodePath = path.join(sidecarDir, process.platform === "win32" ? "opencode.exe" : "opencode");
     const orchestratorMarker = path.join(root, "orchestrator-spawned");
     const legacyDataDir = path.join(root, "legacy-orchestrator-data");
     const previousDataDir = process.env.JUGGLEWORK_DATA_DIR;
@@ -184,8 +185,8 @@ describe("Electron managed runtime", () => {
       await mkdir(workspacePath, { recursive: true });
       await mkdir(homePath, { recursive: true });
       await mkdir(legacyDataDir, { recursive: true });
-      await writeFile(path.join(sidecarDir, "opencode"), "#!/bin/sh\nexit 99\n");
-      await chmod(path.join(sidecarDir, "opencode"), 0o755);
+      await writeFile(opencodePath, "#!/bin/sh\nexit 99\n");
+      await chmod(opencodePath, 0o755);
       await writeFile(
         path.join(sidecarDir, "jugglework-orchestrator"),
         `#!/bin/sh\nprintf spawned > ${JSON.stringify(orchestratorMarker)}\nexit 98\n`,
@@ -261,7 +262,7 @@ describe("Electron managed runtime", () => {
       assert.equal(engine.running, true);
       assert.equal(engine.managedByServer, true);
       assert.equal(embeddedStartOptions.manageOpencode, true);
-      assert.equal(embeddedStartOptions.opencodeBin, path.join(sidecarDir, "opencode"));
+      assert.equal(embeddedStartOptions.opencodeBin, opencodePath);
       assert.equal(embeddedStartOptions.workspaces[0], workspacePath);
       assert.deepEqual(manager.managedServerAccess(), {
         baseUrl: `http://127.0.0.1:${embeddedStartOptions.port}`,
@@ -518,9 +519,10 @@ describe("embeddedServerImportUrl", () => {
 
 describe("resolveJuggleWorkServerConfigPath", () => {
   it("respects explicit server config path", () => {
+    const configuredPath = path.join(os.tmpdir(), "jugglework", "server.json");
     assert.equal(
-      resolveJuggleWorkServerConfigPath({ JUGGLEWORK_SERVER_CONFIG: "/tmp/jugglework/server.json" }),
-      "/tmp/jugglework/server.json",
+      resolveJuggleWorkServerConfigPath({ JUGGLEWORK_SERVER_CONFIG: configuredPath }),
+      path.resolve(configuredPath),
     );
   });
 

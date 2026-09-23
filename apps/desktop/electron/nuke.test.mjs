@@ -39,7 +39,7 @@ function pendingNukeInput(root) {
   return {
     env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
     homedir: path.join(root, "home"),
-    platform: "darwin",
+    platform: process.platform,
     userDataPath: path.join(root, "userData"),
   };
 }

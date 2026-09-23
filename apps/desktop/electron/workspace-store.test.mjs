@@ -21,12 +21,14 @@ async function withIsolatedBootstrapStore(callback) {
   const home = path.join(root, "home");
   const xdg = path.join(root, "xdg");
   const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
   const previousXdg = process.env.XDG_CONFIG_HOME;
   const previousOverride = process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH;
   const previousBundleDir = process.env.JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR;
   const previousDevMode = process.env.JUGGLEWORK_DEV_MODE;
 
   process.env.HOME = home;
+  if (process.platform === "win32") process.env.USERPROFILE = home;
   process.env.XDG_CONFIG_HOME = xdg;
   delete process.env.JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH;
   delete process.env.JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR;
@@ -51,6 +53,7 @@ async function withIsolatedBootstrapStore(callback) {
     });
   } finally {
     restoreEnv("HOME", previousHome);
+    restoreEnv("USERPROFILE", previousUserProfile);
     restoreEnv("XDG_CONFIG_HOME", previousXdg);
     restoreEnv("JUGGLEWORK_DESKTOP_BOOTSTRAP_PATH", previousOverride);
     restoreEnv("JUGGLEWORK_BOOTSTRAP_BUNDLE_DIR", previousBundleDir);
