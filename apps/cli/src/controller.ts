@@ -21,6 +21,14 @@ export type PromptResult = {
   aborted: boolean;
 };
 
+export type PromptInput = {
+  context?: string | null;
+  outputSchema?: Record<string, unknown> | null;
+};
+
+export const STDIN_CONTEXT_START = "--- BEGIN PIPED STDIN CONTEXT ---";
+export const STDIN_CONTEXT_END = "--- END PIPED STDIN CONTEXT ---";
+
 const delay = (ms: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms));
 
 function modelSelection(model: string | null): { providerID: string; modelID: string } | undefined {
@@ -119,6 +127,7 @@ export class SessionController {
   private currentSessionValue: SessionInfo | null = null;
   private currentRunValue: SessionRun | null = null;
   private abortRequested = false;
+  private lastAssistantText = "";
 
   constructor(
     readonly api: JuggleWorkApiClient,
@@ -130,6 +139,7 @@ export class SessionController {
 
   get currentSession(): SessionInfo | null { return this.currentSessionValue; }
   get currentRun(): SessionRun | null { return this.currentRunValue; }
+  get lastResponse(): string { return this.lastAssistantText; }
 
   async listSessions(): Promise<SessionInfo[]> {
     const { items } = await this.api.listSessions(this.workspace.id, 50);
@@ -179,6 +189,66 @@ export class SessionController {
     return this.selectSession(answer || sessions[0]!.id, true);
   }
 
+  async resolveSession(target: string | null, allowPicker = false): Promise<SessionInfo> {
+    const sessions = await this.listSessions();
+    if (!sessions.length) throw new Error("No sessions are available.");
+    if (!target) {
+      if (!allowPicker) throw new Error("A session ID is required.");
+      return this.selectSession(null, false);
+    }
+    const exact = sessions.find((item) => item.id === target);
+    if (exact) return exact;
+    const prefix = sessions.filter((item) => item.id.startsWith(target));
+    if (prefix.length > 1) throw new Error(`Session prefix ${target} is ambiguous.`);
+    if (prefix.length === 1) return prefix[0]!;
+    throw new Error(`Session ${target} was not found.`);
+  }
+
+  async showSession(target: string): Promise<void> {
+    const session = await this.resolveSession(target);
+    const { item } = await this.api.getSnapshot(this.workspace.id, session.id);
+    this.renderer.sessionSnapshot(item);
+  }
+
+  async forkSession(target: string | null): Promise<SessionInfo> {
+    const source = await this.resolveSession(target, true);
+    const { item } = await this.api.forkSession(this.workspace.id, source.id);
+    this.renderer.sessionMutation("forked", item, { sourceSessionId: source.id });
+    return item;
+  }
+
+  async queueSession(target: string, prompt: string): Promise<void> {
+    const session = await this.resolveSession(target);
+    const result = await this.api.queuePrompt(this.workspace.id, session.id, prompt);
+    this.renderer.sessionQueued(session, result);
+  }
+
+  async renameSession(target: string, title: string): Promise<void> {
+    const session = await this.resolveSession(target);
+    const { item } = await this.api.updateSession(this.workspace.id, session.id, { title });
+    this.renderer.sessionMutation("renamed", item);
+  }
+
+  async archiveSession(target: string, archived: boolean): Promise<void> {
+    const session = await this.resolveSession(target);
+    const { item } = await this.api.updateSession(this.workspace.id, session.id, { archived });
+    this.renderer.sessionMutation(archived ? "archived" : "unarchived", item);
+  }
+
+  async deleteSession(target: string, force: boolean): Promise<void> {
+    const session = await this.resolveSession(target);
+    if (force && target !== session.id) {
+      throw new Error("--force requires the complete, exact session ID; prefixes are not accepted.");
+    }
+    if (!force) {
+      if (!this.ask) throw new Error("Session deletion requires interactive confirmation, or --force with the complete, exact session ID.");
+      const answer = (await this.ask(`Permanently delete ${session.id} (${session.title ?? "Untitled"})? Type the exact session ID to confirm: `)).trim();
+      if (answer !== session.id) throw new Error("Session deletion was not confirmed.");
+    }
+    await this.api.deleteSession(this.workspace.id, session.id);
+    this.renderer.sessionMutation("deleted", session);
+  }
+
   async status(): Promise<Record<string, unknown>> {
     const server = await this.api.status();
     const active = await this.api.listActiveRuns(this.workspace.id);
@@ -195,6 +265,43 @@ export class SessionController {
       this.renderer.info(`Active runs: ${active.items.length}`);
     }
     return result;
+  }
+
+  async plan(): Promise<void> {
+    if (!this.currentSessionValue) throw new Error("No session is selected. Use /new or /resume first.");
+    const snapshot = await this.api.getSnapshot(this.workspace.id, this.currentSessionValue.id);
+    if (this.options.json) this.renderer.event("plan", { items: snapshot.item.todos });
+    else if (!snapshot.item.todos.length) this.renderer.info("Plan: no task items reported by the runtime.");
+    else snapshot.item.todos.forEach((item) => this.renderer.info(`[${item.status}] ${item.content} (${item.priority})`));
+  }
+
+  async permissions(requested?: "request-approval" | "full-access"): Promise<void> {
+    if (!this.currentSessionValue) throw new Error("No session is selected. Use /new or /resume first.");
+    const mode = await this.api.getPermissionMode(this.workspace.id, this.currentSessionValue.id);
+    if (!mode.supported) throw new Error("This JuggleWork Server does not support session permission modes.");
+    if (requested) {
+      const revision = mode.state?.authorityRevision ?? 0;
+      if (requested === "full-access") {
+        if (!this.ask) throw new Error("Full access requires an interactive acknowledgement or the expert-only CLI bypass flag.");
+        const answer = (await this.ask("Full access may auto-approve file, shell, network, connector, and descendant-agent actions. Type 'enable full access' to continue: ")).trim().toLowerCase();
+        if (answer !== "enable full access") throw new Error("Full access was not enabled.");
+        await this.api.setFullAccess(this.workspace.id, this.currentSessionValue.id, revision, mode.profileVersion);
+      } else {
+        await this.api.setRequestApproval(this.workspace.id, this.currentSessionValue.id, revision);
+      }
+    }
+    const current = requested ? await this.api.getPermissionMode(this.workspace.id, this.currentSessionValue.id) : mode;
+    this.renderer.info(`Approval: ${current.state?.effectiveMode ?? "request-approval"} (Server authoritative)`);
+    const effectiveSandbox = current.state?.effectiveMode === "full-access" ? "danger-full-access" : this.options.sandbox;
+    this.renderer.info(`Sandbox: ${effectiveSandbox} (mapped to the Server permission mode; independent process sandbox controls are not exposed by this Server API)`);
+  }
+
+  async compact(): Promise<void> {
+    if (!this.currentSessionValue) throw new Error("No session is selected. Use /new or /resume first.");
+    const model = modelSelection(this.options.model);
+    if (!model) throw new Error("/compact requires --model provider/model because the Server summarize API requires an explicit model.");
+    await this.api.compactSession(this.workspace.id, this.currentSessionValue.id, model);
+    this.renderer.info("Compaction was accepted by the runtime.");
   }
 
   async abortCurrentRun(): Promise<boolean> {
@@ -217,8 +324,8 @@ export class SessionController {
   }
 
   private async handlePermission(interaction: OwnedInteraction): Promise<void> {
-    if (!this.ask) {
-      throw new Error(`Permission required (${permissionSummary(interaction)}). Re-run in an interactive terminal or use --full-access.`);
+    if (!this.ask || this.options.approval === "never") {
+      throw new Error(`Permission required (${permissionSummary(interaction)}). The configured approval policy is fail-closed; re-run interactively with --approval on-request or use --dangerously-bypass-approvals-and-sandbox subject to Server policy.`);
     }
     this.renderer.ensureLine();
     this.renderer.info(`Permission requested: ${permissionSummary(interaction)}`);
@@ -275,7 +382,7 @@ export class SessionController {
     }
   }
 
-  async runPrompt(prompt: string): Promise<PromptResult> {
+  async runPrompt(prompt: string, input: PromptInput = {}): Promise<PromptResult> {
     const text = prompt.trim();
     if (!text) throw new Error("Prompt cannot be empty.");
     const session = this.currentSessionValue ?? await this.createSession(this.options.title || text.slice(0, 80));
@@ -284,13 +391,18 @@ export class SessionController {
     const baselineErrors = new Map(before.item.messages.map((message) => [message.info.id, JSON.stringify(message.info.error ?? null)]));
     const baselineParts = new Map(assistantTextParts(before.item.messages)
       .map((part) => [textPartKey(part.messageId, part.partId), part.text]));
+    const context = input.context?.trim();
     const promptBody: Record<string, unknown> = {
-      parts: [{ type: "text", text }],
+      parts: [
+        { type: "text", text },
+        ...(context ? [{ type: "text", text: `\n${STDIN_CONTEXT_START}\n${context}\n${STDIN_CONTEXT_END}` }] : []),
+      ],
     };
     const model = modelSelection(this.options.model);
     if (model) promptBody.model = model;
     if (this.options.agent) promptBody.agent = this.options.agent;
     if (this.options.reasoningEffort) promptBody.reasoning_effort = this.options.reasoningEffort;
+    if (input.outputSchema) promptBody.format = { type: "json_schema", schema: input.outputSchema };
     this.abortRequested = false;
     const deadline = Date.now() + this.options.timeoutMs;
     const started = await this.api.startRun(this.workspace.id, session.id, {
@@ -386,6 +498,7 @@ export class SessionController {
           this.currentRunValue = active.items.find((item) => item.sessionId === session.id) ?? null;
         }
         if (isIdle && terminal) {
+          this.lastAssistantText = finalText;
           this.renderer.final(finalText, session.id);
           return { text: finalText, sessionId: session.id, aborted: this.abortRequested };
         }

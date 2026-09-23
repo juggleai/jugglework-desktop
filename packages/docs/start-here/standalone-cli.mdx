@@ -1,0 +1,140 @@
+---
+title: "Install the standalone CLI"
+description: "Install, upgrade, sign in, and import an organization provider without JuggleWork Desktop or global OpenCode."
+---
+
+The supported standalone `jugglework` CLI runs interactive or scripted agent
+tasks and manages JuggleWork Cloud account/provider access. It is a new product
+surface, not the retired `jugglework-orchestrator` launcher that previously used
+the same command name.
+
+Complete native release archives include JuggleWork CLI, the compatible OpenCode
+sidecar, required plugins, licenses, and a checksummed `manifest.json`. Release
+mode does not require JuggleWork Desktop, OpenCode on `PATH`, or a runtime
+component download. The repository implements a manual native-archive release
+workflow but not an npm package, package-manager formula, installer, or
+automatic updater. Use a complete published archive when one is available;
+do not install a lone development binary as a release.
+
+## Choose the archive
+
+Select the target matching your operating system and CPU:
+
+| Platform | arm64 | x64 |
+|---|---|---|
+| macOS | `bun-darwin-arm64` | `bun-darwin-x64` |
+| Linux | `bun-linux-arm64` | `bun-linux-x64` |
+| Windows | `bun-windows-arm64` | `bun-windows-x64` |
+
+Keep the extracted layout intact:
+
+```text
+bin/jugglework[.exe]
+sidecars/opencode[.exe]
+opencode-plugins/*.js
+licenses/OpenCode-LICENSE.txt
+THIRD_PARTY_NOTICES.md
+manifest.json
+```
+
+The CLI verifies these files before starting a task. Moving only the executable
+causes an incomplete-installation error.
+
+## macOS
+
+Extract the matching archive to a versioned user directory and link its
+entrypoint into a directory already on `PATH`:
+
+```bash
+mkdir -p "$HOME/.local/share/jugglework-cli/<version>" "$HOME/.local/bin"
+tar -xf <downloaded-archive> -C "$HOME/.local/share/jugglework-cli/<version>"
+ln -sfn "$HOME/.local/share/jugglework-cli/<version>/bin/jugglework" "$HOME/.local/bin/jugglework"
+jugglework doctor
+```
+
+Use the extraction tool appropriate for the published archive format. Only use
+release artifacts that passed the project's signing and notarization checks.
+
+## Linux
+
+```bash
+mkdir -p "$HOME/.local/share/jugglework-cli/<version>" "$HOME/.local/bin"
+tar -xf <downloaded-archive> -C "$HOME/.local/share/jugglework-cli/<version>"
+ln -sfn "$HOME/.local/share/jugglework-cli/<version>/bin/jugglework" "$HOME/.local/bin/jugglework"
+jugglework doctor
+```
+
+The archive preserves executable permissions. Redownload and reverify a damaged
+archive instead of manually replacing or repairing sidecar files.
+
+## Windows
+
+Extract the archive as one directory:
+
+```powershell
+$version = "<version>"
+$install = Join-Path $env:LOCALAPPDATA "JuggleWork\CLI\$version"
+New-Item -ItemType Directory -Force $install | Out-Null
+Expand-Archive -Path .\<downloaded-archive>.zip -DestinationPath $install
+& "$install\bin\jugglework.exe" doctor
+```
+
+Add that version's `bin` directory to your user `PATH`, or invoke it by full
+path. Do not separate `jugglework.exe` from its sibling manifest and directories.
+
+## Sign in and import a provider
+
+The Cloud control plane defaults to `https://work.jugglechat.cn`. This is
+independent from `--server`, which selects a local or remote runtime.
+
+Starting bare `jugglework` in an interactive terminal without a saved Cloud
+login opens a sign-in choice before the local runtime starts. Choose browser
+sign-in, paste a one-time handoff from another device, or continue without
+Cloud. Arrow keys and Enter (or 1–3) select an option. Scripted, JSON, one-shot,
+and explicitly connected Server commands do not show this menu.
+
+```bash
+jugglework login
+jugglework login status
+jugglework org list
+jugglework org use <id-or-slug>
+jugglework provider list
+jugglework provider import <publication-id>
+jugglework "inspect this directory"
+```
+
+Login opens the browser when possible and always prints the sign-in URL. Paste
+the returned `jugglework-cli://den-auth?...` link or raw one-time grant into the
+hidden prompt. For SSH or another non-interactive terminal, pipe the result to
+`jugglework login --grant-stdin`.
+The current Cloud contract does not provide a device-code or direct API-key
+login option.
+
+Organization account and inventory commands do not start the embedded runtime.
+Provider import does start or connect to a runtime because it applies the
+selected publication there. It stores provider authentication through Server's
+host-authorized API rather than printing credentials or editing OpenCode auth
+files directly.
+
+## Upgrade or roll back
+
+Extract each release into a new version directory, run that version's `doctor`,
+and switch the symlink or Windows `PATH` entry. Never overlay releases: stale
+plugins or a mismatched sidecar invalidate the checksummed installation. Roll
+back by repointing to the previous intact directory. Cloud profiles and
+workspace runtime state are stored outside the release directory.
+
+## Development and connected-mode overrides
+
+Source/development runs may use `--opencode-bin`,
+`JUGGLEWORK_OPENCODE_BIN`, OpenCode on `PATH`, source-checkout assets, or a
+Desktop sidecar. Plugin overrides are `--plugin-dir` and
+`JUGGLEWORK_EXTENSIONS_PLUGIN_DIR`. Cloud overrides are `--cloud-url`,
+`JUGGLEWORK_CLOUD_URL`, `JUGGLEWORK_CLOUD_TOKEN`, and
+`JUGGLEWORK_CLOUD_ORG`; the environment Cloud token is not persisted.
+
+To use an existing runtime instead of the embedded one, configure `--server` or
+`JUGGLEWORK_SERVER_URL` with `--token`/`JUGGLEWORK_TOKEN`. Provider import into
+an external Server also requires host authority through `--host-token` or
+`JUGGLEWORK_HOST_TOKEN`. These are development and connected-mode controls, not
+extra prerequisites for a complete native release.

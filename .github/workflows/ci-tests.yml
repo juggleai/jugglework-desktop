@@ -12,6 +12,53 @@ permissions:
   contents: read
 
 jobs:
+  cli-tests:
+    name: CLI tests and native package smoke (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: bun-linux-x64
+          - os: macos-26
+            target: bun-darwin-arm64
+          - os: windows-2025
+            target: bun-windows-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run CLI unit and integration tests
+        run: pnpm --filter @jugglework/cli test
+      - name: Typecheck CLI
+        run: pnpm --filter @jugglework/cli typecheck
+      - name: Acquire digest-pinned host OpenCode sidecar
+        shell: bash
+        run: pnpm --filter @jugglework/cli acquire:opencode -- --target "${{ matrix.target }}" --outdir "$RUNNER_TEMP/opencode"
+      - name: Build and stage host-native CLI distribution
+        shell: bash
+        run: bun apps/cli/script/build.ts --outdir "$RUNNER_TEMP/build" --target "${{ matrix.target }}" --sidecar-dir "$RUNNER_TEMP/opencode"
+      - name: Validate and smoke-test clean-home native package
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/build/distributions/${{ matrix.target }}"
+          bun apps/cli/script/release.ts validate --root "$root" --target "${{ matrix.target }}"
+          bun apps/cli/script/release.ts smoke --root "$root" --target "${{ matrix.target }}"
+
   desktop-remote-reliability:
     name: Desktop remote reliability (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

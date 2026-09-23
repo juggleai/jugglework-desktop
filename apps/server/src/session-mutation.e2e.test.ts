@@ -227,6 +227,23 @@ function runPath(base: string, sessionId: string): string {
 }
 
 describe("authoritative session mutation APIs", () => {
+  test("local collaborator queue uses OpenCode v2 queue delivery without remote pending policy", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    const response = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_cli_queue/queue`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ id: "cli_queue_1", prompt: "Continue later" }),
+    });
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ disposition: "enqueued", admissionId: "cli_queue_1" });
+    expect(engine.v2Prompts).toEqual([{
+      sessionId: "ses_cli_queue",
+      body: { id: "cli_queue_1", delivery: "queue", prompt: { text: "Continue later" } },
+      directory: harness.root,
+    }]);
+  });
+
   test("busy local-renderer steer is admitted through OpenCode v2 without starting a second run", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

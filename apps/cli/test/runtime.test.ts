@@ -10,8 +10,10 @@ import {
   createRuntime,
   REQUIRED_PLUGIN_FILES,
   resolveOpenCodeBinary,
+  resolvePackagedRuntimeAssets,
   resolvePluginDirectory,
 } from "../src/runtime.js";
+import { stageDistribution } from "../script/build.js";
 
 async function writePlugins(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -72,6 +74,57 @@ test("invalid configured runtime paths do not fall through to discovered assets"
   }
 });
 
+test("packaged runtime resolves only manifest-declared checksum-valid assets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-cli-packaged-runtime-"));
+  const sources = join(root, "sources");
+  const plugins = join(sources, "plugins");
+  const cli = join(sources, "jugglework");
+  const opencode = join(sources, "opencode");
+  const distribution = join(root, "release");
+  try {
+    await mkdir(sources);
+    await writePlugins(plugins);
+    await writeFile(cli, "fixture cli\n", { mode: 0o700 });
+    await writeFile(opencode, "fixture opencode\n", { mode: 0o700 });
+    if (process.platform !== "win32") {
+      await chmod(cli, 0o700);
+      await chmod(opencode, 0o700);
+    }
+    const platform = process.platform === "win32" ? "windows" : process.platform;
+    const target = `bun-${platform}-${process.arch}` as Parameters<typeof stageDistribution>[0]["target"];
+    const manifest = stageDistribution({ target, root: distribution, cliBinary: cli, opencodeBinary: opencode, pluginSource: plugins });
+    const packaged = await resolvePackagedRuntimeAssets(join(distribution, manifest.cli.file.path));
+    assert.deepEqual(packaged, {
+      opencodeBin: join(distribution, manifest.opencode.file.path),
+      pluginDir: join(distribution, manifest.plugins.directory),
+    });
+    await writeFile(join(distribution, manifest.opencode.file.path), "tampered\n");
+    await assert.rejects(
+      resolvePackagedRuntimeAssets(join(distribution, manifest.cli.file.path)),
+      /Incomplete JuggleWork CLI installation.*checksum mismatch for sidecars\/opencode/s,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an invalid adjacent packaged manifest fails closed instead of using development fallbacks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jugglework-cli-invalid-manifest-"));
+  const bin = join(root, "bin");
+  const cli = join(bin, process.platform === "win32" ? "jugglework.exe" : "jugglework");
+  try {
+    await mkdir(bin);
+    await writeFile(cli, "fixture cli\n", { mode: 0o700 });
+    await writeFile(join(root, "manifest.json"), "{ not json\n");
+    await assert.rejects(
+      resolvePackagedRuntimeAssets(cli),
+      /Incomplete JuggleWork CLI installation/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("owned runtime forces per-workspace storage and restores inherited environment", async () => {
   const root = await mkdtemp(join(tmpdir(), "jugglework-cli-runtime-env-"));
   const executable = join(root, process.platform === "win32" ? "opencode.exe" : "opencode");
@@ -97,6 +150,7 @@ test("owned runtime forces per-workspace storage and restores inherited environm
         assert.equal(process.env.JUGGLEWORK_RUNTIME_DB, paths.database);
         assert.equal(process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR, plugins);
         assert.equal(typeof input.logger?.log, "function");
+        assert.equal(input.approvalMode, "manual");
         return {
           url: "http://127.0.0.1:12345",
           stop: async () => {

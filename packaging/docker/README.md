@@ -7,10 +7,16 @@ runs one runtime entrypoint:
 - Server starts and stops `opencode serve` as a managed child on the container
   loopback interface.
 
-No `jugglework-orchestrator` process or bare `jugglework` CLI is installed or
-started. Image construction supplies the OpenCode binary, and the container sets
+No `jugglework-orchestrator` process or standalone `jugglework` CLI is installed
+or started in this host image. Image construction supplies the OpenCode binary,
+and the container sets
 `JUGGLEWORK_MANAGE_OPENCODE=1` plus `JUGGLEWORK_OPENCODE_BIN` before executing
 Server.
+
+The legacy orchestrator is retired, but the current standalone `jugglework` CLI
+is supported as a separate client. Its native release archive bundles OpenCode
+for CLI-owned local execution and can also connect to this container with
+`--server`; that archive layout is not used inside this Server image.
 
 The hosted JuggleWork control plane and inference services are maintained in the
 separate `jugglework-server` repository.

@@ -47,4 +47,19 @@ describe("assertOpencodeProxyAllowed", () => {
       assertOpencodeProxyAllowed(actor(undefined), "GET", "/opencode/permission"),
     ).not.toThrow();
   });
+
+  test("provider auth mutations cannot bypass host-authorized routes", () => {
+    for (const scope of ["owner", "collaborator"] as const) {
+      expect(() =>
+        assertOpencodeProxyAllowed(actor(scope), "PUT", "/opencode/auth/openai"),
+      ).toThrow(ApiError);
+      expect(() =>
+        assertOpencodeProxyAllowed(actor(scope), "DELETE", "/auth/openai"),
+      ).toThrow(ApiError);
+    }
+
+    expect(() =>
+      assertOpencodeProxyAllowed(actor("owner"), "GET", "/opencode/auth/openai"),
+    ).not.toThrow();
+  });
 });

@@ -32,6 +32,13 @@ configuration, health, and shutdown. `JUGGLEWORK_OPENCODE_BIN` must point to an
 executable OpenCode binary; Server does not download one. Keep the client and
 host tokens secret, especially when binding outside `127.0.0.1`.
 
+This manual OpenCode requirement applies to a direct Server deployment. It does
+not apply to the supported standalone `jugglework` CLI: complete native CLI
+release archives carry a manifest-verified OpenCode sidecar and plugins, start
+an embedded Server, and require neither Desktop nor global OpenCode. Use direct
+Server when you need a long-running API host; use the CLI for terminal tasks or
+as a client of an existing Server.
+
 Or from source:
 
 ```bash
@@ -173,19 +180,22 @@ Approvals endpoints:
 
 Set `JUGGLEWORK_APPROVAL_MODE=auto` to auto-approve during local development.
 
-## Migration from `jugglework`
+## Migration From JuggleWork Orchestrator
 
-The `jugglework-orchestrator` package and its bare `jugglework` command are
-retired. There is no thin compatibility CLI. Use `jugglework-server` as the
-runtime entrypoint and use the Server API for remote operations.
+The `jugglework-orchestrator` package and its legacy launcher behavior are
+retired. There is no compatibility wrapper for its daemon, detach, downloader,
+or sandbox commands. The current `jugglework` command belongs to the supported
+standalone CLI and has a different command contract. Use `jugglework-server` as
+the direct headless-host entrypoint, or use the standalone CLI for interactive
+and scripted terminal work.
 
 | Retired command or option | Direct-Server replacement |
 |---|---|
-| `jugglework`, `jugglework start`, `jugglework serve` | Start `jugglework-server` with `JUGGLEWORK_MANAGE_OPENCODE=1` and `JUGGLEWORK_OPENCODE_BIN` as shown above. |
-| Interactive TUI, `--no-tui` | Use Server logs, `GET /health`, `GET /status`, or the Desktop app. Server has no TUI mode. |
+| Legacy `jugglework start`, `jugglework serve`, and implicit hosting | Start `jugglework-server` with `JUGGLEWORK_MANAGE_OPENCODE=1` and `JUGGLEWORK_OPENCODE_BIN` as shown above. The new bare `jugglework` command starts the standalone CLI instead. |
+| Legacy orchestrator TUI and `--no-tui` | Use the standalone CLI for terminal interaction, or Server logs, `GET /health`, `GET /status`, and Desktop for host operations. Server has no TUI mode. |
 | `--detach` | Run Server under Docker Compose (`docker compose up -d`), systemd, or another process supervisor. |
 | `jugglework daemon ...` | Run one supervised Server process. Configure workspaces with repeatable `--workspace`, `JUGGLEWORK_WORKSPACES`, or `server.json`. |
-| `jugglework status` | Call `GET /health` and authenticated `GET /status`. |
+| Legacy host `jugglework status` | Call `GET /health` and authenticated `GET /status`. The standalone CLI's `jugglework status` reports its selected runtime/task state. |
 | `jugglework approvals list/reply` | Call `GET /approvals` and `POST /approvals/:id` with host authorization. |
 | `jugglework files ...` | Use `/workspace/:id/files/sessions` and `/files/sessions/:sessionId/*`. |
 | `--sandbox`, `--sandbox-image`, `--sandbox-mount` | Use the Desktop sandbox flow, owned by Desktop's `sandbox-runtime`, or provision Docker directly. Server does not create containers. |
@@ -207,3 +217,6 @@ runtime entrypoint and use the Server API for remote operations.
 See [Migrate from JuggleWork Orchestrator](../../packages/docs/start-here/migrate-from-orchestrator.mdx)
 for API examples, systemd configuration, sandbox guidance, and safe legacy-state
 cleanup.
+
+Standalone CLI installation, Cloud login, and provider import are documented in
+[apps/cli/README.md](../cli/README.md).

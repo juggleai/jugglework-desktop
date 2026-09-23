@@ -1,0 +1,46 @@
+{
+  "name": "OpenCode",
+  "version": "1.18.15",
+  "repository": "https://github.com/anomalyco/opencode",
+  "release": "https://github.com/anomalyco/opencode/releases/tag/v1.18.15",
+  "sourceCommit": "325529761beb79a004de6d86e48b8db69cf4eba3",
+  "license": "MIT",
+  "targets": {
+    "bun-darwin-arm64": {
+      "archive": "opencode-darwin-arm64.zip",
+      "format": "zip",
+      "sha256": "bd60b57cb9fe0494a5352c807424d36d6d7853cf6dbddb97065c7ccd3c5d391c",
+      "executable": "opencode"
+    },
+    "bun-darwin-x64": {
+      "archive": "opencode-darwin-x64.zip",
+      "format": "zip",
+      "sha256": "e97e8185e7b7942f6e14f51b8727dbe023b54772e075bc16fead813680455d17",
+      "executable": "opencode"
+    },
+    "bun-linux-arm64": {
+      "archive": "opencode-linux-arm64.tar.gz",
+      "format": "tar.gz",
+      "sha256": "500611819ff88916b185649990505a9be76ad13ca5bb4b9323e5abdd39b1c6fb",
+      "executable": "opencode"
+    },
+    "bun-linux-x64": {
+      "archive": "opencode-linux-x64.tar.gz",
+      "format": "tar.gz",
+      "sha256": "d842e0e8c622c672a481b7dc6f0329009b64db96b2ba6041e56f4f93f0293b1c",
+      "executable": "opencode"
+    },
+    "bun-windows-arm64": {
+      "archive": "opencode-windows-arm64.zip",
+      "format": "zip",
+      "sha256": "7815f7a980fc4273e3fc1ada5a51e9dff17e62f5a119ab769b44e06b50c1d9da",
+      "executable": "opencode.exe"
+    },
+    "bun-windows-x64": {
+      "archive": "opencode-windows-x64.zip",
+      "format": "zip",
+      "sha256": "a80785874978ccbb93b7bfe4345f5aed41696f5ae76c109cd6dbbb934dbe795d",
+      "executable": "opencode.exe"
+    }
+  }
+}

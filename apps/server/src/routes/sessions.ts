@@ -135,6 +135,15 @@ const legacyStartRunBodySchema = z.discriminatedUnion("origin", [
 ]);
 const abortRunBodySchema = z.object({ abortCommandCorrelationId: runIdentifierSchema.nullable() }).strict();
 const cancelPendingBodySchema = z.object({ commandCorrelationId: runIdentifierSchema }).strict();
+const forkSessionBodySchema = z.object({ messageId: runIdentifierSchema.optional() }).strict();
+const updateSessionBodySchema = z.object({
+  title: z.string().optional(),
+  archived: z.boolean().optional(),
+}).strict().refine((value) => value.title !== undefined || value.archived !== undefined);
+const queueSessionBodySchema = z.object({
+  id: runIdentifierSchema,
+  prompt: z.string().min(1).refine((value) => value.trim().length > 0).refine((value) => Buffer.byteLength(value, "utf8") <= 200_000),
+}).strict();
 const legacyAbortRunBodySchema = z.object({ expectedRunId: runIdentifierSchema, commandId: runIdentifierSchema }).strict();
 const observeRunBodySchema = z.object({
   status: z.enum(["starting", "running", "waiting", "retrying", "aborting", "idle", "completed", "failed", "aborted"]),
@@ -632,6 +641,58 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
       limit: parseOptionalPositiveInteger(ctx.url.searchParams.get("limit"), "limit"),
     });
     return jsonResponse({ item });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/fork", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(forkSessionBodySchema, await readJsonBody(ctx.request));
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const item = buildSession(unwrapOpencodeResult(
+      await opencode.session.fork({ sessionID: sessionId, messageID: body.messageId }),
+      `/session/${encodeURIComponent(sessionId)}/fork`,
+    ));
+    return jsonResponse({ item }, 201);
+  });
+
+  addRoute(routes, "PATCH", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(updateSessionBodySchema, await readJsonBody(ctx.request));
+    const title = body.title === undefined ? undefined : parseSessionCreateTitle(body.title);
+    const opencode = createWorkspaceOpencodeClient(config, workspace);
+    const item = buildSession(unwrapOpencodeResult(
+      await opencode.session.update({
+        sessionID: sessionId,
+        title,
+        time: body.archived === undefined ? undefined : { archived: body.archived ? Date.now() : 0 },
+      }),
+      `/session/${encodeURIComponent(sessionId)}`,
+    ));
+    return jsonResponse({ item });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/queue", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
+    const body = parseRunBody(queueSessionBodySchema, await readJsonBody(ctx.request));
+    const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
+      sessionID: sessionId,
+      id: body.id,
+      prompt: { text: body.prompt },
+      delivery: "queue",
+    });
+    const admitted = result.data?.data;
+    if (result.error !== undefined || !admitted || admitted.id !== body.id || admitted.sessionID !== sessionId || admitted.delivery !== "queue") {
+      throw new ApiError(502, "opencode_invalid_response", "OpenCode did not accept the queued prompt");
+    }
+    return jsonResponse({ disposition: "enqueued", admissionId: admitted.id }, 202);
   });
 
   async function startSessionRun(

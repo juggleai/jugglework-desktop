@@ -3,7 +3,8 @@
 Script-installable `jugglework-bootstrap` command for agent-first onboarding.
 
 This package is intentionally small and does not assume npm is the install
-channel. A bootstrap script can place `bin/jugglework.mjs` on disk, then run:
+channel. A bootstrap script can place its package-local launcher on disk, then
+run:
 
 ```bash
 jugglework-bootstrap install --bin-dir ~/.local/bin --install-dir ~/.jugglework/bootstrap
@@ -24,8 +25,13 @@ Current scope:
 - `cloud onboard` drives the headless REST onboarding flow: sign up, sign in,
   create an org, invite a teammate, and create a starter skill.
 
-This bootstrap layer is independent from runtime hosting. The old bare
-`jugglework` command and `jugglework-orchestrator` package are retired;
-`jugglework-server` is the supported headless runtime entrypoint. Bootstrap does
-not start Server, manage OpenCode, daemonize a runtime, or provide compatibility
-commands for the retired CLI.
+This bootstrap layer is independent from runtime hosting and from the supported
+standalone `jugglework` CLI in `apps/cli`. Bootstrap installs itself or a Desktop
+app artifact; it does not install a standalone CLI distribution, start Server,
+manage OpenCode, daemonize a runtime, or update CLI archives.
+
+The old `jugglework-orchestrator` package and its legacy launcher contract are
+retired. `jugglework-server` remains the supported direct headless-host
+entrypoint. The current standalone `jugglework` command is a separate terminal
+client whose native release directory bundles OpenCode and can own an embedded
+Server; see [the CLI guide](../../apps/cli/README.md).

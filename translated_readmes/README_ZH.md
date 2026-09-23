@@ -35,13 +35,14 @@ JuggleWork 围绕一个核心理念设计：让您可以轻松地将智能体工
 
 ## 其他界面
 
+- **JuggleWork CLI（独立终端客户端）**：新的、受支持的 `jugglework` 命令可运行本地任务、登录 JuggleWork Cloud 并导入组织模型提供商。完整的原生发布压缩包已包含兼容的 OpenCode 和所需插件，不要求安装 Desktop 或全局 OpenCode。安装与升级说明见[独立 CLI 指南](../packages/docs/start-here/standalone-cli.mdx)。
 - **Owpenbot (WhatsApp 机器人)**：为运行中的 OpenCode 服务器提供的轻量级 WhatsApp 桥接器。安装方法：
   - `curl -fsSL https://raw.githubusercontent.com/juggleai/jugglework-desktop/dev/install.sh | bash`
   - 运行 `owpenbot setup`，然后 `owpenbot whatsapp login`，接着 `owpenbot start`
   - 完整设置：https://github.com/juggleai/jugglework-desktop/blob/dev/README.md
 - **JuggleWork Server（无界面运行时）**：无需桌面 UI，直接运行经过身份验证的 JuggleWork API，并由 Server 管理 OpenCode。使用 `npm install -g jugglework-server` 安装。
   - 文档：[apps/server/README.md](../apps/server/README.md)
-  - 原 `jugglework-orchestrator` 包和裸 `jugglework` CLI 已退休；请参阅[迁移指南](../packages/docs/start-here/migrate-from-orchestrator.mdx)。
+  - 原 `jugglework-orchestrator` 包及其旧版 `jugglework` 启动器行为已退休；新的独立 CLI 虽然复用命令名，但不是兼容包装器。请参阅[迁移指南](../packages/docs/start-here/migrate-from-orchestrator.mdx)。
 
 
 ## 快速开始
@@ -86,7 +87,7 @@ JuggleWork 的设计目标是：
 - Node.js + `pnpm`
 - Rust 工具链（用于 Tauri）：通过 `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` 安装
 - Tauri CLI：`cargo install tauri-cli`
-- 已安装 OpenCode CLI 且可在 PATH 中使用：`opencode`
+- 仅在源码/开发模式使用运行时回退时，才需要 PATH 中的 OpenCode CLI；独立 CLI 原生发布包不需要全局 OpenCode
 
 ### 安装
 
@@ -187,7 +188,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 jugglework
 ## 贡献
 
 - 在进行更改之前，请查看 `AGENTS.md` 以及 `VISION.md`、`PRINCIPLES.md`、`PRODUCT.md` 和 `ARCHITECTURE.md` 以了解产品目标。
-- 在仓库内工作之前，确保已安装 Node.js、`pnpm`、Rust 工具链和 `opencode`。
+- 在仓库内工作之前，确保已安装 Node.js、`pnpm`、Rust 工具链；仅在测试源码/开发 CLI 回退时安装 `opencode`。
 - 每次检出后运行一次 `pnpm install`，然后在打开 PR 之前使用 `pnpm typecheck` 加上 `pnpm test:e2e`（或目标脚本子集）验证您的更改。
 - 按照 `AGENTS.md` 中描述的 `.opencode/skills/prd-conventions/SKILL.md` 约定，将新的 PRD 添加到 `packages/app/pr/<name>.md`。
 

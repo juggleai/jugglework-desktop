@@ -148,6 +148,7 @@ async function openRuntimeDb(path: string): Promise<RuntimeOpencodeDb> {
 }
 
 const dbByPath = new Map<string, Promise<RuntimeOpencodeDb>>();
+const writesByWorkspace = new Map<string, Promise<void>>();
 
 async function runtimeDb(config: ServerConfig): Promise<RuntimeOpencodeDb> {
   const path = runtimeDbPath(config);
@@ -379,18 +380,27 @@ export async function writeRuntimeOpencodeConfig(
   workspaceId: string,
   updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
-  const db = await runtimeDb(config);
-  const row = db.get(workspaceId);
-  const current = row ? parseRuntimeOpencodeConfig(row.configJson) : {};
-  const next = normalizeRuntimeOpencodeConfig(updater(current));
-  const now = Date.now();
-  const configJson = JSON.stringify(next);
-  if (row?.configJson === configJson) {
-    return { config: next, changed: false };
+  const lockKey = `${runtimeDbPath(config)}\0${workspaceId}`;
+  const previous = writesByWorkspace.get(lockKey) ?? Promise.resolve();
+  let release!: () => void;
+  const currentWrite = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => currentWrite);
+  writesByWorkspace.set(lockKey, queued);
+  await previous;
+  try {
+    const db = await runtimeDb(config);
+    const row = db.get(workspaceId);
+    const current = row ? parseRuntimeOpencodeConfig(row.configJson) : {};
+    const next = normalizeRuntimeOpencodeConfig(updater(current));
+    const configJson = JSON.stringify(next);
+    if (row?.configJson === configJson) return { config: next, changed: false };
+    db.upsert({ workspaceId, configJson, updatedAt: Date.now() });
+    for (const listener of writeListeners) listener(config, workspaceId);
+    return { config: next, changed: true };
+  } finally {
+    release();
+    if (writesByWorkspace.get(lockKey) === queued) writesByWorkspace.delete(lockKey);
   }
-  db.upsert({ workspaceId, configJson, updatedAt: now });
-  for (const listener of writeListeners) listener(config, workspaceId);
-  return { config: next, changed: true };
 }
 
 export function mergeOpencodeConfigs(

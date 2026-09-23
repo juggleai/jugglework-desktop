@@ -1869,6 +1869,18 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
       );
     },
+    setProviderAuth: (workspaceId: string, providerId: string, auth: { type: "api"; key: string; metadata?: Record<string, string> }) =>
+      requestJson<{ ok: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/provider-auth/${encodeURIComponent(providerId)}`,
+        { hostToken, method: "PUT", body: auth, timeoutMs: timeouts.config },
+      ),
+    removeProviderAuth: (workspaceId: string, providerId: string) =>
+      requestJson<{ ok: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/provider-auth/${encodeURIComponent(providerId)}`,
+        { hostToken, method: "DELETE", timeoutMs: timeouts.config },
+      ),
     deleteWorkspace: (workspaceId: string) =>
       requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: JuggleWorkWorkspaceInfo[]; workspaces?: WorkspaceInfo[] }>(
         baseUrl,

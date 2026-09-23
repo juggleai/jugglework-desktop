@@ -63,6 +63,7 @@ async function openDb(path: string): Promise<JuggleWorkWorkspaceConfigDb> {
 }
 
 const dbByPath = new Map<string, Promise<JuggleWorkWorkspaceConfigDb>>();
+const writesByWorkspace = new Map<string, Promise<void>>();
 
 async function workspaceConfigDb(config: ServerConfig): Promise<JuggleWorkWorkspaceConfigDb> {
   const path = runtimeDbPath(config);
@@ -89,10 +90,26 @@ export async function writeJuggleWorkWorkspaceConfig(
   workspaceId: string,
   updater: (current: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const db = await workspaceConfigDb(config);
-  const next = normalizeJuggleWorkWorkspaceConfig(updater(await readJuggleWorkWorkspaceConfig(config, workspaceId)));
-  db.upsert({ workspaceId, configJson: JSON.stringify(next), updatedAt: Date.now() });
-  return next;
+  const lockKey = `${runtimeDbPath(config)}\0${workspaceId}`;
+  const previous = writesByWorkspace.get(lockKey) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  writesByWorkspace.set(lockKey, queued);
+  await previous;
+  try {
+    const db = await workspaceConfigDb(config);
+    const row = db.get(workspaceId);
+    const stored = row ? (() => {
+      try { return normalizeJuggleWorkWorkspaceConfig(JSON.parse(row.configJson)); } catch { return {}; }
+    })() : {};
+    const next = normalizeJuggleWorkWorkspaceConfig(updater(stored));
+    db.upsert({ workspaceId, configJson: JSON.stringify(next), updatedAt: Date.now() });
+    return next;
+  } finally {
+    release();
+    if (writesByWorkspace.get(lockKey) === queued) writesByWorkspace.delete(lockKey);
+  }
 }
 
 export async function hasJuggleWorkWorkspaceConfig(

@@ -1,12 +1,19 @@
 ---
 title: "Migrate from JuggleWork Orchestrator"
-description: "Replace the retired jugglework CLI, daemon, and sandbox commands with JuggleWork Server and Desktop."
+description: "Replace retired orchestrator hosting commands with JuggleWork Server, Desktop, or the supported standalone CLI."
 ---
 
-`jugglework-orchestrator` and the bare `jugglework` command are retired. There is
-no compatibility CLI. The supported runtime entrypoint for headless and
-self-hosted workspaces is `jugglework-server`; `jugglework-bootstrap` remains a
-separate installer and onboarding tool.
+`jugglework-orchestrator` and its legacy launcher contract are retired. There is
+no compatibility wrapper for its daemon, detach, downloader, or sandbox
+commands. A new supported standalone terminal client now uses the `jugglework`
+command, but it is not the orchestrator and does not preserve those host-control
+commands.
+
+Use `jugglework-server` as the runtime entrypoint for persistent headless and
+self-hosted workspaces. Use the [standalone CLI](/start-here/standalone-cli) for
+interactive or scripted terminal tasks, including a self-contained local runtime
+from a native release archive. `jugglework-bootstrap` remains a separate Desktop
+installer and onboarding tool.
 
 JuggleWork Server owns workspace runtime state, starts and stops managed
 OpenCode, and exposes the JuggleWork API. Docker, systemd, or another deployment
@@ -43,13 +50,13 @@ in front of Server before exposing it outside a trusted network.
 
 | Retired surface | Replacement |
 |---|---|
-| `jugglework`, `jugglework start`, `jugglework serve` | Run `jugglework-server` directly with managed OpenCode enabled. |
-| TUI and `--no-tui` | Use Server logs, the Server health/status APIs, or Desktop. No replacement TUI is shipped. |
+| Legacy `jugglework start`, `jugglework serve`, and implicit hosting | Run `jugglework-server` directly with managed OpenCode enabled. Bare `jugglework` now opens the standalone CLI instead. |
+| Legacy orchestrator TUI and `--no-tui` | Use the standalone CLI for terminal work, or Server logs, health/status APIs, and Desktop for host operations. |
 | `--detach` | Use `docker compose up -d`, systemd, or your platform's process supervisor. |
 | `jugglework daemon start/stop` | Start and stop the supervised `jugglework-server` service. Server handles its OpenCode child during startup and shutdown. |
 | `jugglework workspace add/list/path` | Declare workspaces with repeatable `--workspace`, `JUGGLEWORK_WORKSPACES`, or `~/.config/jugglework/server.json`; query `GET /workspaces`. |
 | `jugglework instance dispose` | Use `POST /workspace/:id/engine/reload` when a workspace engine must reload. |
-| `jugglework status` | Use `GET /health` and `GET /status`. |
+| Legacy host `jugglework status` | Use `GET /health` and `GET /status`. The standalone CLI's command reports its selected runtime/task state. |
 | `jugglework approvals list/reply` | Use `GET /approvals` and `POST /approvals/:id`. |
 | `jugglework files ...` | Use Server file-session APIs. |
 | `jugglework ... --sandbox ...` | Use Desktop's sandbox UI/runtime, or manage a Docker deployment directly. |

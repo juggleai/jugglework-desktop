@@ -77,8 +77,9 @@ describe("legacy hosted model retirement", () => {
 
   test("retains stale-provider compatibility guards", () => {
     const den = source("src/app/lib/den.ts");
-    const cloudProviderConfig = source(
-      "src/react-app/domains/connections/provider-auth/cloud-provider-config.ts",
+    const cloudProviderConfig = readFileSync(
+      new URL("../../../packages/cloud-provider/src/index.ts", import.meta.url),
+      "utf8",
     );
     const modelSelect = source("src/components/model-select.tsx");
     const modelPicker = source(

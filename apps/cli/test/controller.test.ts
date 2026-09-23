@@ -9,7 +9,7 @@ import {
   type SessionRun,
   type SessionSnapshot,
 } from "../src/api.js";
-import { SessionController } from "../src/controller.js";
+import { chooseWorkspace, SessionController, STDIN_CONTEXT_END, STDIN_CONTEXT_START } from "../src/controller.js";
 import type { CliRenderer } from "../src/render.js";
 
 const run: SessionRun = {
@@ -44,6 +44,9 @@ function createRenderer() {
     banner() {},
     session() {},
     sessions() {},
+    sessionSnapshot() {},
+    sessionMutation() {},
+    sessionQueued() {},
     assistantStart() {},
     delta(value: string) { output.deltas.push(value); },
     final(value: string) { output.finals.push(value); },
@@ -63,6 +66,15 @@ function baseApi(overrides: Record<string, unknown> = {}): JuggleWorkApiClient {
     ...overrides,
   } as unknown as JuggleWorkApiClient;
 }
+
+test("workspace selection matches the requested path and refuses ambiguous connected Servers", async () => {
+  const api = baseApi({ listWorkspaces: async () => ({ activeId: "ws_first", items: [
+    { id: "ws_first", path: "/tmp/other" }, { id: "ws_requested", path: "/tmp/requested" },
+  ] }) });
+  const selected = await chooseWorkspace(api, parseCliArgs(["--workspace", "/tmp/requested"]), null);
+  assert.equal(selected.id, "ws_requested");
+  await assert.rejects(chooseWorkspace(api, parseCliArgs(["--workspace", "/tmp/unknown"]), null), /Pass --workspace-id/);
+});
 
 test("step-finish is progress metadata, not terminal evidence", async () => {
   const observations: string[] = [];
@@ -196,6 +208,49 @@ test("start admission is bounded by the configured run timeout", async () => {
   assert.ok(admissionTimeout > 0 && admissionTimeout <= 1_000);
 });
 
+test("piped exec context is a separately delimited part and output schema reaches the run request", async () => {
+  const submitted: Array<Record<string, unknown>> = [];
+  let snapshots = 0;
+  const api = baseApi({
+    getSnapshot: async () => snapshots++ === 0 ? snapshot([]) : snapshot([message('{"answer":"done"}')]),
+    startRun: async (_workspaceId: string, _sessionId: string, input: Record<string, unknown>) => {
+      submitted.push(input);
+      return { disposition: "started", run };
+    },
+    observeRun: async () => ({ cleared: true, run: null, terminalStatus: "completed" }),
+  });
+  const { renderer } = createRenderer();
+  await new SessionController(api, { id: "ws_1" }, parseCliArgs(["exec", "summarize"]), renderer, null).runPrompt("summarize", {
+    context: "raw piped input",
+    outputSchema: { type: "object", required: ["answer"] },
+  });
+  const prompt = submitted[0]?.prompt as { parts: Array<{ text: string }>; format: unknown };
+  assert.equal(prompt.parts[0]?.text, "summarize");
+  assert.equal(prompt.parts[1]?.text, `\n${STDIN_CONTEXT_START}\nraw piped input\n${STDIN_CONTEXT_END}`);
+  assert.deepEqual(prompt.format, {
+    type: "json_schema",
+    schema: { type: "object", required: ["answer"] },
+  });
+});
+
+test("session deletion requires the exact interactive confirmation and force rejects prefixes", async () => {
+  const deleted: string[] = [];
+  const api = baseApi({
+    listSessions: async () => ({ items: [{ id: "ses_exact", title: "Exact" }] }),
+    deleteSession: async (_workspaceId: string, sessionId: string) => { deleted.push(sessionId); return { ok: true }; },
+  });
+  const { renderer } = createRenderer();
+  const rejected = new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, async () => "no");
+  await assert.rejects(() => rejected.deleteSession("ses_exact", false), /was not confirmed/);
+  assert.deepEqual(deleted, []);
+
+  const confirmed = new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, async () => "ses_exact");
+  await confirmed.deleteSession("ses_exact", false);
+  assert.deepEqual(deleted, ["ses_exact"]);
+  await assert.rejects(() => confirmed.deleteSession("ses_", true), /complete, exact session ID/);
+  assert.deepEqual(deleted, ["ses_exact"]);
+});
+
 test("abort run_mismatch race remains a natural completion", async () => {
   let releaseInteractions!: () => void;
   let pollingStarted!: () => void;
@@ -281,6 +336,35 @@ test("non-interactive permission request aborts instead of auto-approving", asyn
     new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, null).runPrompt("do it"),
     /Permission required \(external_directory: \/Applications\/\*\)/,
   );
+  assert.equal(aborted, true);
+});
+
+test("approval never fails closed even when an interactive prompt function exists", async () => {
+  let asked = false;
+  let aborted = false;
+  const interaction = {
+    id: "perm_never",
+    sessionID: "ses_1",
+    protocol: "v2",
+    targetSessionId: "ses_1",
+    rootSessionId: "ses_1",
+    action: "shell.run",
+    resources: ["rm protected"],
+  } as OwnedInteraction;
+  const api = baseApi({
+    getSnapshot: async () => snapshot([]),
+    getInteractions: async () => ({ item: { permissions: [interaction], questions: [] } }),
+    abortRun: async () => { aborted = true; return { accepted: true }; },
+  });
+  const { renderer } = createRenderer();
+  await assert.rejects(
+    new SessionController(api, { id: "ws_1" }, parseCliArgs(["--approval", "never"]), renderer, async () => {
+      asked = true;
+      return "o";
+    }).runPrompt("do it"),
+    /configured approval policy is fail-closed/,
+  );
+  assert.equal(asked, false);
   assert.equal(aborted, true);
 });
 

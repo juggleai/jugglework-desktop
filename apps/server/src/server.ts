@@ -82,6 +82,7 @@ import { registerSessionPermissionRoutes } from "./routes/session-permissions.js
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
+import { registerProviderAuthRoutes } from "./routes/provider-auth.js";
 import {
   applyMcpWorkspacePolicyToPrompt,
   checkMcpWorkspaceToolPolicy,
@@ -863,6 +864,11 @@ function normalizeOpencodeProxyPath(proxyPath: string): string {
 export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
+  const normalized = normalizeOpencodeProxyPath(proxyPath);
+
+  if ((m === "PUT" || m === "DELETE") && /^\/auth\/[^/]+$/.test(normalized)) {
+    throw new ApiError(403, "forbidden", "Provider authentication requires host authorization");
+  }
 
   if (scope === "viewer" && m !== "GET" && m !== "HEAD") {
     throw new ApiError(403, "forbidden", "Viewer tokens are read-only");
@@ -876,7 +882,6 @@ export function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPa
   // (403 "Only owner tokens can reply") and left tool calls stuck in
   // "running" forever (#1918).
   if (scope === "viewer" && m !== "GET" && m !== "HEAD") {
-    const normalized = normalizeOpencodeProxyPath(proxyPath);
     if (/\/permission\/[^/]+\/reply$/.test(normalized)) {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot reply to permission requests");
     }
@@ -2161,6 +2166,16 @@ function createRoutes(
     ensureWritable,
     resolveWorkspaceWithoutBootstrap,
     serializeWorkspace,
+  });
+
+  registerProviderAuthRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    resolveWorkspace,
+    createWorkspaceOpencodeClient,
   });
 
   registerSessionRoutes({

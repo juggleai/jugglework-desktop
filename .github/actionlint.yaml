@@ -4,3 +4,4 @@ self-hosted-runner:
     - macos-15-intel
     - windows-11-arm
     - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-4vcpu-ubuntu-2204

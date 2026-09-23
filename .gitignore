@@ -78,4 +78,7 @@ evals/results/
 .vscode/
 .opencode
 .github
+!.github/
+!.github/workflows/
+!.github/workflows/release-cli.yml
 .devcontainer

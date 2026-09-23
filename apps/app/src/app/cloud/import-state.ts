@@ -1,21 +1,5 @@
-export type CloudImportedProvider = {
-  cloudProviderId: string;
-  providerId: string;
-  sourceProviderId: string;
-  name: string;
-  source: string | null;
-  updatedAt: string | null;
-  modelIds: string[];
-  importedAt: number | null;
-  /**
-   * How the provider block was written, independent of what Den published.
-   * Bumped when the desktop changes the shape it writes so an existing import
-   * is rewritten once — Den's `updatedAt` and model list are unchanged in that
-   * case, so nothing else would mark it out of sync.
-   * `null` is a pre-versioning baseline.
-   */
-  metadataVersion: number | null;
-};
+export type { CloudImportedProvider } from "@jugglework/cloud-provider";
+import type { CloudImportedProvider } from "@jugglework/cloud-provider";
 
 export type CloudImportedMarketplace = {
   marketplaceId: string;

@@ -75,6 +75,7 @@ JuggleWork is more than the desktop app:
 
 | Surface | What it is |
 |---|---|
+| **[JuggleWork CLI](apps/cli/README.md)** | Supported standalone terminal client for local tasks and JuggleWork Cloud. Native release archives bundle the compatible OpenCode engine and do not require Desktop or global OpenCode. |
 | **[JuggleWork Server](apps/server/README.md)** | Headless runtime — run the authenticated JuggleWork API with Server-managed OpenCode. `npm install -g jugglework-server` |
 | **[Owpenbot](https://github.com/juggleai/jugglework-desktop)** | Lightweight WhatsApp bridge for a running OpenCode server. |
 | **JuggleWork control plane** | Self-hostable organization backend — deploy in your VPC for private team use. |
@@ -94,13 +95,19 @@ Windows access is available through a paid support plan at [juggle.im/pricing#wi
 
 Hosted JuggleWork Cloud workers launch from the web app after sign-in and connect from the desktop via **Add a worker → Connect remote**.
 
+For terminal-only use, install a complete platform archive as described in the
+[standalone CLI guide](packages/docs/start-here/standalone-cli.mdx). The current
+repository implements manifest-backed archive staging and a manual native
+release workflow. It does not provide an npm package, installer, or automatic
+updater. Use a complete published CLI archive when one is available.
+
 ### Prerequisites (source build)
 
 - **Node.js 24** + **pnpm 11.4+**
 - **Bun 1.3.9+** (`bun --version`)
 - **Rust toolchain** (for Tauri): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Tauri CLI**: `cargo install tauri-cli`
-- **OpenCode CLI** on PATH: `opencode`
+- **OpenCode CLI** on `PATH` only for source/development runtime fallback; native CLI releases and packaged Desktop builds carry their own engine
 - **macOS 14+**: Xcode Command Line Tools
 - **Linux**: WebKitGTK 4.1 dev packages (`webkit2gtk-4.1`, `javascriptcoregtk-4.1`)
 
@@ -166,10 +173,14 @@ JuggleWork Desktop
       └── opencode serve             ← managed child process
 ```
 
+The supported standalone `jugglework` CLI starts an embedded Server and bundled
+OpenCode from its native release archive. It is distinct from the retired
+`jugglework-orchestrator` launcher, despite reusing the command name.
+
 Headless and container deployments start `jugglework-server` directly with
 `JUGGLEWORK_MANAGE_OPENCODE=1` and a resolved `JUGGLEWORK_OPENCODE_BIN`. The
-former `jugglework-orchestrator` package and bare `jugglework` CLI are retired;
-see the [migration guide](packages/docs/start-here/migrate-from-orchestrator.mdx).
+former `jugglework-orchestrator` package and its legacy `jugglework` commands are
+retired; see the [migration guide](packages/docs/start-here/migrate-from-orchestrator.mdx).
 
 Desktop Docker sandbox provisioning is owned by Desktop's `sandbox-runtime`;
 the sandbox container runs JuggleWork Server directly.
@@ -232,7 +243,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 jugglework
 We welcome contributions. Before diving in:
 
 1. Read `AGENTS.md`, `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, and `ARCHITECTURE.md` for product context.
-2. Ensure Node.js, `pnpm`, Rust, Bun, and `opencode` are installed.
+2. Ensure Node.js, `pnpm`, Rust, and Bun are installed. Install `opencode` only when exercising the source/development CLI fallback rather than packaged assets.
 3. Run `pnpm install` after every checkout.
 4. Validate changes with `pnpm typecheck` and `pnpm test:e2e` before opening a PR.
 5. Use `.github/pull_request_template.md` and include the commands you ran, results, and manual verification steps.

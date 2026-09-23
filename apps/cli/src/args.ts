@@ -1,7 +1,19 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-export type CliCommand = "run" | "resume" | "sessions" | "status";
+export type CliCommand =
+  | { group: "runtime"; action: "run" | "exec" | "resume" | "sessions" | "status" }
+  | { group: "workspace"; action: "list" | "add" | "open"; target: string | null }
+  | { group: "session"; action: "list" }
+  | { group: "session"; action: "show" | "resume" | "fork" | "archive" | "unarchive" | "delete"; target: string | null }
+  | { group: "session"; action: "queue" | "rename"; target: string | null; value: string | null }
+  | { group: "account"; action: "login" | "login-status" | "logout" }
+  | { group: "org"; action: "list" | "use"; target: string | null }
+  | { group: "catalog"; action: "list" }
+  | { group: "provider"; action: "list" | "import" | "remove"; target: string | null }
+  | { group: "model"; action: "list" }
+  | { group: "diagnostics"; action: "doctor" }
+  | { group: "meta"; action: "completion"; shell: "bash" | "zsh" | "fish" | "powershell" };
 
 export type CliOptions = {
   command: CliCommand;
@@ -11,6 +23,10 @@ export type CliOptions = {
   serverUrl: string | null;
   token: string | null;
   hostToken: string | null;
+  cloudUrl: string | null;
+  cloudToken: string | null;
+  cloudOrg: string | null;
+  grantStdin: boolean;
   workspace: string;
   workspaceExplicit: boolean;
   workspaceId: string | null;
@@ -20,24 +36,35 @@ export type CliOptions = {
   agent: string | null;
   reasoningEffort: string | null;
   title: string | null;
+  outputLastMessage: string | null;
+  outputSchema: string | null;
+  sandbox: "workspace-write" | "danger-full-access";
+  approval: "on-request" | "never";
+  sandboxExplicit: boolean;
+  approvalExplicit: boolean;
   fullAccess: boolean;
+  force: boolean;
   json: boolean;
   color: boolean;
   configPath: string;
   timeoutMs: number;
   help: boolean;
+  helpTopic: string[];
   version: boolean;
 };
 
 export type CliConfigFile = Partial<Pick<CliOptions,
   "serverUrl" | "token" | "hostToken" | "workspace" | "workspaceId" |
-  "opencodeBin" | "pluginDir" | "model" | "agent" | "reasoningEffort"
+  "opencodeBin" | "pluginDir" | "model" | "agent" | "reasoningEffort" |
+  "cloudUrl" | "cloudOrg" | "sandbox" | "approval"
 >>;
 
 const CONFIG_FIELDS = [
   "serverUrl",
   "token",
   "hostToken",
+  "cloudUrl",
+  "cloudOrg",
   "workspace",
   "workspaceId",
   "opencodeBin",
@@ -45,6 +72,8 @@ const CONFIG_FIELDS = [
   "model",
   "agent",
   "reasoningEffort",
+  "sandbox",
+  "approval",
 ] as const satisfies readonly (keyof CliConfigFile)[];
 const CONFIG_FIELD_SET = new Set<string>(CONFIG_FIELDS);
 
@@ -153,13 +182,20 @@ function positiveInteger(value: string, flag: string): number {
   return parsed;
 }
 
+function choice<T extends string>(value: string, flag: string, allowed: readonly T[]): T {
+  if (!allowed.includes(value as T)) throw new CliArgumentError(`${flag} requires one of: ${allowed.join(", ")}`);
+  return value as T;
+}
+
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
-  let command: CliCommand = "run";
+  let command: CliCommand = { group: "runtime", action: "run" };
   let sessionId: string | null = null;
   let continueLatest = false;
   let serverUrl: string | null = null;
   let token: string | null = null;
   let hostToken: string | null = null;
+  let cloudUrl: string | null = null;
+  let grantStdin = false;
   let workspace = process.cwd();
   let workspaceExplicit = false;
   let workspaceId: string | null = null;
@@ -169,7 +205,14 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   let agent: string | null = null;
   let reasoningEffort: string | null = null;
   let title: string | null = null;
+  let outputLastMessage: string | null = null;
+  let outputSchema: string | null = null;
+  let sandbox: CliOptions["sandbox"] = "workspace-write";
+  let approval: CliOptions["approval"] = "on-request";
+  let sandboxExplicit = false;
+  let approvalExplicit = false;
   let fullAccess = false;
+  let force = false;
   let json = false;
   let color = process.stdout.isTTY === true;
   let configPath = defaultConfigPath(env);
@@ -193,11 +236,33 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     if (arg === "--version" || arg === "-V") { version = true; continue; }
     if (arg === "--json") { json = true; color = false; continue; }
     if (arg === "--no-color") { color = false; continue; }
-    if (arg === "--full-access") { fullAccess = true; continue; }
+    if (arg === "--full-access" || arg === "--dangerously-enable-full-access" || arg === "--dangerously-bypass-approvals-and-sandbox") {
+      sandbox = "danger-full-access";
+      approval = "never";
+      sandboxExplicit = true;
+      approvalExplicit = true;
+      fullAccess = true;
+      continue;
+    }
+    if (arg === "--sandbox") {
+      sandbox = choice(valueAfter(argv, index, arg), arg, ["workspace-write", "danger-full-access"] as const);
+      sandboxExplicit = true;
+      index += 1;
+      continue;
+    }
+    if (arg === "--approval") {
+      approval = choice(valueAfter(argv, index, arg), arg, ["on-request", "never"] as const);
+      approvalExplicit = true;
+      index += 1;
+      continue;
+    }
+    if (arg === "--force") { force = true; continue; }
+    if (arg === "--grant-stdin") { grantStdin = true; continue; }
     if (arg === "--continue" || arg === "-c") { continueLatest = true; continue; }
     if (arg === "--server") { serverUrl = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--token") { token = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--host-token") { hostToken = valueAfter(argv, index, arg); index += 1; continue; }
+    if (arg === "--cloud-url") { cloudUrl = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--workspace" || arg === "-C") { workspace = valueAfter(argv, index, arg); workspaceExplicit = true; index += 1; continue; }
     if (arg === "--workspace-id") { workspaceId = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--opencode-bin") { opencodeBin = valueAfter(argv, index, arg); index += 1; continue; }
@@ -206,28 +271,95 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     if (arg === "--agent" || arg === "-a") { agent = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--reasoning-effort") { reasoningEffort = valueAfter(argv, index, arg); index += 1; continue; }
     if (arg === "--title") { title = valueAfter(argv, index, arg); index += 1; continue; }
+    if (arg === "--output-last-message") { outputLastMessage = resolve(valueAfter(argv, index, arg)); index += 1; continue; }
+    if (arg === "--output-schema") { outputSchema = resolve(valueAfter(argv, index, arg)); index += 1; continue; }
     if (arg === "--config") { configPath = resolve(valueAfter(argv, index, arg)); index += 1; continue; }
     if (arg === "--timeout") { timeoutMs = positiveInteger(valueAfter(argv, index, arg), arg) * 1000; index += 1; continue; }
     if (arg.startsWith("-")) throw new CliArgumentError(`Unknown option: ${arg}`);
     positionals.push(arg);
   }
 
-  if (positionals[0] === "resume") {
-    command = "resume";
+  const helpTopic = help ? positionals.slice(0, 2) : [];
+  if (help) {
+    command = { group: "runtime", action: "run" };
+  } else if (positionals[0] === "exec") {
+    command = { group: "runtime", action: "exec" };
+  } else if (positionals[0] === "resume") {
+    command = { group: "runtime", action: "resume" };
     sessionId = positionals[1] ?? null;
     if (positionals.length > 2) throw new CliArgumentError("resume accepts at most one session ID");
   } else if (positionals[0] === "sessions") {
-    command = "sessions";
+    command = { group: "runtime", action: "sessions" };
     if (positionals.length > 1) throw new CliArgumentError("sessions does not accept positional arguments");
+  } else if (positionals[0] === "fork") {
+    if (positionals.length > 2) throw new CliArgumentError("fork accepts at most one session ID");
+    command = { group: "session", action: "fork", target: positionals[1] ?? null };
+  } else if (positionals[0] === "session") {
+    const action = positionals[1];
+    if (action === "list" && positionals.length === 2) command = { group: "session", action };
+    else if ((action === "resume" || action === "fork") && positionals.length <= 3) {
+      command = { group: "session", action, target: positionals[2] ?? null };
+    } else if (["show", "archive", "unarchive", "delete"].includes(action ?? "") && positionals.length === 3) {
+      command = { group: "session", action: action as "show" | "resume" | "fork" | "archive" | "unarchive" | "delete", target: positionals[2] ?? null };
+    } else if ((action === "queue" || action === "rename") && positionals.length >= 4) {
+      command = { group: "session", action, target: positionals[2] ?? null, value: positionals.slice(3).join(" ").trim() || null };
+    } else throw new CliArgumentError("session requires list, show <id>, resume [id], fork [id], queue <id> <prompt>, rename <id> <title>, archive <id>, unarchive <id>, or delete <id>");
   } else if (positionals[0] === "status") {
-    command = "status";
+    command = { group: "runtime", action: "status" };
     if (positionals.length > 1) throw new CliArgumentError("status does not accept positional arguments");
+  } else if (positionals[0] === "login") {
+    if (positionals.length === 1) command = { group: "account", action: "login" };
+    else if (positionals.length === 2 && positionals[1] === "status") command = { group: "account", action: "login-status" };
+    else throw new CliArgumentError("login accepts only the optional 'status' subcommand");
+  } else if (positionals[0] === "logout") {
+    if (positionals.length > 1) throw new CliArgumentError("logout does not accept positional arguments");
+    command = { group: "account", action: "logout" };
+  } else if (positionals[0] === "org") {
+    if (positionals[1] === "list" && positionals.length === 2) command = { group: "org", action: "list", target: null };
+    else if (positionals[1] === "use" && positionals.length <= 3) command = { group: "org", action: "use", target: positionals[2] ?? null };
+    else throw new CliArgumentError("org requires 'list' or 'use [id-or-slug]'");
+  } else if (positionals[0] === "workspace") {
+    const action = positionals[1];
+    if (action === "list" && positionals.length === 2) command = { group: "workspace", action, target: null };
+    else if ((action === "add" || action === "open") && positionals.length === 3) command = { group: "workspace", action, target: positionals[2] ?? null };
+    else throw new CliArgumentError("workspace requires 'list', 'add <path>', or 'open <id>'");
+  } else if (positionals[0] === "provider") {
+    const action = positionals[1];
+    if (action === "list" && positionals.length === 2) command = { group: "provider", action: "list", target: null };
+    else if ((action === "import" || action === "remove") && positionals.length === 3) {
+      command = { group: "provider", action, target: positionals[2] ?? null };
+    } else throw new CliArgumentError("provider requires 'list', 'import <publication-id>', or 'remove <publication-id>'");
+  } else if (positionals[0] === "catalog" || positionals[0] === "model") {
+    const group = positionals[0];
+    if (positionals[1] !== "list" || positionals.length !== 2) throw new CliArgumentError(`${group} requires the 'list' subcommand`);
+    command = { group, action: "list" };
+  } else if (positionals[0] === "doctor") {
+    if (positionals.length !== 1) throw new CliArgumentError("doctor does not accept positional arguments");
+    command = { group: "diagnostics", action: "doctor" };
+  } else if (positionals[0] === "completion") {
+    const shell = positionals[1];
+    if (positionals.length !== 2 || !["bash", "zsh", "fish", "powershell"].includes(shell ?? "")) {
+      throw new CliArgumentError("completion requires one of: bash, zsh, fish, powershell");
+    }
+    command = { group: "meta", action: "completion", shell: shell as "bash" | "zsh" | "fish" | "powershell" };
   } else {
-    command = continueLatest ? "resume" : "run";
+    command = { group: "runtime", action: continueLatest ? "resume" : "run" };
   }
 
-  const prompt = (command === "run" || (command === "resume" && continueLatest)) && positionals.length > 0
-    ? positionals.join(" ").trim() || null
+  if ((outputLastMessage || outputSchema) && !(command.group === "runtime" && command.action === "exec")) {
+    throw new CliArgumentError("--output-last-message and --output-schema are supported only with 'jugglework exec'");
+  }
+  fullAccess = sandbox === "danger-full-access" && approval === "never";
+  if (sandbox === "danger-full-access" && approval !== "never") {
+    throw new CliArgumentError("--sandbox danger-full-access requires --approval never; the Server exposes this combination only as versioned Full access.");
+  }
+  if (force && !(command.group === "session" && command.action === "delete")) {
+    throw new CliArgumentError("--force is supported only with 'jugglework session delete <exact-session-id>'");
+  }
+
+  const promptPositionals = command.group === "runtime" && command.action === "exec" ? positionals.slice(1) : positionals;
+  const prompt = command.group === "runtime" && (command.action === "run" || command.action === "exec" || (command.action === "resume" && continueLatest)) && promptPositionals.length > 0
+    ? promptPositionals.join(" ").trim() || null
     : null;
   return {
     command,
@@ -237,6 +369,10 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     serverUrl,
     token,
     hostToken,
+    cloudUrl,
+    cloudToken: null,
+    cloudOrg: null,
+    grantStdin,
     workspace: resolve(workspace),
     workspaceExplicit,
     workspaceId,
@@ -246,12 +382,20 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     agent,
     reasoningEffort,
     title,
+    outputLastMessage,
+    outputSchema,
+    sandbox,
+    approval,
+    sandboxExplicit,
+    approvalExplicit,
     fullAccess,
+    force,
     json,
     color,
     configPath,
     timeoutMs,
     help,
+    helpTopic,
     version,
   };
 }
@@ -260,11 +404,25 @@ export function applyConfig(options: CliOptions, config: CliConfigFile, env: Nod
   const clean = (value: string | null | undefined) => value?.trim() || null;
   const pick = (explicit: string | null, envValue: string | undefined, fileValue: string | null | undefined) =>
     clean(explicit) ?? clean(envValue) ?? clean(fileValue);
+  const sandbox = pick(options.sandboxExplicit ? options.sandbox : null, env.JUGGLEWORK_SANDBOX, config.sandbox) ?? options.sandbox;
+  const approval = pick(options.approvalExplicit ? options.approval : null, env.JUGGLEWORK_APPROVAL, config.approval) ?? options.approval;
+  if (sandbox !== "workspace-write" && sandbox !== "danger-full-access") {
+    throw new CliArgumentError("sandbox must be one of: workspace-write, danger-full-access");
+  }
+  if (approval !== "on-request" && approval !== "never") {
+    throw new CliArgumentError("approval must be one of: on-request, never");
+  }
+  if (sandbox === "danger-full-access" && approval !== "never") {
+    throw new CliArgumentError("sandbox danger-full-access requires approval never; the Server exposes this combination only as versioned Full access.");
+  }
   return {
     ...options,
     serverUrl: pick(options.serverUrl, env.JUGGLEWORK_SERVER_URL, config.serverUrl),
     token: pick(options.token, env.JUGGLEWORK_TOKEN, config.token),
     hostToken: pick(options.hostToken, env.JUGGLEWORK_HOST_TOKEN, config.hostToken),
+    cloudUrl: pick(options.cloudUrl, env.JUGGLEWORK_CLOUD_URL, config.cloudUrl) ?? "https://work.jugglechat.cn",
+    cloudToken: clean(env.JUGGLEWORK_CLOUD_TOKEN),
+    cloudOrg: pick(options.cloudOrg, env.JUGGLEWORK_CLOUD_ORG, config.cloudOrg),
     workspace: resolve(options.workspaceExplicit
       ? options.workspace
       : env.JUGGLEWORK_WORKSPACE?.trim() || config.workspace?.trim() || options.workspace),
@@ -274,38 +432,10 @@ export function applyConfig(options: CliOptions, config: CliConfigFile, env: Nod
     model: pick(options.model, env.JUGGLEWORK_MODEL, config.model),
     agent: pick(options.agent, env.JUGGLEWORK_AGENT, config.agent),
     reasoningEffort: pick(options.reasoningEffort, env.JUGGLEWORK_REASONING_EFFORT, config.reasoningEffort),
+    sandbox,
+    approval,
+    fullAccess: sandbox === "danger-full-access" && approval === "never",
   };
 }
 
-export const HELP = `jugglework
-
-Usage:
-  jugglework [options] [prompt]
-  jugglework resume [session-id] [options]
-  jugglework sessions [options]
-  jugglework status [options]
-
-Options:
-  -C, --workspace <path>       Workspace directory (default: current directory)
-      --workspace-id <id>      Workspace ID when connecting to an existing Server
-      --server <url>           Connect to an existing JuggleWork Server
-      --token <token>          Server bearer token
-      --host-token <token>     Host token, required for connected Full access
-      --opencode-bin <path>    OpenCode executable for local mode
-      --plugin-dir <path>      JuggleWork OpenCode plugin directory
-  -m, --model <provider/model> Model for submitted prompts
-  -a, --agent <name>           Agent for submitted prompts
-      --reasoning-effort <n>   Model reasoning effort
-      --full-access            Explicitly enable Full access for new sessions
-  -c, --continue               Resume the latest session
-      --title <text>           Title for a new session
-      --timeout <seconds>      Per-run timeout (default: 1800)
-      --config <path>          CLI config file
-      --json                   Emit NDJSON records
-      --no-color               Disable ANSI colors
-  -h, --help                   Show help
-  -V, --version                Show version
-
-Interactive commands:
-  /help  /new  /sessions  /resume <id>  /status  /stop  /exit
-`;
+export { HELP } from "./help.js";

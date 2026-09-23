@@ -1,0 +1,217 @@
+name: Release Standalone CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing GitHub release tag; leave empty for workflow artifacts only"
+        required: false
+        type: string
+      production:
+        description: "Require signing/notarization for macOS and Authenticode signing for Windows"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cli-${{ inputs.release_tag || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, verify, and archive ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    environment: ${{ inputs.production && 'cli-production-release' || 'cli-release' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            runner: macos-26
+            os: macos
+          - target: bun-darwin-x64
+            runner: macos-15-intel
+            os: macos
+          - target: bun-linux-arm64
+            runner: ubuntu-22.04-arm
+            os: linux
+          - target: bun-linux-x64
+            runner: ubuntu-22.04
+            os: linux
+          - target: bun-windows-arm64
+            runner: windows-11-arm
+            os: windows
+          - target: bun-windows-x64
+            runner: windows-2025
+            os: windows
+    env:
+      TARGET: ${{ matrix.target }}
+      PRODUCTION: ${{ inputs.production }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID || vars.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG || vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG || vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ secrets.SIGNPATH_CLI_ARTIFACT_CONFIGURATION_SLUG || vars.SIGNPATH_CLI_ARTIFACT_CONFIGURATION_SLUG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test and typecheck CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @jugglework/cli test
+          pnpm --filter @jugglework/cli typecheck
+      - name: Acquire digest-pinned OpenCode sidecar
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: pnpm --filter @jugglework/cli acquire:opencode -- --target "$TARGET" --outdir "$RUNNER_TEMP/opencode"
+      - name: Build and stage distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter jugglework-server build
+          bun apps/cli/script/build.ts --outdir "$RUNNER_TEMP/build" --target "$TARGET" --sidecar-dir "$RUNNER_TEMP/opencode"
+          echo "DIST_ROOT=$RUNNER_TEMP/build/distributions/$TARGET" >> "$GITHUB_ENV"
+
+      - name: Require Apple production credentials
+        if: matrix.os == 'macos' && inputs.production
+        shell: bash
+        env:
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CODESIGN_CERT_P12_BASE64 APPLE_CODESIGN_CERT_PASSWORD APPLE_NOTARY_API_KEY_P8_BASE64 APPLE_NOTARY_API_KEY_ID APPLE_NOTARY_API_ISSUER_ID; do
+            if [ -z "${!name:-}" ]; then echo "Missing required production secret: $name" >&2; exit 1; fi
+          done
+          KEYCHAIN="$RUNNER_TEMP/cli-release.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$APPLE_CODESIGN_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cli-cert.p12"
+          security import "$RUNNER_TEMP/cli-cert.p12" -k "$KEYCHAIN" -P "$APPLE_CODESIGN_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' 'NR==1{print $2}')"
+          if [ -z "$IDENTITY" ]; then echo "No Apple signing identity found" >&2; exit 1; fi
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_NOTARY_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+          echo "APPLE_NOTARY_KEY_ID=$APPLE_NOTARY_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_NOTARY_ISSUER=$APPLE_NOTARY_API_ISSUER_ID" >> "$GITHUB_ENV"
+      - name: Sign and notarize macOS executables
+        if: matrix.os == 'macos' && inputs.production
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DIST_ROOT/bin/jugglework"
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DIST_ROOT/sidecars/opencode"
+          ditto -c -k --keepParent "$DIST_ROOT" "$RUNNER_TEMP/notarize-$TARGET.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize-$TARGET.zip" --key "$APPLE_NOTARY_KEY" --key-id "$APPLE_NOTARY_KEY_ID" --issuer "$APPLE_NOTARY_ISSUER" --wait
+
+      - name: Require Windows production signing configuration
+        if: matrix.os == 'windows' && inputs.production
+        shell: bash
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG SIGNPATH_ARTIFACT_CONFIGURATION_SLUG; do
+            if [ -z "${!name:-}" ]; then echo "Missing required production signing value: $name" >&2; exit 1; fi
+          done
+      - name: Upload unsigned Windows distribution for SignPath
+        if: matrix.os == 'windows' && inputs.production
+        id: unsigned-windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-cli-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.DIST_ROOT }}/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign Windows executables with SignPath
+        if: matrix.os == 'windows' && inputs.production
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ env.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ env.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-windows.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ env.DIST_ROOT }}
+
+      - name: Refresh checksums after signing
+        shell: bash
+        run: bun apps/cli/script/release.ts refresh --root "$DIST_ROOT" --target "$TARGET"
+      - name: Validate package content, checksums, permissions, versions, and signatures
+        shell: bash
+        run: bun apps/cli/script/release.ts validate --root "$DIST_ROOT" --target "$TARGET" ${{ inputs.production && matrix.os != 'linux' && '--require-signature' || '' }}
+      - name: Clean-home packaged runtime startup smoke test
+        shell: bash
+        run: bun apps/cli/script/release.ts smoke --root "$DIST_ROOT" --target "$TARGET"
+      - name: Archive distribution and write SHA-256 checksum
+        shell: bash
+        run: bun apps/cli/script/release.ts archive --root "$DIST_ROOT" --target "$TARGET" --outdir "$RUNNER_TEMP/release"
+      - name: Upload native CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jugglework-cli-${{ matrix.target }}
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish CLI release artifacts
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: ${{ inputs.production && 'cli-production-release' || 'cli-release' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release_tag || github.sha }}
+      - name: Download all six native artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: jugglework-cli-*
+          path: dist/cli-release
+          merge-multiple: true
+      - name: Verify six archives and checksum files are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find dist/cli-release -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l | tr -d ' ')" = 6
+          test "$(find dist/cli-release -type f -name '*.sha256' | wc -l | tr -d ' ')" = 6
+          (cd dist/cli-release && sha256sum --check *.sha256)
+      - name: Upload assets to existing GitHub release
+        if: inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" dist/cli-release/* --repo "$GITHUB_REPOSITORY" --clobber

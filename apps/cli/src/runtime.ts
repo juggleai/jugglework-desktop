@@ -1,23 +1,22 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, chmod, mkdir, stat } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startEmbeddedServer, type EmbeddedServerHandle } from "jugglework-server";
 import type { CliOptions } from "./args.js";
+import {
+  DISTRIBUTION_MANIFEST,
+  hostDistributionTarget,
+  parseDistributionManifest,
+  REQUIRED_PLUGIN_FILES,
+  resolveManifestPath,
+  verifyManifestFile,
+} from "./distribution.js";
 
-export const REQUIRED_PLUGIN_FILES = [
-  "jugglework-extensions-preview.js",
-  "jugglework-capabilities-knowledge.js",
-  "jugglework-office-attachments.js",
-  "jugglework-anthropic-adaptive-thinking.js",
-  "jugglework-anthropic-tool-schema.js",
-  "jugglework-safe-grep.js",
-  "jugglework-context-overflow.js",
-  "jugglework-mcp-workspace-policy.js",
-] as const;
+export { REQUIRED_PLUGIN_FILES } from "./distribution.js";
 
 export type RuntimeConnection = {
   url: string;
@@ -70,10 +69,41 @@ function installedOpenCodeCandidates(): string[] {
   ];
 }
 
+export type PackagedRuntimeAssets = { opencodeBin: string; pluginDir: string };
+
+export async function resolvePackagedRuntimeAssets(executablePath = process.execPath): Promise<PackagedRuntimeAssets | null> {
+  const roots = [dirname(executablePath), resolve(dirname(executablePath), "..")];
+  for (const root of roots) {
+    const manifestPath = join(root, DISTRIBUTION_MANIFEST);
+    try {
+      await access(manifestPath, constants.R_OK);
+    } catch {
+      continue;
+    }
+    try {
+      const manifest = parseDistributionManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+      const hostTarget = hostDistributionTarget();
+      if (hostTarget && manifest.target !== hostTarget) {
+        throw new Error(`manifest target ${manifest.target} does not match host ${hostTarget}`);
+      }
+      await verifyManifestFile(root, manifest.cli.file, true);
+      const opencodeBin = await verifyManifestFile(root, manifest.opencode.file, true);
+      for (const file of [...manifest.plugins.files, ...manifest.notices]) await verifyManifestFile(root, file);
+      const pluginDir = resolveManifestPath(root, manifest.plugins.directory);
+      return { opencodeBin, pluginDir };
+    } catch (error) {
+      throw new Error(`Incomplete JuggleWork CLI installation (${manifestPath}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return null;
+}
+
 export async function resolveOpenCodeBinary(explicit: string | null): Promise<string | null> {
   if (explicit?.trim()) return executable(explicit);
+  if (process.env.JUGGLEWORK_OPENCODE_BIN?.trim()) return executable(process.env.JUGGLEWORK_OPENCODE_BIN);
+  const packaged = await resolvePackagedRuntimeAssets();
+  if (packaged) return packaged.opencodeBin;
   for (const candidate of [
-    process.env.JUGGLEWORK_OPENCODE_BIN,
     executableOnPath(process.platform === "win32" ? "opencode.exe" : "opencode"),
     ...installedOpenCodeCandidates(),
     join(dirname(process.execPath), "sidecars", process.platform === "win32" ? "opencode.exe" : "opencode"),
@@ -114,9 +144,11 @@ async function pluginDirectory(path: string | null | undefined): Promise<string 
 
 export async function resolvePluginDirectory(explicit: string | null, opencodeBin: string): Promise<string | null> {
   if (explicit?.trim()) return pluginDirectory(explicit);
+  if (process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR?.trim()) return pluginDirectory(process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR);
+  const packaged = await resolvePackagedRuntimeAssets();
+  if (packaged && packaged.opencodeBin === opencodeBin) return packaged.pluginDir;
   const executableDir = dirname(opencodeBin);
   const candidates = [
-    process.env.JUGGLEWORK_EXTENSIONS_PLUGIN_DIR,
     join(dirname(executableDir), "opencode-plugins"),
     join(dirname(process.execPath), "opencode-plugins"),
     join(dirname(process.execPath), "..", "opencode-plugins"),
@@ -193,7 +225,7 @@ export async function createRuntime(
       throw new Error(`Configured OpenCode binary is not an executable file: ${resolve(options.opencodeBin)}`);
     }
     throw new Error(
-      "OpenCode was not found. Install it, add it to PATH, pass --opencode-bin, or install JuggleWork Desktop with its bundled sidecar.",
+      "OpenCode was not found. This source/development run can use --opencode-bin or JUGGLEWORK_OPENCODE_BIN; installed releases require their packaged sidecar.",
     );
   }
   const pluginDir = await resolvePluginDirectory(options.pluginDir, opencodeBin);
@@ -226,7 +258,9 @@ export async function createRuntime(
       port: 0,
       token,
       hostToken,
-      approvalMode: "auto",
+      // Session permission modes are authoritative; keep legacy approvals
+      // manual so non-interactive execution cannot silently widen access.
+      approvalMode: "manual",
       approvalTimeoutMs: 30_000,
       workspaces: [options.workspace],
       corsOrigins: ["*"],

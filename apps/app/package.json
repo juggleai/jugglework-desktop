@@ -49,6 +49,7 @@
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
     "@heroicons/react": "^2.2.0",
+    "@jugglework/cloud-provider": "workspace:*",
     "@jugglework/install-config": "workspace:*",
     "@jugglework/types": "workspace:*",
     "@jugglework/ui": "workspace:*",

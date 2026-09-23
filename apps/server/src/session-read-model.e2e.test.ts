@@ -96,12 +96,33 @@ function startMockOpencode(input?: {
       }
 
       if (url.pathname === "/session/ses_1") {
+        if (request.method === "PATCH") {
+          const body = record.body as { title?: string; time?: { archived?: number } };
+          return Response.json({
+            id: "ses_1",
+            title: body.title ?? "Hostname Check",
+            slug: "hostname-check",
+            directory: request.headers.get("x-opencode-directory"),
+            time: { created: 100, updated: 201, ...(body.time ?? {}) },
+          });
+        }
+        if (request.method === "DELETE") return Response.json(true);
         return Response.json({
           id: "ses_1",
           title: "Hostname Check",
           slug: "hostname-check",
           directory: request.headers.get("x-opencode-directory"),
           time: { created: 100, updated: 200 },
+        });
+      }
+
+      if (url.pathname === "/session/ses_1/fork" && request.method === "POST") {
+        return Response.json({
+          id: "ses_forked",
+          parentID: "ses_1",
+          title: "Hostname Check (fork)",
+          directory: request.headers.get("x-opencode-directory"),
+          time: { created: 301, updated: 301 },
         });
       }
 
@@ -522,6 +543,41 @@ describe("workspace session read APIs", () => {
       message: "Session not found",
     });
 
+  });
+
+  test("forwards safe session lifecycle mutations through collaborator routes", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const jugglework = await startJuggleWorkServer({
+      workspaceRoot,
+      opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`,
+      readOnly: false,
+    });
+    const headers = { ...auth(jugglework.token), "Content-Type": "application/json" };
+
+    const forked = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1/fork`, {
+      method: "POST", headers, body: JSON.stringify({}),
+    });
+    expect(forked.status).toBe(201);
+    await expect(forked.json()).resolves.toMatchObject({ item: { id: "ses_forked", parentID: "ses_1" } });
+
+    for (const body of [{ title: "Renamed" }, { archived: true }, { archived: false }]) {
+      const updated = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
+      });
+      expect(updated.status).toBe(200);
+    }
+    expect(mock.requests.filter((request) => request.pathname === "/session/ses_1" && request.method === "PATCH").map((request) => request.body)).toEqual([
+      { title: "Renamed" },
+      { time: { archived: expect.any(Number) } },
+      { time: { archived: 0 } },
+    ]);
+
+    const deleted = await fetch(`http://127.0.0.1:${jugglework.server.port}/workspace/ws_1/sessions/ses_1`, {
+      method: "DELETE", headers,
+    });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toEqual({ ok: true });
   });
 
   test("acknowledges proxied session commands before upstream completion", async () => {

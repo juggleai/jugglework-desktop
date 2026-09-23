@@ -1,4 +1,9 @@
 import { getDenModelCatalogUrl } from "../../../../app/lib/den";
+export type {
+  DeploymentCatalogModel,
+  DeploymentModelCatalog,
+} from "@jugglework/cloud-provider";
+import type { DeploymentModelCatalog } from "@jugglework/cloud-provider";
 
 /**
  * The connected deployment's provider catalog, in the models.dev payload shape
@@ -11,9 +16,6 @@ import { getDenModelCatalogUrl } from "../../../../app/lib/den";
  * Importing resolves the catalog by the provider's *source* id instead and
  * writes the metadata into the block (#2346 follow-up).
  */
-export type DeploymentCatalogModel = Record<string, unknown>;
-export type DeploymentModelCatalog = Record<string, Record<string, DeploymentCatalogModel>>;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

@@ -19,10 +19,11 @@
 JuggleWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
 
 ## 代替UI
+- **JuggleWork CLI（スタンドアロン端末クライアント）**: 新しいサポート対象の`jugglework`コマンドで、ローカルタスクの実行、JuggleWork Cloudへのログイン、組織プロバイダーのインポートができます。完全なネイティブリリースアーカイブには互換OpenCodeと必須プラグインが含まれ、DesktopやグローバルOpenCodeは不要です。インストールと更新は[スタンドアロンCLIガイド](../packages/docs/start-here/standalone-cli.mdx)を参照してください。
 - **JuggleWork Server（ヘッドレスランタイム）**: デスクトップUIなしで認証済みJuggleWork APIを直接実行し、ServerがOpenCodeを管理します。
   - インストール: `npm install -g jugglework-server`
   - ドキュメント: [apps/server/README.md](../apps/server/README.md)
-  - 旧`jugglework-orchestrator`パッケージと裸の`jugglework` CLIは廃止されました。[移行ガイド](../packages/docs/start-here/migrate-from-orchestrator.mdx)を参照してください。
+  - 旧`jugglework-orchestrator`パッケージと従来の`jugglework`ランチャー動作は廃止されました。新しいスタンドアロンCLIは同じコマンド名を使いますが、互換ラッパーではありません。[移行ガイド](../packages/docs/start-here/migrate-from-orchestrator.mdx)を参照してください。
 
 ## クイックスタート
 
@@ -72,7 +73,7 @@ JuggleWorkは以下を目指して設計されています:
 - Node.js + `pnpm`
 - Rustツールチェーン（Tauri用）: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` でインストール
 - Tauri CLI: `cargo install tauri-cli`
-- OpenCode CLIがPATH上にインストールされていること: `opencode`
+- ソース/開発モードのランタイムフォールバックを使う場合のみ、OpenCode CLIがPATH上に必要です。スタンドアロンCLIのネイティブリリースにグローバルOpenCodeは不要です
 
 ### ローカル開発の前提条件（デスクトップ）
 
@@ -203,7 +204,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 jugglework
 ## コントリビューション
 
 - 変更を行う前に、`AGENTS.md`、`VISION.md`、`PRINCIPLES.md`、`PRODUCT.md`、`ARCHITECTURE.md` を確認してプロダクトの目標を理解してください。
-- リポジトリ内で作業する前に、Node.js、`pnpm`、Rustツールチェーン、および `opencode` がインストールされていることを確認してください。
+- リポジトリ内で作業する前に、Node.js、`pnpm`、Rustツールチェーンがインストールされていることを確認してください。`opencode`はソース/開発CLIのフォールバックをテストする場合にのみ必要です。
 - チェックアウトごとに `pnpm install` を実行し、PRを作成する前に `pnpm typecheck` と `pnpm test:e2e`（または対象のスクリプトサブセット）で変更を検証してください。
 - PRを作成する際は `.github/pull_request_template.md` を使用し、実行したコマンド、結果、手動検証手順、およびエビデンスを含めてください。
 - CIが失敗した場合は、PRの本文でコード関連のリグレッションか外部/環境/認証のブロッカーかを分類してください。
