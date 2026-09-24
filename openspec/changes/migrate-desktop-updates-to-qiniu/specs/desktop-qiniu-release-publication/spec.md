@@ -83,7 +83,7 @@ Exact stable macOS arm64 `1.2.21` MAY retain the promoted channel object's obser
 
 Exact stable macOS arm64 `1.2.22` MAY use a separately audited one-time exception for the local real-client upgrade canary. This exception SHALL be restricted to exact stable macOS arm64 `1.2.22` and SHALL NOT bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, immutable non-overwrite publication, Qiniu/CDN byte verification, controlled channel cache metadata, promotion locking, cache refresh, public channel read-back, or serialized Den exposure.
 
-Exact stable macOS arm64 `1.2.23` MAY use separately audited one-time exceptions for the local real-client upgrade canary and mutable Stable channel cache convergence. These exceptions SHALL be restricted to exact stable macOS arm64 `1.2.23`. The cache exception SHALL bypass only mutable-channel Cache-Control management, CDN refresh, and public Stable-manifest convergence validation; it SHALL NOT bypass the Stable object write, Qiniu metadata verification of the written channel object, promotion locking, immutable non-overwrite publication, or immutable Qiniu/CDN byte verification. Neither exception SHALL bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, or serialized Den exposure.
+Exact stable macOS arm64 `1.2.23` and `1.2.24` MAY each use separately audited one-time exceptions for the local real-client upgrade canary and mutable Stable channel cache convergence. These exceptions SHALL be restricted to the exact stable macOS arm64 version independently. The cache exception SHALL bypass only mutable-channel Cache-Control management, CDN refresh, and public Stable-manifest convergence validation; it SHALL NOT bypass the Stable object write, Qiniu metadata verification of the written channel object, promotion locking, immutable non-overwrite publication, or immutable Qiniu/CDN byte verification. Neither exception SHALL bypass Developer ID identity, Team identity, bundle identity, hardened runtime, successful Apple notarization, stapling, Gatekeeper acceptance, packaged runtime-contract verification, complete ZIP/DMG/blockmap inventory, or serialized Den exposure.
 
 #### Scenario: Stable candidate is fully trusted
 - **WHEN** codesign deep verification, notarization, stapling, and Gatekeeper assessment pass for the candidate
@@ -155,6 +155,12 @@ Exact stable macOS arm64 `1.2.23` MAY use separately audited one-time exceptions
 - **THEN** tooling writes and verifies the channel object under the promotion lock with an audited reason scoped to `stable-1.2.23-only`
 - **AND** it still requires immutable object verification, signed/notarized package verification, channel-object Qiniu metadata verification, and serialized Den exposure
 - **AND** it rejects the exception for Windows, x64, Alpha, every other version, and every other channel
+
+#### Scenario: Explicit 1.2.24 macOS ARM64 release exceptions
+
+- **WHEN** an operator authorizes exact stable macOS ARM64 `1.2.24` without a local real-client upgrade canary and without forcing cached Stable-manifest convergence
+- **THEN** tooling requires separate audited reasons scoped to `stable-1.2.24-only` and still verifies signed and notarized packages, immutable CDN bytes, the locked Stable object write, and its Qiniu metadata
+- **AND** it rejects these exceptions for Windows, x64, Alpha, any other version, or any other channel
 
 ### Requirement: Channel manifests have controlled cache behavior
 Mutable stable/alpha manifests SHALL use short-lived or revalidation-required caching, while immutable version objects SHALL use long-lived immutable caching.

@@ -484,6 +484,23 @@ test("stable macOS arm64 1.2.23 cache exception promotes without cache metadata,
   assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
 });
 
+test("stable macOS arm64 1.2.24 cache exception still verifies the channel object under lock", async () => {
+  const plan = fixturePlan("1.2.24");
+  const initial = new Map([...plan.objects, plan.manifest].map((item) => [item.key, { size: item.size, etag: item.etag }]));
+  const qiniu = createFakeQiniu(initial);
+  delete qiniu.setCacheControl;
+  const evidence = verifiedEvidence(plan);
+  evidence.canary = null;
+  const result = await promoteChannel(plan, evidence, {
+    qiniu,
+    preCanaryExceptionReason: "Operator authorized stable macOS arm64 1.2.24 without a local real-client upgrade canary",
+    cacheExceptionReason: "Operator authorized stable macOS arm64 1.2.24 without cache expiry or public Stable convergence validation",
+  });
+  assert.deepEqual(result.channelObject, { size: plan.manifest.size, etag: plan.manifest.etag, verified: true });
+  assert.equal(result.cacheException.scope, "stable-1.2.24-only");
+  assert.equal(qiniu.state.has("jugglework/releases/locks/stable-mac.lock"), false);
+});
+
 test("promotion fails before Qiniu calls when cache metadata management is unavailable", async () => {
   const plan = fixturePlan();
   const qiniu = createFakeQiniu();
