@@ -44,6 +44,22 @@ export const isTerminalSessionStatus = (status: string | undefined) =>
 export type WorkspaceSessionIndicator = "running" | "completed" | null;
 
 /**
+ * Server-owned session runs outlive transient OpenCode `idle` events (most
+ * notably while a parent waits for delegated child work). Prefer that
+ * lifecycle receipt when deriving sidebar state so an active task never
+ * flashes as completed merely because the engine root is temporarily idle.
+ */
+export function overlayCoordinatorSessionRuns(
+  statusBySessionId: Record<string, string>,
+  coordinatorSessionIds: ReadonlySet<string>,
+): Record<string, string> {
+  if (coordinatorSessionIds.size === 0) return statusBySessionId;
+  const next = { ...statusBySessionId };
+  for (const sessionId of coordinatorSessionIds) next[sessionId] = "running";
+  return next;
+}
+
+/**
  * 汇总工作区内全部会话的状态指示。
  * @param sessions 工作区内的会话列表
  * @param sessionStatusById 会话运行状态映射

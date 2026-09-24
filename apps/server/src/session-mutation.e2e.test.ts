@@ -1037,6 +1037,50 @@ describe("authoritative session mutation APIs", () => {
     await expect(second.json()).resolves.toEqual({ items: [] });
   });
 
+  test("active-run reads retain an idle parent while a delegated descendant is busy", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.sessions.set("ses_child", {
+      id: "ses_child",
+      title: "Delegated review",
+      parentID: "ses_parent",
+      directory: harness.root,
+      time: { created: Date.now(), updated: Date.now() },
+    });
+    engine.sessions.set("ses_grandchild", {
+      id: "ses_grandchild",
+      title: "Nested review",
+      parentID: "ses_child",
+      directory: harness.root,
+      time: { created: Date.now(), updated: Date.now() },
+    });
+    const started = await fetch(`${runPath(harness.base, "ses_parent")}/start`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({
+        origin: "local-renderer",
+        startCommandCorrelationId: "cmd_delegated",
+        prompt: { parts: [{ type: "text", text: "Delegate work" }] },
+      }),
+    });
+    expect(started.status).toBe(202);
+    const run = (await started.json() as { run: { runId: string } }).run;
+    await fetch(`${runPath(harness.base, "ses_parent")}/${run.runId}/observations`, {
+      method: "POST",
+      headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ status: "running" }),
+    });
+
+    engine.statuses.set("ses_parent", { type: "idle" });
+    engine.statuses.set("ses_grandchild", { type: "busy" });
+    const active = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(active.json()).resolves.toMatchObject({ items: [{ sessionId: "ses_parent" }] });
+
+    engine.statuses.set("ses_grandchild", { type: "idle" });
+    const terminal = await fetch(`${harness.base}/workspace/ws_1/session-runs`, { headers: harness.collaboratorHeaders });
+    await expect(terminal.json()).resolves.toEqual({ items: [] });
+  });
+
   test("engine reload in another workspace is blocked until the authoritative active run clears", async () => {
     const engine = startMockOpencode();
     const harness = await startHarness(engine.server.port);

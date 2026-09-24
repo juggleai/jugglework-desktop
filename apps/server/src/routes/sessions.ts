@@ -250,6 +250,49 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     return "running";
   }
 
+  async function hasActiveDelegatedDescendant(
+    opencode: WorkspaceOpencodeClient,
+    statuses: Record<string, unknown>,
+    parentSessionId: string,
+  ): Promise<boolean> {
+    const parentCache = new Map<string, string | null>();
+    const readParent = async (sessionId: string): Promise<string | null> => {
+      if (parentCache.has(sessionId)) return parentCache.get(sessionId) ?? null;
+      try {
+        const session = unwrapOpencodeResult(
+          await opencode.session.get({ sessionID: sessionId }),
+          `/session/${encodeURIComponent(sessionId)}`,
+        );
+        const parentID = isRecord(session) && typeof session.parentID === "string"
+          ? session.parentID.trim() || null
+          : null;
+        parentCache.set(sessionId, parentID);
+        return parentID;
+      } catch {
+        parentCache.set(sessionId, null);
+        return null;
+      }
+    };
+
+    for (const [candidateId, candidateStatus] of Object.entries(statuses)) {
+      if (candidateId === parentSessionId) continue;
+      const parsed = opencodeTargetSessionStatusSchema.safeParse(candidateStatus);
+      if (!parsed.success || normalizeEngineSessionStatus(parsed.data.type) === "idle") continue;
+
+      const visited = new Set<string>([candidateId]);
+      let cursor = candidateId;
+      for (let depth = 0; depth < 64; depth += 1) {
+        const parentID = await readParent(cursor);
+        if (!parentID) break;
+        if (parentID === parentSessionId) return true;
+        if (visited.has(parentID)) break;
+        visited.add(parentID);
+        cursor = parentID;
+      }
+    }
+    return false;
+  }
+
   async function readEngineSessionStatus(
     workspace: WorkspaceInfo,
     sessionId: string,
@@ -262,12 +305,22 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const targetStatus = Object.prototype.hasOwnProperty.call(statuses, sessionId)
       ? statuses[sessionId]
       : undefined;
-    if (targetStatus === undefined) return "idle";
-    const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
-    if (!parsedStatus.success) {
-      throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+    if (targetStatus !== undefined) {
+      const parsedStatus = opencodeTargetSessionStatusSchema.safeParse(targetStatus);
+      if (!parsedStatus.success) {
+        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid session status");
+      }
+      const normalized = normalizeEngineSessionStatus(parsedStatus.data.type);
+      if (normalized !== "idle") return normalized;
     }
-    return normalizeEngineSessionStatus(parsedStatus.data.type);
+
+    // OpenCode can briefly report the root session idle while a delegated
+    // child (or nested grandchild) is still executing. The root task remains
+    // active in that state: settling it here makes the sidebar claim success
+    // and admits overlapping work into a still-running objective.
+    return await hasActiveDelegatedDescendant(opencode, statuses, sessionId)
+      ? "running"
+      : "idle";
   }
 
   function finalizeClearedRun(workspaceId: string, sessionId: string, runId: string): void {

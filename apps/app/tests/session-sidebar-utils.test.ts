@@ -5,6 +5,7 @@ import {
   buildSessionTreeState,
   flattenSessionRows,
   isActiveWorkSessionStatus,
+  overlayCoordinatorSessionRuns,
   resolveWorkspaceSessionIndicator,
 } from "../src/react-app/domains/session/sidebar/utils";
 
@@ -86,6 +87,15 @@ describe("workspace session indicator", () => {
       { "session-a": "idle", "session-b": "responding" },
       new Set(["session-a"]),
     )).toBe("running");
+  });
+
+  test("keeps a coordinator-owned task running across a transient engine idle", () => {
+    const status = overlayCoordinatorSessionRuns(
+      { "session-a": "idle", "session-b": "idle" },
+      new Set(["session-a"]),
+    );
+    expect(status).toEqual({ "session-a": "running", "session-b": "idle" });
+    expect(resolveWorkspaceSessionIndicator(sessions, status, new Set(["session-a"]))).toBe("running");
   });
 
   test("shows unread after every session becomes idle", () => {

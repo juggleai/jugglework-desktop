@@ -29,6 +29,10 @@ import { mergeVideoGenerationSystemContext } from "@/react-app/domains/session/s
 import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
+  isActiveWorkSessionStatus,
+  overlayCoordinatorSessionRuns,
+} from "@/react-app/domains/session/sidebar/utils";
+import {
   buildJuggleWorkWorkspaceBaseUrl,
   readJuggleWorkServerSettings,
 } from "@/app/lib/jugglework-server";
@@ -138,6 +142,7 @@ import type {
   CreateWorkspaceScreen,
 } from "@/react-app/domains/workspace/types";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { isManagedModelSubmissionReady } from "@/react-app/domains/connections/provider-auth/cloud-provider-readiness";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
   disabledProvidersFromConfig,
@@ -805,6 +810,8 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   const assignSessionToGroup = sessionManagementStore((state) => state.assignGroup);
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
+  const [coordinatorSessionIdsByWorkspace, setCoordinatorSessionIdsByWorkspace] = useState<Record<string, string[]>>({});
+  const [coordinatorProbeSessionIdsByWorkspace, setCoordinatorProbeSessionIdsByWorkspace] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     for (const group of workspaceSessionGroups) {
@@ -816,6 +823,126 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     }
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
+  const activitySessionIdsByWorkspace = useMemo(() => {
+    const next: Record<string, string[]> = {};
+    for (const group of workspaceSessionGroups) {
+      const serverId = workspaceServerId(group.workspace);
+      const workspaceStatuses = {
+        ...(sessionActivityByWorkspaceId[group.workspace.id] ?? {}),
+        ...(serverId ? sessionActivityByWorkspaceId[serverId] ?? {} : {}),
+      };
+      const sessionIds = Object.entries(workspaceStatuses)
+        .filter(([, status]) => isActiveWorkSessionStatus(status))
+        .map(([sessionId]) => sessionId)
+        .sort();
+      if (sessionIds.length > 0) next[group.workspace.id] = sessionIds;
+    }
+    return next;
+  }, [sessionActivityByWorkspaceId, workspaceSessionGroups]);
+  const activityTrackedWorkspaceIds = useMemo(
+    () => Object.keys(activitySessionIdsByWorkspace).sort(),
+    [activitySessionIdsByWorkspace],
+  );
+
+  useEffect(() => {
+    if (activityTrackedWorkspaceIds.length === 0) return;
+    setCoordinatorProbeSessionIdsByWorkspace((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const workspaceId of activityTrackedWorkspaceIds) {
+        const sessionIds = Array.from(new Set([
+          ...(current[workspaceId] ?? []),
+          ...(activitySessionIdsByWorkspace[workspaceId] ?? []),
+        ])).sort();
+        const previous = current[workspaceId] ?? [];
+        if (sessionIds.length === previous.length && sessionIds.every((id, index) => id === previous[index])) {
+          continue;
+        }
+        changed = true;
+        next[workspaceId] = sessionIds;
+      }
+      return changed ? next : current;
+    });
+  }, [activitySessionIdsByWorkspace, activityTrackedWorkspaceIds]);
+
+  const coordinatorTrackedWorkspaceIds = useMemo(() => {
+    const ids = new Set(activityTrackedWorkspaceIds);
+    for (const [workspaceId, sessionIds] of Object.entries(coordinatorProbeSessionIdsByWorkspace)) {
+      if (sessionIds.length > 0) ids.add(workspaceId);
+    }
+    for (const [workspaceId, sessionIds] of Object.entries(coordinatorSessionIdsByWorkspace)) {
+      if (sessionIds.length > 0) ids.add(workspaceId);
+    }
+    return [...ids].sort();
+  }, [activityTrackedWorkspaceIds, coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace]);
+
+  useEffect(() => {
+    if (coordinatorTrackedWorkspaceIds.length === 0) return;
+    let disposed = false;
+    let timer: number | null = null;
+
+    const poll = async () => {
+      const results = await Promise.all(coordinatorTrackedWorkspaceIds.map(async (workspaceId) => {
+        const workspace = workspaces.find((item) => item.id === workspaceId);
+        const endpoint = workspace ? endpointForWorkspace(workspace) : null;
+        if (!endpoint) return { workspaceId, sessionIds: null as string[] | null };
+        try {
+          const response = await endpoint.client.listActiveSessionRuns(endpoint.workspaceId);
+          return {
+            workspaceId,
+            sessionIds: Array.from(new Set(response.items.map((run) => run.sessionId.trim()).filter(Boolean))).sort(),
+          };
+        } catch {
+          // Preserve the last authoritative receipt while the endpoint is
+          // temporarily unreachable. Clearing it here would recreate the
+          // false-completion flash this reconciliation is meant to prevent.
+          return { workspaceId, sessionIds: null as string[] | null };
+        }
+      }));
+      if (disposed) return;
+      const confirmedInactiveWorkspaceIds = new Set<string>();
+      setCoordinatorSessionIdsByWorkspace((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const result of results) {
+          if (result.sessionIds === null) continue;
+          const sessionIds = result.sessionIds;
+          if (sessionIds.length === 0 && !activityTrackedWorkspaceIds.includes(result.workspaceId)) {
+            confirmedInactiveWorkspaceIds.add(result.workspaceId);
+          }
+          const previous = current[result.workspaceId] ?? [];
+          if (
+            previous.length === sessionIds.length &&
+            previous.every((sessionId, index) => sessionId === sessionIds[index])
+          ) continue;
+          changed = true;
+          if (sessionIds.length > 0) next[result.workspaceId] = sessionIds;
+          else delete next[result.workspaceId];
+        }
+        return changed ? next : current;
+      });
+      if (confirmedInactiveWorkspaceIds.size > 0) {
+        setCoordinatorProbeSessionIdsByWorkspace((current) => {
+          const next = { ...current };
+          let changed = false;
+          for (const workspaceId of confirmedInactiveWorkspaceIds) {
+            if (!(workspaceId in next)) continue;
+            delete next[workspaceId];
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      }
+      if (!disposed) timer = window.setTimeout(poll, 750);
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [activityTrackedWorkspaceIds, coordinatorTrackedWorkspaceIds, endpointForWorkspace, workspaces]);
+
   const sidebarSessionStatusById = useMemo(() => {
     const next: Record<string, string> = {};
     for (const group of workspaceSessionGroups) {
@@ -824,13 +951,20 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         ...(sessionActivityByWorkspaceId[group.workspace.id] ?? {}),
         ...(serverId ? sessionActivityByWorkspaceId[serverId] ?? {} : {}),
       };
+      const effectiveStatuses = overlayCoordinatorSessionRuns(
+        workspaceStatuses,
+        new Set([
+          ...(coordinatorProbeSessionIdsByWorkspace[group.workspace.id] ?? []),
+          ...(coordinatorSessionIdsByWorkspace[group.workspace.id] ?? []),
+        ]),
+      );
       for (const session of group.sessions) {
-        const status = workspaceStatuses[session.id];
+        const status = effectiveStatuses[session.id];
         if (status) next[session.id] = status;
       }
     }
     return next;
-  }, [sessionActivityByWorkspaceId, workspaceSessionGroups]);
+  }, [coordinatorProbeSessionIdsByWorkspace, coordinatorSessionIdsByWorkspace, sessionActivityByWorkspaceId, workspaceSessionGroups]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -950,10 +1084,19 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     selectedWorkspaceId,
   ]);
   const selectedModelUnavailable = isModelUnavailable(activeModel);
+  const isManagedModelReady = useCallback((model: ModelRef | null) => (
+    !model ||
+    !isCloudManagedProviderKey(model.providerID) ||
+    isManagedModelSubmissionReady({
+      cloudProviderSyncReady,
+      providerList: providerListQuery.data,
+      model,
+    })
+  ), [cloudProviderSyncReady, providerListQuery.data]);
   const selectedManagedModelPreparing = Boolean(
     activeModel &&
     isCloudManagedProviderKey(activeModel.providerID) &&
-    !cloudProviderSyncReady,
+    !isManagedModelReady(activeModel),
   );
   const selectedModelUnavailableKey = selectedModelUnavailable && activeModel
     ? `${activeModel.providerID}:${activeModel.modelID}`
@@ -966,7 +1109,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
   useEffect(() => {
     if (!selectedWorkspaceId || providerListQuery.isPending) return;
     if (activeModel && !selectedModelUnavailable) return;
-    if (activeModel && isCloudManagedProviderKey(activeModel.providerID) && !cloudProviderSyncReady) return;
+    if (activeModel && !isManagedModelReady(activeModel)) return;
 
     const fallback = resolveConnectedProviderModel(providerListQuery.data, activeModel, {
       isAllowed: ({ provider, model }) => !isDesktopModelBlocked({
@@ -984,6 +1127,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     applyModelSelection,
     checkDesktopRestriction,
     cloudProviderSyncReady,
+    isManagedModelReady,
     providerListQuery.data,
     providerListQuery.isPending,
     selectedModelUnavailable,
@@ -1303,7 +1447,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           taskSubmissionDisabled: Boolean(
             !canAcceptTask ||
             isModelUnavailable(model) ||
-            (model && isCloudManagedProviderKey(model.providerID) && !cloudProviderSyncReady),
+            (model && isCloudManagedProviderKey(model.providerID) && !isManagedModelReady(model)),
           ),
           modelVariant: behavior.modelVariantValue,
           modelVariantLabel: behavior.modelVariantLabel,
@@ -1380,7 +1524,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         if (
           targetModel &&
           isCloudManagedProviderKey(targetModel.providerID) &&
-          !cloudProviderSyncReady
+          !isManagedModelReady(targetModel)
         ) {
           throw new Error(t("app.error_managed_model_preparing"));
         }
@@ -1592,6 +1736,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
     applyModelVariantSelection,
     client,
     describeModel,
+    isManagedModelReady,
     isModelUnavailable,
     modelPicker.compactOpen,
     refreshCloudProviderReadiness,
