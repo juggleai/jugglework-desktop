@@ -19,6 +19,7 @@ import { exportExtensions } from "./extensions-export.js";
 import { deleteSkill, globalSkillDirs, listSkills, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { admitOpencodePrompt } from "./opencode-admission.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
@@ -1375,17 +1376,14 @@ export async function startServer(config: ServerConfig, options: {
     },
     async admit(operation, signal) {
       const workspace = await resolveWorkspaceWithoutBootstrap(config, operation.workspaceId);
-      const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
-        sessionID: operation.sessionId,
+      await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
+        workspaceId: workspace.id,
+        sessionId: operation.sessionId,
+        source: "remote-pending",
         id: operation.id,
         prompt: { text: operation.prompt },
         delivery: operation.mode === "steer" ? "steer" : "queue",
-      }, { signal });
-      const admitted = result.data?.data;
-      const expectedDelivery = operation.mode === "steer" ? "steer" : "queue";
-      if (result.error !== undefined || !admitted || admitted.id !== operation.id || admitted.sessionID !== operation.sessionId || admitted.delivery !== expectedDelivery) {
-        throw new ApiError(502, "opencode_invalid_response", "OpenCode returned invalid queue admission");
-      }
+      }, signal);
     },
   });
 

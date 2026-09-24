@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer } from "./server.js";
+import { opencodeAdmissionId } from "./opencode-admission.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = {
@@ -53,6 +56,8 @@ function startMockOpencode() {
   const failedPrompts = new Set<string>();
   const failedMessageIds = new Set<string>();
   const failedV2Ids = new Set<string>();
+  const v2Admissions = new Map<string, { fingerprint: string; receipt: unknown }>();
+  const v2Statuses = new Map<string, number>();
   const failedShells = new Set<string>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -79,8 +84,16 @@ function startMockOpencode() {
         const sessionId = decodeURIComponent(v2PromptMatch[1]!);
         const body = await request.json() as { id?: string; delivery?: string; prompt?: unknown };
         v2Prompts.push({ sessionId, body, directory: request.headers.get("x-opencode-directory") });
+        if (!body.id?.startsWith("msg_")) return Response.json({ _tag: "InvalidRequestError" }, { status: 400 });
+        const forcedStatus = v2Statuses.get(sessionId);
+        if (forcedStatus) return Response.json({ message: "private upstream prompt must not leak" }, { status: forcedStatus });
         if (body.id && failedV2Ids.delete(body.id)) return Response.json({ name: "PromptFailure" }, { status: 500 });
-        return Response.json({
+        const fingerprint = JSON.stringify([sessionId, body.prompt, body.delivery]);
+        const existing = v2Admissions.get(body.id);
+        if (existing) return existing.fingerprint === fingerprint
+          ? Response.json(existing.receipt)
+          : Response.json({ _tag: "ConflictError" }, { status: 409 });
+        const receipt = {
           data: {
             admittedSeq: v2Prompts.length,
             id: body.id,
@@ -89,7 +102,9 @@ function startMockOpencode() {
             delivery: body.delivery,
             timeCreated: Date.now(),
           },
-        });
+        };
+        v2Admissions.set(body.id, { fingerprint, receipt });
+        return Response.json(receipt);
       }
 
       const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/);
@@ -159,6 +174,8 @@ function startMockOpencode() {
     failedPrompts,
     failedMessageIds,
     failedV2Ids,
+    v2Admissions,
+    v2Statuses,
     failedShells,
   };
 }
@@ -239,7 +256,7 @@ describe("authoritative session mutation APIs", () => {
     await expect(response.json()).resolves.toEqual({ disposition: "enqueued", admissionId: "cli_queue_1" });
     expect(engine.v2Prompts).toEqual([{
       sessionId: "ses_cli_queue",
-      body: { id: "cli_queue_1", delivery: "queue", prompt: { text: "Continue later" } },
+      body: { id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_cli_queue", source: "local-queue", id: "cli_queue_1" }), delivery: "queue", prompt: { text: "Continue later" } },
       directory: harness.root,
     }]);
   });
@@ -271,7 +288,7 @@ describe("authoritative session mutation APIs", () => {
     expect(engine.v2Prompts).toEqual([{
       sessionId: "ses_local_steer",
       body: {
-        id: "queued-draft-1",
+        id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_local_steer", source: "local-steer", id: "queued-draft-1" }),
         delivery: "steer",
         prompt: {
           text: "Change direction",
@@ -286,6 +303,48 @@ describe("authoritative session mutation APIs", () => {
     });
     await expect(pending.json()).resolves.toEqual({ items: [] });
   });
+
+  test("local steer retries keep one engine admission and conflicting edits return 409", async () => {
+    const engine = startMockOpencode();
+    const harness = await startHarness(engine.server.port);
+    engine.statuses.set("ses_retry", { type: "busy" });
+    const send = (text: string) => fetch(`${runPath(harness.base, "ses_retry")}/start`, {
+      method: "POST", headers: harness.collaboratorHeaders,
+      body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "local-steer-retry", whenBusy: "steer", prompt: { parts: [{ type: "text", text }] } }),
+    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await send("Change direction");
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({ disposition: "steered", admissionId: "local-steer-retry" });
+    }
+    const conflict = await send("Different content");
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toMatchObject({ code: "opencode_admission_conflict", details: { status: 409 } });
+    expect(engine.v2Admissions.size).toBe(1);
+    expect(new Set(engine.v2Prompts.map((item) => item.body.id)).size).toBe(1);
+    expect(engine.prompts).toHaveLength(0);
+    expect(engine.aborts).toHaveLength(0);
+  });
+
+  for (const [status, code] of [[400, "opencode_admission_invalid_request"], [404, "opencode_admission_not_found"], [500, "opencode_admission_unconfirmed"]] as const) {
+    test(`local steer preserves safe upstream ${status} diagnostics`, async () => {
+      const engine = startMockOpencode();
+      const harness = await startHarness(engine.server.port);
+      engine.statuses.set("ses_error", { type: "busy" });
+      engine.v2Statuses.set("ses_error", status);
+      const response = await fetch(`${runPath(harness.base, "ses_error")}/start`, {
+        method: "POST", headers: harness.collaboratorHeaders,
+        body: JSON.stringify({ origin: "local-renderer", startCommandCorrelationId: "local-steer-error", whenBusy: "steer", prompt: { parts: [{ type: "text", text: "Private prompt" }] } }),
+      });
+      expect(response.status).toBe(502);
+      const body = await response.json();
+      expect(body).toMatchObject({ code, details: { status, path: "/api/session/ses_error/prompt" } });
+      expect(JSON.stringify(body)).not.toContain("private upstream");
+      expect(JSON.stringify(body)).not.toContain("Private prompt");
+      expect(engine.prompts).toHaveLength(0);
+      expect(engine.aborts).toHaveLength(0);
+    });
+  }
 
   test("busy local-renderer steer rejects unsupported prompt parts without losing the active run", async () => {
     const engine = startMockOpencode();
@@ -332,9 +391,18 @@ describe("authoritative session mutation APIs", () => {
     await waitUntil(() => engine.v2Prompts.length === 1);
     expect(engine.v2Prompts).toEqual([{
       sessionId: "ses_steer",
-      body: { id: result.pendingOperationId, delivery: "steer", prompt: { text: "Change direction" } },
+      body: { id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_steer", source: "remote-pending", id: result.pendingOperationId }), delivery: "steer", prompt: { text: "Change direction" } },
       directory: harness.root,
     }]);
+    const db = new Database(runtimeDbPath(harness.config), { readonly: true });
+    try {
+      await waitUntil(() => {
+        const row = db.query("SELECT state FROM session_pending_operations WHERE id = ?").get(result.pendingOperationId) as { state: string } | null;
+        return row?.state === "admitted";
+      });
+    } finally {
+      db.close();
+    }
   });
 
   test("busy enqueue acknowledges FIFO positions and terminal observations promote one at a time", async () => {
@@ -365,7 +433,7 @@ describe("authoritative session mutation APIs", () => {
       method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
     });
     await waitUntil(() => engine.v2Prompts.length === 1);
-    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: queued[0]!.pendingOperationId, delivery: "queue", prompt: { text: "First" } });
+    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_queue", source: "remote-pending", id: queued[0]!.pendingOperationId }), delivery: "queue", prompt: { text: "First" } });
     const admittedCancel = await fetch(`${harness.base}/workspace/ws_1/sessions/ses_queue/pending/${queued[0]!.pendingOperationId}/cancel`, {
       method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ commandCorrelationId: "cancel_admitted" }),
     });
@@ -377,7 +445,7 @@ describe("authoritative session mutation APIs", () => {
       method: "POST", headers: harness.collaboratorHeaders, body: JSON.stringify({ status: "completed" }),
     });
     await waitUntil(() => engine.v2Prompts.length === 2);
-    expect(engine.v2Prompts[1]?.body).toMatchObject({ id: queued[1]!.pendingOperationId, delivery: "queue", prompt: { text: "Second" } });
+    expect(engine.v2Prompts[1]?.body).toMatchObject({ id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_queue", source: "remote-pending", id: queued[1]!.pendingOperationId }), delivery: "queue", prompt: { text: "Second" } });
   });
 
   test("failed queue promotion rolls back its local reservation", async () => {
@@ -389,7 +457,7 @@ describe("authoritative session mutation APIs", () => {
       body: JSON.stringify({ origin: "remote-control", startCommandCorrelationId: "cmd_fail_queue", whenBusy: "enqueue", prompt: { parts: [{ type: "text", text: "Fail admission" }] } }),
     });
     const queued = await queuedResponse.json() as { pendingOperationId: string };
-    engine.failedV2Ids.add(queued.pendingOperationId);
+    engine.failedV2Ids.add(opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_rollback_queue", source: "remote-pending", id: queued.pendingOperationId }));
     engine.statuses.set("ses_rollback_queue", { type: "idle" });
     await waitUntil(() => engine.v2Prompts.length === 1);
     await waitUntil(async () => {
@@ -499,7 +567,7 @@ describe("authoritative session mutation APIs", () => {
     await waitUntil(() => engine.v2Prompts.length === 1);
     await new Promise((resolve) => setTimeout(resolve, 350));
     expect(engine.v2Prompts).toHaveLength(1);
-    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: queued.pendingOperationId, delivery: "queue", prompt: { text: "After restart" } });
+    expect(engine.v2Prompts[0]?.body).toMatchObject({ id: opencodeAdmissionId({ workspaceId: "ws_1", sessionId: "ses_restart_queue", source: "remote-pending", id: queued.pendingOperationId }), delivery: "queue", prompt: { text: "After restart" } });
   });
 
   test("rejects authoritative engine activity without fabricating a run id", async () => {

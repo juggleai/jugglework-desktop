@@ -260,8 +260,8 @@ export async function createSessionPendingOperationStore(options: {
     };
   }
 
-  // Admission uses the pending operation ID as OpenCode's durable idempotency
-  // identity. A crash may therefore safely return an unfinished claim to the
+  // Admission deterministically maps the pending operation ID into OpenCode's
+  // durable message identity. A crash may safely return an unfinished claim to the
   // pending state and retry the same identity without duplicating execution.
   transaction(sqlite, () => {
     // Every managed-server process starts fail-closed. Electron re-enables

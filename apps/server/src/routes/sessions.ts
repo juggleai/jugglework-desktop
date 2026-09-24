@@ -1,6 +1,7 @@
 import type { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { admitOpencodePrompt } from "../opencode-admission.js";
 import {
   SessionMutationError,
   type SessionMutationCoordinator,
@@ -735,17 +736,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const sessionId = parseRunIdentifier(ctx.params.sessionId, "sessionId");
     const body = parseRunBody(queueSessionBodySchema, await readJsonBody(ctx.request));
-    const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
-      sessionID: sessionId,
+    await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
+      workspaceId: workspace.id,
+      sessionId,
+      source: "local-queue",
       id: body.id,
       prompt: { text: body.prompt },
       delivery: "queue",
     });
-    const admitted = result.data?.data;
-    if (result.error !== undefined || !admitted || admitted.id !== body.id || admitted.sessionID !== sessionId || admitted.delivery !== "queue") {
-      throw new ApiError(502, "opencode_invalid_response", "OpenCode did not accept the queued prompt");
-    }
-    return jsonResponse({ disposition: "enqueued", admissionId: admitted.id }, 202);
+    return jsonResponse({ disposition: "enqueued", admissionId: body.id }, 202);
   });
 
   async function startSessionRun(
@@ -822,23 +821,15 @@ export function registerSessionRoutes(options: RegisterSessionRoutesOptions): vo
           if (!input.startCommandCorrelationId) {
             throw new ApiError(400, "invalid_payload", "Local steer requires an admission id");
           }
-          const result = await createWorkspaceOpencodeClient(config, workspace).v2.session.prompt({
-            sessionID: input.sessionId,
+          await admitOpencodePrompt(createWorkspaceOpencodeClient(config, workspace), {
+            workspaceId: workspace.id,
+            sessionId: input.sessionId,
+            source: "local-steer",
             id: input.startCommandCorrelationId,
             prompt: promptBodyToV2Input(input.prompt),
             delivery: "steer",
           });
-          const admitted = result.data?.data;
-          if (
-            result.error !== undefined ||
-            !admitted ||
-            admitted.id !== input.startCommandCorrelationId ||
-            admitted.sessionID !== input.sessionId ||
-            admitted.delivery !== "steer"
-          ) {
-            throw new ApiError(502, "opencode_invalid_response", "OpenCode did not accept the steer prompt");
-          }
-          return jsonResponse({ disposition: "steered", admissionId: admitted.id }, 202);
+          return jsonResponse({ disposition: "steered", admissionId: input.startCommandCorrelationId }, 202);
         }
         if (input.origin === "remote-control" && input.whenBusy && input.whenBusy !== "reject") {
           const text = isRecord(input.prompt) && Array.isArray(input.prompt.parts) && input.prompt.parts.length === 1 &&

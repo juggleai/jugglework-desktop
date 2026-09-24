@@ -51,3 +51,27 @@ The consolidated runtime SHALL preserve JuggleWork-specific environment names, d
 #### Scenario: Runtime configuration is rebuilt
 - **WHEN** Server writes the engine-visible OpenCode configuration
 - **THEN** Safe Grep, Context Overflow, JuggleWork cloud/tool identifiers, and explicit compaction overrides remain present
+
+### Requirement: Server adapts prompt admission identities to the engine contract
+For V2 prompt admission, Server SHALL separate client correlation IDs from OpenCode message IDs. Non-message IDs SHALL map deterministically to valid `msg_` IDs scoped by workspace, session, and admission source. Existing valid message IDs SHALL retain their legacy wire identity across upgrades. Public admission and pending-operation IDs SHALL remain unchanged.
+
+#### Scenario: Busy local steer carries a renderer correlation ID
+- **WHEN** the renderer submits a steer with a `local-steer-` correlation ID while the engine is busy
+- **THEN** Server sends a valid message ID to OpenCode and verifies the returned ID, session, and delivery before acknowledging the original correlation ID
+
+#### Scenario: V2 admission is retried after an unknown outcome
+- **WHEN** the same queue, busy-steer, or remote pending admission is dispatched again, including after Server restart
+- **THEN** the engine receives the same message ID
+- **AND** changing prompt content does not silently create a new engine identity
+
+#### Scenario: An older caller supplies an already valid message ID
+- **WHEN** a caller retries a `msg_` ID that an older Server forwarded unchanged
+- **THEN** Server preserves that wire ID rather than creating a second admission identity
+
+### Requirement: Admission failures preserve safe diagnostic categories
+Server SHALL distinguish upstream request rejection, authorization failure, missing endpoint or session, and conflict from malformed successful admission responses. Error diagnostics SHALL exclude upstream response bodies, prompts, and credentials. A transport failure SHALL NOT be reported as successful admission.
+
+#### Scenario: Engine rejects an admission request
+- **WHEN** OpenCode returns HTTP 400, 401, 403, 404, or 409 for a V2 admission
+- **THEN** Server returns a corresponding safe error category with the upstream HTTP status and endpoint path
+- **AND** an admission conflict is exposed as HTTP 409 rather than a generic malformed-response error
