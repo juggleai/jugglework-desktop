@@ -60,6 +60,22 @@ export function overlayCoordinatorSessionRuns(
 }
 
 /**
+ * A probe only bridges the gap until the coordinator has answered. Once an
+ * authoritative response arrives, a session absent from that response must
+ * stop contributing a running indicator even when another session in the
+ * same workspace is still active. Transport failures keep the probes intact.
+ */
+export function reconcileCoordinatorProbeSessionIds(
+  probeSessionIds: readonly string[],
+  authoritativeSessionIds: readonly string[] | null,
+): string[] {
+  if (authoritativeSessionIds === null) return [...probeSessionIds];
+  if (probeSessionIds.length === 0 || authoritativeSessionIds.length === 0) return [];
+  const activeSessionIds = new Set(authoritativeSessionIds);
+  return probeSessionIds.filter((sessionId) => activeSessionIds.has(sessionId));
+}
+
+/**
  * 汇总工作区内全部会话的状态指示。
  * @param sessions 工作区内的会话列表
  * @param sessionStatusById 会话运行状态映射

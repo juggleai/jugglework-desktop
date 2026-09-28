@@ -31,6 +31,7 @@ import { useSessionManagementStore as sessionManagementStore } from "@/react-app
 import {
   isActiveWorkSessionStatus,
   overlayCoordinatorSessionRuns,
+  reconcileCoordinatorProbeSessionIds,
 } from "@/react-app/domains/session/sidebar/utils";
 import {
   buildJuggleWorkWorkspaceBaseUrl,
@@ -900,16 +901,12 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
       }));
       if (disposed) return;
-      const confirmedInactiveWorkspaceIds = new Set<string>();
       setCoordinatorSessionIdsByWorkspace((current) => {
         let changed = false;
         const next = { ...current };
         for (const result of results) {
           if (result.sessionIds === null) continue;
           const sessionIds = result.sessionIds;
-          if (sessionIds.length === 0 && !activityTrackedWorkspaceIds.includes(result.workspaceId)) {
-            confirmedInactiveWorkspaceIds.add(result.workspaceId);
-          }
           const previous = current[result.workspaceId] ?? [];
           if (
             previous.length === sessionIds.length &&
@@ -921,18 +918,23 @@ export function SessionRoute(props: SessionRouteProps = {}) {
         }
         return changed ? next : current;
       });
-      if (confirmedInactiveWorkspaceIds.size > 0) {
-        setCoordinatorProbeSessionIdsByWorkspace((current) => {
-          const next = { ...current };
-          let changed = false;
-          for (const workspaceId of confirmedInactiveWorkspaceIds) {
-            if (!(workspaceId in next)) continue;
-            delete next[workspaceId];
-            changed = true;
-          }
-          return changed ? next : current;
-        });
-      }
+      setCoordinatorProbeSessionIdsByWorkspace((current) => {
+        const next = { ...current };
+        let changed = false;
+        for (const result of results) {
+          if (result.sessionIds === null) continue;
+          const previous = current[result.workspaceId] ?? [];
+          const reconciled = reconcileCoordinatorProbeSessionIds(previous, result.sessionIds);
+          if (
+            previous.length === reconciled.length &&
+            previous.every((sessionId, index) => sessionId === reconciled[index])
+          ) continue;
+          changed = true;
+          if (reconciled.length > 0) next[result.workspaceId] = reconciled;
+          else delete next[result.workspaceId];
+        }
+        return changed ? next : current;
+      });
       if (!disposed) timer = window.setTimeout(poll, 750);
     };
 
@@ -941,7 +943,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
       disposed = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [activityTrackedWorkspaceIds, coordinatorTrackedWorkspaceIds, endpointForWorkspace, workspaces]);
+  }, [coordinatorTrackedWorkspaceIds, endpointForWorkspace, workspaces]);
 
   const sidebarSessionStatusById = useMemo(() => {
     const next: Record<string, string> = {};
