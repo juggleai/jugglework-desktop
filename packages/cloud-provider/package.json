@@ -16,6 +16,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test"
   },
+  "dependencies": {
+    "@jugglework/types": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "^5.6.3"
   }

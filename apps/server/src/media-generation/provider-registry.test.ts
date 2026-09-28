@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { openAiCompatibleVideoAdapters } from "./provider-registry.js";
 
-const env = { list: async () => [{ key: "VIDEO_KEY", value: "secret" }] } as never;
-
 describe("video provider registry", () => {
-  test("creates model-scoped OpenAI and Ark V3 adapters for one provider", () => {
-    const adapters = openAiCompatibleVideoAdapters({
+  test("creates model-scoped OpenAI and Ark V3 adapters for one provider", async () => {
+    const adapters = await openAiCompatibleVideoAdapters({
       provider: {
         mixed: {
           npm: "@ai-sdk/openai-compatible",
@@ -19,16 +17,18 @@ describe("video provider registry", () => {
           },
         },
       },
-    } as never, env);
+    } as never, "ws", async () => "secret");
 
     expect(adapters.map((adapter) => adapter.id)).toEqual([
+      "openai-compatible:mixed",
       "openai-compatible:mixed",
       "volcengine-ark-v3:mixed",
     ]);
     expect(adapters[0]?.matches({ providerID: "mixed", modelID: "openai" })).toBe(true);
-    expect(adapters[0]?.matches({ providerID: "mixed", modelID: "legacyDefault" })).toBe(true);
+    expect(adapters[1]?.matches({ providerID: "mixed", modelID: "legacyDefault" })).toBe(true);
     expect(adapters[0]?.matches({ providerID: "mixed", modelID: "ark" })).toBe(false);
-    expect(adapters[1]?.matches({ providerID: "mixed", modelID: "ark" })).toBe(true);
+    expect(adapters[2]?.matches({ providerID: "mixed", modelID: "ark" })).toBe(true);
     expect(adapters.some((adapter) => adapter.matches({ providerID: "mixed", modelID: "chat" }))).toBe(false);
+    expect(adapters[0]?.binding).toMatchObject({ protocol: "openai", origin: "https://api.example.test" });
   });
 });

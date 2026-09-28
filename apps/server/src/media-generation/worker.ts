@@ -1,4 +1,4 @@
-import { publishVideoArtifact } from "./artifact-publisher.js";
+import { existingVideoArtifact, publishVideoArtifact } from "./artifact-publisher.js";
 import { MediaGenerationRepository } from "./repository.js";
 import type { VideoGenerationAdapter, VideoGenerationJob } from "./types.js";
 
@@ -9,10 +9,12 @@ export class MediaGenerationWorker {
   private readonly controllers = new Set<AbortController>();
   constructor(private readonly options: {
     repository: MediaGenerationRepository;
-    adapters: VideoGenerationAdapter[];
+    resolveAdapters: (workspaceId: string) => Promise<VideoGenerationAdapter[]>;
     workspaceRoot: (workspaceId: string) => string | null;
     pollIntervalMs?: number;
     maxOutputBytes?: number;
+    maxMissingAdapterAttempts?: number;
+    missingAdapterBackoff?: (attempts: number) => number;
   }) {}
   start() { if (!this.stopped) return; this.stopped = false; this.schedule(0); }
   wake() { if (!this.stopped) this.schedule(0); }
@@ -35,8 +37,42 @@ export class MediaGenerationWorker {
     }
   }
   private async reconcile(job: VideoGenerationJob) {
-    const adapter = this.options.adapters.find((candidate) => candidate.matches(job.model));
-    if (!adapter || !job.providerJobId) return;
+    if (job.status === "downloading") {
+      const root = this.options.workspaceRoot(job.workspaceId);
+      if (!root) throw new Error("video_workspace_not_found");
+      const artifact = await existingVideoArtifact({ workspaceRoot: root, jobId: job.id, maxBytes: this.options.maxOutputBytes ?? 512 * 1024 * 1024 });
+      if (artifact) {
+        this.options.repository.transition(job.id, job.revision, "completed", { artifact });
+        return;
+      }
+    }
+    const adapters = await this.options.resolveAdapters(job.workspaceId);
+    const adapter = adapters.find((candidate) => candidate.matches(job.model) && sameBinding(candidate.binding, job.adapterBinding));
+    if (!job.providerJobId) {
+      if (job.status === "submitting") {
+        if (adapter?.reconcileSubmission) {
+          try {
+            const reconciled = await adapter.reconcileSubmission(job.clientRequestId, new AbortController().signal);
+            if (reconciled) {
+              this.options.repository.transition(job.id, job.revision, "submitted", { providerJobId: reconciled.providerJobId, adapterBinding: adapter.binding, nextPollAt: Date.now() });
+              return;
+            }
+          } catch {
+            // Unknown remains safer than treating a possibly accepted paid request as failed.
+          }
+        }
+        this.options.repository.transition(job.id, job.revision, "submission_unknown", {
+          error: { code: "video_submission_outcome_unknown", message: "The provider submission outcome could not be reconciled safely.", retryable: false },
+        });
+        return;
+      }
+      this.deferOrFailUnavailable(job, "video_provider_job_unavailable", "The submitted provider job identity is unavailable.");
+      return;
+    }
+    if (!adapter) {
+      this.deferOrFailUnavailable(job, "video_adapter_binding_unavailable", "The submitted provider adapter is no longer available for this workspace.");
+      return;
+    }
     const controller = new AbortController();
     this.controllers.add(controller);
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -70,11 +106,28 @@ export class MediaGenerationWorker {
       }
     } catch (error) {
       const latest = this.options.repository.get(job.id);
-      if (latest && !["completed", "failed", "cancelled"].includes(latest.status)) {
+      if (latest && !["completed", "failed", "cancelled", "submission_unknown"].includes(latest.status)) {
         this.options.repository.transition(latest.id, latest.revision, "failed", { error: { code: "video_reconciliation_failed", message: error instanceof Error ? error.message.slice(0, 500) : "Video reconciliation failed.", retryable: true } });
       }
     } finally { clearTimeout(timeout); this.controllers.delete(controller); }
   }
+
+  private deferOrFailUnavailable(job: VideoGenerationJob, code: string, message: string) {
+    const attempts = job.pollAttempts + 1;
+    if (attempts >= (this.options.maxMissingAdapterAttempts ?? 5)) {
+      this.options.repository.transition(job.id, job.revision, "failed", { error: { code, message, retryable: false } });
+      return;
+    }
+    this.options.repository.transition(job.id, job.revision, job.status, {
+      incrementPollAttempts: true,
+      nextPollAt: Date.now() + (this.options.missingAdapterBackoff ?? backoff)(job.pollAttempts),
+    });
+  }
 }
 
 function backoff(attempts: number) { return Math.min(30_000, 2_000 * 2 ** Math.min(attempts, 4)); }
+
+function sameBinding(left: VideoGenerationAdapter["binding"], right: VideoGenerationJob["adapterBinding"]): boolean {
+  return Boolean(right) && left.adapterId === right!.adapterId && left.protocol === right!.protocol && left.origin === right!.origin &&
+    left.configFingerprint === right!.configFingerprint && left.cloudProviderId === right!.cloudProviderId && left.organizationId === right!.organizationId;
+}

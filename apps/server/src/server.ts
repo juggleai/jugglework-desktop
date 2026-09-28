@@ -97,10 +97,12 @@ import {
 import { AutomationRepository } from "./automation/repository.js";
 import { SessionPermissionModeStore } from "./session-permission-mode-store.js";
 import { MediaGenerationRepository } from "./media-generation/repository.js";
-import { MediaGenerationService } from "./media-generation/service.js";
+import { filterVideoSubmissionEligibleModels, MediaGenerationService, videoSubmissionAllowed } from "./media-generation/service.js";
 import { MediaGenerationWorker } from "./media-generation/worker.js";
-import { credentialReadiness, openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
+import { publicVideoGenerationJob } from "./media-generation/types.js";
+import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
 import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
+import { createWorkspaceProviderCredentialResolver } from "./provider-credential-resolver.js";
 import {
   RootSerialization,
   SessionPermissionBroker,
@@ -1051,6 +1053,7 @@ export async function startServer(config: ServerConfig, options: {
     log: (event, fields) => logger.log("info", event, fields),
   });
   const videoSubmissionEnabled = /^(1|true|yes)$/i.test(process.env.JUGGLEWORK_VIDEO_GENERATION_ENABLED?.trim() ?? "");
+  const mediaCredentials = createWorkspaceProviderCredentialResolver({ config, env });
   const resolveMediaWorkspace = (context: Record<string, unknown>) => {
     const workspaceId = typeof context.workspaceId === "string" ? context.workspaceId.trim() : typeof context.workspaceID === "string" ? context.workspaceID.trim() : "";
     const directory = typeof context.directory === "string" ? resolve(context.directory) : typeof context.worktree === "string" ? resolve(context.worktree) : "";
@@ -1068,8 +1071,12 @@ export async function startServer(config: ServerConfig, options: {
       { allowInvalid: true, maxBytes: 1024 * 1024, regularFileOnly: true },
     );
     const runtimeConfig = mergeOpencodeConfigs(globalConfig, runtimePatch);
-    const adapters = openAiCompatibleVideoAdapters(runtimeConfig, env);
-    const credentials = await credentialReadiness(env);
+    const adapters = await openAiCompatibleVideoAdapters(
+      runtimeConfig,
+      workspace.id,
+      (input) => mediaCredentials.resolve(input),
+      (input) => mediaCredentials.organizationProviderProvenance(input),
+    );
     const providerRecords = ensurePlainObject(runtimeConfig.provider);
     const catalog: ProviderCatalogSnapshot = {
       connected: Object.keys(providerRecords),
@@ -1078,42 +1085,71 @@ export async function startServer(config: ServerConfig, options: {
         return { id, name: typeof record.name === "string" ? record.name : id, models: ensurePlainObject(record.models) };
       }),
     };
-    const credentialReady = (ref: { providerID: string }) => {
+    const credentialReady = async (ref: { providerID: string; modelID: string }) => {
       const provider = ensurePlainObject(providerRecords[ref.providerID]);
       const keys = Array.isArray(provider.env) ? provider.env.filter((key): key is string => typeof key === "string") : [];
-      return keys.some((key) => credentials.has(key));
+      return Boolean(await mediaCredentials.resolve({ workspaceId: workspace.id, providerID: ref.providerID, modelID: ref.modelID, declaredEnvKeys: keys }));
     };
-    return { adapters, catalog, credentialReady };
+    return { adapters, catalog, credentialReady, providerRecords };
   };
-  const workerVideoAdapters = (await Promise.all(config.workspaces.map(async (workspace) =>
-    (await resolveMediaRuntime(workspace)).adapters))).flat();
   const mediaGenerationWorker = new MediaGenerationWorker({
     repository: mediaGenerationRepository,
-    adapters: workerVideoAdapters,
+    resolveAdapters: async (workspaceId) => {
+      const workspace = config.workspaces.find((candidate) => candidate.id === workspaceId);
+      return workspace ? (await resolveMediaRuntime(workspace)).adapters : [];
+    },
     workspaceRoot: (workspaceId) => config.workspaces.find((workspace) => workspace.id === workspaceId)?.path ?? null,
   });
+  const submissionEligibleModels = (workspaceId: string, models: Awaited<ReturnType<typeof listReadyVideoModels>>) =>
+    filterVideoSubmissionEligibleModels({
+      models,
+      explicitFlagEnabled: videoSubmissionEnabled,
+      isOrganizationImportedModel: async (model) => {
+        const runtime = await resolveMediaRuntime(config.workspaces.find((workspace) => workspace.id === workspaceId)!);
+        const provider = ensurePlainObject(runtime.providerRecords[model.providerID]);
+        const declaredEnvKeys = Array.isArray(provider.env) ? provider.env.filter((key): key is string => typeof key === "string") : [];
+        return Boolean(await mediaCredentials.organizationProviderProvenance({ workspaceId, ...model, declaredEnvKeys, providerConfig: provider }));
+      },
+    });
   const mediaGenerationRuntime = {
     async status(context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      return { submissionEnabled: videoSubmissionEnabled, models: discoverVideoModels({ catalog: runtime.catalog, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady }) };
+      const models = await discoverVideoModels({ catalog: runtime.catalog, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const eligible = await submissionEligibleModels(workspace.id, models.filter((model) => model.availability === "ready"));
+      return { submissionEnabled: eligible.length > 0, models };
     },
     async listModels(mode: import("@jugglework/types/media-generation").VideoGenerationMode | undefined, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const models = listReadyVideoModels({ catalog: runtime.catalog, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const ready = await listReadyVideoModels({ catalog: runtime.catalog, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const models = await submissionEligibleModels(workspace.id, ready);
       return models.length || !mode ? { ok: true, models } : noVideoModelResult(mode);
     },
     async generate(input: { prompt: string; mode: import("@jugglework/types/media-generation").VideoGenerationMode; model?: { providerID: string; modelID: string }; sourceImagePath?: string; durationSeconds?: number; resolution?: string; clientRequestId: string }, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const ready = listReadyVideoModels({ catalog: runtime.catalog, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const discovered = await listReadyVideoModels({ catalog: runtime.catalog, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const ready = await submissionEligibleModels(workspace.id, discovered);
       const selected = input.model ? ready.find((item) => item.ref.providerID === input.model?.providerID && item.ref.modelID === input.model?.modelID) : ready[0];
       if (!selected) return noVideoModelResult(input.mode);
+      const selectedProvider = ensurePlainObject(runtime.providerRecords[selected.ref.providerID]);
+      const selectedEnvKeys = Array.isArray(selectedProvider.env)
+        ? selectedProvider.env.filter((key): key is string => typeof key === "string")
+        : [];
+      const submissionEnabled = videoSubmissionAllowed({
+        explicitFlagEnabled: videoSubmissionEnabled,
+        organizationImportedModel: Boolean(await mediaCredentials.organizationProviderProvenance({
+          workspaceId: workspace.id,
+          ...selected.ref,
+          declaredEnvKeys: selectedEnvKeys,
+          providerConfig: selectedProvider,
+        })),
+      });
       const service = new MediaGenerationService({
         repository: mediaGenerationRepository,
         adapters: runtime.adapters,
-        submissionEnabled: videoSubmissionEnabled,
+        submissionEnabled,
         audit: (event) => { void recordAudit(workspace.path, {
           id: event.jobId,
           workspaceId: event.workspaceId,
@@ -1130,19 +1166,19 @@ export async function startServer(config: ServerConfig, options: {
           ? context.sessionId
           : undefined;
       const job = await service.submit({ workspace, sessionId, clientRequestId: input.clientRequestId, prompt: input.prompt, mode: input.mode, model: selected.ref, ...(input.sourceImagePath ? { sourceImagePath: input.sourceImagePath } : {}), options: { ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}), ...(input.resolution ? { resolution: input.resolution } : {}) } });
-      return { job };
+      return { job: publicVideoGenerationJob(job) };
     },
     async getJob(jobId: string, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const job = mediaGenerationRepository.get(jobId);
       if (!job || job.workspaceId !== workspace.id) throw new ApiError(404, "video_job_not_found", "Video job not found");
-      return { job };
+      return { job: publicVideoGenerationJob(job) };
     },
     async cancelJob(jobId: string, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const job = mediaGenerationRepository.get(jobId);
       if (!job || job.workspaceId !== workspace.id) throw new ApiError(404, "video_job_not_found", "Video job not found");
-      return { job: mediaGenerationRepository.requestCancellation(jobId) };
+      return { job: publicVideoGenerationJob(mediaGenerationRepository.requestCancellation(jobId)) };
     },
   };
   const routes = createRoutes(
@@ -2174,6 +2210,7 @@ function createRoutes(
     ensureWritable,
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    env,
   });
 
   registerSessionRoutes({
@@ -2879,6 +2916,49 @@ function createRoutes(
     const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
     const items = await readAuditEntries(workspace.path, workspace.id, limit);
     return jsonResponse({ items });
+  });
+
+  // Cloud provider reconciliation is initiated by the local CLI host, not by
+  // an interactive client. Keep this authority separate from the general
+  // config PATCH, which must continue to require user approval.
+  addRoute(routes, "PATCH", "/workspace/:id/cloud-provider-config", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const provider = body.provider;
+    if (Object.keys(body).length !== 1 || !isRecord(provider) || !Object.keys(provider).length) {
+      throw new ApiError(400, "invalid_cloud_provider_config", "Cloud provider config patch is invalid");
+    }
+    const workspaceConfig = await readJuggleWorkWorkspaceConfig(config, workspace.id);
+    const imported = isRecord(workspaceConfig.cloudImports) && isRecord(workspaceConfig.cloudImports.providers)
+      ? Object.values(workspaceConfig.cloudImports.providers).filter(isRecord)
+      : [];
+    const ownedProviderIds = new Set(imported.flatMap((item) => typeof item.providerId === "string" ? [item.providerId] : []));
+    if (Object.entries(provider).some(([id, value]) => value === null
+      ? !/^[a-z0-9][a-z0-9._-]{0,127}$/i.test(id)
+      : !/^lpr_[a-z0-9._-]{1,124}$/i.test(id) || !isRecord(value))) {
+      throw new ApiError(400, "invalid_cloud_provider_config", "Cloud provider config patch is invalid");
+    }
+    if (Object.entries(provider).some(([id, value]) => value === null && !ownedProviderIds.has(id))) {
+      throw new ApiError(409, "cloud_provider_delete_unowned", "Cloud provider deletion requires an exact owning import baseline");
+    }
+    const result = await writeRuntimeOpencodeConfig(config, workspace.id, (current) => ({
+      ...current,
+      provider: mergeRuntimeProviderUpdate(current.provider, provider),
+    }));
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "cloud-provider-config.patch",
+      target: juggleworkConfigPath(workspace.path),
+      summary: "Patched Cloud-managed provider config",
+      timestamp: Date.now(),
+    });
+    if (result.changed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(juggleworkConfigPath(workspace.path)));
+    }
+    return jsonResponse({ updatedAt: Date.now() });
   });
 
   addRoute(routes, "PATCH", "/workspace/:id/config", "client", async (ctx) => {

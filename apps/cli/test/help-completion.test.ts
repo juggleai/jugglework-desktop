@@ -6,6 +6,7 @@ import { commandHelp, completionScript } from "../src/help.js";
 test("hierarchical help snapshots expose only implemented command contexts", () => {
   assert.equal(commandHelp(["org"]), `jugglework - Manage the selected Cloud organization.\n\nUsage:\n  jugglework org <command>\n\nCommands:\n  list  List account organizations\n  use   Select an organization by exact ID or slug\n`);
   assert.equal(commandHelp(["doctor"]), `jugglework - Run redacted diagnostics without starting an embedded runtime.\n\nUsage:\n  jugglework doctor [--json] [--server <url> --token <token>]\n`);
+  assert.match(commandHelp(["logout"]), /return to login in an interactive terminal/);
   assert.match(commandHelp(), /doctor\s+Run redacted installation/);
   assert.match(commandHelp(), /session\s+Manage the persisted session lifecycle/);
   assert.match(commandHelp(["session"]), /delete\s+Permanently delete a session/);

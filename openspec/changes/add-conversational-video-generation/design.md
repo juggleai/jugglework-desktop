@@ -54,9 +54,14 @@ The canonical lifecycle is:
 queued -> submitting -> submitted -> running -> downloading -> completed
                        \-------------------------------> failed
 queued/submitting/submitted/running -> cancel_requested -> cancelled
+submitting -> submission_unknown
 ```
 
 A background reconciler will poll active jobs with bounded backoff and recover incomplete jobs on startup. Adapters may translate verified webhook callbacks to the same state transitions in future. State updates and completion handling must be idempotent.
+
+Only an explicit provider rejection is an ordinary failed submission. Transport loss, abort, process interruption, and malformed acceptance responses are ambiguous after a paid request may have reached the provider. An adapter that supports lookup by idempotency key reconciles first; otherwise the job enters terminal attention state `submission_unknown`. Retrying the exact client request identity returns that job and never submits again automatically. Restart recovery of `downloading` also recognizes a valid deterministic artifact already on disk before reacquiring provider output.
+
+The reconciler resolves the effective workspace runtime and adapter set for each pass. Submission persists the adapter protocol, API origin, effective provider-config fingerprint, cloud row, and organization. Polling requires an exact match to that immutable binding, so credential values may rotate but provider ownership or origin cannot be redirected after acceptance. A missing binding retries with bounded backoff and then fails terminally instead of wedging forever.
 
 **Alternative considered:** hold the original extension HTTP request until the video completes. Rejected because provider work can exceed normal tool/request timeouts, cancellation is unreliable, and server restart loses progress.
 
@@ -65,6 +70,8 @@ A background reconciler will poll active jobs with bounded backoff and recover i
 Each adapter will implement model matching, submit, status, optional cancel, and result acquisition. Provider-specific duration, aspect ratio, resolution, image upload, and error semantics are normalized at this boundary. The first adapter proves text-to-video; image-to-video is enabled only when both metadata and adapter behavior support it. A second adapter should be added before declaring the contract stable.
 
 The adapter receives a resolved credential reference from the existing provider/environment infrastructure, never from the renderer request. It returns sanitized statuses and either a guarded result stream or a download descriptor that the service validates.
+
+Cloud gateway credentials require an additional Desktop boundary. Only the exact versioned `JUGGLEWORK_GATEWAY_KEY_*` alias is virtualized; other `JUGGLEWORK_*` keys are not gateway aliases, and the allowed `JUGGLEWORK_API_KEY` compatibility path remains available to its existing consumers. Mirrors use an injective encoding of workspace, organization, and cloud row and carry matching secure-store ownership metadata. A current baseline must match the runtime provider, model, organization, effective provider-config fingerprint, mirror key, and mirror owner before media can read it. Legacy normalized mirrors may be removed during an exact baseline-owned migration but are never trusted for media resolution or broad process injection.
 
 **Alternative considered:** a single switch statement in the extension action. Rejected because provider polling and result acquisition differences would quickly couple UI, validation, and lifecycle logic.
 
@@ -95,6 +102,10 @@ The transcript will render a video job/artifact component with status, cancellat
 ### 8. Enforce idempotency, redaction, and workspace policies centrally
 
 The generation service will deduplicate accepted requests using a client request identity scoped to workspace/session. It will cap concurrent jobs, duration, resolution, and output bytes using workspace policy before submission. Normal logs and job records exclude secrets, authorization headers, signed URLs, and base64 media. Provider safety refusals and rate limits become stable sanitized error codes with retryability metadata.
+
+Idempotency lookup precedes concurrency enforcement so a retry can always retrieve its existing job. Provider-derived errors are redacted against the exact resolved credential, regardless of credential format, before they can be logged, returned, or persisted. Public image status/list descriptors are built from an explicit allowlist; private provider config and config fingerprints never cross that boundary.
+
+Organization switching is fail closed. Mirror, provider-auth, runtime-provider, and Cloud MCP cleanup are attempted independently, unresolved import baselines are retained, and activation/import for the next organization is blocked until every cleanup category succeeds.
 
 This control remains server-side so agent and direct UI entry points behave identically.
 
@@ -168,6 +179,8 @@ Completed cards load the workspace-confined artifact through the authenticated f
 7. Add workspace/session defaults and then a second adapter before removing the feature flag.
 
 Rollback disables new generation entry points and worker submission while leaving status/read access available for already submitted jobs. Active jobs are reconciled to a terminal state and completed artifacts remain ordinary workspace files. The additive database schema is retained during rollback to avoid losing provider job identities.
+
+Packaged builds apply submission eligibility per selected model. A ready model backed by a current organization import baseline can submit without `JUGGLEWORK_VIDEO_GENERATION_ENABLED`; a local/custom model still requires that explicit process flag. Discovery used for selectable models applies the same per-model rule, preventing an eligible organization model from accidentally exposing an ineligible local model. Reconciliation remains available regardless of submission eligibility.
 
 ## Open Questions
 

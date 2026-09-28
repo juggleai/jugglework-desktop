@@ -38,14 +38,14 @@ async function createWorkspaceRoot() {
   return root;
 }
 
-async function startJuggleWorkServer(workspaceRoot: string) {
+async function startJuggleWorkServer(workspaceRoot: string, approvalMode: "auto" | "manual" = "auto") {
   const config: ServerConfig = {
     host: "127.0.0.1",
     port: 0,
     configPath: join(workspaceRoot, "server.json"),
     token: "owt_test_token",
     hostToken: "owt_host_token",
-    approval: { mode: "auto", timeoutMs: 1000 },
+    approval: { mode: approvalMode, timeoutMs: 100 },
     corsOrigins: ["*"],
     workspaces: [{ id: "ws_1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }],
     authorizedRoots: [workspaceRoot],
@@ -58,7 +58,7 @@ async function startJuggleWorkServer(workspaceRoot: string) {
   };
   const server = await startServer(config);
   stops.push(() => server.stop());
-  return { base: `http://127.0.0.1:${server.port}`, token: config.token };
+  return { base: `http://127.0.0.1:${server.port}`, token: config.token, hostToken: config.hostToken, config };
 }
 
 async function patchConfig(base: string, token: string, payload: Record<string, unknown>): Promise<void> {
@@ -85,6 +85,48 @@ async function sleep(ms: number): Promise<void> {
 }
 
 describe("workspace config patch reload events", () => {
+  test("host-authorized Cloud provider patches bypass approval without weakening general config patches", async () => {
+    const root = await createWorkspaceRoot();
+    const { base, token, hostToken, config } = await startJuggleWorkServer(root, "manual");
+    const provider = { lpr_example: { name: "Example", models: { test: { name: "Test" } } } };
+    const url = `${base}/workspace/ws_1/cloud-provider-config`;
+    const request = (headers: Record<string, string>, body: unknown) => fetch(url, {
+      method: "PATCH", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body),
+    });
+
+    expect((await request(auth(token), { provider })).status).toBe(401);
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider: { other: {} } })).status).toBe(400);
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider, opencode: { model: "evil" } })).status).toBe(400);
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider })).status).toBe(200);
+    expect((await readRuntimeOpencodeConfig(config, "ws_1")).provider).toEqual(provider);
+    expect(await readEvents(base, token)).toHaveLength(1);
+
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider })).status).toBe(200);
+    expect(await readEvents(base, token)).toHaveLength(1);
+
+    const general = await fetch(`${base}/workspace/ws_1/config`, {
+      method: "PATCH", headers: auth(token), body: JSON.stringify({ opencode: { default_agent: "build" } }),
+    });
+    expect(general.status).toBe(403);
+    expect((await readRuntimeOpencodeConfig(config, "ws_1")).default_agent).toBeUndefined();
+
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider: { lpr_example: null } })).status).toBe(409);
+    const baseline = await fetch(`${base}/workspace/ws_1/cloud-provider-imports/lpr_example`, {
+      method: "PUT", headers: { "x-jugglework-host-token": hostToken, "content-type": "application/json" },
+      body: JSON.stringify({ item: { cloudProviderId: "lpr_example", providerId: "lpr_example" } }),
+    });
+    expect(baseline.status).toBe(200);
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider: { lpr_example: null } })).status).toBe(200);
+    expect((await readRuntimeOpencodeConfig(config, "ws_1")).provider).toBeUndefined();
+
+    const legacyBaseline = await fetch(`${base}/workspace/ws_1/cloud-provider-imports/lpr_legacy`, {
+      method: "PUT", headers: { "x-jugglework-host-token": hostToken, "content-type": "application/json" },
+      body: JSON.stringify({ item: { cloudProviderId: "lpr_legacy", providerId: "JuggleRouter" } }),
+    });
+    expect(legacyBaseline.status).toBe(200);
+    expect((await request({ "x-jugglework-host-token": hostToken }, { provider: { JuggleRouter: null } })).status).toBe(200);
+  });
+
   test("identical runtime provider patches do not emit another config reload event", async () => {
     const root = await createWorkspaceRoot();
     const { base, token } = await startJuggleWorkServer(root);

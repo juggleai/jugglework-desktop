@@ -158,6 +158,14 @@ export class JuggleWorkApiClient {
   removeUserEnvironment(key: string) {
     return this.request<{ ok: true }>(`/env/${encodeURIComponent(key)}`, { method: "DELETE" });
   }
+  setCloudProviderMirror(workspaceId: string, cloudProviderId: string, organizationId: string, value: string) {
+    return this.request<{ ok: true; mirror: { workspaceId: string; organizationId: string; cloudProviderId: string; key: string } }>(`/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`, {
+      method: "PUT", body: JSON.stringify({ organizationId, value }),
+    });
+  }
+  removeCloudProviderMirror(workspaceId: string, cloudProviderId: string) {
+    return this.request<{ ok: true }>(`/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`, { method: "DELETE" });
+  }
   setProviderAuth(workspaceId: string, providerId: string, key: string) {
     return this.request<{ ok: true }>(`/workspace/${encodeURIComponent(workspaceId)}/provider-auth/${encodeURIComponent(providerId)}`, {
       method: "PUT", body: JSON.stringify({ type: "api", key }),
@@ -169,6 +177,11 @@ export class JuggleWorkApiClient {
   patchWorkspaceConfig(workspaceId: string, payload: { opencode?: JsonRecord; jugglework?: JsonRecord }) {
     return this.request<{ updatedAt: number }>(`/workspace/${encodeURIComponent(workspaceId)}/config`, {
       method: "PATCH", body: JSON.stringify(payload),
+    });
+  }
+  patchCloudProviderConfig(workspaceId: string, provider: JsonRecord) {
+    return this.request<{ updatedAt: number }>(`/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-config`, {
+      method: "PATCH", body: JSON.stringify({ provider }),
     });
   }
   reloadEngine(workspaceId: string) {
@@ -201,7 +214,7 @@ export class JuggleWorkApiClient {
     });
   }
   runtimeConfig(workspaceId: string) { return this.request<JsonRecord>(`/workspace/${encodeURIComponent(workspaceId)}/runtime-config`); }
-  providerList(workspaceId: string) { return this.request<RuntimeProviderList>(`/w/${encodeURIComponent(workspaceId)}/provider`); }
+  providerList(workspaceId: string) { return this.request<RuntimeProviderList>(`/workspace/${encodeURIComponent(workspaceId)}/opencode/provider`); }
   workspaceConfig(workspaceId: string) { return this.request<{ opencode?: JsonRecord; jugglework?: JsonRecord }>(`/workspace/${encodeURIComponent(workspaceId)}/config`); }
   listSessions(workspaceId: string, limit = 20) {
     return this.request<{ items: SessionInfo[] }>(`/workspace/${encodeURIComponent(workspaceId)}/sessions?roots=false&limit=${limit}`);

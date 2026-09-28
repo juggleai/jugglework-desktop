@@ -34,6 +34,19 @@ The image-generation extension SHALL discover configured ready image models and 
 - **WHEN** a member configures an image model in the desktop global `opencode.jsonc` and no runtime provider patch duplicates it
 - **THEN** image discovery merges global and runtime configuration and reports that local model
 
+#### Scenario: Organization image model uses a reserved gateway declaration
+- **WHEN** an image model declares its cloud-row `JUGGLEWORK_GATEWAY_KEY_*` reference and the active workspace owns a matching current import baseline and mirror
+- **THEN** image discovery reports the model ready and invocation re-resolves the workspace-owned mirror for that request
+
+#### Scenario: Organization image mirror has no matching baseline
+- **WHEN** the same mirror is visible in the user credential store but the active workspace has no matching import baseline
+- **THEN** image discovery reports no ready model and does not use the mirror
+
+#### Scenario: Image model status is returned publicly
+- **WHEN** status or model listing returns configured image descriptors
+- **THEN** every descriptor contains only explicitly allowed public identity, capability, and availability fields
+- **AND** raw provider configuration, private fingerprints, and inline secrets are absent
+
 ### Requirement: Secure image artifacts
 Generated images SHALL be validated by MIME type, file signature, size, workspace containment, and atomic-write rules before being returned as workspace artifacts.
 

@@ -70,3 +70,10 @@ test("built media generation runtime is importable without TypeScript source loa
   assert.deepEqual(runtime.VIDEO_RESOLUTION_PRESETS, ["480p", "720p", "1080p", "4k"])
   assert.equal(runtime.parseImageGenerationCapabilities({ textToImage: true })?.textToImage, true)
 })
+
+test("built provider credential runtime is importable without TypeScript source loading", async () => {
+  const runtime = await import("@jugglework/types/provider-credentials")
+  const owner = { workspaceId: "ws", organizationId: "org", cloudProviderId: "lpr-a.b" }
+  assert.match(runtime.cloudGatewayMirrorEnvName(owner), /^MCP_GATEWAY_KEY_V2_/)
+  assert.notEqual(runtime.cloudGatewayMirrorEnvName(owner), runtime.cloudGatewayMirrorEnvName({ ...owner, cloudProviderId: "lpr_a_b" }))
+})

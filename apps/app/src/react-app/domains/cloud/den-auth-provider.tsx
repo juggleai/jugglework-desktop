@@ -32,6 +32,7 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { reconcileDenAccountIdentity } from "./den-account-switch";
+import { requireOrganizationCleanup } from "../connections/provider-auth/cloud-provider-cleanup";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
   denSessionUpdatedEvent,
@@ -275,6 +276,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     setAccountBusy(true);
     setAccountError(null);
     try {
+      await requireOrganizationCleanup();
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
       // TIPS: 这次切换的响应里带着新组织重新供给的 IM 凭据（可能是 null，比如切进一个
       // 没开 IM 的组织）——之前这里没接住，切完组织聊天/通讯录永远连不上新组织的 IM，

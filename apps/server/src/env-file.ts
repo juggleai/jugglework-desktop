@@ -25,11 +25,14 @@ const PERSISTABLE_INTERNAL_KEYS = new Set([
   "JUGGLEWORK_INFERENCE_BASE_URL",
   "JUGGLEWORK_MODELS_BASE_URL",
 ]);
+const INJECTABLE_INTERNAL_KEYS = new Set(["JUGGLEWORK_API_KEY"]);
+const OWNED_GATEWAY_MIRROR_PREFIX = "MCP_GATEWAY_KEY_V2_";
 
 export type EnvRecord = {
   key: string;
   value: string;
   updatedAt: number;
+  owner?: string;
 };
 
 type EnvStoreFile = {
@@ -75,6 +78,7 @@ function parseRecord(raw: unknown): EnvRecord | null {
     key,
     value,
     updatedAt: typeof record.updatedAt === "number" ? record.updatedAt : Date.now(),
+    ...(typeof record.owner === "string" && record.owner.trim() ? { owner: record.owner.trim() } : {}),
   };
 }
 
@@ -212,7 +216,7 @@ export class EnvService {
         if (!isValidEnvKey(entry.key)) {
           throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
         }
-        if (isReservedEnvKey(entry.key)) {
+        if (isReservedEnvKey(entry.key) || entry.key.startsWith(OWNED_GATEWAY_MIRROR_PREFIX)) {
           throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
         }
         next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
@@ -226,11 +230,41 @@ export class EnvService {
   async delete(key: string): Promise<boolean> {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
+      if (key.startsWith(OWNED_GATEWAY_MIRROR_PREFIX)) {
+        throw new InvalidEnvKeyError(key, "reserved_env_key");
+      }
       const before = this.variables.length;
       const nextVariables = this.variables.filter((entry) => entry.key !== key);
       if (nextVariables.length === before) return false;
       await writeStore(this.path, nextVariables);
       this.variables = nextVariables;
+      return true;
+    });
+  }
+
+  async upsertOwned(entry: EnvEntry & { owner: string }): Promise<void> {
+    return this.enqueueMutation(async () => {
+      await this.ensureLoaded();
+      if (!entry.key.startsWith(OWNED_GATEWAY_MIRROR_PREFIX) || !entry.owner.trim()) {
+        throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
+      }
+      const now = Date.now();
+      const next = new Map(this.variables.map((item) => [item.key, item] as const));
+      next.set(entry.key, { key: entry.key, value: entry.value, owner: entry.owner.trim(), updatedAt: now });
+      const variables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
+      await writeStore(this.path, variables);
+      this.variables = variables;
+    });
+  }
+
+  async deleteOwned(key: string, owner: string): Promise<boolean> {
+    return this.enqueueMutation(async () => {
+      await this.ensureLoaded();
+      const existing = this.variables.find((entry) => entry.key === key);
+      if (!existing || existing.owner !== owner) return false;
+      const variables = this.variables.filter((entry) => entry.key !== key);
+      await writeStore(this.path, variables);
+      this.variables = variables;
       return true;
     });
   }
@@ -243,7 +277,8 @@ export class EnvService {
     const store = await readStore(path, { tolerateInvalid: true });
     const out: Record<string, string> = {};
     for (const entry of store.variables) {
-      if (isInternalEnvKey(entry.key)) continue;
+      if (entry.key.startsWith(OWNED_GATEWAY_MIRROR_PREFIX)) continue;
+      if (isInternalEnvKey(entry.key) && !INJECTABLE_INTERNAL_KEYS.has(entry.key)) continue;
       out[entry.key] = entry.value;
     }
     return out;

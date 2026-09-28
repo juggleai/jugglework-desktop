@@ -50,6 +50,11 @@
       "development": "./src/media-generation.ts",
       "default": "./dist/media-generation.js"
     },
+    "./provider-credentials": {
+      "types": "./src/provider-credentials.ts",
+      "development": "./src/provider-credentials.ts",
+      "default": "./dist/provider-credentials.js"
+    },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",
       "development": "./src/den/desktop-app-restrictions.ts",

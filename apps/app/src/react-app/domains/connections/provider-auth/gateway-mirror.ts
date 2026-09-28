@@ -2,11 +2,11 @@ import {
   JuggleWorkServerError,
   type JuggleWorkServerClient,
 } from "../../../../app/lib/jugglework-server";
-import { gatewayMirrorEnvName } from "./cloud-provider-config";
+import type { CloudGatewayMirrorReference } from "@jugglework/types/provider-credentials";
 
 type GatewayMirrorClient = Pick<
   JuggleWorkServerClient,
-  "upsertUserEnv" | "deleteUserEnv"
+  "setCloudProviderMirror" | "removeCloudProviderMirror"
 >;
 
 type GatewayMirrorOperation = "write" | "delete";
@@ -40,27 +40,28 @@ function mirrorFailure(operation: GatewayMirrorOperation): Error {
 
 export async function writeGatewayMirror(
   client: GatewayMirrorClient | null | undefined,
+  workspaceId: string,
+  organizationId: string,
   cloudProviderId: string,
   token: string,
-): Promise<void> {
-  if (!client) return;
+): Promise<CloudGatewayMirrorReference | null> {
+  if (!client) return null;
   try {
-    await client.upsertUserEnv([
-      { key: gatewayMirrorEnvName(cloudProviderId), value: token },
-    ]);
+    return (await client.setCloudProviderMirror(workspaceId, cloudProviderId, organizationId, token)).mirror;
   } catch (error) {
-    if (isBenignGatewayMirrorError(error, "write")) return;
+    if (isBenignGatewayMirrorError(error, "write")) return null;
     throw mirrorFailure("write");
   }
 }
 
 export async function removeGatewayMirror(
   client: GatewayMirrorClient | null | undefined,
+  workspaceId: string,
   cloudProviderId: string,
 ): Promise<void> {
   if (!client) return;
   try {
-    await client.deleteUserEnv(gatewayMirrorEnvName(cloudProviderId));
+    await client.removeCloudProviderMirror(workspaceId, cloudProviderId);
   } catch (error) {
     if (isBenignGatewayMirrorError(error, "delete")) return;
     throw mirrorFailure("delete");

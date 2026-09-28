@@ -47,6 +47,14 @@ The CLI SHALL support login, login status, and logout without requiring JuggleWo
 #### Scenario: Logout
 - **WHEN** the user runs `jugglework logout`
 - **THEN** the CLI invalidates the Cloud session when supported and removes the selected local credential profile
+- **AND** in an interactive terminal returns to the sign-in menu, where the user can sign in again, continue without Cloud, or cancel to exit
+- **AND** in non-interactive or JSON mode exits without waiting for menu input
+
+#### Scenario: Interactive logout
+- **WHEN** the user runs `/logout` in the interactive CLI
+- **THEN** the saved Cloud session is removed and the login menu is shown
+- **AND** signing in again starts a fresh task session and synchronizes the new account's organization models
+- **AND** continuing without Cloud does not retain the old account's selected Cloud model
 
 ### Requirement: Cloud credentials are isolated and protected
 
@@ -101,6 +109,8 @@ The CLI SHALL distinguish public catalog metadata, providers and models publishe
 
 The CLI SHALL be able to import a supported organization provider into the selected CLI runtime using host-authorized runtime APIs. It SHALL store provider authentication through the runtime authority rather than editing OpenCode credential files directly, SHALL persist non-secret import metadata for reconciliation, and SHALL make retries idempotent.
 
+Cloud-managed provider configuration changes SHALL use a host-token-protected, provider-only runtime API. They SHALL not wait for interactive approval in the CLI's manual-approval runtime, while general workspace configuration changes SHALL continue to require approval. The provider-only API SHALL reject non-Cloud provider IDs and unrelated configuration fields.
+
 #### Scenario: Import succeeds
 - **WHEN** the user imports an organization provider and has sufficient runtime host authority
 - **THEN** required protected environment values, provider authentication, runtime provider configuration, and import metadata are applied
@@ -114,6 +124,42 @@ The CLI SHALL be able to import a supported organization provider into the selec
 #### Scenario: Connected runtime lacks host authority
 - **WHEN** provider import targets an existing runtime without valid host authority
 - **THEN** the command fails before disclosing or writing provider credentials
+
+#### Scenario: Import under manual approval policy
+- **WHEN** the host-authorized CLI imports an organization provider into a runtime with manual approval enabled
+- **THEN** its Cloud-managed provider configuration is applied without an unattended approval timeout
+- **AND** a general workspace configuration patch still requires approval
+
+#### Scenario: Organization ownership changes without changing the publication row
+- **WHEN** the selected organization changes and publishes a provider with the same cloud row identifier
+- **THEN** the CLI treats the previous import as out of sync and rewrites its organization ownership, runtime config fingerprint, and workspace-scoped credential mirror
+
+#### Scenario: Legacy provider deletion or rename
+- **WHEN** reconciliation wants to delete a predecessor runtime provider id
+- **THEN** it may delete only the exact id retained by that cloud row's import baseline
+- **AND** a matching `lpr_*` prefix without a baseline is not treated as ownership
+
+### Requirement: Task startup uses the selected organization's models by default
+
+After a persisted Cloud login, the CLI SHALL reconcile the selected organization's enabled importable providers with the active workspace before starting a task. It SHALL import missing or changed publications, remove stale Cloud-managed imports when the organization changes, and choose the first connected organization model when neither a CLI nor a workspace model was selected. Explicit model choices SHALL take precedence, while a stale Cloud-managed model from another organization SHALL not be reused. An organization with published importable models but no usable runtime model SHALL cause a task-startup error rather than silently using the online runtime default. Login and inventory commands SHALL remain runtime-free; logout MAY briefly start an owned runtime to clean imported providers.
+
+#### Scenario: First task after login
+- **WHEN** a signed-in user starts a task without a selected model
+- **THEN** the CLI imports the selected organization's enabled providers into the active workspace runtime
+- **AND** the task uses the first published model that the runtime reports connected and enabled
+
+#### Scenario: Organization changes
+- **WHEN** the selected organization changes before the next task
+- **THEN** the CLI removes Cloud-managed imports no longer published to that organization
+- **AND** replaces a stale Cloud-managed model choice with an available model from the new organization
+
+#### Scenario: Explicit model choice
+- **WHEN** the user explicitly selects an available model
+- **THEN** provider synchronization does not replace that selection
+
+#### Scenario: No usable organization model
+- **WHEN** an organization has published importable models but no connected, enabled runtime model after synchronization
+- **THEN** task startup fails with a diagnostic instead of falling back to the online runtime default
 
 ### Requirement: The released CLI contains its execution engine
 

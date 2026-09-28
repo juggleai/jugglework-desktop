@@ -19,6 +19,9 @@
 - [x] 1.17 Add per-text-model none/low/medium/high/xhigh/max/ultra reasoning-depth multi-select, explicit variant persistence, and round-trip tests.
 - [x] 1.18 Add per-model text-to-image, image-to-image, and multi-image-to-image controls, metadata round-trip, list labels, and chat-picker filtering.
 - [x] 1.19 Replace mixed capability switches with one text/image/video model-type selector and type-specific text fields or image/video mode multi-selects.
+- [x] 1.20 Add shared gateway credential naming helpers and a workspace-aware resolver that maps reserved cloud declarations only through current organization-stamped import baselines, while rejecting cross-workspace/model and tampered reserved-key use.
+- [x] 1.21 Route image readiness/invocation and video discovery/adapters through per-request credential resolution, with focused ownership, isolation, tamper, and image-readiness tests.
+- [x] 1.22 Replace collision-prone global mirrors with injective workspace/org/cloud-row keys and owner metadata; require effective provider provenance and preserve only the explicit `JUGGLEWORK_API_KEY` compatibility path.
 
 ## 2. Persistent Generation Jobs
 
@@ -26,6 +29,9 @@
 - [x] 2.2 Implement validated job state transitions, terminal-state handling, and idempotent request lookup to prevent duplicate paid submissions.
 - [x] 2.3 Implement a background reconciler with bounded polling backoff, startup recovery, cancellation reconciliation, and temporary-file cleanup.
 - [x] 2.4 Add repository and worker tests for retries, cancellation races, ambiguous submission, restart recovery, and idempotent completion.
+- [x] 2.5 Resolve worker adapters from the current workspace runtime on every reconciliation pass and test adapter availability changing after startup.
+- [x] 2.6 Persist immutable adapter protocol/origin/config/cloud-row/org bindings, reject changed ownership or origin while allowing credential rotation, and bound missing-adapter retries.
+- [x] 2.7 Add terminal `submission_unknown`, exact-request deduplication before quota checks, optional idempotency-key reconciliation, and restart-safe downloading recovery.
 
 ## 3. Provider-Neutral Service and First Adapter
 
@@ -87,6 +93,8 @@
 - [x] 9.2 Add structured audit events for workspace/session, model, mode, specifications, state, artifact metadata, and provider-reported usage without credentials, signed URLs, or encoded media.
 - [x] 9.3 Add redaction regression tests covering normal logs, job records, action responses, transcript content, and workspace preference storage.
 - [x] 9.4 Gate generation submission behind a feature flag while leaving safe job status reconciliation available during rollback.
+- [x] 9.6 Apply submission eligibility per selected model: current organization imports are packaged-ready without the local flag, while local/custom models retain explicit opt-in; test the gate and cloud metadata-version reconciliation.
+- [x] 9.7 Restrict public image descriptors, redact exact resolved credentials from provider-derived errors, and fail organization switching closed on independently attempted cleanup.
 - [ ] 9.5 Run focused server, desktop, database migration, extension action, and UI tests; manually canary one T2V and one I2V flow against configured providers before enabling the feature broadly.
 
 ## 10. Composer Image Generation

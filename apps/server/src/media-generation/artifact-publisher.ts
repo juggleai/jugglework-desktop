@@ -1,4 +1,4 @@
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import type { VideoArtifact } from "./types.js";
 
@@ -15,6 +15,27 @@ function validSignature(mimeType: string, bytes: Uint8Array): boolean {
   if (mimeType === "video/mp4" || mimeType === "video/quicktime") return bytes.length >= 12 && String.fromCharCode(...bytes.slice(4, 8)) === "ftyp";
   if (mimeType === "video/webm") return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
   return false;
+}
+
+export async function existingVideoArtifact(input: { workspaceRoot: string; jobId: string; filename?: string; maxBytes: number }): Promise<VideoArtifact | null> {
+  const slug = artifactSlug(input.filename);
+  for (const [mimeType, extension] of Object.entries(MIME_EXTENSION)) {
+    const relativePath = `artifacts/${slug}-${input.jobId}.${extension}`;
+    const path = safeWorkspaceChild(input.workspaceRoot, relativePath);
+    try {
+      const metadata = await stat(path);
+      if (!metadata.isFile() || metadata.size <= 0 || metadata.size > input.maxBytes) continue;
+      const bytes = new Uint8Array(await readFile(path));
+      if (validSignature(mimeType, bytes)) return { path: relativePath, mimeType, bytes: bytes.byteLength };
+    } catch {
+      // Missing or incomplete files are handled by normal provider result acquisition.
+    }
+  }
+  return null;
+}
+
+function artifactSlug(filename?: string): string {
+  return (filename ?? "jugglework-video").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "jugglework-video";
 }
 
 export async function publishVideoArtifact(input: { response: Response; workspaceRoot: string; jobId: string; filename?: string; maxBytes: number }): Promise<VideoArtifact> {
@@ -44,7 +65,7 @@ export async function publishVideoArtifact(input: { response: Response; workspac
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   if (!validSignature(mimeType, bytes)) throw new Error("video_result_invalid_signature");
-  const slug = (input.filename ?? "jugglework-video").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "jugglework-video";
+  const slug = artifactSlug(input.filename);
   const relativePath = `artifacts/${slug}-${input.jobId}.${extension}`;
   const finalPath = safeWorkspaceChild(input.workspaceRoot, relativePath);
   const tempPath = `${finalPath}.partial`;

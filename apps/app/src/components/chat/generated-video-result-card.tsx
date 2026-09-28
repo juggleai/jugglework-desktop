@@ -15,7 +15,7 @@ import {
   type GeneratedVideoJob,
 } from "./generated-video-result"
 
-const TERMINAL = new Set(["completed", "failed", "cancelled"])
+const TERMINAL = new Set(["completed", "failed", "cancelled", "submission_unknown"])
 const notifiedJobs = new Set<string>()
 
 function labels() {
@@ -25,6 +25,7 @@ function labels() {
     completed: "视频生成完成",
     failed: "视频生成失败",
     cancelled: "视频生成已取消",
+    unknown: "提交结果待确认",
     working: "视频生成中",
     download: "下载",
     expand: "放大预览",
@@ -35,6 +36,7 @@ function labels() {
     completed: "Video generation completed",
     failed: "Video generation failed",
     cancelled: "Video generation cancelled",
+    unknown: "Submission outcome needs attention",
     working: "Generating video",
     download: "Download",
     expand: "Expand preview",
@@ -48,6 +50,7 @@ function statusLabel(job: GeneratedVideoJob) {
   if (job.status === "completed") return copy.completed
   if (job.status === "failed") return copy.failed
   if (job.status === "cancelled") return copy.cancelled
+  if (job.status === "submission_unknown") return copy.unknown
   return copy.working
 }
 
@@ -113,14 +116,14 @@ export function GeneratedVideoResultCard({ job: initialJob }: { job: GeneratedVi
     const body = job.artifact?.name ?? job.error?.message
     notifyEvent({
       kind: "system",
-      severity: job.status === "completed" ? "success" : job.status === "failed" ? "error" : "info",
+      severity: job.status === "completed" ? "success" : job.status === "failed" || job.status === "submission_unknown" ? "error" : "info",
       title,
       ...(body ? { body } : {}),
       dedupeKey: `video-generation:${job.id}`,
     })
     if (job.status === "completed") toast.success(title, { description: body })
-    else if (job.status === "failed") toast.error(title, { description: body })
-    if (job.status === "completed" || job.status === "failed") {
+    else if (job.status === "failed" || job.status === "submission_unknown") toast.error(title, { description: body })
+    if (job.status === "completed" || job.status === "failed" || job.status === "submission_unknown") {
       notifyDesktopEvent({
         type: job.status === "completed" ? "video.completed" : "video.failed",
         sessionId,

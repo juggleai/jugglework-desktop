@@ -225,6 +225,24 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
           typeof entry.metadataVersion === "number" && Number.isFinite(entry.metadataVersion)
             ? entry.metadataVersion
             : null,
+        organizationId: typeof entry.organizationId === "string"
+          ? entry.organizationId.trim() || null
+          : null,
+        providerConfigFingerprint: typeof entry.providerConfigFingerprint === "string"
+          ? entry.providerConfigFingerprint
+          : null,
+        gatewayMirror: isRecord(entry.gatewayMirror) &&
+          typeof entry.gatewayMirror.workspaceId === "string" &&
+          typeof entry.gatewayMirror.organizationId === "string" &&
+          typeof entry.gatewayMirror.cloudProviderId === "string" &&
+          typeof entry.gatewayMirror.key === "string"
+          ? {
+              workspaceId: entry.gatewayMirror.workspaceId,
+              organizationId: entry.gatewayMirror.organizationId,
+              cloudProviderId: entry.gatewayMirror.cloudProviderId,
+              key: entry.gatewayMirror.key,
+            }
+          : null,
       } satisfies CloudImportedProvider;
       return [[cloudProviderId, imported] as const];
     }),

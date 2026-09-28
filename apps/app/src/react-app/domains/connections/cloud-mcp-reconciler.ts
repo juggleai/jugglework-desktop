@@ -639,14 +639,15 @@ export async function cleanupJuggleWorkCloudMcpAfterSignOut(input: {
   const scope = normalizeCloudMcpScope(input.context);
   if (scope) clearCloudMcpScopedMetadata(scope);
 
-  await Promise.all([
+  const results = await Promise.allSettled([
     input.juggleworkClient && scope
-      ? input.juggleworkClient.removeMcp(scope.workspaceId, CLOUD_MCP_SERVER_NAME).catch(() => null)
+      ? input.juggleworkClient.removeMcp(scope.workspaceId, CLOUD_MCP_SERVER_NAME)
       : Promise.resolve(null),
     input.opencodeClient && input.directory.trim()
-      ? input.opencodeClient.mcp.disconnect({ directory: input.directory.trim(), name: CLOUD_MCP_SERVER_NAME }).catch(() => null)
+      ? input.opencodeClient.mcp.disconnect({ directory: input.directory.trim(), name: CLOUD_MCP_SERVER_NAME })
       : Promise.resolve(null),
   ]);
+  if (results.some((result) => result.status === "rejected")) throw new Error("cloud_mcp_cleanup_incomplete");
 }
 
 export function recordCloudMcpDisabledIntent(scope: CloudMcpScope, state: CloudMcpUserState): void {

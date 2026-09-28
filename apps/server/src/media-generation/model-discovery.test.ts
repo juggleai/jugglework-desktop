@@ -27,8 +27,8 @@ const options = {
 };
 
 describe("video model discovery", () => {
-  test("reports readiness diagnostics without exposing disconnected providers", () => {
-    expect(discoverVideoModels(options).map((model) => [model.ref.providerID, model.ref.modelID, model.availability])).toEqual([
+  test("reports readiness diagnostics without exposing disconnected providers", async () => {
+    expect((await discoverVideoModels(options)).map((model) => [model.ref.providerID, model.ref.modelID, model.availability])).toEqual([
       ["missing", "video", "missing_credentials"],
       ["ready", "i2v", "ready"],
       ["ready", "t2v", "ready"],
@@ -36,9 +36,9 @@ describe("video model discovery", () => {
     ]);
   });
 
-  test("filters ready models by requested mode", () => {
-    expect(listReadyVideoModels({ ...options, mode: "text-to-video" }).map((model) => model.ref.modelID)).toEqual(["t2v"]);
-    expect(listReadyVideoModels({ ...options, mode: "image-to-video" }).map((model) => model.ref.modelID)).toEqual(["i2v"]);
+  test("filters ready models by requested mode", async () => {
+    expect((await listReadyVideoModels({ ...options, mode: "text-to-video" })).map((model) => model.ref.modelID)).toEqual(["t2v"]);
+    expect((await listReadyVideoModels({ ...options, mode: "image-to-video" })).map((model) => model.ref.modelID)).toEqual(["i2v"]);
   });
 
   test("returns a stable no-model result and calls out an unused image", () => {

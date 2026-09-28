@@ -2774,6 +2774,20 @@ export function createJuggleWorkServerClient(options: { baseUrl: string; token?:
         timeoutMs: timeouts.config,
       }),
 
+    setCloudProviderMirror: (workspaceId: string, cloudProviderId: string, organizationId: string, value: string) =>
+      requestJson<{ ok: true; mirror: { workspaceId: string; organizationId: string; cloudProviderId: string; key: string } }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`,
+        { token, hostToken, method: "PUT", body: { organizationId, value }, timeoutMs: timeouts.config },
+      ),
+
+    removeCloudProviderMirror: (workspaceId: string, cloudProviderId: string) =>
+      requestJson<{ ok: true }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/cloud-provider-mirror/${encodeURIComponent(cloudProviderId)}`,
+        { token, hostToken, method: "DELETE", timeoutMs: timeouts.config },
+      ),
+
     createVoiceRealtimeSession: (payload?: {
       purpose?: "assistant" | "dictation";
       model?: string;

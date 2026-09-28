@@ -5,6 +5,11 @@ import { ApiError } from "../errors.js";
 import { readJuggleWorkWorkspaceConfig, writeJuggleWorkWorkspaceConfig } from "../jugglework-workspace-config-store.js";
 import { readRuntimeOpencodeConfig, runtimeDisabledProviderList } from "../runtime-opencode-config-store.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import type { EnvService } from "../env-file.js";
+import {
+  cloudGatewayMirrorEnvName,
+  cloudGatewayMirrorOwnerId,
+} from "@jugglework/types/provider-credentials";
 import { addRoute, type Route } from "./registry.js";
 
 type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
@@ -19,6 +24,7 @@ interface RegisterProviderAuthRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   createWorkspaceOpencodeClient: (config: ServerConfig, workspace: WorkspaceInfo) => WorkspaceOpencodeClient;
+  env: EnvService;
 }
 
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
@@ -83,6 +89,7 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
     ensureWritable,
     resolveWorkspace,
     createWorkspaceOpencodeClient,
+    env,
   } = options;
 
   addRoute(routes, "GET", "/workspace/:id/provider-auth", "host-token", async (ctx) => {
@@ -128,6 +135,43 @@ export function registerProviderAuthRoutes(options: RegisterProviderAuthRoutesOp
         cloudImports: { ...(record(current.cloudImports) ?? {}), providers },
       };
     });
+    return jsonResponse({ ok: true });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/cloud-provider-mirror/:cloudProviderId", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const cloudProviderId = parseCloudProviderId(ctx.params.cloudProviderId);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const organizationId = typeof body.organizationId === "string" ? body.organizationId.trim() : "";
+    const value = typeof body.value === "string" ? body.value : "";
+    if (!organizationId || !value.trim()) {
+      throw new ApiError(400, "invalid_cloud_provider_mirror", "Cloud provider mirror payload is invalid");
+    }
+    const owner = { workspaceId: workspace.id, organizationId, cloudProviderId };
+    const key = cloudGatewayMirrorEnvName(owner);
+    await env.upsertOwned({ key, value, owner: cloudGatewayMirrorOwnerId(owner) });
+    return jsonResponse({ ok: true, mirror: { ...owner, key } });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/cloud-provider-mirror/:cloudProviderId", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const cloudProviderId = parseCloudProviderId(ctx.params.cloudProviderId);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const baseline = record(importedProviders(await readJuggleWorkWorkspaceConfig(config, workspace.id))[cloudProviderId]);
+    const mirror = record(baseline?.gatewayMirror);
+    const organizationId = typeof mirror?.organizationId === "string" ? mirror.organizationId.trim() : "";
+    const key = typeof mirror?.key === "string" ? mirror.key.trim() : "";
+    if (mirror?.workspaceId !== workspace.id || mirror?.cloudProviderId !== cloudProviderId || !organizationId ||
+      key !== cloudGatewayMirrorEnvName({ workspaceId: workspace.id, organizationId, cloudProviderId })) {
+      throw new ApiError(409, "cloud_provider_mirror_unowned", "Cloud provider mirror has no exact owning baseline");
+    }
+    const expectedOwner = cloudGatewayMirrorOwnerId({ workspaceId: workspace.id, organizationId, cloudProviderId });
+    const stored = (await env.list()).find((entry) => entry.key === key);
+    if (stored && stored.owner !== expectedOwner) {
+      throw new ApiError(409, "cloud_provider_mirror_unowned", "Cloud provider mirror ownership does not match");
+    }
+    if (stored) await env.deleteOwned(key, expectedOwner);
     return jsonResponse({ ok: true });
   });
 

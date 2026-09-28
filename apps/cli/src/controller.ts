@@ -149,6 +149,7 @@ export class SessionController {
   async createSession(title = "JuggleWork CLI"): Promise<SessionInfo> {
     const { item } = await this.api.createSession(this.workspace.id, title);
     this.currentSessionValue = item;
+    this.lastAssistantText = "";
     if (this.options.fullAccess) {
       const mode = await this.api.getPermissionMode(this.workspace.id, item.id);
       if (!mode.supported) throw new Error("This JuggleWork Server does not support Full access mode.");

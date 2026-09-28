@@ -28,8 +28,9 @@ function harness(failAt?: string) {
     preflightProviderAuthority: () => invoke("host_authority", { ok: true as const }),
     getCloudProviderImport: () => invoke("read_baseline", { item: null }),
     upsertUserEnvironment: () => invoke("environment", { ok: true as const, count: 2 }),
+    setCloudProviderMirror: () => invoke("mirror", { ok: true as const, mirror: { workspaceId: "ws", organizationId: "org", cloudProviderId: provider.id, key: "MCP_GATEWAY_KEY_V2_owner" } }),
     setProviderAuth: () => invoke("authentication", { ok: true as const }),
-    patchWorkspaceConfig: () => invoke("runtime_config", { updatedAt: 1 }),
+    patchCloudProviderConfig: () => invoke("runtime_config", { updatedAt: 1 }),
     setCloudProviderImport: () => invoke("baseline", { ok: true as const, item: {} }),
     reloadEngine: () => invoke("reload", { ok: true as const, reloadedAt: 1 }),
     providerStatus: () => invoke("verification", visible),
@@ -91,7 +92,8 @@ test("retries idempotently and writes a Desktop-compatible baseline", async () =
   assert.equal(baseline.providerId, provider.id);
   assert.equal(baseline.sourceProviderId, provider.providerId);
   assert.deepEqual(baseline.modelIds, ["model-a"]);
-  assert.equal(baseline.metadataVersion, 8);
+  assert.equal(baseline.metadataVersion, 10);
+  assert.equal(baseline.organizationId, "org");
   assert.equal(calls.filter((call) => call === "verification").length, 2);
 });
 

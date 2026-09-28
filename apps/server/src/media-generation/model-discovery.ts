@@ -33,13 +33,13 @@ export type VideoModelDiscoveryOptions = {
   catalog: ProviderCatalogSnapshot;
   mode?: VideoGenerationMode;
   supportsAdapter: (ref: VideoModelRef, capabilities: MediaGenerationCapabilities) => boolean;
-  credentialReady: (ref: VideoModelRef) => boolean;
+  credentialReady: (ref: VideoModelRef) => boolean | Promise<boolean>;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export function discoverVideoModels(options: VideoModelDiscoveryOptions): VideoModelDescriptor[] {
+export async function discoverVideoModels(options: VideoModelDiscoveryOptions): Promise<VideoModelDescriptor[]> {
   const connected = new Set(options.catalog.connected);
   const discovered: VideoModelDescriptor[] = [];
 
@@ -52,7 +52,7 @@ export function discoverVideoModels(options: VideoModelDiscoveryOptions): VideoM
 
       const ref = { providerID: provider.id, modelID };
       const adapterSupported = options.supportsAdapter(ref, capabilities);
-      const credentialsReady = options.credentialReady(ref);
+      const credentialsReady = await options.credentialReady(ref);
       const availability: VideoModelAvailability = !adapterSupported
         ? "unsupported_adapter"
         : !credentialsReady
@@ -79,8 +79,8 @@ export function discoverVideoModels(options: VideoModelDiscoveryOptions): VideoM
     left.ref.modelID.localeCompare(right.ref.modelID));
 }
 
-export function listReadyVideoModels(options: VideoModelDiscoveryOptions): VideoModelDescriptor[] {
-  return discoverVideoModels(options).filter((model) => model.availability === "ready");
+export async function listReadyVideoModels(options: VideoModelDiscoveryOptions): Promise<VideoModelDescriptor[]> {
+  return (await discoverVideoModels(options)).filter((model) => model.availability === "ready");
 }
 
 export function noVideoModelResult(mode: VideoGenerationMode) {

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
+import { CloudProfileStore, cloudProfilePath } from "../src/cloud-profiles.js";
 
 type Scenario = "complete" | "fast" | "abort" | "permission" | "question";
 type MockState = {
@@ -63,7 +64,7 @@ async function startMockServer(scenario: Scenario = "complete") {
     if (request.method === "GET" && url.pathname === "/health") return send(response, { ok: true, version: "test" });
     if (request.method === "GET" && url.pathname === "/status") return send(response, { ok: true });
     if (request.method === "GET" && url.pathname === "/workspace/ws_1/config") return send(response, { opencode: { model: "openai/gpt-5" } });
-    if (request.method === "GET" && url.pathname === "/w/ws_1/provider") return send(response, {
+    if (request.method === "GET" && url.pathname === "/workspace/ws_1/opencode/provider") return send(response, {
       all: [{ id: "openai", name: "OpenAI", models: {
         "gpt-5": { name: "GPT-5", variants: { low: {}, high: {} } },
         "gpt-6": { name: "GPT-6", variants: { low: {}, high: {} } },
@@ -521,7 +522,10 @@ send "\\033\\[B\\033\\[B\\r"
 require "Reasoning effort: high"
 require "openai/gpt-6 · high reasoning"
 send "/exit\\r"
-expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 } }
+expect {
+  eof {}
+  timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 }
+}
 `;
     const result = await collect(spawn("expect", ["-c", script], {
       cwd,
@@ -534,5 +538,105 @@ expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 }
     assert.match(result.stdout, /openai\/gpt-6 · high reasoning/);
   } finally {
     await mock.close();
+  }
+});
+
+test("interactive /logout and logout return to login, then continue anonymously or sign in again", { timeout: 35_000 }, async () => {
+  if (spawnSync("which", ["expect"]).status !== 0) return;
+  const runtime = await startMockServer();
+  let signOuts = 0;
+  const cloudServer = createServer((request, response) => {
+    if (request.url === "/jwork/api/v1/auth/desktop-handoff/exchange") return send(response, { token: "new-session-token", user: { id: "user_2" } });
+    if (request.url === "/jwork/api/v1/me") return send(response, { user: { id: "user_2" } });
+    if (request.url === "/jwork/api/v1/me/orgs") return send(response, { orgs: [{ id: "org_1", name: "One", slug: "one" }], activeOrgId: "org_1" });
+    if (request.url === "/jwork/api/v1/llm-providers") return send(response, { llmProviders: [] });
+    if (request.url === "/jwork/api/auth/sign-out") { signOuts += 1; return send(response, { ok: true }); }
+    return send(response, { error: "not_found" }, 404);
+  });
+  await new Promise<void>((done) => cloudServer.listen(0, "127.0.0.1", done));
+  const address = cloudServer.address();
+  assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const root = await mkdtemp(join(tmpdir(), "jugglework-logout-tty-"));
+  const config = join(root, "cli.json");
+  const store = new CloudProfileStore(cloudProfilePath(config));
+  try {
+    await store.set(origin, { token: "old-session-token", user: { id: "user_1" }, organizationId: "org_1" });
+    const script = `
+set timeout 6
+proc require {pattern} {
+  expect {
+    -exact $pattern {}
+    timeout { puts stderr "Timed out waiting for: $pattern"; exit 2 }
+    eof { puts stderr "Unexpected EOF waiting for: $pattern"; exit 2 }
+  }
+}
+spawn $env(JUGGLEWORK_TEST_BUN) src/cli.ts --server $env(JUGGLEWORK_TEST_SERVER) --token test-token --workspace-id ws_1 --cloud-url $env(JUGGLEWORK_TEST_CLOUD) --config $env(JUGGLEWORK_TEST_CONFIG)
+require "Type a task or /help"
+send "/logout\\r"
+require "Welcome to JuggleWork"
+send "3\\r"
+require "openai/gpt-5 · default reasoning"
+send "/exit\\r"
+expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 } }
+`;
+    const result = await collect(spawn("expect", ["-c", script], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        JUGGLEWORK_TEST_SERVER: runtime.url,
+        JUGGLEWORK_TEST_BUN: process.execPath,
+        JUGGLEWORK_TEST_CLOUD: origin,
+        JUGGLEWORK_TEST_CONFIG: config,
+      },
+    }));
+    assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(signOuts, 1);
+    assert.equal(await store.get(origin), null);
+    assert.equal(runtime.state.sessions[0]?.id, "ses_new");
+
+    await store.set(origin, { token: "old-session-token", user: { id: "user_1" }, organizationId: "org_1" });
+    const commandScript = `
+set timeout 6
+spawn $env(JUGGLEWORK_TEST_BUN) src/cli.ts --server $env(JUGGLEWORK_TEST_SERVER) --token test-token --workspace-id ws_1 --cloud-url $env(JUGGLEWORK_TEST_CLOUD) --config $env(JUGGLEWORK_TEST_CONFIG) logout
+expect {
+  -exact "Welcome to JuggleWork" {}
+  timeout { puts stderr "Login screen was not shown"; exit 2 }
+  eof { puts stderr "Unexpected EOF before login screen"; exit 2 }
+}
+send "2\\r"
+expect {
+  -exact "Paste the one-time grant" {}
+  timeout { puts stderr "Handoff prompt was not shown"; exit 2 }
+  eof { puts stderr "Unexpected EOF before handoff prompt"; exit 2 }
+}
+send "valid_grant_12345\\r"
+expect {
+  -exact "openai/gpt-5 · default reasoning" {}
+  timeout { puts stderr "Task input was not restored after login"; exit 2 }
+  eof { puts stderr "Unexpected EOF after login"; exit 2 }
+}
+send "/exit\\r"
+expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 } }
+`;
+    const commandResult = await collect(spawn("expect", ["-c", commandScript], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        JUGGLEWORK_TEST_SERVER: runtime.url,
+        JUGGLEWORK_TEST_BUN: process.execPath,
+        JUGGLEWORK_TEST_CLOUD: origin,
+        JUGGLEWORK_TEST_CONFIG: config,
+      },
+    }));
+    assert.equal(commandResult.code, 0, `${commandResult.stdout}\n${commandResult.stderr}`);
+    assert.equal(signOuts, 2);
+    assert.equal((await store.get(origin))?.token, "new-session-token");
+  } finally {
+    await runtime.close();
+    await new Promise<void>((done, reject) => cloudServer.close((error) => error ? reject(error) : done()));
+    await rm(root, { recursive: true, force: true });
   }
 });

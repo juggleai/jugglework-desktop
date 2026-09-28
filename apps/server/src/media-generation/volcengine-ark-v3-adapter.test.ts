@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { VolcengineArkV3VideoAdapter } from "./volcengine-ark-v3-adapter.js";
 
-const env = { list: async () => [{ key: "ARK_API_KEY", value: "ark-secret" }] } as never;
+const credential = async () => "ark-secret";
 
 describe("VolcengineArkV3VideoAdapter", () => {
   test("submits text-to-video and maps Ark task completion", async () => {
@@ -13,8 +13,7 @@ describe("VolcengineArkV3VideoAdapter", () => {
       providerID: "ark",
       modelIDs: ["seedance"],
       baseURL: "https://ark.example.test/api/v3",
-      envKeys: ["ARK_API_KEY"],
-      env,
+      credential,
       fetch: (async (url: string, init: RequestInit) => {
         requests.push({ url, init });
         if (init.method === "POST") return Response.json({ id: "cgt-1" });
@@ -45,7 +44,7 @@ describe("VolcengineArkV3VideoAdapter", () => {
     try {
       let body: Record<string, unknown> | null = null;
       const adapter = new VolcengineArkV3VideoAdapter({
-        providerID: "ark", modelIDs: ["seedance-i2v"], baseURL: "https://ark.example.test/api/v3", envKeys: ["ARK_API_KEY"], env,
+        providerID: "ark", modelIDs: ["seedance-i2v"], baseURL: "https://ark.example.test/api/v3", credential,
         fetch: (async (_url: string, init: RequestInit) => { body = JSON.parse(String(init.body)); return Response.json({ id: "cgt-2" }); }) as never,
       });
       await adapter.submit({ jobId: "job", clientRequestId: "request", model: { providerID: "ark", modelID: "seedance-i2v" }, mode: "image-to-video", prompt: "move", sourceImagePath: image, options: {} }, new AbortController().signal);
@@ -59,7 +58,7 @@ describe("VolcengineArkV3VideoAdapter", () => {
 
   test("maps running and sanitized failed states", async () => {
     let response = Response.json({ status: "running" });
-    const adapter = new VolcengineArkV3VideoAdapter({ providerID: "ark", modelIDs: ["seedance"], baseURL: "https://ark.example.test/api/v3", envKeys: ["ARK_API_KEY"], env, fetch: (async () => response) as never });
+    const adapter = new VolcengineArkV3VideoAdapter({ providerID: "ark", modelIDs: ["seedance"], baseURL: "https://ark.example.test/api/v3", credential, fetch: (async () => response) as never });
     expect(await adapter.inspect("cgt-1", new AbortController().signal)).toEqual({ status: "running" });
     response = Response.json({ status: "failed", error: { message: "Bearer sk-secret-token rejected" } });
     const failed = await adapter.inspect("cgt-1", new AbortController().signal);

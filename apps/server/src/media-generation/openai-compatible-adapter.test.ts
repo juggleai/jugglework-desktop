@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { OpenAiCompatibleVideoAdapter, openAiVideoSize } from "./openai-compatible-adapter.js";
 
-const env = { list: async () => [{ key: "VIDEO_KEY", value: "secret-value" }] } as never;
+const credential = async () => "secret-value";
 
 describe("OpenAiCompatibleVideoAdapter", () => {
   test("maps canonical video presets to OpenAI-style pixel dimensions", () => {
@@ -14,7 +14,7 @@ describe("OpenAiCompatibleVideoAdapter", () => {
   });
   test("submits and polls the official asynchronous videos shape", async () => {
     const requests: Array<{ url: string; init: RequestInit }> = [];
-    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", env, envKeys: ["VIDEO_KEY"], fetch: (async (url: string, init: RequestInit) => {
+    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", credential, fetch: (async (url: string, init: RequestInit) => {
       requests.push({ url, init });
       if (init.method === "POST") return Response.json({ id: "video_1", status: "queued" });
       return Response.json({ id: "video_1", status: "in_progress", progress: 42 });
@@ -27,18 +27,29 @@ describe("OpenAiCompatibleVideoAdapter", () => {
   });
 
   test("normalizes failed asynchronous status", async () => {
-    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", env, envKeys: ["VIDEO_KEY"], fetch: (async () => Response.json({ status: "failed", error: { code: "policy", message: "Rejected" } })) as never });
+    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", credential, fetch: (async () => Response.json({ status: "failed", error: { code: "policy", message: "Rejected" } })) as never });
     expect(await adapter.inspect("video_1", new AbortController().signal)).toEqual({ status: "failed", error: { code: "video_provider_failed", message: "Rejected", retryable: false } });
   });
 
   test("redacts secrets echoed by provider errors", async () => {
-    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", env, envKeys: ["VIDEO_KEY"], fetch: (async () => Response.json({ error: { message: "Bearer sk-secret-token https://example.test/result?signature=private" } }, { status: 400 })) as never });
+    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", credential, fetch: (async () => Response.json({ error: { message: "Bearer sk-secret-token https://example.test/result?signature=private" } }, { status: 400 })) as never });
     await expect(adapter.submit({ jobId: "job", clientRequestId: "request", model: { providerID: "openai", modelID: "video-model" }, mode: "text-to-video", prompt: "waves", options: {} }, new AbortController().signal)).rejects.toThrow("Bearer [REDACTED]");
     try {
       await adapter.submit({ jobId: "job", clientRequestId: "request", model: { providerID: "openai", modelID: "video-model" }, mode: "text-to-video", prompt: "waves", options: {} }, new AbortController().signal);
     } catch (error) {
       expect(String(error)).not.toContain("sk-secret-token");
       expect(String(error)).not.toContain("signature=private");
+    }
+  });
+
+  test("redacts the exact arbitrary UUID and JWT-like credential", async () => {
+    const secret = "be459a45-01ef-47ad-8184-7e937dcb9b86.eyJhbGciOiJIUzI1NiJ9.signature";
+    const adapter = new OpenAiCompatibleVideoAdapter({ providerID: "openai", baseURL: "https://api.example.test/v1", credential: async () => secret, fetch: (async () => Response.json({ error: { message: `credential ${secret} rejected` } }, { status: 401 })) as never });
+    try {
+      await adapter.submit({ jobId: "job", clientRequestId: "request", model: { providerID: "openai", modelID: "video-model" }, mode: "text-to-video", prompt: "waves", options: {} }, new AbortController().signal);
+    } catch (error) {
+      expect(String(error)).toContain("[REDACTED]");
+      expect(String(error)).not.toContain(secret);
     }
   });
 });

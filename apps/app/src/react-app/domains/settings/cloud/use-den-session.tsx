@@ -33,6 +33,7 @@ import {
 } from "@/app/lib/den-session-events";
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
+import { requireOrganizationCleanup } from "../../connections/provider-auth/cloud-provider-cleanup";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
 import { useCloudSession } from "./cloud-session-provider";
 import { defaultControlPlaneUrl, saveControlPlaneUrl } from "./control-plane-url";
@@ -523,6 +524,7 @@ export function useDenSession({
       setOrgsError(null);
 
       try {
+        await requireOrganizationCleanup();
         // 1. Sync Den server-side (cookie/session)
         await client.setActiveOrganization({ organizationId: nextOrg.id });
       } catch (error) {

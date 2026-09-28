@@ -103,6 +103,14 @@ describe("generated video transcript results", () => {
     expect(isGeneratedVideoJobRecent({ ...base, updatedAt: now - 11 * 60_000 }, now)).toBe(false)
   })
 
+  test("parses submission_unknown as a persisted attention state", () => {
+    expect(generatedVideoJobFromToolPart(videoToolPart({
+      ok: true,
+      result: { job: { id: "job-unknown", status: "submission_unknown", revision: 2, error: { message: "The provider submission outcome could not be reconciled safely." } } },
+    }))).toMatchObject({ id: "job-unknown", status: "submission_unknown", error: { message: expect.any(String) } })
+    expect(readFileSync(cardPath, "utf8")).toContain('"submission_unknown"')
+  })
+
   test("provides live polling, playback, expanded preview, download, and completion notifications", () => {
     const source = readFileSync(cardPath, "utf8")
     expect(source).toContain('action: "video_job_get"')

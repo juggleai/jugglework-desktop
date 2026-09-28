@@ -18,6 +18,8 @@ import { mergeOpencodeConfigs } from "../runtime-opencode-config-store.js";
 import { readJsoncFile } from "../jsonc.js";
 import { resolveGlobalOpenCodeConfigPath } from "../mcp.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
+import { redactProviderMessage } from "../media-generation/redaction.js";
 
 export const OPENAI_IMAGE_GENERATION_EXTENSION_ID = "openai-image-generation";
 const IMAGE_API_TIMEOUT_MS = 120_000;
@@ -38,8 +40,19 @@ type ImageModelDescriptor = {
   capabilities: ImageGenerationCapabilities;
   baseURL: string;
   envKeys: string[];
+  providerConfig: Record<string, unknown>;
   availability: "ready" | "missing_credentials" | "unsupported_adapter";
 };
+
+function publicImageModelDescriptor(model: ImageModelDescriptor) {
+  return {
+    ref: model.ref,
+    providerName: model.providerName,
+    modelName: model.modelName,
+    capabilities: model.capabilities,
+    availability: model.availability,
+  };
+}
 
 const generateSchema = z.object({
   prompt: z.string().trim().min(1).max(32_000),
@@ -82,8 +95,7 @@ async function configuredImageModels(config: ServerConfig, env: EnvService, work
     { allowInvalid: true, maxBytes: 1024 * 1024, regularFileOnly: true },
   );
   const effective = mergeOpencodeConfigs(globalConfig, runtime);
-  const envRecords = await env.list();
-  const envMap = new Map(envRecords.map((entry) => [entry.key, entry.value]));
+  const credentials = createWorkspaceProviderCredentialResolver({ config, env });
   const result: ImageModelDescriptor[] = [];
   const providers = isRecord(effective.provider) ? effective.provider : {};
   for (const [providerID, rawProvider] of Object.entries(providers)) {
@@ -93,29 +105,33 @@ async function configuredImageModels(config: ServerConfig, env: EnvService, work
     const envKeys = Array.isArray(rawProvider.env) ? rawProvider.env.filter((key): key is string => typeof key === "string") : [];
     const providerName = typeof rawProvider.name === "string" && rawProvider.name.trim() ? rawProvider.name.trim() : providerID;
     const adapterSupported = /^https:\/\//i.test(baseURL) && String(rawProvider.npm ?? "").includes("openai");
-    const credentialReady = envKeys.some((key) => Boolean(envMap.get(key)?.trim() || process.env[key]?.trim()));
     const models = isRecord(rawProvider.models) ? rawProvider.models : {};
     for (const [modelID, rawModel] of Object.entries(models)) {
       if (!isRecord(rawModel)) continue;
       const capabilities = parseImageGenerationCapabilities(rawModel.imageGeneration);
       if (!capabilities) continue;
+      const credentialReady = Boolean(await credentials.resolve({ workspaceId: workspace.id, providerID, modelID, declaredEnvKeys: envKeys, providerConfig: rawProvider }));
+      const organizationImported = await credentials.organizationProviderProvenance({ workspaceId: workspace.id, providerID, modelID, declaredEnvKeys: envKeys, providerConfig: rawProvider });
       result.push({
         ref: { providerID, modelID }, providerName,
         modelName: typeof rawModel.name === "string" && rawModel.name.trim() ? rawModel.name.trim() : modelID,
-        capabilities, baseURL, envKeys,
-        availability: !adapterSupported ? "unsupported_adapter" : !credentialReady ? "missing_credentials" : "ready",
+        capabilities, baseURL, envKeys, providerConfig: rawProvider,
+        availability: !adapterSupported ? "unsupported_adapter" : !credentialReady || (envKeys.some((key) => /^JUGGLEWORK_GATEWAY_KEY_V2_/.test(key)) && !organizationImported) ? "missing_credentials" : "ready",
       });
     }
   }
   return result;
 }
 
-async function credential(model: ImageModelDescriptor, env: EnvService): Promise<string> {
-  const records = await env.list();
-  for (const key of model.envKeys) {
-    const value = records.find((entry) => entry.key === key)?.value.trim() || process.env[key]?.trim();
-    if (value) return value;
-  }
+async function credential(model: ImageModelDescriptor, config: ServerConfig, env: EnvService, workspace: WorkspaceInfo): Promise<string> {
+  const value = await createWorkspaceProviderCredentialResolver({ config, env }).resolve({
+    workspaceId: workspace.id,
+    providerID: model.ref.providerID,
+    modelID: model.ref.modelID,
+    declaredEnvKeys: model.envKeys,
+    providerConfig: model.providerConfig,
+  });
+  if (value) return value;
   throw new ApiError(400, "image_credential_missing", "The configured image provider credential is unavailable.");
 }
 
@@ -155,10 +171,13 @@ async function callImageProvider(model: ImageModelDescriptor, apiKey: string, in
     }
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      const providerError = isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string" ? payload.error.message.slice(0, 500) : "Image generation failed.";
+      const providerError = redactProviderMessage(isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string" ? payload.error.message : "Image generation failed.", [apiKey]);
       throw new ApiError(response.status, "image_generation_failed", providerError);
     }
     return payload;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(502, "image_generation_failed", redactProviderMessage(error, [apiKey]));
   } finally { clearTimeout(timeout); }
 }
 
@@ -200,11 +219,11 @@ export async function callOpenAiImageGenerationExtensionAction(config: ServerCon
     workspace = { ...config.workspaces[0], path: resolve(config.workspaces[0].path) };
   }
   const models = await configuredImageModels(config, env, workspace);
-  if (action === "status") return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, result: { configured: models.length > 0, connected: models.some((model) => model.availability === "ready"), models }, context };
+  if (action === "status") return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, result: { configured: models.length > 0, connected: models.some((model) => model.availability === "ready"), models: models.map(publicImageModelDescriptor) }, context };
   if (action === "image_models_list") {
     const mode = IMAGE_GENERATION_MODES.includes(args.mode as ImageGenerationMode) ? args.mode as ImageGenerationMode : undefined;
     const ready = models.filter((model) => model.availability === "ready" && (!mode || supportsImageGenerationMode(model.capabilities, mode)));
-    return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, result: { models: ready }, context };
+    return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, result: { models: ready.map(publicImageModelDescriptor) }, context };
   }
   if (action === "image_generate") {
     const parsed = generateSchema.safeParse(args);
@@ -213,7 +232,7 @@ export async function callOpenAiImageGenerationExtensionAction(config: ServerCon
     const selected = parsed.data.model ? ready.find((model) => model.ref.providerID === parsed.data.model?.providerID && model.ref.modelID === parsed.data.model?.modelID) : ready[0];
     if (!selected) return { ok: false, error: "no_image_model_available", mode: parsed.data.mode, message: "No configured ready image model supports the requested mode." };
     const references = await readReferences(workspace, parsed.data.sourceImagePaths, parsed.data.mode);
-    const payload = await callImageProvider(selected, await credential(selected, env), parsed.data, references);
+    const payload = await callImageProvider(selected, await credential(selected, config, env, workspace), parsed.data, references);
     const artifact = await publishImage(workspace, await resultBytes(payload), parsed.data.filename);
     return { ok: true, extensionId: OPENAI_IMAGE_GENERATION_EXTENSION_ID, action, path: artifact.path, result: { artifact, model: selected.ref, mode: parsed.data.mode }, context };
   }

@@ -77,6 +77,20 @@ test("workspace selection matches the requested path and refuses ambiguous conne
   await assert.rejects(chooseWorkspace(api, parseCliArgs(["--workspace", "/tmp/unknown"]), null), /Pass --workspace-id/);
 });
 
+test("starting a new session clears the previous session's copy-ready response", async () => {
+  let snapshots = 0;
+  const api = baseApi({
+    getSnapshot: async () => snapshot(snapshots++ === 0 ? [] : [message("private response")]),
+    observeRun: async () => ({ cleared: true, run: null, terminalStatus: "completed" }),
+  });
+  const { renderer } = createRenderer();
+  const controller = new SessionController(api, { id: "ws_1" }, parseCliArgs([]), renderer, null);
+  await controller.runPrompt("first task");
+  assert.equal(controller.lastResponse, "private response");
+  await controller.createSession("New account");
+  assert.equal(controller.lastResponse, "");
+});
+
 test("step-finish is progress metadata, not terminal evidence", async () => {
   const observations: string[] = [];
   let snapshots = 0;

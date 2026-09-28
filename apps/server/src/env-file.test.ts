@@ -102,6 +102,18 @@ describe("env-file", () => {
     await expect(promise).rejects.toMatchObject({ code: "reserved_env_key" });
   });
 
+  test("owned gateway mirrors require exact ownership and are never broadly injected", async () => {
+    const ownedPath = join(dir, "owned.json");
+    const svc = new EnvService({ path: ownedPath });
+    const key = "MCP_GATEWAY_KEY_V2_OWNER";
+    await expect(svc.upsertMany([{ key, value: "secret" }])).rejects.toThrow();
+    await svc.upsertOwned({ key, value: "secret", owner: "owner-a" });
+    expect((await svc.list()).find((entry) => entry.key === key)?.owner).toBe("owner-a");
+    expect(await svc.deleteOwned(key, "owner-b")).toBe(false);
+    expect(await EnvService.readForInjection(ownedPath)).toEqual({});
+    expect(await svc.deleteOwned(key, "owner-a")).toBe(true);
+  });
+
   test("upsertMany accepts managed voice keys but does not inject them", async () => {
     const svc = new EnvService({ path });
     await svc.upsertMany([
@@ -115,7 +127,7 @@ describe("env-file", () => {
       "JUGGLEWORK_API_KEY",
       "JUGGLEWORK_INFERENCE_BASE_URL",
     ]);
-    expect(await EnvService.readForInjection(path)).toEqual({ ANTHROPIC_API_KEY: "sk-ant" });
+    expect(await EnvService.readForInjection(path)).toEqual({ ANTHROPIC_API_KEY: "sk-ant", JUGGLEWORK_API_KEY: "ow_inf_test" });
   });
 
   test("delete returns false when the key is missing", async () => {

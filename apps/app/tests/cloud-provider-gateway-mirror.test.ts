@@ -24,9 +24,9 @@ const storeSource = readFileSync(
 
 describe("gateway credential mirror", () => {
   test("derives a stable name from the provider record id", () => {
-    expect(gatewayMirrorEnvName("lpr_a1b2c3")).toBe("MCP_GATEWAY_KEY_LPR_A1B2C3");
-    expect(gatewayMirrorEnvName("lpr-x.y")).toBe("MCP_GATEWAY_KEY_LPR_X_Y");
-    expect(gatewayMirrorEnvName("  ")).toBe("MCP_GATEWAY_KEY");
+    const owner = { workspaceId: "ws", organizationId: "org", cloudProviderId: "lpr_a1b2c3" };
+    expect(gatewayMirrorEnvName(owner)).toMatch(/^MCP_GATEWAY_KEY_V2_/);
+    expect(gatewayMirrorEnvName({ ...owner, cloudProviderId: "lpr-x.y" })).not.toBe(gatewayMirrorEnvName({ ...owner, cloudProviderId: "lpr_x_y" }));
   });
 
   test("never produces a name the env store would reject or strip", () => {
@@ -34,7 +34,7 @@ describe("gateway credential mirror", () => {
     // and strips them again on injection (readForInjection). A mirror under a
     // reserved name would silently never reach the MCP subprocess.
     for (const id of ["lpr_1", "jugglework_provider", "opencode-thing", ""]) {
-      const name = gatewayMirrorEnvName(id);
+      const name = gatewayMirrorEnvName({ workspaceId: "ws", organizationId: "org", cloudProviderId: id });
       expect(name.startsWith("JUGGLEWORK_")).toBe(false);
       expect(name.startsWith("OPENCODE_")).toBe(false);
       expect(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)).toBe(true);
@@ -77,12 +77,12 @@ describe("gateway credential mirror", () => {
     const env = new Map<string, string>();
     const removedAuth = new Set<string>();
     const client = {
-      upsertUserEnv: async (entries: Array<{ key: string; value: string }>) => {
-        for (const entry of entries) env.set(entry.key, entry.value);
+      setCloudProviderMirror: async (workspaceId: string, providerId: string, organizationId: string, value: string) => {
+        const key = gatewayMirrorEnvName({ workspaceId, organizationId, cloudProviderId: providerId });
+        env.set(key, value);
+        return { ok: true as const, mirror: { workspaceId, organizationId, cloudProviderId: providerId, key } };
       },
-      deleteUserEnv: async (key: string) => {
-        env.delete(key);
-      },
+      removeCloudProviderMirror: async () => ({ ok: true as const }),
     } as unknown as JuggleWorkServerClient;
     const provider: DenOrgLlmProviderConnection = {
       id: cloudProviderId,
@@ -113,7 +113,7 @@ describe("gateway credential mirror", () => {
       metadataVersion: 5,
     };
 
-    await writeGatewayMirror(client, cloudProviderId, gatewayToken);
+    await writeGatewayMirror(client, "ws", "org", cloudProviderId, gatewayToken);
     if (startingBaseline.providerId !== cloudProviderId) {
       removedAuth.add(startingBaseline.providerId);
     }
@@ -124,7 +124,7 @@ describe("gateway credential mirror", () => {
     );
     const finalBaseline = buildCloudImportedProvider(provider, 2);
 
-    expect(env.get("MCP_GATEWAY_KEY_LPR_X")).toBe(gatewayToken);
+    expect(env.get(gatewayMirrorEnvName({ workspaceId: "ws", organizationId: "org", cloudProviderId }))).toBe(gatewayToken);
     expect(removedAuth.has(legacyProviderId)).toBe(true);
     expect(runtimePatch[legacyProviderId]).toBeNull();
     expect(runtimePatch[cloudProviderId]).toBeDefined();
@@ -134,31 +134,35 @@ describe("gateway credential mirror", () => {
       sourceProviderId: "JuggleRouter",
       metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
     });
-    expect(finalBaseline.metadataVersion).toBe(8);
+    expect(finalBaseline.metadataVersion).toBe(10);
 
     const connectStart = storeSource.indexOf("async function connectCloudProviderInternal");
     const connectEnd = storeSource.indexOf("async function connectCloudProvider(", connectStart);
     const connectSource = storeSource.slice(connectStart, connectEnd);
     expect(connectSource).toContain("await removeProviderAuthCredentials(existingImported.providerId);");
     expect(connectSource).toContain("existingImported?.providerId ?? null");
-    expect(connectSource).not.toContain("await removeGatewayMirror(");
+    expect(connectSource).toContain("stripLegacyCloudProviderBlocks([existingImported?.providerId])");
+    expect(connectSource).not.toContain("stripLegacyCloudProviderBlocks([localProviderId");
+    expect(connectSource).toContain("existingImported.gatewayMirror.key !== providerGatewayMirror.key");
+    expect(connectSource).toContain("await removeGatewayMirror(");
   });
 
   test("a transient mirror write failure is sanitized, blocks completion, and retries", async () => {
     const token = "jwgw_secret_must_not_escape";
     let attempts = 0;
     const client = {
-      upsertUserEnv: async () => {
+      setCloudProviderMirror: async (workspaceId: string, providerId: string, organizationId: string) => {
         attempts += 1;
         if (attempts === 1) {
           throw new JuggleWorkServerError(503, "unavailable", `failed for ${token}`);
         }
+        return { ok: true as const, mirror: { workspaceId, organizationId, cloudProviderId: providerId, key: "MCP_GATEWAY_KEY_V2_retry" } };
       },
     } as unknown as JuggleWorkServerClient;
 
     let message = "";
     try {
-      await writeGatewayMirror(client, "lpr_retry", token);
+      await writeGatewayMirror(client, "ws", "org", "lpr_retry", token);
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -166,7 +170,7 @@ describe("gateway credential mirror", () => {
     expect(message.includes(token)).toBe(false);
     expect(attempts).toBe(1);
 
-    await writeGatewayMirror(client, "lpr_retry", token);
+    await writeGatewayMirror(client, "ws", "org", "lpr_retry", token);
     expect(attempts).toBe(2);
   });
 
@@ -174,7 +178,7 @@ describe("gateway credential mirror", () => {
     const token = "jwgw_delete_secret_must_not_escape";
     let attempts = 0;
     const client = {
-      deleteUserEnv: async () => {
+      removeCloudProviderMirror: async () => {
         attempts += 1;
         if (attempts === 1) {
           throw new JuggleWorkServerError(500, "env_store_failed", `failed for ${token}`);
@@ -184,7 +188,7 @@ describe("gateway credential mirror", () => {
 
     let message = "";
     try {
-      await removeGatewayMirror(client, "lpr_retry");
+      await removeGatewayMirror(client, "ws", "lpr_retry");
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
@@ -192,39 +196,39 @@ describe("gateway credential mirror", () => {
     expect(message.includes(token)).toBe(false);
     expect(attempts).toBe(1);
 
-    await removeGatewayMirror(client, "lpr_retry");
+    await removeGatewayMirror(client, "ws", "lpr_retry");
     expect(attempts).toBe(2);
   });
 
   test("delete 404 and demonstrably missing old-server routes are benign", async () => {
     const missingItem = {
-      deleteUserEnv: async () => {
+      removeCloudProviderMirror: async () => {
         throw new JuggleWorkServerError(404, "env_not_found", "Environment variable not found");
       },
     } as unknown as JuggleWorkServerClient;
     const oldServer = {
-      upsertUserEnv: async () => {
+      setCloudProviderMirror: async () => {
         throw new JuggleWorkServerError(404, "not_found", "Not found");
       },
-      deleteUserEnv: async () => {
+      removeCloudProviderMirror: async () => {
         throw new JuggleWorkServerError(501, "not_implemented", "Not implemented");
       },
     } as unknown as JuggleWorkServerClient;
 
-    await expect(removeGatewayMirror(missingItem, "lpr_missing")).resolves.toBeUndefined();
-    await expect(writeGatewayMirror(oldServer, "lpr_old", "jwgw_secret")).resolves.toBeUndefined();
-    await expect(removeGatewayMirror(oldServer, "lpr_old")).resolves.toBeUndefined();
+    await expect(removeGatewayMirror(missingItem, "ws", "lpr_missing")).resolves.toBeUndefined();
+    await expect(writeGatewayMirror(oldServer, "ws", "org", "lpr_old", "jwgw_secret")).resolves.toBeNull();
+    await expect(removeGatewayMirror(oldServer, "ws", "lpr_old")).resolves.toBeUndefined();
   });
 
   test("compatibility does not use broad message matching", async () => {
     const token = "jwgw_message_secret";
     const untyped404 = {
-      upsertUserEnv: async () => {
+      setCloudProviderMirror: async () => {
         throw new Error(`404 not found ${token}`);
       },
     } as unknown as JuggleWorkServerClient;
     const writeItem404 = {
-      upsertUserEnv: async () => {
+      setCloudProviderMirror: async () => {
         throw new JuggleWorkServerError(404, "env_not_found", `not found ${token}`);
       },
     } as unknown as JuggleWorkServerClient;
@@ -232,7 +236,7 @@ describe("gateway credential mirror", () => {
     for (const client of [untyped404, writeItem404]) {
       let message = "";
       try {
-        await writeGatewayMirror(client, "lpr_strict", token);
+        await writeGatewayMirror(client, "ws", "org", "lpr_strict", token);
       } catch (error) {
         message = error instanceof Error ? error.message : String(error);
       }
@@ -242,8 +246,8 @@ describe("gateway credential mirror", () => {
   });
 
   test("no client remains a compatibility no-op", async () => {
-    await expect(writeGatewayMirror(null, "lpr_none", "jwgw_secret")).resolves.toBeUndefined();
-    await expect(removeGatewayMirror(undefined, "lpr_none")).resolves.toBeUndefined();
+    await expect(writeGatewayMirror(null, "ws", "org", "lpr_none", "jwgw_secret")).resolves.toBeNull();
+    await expect(removeGatewayMirror(undefined, "ws", "lpr_none")).resolves.toBeUndefined();
   });
 });
 

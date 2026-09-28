@@ -13,6 +13,7 @@ import {
 } from "../src/app/cloud/import-state";
 import {
   buildRuntimeProviderPatch,
+  buildCloudImportedProvider,
   CLOUD_PROVIDER_METADATA_VERSION,
   getCloudManagedProviderId,
   getProviderModelIds,
@@ -66,17 +67,7 @@ const makeProvider = (
 
 const importedFrom = (
   provider: DenOrgLlmProviderConnection,
-): CloudImportedProvider => ({
-  cloudProviderId: provider.id,
-  providerId: getCloudManagedProviderId(provider),
-  sourceProviderId: provider.providerId,
-  name: provider.name,
-  source: provider.source,
-  updatedAt: provider.updatedAt,
-  modelIds: getProviderModelIds(provider),
-  importedAt: Date.now(),
-  metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
-});
+): CloudImportedProvider => buildCloudImportedProvider(provider, Date.now(), "org_current");
 
 const patchModelKeys = (patch: Record<string, unknown>): string[] => {
   const block = patch[LPR_ID] as { models?: Record<string, unknown> } | null | undefined;

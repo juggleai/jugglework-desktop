@@ -4,6 +4,7 @@ import type { VideoGenerationMode, VideoModelRef } from "@jugglework/types/media
 import type { WorkspaceInfo } from "../types.js";
 import { MediaGenerationRepository } from "./repository.js";
 import type { VideoGenerationAdapter, VideoGenerationJob } from "./types.js";
+import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
 export type SubmitVideoRequest = {
   workspace: WorkspaceInfo;
@@ -15,6 +16,23 @@ export type SubmitVideoRequest = {
   sourceImagePath?: string;
   options?: { durationSeconds?: number; resolution?: string };
 };
+
+export function videoSubmissionAllowed(input: {
+  explicitFlagEnabled: boolean;
+  organizationImportedModel: boolean;
+}): boolean {
+  return input.explicitFlagEnabled || input.organizationImportedModel;
+}
+
+export async function filterVideoSubmissionEligibleModels<T extends { ref: VideoModelRef }>(input: {
+  models: T[];
+  explicitFlagEnabled: boolean;
+  isOrganizationImportedModel: (model: VideoModelRef) => Promise<boolean>;
+}): Promise<T[]> {
+  if (input.explicitFlagEnabled) return input.models;
+  const eligibility = await Promise.all(input.models.map((model) => input.isOrganizationImportedModel(model.ref)));
+  return input.models.filter((_, index) => eligibility[index]);
+}
 
 export class MediaGenerationService {
   constructor(private readonly options: {
@@ -32,9 +50,11 @@ export class MediaGenerationService {
   }
 
   async submit(input: SubmitVideoRequest, signal = new AbortController().signal): Promise<VideoGenerationJob> {
+    if (!input.clientRequestId.trim()) throw new Error("video_client_request_id_required");
+    const existing = this.options.repository.getByRequest(input.workspace.id, input.sessionId, input.clientRequestId);
+    if (existing) return existing;
     if (!this.options.submissionEnabled) throw new Error("video_submission_disabled");
     if (!input.prompt.trim()) throw new Error("video_prompt_required");
-    if (!input.clientRequestId.trim()) throw new Error("video_client_request_id_required");
     if (this.options.repository.countActive(input.workspace.id) >= (this.options.maxConcurrentJobs ?? 2)) throw new Error("video_workspace_concurrency_limit");
     if (input.mode === "image-to-video" && !input.sourceImagePath) throw new Error("video_source_image_required");
     const duration = input.options?.durationSeconds;
@@ -47,19 +67,40 @@ export class MediaGenerationService {
       model: input.model, mode: input.mode, options: input.options ?? {},
     });
     if (job.status !== "queued") return job;
+    job = this.options.repository.setAdapterBinding(job.id, job.revision, adapter.binding);
     job = this.options.repository.transition(job.id, job.revision, "submitting");
     try {
       const submitted = await adapter.submit({
         jobId: job.id, clientRequestId: input.clientRequestId, model: input.model, mode: input.mode,
         prompt: input.prompt.trim(), ...(sourceImagePath ? { sourceImagePath } : {}), options: input.options ?? {},
       }, signal);
-      const accepted = this.options.repository.transition(job.id, job.revision, "submitted", { providerJobId: submitted.providerJobId, nextPollAt: Date.now() });
+      const accepted = this.options.repository.transition(job.id, job.revision, "submitted", { providerJobId: submitted.providerJobId, adapterBinding: adapter.binding, nextPollAt: Date.now() });
       this.options.audit?.({ action: "video_generation_submitted", jobId: accepted.id, workspaceId: accepted.workspaceId, ...(accepted.sessionId ? { sessionId: accepted.sessionId } : {}), providerID: accepted.model.providerID, modelID: accepted.model.modelID, mode: accepted.mode, status: accepted.status });
       return accepted;
     } catch (error) {
-      // Keep ambiguous network failures in submitting so the same paid request is never automatically resubmitted.
-      if (error instanceof Error && error.message === "video_provider_invalid_response") throw error;
-      return this.options.repository.transition(job.id, job.revision, "failed", { error: normalizeError(error) });
+      if (error instanceof VideoSubmissionError && error.outcome === "rejected") {
+        return this.options.repository.transition(job.id, job.revision, "failed", { error: normalizeError(error) });
+      }
+      if (!(error instanceof VideoSubmissionError) && error instanceof Error && error.message === "video_credential_missing") {
+        return this.options.repository.transition(job.id, job.revision, "failed", { error: normalizeError(error) });
+      }
+      if (adapter.reconcileSubmission) {
+        try {
+          const reconciled = await adapter.reconcileSubmission(input.clientRequestId, signal);
+          if (reconciled) return this.options.repository.transition(job.id, job.revision, "submitted", {
+            providerJobId: reconciled.providerJobId, adapterBinding: adapter.binding, nextPollAt: Date.now(),
+          });
+        } catch {
+          // The persisted unknown state is safer than guessing whether a paid request was accepted.
+        }
+      }
+      return this.options.repository.transition(job.id, job.revision, "submission_unknown", {
+        error: {
+          code: error instanceof VideoSubmissionError ? error.code : "video_submission_outcome_unknown",
+          message: redactProviderMessage(error),
+          retryable: false,
+        },
+      });
     }
   }
 
@@ -85,6 +126,7 @@ async function validateSourceImage(workspace: WorkspaceInfo, relativePath: strin
 }
 
 function normalizeError(error: unknown) {
-  const message = error instanceof Error ? error.message.slice(0, 500) : "Video generation failed.";
-  return { code: message.startsWith("video_") ? message : "video_provider_failed", message, retryable: /timeout|rate_limited/.test(message) };
+  const message = redactProviderMessage(error);
+  const code = error instanceof VideoSubmissionError ? error.code : message.startsWith("video_") ? message : "video_provider_failed";
+  return { code, message, retryable: error instanceof VideoSubmissionError ? error.retryable : /timeout|rate_limited/.test(message) };
 }

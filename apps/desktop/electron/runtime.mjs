@@ -531,6 +531,8 @@ function resolveUserEnvFilePath() {
 
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const USER_ENV_RESERVED_PREFIXES = ["JUGGLEWORK_", "OPENCODE_"];
+const USER_ENV_INJECTABLE_INTERNAL_KEYS = new Set(["JUGGLEWORK_API_KEY"]);
+const USER_ENV_OWNED_MIRROR_PREFIX = "MCP_GATEWAY_KEY_V2_";
 
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
 // are stripped so a tampered file can never shadow JUGGLEWORK_* / OPENCODE_*.
@@ -545,7 +547,8 @@ function loadUserEnvFile() {
       const { key, value } = entry;
       if (typeof key !== "string" || typeof value !== "string") continue;
       if (!USER_ENV_KEY_PATTERN.test(key)) continue;
-      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (key.startsWith(USER_ENV_OWNED_MIRROR_PREFIX)) continue;
+      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p)) && !USER_ENV_INJECTABLE_INTERNAL_KEYS.has(key)) continue;
       out[key] = value;
     }
     return out;

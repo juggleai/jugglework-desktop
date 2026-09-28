@@ -36,7 +36,7 @@ const HELP_TREE: Record<string, CommandHelp> = {
     usage: "jugglework [options] [prompt]\n  jugglework <command> [options]",
     commands: {
       exec: "Run one deterministic non-interactive task", session: "Manage the persisted session lifecycle", resume: "Alias for session resume", fork: "Alias for session fork", sessions: "Alias for session list", status: "Show runtime and task status", workspace: "List, add, or activate Server workspaces",
-      login: "Sign in or inspect Cloud login status", logout: "Sign out of the selected Cloud deployment",
+      login: "Sign in or inspect Cloud login status", logout: "Sign out and return to login in a terminal",
       org: "List or select an organization", catalog: "Inspect public model catalog metadata",
       provider: "Inspect organization providers", model: "Inspect organization models",
       doctor: "Run redacted installation and connectivity diagnostics", completion: "Generate shell completion",
@@ -44,6 +44,7 @@ const HELP_TREE: Record<string, CommandHelp> = {
     options: GLOBAL_OPTIONS,
   },
   login: { summary: "Authenticate to JuggleWork Cloud.", usage: "jugglework login [--grant-stdin]\n  jugglework login status", commands: { status: "Validate the selected Cloud login" }, options: ["    --grant-stdin            Read a one-time login grant from stdin"] },
+  logout: { summary: "Sign out of JuggleWork Cloud and return to login in an interactive terminal.", usage: "jugglework logout [--json]" },
   org: { summary: "Manage the selected Cloud organization.", usage: "jugglework org <command>", commands: { list: "List account organizations", use: "Select an organization by exact ID or slug" } },
   "org list": { summary: "List organizations available to the signed-in account.", usage: "jugglework org list [--json]" },
   "org use": { summary: "Select the organization used by inventory commands.", usage: "jugglework org use <id-or-slug> [--json]" },

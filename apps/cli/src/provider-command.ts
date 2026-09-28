@@ -1,5 +1,5 @@
 import {
-  buildCloudImportedProvider, buildRuntimeProviderPatch, gatewayMirrorEnvName,
+  buildCloudImportedProvider, buildRuntimeProviderPatch, legacyGatewayMirrorEnvName,
   filterImportableCloudOrgProviders, getCloudManagedProviderId, isCloudManagedProviderKey, resolveCloudProviderCredentials,
   type CloudImportedProvider, type DeploymentModelCatalog,
 } from "@jugglework/cloud-provider";
@@ -23,7 +23,7 @@ export class ProviderMutationError extends Error {
   }
 }
 
-type RuntimeApi = Pick<JuggleWorkApiClient, "preflightProviderAuthority" | "upsertUserEnvironment" | "removeUserEnvironment" | "setProviderAuth" | "removeProviderAuth" | "patchWorkspaceConfig" | "reloadEngine" | "providerStatus" | "getCloudProviderImport" | "setCloudProviderImport" | "removeCloudProviderImport">;
+type RuntimeApi = Pick<JuggleWorkApiClient, "preflightProviderAuthority" | "upsertUserEnvironment" | "removeUserEnvironment" | "setCloudProviderMirror" | "removeCloudProviderMirror" | "setProviderAuth" | "removeProviderAuth" | "patchCloudProviderConfig" | "reloadEngine" | "providerStatus" | "getCloudProviderImport" | "setCloudProviderImport" | "removeCloudProviderImport">;
 
 async function stage<T>(operation: "import" | "remove", name: ProviderMutationStage, completed: ProviderMutationStage[], run: () => Promise<T>): Promise<T> {
   try {
@@ -42,7 +42,7 @@ function deploymentCatalog(payload: unknown): DeploymentModelCatalog | null {
   return (providers && typeof providers === "object" && !Array.isArray(providers) ? providers : root) as DeploymentModelCatalog;
 }
 
-export async function importProvider(input: { cloud: CloudClient; runtime: RuntimeApi; token: string; organizationId: string; workspaceId: string; cloudProviderId: string; registerSecrets?: (values: string[]) => void }): Promise<RuntimeProviderStatus> {
+export async function importProvider(input: { cloud: Pick<CloudClient, "providerConnection" | "catalog">; runtime: RuntimeApi; token: string; organizationId: string; workspaceId: string; cloudProviderId: string; registerSecrets?: (values: string[]) => void }): Promise<RuntimeProviderStatus> {
   const completed: ProviderMutationStage[] = [];
   await stage("import", "host_authority", completed, () => input.runtime.preflightProviderAuthority(input.workspaceId));
   const provider = await stage("import", "connection", completed, () => input.cloud.providerConnection(input.token, input.organizationId, input.cloudProviderId));
@@ -55,15 +55,28 @@ export async function importProvider(input: { cloud: CloudClient; runtime: Runti
   input.registerSecrets?.([credentials.primaryApiKey, ...credentials.envEntries.map((entry) => entry.value)].filter(Boolean));
   const requiredEnv = Array.isArray(provider.providerConfig?.env) ? provider.providerConfig.env.filter((value): value is string => typeof value === "string") : [];
   if (!credentials.primaryApiKey && requiredEnv.length) throw new ProviderMutationError("import", "connection", completed, new Error(`${provider.name} has no stored organization credential.`));
-  const envEntries = [...credentials.envEntries];
-  if (credentials.primaryApiKey) envEntries.push({ key: gatewayMirrorEnvName(provider.id), value: credentials.primaryApiKey });
-  if (envEntries.length) await stage("import", "environment", completed, () => input.runtime.upsertUserEnvironment(envEntries)); else completed.push("environment");
-  if (credentials.primaryApiKey) await stage("import", "authentication", completed, () => input.runtime.setProviderAuth(input.workspaceId, localProviderId, credentials.primaryApiKey)); else completed.push("authentication");
-  await stage("import", "runtime_config", completed, async () => {
-    const catalog = deploymentCatalog(await input.cloud.catalog());
-    return input.runtime.patchWorkspaceConfig(input.workspaceId, { opencode: { provider: buildRuntimeProviderPatch(provider, localProviderId, existing?.providerId ?? null, catalog) } });
+  const envEntries = credentials.envEntries.filter((entry) => !/^JUGGLEWORK_GATEWAY_KEY_[A-Za-z0-9_]+$/.test(entry.key));
+  let mirror: CloudImportedProvider["gatewayMirror"] = null;
+  await stage("import", "environment", completed, async () => {
+    if (envEntries.length) await input.runtime.upsertUserEnvironment(envEntries);
+    if (credentials.primaryApiKey) {
+      mirror = (await input.runtime.setCloudProviderMirror(input.workspaceId, provider.id, input.organizationId, credentials.primaryApiKey)).mirror;
+    }
+    if (existing?.gatewayMirror && mirror && existing.gatewayMirror.key !== mirror.key) {
+      await input.runtime.removeCloudProviderMirror(input.workspaceId, provider.id);
+    }
+    if (existing && !existing.gatewayMirror && existing.cloudProviderId === provider.id) {
+      try { await input.runtime.removeUserEnvironment(legacyGatewayMirrorEnvName(provider.id)); }
+      catch (error) { if (!(error instanceof JuggleWorkApiError && error.status === 404)) throw error; }
+    }
   });
-  const baseline = buildCloudImportedProvider(provider);
+  if (credentials.primaryApiKey) await stage("import", "authentication", completed, () => input.runtime.setProviderAuth(input.workspaceId, localProviderId, credentials.primaryApiKey)); else completed.push("authentication");
+  let catalog: DeploymentModelCatalog | null = null;
+  await stage("import", "runtime_config", completed, async () => {
+    catalog = deploymentCatalog(await input.cloud.catalog());
+    return input.runtime.patchCloudProviderConfig(input.workspaceId, buildRuntimeProviderPatch(provider, localProviderId, existing?.cloudProviderId === provider.id ? existing.providerId : null, catalog));
+  });
+  const baseline = buildCloudImportedProvider(provider, Date.now(), input.organizationId, mirror, catalog);
   await stage("import", "baseline", completed, () => input.runtime.setCloudProviderImport(input.workspaceId, provider.id, baseline as unknown as JsonRecord));
   await stage("import", "reload", completed, () => input.runtime.reloadEngine(input.workspaceId));
   const status = await stage("import", "verification", completed, () => input.runtime.providerStatus(input.workspaceId, localProviderId));
@@ -76,9 +89,14 @@ export async function removeProvider(input: { runtime: RuntimeApi; workspaceId: 
   await stage("remove", "host_authority", completed, () => input.runtime.preflightProviderAuthority(input.workspaceId));
   const imported = (await input.runtime.getCloudProviderImport(input.workspaceId, input.cloudProviderId)).item as CloudImportedProvider | null;
   if (!imported) return;
-  await stage("remove", "environment", completed, async () => { try { await input.runtime.removeUserEnvironment(gatewayMirrorEnvName(input.cloudProviderId)); } catch (error) { if (!(error instanceof JuggleWorkApiError && error.status === 404)) throw error; } });
+  await stage("remove", "environment", completed, async () => {
+    try {
+      if (imported.gatewayMirror) await input.runtime.removeCloudProviderMirror(input.workspaceId, input.cloudProviderId);
+      else if (imported.cloudProviderId === input.cloudProviderId) await input.runtime.removeUserEnvironment(legacyGatewayMirrorEnvName(input.cloudProviderId));
+    } catch (error) { if (!(error instanceof JuggleWorkApiError && error.status === 404)) throw error; }
+  });
   await stage("remove", "authentication", completed, async () => { try { await input.runtime.removeProviderAuth(input.workspaceId, imported.providerId); } catch (error) { if (!(error instanceof JuggleWorkApiError && error.status === 404)) throw error; } });
-  await stage("remove", "runtime_config", completed, () => input.runtime.patchWorkspaceConfig(input.workspaceId, { opencode: { provider: { [imported.providerId]: null } } }));
+  await stage("remove", "runtime_config", completed, () => input.runtime.patchCloudProviderConfig(input.workspaceId, { [imported.providerId]: null }));
   await stage("remove", "baseline", completed, () => input.runtime.removeCloudProviderImport(input.workspaceId, input.cloudProviderId));
   await stage("remove", "reload", completed, () => input.runtime.reloadEngine(input.workspaceId));
 }

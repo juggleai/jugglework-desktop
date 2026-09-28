@@ -53,7 +53,7 @@ The vendor key never reaches the desktop. An administrator configures the LLM pr
         "VISION_PROVIDER": "jugglework",
         "VISION_BASE_URL": "https://your-server/jwork/api/gateway/v1/lpr_xxx",
         "VISION_MODEL": "kimi-k2.7-code",
-        "VISION_API_KEY_ENV": "MCP_GATEWAY_KEY_LPR_XXX"
+        "VISION_API_KEY_ENV": "<managed by the JuggleWork provider import>"
       }
     }
   }

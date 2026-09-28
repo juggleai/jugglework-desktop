@@ -128,13 +128,14 @@ jugglework workspace open ws_123
 # Sign in through the browser, then paste the one-time handoff result
 jugglework login
 jugglework login status
+jugglework logout
 jugglework org list
 jugglework org use my-organization
 jugglework provider list
 jugglework model list
 jugglework catalog list
 
-# Import an organization-published provider into the local CLI runtime
+# Manually re-import an organization publication when troubleshooting
 jugglework provider import <publication-id>
 
 # Redacted diagnostics; an embedded runtime is never started
@@ -164,7 +165,7 @@ With no prompt, the interactive REPL is available only when both stdin and stdou
 | `/workspace` | List workspaces and show the supported top-level mutation commands. |
 | `/compact` | Request real runtime compaction; requires `--model provider/model`. |
 | `/copy` | Print the last response as explicitly labeled copy-ready text; it does not claim clipboard access. |
-| `/logout` | Invalidate and remove the selected Cloud profile. |
+| `/logout` | Sign out, clear the selected Cloud account, and return to the login menu. Signing in again starts a fresh session; Cancel exits the CLI. |
 | `/fork [id]` | Fork the selected session or an explicitly identified session through the Server API. |
 | `/connect`, `/mcp`, `/skills`, `/extensions`, `/doctor` | Clearly labeled read-only guidance/status entries where this CLI lacks safe mutation or complete inventory APIs. |
 | `/stop` | Request abort of the current run without deleting its session. |
@@ -242,13 +243,13 @@ Precedence from highest to lowest is:
 
 Supported environment variables are `JUGGLEWORK_SERVER_URL`, `JUGGLEWORK_TOKEN`, `JUGGLEWORK_HOST_TOKEN`, `JUGGLEWORK_CLOUD_URL`, `JUGGLEWORK_CLOUD_TOKEN`, `JUGGLEWORK_CLOUD_ORG`, `JUGGLEWORK_WORKSPACE`, `JUGGLEWORK_WORKSPACE_ID`, `JUGGLEWORK_OPENCODE_BIN`, `JUGGLEWORK_EXTENSIONS_PLUGIN_DIR`, `JUGGLEWORK_MODEL`, `JUGGLEWORK_AGENT`, `JUGGLEWORK_SANDBOX`, and `JUGGLEWORK_APPROVAL`. `JUGGLEWORK_REASONING_EFFORT` is also supported. The Cloud token is an ephemeral override and is never persisted.
 
-Cloud commands default to `https://work.jugglechat.cn`; this is independent from the runtime `--server` URL. `jugglework login` opens the Cloud sign-in page where possible and always prints it. After sign-in, paste the resulting `jugglework-cli://den-auth?...` link or raw one-time grant into the hidden prompt. The bare interactive sign-in menu offers the same handoff with a paste-only choice for remote terminals. On SSH or another non-interactive terminal, pipe the result to `jugglework login --grant-stdin`. Login restores the account's Cloud active organization, falls back to that account's remembered choice, then selects the first available organization. `/org` changes are synchronized to Cloud. Account, organization, catalog, provider-list, and model-list commands do not start the local runtime.
+Cloud commands default to `https://work.jugglechat.cn`; this is independent from the runtime `--server` URL. `jugglework login` opens the Cloud sign-in page where possible and always prints it. After sign-in, paste the resulting `jugglework-cli://den-auth?...` link or raw one-time grant into the hidden prompt. The bare interactive sign-in menu offers the same handoff with a paste-only choice for remote terminals. On SSH or another non-interactive terminal, pipe the result to `jugglework login --grant-stdin`. Login restores the account's Cloud active organization, falls back to that account's remembered choice, then selects the first available organization. `/org` changes are synchronized to Cloud. Login, organization, catalog, provider-list, and model-list commands do not start the local runtime. Logout may briefly start the owned runtime to remove imported providers before signing out.
 
-A typical first run is `jugglework login`, `jugglework org list`,
-an optional `jugglework org use <id-or-slug>`, `jugglework provider list`, and
-`jugglework provider import <publication-id>`. Provider import starts or connects
-to the runtime because it writes the selected organization's provider into that
-runtime; inventory and account commands remain Cloud-only.
+In a terminal, `/logout` and `jugglework logout` return to the sign-in menu after removing the saved Cloud session. Choose another login, continue without Cloud, or cancel to exit. In non-interactive and `--json` mode, `jugglework logout` only signs out and exits. If `JUGGLEWORK_CLOUD_TOKEN` is set, unset it in the shell as well; an environment token can re-authenticate a later CLI process.
+
+When a task starts after a saved Cloud login, the CLI synchronizes the selected organization's enabled provider publications into that workspace's runtime. It removes stale Cloud imports after an organization switch, verifies provider visibility, and selects the first connected organization model when no model was explicitly selected or configured. A CLI `--model`, `JUGGLEWORK_MODEL`, or configured workspace model remains authoritative unless it refers to a Cloud publication no longer in the selected organization. If eligible organization providers publish models but none can be used, task startup fails instead of silently falling back to the online OpenCode default. `/model` shows the resulting model beneath the interactive input. Signing out cleans imported providers from the CLI-owned runtime when available; an explicitly connected Server is left unchanged.
+
+A typical first run is `jugglework login`, optionally `jugglework org use <id-or-slug>`, then `jugglework`. Provider import is automatic at task startup; the manual `provider import` command remains available for repair. An existing Server requires host authority for synchronization (`--host-token` or `JUGGLEWORK_HOST_TOKEN`), while the owned runtime supplies that authority itself. Login and inventory commands remain Cloud-only.
 
 Credential-shaped fields and occurrences of the actual bearer or host token in rendered messages are redacted. Avoid passing tokens directly on a shared machine's command line because process-list and shell-history exposure happens before the CLI can redact output; prefer environment variables or a user-readable config file.
 

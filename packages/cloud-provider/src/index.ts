@@ -1,3 +1,11 @@
+import {
+  cloudGatewayCredentialEnvName,
+  cloudGatewayMirrorEnvName,
+  cloudProviderConfigFingerprint,
+  legacyCloudGatewayMirrorEnvName,
+  type CloudGatewayMirrorReference,
+} from "@jugglework/types/provider-credentials";
+
 export type CloudProviderModel = {
   id: string;
   name: string;
@@ -33,6 +41,9 @@ export type CloudImportedProvider = {
   modelIds: string[];
   importedAt: number | null;
   metadataVersion: number | null;
+  organizationId?: string | null;
+  providerConfigFingerprint?: string | null;
+  gatewayMirror?: CloudGatewayMirrorReference | null;
 };
 
 export type DeploymentCatalogModel = Record<string, unknown>;
@@ -58,10 +69,8 @@ const getStringList = (value: unknown): string[] =>
 const sameStringList = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
-export const gatewayMirrorEnvName = (cloudProviderId: string): string => {
-  const suffix = cloudProviderId.trim().replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
-  return suffix ? `MCP_GATEWAY_KEY_${suffix}` : "MCP_GATEWAY_KEY";
-};
+export const gatewayMirrorEnvName = cloudGatewayMirrorEnvName;
+export const legacyGatewayMirrorEnvName = legacyCloudGatewayMirrorEnvName;
 
 export const getCloudProviderEnv = (config: Record<string, unknown>) => getStringList(config.env);
 
@@ -92,11 +101,14 @@ export const getProviderModelIds = (provider: Pick<CloudProvider, "models">) =>
     return id ? [id] : [];
   }).sort();
 
-export const CLOUD_PROVIDER_METADATA_VERSION = 8;
+export const CLOUD_PROVIDER_METADATA_VERSION = 10;
 
 export const buildCloudImportedProvider = (
   provider: CloudProvider,
   importedAt = Date.now(),
+  organizationId: string | null = null,
+  gatewayMirror: CloudGatewayMirrorReference | null = null,
+  catalog?: DeploymentModelCatalog | null,
 ): CloudImportedProvider => ({
   cloudProviderId: provider.id,
   providerId: getCloudManagedProviderId(provider),
@@ -107,6 +119,9 @@ export const buildCloudImportedProvider = (
   modelIds: getProviderModelIds(provider),
   importedAt,
   metadataVersion: CLOUD_PROVIDER_METADATA_VERSION,
+  organizationId: organizationId?.trim() || null,
+  providerConfigFingerprint: cloudProviderConfigFingerprint(buildCloudProviderConfig(provider as CloudProviderConnection, catalog)),
+  gatewayMirror,
 });
 
 export const filterImportableCloudOrgProviders = <T extends CloudProvider>(providers: readonly T[]): T[] =>
@@ -132,13 +147,28 @@ export const isCloudManagedProviderKey = (providerId: string) =>
 export const isCloudProviderOutOfSync = (
   provider: CloudProvider,
   importedProvider: CloudImportedProvider,
-) =>
-  (importedProvider.metadataVersion ?? 0) < CLOUD_PROVIDER_METADATA_VERSION ||
-  importedProvider.providerId !== getCloudManagedProviderId(provider) ||
-  importedProvider.sourceProviderId !== provider.providerId ||
-  (importedProvider.source ?? null) !== (provider.source ?? null) ||
-  (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
-  !sameStringList(importedProvider.modelIds, getProviderModelIds(provider));
+  organizationId?: string | null,
+  catalog?: DeploymentModelCatalog | null,
+) => {
+  const effectiveConfig = buildCloudProviderConfig(provider as CloudProviderConnection, catalog);
+  const requiresOwnedMirror = getCloudProviderEnv(effectiveConfig).some((key) => /^JUGGLEWORK_GATEWAY_KEY_V2_[A-F0-9]+$/.test(key));
+  const expectedOrganizationId = organizationId?.trim() || null;
+  const mirror = importedProvider.gatewayMirror;
+  const invalidMirror = requiresOwnedMirror && (
+    !mirror || mirror.cloudProviderId !== provider.id ||
+    (organizationId !== undefined && mirror.organizationId !== expectedOrganizationId) ||
+    mirror.key !== cloudGatewayMirrorEnvName({ workspaceId: mirror.workspaceId, organizationId: mirror.organizationId, cloudProviderId: mirror.cloudProviderId })
+  );
+  return (importedProvider.metadataVersion ?? 0) < CLOUD_PROVIDER_METADATA_VERSION ||
+    (organizationId !== undefined && (importedProvider.organizationId ?? null) !== expectedOrganizationId) ||
+    importedProvider.providerId !== getCloudManagedProviderId(provider) ||
+    importedProvider.sourceProviderId !== provider.providerId ||
+    (importedProvider.source ?? null) !== (provider.source ?? null) ||
+    (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
+    invalidMirror ||
+    (catalog !== undefined && importedProvider.providerConfigFingerprint !== cloudProviderConfigFingerprint(effectiveConfig)) ||
+    !sameStringList(importedProvider.modelIds, getProviderModelIds(provider));
+};
 
 export function missingCloudProviderReloadKey(input: {
   workspaceId: string;
@@ -183,7 +213,8 @@ export const buildCloudProviderConfig = (
   const next: CloudProviderConfig = {
     id: provider.providerId,
     name: provider.name,
-    env: getCloudProviderEnv(providerConfig),
+    env: getCloudProviderEnv(providerConfig).map((key) =>
+      /^JUGGLEWORK_GATEWAY_KEY_[A-Za-z0-9_]+$/.test(key) ? cloudGatewayCredentialEnvName(provider.id) : key),
     models,
   };
   if (typeof providerConfig.npm === "string" && providerConfig.npm.trim()) next.npm = providerConfig.npm;

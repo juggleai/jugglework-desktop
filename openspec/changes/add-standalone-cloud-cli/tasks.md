@@ -29,6 +29,10 @@
 - [x] 4.3 Add CLI runtime client methods for protected user environment updates, provider authentication, workspace config patching, reload, and provider visibility checks.
 - [x] 4.4 Implement idempotent `provider import` and `provider remove` orchestration with staged redacted errors and no blind destructive rollback.
 - [x] 4.5 Add tests for missing host authority, retries after each import-stage failure, pre-existing values, Desktop-compatible baselines, concurrent reconciliation, and post-import verification.
+- [x] 4.6 Reconcile the selected organization's enabled providers before task startup, remove stale Cloud imports, select the first usable organization model when no explicit or valid workspace model exists, and fail closed when published models are unusable.
+- [x] 4.7 Route Cloud-managed provider config updates through a host-token-only, provider-scoped endpoint so owned manual-approval runtimes can reconcile without weakening general config approval; cover authorization, validation, idempotence, and removal.
+- [x] 4.8 Read the runtime model catalog through the Server's canonical workspace OpenCode proxy; verify startup model resolution and `/model` against the real Server router.
+- [x] 4.9 Stamp CLI imports with organization ownership, force same-row reimport across organization switches, and limit legacy provider deletion/rename to exact baseline-owned ids.
 
 ## 5. Self-Contained OpenCode Distribution
 
@@ -48,6 +52,8 @@
 - [x] 6.6 Show an interactive submitted-task row, elapsed working state, model/workspace context, and working Escape cancellation without changing exec or JSON output.
 - [x] 6.7 Show the slash palette on `/`, report provider/model/reasoning context, separate tool and assistant output, and restore the account's active organization with first-org fallback.
 - [x] 6.8 Make the interactive slash menu keyboard-selectable, browse connected runtime models and reasoning variants through `/model`, and keep the active model/effort directly below the composer.
+- [x] 6.9 Return `/logout` and terminal `jugglework logout` to the sign-in menu, isolate subsequent work in a new session, and keep scripted logout non-interactive.
+- [x] 6.10 Restore terminal input mode and pause the composer input stream during shutdown so `/exit` terminates on Linux; enforce EOF in the interactive regression test.
 
 ## 7. Diagnostics, Documentation, and Release
 

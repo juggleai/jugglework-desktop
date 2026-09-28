@@ -86,6 +86,36 @@ Saving a local video model group with an API key SHALL store the credential in O
 - **WHEN** a member edits a video model group and leaves the API key field blank
 - **THEN** neither the OpenCode credential nor the mirrored environment credential is deleted or replaced
 
+### Requirement: Resolve cloud gateway credentials with workspace ownership
+The Desktop SHALL treat only the exact versioned `JUGGLEWORK_GATEWAY_KEY_*` names as reserved virtual credential references and SHALL map them to injectively named, owner-stamped mirrors only for a matching current workspace cloud import baseline.
+
+#### Scenario: Organization-imported model owns the mirror
+- **WHEN** the active workspace has a current-version import baseline for the same cloud row, runtime provider, organization, and model declared by the provider configuration
+- **THEN** media discovery and invocation additionally verify the effective provider-config fingerprint and exact workspace/organization/cloud-row mirror owner
+- **AND** resolve the corresponding mirror without broadly injecting the reserved alias
+
+#### Scenario: Mirror belongs to another workspace or model
+- **WHEN** a mirror exists but the active workspace has no matching baseline or the baseline names another provider or model
+- **THEN** the resolver reports missing credentials and does not use that mirror
+
+#### Scenario: Reserved environment value is tampered
+- **WHEN** a reserved gateway key appears directly in the user environment store or process environment
+- **THEN** the resolver ignores that value and does not make it user-writable or available through broad environment injection
+
+#### Scenario: Credential changes while Desktop is running
+- **WHEN** a credential mirror is added, rotated, or removed after media discovery or server startup
+- **THEN** image and video invocation re-resolve the credential for the current request
+
+#### Scenario: Normalized cloud row collision
+- **WHEN** two cloud row identifiers differ only by punctuation that the legacy normalizer collapsed
+- **THEN** their new mirror keys remain distinct and neither baseline can read the other's value
+
+#### Scenario: Organization switch cleanup is partially unavailable
+- **WHEN** mirror, auth, runtime provider, or Cloud MCP cleanup fails while switching organizations
+- **THEN** all cleanup categories are still attempted independently
+- **AND** unresolved import baselines remain recorded
+- **AND** activation and provider import for the next organization are blocked until cleanup succeeds
+
 ### Requirement: Normalize video-generation capabilities
 The system SHALL represent text-to-video and image-to-video as explicit, independently queryable model capabilities, including provider-reported input and output constraints that JuggleWork can validate.
 

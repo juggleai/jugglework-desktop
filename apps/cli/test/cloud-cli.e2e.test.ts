@@ -136,7 +136,7 @@ for (const failure of ["grant_expired", "grant_replayed"] as const) {
   });
 }
 
-test("successful grant login persists atomically while environment tokens remain non-persistent", async () => {
+test("successful grant login persists atomically while environment tokens remain non-persistent", { timeout: 20_000 }, async () => {
   const switches: string[] = [];
   const cloud = await mockCloud((request, response) => {
     if (request.url?.endsWith("/desktop-handoff/exchange")) return send(response, { token: "persisted-session", user: { id: "user_1" } });

@@ -89,7 +89,7 @@ async function callLocalExtension(
   });
 }
 
-const TERMINAL_VIDEO_JOB_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_VIDEO_JOB_STATUSES = new Set(["completed", "failed", "cancelled", "submission_unknown"]);
 const VIDEO_JOB_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

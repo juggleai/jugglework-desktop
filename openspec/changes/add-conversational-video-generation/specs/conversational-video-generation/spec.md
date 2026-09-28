@@ -41,12 +41,48 @@ The system SHALL use an idempotent request identity to prevent retries of the sa
 - **WHEN** the client retries a request with the same idempotency identity after the original request was accepted
 - **THEN** the system returns or reconciles the existing job instead of submitting another paid generation
 
+#### Scenario: Submission transport outcome is ambiguous
+- **WHEN** submission transport aborts, crashes, or returns an invalid acceptance response after the provider may have received the paid request
+- **THEN** the system reconciles by idempotency key when the adapter supports lookup
+- **AND** otherwise persists terminal attention state `submission_unknown` rather than ordinary `failed`
+- **AND** a retry with the exact client request identity returns the same job without a second submission
+
+#### Scenario: Existing request is retrieved at the concurrency limit
+- **WHEN** the workspace is at its concurrency limit and the client repeats an existing request identity
+- **THEN** the system returns the existing job before applying the limit to new submissions
+
+### Requirement: Apply video submission eligibility per selected model
+The Desktop SHALL allow a ready current organization-imported model to submit in a packaged runtime without a local rollout environment flag and SHALL continue requiring `JUGGLEWORK_VIDEO_GENERATION_ENABLED` for local or custom models.
+
+#### Scenario: Current organization model in a packaged runtime
+- **WHEN** a ready selected model is covered by the active workspace's current organization import baseline and the explicit local flag is absent
+- **THEN** discovery exposes that model as selectable and submission is allowed
+
+#### Scenario: Local model without explicit opt-in
+- **WHEN** a ready local or custom model is not covered by a current organization import baseline and the explicit flag is absent
+- **THEN** discovery does not expose it as selectable and submission is rejected
+
+#### Scenario: Worker reconciles after runtime configuration changes
+- **WHEN** an existing job requires reconciliation after its workspace provider configuration or credentials change
+- **THEN** the worker resolves the current workspace adapter and credential instead of using a server-startup snapshot
+- **AND** requires its immutable protocol, origin, provider-config fingerprint, cloud row, and organization to match the submission binding
+- **AND** permits credential value rotation without changing that binding
+
+#### Scenario: Submitted adapter disappears or changes ownership
+- **WHEN** no adapter matches the immutable submission binding during reconciliation
+- **THEN** the worker retries with bounded backoff and transitions the job to a sanitized terminal failure after the configured limit
+
 ### Requirement: Publish completed video as a workspace artifact
 The system SHALL download a successful provider result into the active authorized workspace under `artifacts/`, SHALL avoid exposing a partially downloaded final file, and SHALL return a workspace-relative artifact descriptor.
 
 #### Scenario: Successful video download
 - **WHEN** a provider reports a valid completed result
 - **THEN** the system validates the response, writes the complete video artifact under `artifacts/`, and publishes its relative path, MIME type, byte count, provider, model, and available media metadata
+
+#### Scenario: Restart during artifact download
+- **WHEN** a persisted job restarts in `downloading`
+- **THEN** reconciliation safely repeats download processing without an invalid downloading-to-downloading failure
+- **AND** completes immediately when the deterministic existing artifact is already valid
 
 #### Scenario: Invalid provider payload
 - **WHEN** a provider completion points to content that exceeds configured limits or fails MIME or video-content validation
@@ -111,6 +147,10 @@ The system MUST NOT persist or expose provider credentials, authorization header
 #### Scenario: Job diagnostics are inspected
 - **WHEN** a user or operator views a failed job or its logs
 - **THEN** diagnostics contain no API key, authorization header, signed download URL, or complete encoded media payload
+
+#### Scenario: Provider echoes an arbitrary credential
+- **WHEN** an image or video provider-derived error includes the exact resolved credential in UUID, JWT-like, or another arbitrary format
+- **THEN** the exact value is redacted before output, logging, or persistence
 
 #### Scenario: Output path attempts traversal
 - **WHEN** a requested filename or provider result attempts to resolve outside the active workspace

@@ -1,7 +1,7 @@
 import type { CliOptions } from "./args.js";
 import type { JuggleWorkApiClient, WorkspaceInfo } from "./api.js";
 
-export type ModelContext = { provider: string | null; model: string | null; reasoningEffort: string | null; source: "cli" | "workspace" | "runtime" };
+export type ModelContext = { provider: string | null; model: string | null; reasoningEffort: string | null; source: "cli" | "workspace" | "runtime" | "organization" };
 
 export function parseModelContext(model: string | null, reasoningEffort: string | null, source: ModelContext["source"]): ModelContext {
   const slash = model?.indexOf("/") ?? -1;

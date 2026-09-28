@@ -82,12 +82,14 @@ import {
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
   missingCloudProviderReloadKey,
+  legacyGatewayMirrorEnvName,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
 import {
   removeGatewayMirror,
   writeGatewayMirror,
 } from "./gateway-mirror";
+import { cleanupCloudProviderIndependently, registerOrganizationCleanup } from "./cloud-provider-cleanup";
 import {
   buildCustomProviderConfig,
   customProviderCredentialEnvEntry,
@@ -244,6 +246,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   let disposed = false;
   let started = false;
   let denSessionCleanup: (() => void) | null = null;
+  let organizationCleanup: (() => void) | null = null;
   let lastWorkspaceKey = "";
 
   let state: MutableState = {
@@ -790,55 +793,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return result;
   };
 
-  // Sweep all cloud-managed provider entries (keys matching /^lpr_/) from
-  // both the runtime config and opencode.jsonc, regardless of
-  // importedCloudProviders state. Returns the list of provider IDs that were
-  // removed so callers can also clear their auth credentials.
+  // A prefix is not proof of ownership. Legacy cleanup is limited to exact
+  // provider ids retained in an import baseline and handled by normal removal.
   const sweepOrphanCloudProvidersFromConfig = async (): Promise<string[]> => {
-    const orphanIds = new Set<string>();
-
-    // Runtime-managed orphans (`lpr_*` keys in the workspace runtime config).
-    try {
-      const { juggleworkClient, juggleworkWorkspaceId, canUseJuggleWorkServer } =
-        await resolveJuggleWorkConfigTarget("write");
-      if (canUseJuggleWorkServer && juggleworkClient && juggleworkWorkspaceId) {
-        const merged = await juggleworkClient.getConfig(juggleworkWorkspaceId);
-        const runtimeProvider = isRecord(merged.opencode) ? merged.opencode.provider : null;
-        const runtimeOrphans = isRecord(runtimeProvider)
-          ? Object.keys(runtimeProvider).filter((key) => /^lpr_/i.test(key))
-          : [];
-        if (runtimeOrphans.length > 0) {
-          await patchRuntimeProviders(
-            Object.fromEntries(runtimeOrphans.map((id) => [id, null])),
-          );
-          for (const id of runtimeOrphans) orphanIds.add(id);
-        }
-      }
-    } catch {
-      // Best-effort; the legacy file sweep below still runs.
-    }
-
-    // Legacy `opencode.jsonc` blocks written by pre-runtime builds.
-    const configFile = await readProjectConfigFile().catch(() => null) as { content?: string } | null;
-    if (configFile?.content?.trim()) {
-      const parsed = parse(configFile.content);
-      const providerSection =
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>).provider
-          : null;
-      const fileOrphans =
-        providerSection && typeof providerSection === "object" && !Array.isArray(providerSection)
-          ? Object.keys(providerSection as Record<string, unknown>).filter((key) => /^lpr_/i.test(key))
-          : [];
-      if (fileOrphans.length > 0) {
-        await updateProjectConfigFile((raw) =>
-          formatConfigWithoutCloudProviders(raw, fileOrphans)
-        );
-        for (const id of fileOrphans) orphanIds.add(id);
-      }
-    }
-
-    return [...orphanIds];
+    return [];
   };
 
   const assertCloudProviderImportSafe = async (
@@ -1710,7 +1668,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       assertProviderAllowedByDesktopPolicy(provider.providerId);
       const existingImported = state.importedCloudProviders[cloudProviderId] ?? null;
       const localProviderId = getCloudManagedProviderId(provider);
-      const { envEntries, primaryApiKey } = resolveCloudProviderCredentials(provider);
+      let providerGatewayMirror: CloudImportedProvider["gatewayMirror"] = null;
+      const resolvedCredentials = resolveCloudProviderCredentials(provider);
+      const envEntries = resolvedCredentials.envEntries.filter((entry) => !/^JUGGLEWORK_GATEWAY_KEY_[A-Za-z0-9_]+$/.test(entry.key));
+      const { primaryApiKey } = resolvedCredentials;
       const env = getCloudProviderEnv(provider.providerConfig);
       if (!primaryApiKey && env.length > 0) {
         throw new Error(`${provider.name} does not have a stored organization credential yet.`);
@@ -1734,14 +1695,29 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        // Mirror the token where stdio MCP servers can reach it. auth.json is
-        // OpenCode's own store and is not visible to a spawned MCP process; see
-        // `gatewayMirrorEnvName` for why the server's variable name cannot be used.
-        await writeGatewayMirror(
-          options.juggleworkServer.getSnapshot().juggleworkServerClient,
+        // Store a workspace/org/cloud-row owned mirror for server-side media
+        // resolution. It is intentionally excluded from broad process injection.
+        const mirrorTarget = await resolveJuggleWorkConfigTarget("write");
+        providerGatewayMirror = await writeGatewayMirror(
+          mirrorTarget.juggleworkClient,
+          mirrorTarget.juggleworkWorkspaceId ?? "",
+          orgId,
           cloudProviderId,
           primaryApiKey,
         );
+        if (!providerGatewayMirror) {
+          throw new Error("This JuggleWork server cannot securely own the cloud gateway credential. Update it and retry the import.");
+        }
+        if (existingImported?.gatewayMirror && existingImported.gatewayMirror.key !== providerGatewayMirror.key) {
+          await removeGatewayMirror(mirrorTarget.juggleworkClient, mirrorTarget.juggleworkWorkspaceId ?? "", cloudProviderId);
+        }
+        if (existingImported && !existingImported.gatewayMirror && existingImported.cloudProviderId === cloudProviderId) {
+          try {
+            await mirrorTarget.juggleworkClient?.deleteUserEnv(legacyGatewayMirrorEnvName(cloudProviderId));
+          } catch (error) {
+            if (!(error instanceof JuggleWorkServerError && error.status === 404)) throw error;
+          }
+        }
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         // The mirror is keyed by the stable cloud row id, not the local runtime
@@ -1770,7 +1746,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           catalog,
         ),
       );
-      await stripLegacyCloudProviderBlocks([localProviderId, existingImported?.providerId]);
+      await stripLegacyCloudProviderBlocks([existingImported?.providerId]);
       await removeCloudProviderDisabledState([
         localProviderId,
         existingImported?.providerId ?? "",
@@ -1779,7 +1755,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       const nextImportedProviders = {
         ...state.importedCloudProviders,
-        [provider.id]: buildCloudImportedProvider(provider),
+        [provider.id]: buildCloudImportedProvider(provider, Date.now(), orgId, providerGatewayMirror, catalog),
       };
       await persistImportedCloudProviders(nextImportedProviders);
 
@@ -1813,29 +1789,37 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     try {
-      // Revoking the provider must take its mirrored token with it, otherwise a
-      // live gateway credential outlives the provider it belongs to.
-      await removeGatewayMirror(
-        options.juggleworkServer.getSnapshot().juggleworkServerClient,
-        cloudProviderId,
-      );
-      try {
-        await removeProviderAuthCredentials(imported.providerId);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error ?? "");
-        if (!/not found|unknown auth|404/i.test(message.toLowerCase())) {
-          throw error;
-        }
-      }
-      // Runtime-managed: delete the provider entry via the server's per-key
-      // merge (`null` deletes), then strip any legacy opencode.jsonc block
-      // left by pre-runtime builds. Both are idempotent.
-      await patchRuntimeProviders({ [imported.providerId]: null });
-      await stripLegacyCloudProviderBlocks([imported.providerId]);
-      await removeCloudProviderDisabledState([
-        imported.providerId,
-        imported.cloudProviderId,
-      ]);
+      await cleanupCloudProviderIndependently({
+        mirror: async () => {
+          const mirrorTarget = await resolveJuggleWorkConfigTarget("write");
+          if (imported.gatewayMirror) {
+            await removeGatewayMirror(
+              mirrorTarget.juggleworkClient,
+              mirrorTarget.juggleworkWorkspaceId ?? "",
+              cloudProviderId,
+            );
+          } else if (imported.cloudProviderId === cloudProviderId) {
+            try {
+              await mirrorTarget.juggleworkClient?.deleteUserEnv(legacyGatewayMirrorEnvName(cloudProviderId));
+            } catch (error) {
+              if (!(error instanceof JuggleWorkServerError && error.status === 404)) throw error;
+            }
+          }
+        },
+        auth: async () => {
+          try {
+            await removeProviderAuthCredentials(imported.providerId);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error ?? "");
+            if (!/not found|unknown auth|404/i.test(message.toLowerCase())) throw error;
+          }
+        },
+        runtime: async () => {
+          await patchRuntimeProviders({ [imported.providerId]: null });
+          await stripLegacyCloudProviderBlocks([imported.providerId]);
+          await removeCloudProviderDisabledState([imported.providerId, imported.cloudProviderId]);
+        },
+      });
       options.markOpencodeConfigReloadRequired();
 
       const nextImportedProviders = { ...state.importedCloudProviders };
@@ -1906,11 +1890,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // can still find them.
     const importedIds = Object.keys(state.importedCloudProviders);
 
+    const failures: unknown[] = [];
     for (const cloudId of importedIds) {
       try {
         await removeCloudProviderInternal(cloudId, { silent: true });
-      } catch {
-        // Ignore individual removal failures during cleanup
+      } catch (error) {
+        failures.push(error);
       }
     }
 
@@ -1928,11 +1913,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       if (orphans.length > 0) {
         options.markOpencodeConfigReloadRequired();
       }
-    } catch {
-      // Ignore sweep failures during cleanup
+    } catch (error) {
+      failures.push(error);
     }
 
-    await removeCloudMcpFromWorkspace();
+    try { await removeCloudMcpFromWorkspace(); } catch (error) { failures.push(error); }
+
+    if (failures.length) throw new Error("workspace_cloud_cleanup_incomplete");
 
     // Clear state AFTER cleanup so the records were available during removal.
     mutateState((current) => ({
@@ -1972,7 +1959,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       juggleworkClient: juggleworkClient && workspaceId ? juggleworkClient : null,
       opencodeClient: options.client(),
       directory: options.selectedWorkspaceRoot(),
-    }).catch(() => undefined);
+    });
   };
 
   /**
@@ -2098,7 +2085,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
       const missingFromEngine = engineProviderIds !== null &&
         !engineProviderIds.has(importedProvider.providerId);
-      if (!isCloudProviderOutOfSync(liveProvider, importedProvider) && !missingFromEngine) {
+      if (!isCloudProviderOutOfSync(liveProvider, importedProvider, settings.activeOrgId) && !missingFromEngine) {
         continue;
       }
 
@@ -2382,6 +2369,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     // StrictMode double-mount re-arms after dispose.
     disposed = false;
     started = true;
+    organizationCleanup = registerOrganizationCleanup(purgeWorkspaceCloudState);
     lastWorkspaceKey = currentWorkspaceKey();
     if (typeof window !== "undefined") {
       const handleDenSessionUpdate = (event: Event) => {
@@ -2418,34 +2406,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // were left behind. Handles orphans from a previous sign-out that
       // didn't clean up (e.g. crash, force-quit, external edit).
       if (!hasCloudProviderSyncPrerequisites()) {
-        void (async () => {
-          // First: remove anything tracked in import state
-          if (imported && Object.keys(imported).length > 0) {
-            for (const cloudId of Object.keys(imported)) {
-              try {
-                await removeCloudProviderInternal(cloudId, { silent: true });
-              } catch {}
-            }
-          }
-          // Then: sweep any `lpr_*` keys that remain in opencode.jsonc
-          try {
-            const orphans = await sweepOrphanCloudProvidersFromConfig();
-            for (const providerId of orphans) {
-              try {
-                await removeProviderAuthCredentials(providerId);
-              } catch {}
-            }
-            if (orphans.length > 0) {
-              options.markOpencodeConfigReloadRequired();
-            }
-          } catch {}
-          mutateState((current) => ({
-            ...current,
-            importedCloudProviders: {},
-          }));
-          refreshSnapshot();
-          emitChange();
-        })();
+        void purgeWorkspaceCloudState().catch(() => undefined);
       }
     });
     refreshSnapshot();
@@ -2458,6 +2419,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     started = false;
     denSessionCleanup?.();
     denSessionCleanup = null;
+    organizationCleanup?.();
+    organizationCleanup = null;
     listeners.clear();
   };
 

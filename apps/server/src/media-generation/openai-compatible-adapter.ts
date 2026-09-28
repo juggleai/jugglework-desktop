@@ -1,16 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { EnvService } from "../env-file.js";
 import { externalFetch } from "../server-fetch.js";
-import type { VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState } from "./types.js";
+import type { VideoAdapterBinding, VideoAdapterSubmitInput, VideoGenerationAdapter, VideoProviderJobState } from "./types.js";
 import type { VideoModelRef } from "@jugglework/types/media-generation";
+import { redactProviderMessage, VideoSubmissionError } from "./redaction.js";
 
 type OpenAiCompatibleVideoAdapterOptions = {
   providerID: string;
   modelIDs?: string[];
   baseURL: string;
-  envKeys: string[];
-  env: EnvService;
+  credential: () => Promise<string | null>;
+  binding?: Omit<VideoAdapterBinding, "adapterId" | "protocol" | "origin">;
   fetch?: typeof externalFetch;
 };
 
@@ -30,32 +30,30 @@ export function openAiVideoSize(value: unknown): string | undefined {
   return OPENAI_VIDEO_SIZE_BY_PRESET[normalized] ?? (/^\d{2,5}x\d{2,5}$/.test(normalized) ? normalized : undefined);
 }
 
-function providerMessage(payload: unknown, fallback: string): string {
+function providerMessage(payload: unknown, fallback: string, credential?: string): string {
   const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
   const message = typeof error?.message === "string" && error.message.trim() ? error.message.trim().slice(0, 500) : fallback;
-  return message
-    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+/gi, "Bearer [REDACTED]")
-    .replace(/([?&](?:token|key|signature|sig|credential)=)[^&\s]+/gi, "$1[REDACTED]")
-    .replace(/\b(?:sk|jwmcp|jwgw)_[A-Za-z0-9_-]+\b/g, "[REDACTED]");
+  return redactProviderMessage(message, [credential]);
 }
 
 export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
   readonly id: string;
+  readonly binding: VideoAdapterBinding;
   private readonly fetch: typeof externalFetch;
   private readonly modelIDs: Set<string> | null;
   constructor(private readonly options: OpenAiCompatibleVideoAdapterOptions) {
     this.id = `openai-compatible:${options.providerID}`;
+    this.binding = { adapterId: this.id, protocol: "openai", origin: new URL(options.baseURL).origin,
+      configFingerprint: options.binding?.configFingerprint ?? "direct", cloudProviderId: options.binding?.cloudProviderId ?? null,
+      organizationId: options.binding?.organizationId ?? null };
     this.fetch = options.fetch ?? externalFetch;
     this.modelIDs = options.modelIDs ? new Set(options.modelIDs) : null;
   }
   matches(model: VideoModelRef) { return model.providerID === this.options.providerID && (!this.modelIDs || this.modelIDs.has(model.modelID)); }
 
   private async apiKey(): Promise<string> {
-    const records = await this.options.env.list();
-    for (const key of this.options.envKeys) {
-      const value = records.find((entry) => entry.key === key)?.value.trim() || process.env[key]?.trim();
-      if (value) return value;
-    }
+    const value = (await this.options.credential())?.trim();
+    if (value) return value;
     throw new Error("video_credential_missing");
   }
 
@@ -63,13 +61,18 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
     return `${this.options.baseURL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
   }
 
-  private async request(path: string, init: RequestInit): Promise<Response> {
-    const apiKey = await this.apiKey();
-    return this.fetch(this.endpoint(path), {
-      ...init,
-      headers: { Authorization: `Bearer ${apiKey}`, ...init.headers },
-      redirect: "follow",
-    });
+  private async request(path: string, init: RequestInit): Promise<{ response: Response; credential: string }> {
+    const credential = await this.apiKey();
+    try {
+      const response = await this.fetch(this.endpoint(path), {
+        ...init,
+        headers: { Authorization: `Bearer ${credential}`, ...init.headers },
+        redirect: "follow",
+      });
+      return { response, credential };
+    } catch (error) {
+      throw new VideoSubmissionError("unknown", "video_provider_transport_unknown", redactProviderMessage(error, [credential]));
+    }
   }
 
   async submit(input: VideoAdapterSubmitInput, signal: AbortSignal): Promise<{ providerJobId: string }> {
@@ -96,18 +99,18 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
         ...(typeof size === "string" ? { size } : {}),
       });
     }
-    const response = await this.request("videos", { method: "POST", headers, body, signal });
+    const { response, credential } = await this.request("videos", { method: "POST", headers, body, signal });
     const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(providerMessage(payload, response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed"));
+    if (!response.ok) throw new VideoSubmissionError("rejected", response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", providerMessage(payload, response.status === 429 ? "video_provider_rate_limited" : "video_provider_submission_failed", credential), response.status === 429);
     const id = isRecord(payload) && typeof payload.id === "string" ? payload.id.trim() : "";
-    if (!id) throw new Error("video_provider_invalid_response");
+    if (!id) throw new VideoSubmissionError("unknown", "video_provider_invalid_response", "The provider submission response did not contain a job identifier.");
     return { providerJobId: id };
   }
 
   async inspect(providerJobId: string, signal: AbortSignal): Promise<VideoProviderJobState> {
-    const response = await this.request(`videos/${encodeURIComponent(providerJobId)}`, { method: "GET", signal });
+    const { response, credential } = await this.request(`videos/${encodeURIComponent(providerJobId)}`, { method: "GET", signal });
     const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(providerMessage(payload, "video_provider_status_failed"));
+    if (!response.ok) throw new Error(providerMessage(payload, "video_provider_status_failed", credential));
     if (!isRecord(payload) || typeof payload.status !== "string") throw new Error("video_provider_invalid_response");
     const progress = typeof payload.progress === "number" ? payload.progress : undefined;
     if (payload.status === "queued") return { status: "submitted", ...(progress !== undefined ? { progress } : {}) };
@@ -118,6 +121,6 @@ export class OpenAiCompatibleVideoAdapter implements VideoGenerationAdapter {
   }
 
   acquireResult(resultReference: string, signal: AbortSignal): Promise<Response> {
-    return this.request(`videos/${encodeURIComponent(resultReference)}/content`, { method: "GET", signal });
+    return this.request(`videos/${encodeURIComponent(resultReference)}/content`, { method: "GET", signal }).then(({ response }) => response);
   }
 }

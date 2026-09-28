@@ -21,6 +21,8 @@ import { CliRenderer } from "./render.js";
 import { createRuntime, type RuntimeConnection } from "./runtime.js";
 import { executeCloudCommand, isCloudOnlyCommand } from "./cloud-command.js";
 import { CloudHttpError } from "./cloud-client.js";
+import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
+import { normalizeCloudUrl } from "./cloud-url.js";
 import { CLI_VERSION } from "./version.js";
 import { commandHelp, completionScript } from "./help.js";
 import { executeDoctor } from "./doctor.js";
@@ -30,6 +32,8 @@ import { chooseCloudOnboarding, isOnboardingEntry } from "./onboarding.js";
 import { modelContextLabel, parseModelContext, resolveModelContext, type ModelContext } from "./model-context.js";
 import { chooseComposerItem, readCommandComposer } from "./composer.js";
 import { loadAvailableModels } from "./model-catalog.js";
+import { removeImportedCloudRuntimeProviders, synchronizeCloudRuntime } from "./cloud-runtime-sync.js";
+import { isCloudManagedProviderKey } from "@jugglework/cloud-provider";
 
 const CLEANUP_TIMEOUT_MS = 5_000;
 const ABORT_TIMEOUT_MS = 1_500;
@@ -105,7 +109,7 @@ const SLASH_COMMANDS = [
   ["compact", "Compact the selected session using --model"],
   ["copy", "Print the last response as copy-ready text"],
   ["doctor", "Show the diagnostic command to run"],
-  ["logout", "Sign out from JuggleWork Cloud"],
+  ["logout", "Sign out of JuggleWork Cloud and return to login"],
   ["help", "Search all available commands"],
   ["stop", "Stop the active task"],
   ["exit", "Exit JuggleWork"],
@@ -124,8 +128,33 @@ function printInteractiveHelp(query = ""): void {
   stdout.write(`Commands${needle ? ` matching '${needle}'` : ""}:\n${matches.map(({ name, summary }) => `  /${name.padEnd(13)} ${summary}`).join("\n")}\n`);
 }
 
-async function repl(controller: SessionController, renderer: CliRenderer, options: CliOptions, initialModel: ModelContext, setTaskKeyCapture: (active: boolean) => void, onInterrupt: () => void): Promise<void> {
+function clearSignedOutCloudSelection(options: CliOptions, renderer: CliRenderer): void {
+  if (options.cloudToken) renderer.warn("A Cloud token was supplied externally. Remove --cloud-token or JUGGLEWORK_CLOUD_TOKEN before the next launch to remain signed out.");
+  options.cloudToken = null;
+  options.cloudOrg = null;
+  if (options.model && isCloudManagedProviderKey(options.model.split("/")[0] ?? "")) {
+    options.model = null;
+    options.reasoningEffort = null;
+  }
+}
+
+async function loginScreenAfterLogout(options: CliOptions, renderer: CliRenderer): Promise<"signed-in" | "continue" | "cancel"> {
+  while (true) {
+    const choice = await chooseCloudOnboarding(options.color);
+    if (choice === "cancel" || choice === "continue") return choice;
+    try {
+      await executeCloudCommand({ ...options, command: { group: "account", action: "login" } }, renderer, choice);
+      return "signed-in";
+    } catch (error) {
+      renderer.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+async function repl(controller: SessionController, renderer: CliRenderer, options: CliOptions, initialModel: ModelContext, initialManagedModel: string | null, ownedRuntime: boolean, setTaskKeyCapture: (active: boolean) => void, onInterrupt: () => void): Promise<void> {
   let modelContext = initialModel;
+  let managedModel = initialManagedModel;
+  let cloudSyncError: string | null = null;
   renderer.info("Type a task or /help for commands.");
   while (true) {
     const entered = await readCommandComposer(renderer, modelContextLabel(modelContext),
@@ -136,6 +165,10 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
       continue;
     }
     if (!input.startsWith("/")) {
+      if (cloudSyncError) {
+        renderer.error(`Organization models are not ready: ${cloudSyncError}. Retry with /org <id-or-slug> or run /logout.`);
+        continue;
+      }
       renderer.submittedPrompt(input);
       renderer.taskContext(modelContextLabel(modelContext), controller.workspace);
       renderer.startWorking();
@@ -178,6 +211,7 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
             options.model = rest[0]!;
             options.reasoningEffort = rest[1] ?? null;
             modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+            managedModel = null;
           } else {
             const models = await loadAvailableModels(controller.api, controller.workspace);
             if (!models.length) {
@@ -198,14 +232,31 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
             options.model = model.id;
             options.reasoningEffort = effort || null;
             modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+            managedModel = null;
           }
           renderer.info(`Provider: ${modelContext.provider ?? "runtime default (not reported)"}`);
           renderer.info(`Model: ${modelContext.model ?? "runtime default (not reported)"}`);
           renderer.info(`Reasoning effort: ${modelContext.reasoningEffort ?? "runtime default"}`);
-          renderer.info(`Source: ${modelContext.source === "cli" ? "CLI selection" : modelContext.source === "workspace" ? "workspace configuration" : "runtime default"}`);
+          renderer.info(`Source: ${modelContext.source === "cli" ? "CLI selection" : modelContext.source === "organization" ? "organization default" : modelContext.source === "workspace" ? "workspace configuration" : "runtime default"}`);
           break;
         case "org":
           await executeCloudCommand({ ...options, command: rest.length ? { group: "org", action: "use", target: rest[0]! } : { group: "org", action: "list", target: null } }, renderer);
+          if (rest.length) {
+            options.cloudOrg = rest[0]!;
+            if (managedModel && options.model === managedModel) options.model = null;
+            try {
+              const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
+              if (synced.autoModel) options.model = synced.autoModel;
+              managedModel = synced.autoModel;
+              modelContext = synced.autoModel
+                ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
+                : await resolveModelContext(controller.api, controller.workspace, options);
+              cloudSyncError = null;
+            } catch (error) {
+              cloudSyncError = error instanceof Error ? error.message : String(error);
+              throw error;
+            }
+          }
           break;
         case "permissions": {
           const requested = rest[0]?.toLowerCase();
@@ -248,9 +299,38 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
         case "doctor":
           renderer.info("Read-only guidance: run 'jugglework doctor' outside this REPL for a fresh redacted diagnostic report.");
           break;
-        case "logout":
+        case "logout": {
+          if (ownedRuntime) {
+            try {
+              await removeImportedCloudRuntimeProviders(controller.api, controller.workspace);
+            } catch (error) {
+              renderer.warn(`Imported providers will be cleaned up on the next CLI startup: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          } else renderer.warn("Connected Server providers were left unchanged; sign-out affects only this CLI's Cloud profile.");
           await executeCloudCommand({ ...options, command: { group: "account", action: "logout" } }, renderer);
+          clearSignedOutCloudSelection(options, renderer);
+          managedModel = null;
+          cloudSyncError = null;
+          const choice = await loginScreenAfterLogout(options, renderer);
+          if (choice === "cancel") return;
+          await controller.createSession();
+          if (choice === "signed-in") {
+            try {
+              const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
+              if (synced.autoModel) options.model = synced.autoModel;
+              managedModel = synced.autoModel;
+              modelContext = synced.autoModel
+                ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
+                : await resolveModelContext(controller.api, controller.workspace, options);
+            } catch (error) {
+              cloudSyncError = error instanceof Error ? error.message : String(error);
+              renderer.error(cloudSyncError);
+            }
+          } else {
+            modelContext = await resolveModelContext(controller.api, controller.workspace, options);
+          }
           break;
+        }
         case "stop":
           if (!await controller.abortCurrentRun()) renderer.info("No active task to stop.");
           break;
@@ -345,7 +425,14 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
       return 0;
     }
     const workspace = await chooseWorkspace(api, options, ask);
-    const modelContext = await resolveModelContext(api, workspace, options);
+    const needsTaskModel = options.command.group === "runtime"
+      ? options.command.action !== "status" && options.command.action !== "sessions"
+      : options.command.group === "session" && options.command.action === "resume";
+    const synced = needsTaskModel ? await synchronizeCloudRuntime({ options, api, workspace, renderer, ownedRuntime: runtime.owned }) : null;
+    if (synced?.autoModel) options.model = synced.autoModel;
+    const modelContext = synced?.autoModel
+      ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
+      : await resolveModelContext(api, workspace, options);
     if (interactive && !options.prompt && options.command.group === "runtime" && options.command.action !== "status" && options.command.action !== "sessions") {
       renderer.welcome({
         workspace,
@@ -409,7 +496,7 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
       if (!interactive) {
         throw new Error("No prompt was provided. Pass a prompt argument, pipe text on stdin, or run in an interactive terminal.");
       }
-      await repl(activeController, renderer, options, modelContext, (active) => {
+      await repl(activeController, renderer, options, modelContext, synced?.autoModel ?? null, runtime!.owned, (active) => {
         taskKeyCapture = active;
         if (stdin.isTTY) stdin.setRawMode(active);
       }, signalHandlers.SIGINT);
@@ -421,8 +508,35 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
     process.off("SIGTERM", signalHandlers.SIGTERM);
     process.off("SIGHUP", signalHandlers.SIGHUP);
     closeQuestion();
+    // The composer resumes stdin; a live TTY keeps the Linux CLI running
+    // after /exit even once the embedded runtime has stopped.
+    if (stdin.isTTY) {
+      stdin.setRawMode(false);
+      stdin.pause();
+    }
     if (runtime && !await settleWithin(runtime.stop(), CLEANUP_TIMEOUT_MS)) {
       renderer.warn(`Runtime cleanup exceeded ${CLEANUP_TIMEOUT_MS / 1000} seconds; exiting.`);
+    }
+  }
+}
+
+async function cleanupOwnedCloudProvidersForLogout(options: CliOptions, renderer: CliRenderer): Promise<void> {
+  if (options.serverUrl || options.cloudToken) return;
+  const urls = normalizeCloudUrl(options.cloudUrl);
+  const profile = await new CloudProfileStore(cloudProfilePath(options.configPath)).get(urls.origin);
+  if (!profile) return;
+  let runtime: RuntimeConnection | null = null;
+  try {
+    runtime = await createRuntime(options);
+    const api = new JuggleWorkApiClient(runtime.url, runtime.token, runtime.hostToken);
+    const workspace = await chooseWorkspace(api, options, null);
+    const removed = await removeImportedCloudRuntimeProviders(api, workspace);
+    if (removed.length) renderer.info(`Removed ${removed.length} imported Cloud provider(s) from this CLI workspace before sign-out.`);
+  } catch (error) {
+    renderer.warn(`Cloud sign-out will leave this workspace's imported providers until the CLI can start and clean them up: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    if (runtime && !await settleWithin(runtime.stop(), CLEANUP_TIMEOUT_MS)) {
+      renderer.warn(`Runtime cleanup exceeded ${CLEANUP_TIMEOUT_MS / 1000} seconds during sign-out.`);
     }
   }
 }
@@ -464,7 +578,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 0;
     }
     if (options.command.group === "diagnostics") return await executeDoctor(options, renderer);
-    if (isCloudOnlyCommand(options.command)) return await executeCloudCommand(options, renderer);
+    if (isCloudOnlyCommand(options.command)) {
+      if (options.command.group === "account" && options.command.action === "logout") await cleanupOwnedCloudProvidersForLogout(options, renderer);
+      const result = await executeCloudCommand(options, renderer);
+      if (options.command.group !== "account" || options.command.action !== "logout" || result !== 0 ||
+        !isInteractiveCli(options, stdin.isTTY === true, stdout.isTTY === true)) return result;
+      clearSignedOutCloudSelection(options, renderer);
+      if (await loginScreenAfterLogout(options, renderer) === "cancel") return 0;
+      options.command = { group: "runtime", action: "run" };
+      return await execute(options, renderer);
+    }
     if (options.command.group === "provider") return await executeProviderCommand(options, renderer);
     if (isOnboardingEntry(options, isInteractiveCli(options, stdin.isTTY === true, stdout.isTTY === true)) && !await hasCloudLogin(options)) {
       const choice = await chooseCloudOnboarding(options.color);

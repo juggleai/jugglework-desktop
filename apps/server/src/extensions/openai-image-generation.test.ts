@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { callOpenAiImageGenerationExtensionAction } from "./openai-image-generation.js";
+import { cloudGatewayCredentialEnvName, cloudGatewayMirrorEnvName, cloudGatewayMirrorOwnerId, cloudProviderConfigFingerprint } from "@jugglework/types/provider-credentials";
 import { writeRuntimeOpencodeConfig } from "../runtime-opencode-config-store.js";
+import { writeJuggleWorkWorkspaceConfig } from "../jugglework-workspace-config-store.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); mock.restore(); });
@@ -15,6 +17,7 @@ async function fixture() {
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   const config = {
+    configPath: join(root, "jugglework.json"),
     workspaces: [{ id: "ws", name: "Workspace", path: workspace, preset: "", workspaceType: "local" }],
   } as never;
   const env = { list: async () => [{ key: "CUSTOM_IMAGES_API_KEY", value: "secret" }] } as never;
@@ -78,6 +81,67 @@ describe("configured OpenAI image generation", () => {
     try {
       const response = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_generate", { prompt: "combine", mode: "multi-image-to-image", sourceImagePaths: ["one.png", "two.png"] }, fx.context) as { result: { mode: string } };
       expect(response.result.mode).toBe("multi-image-to-image");
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("reports a reserved cloud credential ready only with its workspace import baseline", async () => {
+    const fx = await fixture();
+    const owner = { workspaceId: "ws", organizationId: "org_current", cloudProviderId: "lpr_images" };
+    const mirrorKey = cloudGatewayMirrorEnvName(owner);
+    const providerConfig = {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Cloud Images",
+      env: [cloudGatewayCredentialEnvName("lpr_images")],
+      options: { baseURL: "https://images.example.test/v1" },
+      models: { painter: { imageGeneration: { protocol: "openai", textToImage: true } } },
+    };
+    await writeRuntimeOpencodeConfig(fx.config, "ws", () => ({ provider: {
+      lpr_images: providerConfig,
+    } }));
+    await writeJuggleWorkWorkspaceConfig(fx.config, "ws", () => ({ cloudImports: { providers: {
+      lpr_images: {
+        cloudProviderId: "lpr_images", providerId: "lpr_images", sourceProviderId: "openai",
+        name: "Cloud Images", source: "custom", updatedAt: null, modelIds: ["painter"],
+        importedAt: Date.now(), metadataVersion: 10, organizationId: "org_current",
+        providerConfigFingerprint: cloudProviderConfigFingerprint(providerConfig), gatewayMirror: { ...owner, key: mirrorKey },
+      },
+    } } }));
+    const env = { list: async () => [{ key: mirrorKey, value: "gateway-secret", owner: cloudGatewayMirrorOwnerId(owner) }] } as never;
+    const ready = await callOpenAiImageGenerationExtensionAction(fx.config, env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };
+    expect(ready.result.models).toHaveLength(1);
+
+    await writeJuggleWorkWorkspaceConfig(fx.config, "ws", (current) => ({ ...current, cloudImports: { providers: {} } }));
+    const isolated = await callOpenAiImageGenerationExtensionAction(fx.config, env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };
+    expect(isolated.result.models).toHaveLength(0);
+  });
+
+  test("status and list expose only public model fields and never inline provider secrets", async () => {
+    const fx = await fixture();
+    const inlineSecret = "be459a45-01ef-47ad-8184-7e937dcb9b86.eyJhbGciOiJIUzI1NiJ9.signature";
+    await writeRuntimeOpencodeConfig(fx.config, "ws", () => ({ provider: { images: {
+      npm: "@ai-sdk/openai-compatible", name: "Images", env: ["CUSTOM_IMAGES_API_KEY"],
+      options: { baseURL: "https://images.example.test/v1", apiKey: inlineSecret },
+      models: { painter: { name: "Painter", imageGeneration: { protocol: "openai", textToImage: true } } },
+    } } }));
+    for (const action of ["status", "image_models_list"]) {
+      const response = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, action, {}, fx.context);
+      const serialized = JSON.stringify(response);
+      expect(serialized).not.toContain("providerConfig");
+      expect(serialized).not.toContain("baseURL");
+      expect(serialized).not.toContain("envKeys");
+      expect(serialized).not.toContain(inlineSecret);
+    }
+  });
+
+  test("redacts the exact arbitrary resolved credential from provider errors", async () => {
+    const fx = await fixture();
+    await writeRuntime(fx.config);
+    const secret = "be459a45-01ef-47ad-8184-7e937dcb9b86.eyJhbGciOiJIUzI1NiJ9.signature";
+    const env = { list: async () => [{ key: "CUSTOM_IMAGES_API_KEY", value: secret }] } as never;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => Response.json({ error: { message: `credential ${secret} rejected` } }, { status: 401 })) as never;
+    try {
+      await expect(callOpenAiImageGenerationExtensionAction(fx.config, env, "image_generate", { prompt: "cat" }, fx.context)).rejects.toThrow("credential [REDACTED] rejected");
     } finally { globalThis.fetch = originalFetch; }
   });
 });

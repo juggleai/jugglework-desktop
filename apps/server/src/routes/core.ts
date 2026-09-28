@@ -434,7 +434,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   // after a write; this surface is user-scoped, not workspace-scoped, so no audit.
   addRoute(routes, "GET", "/env", "host-token", async (ctx) => {
     const includeValues = parseOptionalBoolean(ctx.url.searchParams.get("includeValues"), "includeValues") ?? true;
-    const items = await env.list().catch(rethrowEnvStoreReadError);
+    const items = (await env.list().catch(rethrowEnvStoreReadError)).filter((item) => !item.owner);
     return jsonResponse({
       items: items.map((item) => ({
         key: item.key,
@@ -446,7 +446,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/env/keys", "host-token", async () => {
-    const items = await env.list().catch(rethrowEnvStoreReadError);
+    const items = (await env.list().catch(rethrowEnvStoreReadError)).filter((item) => !item.owner);
     return jsonResponse({ keys: items.map((item) => item.key) });
   });
 
@@ -478,7 +478,7 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     if (!isValidEnvKey(key)) {
       throw new ApiError(400, "invalid_env_key", "Invalid environment variable name");
     }
-    const item = (await env.list().catch(rethrowEnvStoreReadError)).find((entry) => entry.key === key);
+    const item = (await env.list().catch(rethrowEnvStoreReadError)).find((entry) => entry.key === key && !entry.owner);
     if (!item) {
       throw new ApiError(404, "env_not_found", "Environment variable not found");
     }
