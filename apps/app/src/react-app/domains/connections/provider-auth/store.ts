@@ -994,7 +994,47 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     throw new Error(describeProviderError(maybe.error, t("providers.request_failed")));
   };
 
+  const resolveHostProviderAuthTarget = async () => {
+    const target = await resolveJuggleWorkConfigTarget("write");
+    if (
+      target.canUseJuggleWorkServer &&
+      target.juggleworkClient &&
+      target.juggleworkWorkspaceId
+    ) {
+      return {
+        client: target.juggleworkClient,
+        workspaceId: target.juggleworkWorkspaceId,
+      };
+    }
+    return null;
+  };
+
+  const setProviderAuthCredentials = async (
+    providerId: string,
+    auth: { type: "api"; key: string; metadata?: Record<string, string> },
+  ) => {
+    const hostTarget = await resolveHostProviderAuthTarget();
+    if (hostTarget) {
+      await hostTarget.client.setProviderAuth(hostTarget.workspaceId, providerId, auth);
+      return;
+    }
+
+    // Direct OpenCode workspaces have no JuggleWork host bridge. Keep the
+    // native SDK path for those targets only; JuggleWork's proxy deliberately
+    // rejects provider-auth mutations made with a renderer/client token.
+    const c = options.client();
+    if (!c) throw new Error(t("providers.not_connected"));
+    const result = await c.auth.set({ providerID: providerId, auth });
+    assertNoClientError(result);
+  };
+
   const removeProviderAuthCredentials = async (providerId: string) => {
+    const hostTarget = await resolveHostProviderAuthTarget();
+    if (hostTarget) {
+      await hostTarget.client.removeProviderAuth(hostTarget.workspaceId, providerId);
+      return;
+    }
+
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
@@ -1424,7 +1464,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       // Reconnecting must undo an earlier Disconnect that parked the provider
       // in `disabled_providers`; a no-op when it was never disabled.
       await ensureProjectProviderDisabledState(providerId, false);
-      await c.auth.set({ providerID: providerId, auth: { type: "api", key: trimmed } });
+      await setProviderAuthCredentials(providerId, { type: "api", key: trimmed });
       await refreshProviders({ dispose: true });
       return `${t("status.connected")} ${providerId}`;
     } catch (error) {
@@ -1517,10 +1557,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           }
           await target.juggleworkClient.upsertUserEnv([envEntry]);
         }
-        await c.auth.set({
-          providerID: normalized.providerId,
-          auth: { type: "api", key: apiKey },
-        });
+        await setProviderAuthCredentials(normalized.providerId, { type: "api", key: apiKey });
       }
 
       options.markOpencodeConfigReloadRequired();
@@ -1697,10 +1734,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         await juggleworkClient.upsertUserEnv(envEntries);
       }
       if (primaryApiKey) {
-        await c.auth.set({
-          providerID: localProviderId,
-          auth: { type: "api", key: primaryApiKey },
-        });
+        await setProviderAuthCredentials(localProviderId, { type: "api", key: primaryApiKey });
         // Store a workspace/org/cloud-row owned mirror for server-side media
         // resolution. It is intentionally excluded from broad process injection.
         const mirrorTarget = await resolveJuggleWorkConfigTarget("write");
