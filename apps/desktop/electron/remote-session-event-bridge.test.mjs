@@ -10,7 +10,7 @@ const NOW = Date.parse("2026-08-09T12:00:00.000Z");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 /** @param {{ publish?: (event: unknown, options: { connectionGeneration: number }) => boolean, observeRun?: (input: any) => Promise<unknown>, listActiveRuns?: () => Promise<unknown>, resolveOwnership?: (input: any) => Promise<unknown>, timers?: any, logger?: any, subscriptionReadinessTimeoutMs?: number, subscriptionRetryDelaysMs?: number[], autoConnect?: boolean }} [input] */
-function harness({ publish = () => true, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
+function harness({ publish = () => true, publishActivityTaskStatus = null, observeRun, listActiveRuns = async () => ({ items: [] }), resolveOwnership = async ({ targetSessionId }) => ({ rootSessionId: targetSessionId, targetSessionId, parentSessionId: null }), timers = { setTimeout: (callback, delay) => { if (delay < 3_000) callback(); return 1; }, clearTimeout() {} }, logger = {}, subscriptionReadinessTimeoutMs, subscriptionRetryDelaysMs, autoConnect = true } = {}) {
   const subscriptions = [];
   const published = [];
   const terminalCalls = [];
@@ -43,6 +43,7 @@ function harness({ publish = () => true, observeRun, listActiveRuns = async () =
       return observeRun ? observeRun(input) : { cleared: true, run: null, terminalStatus: "completed" };
     },
     publish: (event, options) => { published.push({ event, options }); return publish(event, options); },
+    publishActivityTaskStatus,
     randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
     now: () => NOW,
     timers,
@@ -68,6 +69,20 @@ function harness({ publish = () => true, observeRun, listActiveRuns = async () =
 }
 
 describe("remote session event bridge", () => {
+  it("reuses one global workspace subscription for device activity lifecycle", async () => {
+    const lifecycle = [];
+    const h = harness({ publishActivityTaskStatus: (event) => lifecycle.push(event) });
+    h.bridge.watch([{ id: "ws_1", name: "Workspace" }]);
+    assert.equal(h.subscriptions.length, 1);
+    await h.subscriptions[0].onConnected();
+    await h.subscriptions[0].onEvent({ type: "session.updated", properties: { info: { id: "ses_1", title: "Build release" } } });
+    await h.subscriptions[0].onEvent({ type: "session.status", properties: { sessionID: "ses_1", status: "busy" } });
+    assert.equal(h.subscriptions.length, 1);
+    assert.deepEqual(lifecycle[0], {
+      eventId: "00000000-0000-4000-8000-000000000001", workspaceId: "ws_1", sessionId: "ses_1", runId: "run_1",
+      status: "running", title: "Build release", workspaceName: "Workspace", occurredAt: new Date(NOW).toISOString(),
+    });
+  });
   it("shares one workspace subscription and treats exact bindings as immutable", async () => {
     const h = harness();
     assert.equal(await h.bridge.bind(h.binding), true);

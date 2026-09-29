@@ -2078,6 +2078,32 @@ describe("remote-control agent command handling", () => {
     assert.equal(fixture.agent.publishSessionEvent(event, { connectionGeneration: 77 }), false);
   });
 
+  it("signs a device-scoped activity lifecycle without control-session content", async () => {
+    const signing = generateKeyPairSync("ed25519");
+    const fixture = harness({ signingCredential: { deviceId: DEVICE_ID, privateKey: signing.privateKey } });
+    const socket = await connect(fixture);
+    socket.receive(welcome(77));
+    await settle();
+
+    assert.equal(await fixture.agent.publishActivityTaskStatus({
+      eventId: "55555555-5555-4555-8555-555555555555",
+      workspaceId: "ws_1",
+      sessionId: "ses_1",
+      runId: "run_1",
+      status: "running",
+      title: "Build release",
+      workspaceName: "Desktop",
+      occurredAt: new Date(NOW).toISOString(),
+    }), true);
+    const frame = frames(socket, "activity.task_status").at(-1);
+    assert.deepEqual(Object.keys(frame.payload).sort(), [
+      "eventId", "occurredAt", "runId", "schemaVersion", "sessionId", "signature", "status", "title", "workspaceId", "workspaceName",
+    ]);
+    assert.equal(JSON.stringify(frame).includes("prompt"), false);
+    assert.equal(JSON.stringify(frame).includes("path"), false);
+    assert.equal(JSON.stringify(frame).includes("tool"), false);
+  });
+
   it("handles strict session rejection without closing or reconnecting the device transport", async () => {
     const unbound = [];
     const fixture = harness({ onSessionUnbound: (input) => unbound.push(input) });

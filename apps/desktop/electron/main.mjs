@@ -1454,6 +1454,7 @@ function createMainRemoteSessionEventBridge() {
       );
     },
     publish: (event, options) => remoteControlAgent?.publishSessionEvent(event, options) ?? false,
+    publishActivityTaskStatus: (event) => remoteControlAgent?.publishActivityTaskStatus(event) ?? false,
     randomUUID,
     now: Date.now,
     timers: {
@@ -3215,6 +3216,8 @@ if (!app.requestSingleInstanceLock()) {
     await remoteControlAgent.start().catch((error) => {
       console.warn("[desktop-remote] failed to initialize", error instanceof Error ? error.name : "unknown_error");
     });
+    const activityWorkspaces = await workspaceStore.readWorkspaceState().catch(() => ({ workspaces: [] }));
+    remoteSessionEventBridge.watch(activityWorkspaces.workspaces.filter((entry) => entry?.workspaceType !== "remote"));
     if (process.platform === "win32") {
       await registerWindowsDisplayShortcut();
     }

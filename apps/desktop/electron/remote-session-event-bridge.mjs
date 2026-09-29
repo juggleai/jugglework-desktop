@@ -43,6 +43,7 @@ function observationStatus(type, data) {
  *   listActiveRuns(input: { workspaceId: string }): Promise<unknown>,
  *   observeRun(input: { workspaceId: string, sessionId: string, runId: string, status: "starting" | "running" | "waiting" | "retrying" | "aborting" | "idle" | "completed" | "failed" | "aborted" }): Promise<unknown>,
  *   publish(event: unknown, options: { connectionGeneration: number }): boolean,
+ *   publishActivityTaskStatus?: (event: unknown) => boolean | Promise<boolean>,
  *   randomUUID: () => string,
  *   now: () => number | Date,
  *   timers: { setTimeout(callback: () => void, delay: number): unknown, clearTimeout(handle: unknown): void },
@@ -55,11 +56,11 @@ function observationStatus(type, data) {
  *   interactions?: { resolveOwnership(input: { workspaceId: string, targetSessionId: string }): Promise<unknown> } | null,
  * }} options
  */
-export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null }) {
+export function createRemoteSessionEventBridge({ sseClient, coordinator, listActiveRuns, observeRun, publish, publishActivityTaskStatus = null, randomUUID, now, timers, logger = {}, coalesceMs = 25, subscriptionReadinessTimeoutMs = 3_000, subscriptionRetryDelaysMs = [1_000, 2_000, 5_000, 10_000, 30_000], onNotificationEvent = null, onStop = null, interactions = null }) {
   if (!sseClient || typeof sseClient.subscribe !== "function" || !coordinator ||
       typeof coordinator.getActiveRunId !== "function" || typeof coordinator.recordServerRun !== "function" ||
       typeof coordinator.clearTerminalRun !== "function" || typeof listActiveRuns !== "function" || typeof observeRun !== "function" ||
-       typeof publish !== "function" || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
+       typeof publish !== "function" || !(publishActivityTaskStatus === null || typeof publishActivityTaskStatus === "function") || !(onNotificationEvent === null || typeof onNotificationEvent === "function") ||
        !(onStop === null || typeof onStop === "function") ||
        !(interactions === null || typeof interactions?.resolveOwnership === "function") ||
        !Number.isSafeInteger(subscriptionReadinessTimeoutMs) || subscriptionReadinessTimeoutMs < 1 || subscriptionReadinessTimeoutMs > 10_000 ||
@@ -81,6 +82,8 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
   const sequenceStore = new Map();
   let projector = createProjector();
   const projectedCounts = new Map();
+  const watchedWorkspaces = new Map();
+  const sessionTitles = new Map();
 
   /** @param {number} attempt */
   function retryDelay(attempt) {
@@ -224,6 +227,28 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     });
   }
 
+  async function publishActivityLifecycle(workspaceId, sessionId, status, subscriptionCurrent) {
+    if (!publishActivityTaskStatus) return;
+    let runId = coordinator.getActiveRunId({ workspaceId, sessionId });
+    if (!runId) {
+      try { await hydrateWorkspaceRuns(workspaceId, sessionId, subscriptionCurrent); } catch { return; }
+      if (!subscriptionCurrent()) return;
+      runId = coordinator.getActiveRunId({ workspaceId, sessionId });
+    }
+    const title = sessionTitles.get(observationKey(workspaceId, sessionId));
+    if (!runId || !title) return;
+    const lifecycleStatus = status === "running" || status === "starting" || status === "waiting" || status === "retrying" || status === "aborting" ? "running"
+      : status === "failed" ? "failed" : status === "aborted" ? "aborted" : "completed";
+    try {
+      await publishActivityTaskStatus({
+        eventId: randomUUID(), workspaceId, sessionId, runId, status: lifecycleStatus,
+        title: Buffer.from(title).subarray(0, 80).toString("utf8").replace(/\uFFFD$/u, ""),
+        workspaceName: watchedWorkspaces.get(workspaceId) ?? "",
+        occurredAt: new Date(now()).toISOString(),
+      });
+    } catch {}
+  }
+
   function createProjector() {
     return createRemoteSessionProjector({
       randomUUID,
@@ -275,7 +300,7 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
 
   /** @param {string} workspaceId */
   function workspaceNeeded(workspaceId) {
-    return [...bindings.values()].some((binding) => binding.workspaceId === workspaceId) ||
+    return watchedWorkspaces.has(workspaceId) || [...bindings.values()].some((binding) => binding.workspaceId === workspaceId) ||
       [...pendingBindings.values()].some((pending) => pending.binding.workspaceId === workspaceId);
   }
 
@@ -298,7 +323,9 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
         const before = projectedCounts.get(workspaceId) ?? 0;
         const bindingCount = [...bindings.values()].filter((binding) => binding.workspaceId === workspaceId).length;
         try { logger.debug?.("remote_session_raw_received", { eventType: type ?? "unknown", bindingCount }); } catch {}
-        const sessionId = eventSessionId(data);
+        const sessionId = type === "session.updated" && isRecord(data?.info) && identifier(data.info.id)
+          ? data.info.id
+          : eventSessionId(data);
         if (!type || !data) {
           try { logger.debug?.("remote_session_projection_dropped", { reason: "invalid_envelope", eventType: type ?? "unknown" }); } catch {}
           return;
@@ -307,6 +334,13 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
           try { logger.debug?.("remote_session_projection_dropped", { reason: "missing_session", eventType: type }); } catch {}
         }
         const status = observationStatus(type, data);
+        if (sessionId && type === "session.updated") {
+          const info = isRecord(data.info) ? data.info : data;
+          if (typeof info.title === "string" && identifier(info.title.trim())) sessionTitles.set(observationKey(workspaceId, sessionId), info.title.trim());
+        }
+        if (sessionId && (status || type === "session.updated")) {
+          void publishActivityLifecycle(workspaceId, sessionId, status ?? "running", current);
+        }
         let interactionOwnership = null;
         if (sessionId && (type?.startsWith("permission.") || type?.startsWith("question.")) && interactions) {
           try {
@@ -507,8 +541,12 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     observationChains.clear();
     bindings.clear();
     projectedCounts.clear();
+    sessionTitles.clear();
     projector.stop();
-    if (!stopped) projector = createProjector();
+    if (!stopped) {
+      projector = createProjector();
+      for (const workspaceId of watchedWorkspaces.keys()) ensureSubscription(workspaceId);
+    }
   }
 
   function stop() {
@@ -518,5 +556,29 @@ export function createRemoteSessionEventBridge({ sseClient, coordinator, listAct
     try { onStop?.(); } catch {}
   }
 
-  return Object.freeze({ bind, unbind, clear, stop });
+  /** @param {Array<{ id: string, name?: string }>} workspaces */
+  function watch(workspaces) {
+    if (stopped || !Array.isArray(workspaces)) return false;
+    const next = new Map();
+    for (const workspace of workspaces) {
+      if (!isRecord(workspace) || !identifier(workspace.id)) continue;
+      const name = typeof workspace.name === "string" ? workspace.name.trim() : "";
+      next.set(workspace.id, Buffer.from(name).subarray(0, 40).toString("utf8").replace(/\uFFFD$/u, ""));
+    }
+    for (const workspaceId of watchedWorkspaces.keys()) watchedWorkspaces.delete(workspaceId);
+    for (const [workspaceId, name] of next) {
+      watchedWorkspaces.set(workspaceId, name);
+      ensureSubscription(workspaceId);
+    }
+    for (const [workspaceId, subscription] of subscriptions) {
+      if (!workspaceNeeded(workspaceId)) {
+        settleWaiters(subscription, false);
+        subscription.controller.abort();
+        subscriptions.delete(workspaceId);
+      }
+    }
+    return true;
+  }
+
+  return Object.freeze({ bind, unbind, clear, watch, stop });
 }
