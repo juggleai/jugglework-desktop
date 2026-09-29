@@ -125,9 +125,9 @@ describe("composer image generation", () => {
     const route = readFileSync(sessionRoutePath, "utf8");
     expect(surface).toContain('action: "image_models_list"');
     expect(surface).toContain('args: { mode: "text-to-image" }');
-    expect(surface).toContain("buildImageGenerationInstruction(resolved.trim(), imageGeneration)");
-    expect(surface).toContain("{ imageGeneration }");
+    expect(surface).toContain("buildImageGenerationInstruction(resolved.trim(), activeImageGeneration)");
+    expect(surface).toContain("{ imageGeneration: activeImageGeneration }");
     expect(route).toContain("mergeImageGenerationSystemContext(draft, envSystemContext)");
-    expect(route).toContain("...(systemContext ? { system: systemContext } : {})");
+    expect(route).toContain("...(preparedSystemContext ? { system: preparedSystemContext } : {})");
   });
 });

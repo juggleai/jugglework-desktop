@@ -13,10 +13,7 @@ import { z } from "zod";
 import { ApiError } from "../errors.js";
 import type { EnvService } from "../env-file.js";
 import { externalFetch } from "../server-fetch.js";
-import { readRuntimeOpencodeConfig } from "../runtime-opencode-config-store.js";
-import { mergeOpencodeConfigs } from "../runtime-opencode-config-store.js";
-import { readJsoncFile } from "../jsonc.js";
-import { resolveGlobalOpenCodeConfigPath } from "../mcp.js";
+import { readEffectiveWorkspaceOpencodeConfig } from "../effective-workspace-opencode-config.js";
 import type { ServerConfig, WorkspaceInfo } from "../types.js";
 import { createWorkspaceProviderCredentialResolver } from "../provider-credential-resolver.js";
 import { redactProviderMessage } from "../media-generation/redaction.js";
@@ -88,17 +85,18 @@ function imageMime(bytes: Uint8Array): string | null {
 }
 
 async function configuredImageModels(config: ServerConfig, env: EnvService, workspace: WorkspaceInfo): Promise<ImageModelDescriptor[]> {
-  const runtime = await readRuntimeOpencodeConfig(config, workspace.id);
-  const { data: globalConfig } = await readJsoncFile(
-    resolveGlobalOpenCodeConfigPath(),
-    {} as Record<string, unknown>,
-    { allowInvalid: true, maxBytes: 1024 * 1024, regularFileOnly: true },
-  );
-  const effective = mergeOpencodeConfigs(globalConfig, runtime);
+  const effective = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
   const credentials = createWorkspaceProviderCredentialResolver({ config, env });
   const result: ImageModelDescriptor[] = [];
   const providers = isRecord(effective.provider) ? effective.provider : {};
+  const disabledProviders = new Set(
+    (Array.isArray(effective.disabled_providers) ? effective.disabled_providers : [])
+      .filter((providerID): providerID is string => typeof providerID === "string")
+      .map((providerID) => providerID.trim().toLowerCase())
+      .filter(Boolean),
+  );
   for (const [providerID, rawProvider] of Object.entries(providers)) {
+    if (disabledProviders.has(providerID.trim().toLowerCase())) continue;
     if (!isRecord(rawProvider)) continue;
     const options = isRecord(rawProvider.options) ? rawProvider.options : {};
     const baseURL = typeof options.baseURL === "string" ? options.baseURL.trim().replace(/\/+$/, "") : "";

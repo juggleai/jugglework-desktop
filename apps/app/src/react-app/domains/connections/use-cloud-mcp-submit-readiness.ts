@@ -49,7 +49,9 @@ type CloudMcpSubmitInput = {
   skipGate?: boolean;
   sessionId?: string;
   providerModel?: JuggleWorkCloudMcpProviderModelContext;
-  send: () => Promise<void>;
+  /** Runs after readiness waits and immediately before the send closure. */
+  validateBeforeSend?: () => boolean | Promise<boolean>;
+  send: () => Promise<void | boolean>;
 };
 
 export type CloudMcpSubmitReadiness = {
@@ -96,9 +98,10 @@ function missingContextIssue(input: {
  * @returns 普通任务提交结果
  */
 export async function submitWithoutCloudMcpGate(
-  send: () => Promise<void>,
+  send: () => Promise<void | boolean>,
 ): Promise<CloudMcpSubmissionResult> {
-  await send();
+  const sent = await send();
+  if (sent === false) return { outcome: "cancelled", reason: "context_changed" };
   return { outcome: "sent", bypassed: true };
 }
 
@@ -231,6 +234,10 @@ export function useCloudMcpSubmitReadiness(
     // TIPS: 普通任务当前明确跳过 Connect readiness。此时不得再进入
     // workspace/model 级协调器，否则不同会话会共享发送状态或 Promise。
     if (submission.skipGate) {
+      if (submission.validateBeforeSend && !await submission.validateBeforeSend()) {
+        setState(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
+        return { outcome: "cancelled", reason: "context_changed" };
+      }
       const result = await submitWithoutCloudMcpGate(submission.send);
       setState(IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE);
       return result;
@@ -468,6 +475,7 @@ export function useCloudMcpSubmitReadiness(
     return coordinator.submit({
       scopeKey: capturedScopeKey,
       ...(prepare ? { prepare } : {}),
+      ...(submission.validateBeforeSend ? { validateBeforeSend: submission.validateBeforeSend } : {}),
       send: submission.send,
       onState: (nextState) => {
         if (!scopeIsCurrent()) return;

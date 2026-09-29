@@ -125,7 +125,7 @@ Text-capable models can explicitly declare supported reasoning depths from `none
 
 Conversely, session model selection consumes OpenCode's runtime projection, where modalities are represented as boolean `capabilities.output` flags. Chat filtering therefore recognizes both raw `modalities.output` arrays and normalized `capabilities.output.video/text` flags, excludes video-only models from the picker, and repairs remembered/default chat selections that point at a video-only model.
 
-Local media-model discovery uses the same effective provider configuration as OpenCode: global `opencode.jsonc` merged with workspace runtime provider patches. Reading only the runtime database would hide member-authored local image/video model groups and cause agents to miss configured models even though the chat engine can see them.
+Local media-model discovery uses the same effective provider configuration as OpenCode: global `opencode.jsonc`, the active project's `opencode.json`/`opencode.jsonc`, and workspace runtime provider patches. Reading only global plus runtime state would ignore project-only disabled providers and let disconnected media models remain selectable.
 
 Configured provider/model names are never skills. Agent steering routes image/video requests through local extension discovery and execution, permits the skill loader only for exact system-advertised skill names, and explicitly forbids synthesizing names such as `doubao-image-gen` from provider branding. This prevents a configured model from being mistaken for an unavailable OpenCode skill.
 
@@ -154,6 +154,16 @@ Submission preserves the member's text as the visible user turn and injects a mo
 The direct video tool owns terminal waiting after its single submission instead of relying on the language model to issue shell sleeps or remember a later poll. It returns only after completion, failure, cancellation, or a bounded timeout, allowing the same assistant turn to summarize the result. Independently, the transcript video card polls non-terminal jobs so UI status continues after an interrupted model turn. A terminal transition creates an in-app notification-center entry, an immediate success/error toast, and a preference-respecting desktop notification when the app is in the background.
 
 Completed cards load the workspace-confined artifact through the authenticated file endpoint and render an inline metadata-preloaded video player. The card provides download and expanded-dialog playback controls; it never renders the provider result URL.
+
+Provider mutations capture the current server endpoint, runtime workspace ID, and workspace root before they begin. After a successful API-key, OAuth, custom-provider, cloud-provider, disconnect, delete, edit, or reconnect mutation, the desktop cancels in-flight image/video discovery for exactly that scope before invalidating active queries. Discovery refresh is best effort and cannot convert a successful provider mutation into a failure.
+
+Sign-out and organization lifecycle cleanup use the same completion boundary. They capture the affected workspace scope before cleanup begins and invalidate media discovery only after the provider purge succeeds, without converting a successful account transition into a failure when cache refresh itself fails.
+
+Composer discovery treats pending, fetching, and error states as an empty catalog even when the query cache contains older data. The effective generation mode is synchronously null in those states, preventing stale submission. When a settled refresh no longer contains the selected model, the composer exits that generation mode without selecting a fallback, including when another compatible model remains.
+
+Server discovery applies the effective merged `disabled_providers` list case-insensitively. Image status, listing, and generation share one filtered model catalog. Video status, listing, and new submissions receive the same disabled list, while adapter construction remains independent so already persisted jobs can still reconcile.
+
+Direct, steered, and queued media drafts repeat model admission immediately before sending. A draft is cancelled and restored when discovery is refreshing, failed, or no longer contains its selected provider/model, so a provider transition cannot silently downgrade generation to ordinary chat or submit a stale paid request.
 
 **Alternative considered:** submit the video job directly from the renderer. Rejected because it would bypass the conversation turn, agent summary, existing tool transcript, and queued/steered draft semantics.
 

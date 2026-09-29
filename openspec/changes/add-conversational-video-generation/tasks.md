@@ -113,3 +113,12 @@
 - [x] 11.3 Preserve the ordinary chat model and visible prompt while carrying deterministic video parameters into one `jugglework_video_generate` submission and job polling.
 - [x] 11.4 Add focused model parsing, ratio mapping, instruction, visibility, and composer integration tests.
 - [ ] 11.5 Manually verify the composer flow against at least one configured provider on macOS and Windows.
+
+## 12. Provider Mutation and Discovery Consistency
+
+- [x] 12.1 Centralize endpoint/workspace/root-scoped image and video query keys and best-effort cancel-before-invalidate refresh after successful provider mutations.
+- [x] 12.2 Apply effective case-insensitive `disabled_providers` filtering to image status/list/generation and video status/list/new submissions while preserving existing-job adapters.
+- [x] 12.3 Hide stale discovery data during pending, fetching, and error states and exit generation mode without fallback when the selected model disappears.
+- [x] 12.4 Add focused query isolation, mutation boundary, disabled-provider, and selected-model reconciliation tests.
+- [x] 12.5 Include global, project, and runtime disabled-provider layers; invalidate when OAuth polling observes a connection transition; and reject queued or in-flight generation drafts whose selected model is no longer authoritative.
+- [x] 12.6 Invalidate media discovery after successful sign-out or organization lifecycle cleanup, and repeat generation admission after all asynchronous prompt preparation immediately before task bookkeeping and engine delivery.

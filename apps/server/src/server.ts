@@ -103,6 +103,7 @@ import { publicVideoGenerationJob } from "./media-generation/types.js";
 import { openAiCompatibleVideoAdapters } from "./media-generation/provider-registry.js";
 import { discoverVideoModels, listReadyVideoModels, noVideoModelResult, type ProviderCatalogSnapshot } from "./media-generation/model-discovery.js";
 import { createWorkspaceProviderCredentialResolver } from "./provider-credential-resolver.js";
+import { readEffectiveWorkspaceOpencodeConfig } from "./effective-workspace-opencode-config.js";
 import {
   RootSerialization,
   SessionPermissionBroker,
@@ -1064,13 +1065,7 @@ export async function startServer(config: ServerConfig, options: {
     return matches[0];
   };
   const resolveMediaRuntime = async (workspace: WorkspaceInfo) => {
-    const runtimePatch = await readRuntimeOpencodeConfig(config, workspace.id);
-    const { data: globalConfig } = await readJsoncFile(
-      resolveGlobalOpenCodeConfigPath(),
-      {} as Record<string, unknown>,
-      { allowInvalid: true, maxBytes: 1024 * 1024, regularFileOnly: true },
-    );
-    const runtimeConfig = mergeOpencodeConfigs(globalConfig, runtimePatch);
+    const runtimeConfig = await readEffectiveWorkspaceOpencodeConfig(config, workspace);
     const adapters = await openAiCompatibleVideoAdapters(
       runtimeConfig,
       workspace.id,
@@ -1090,7 +1085,10 @@ export async function startServer(config: ServerConfig, options: {
       const keys = Array.isArray(provider.env) ? provider.env.filter((key): key is string => typeof key === "string") : [];
       return Boolean(await mediaCredentials.resolve({ workspaceId: workspace.id, providerID: ref.providerID, modelID: ref.modelID, declaredEnvKeys: keys }));
     };
-    return { adapters, catalog, credentialReady, providerRecords };
+    const disabledProviders = Array.isArray(runtimeConfig.disabled_providers)
+      ? runtimeConfig.disabled_providers.filter((providerID): providerID is string => typeof providerID === "string")
+      : [];
+    return { adapters, catalog, credentialReady, providerRecords, disabledProviders };
   };
   const mediaGenerationWorker = new MediaGenerationWorker({
     repository: mediaGenerationRepository,
@@ -1115,21 +1113,21 @@ export async function startServer(config: ServerConfig, options: {
     async status(context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const models = await discoverVideoModels({ catalog: runtime.catalog, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const models = await discoverVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
       const eligible = await submissionEligibleModels(workspace.id, models.filter((model) => model.availability === "ready"));
       return { submissionEnabled: eligible.length > 0, models };
     },
     async listModels(mode: import("@jugglework/types/media-generation").VideoGenerationMode | undefined, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const ready = await listReadyVideoModels({ catalog: runtime.catalog, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const ready = await listReadyVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, ...(mode ? { mode } : {}), supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
       const models = await submissionEligibleModels(workspace.id, ready);
       return models.length || !mode ? { ok: true, models } : noVideoModelResult(mode);
     },
     async generate(input: { prompt: string; mode: import("@jugglework/types/media-generation").VideoGenerationMode; model?: { providerID: string; modelID: string }; sourceImagePath?: string; durationSeconds?: number; resolution?: string; clientRequestId: string }, context: Record<string, unknown>) {
       const workspace = resolveMediaWorkspace(context);
       const runtime = await resolveMediaRuntime(workspace);
-      const discovered = await listReadyVideoModels({ catalog: runtime.catalog, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
+      const discovered = await listReadyVideoModels({ catalog: runtime.catalog, disabledProviders: runtime.disabledProviders, mode: input.mode, supportsAdapter: (ref) => runtime.adapters.some((adapter) => adapter.matches(ref)), credentialReady: runtime.credentialReady });
       const ready = await submissionEligibleModels(workspace.id, discovered);
       const selected = input.model ? ready.find((item) => item.ref.providerID === input.model?.providerID && item.ref.modelID === input.model?.modelID) : ready[0];
       if (!selected) return noVideoModelResult(input.mode);

@@ -13,9 +13,11 @@ import {
 } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
+import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 import { isCloudProviderSyncReady } from "./cloud-provider-readiness";
+import { invalidateMediaModelQueries, withProviderMediaModelRefresh } from "../media-model-queries";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -100,8 +102,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   // triggers a spurious cloud provider sync pass that amplified the
   // dispose/create loop.
   const store = useMemo(
-    () =>
-      createProviderAuthStore({
+    () => {
+      const baseStore = createProviderAuthStore({
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -141,7 +143,18 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
             action: "updated",
           });
         },
-      }),
+        onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
+      });
+      return withProviderMediaModelRefresh(baseStore, {
+        queryClient: getReactQueryClient(),
+        scope: () => ({
+          endpoint: stateRef.current.selectedWorkspaceEndpoint?.client.baseUrl ?? "",
+          workspaceId: stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? "",
+          workspaceRoot: stateRef.current.selectedWorkspaceRoot,
+        }),
+        onRefreshError: (error) => console.warn("[media-models] provider refresh failed", error),
+      });
+    },
     [checkDesktopRestriction, markReloadRequired],
   );
   const cloudProviderSyncContext = useMemo(() => ({

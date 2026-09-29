@@ -203,6 +203,7 @@ import { readActiveWorkspaceId, readLastSessionFor, writeActiveWorkspaceId } fro
 import { settingsReturnRoute, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { refreshProviderListQueries } from "@/react-app/infra/provider-list-query";
+import { invalidateMediaModelQueries, runProviderMutationWithMediaRefresh, withProviderMediaModelRefresh } from "@/react-app/domains/connections/media-model-queries";
 import {
   createWorkspaceServerClientResolver,
   useWorkspaceServerClient,
@@ -702,8 +703,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   notifyMcpReloadingRef.current = connectionsStore.notifyMcpReloading;
   pollMcpServersAfterReloadRef.current = connectionsStore.pollMcpServersAfterReload;
   const providerAuthStore = useMemo(
-    () =>
-      createProviderAuthStore({
+    () => {
+      const baseStore = createProviderAuthStore({
         client: () => routeStateRef.current.activeClient,
         providers: () => routeStateRef.current.providerItems,
         providerDefaults: () => routeStateRef.current.providerDefaults,
@@ -731,7 +732,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             action: "updated",
           });
         },
-      }),
+        onProviderAvailabilityChanged: (scope) => invalidateMediaModelQueries(getReactQueryClient(), scope),
+      });
+      return withProviderMediaModelRefresh(baseStore, {
+        queryClient: getReactQueryClient(),
+        scope: () => ({
+          endpoint: routeStateRef.current.selectedWorkspaceJuggleWorkClient?.baseUrl ?? "",
+          workspaceId: routeStateRef.current.runtimeWorkspaceId ?? "",
+          workspaceRoot: routeStateRef.current.selectedWorkspaceRoot,
+        }),
+        onRefreshError: (error) => console.warn("[media-models] provider refresh failed", error),
+      });
+    },
     [checkDesktopRestriction, juggleworkServerStore, reloadCoordinator.markReloadRequired],
   );
   const extensionsStore = useMemo(
@@ -2570,8 +2582,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               setProviderDisconnectError(null);
               setConfigActionStatus(null);
               try {
-                await providerAuthStore.ensureProjectProviderDisabledState(providerId, false);
-                await providerAuthStore.refreshProviders({ dispose: true });
+                await runProviderMutationWithMediaRefresh({
+                  mutation: async () => {
+                    await providerAuthStore.ensureProjectProviderDisabledState(providerId, false);
+                    await providerAuthStore.refreshProviders({ dispose: true });
+                  },
+                  queryClient: getReactQueryClient(),
+                  scope: {
+                    endpoint: routeStateRef.current.selectedWorkspaceJuggleWorkClient?.baseUrl ?? "",
+                    workspaceId: routeStateRef.current.runtimeWorkspaceId ?? "",
+                    workspaceRoot: routeStateRef.current.selectedWorkspaceRoot,
+                  },
+                  onRefreshError: (error) => console.warn("[media-models] provider refresh failed", error),
+                });
                 setConfigActionStatus(`${t("status.connected")} ${providerId}`);
               } catch (error) {
                 setProviderDisconnectError(
@@ -3084,7 +3107,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         customProviderDraft={editingLocalProvider}
         onConnectCloudProvider={providerAuthStore.connectCloudProvider}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
-        onRefreshProviders={providerAuthStore.refreshProviders}
+        onRefreshProviders={providerAuthStore.refreshProvidersForConnectionTransition}
         onClose={() => providerAuthStore.closeProviderAuthModal()}
         onAfterClose={() => setEditingLocalProvider(null)}
       />

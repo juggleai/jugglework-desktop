@@ -66,6 +66,8 @@ import {
   type ComposerVideoModelOption,
 } from "./composer/video-generation";
 import { effectiveSessionRunning, isSessionBusyError, shouldReportAbortFailure } from "./session-run-recovery";
+import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
+import { effectiveGenerationState, generationDraftAvailable } from "./composer/generation-model-reconciliation";
 import {
   classifyTaskProgress,
   shouldAcknowledgeTerminalProgress,
@@ -658,8 +660,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     refetchOnWindowFocus: true,
     refetchInterval: (query) => query.state.data?.items.length ? 750 : false,
   });
+  const mediaQueryScope = mediaModelQueryScope({
+    endpoint: props.client.baseUrl,
+    workspaceId: props.workspaceId,
+    workspaceRoot: props.workspaceRoot,
+  });
   const imageGenerationModelsQuery = useQuery({
-    queryKey: ["composer-image-generation-models", props.workspaceId, props.workspaceRoot],
+    queryKey: imageModelQueryKey(mediaQueryScope),
     queryFn: async () => {
       const response = await props.client.callExtensionAction({
         extensionId: "openai-image-generation",
@@ -677,10 +684,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     retry: 1,
     refetchOnWindowFocus: true,
   });
-  const imageGenerationModels = useMemo<ComposerImageModelOption[]>(
-    () => imageGenerationModelsQuery.data ?? [],
-    [imageGenerationModelsQuery.data],
-  );
+  const imageGenerationUnavailable = imageGenerationModelsQuery.isPending
+    || imageGenerationModelsQuery.isFetching
+    || imageGenerationModelsQuery.isError;
+  const effectiveImageGeneration = effectiveGenerationState({
+    models: imageGenerationModelsQuery.data,
+    selection: imageGeneration,
+    unavailable: imageGenerationUnavailable,
+    modelKey: imageModelKey,
+    selectionKey: (selection) => imageModelKey(selection.model),
+  });
+  const imageGenerationModels: ComposerImageModelOption[] = effectiveImageGeneration.models;
   const refreshImageGenerationModels = useCallback(
     () => imageGenerationModelsQuery.refetch(),
     [imageGenerationModelsQuery.refetch],
@@ -703,7 +717,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   }, [imageGeneration, imageGenerationModels, setImageGeneration, setVideoGeneration]);
   useEffect(() => {
-    if (!imageGeneration || imageGenerationModelsQuery.isFetching) return;
+    if (!imageGeneration || imageGenerationUnavailable) return;
     const selectedKey = imageModelKey({
       providerID: imageGeneration.model.providerID,
       modelID: imageGeneration.model.modelID,
@@ -722,16 +736,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return;
     }
-    const fallback = imageGenerationModels[0];
-    setImageGeneration(fallback ? {
-      ...imageGeneration,
-      model: { providerID: fallback.providerID, modelID: fallback.modelID },
-      modelName: fallback.modelName,
-      providerName: fallback.providerName,
-    } : null);
-  }, [imageGeneration, imageGenerationModels, imageGenerationModelsQuery.isFetching, setImageGeneration]);
+    setImageGeneration(null);
+  }, [imageGeneration, imageGenerationModels, imageGenerationUnavailable, setImageGeneration]);
   const videoGenerationModelsQuery = useQuery({
-    queryKey: ["composer-video-generation-models", props.workspaceId, props.workspaceRoot],
+    queryKey: videoModelQueryKey(mediaQueryScope),
     queryFn: async () => {
       const context = {
         workspaceId: props.workspaceId,
@@ -763,10 +771,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
     retry: 1,
     refetchOnWindowFocus: true,
   });
-  const videoGenerationModels = useMemo<ComposerVideoModelOption[]>(
-    () => videoGenerationModelsQuery.data ?? [],
-    [videoGenerationModelsQuery.data],
-  );
+  const videoGenerationUnavailable = videoGenerationModelsQuery.isPending
+    || videoGenerationModelsQuery.isFetching
+    || videoGenerationModelsQuery.isError;
+  const effectiveVideoGeneration = effectiveGenerationState({
+    models: videoGenerationModelsQuery.data,
+    selection: videoGeneration,
+    unavailable: videoGenerationUnavailable,
+    modelKey: videoModelKey,
+    selectionKey: (selection) => videoModelKey(selection.model),
+  });
+  const videoGenerationModels: ComposerVideoModelOption[] = effectiveVideoGeneration.models;
   const refreshVideoGenerationModels = useCallback(
     () => videoGenerationModelsQuery.refetch(),
     [videoGenerationModelsQuery.refetch],
@@ -789,7 +804,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   }, [setImageGeneration, setVideoGeneration, videoGeneration, videoGenerationModels]);
   useEffect(() => {
-    if (!videoGeneration || videoGenerationModelsQuery.isFetching) return;
+    if (!videoGeneration || videoGenerationUnavailable) return;
     const selectedKey = videoModelKey({
       providerID: videoGeneration.model.providerID,
       modelID: videoGeneration.model.modelID,
@@ -808,14 +823,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return;
     }
-    const fallback = videoGenerationModels[0];
-    setVideoGeneration(fallback ? {
-      ...videoGeneration,
-      model: { providerID: fallback.providerID, modelID: fallback.modelID },
-      modelName: fallback.modelName,
-      providerName: fallback.providerName,
-    } : null);
-  }, [setVideoGeneration, videoGeneration, videoGenerationModels, videoGenerationModelsQuery.isFetching]);
+    setVideoGeneration(null);
+  }, [setVideoGeneration, videoGeneration, videoGenerationModels, videoGenerationUnavailable]);
   const snapshotTodoRevisionBySnapshotRef = useRef(new WeakMap<JuggleWorkSessionSnapshot, number>());
   const snapshotQuery = useQuery<JuggleWorkSessionSnapshot>({
     queryKey: snapshotQueryKey,
@@ -1215,12 +1224,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
     }
     const slashCommand = parseSlashCommandInvocation(resolved);
-    const includeImageGeneration = Boolean(imageGeneration && resolved.trim() && !slashCommand);
-    const includeVideoGeneration = Boolean(videoGeneration && resolved.trim() && !slashCommand);
-    const resolvedForSubmission = includeVideoGeneration && videoGeneration
-      ? buildVideoGenerationInstruction(resolved.trim(), videoGeneration)
-      : includeImageGeneration && imageGeneration
-        ? buildImageGenerationInstruction(resolved.trim(), imageGeneration)
+    const activeImageGeneration = effectiveImageGeneration.selection;
+    const activeVideoGeneration = effectiveVideoGeneration.selection;
+    const includeImageGeneration = Boolean(activeImageGeneration && resolved.trim() && !slashCommand);
+    const includeVideoGeneration = Boolean(activeVideoGeneration && resolved.trim() && !slashCommand);
+    const resolvedForSubmission = includeVideoGeneration && activeVideoGeneration
+      ? buildVideoGenerationInstruction(resolved.trim(), activeVideoGeneration)
+      : includeImageGeneration && activeImageGeneration
+        ? buildImageGenerationInstruction(resolved.trim(), activeImageGeneration)
         : resolved;
     return {
       mode: "prompt",
@@ -1228,11 +1239,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
       attachments: nextAttachments,
       text,
       resolvedText: resolvedForSubmission,
-      ...(includeImageGeneration && imageGeneration ? { imageGeneration } : {}),
-      ...(includeVideoGeneration && videoGeneration ? { videoGeneration } : {}),
+      ...(includeImageGeneration && activeImageGeneration ? { imageGeneration: activeImageGeneration } : {}),
+      ...(includeVideoGeneration && activeVideoGeneration ? { videoGeneration: activeVideoGeneration } : {}),
       command: slashCommand ?? undefined,
     };
-  }, [capabilities, imageGeneration, mentions, pasteParts, videoGeneration]);
+  }, [capabilities, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, mentions, pasteParts]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
@@ -1267,6 +1278,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const surfaceIdentity = `${workspaceId}:${sessionId}`;
     const isCurrentSurface = () => activeSurfaceIdentityRef.current === surfaceIdentity;
     if (props.taskSubmissionDisabled) {
+      return { outcome: "cancelled", reason: "context_changed" } as const;
+    }
+    if (!generationDraftAvailable({
+      selection: nextDraft.imageGeneration,
+      models: imageGenerationModels,
+      unavailable: imageGenerationUnavailable,
+      modelKey: imageModelKey,
+    }) || !generationDraftAvailable({
+      selection: nextDraft.videoGeneration,
+      models: videoGenerationModels,
+      unavailable: videoGenerationUnavailable,
+      modelKey: videoModelKey,
+    })) {
       return { outcome: "cancelled", reason: "context_changed" } as const;
     }
     // 同一会话的 prompt acceptance 返回前只允许一次提交；不同会话仍可独立发送。
@@ -1330,7 +1354,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       inFlightSendIdentitiesRef.current.delete(surfaceIdentity);
     }
-  }, [activeRunsQuery.refetch, appendComposerHistory, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length]);
+  }, [activeRunsQuery.refetch, appendComposerHistory, imageGenerationModels, imageGenerationUnavailable, props.onSendDraft, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, renderedMessages.length, videoGenerationModels, videoGenerationUnavailable]);
 
   const clearComposer = useCallback(() => {
     clearComposerSession(props.sessionId);
@@ -1343,6 +1367,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     submission: ComposerSubmissionOptions = { delivery: "start" },
   ) => {
     if (props.taskSubmissionDisabled) return;
+    if ((imageGeneration && !effectiveImageGeneration.selection) || (videoGeneration && !effectiveVideoGeneration.selection)) return;
     const surfaceIdentity = `${props.workspaceId}:${props.sessionId}`;
     const originalDraft = draft;
     const text = originalDraft.trim();
@@ -1410,7 +1435,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         phase: "finished",
       });
     }
-  }, [attachments, buildDraft, clearComposer, draft, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft]);
+  }, [attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.onCreateNewSession, props.sessionId, props.taskSubmissionDisabled, props.workspaceId, sendDraft, videoGeneration]);
 
   const handleSend = useCallback(async () => {
     await submitComposerDraft();
@@ -1434,12 +1459,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
     if (props.taskSubmissionDisabled) return;
+    if ((imageGeneration && !effectiveImageGeneration.selection) || (videoGeneration && !effectiveVideoGeneration.selection)) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
     appendQueuedDraft(props.sessionId, buildDraft(text, attachments));
     queueWaitsForIdleRef.current = true;
     clearComposer();
-  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, props.taskSubmissionDisabled]);
+  }, [appendQueuedDraft, attachments, buildDraft, clearComposer, draft, effectiveImageGeneration.selection, effectiveVideoGeneration.selection, imageGeneration, props.sessionId, props.taskSubmissionDisabled, videoGeneration]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const removed = removeQueuedDraftFromStore(props.sessionId, id);
@@ -2553,15 +2579,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
         attachmentsEnabled={props.attachmentsEnabled}
         attachmentsDisabledReason={props.attachmentsDisabledReason}
         imageGenerationModels={imageGenerationModels}
-        imageGenerationLoading={imageGenerationModelsQuery.isPending}
-        imageGeneration={imageGeneration}
+        imageGenerationLoading={imageGenerationUnavailable}
+        imageGeneration={effectiveImageGeneration.selection}
         onEnableImageGeneration={enableImageGeneration}
         onImageGenerationChange={setImageGeneration}
         onDisableImageGeneration={() => setImageGeneration(null)}
         onRefreshImageGenerationModels={refreshImageGenerationModels}
         videoGenerationModels={videoGenerationModels}
-        videoGenerationLoading={videoGenerationModelsQuery.isPending}
-        videoGeneration={videoGeneration}
+        videoGenerationLoading={videoGenerationUnavailable}
+        videoGeneration={effectiveVideoGeneration.selection}
         onEnableVideoGeneration={enableVideoGeneration}
         onVideoGenerationChange={setVideoGeneration}
         onDisableVideoGeneration={() => setVideoGeneration(null)}

@@ -357,7 +357,7 @@ export type ProviderAuthModalProps = {
     methodIndex: number,
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
-  onRefreshProviders?: () => Promise<unknown>;
+  onRefreshProviders?: (transition: { providerId: string; connectedBefore: boolean }) => Promise<unknown>;
   onClose: () => void;
   /** 弹窗退出动画完成后的清理回调，避免关闭过程中切换到其它内部视图。 */
   onAfterClose?: () => void;
@@ -737,9 +737,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const pollProviders = async () => {
     const id = activeProviderId;
     if (!id || pollingBusy) return;
+    const connectedBefore = (props.connectedProviderIds ?? []).some((providerId) => providerId.trim().toLowerCase() === id.trim().toLowerCase());
     setPollingBusy(true);
     try {
-      await props.onRefreshProviders?.();
+      await props.onRefreshProviders?.({ providerId: id, connectedBefore });
     } finally {
       setPollingBusy(false);
     }
@@ -1126,7 +1127,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         // TIPS: Base UI 在退出动画期间仍挂载内容。必须等动画结束再重置 view/draft，
         // 否则详情关闭时会短暂闪出模型组列表或新增表单。
         resetState();
-        void props.onRefreshProviders?.();
+        void pollProviders();
         props.onAfterClose?.();
       }}
     >

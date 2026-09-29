@@ -475,7 +475,8 @@ type SubmissionCoordinatorState =
 type SubmissionCoordinatorInput = {
   scopeKey: string;
   prepare?: () => Promise<CloudMcpSubmissionPreparationResult>;
-  send: () => Promise<void>;
+  validateBeforeSend?: () => boolean | Promise<boolean>;
+  send: () => Promise<void | boolean>;
   onState?: (state: SubmissionCoordinatorState) => void;
 };
 
@@ -525,9 +526,18 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
         return { outcome: "blocked", issue: prepared.issue };
       }
       if (active?.id !== id) return { outcome: "cancelled", reason: "context_changed" };
+      if (input.validateBeforeSend && !await input.validateBeforeSend()) {
+        input.onState?.({ status: "cancelled", reason: "context_changed" });
+        return { outcome: "cancelled", reason: "context_changed" };
+      }
+      if (active?.id !== id) return { outcome: "cancelled", reason: "context_changed" };
       input.onState?.({ status: "sending" });
       try {
-        await input.send();
+        const sent = await input.send();
+        if (sent === false) {
+          input.onState?.({ status: "cancelled", reason: "context_changed" });
+          return { outcome: "cancelled", reason: "context_changed" };
+        }
         input.onState?.({ status: "idle" });
         return { outcome: "sent", bypassed: prepared.outcome === "bypass" };
       } catch (error) {

@@ -114,8 +114,8 @@ describe("composer video generation", () => {
     expect(surface).toContain('action: "status"');
     expect(surface).toContain('args: { mode: "text-to-video" }');
     expect(surface).toContain("status?.submissionEnabled !== true");
-    expect(surface).toContain("buildVideoGenerationInstruction(resolved.trim(), videoGeneration)");
-    expect(surface).toContain("{ videoGeneration }");
+    expect(surface).toContain("buildVideoGenerationInstruction(resolved.trim(), activeVideoGeneration)");
+    expect(surface).toContain("{ videoGeneration: activeVideoGeneration }");
     expect(route).toContain("mergeVideoGenerationSystemContext(draft, imageSystemContext)");
   });
 

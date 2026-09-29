@@ -31,6 +31,7 @@ export type ProviderCatalogSnapshot = {
 
 export type VideoModelDiscoveryOptions = {
   catalog: ProviderCatalogSnapshot;
+  disabledProviders: string[];
   mode?: VideoGenerationMode;
   supportsAdapter: (ref: VideoModelRef, capabilities: MediaGenerationCapabilities) => boolean;
   credentialReady: (ref: VideoModelRef) => boolean | Promise<boolean>;
@@ -40,11 +41,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 export async function discoverVideoModels(options: VideoModelDiscoveryOptions): Promise<VideoModelDescriptor[]> {
-  const connected = new Set(options.catalog.connected);
+  const connected = new Set(options.catalog.connected.map((providerID) => providerID.trim().toLowerCase()));
+  const disabled = new Set(options.disabledProviders.map((providerID) => providerID.trim().toLowerCase()));
   const discovered: VideoModelDescriptor[] = [];
 
   for (const provider of options.catalog.all) {
-    if (!connected.has(provider.id)) continue;
+    const normalizedProviderID = provider.id.trim().toLowerCase();
+    if (!connected.has(normalizedProviderID) || disabled.has(normalizedProviderID)) continue;
     for (const [modelID, rawModel] of Object.entries(provider.models)) {
       if (!isRecord(rawModel)) continue;
       const capabilities = parseMediaGenerationCapabilities(rawModel.mediaGeneration);

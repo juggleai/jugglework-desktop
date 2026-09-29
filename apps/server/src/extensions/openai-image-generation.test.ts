@@ -133,6 +133,42 @@ describe("configured OpenAI image generation", () => {
     }
   });
 
+  test("status, list, and generation share case-insensitive disabled-provider filtering", async () => {
+    const fx = await fixture();
+    await writeRuntimeOpencodeConfig(fx.config, "ws", () => ({
+      disabled_providers: ["ImAgEs"],
+      provider: {
+        images: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Images",
+          env: ["CUSTOM_IMAGES_API_KEY"],
+          options: { baseURL: "https://images.example.test/v1" },
+          models: { painter: { imageGeneration: { protocol: "openai", textToImage: true } } },
+        },
+      },
+    }));
+
+    const status = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "status", {}, fx.context) as { result: { configured: boolean; models: unknown[] } };
+    const list = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };
+    const generate = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_generate", { prompt: "cat" }, fx.context) as { ok: boolean; error: string };
+
+    expect(status.result).toMatchObject({ configured: false, models: [] });
+    expect(list.result.models).toEqual([]);
+    expect(generate).toMatchObject({ ok: false, error: "no_image_model_available" });
+  });
+
+  test("project-only disabled providers are excluded from image status, list, and generation", async () => {
+    const fx = await fixture();
+    await writeRuntime(fx.config);
+    await writeFile(join(fx.workspace, "opencode.jsonc"), JSON.stringify({ disabled_providers: ["IMAGES"] }));
+    const status = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "status", {}, fx.context) as { result: { configured: boolean; models: unknown[] } };
+    const list = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_models_list", { mode: "text-to-image" }, fx.context) as { result: { models: unknown[] } };
+    const generate = await callOpenAiImageGenerationExtensionAction(fx.config, fx.env, "image_generate", { prompt: "cat" }, fx.context) as { ok: boolean; error: string };
+    expect(status.result).toMatchObject({ configured: false, models: [] });
+    expect(list.result.models).toEqual([]);
+    expect(generate).toMatchObject({ ok: false, error: "no_image_model_available" });
+  });
+
   test("redacts the exact arbitrary resolved credential from provider errors", async () => {
     const fx = await fixture();
     await writeRuntime(fx.config);

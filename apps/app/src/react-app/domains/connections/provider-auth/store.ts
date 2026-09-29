@@ -216,6 +216,12 @@ type CreateProviderAuthStoreOptions = {
   setDisabledProviders: (value: string[]) => void;
   markOpencodeConfigReloadRequired: () => void;
   focusPromptSoon?: () => void;
+  /** Best-effort notification after lifecycle cleanup changes provider availability. */
+  onProviderAvailabilityChanged?: (scope: {
+    endpoint: string;
+    workspaceId: string;
+    workspaceRoot: string;
+  }) => void | Promise<void>;
 };
 
 type MutableState = {
@@ -1886,6 +1892,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
    * path.
    */
   const purgeWorkspaceCloudState = async () => {
+    // Capture the target before cleanup starts. Sign-out and organization
+    // transitions can change the route-backed option readers while the async
+    // purge is still running.
+    const availabilityScope = {
+      endpoint: options.juggleworkServer.getSnapshot().juggleworkServerClient?.baseUrl ?? "",
+      workspaceId: options.runtimeWorkspaceId() ?? "",
+      workspaceRoot: options.selectedWorkspaceRoot(),
+    };
     // Capture the import records BEFORE clearing state so the removals below
     // can still find them.
     const importedIds = Object.keys(state.importedCloudProviders);
@@ -1930,6 +1944,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }));
     refreshSnapshot();
     emitChange();
+    try {
+      await options.onProviderAvailabilityChanged?.(availabilityScope);
+    } catch (error) {
+      // Cloud cleanup already succeeded. A cache refresh failure must not turn
+      // sign-out or an organization switch into a failed cleanup.
+      console.warn("[media-models] provider lifecycle refresh failed", error);
+    }
   };
 
   /**

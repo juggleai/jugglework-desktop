@@ -69,6 +69,11 @@ The desktop composer SHALL expose image generation as an explicit add-menu mode,
 - **WHEN** image-model discovery is loading, fails, or returns no ready text-to-image models
 - **THEN** the add menu does not display the Image generation entry
 
+#### Scenario: Provider state changes while image generation is selected
+- **WHEN** a provider mutation succeeds or image discovery is pending, fetching, failed, or no longer contains the selected model
+- **THEN** discovery is refreshed for the captured endpoint and workspace scope and the effective image model list is empty until that refresh succeeds
+- **AND** the composer exits image generation without choosing another model when the selected model is absent from the settled result
+
 #### Scenario: Selected parameters are submitted deterministically
 - **WHEN** a member submits a prompt while Image generation is active
 - **THEN** the generated request names the selected provider and model, maps the selected aspect ratio to a normalized size, applies the selected style instruction, and routes generation through `jugglework_image_generate`

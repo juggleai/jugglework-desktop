@@ -460,6 +460,38 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(1);
   });
 
+  test("final admission can cancel a queued submission after readiness without sending", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    let runs = 0;
+    const states: string[] = [];
+    const result = await coordinator.submit({
+      scopeKey: "media-generation",
+      prepare: async () => ({ outcome: "ready" }),
+      validateBeforeSend: async () => false,
+      send: async () => {
+        runs += 1;
+      },
+      onState: (state) => states.push(state.status),
+    });
+
+    expect(result).toEqual({ outcome: "cancelled", reason: "context_changed" });
+    expect(runs).toBe(0);
+    expect(states).toEqual(["checking", "cancelled"]);
+  });
+
+  test("a send closure can cancel after its own asynchronous preparation", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    const states: string[] = [];
+    const result = await coordinator.submit({
+      scopeKey: "media-generation",
+      send: async () => false,
+      onState: (state) => states.push(state.status),
+    });
+
+    expect(result).toEqual({ outcome: "cancelled", reason: "context_changed" });
+    expect(states).toEqual(["sending", "cancelled"]);
+  });
+
   test("ordinary submissions that skip the Connect gate do not share errors across sessions", async () => {
     let rejectSessionA: ((error: Error) => void) | null = null;
     const sessionARequest = new Promise<void>((_resolve, reject) => {

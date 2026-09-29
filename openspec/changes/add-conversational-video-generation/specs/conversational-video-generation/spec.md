@@ -122,6 +122,11 @@ The desktop composer SHALL expose text-to-video generation as an explicit add-me
 - **WHEN** video submission is disabled, video-model discovery is loading or fails, or discovery returns no ready text-to-video models
 - **THEN** the add menu does not display the Video generation entry
 
+#### Scenario: Selected video model disappears after provider refresh
+- **WHEN** provider configuration changes and the refreshed ready-model result no longer contains the selected video model
+- **THEN** the composer exits video generation immediately without falling back to another model
+- **AND** pending, fetching, and failed discovery exposes no effective generation mode or stale model that can be submitted
+
 #### Scenario: Selected video parameters are submitted deterministically
 - **WHEN** a member submits a prompt while Video generation is active
 - **THEN** the generated request names the selected provider and model, maps the selected aspect ratio to a normalized size, includes the selected duration, and routes exactly one submission through `jugglework_video_generate`

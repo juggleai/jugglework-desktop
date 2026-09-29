@@ -24,8 +24,9 @@ import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, compactSession, forkSession, isCompactSessionCommand, listCommands, revertSession, setSessionArchived, shellInSession } from "@/app/lib/opencode-session";
 import { isNewSessionCommand } from "@/react-app/domains/session/surface/composer/slash-command";
 import { resolveModelContextLimit } from "@/react-app/domains/session/surface/composer/context-usage-data";
-import { mergeImageGenerationSystemContext } from "@/react-app/domains/session/surface/composer/image-generation";
-import { mergeVideoGenerationSystemContext } from "@/react-app/domains/session/surface/composer/video-generation";
+import { imageModelKey, mergeImageGenerationSystemContext, type ComposerImageModelOption } from "@/react-app/domains/session/surface/composer/image-generation";
+import { mergeVideoGenerationSystemContext, videoModelKey, type ComposerVideoModelOption } from "@/react-app/domains/session/surface/composer/video-generation";
+import { generationDraftAvailable } from "@/react-app/domains/session/surface/composer/generation-model-reconciliation";
 import { requestComposerFocus } from "@/react-app/domains/session/surface/composer/focus-request";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import {
@@ -208,6 +209,7 @@ import {
 } from "@/react-app/domains/session/surface/composer/capability-tags";
 import { useRegisterWorkspaceShellActions } from "./workspace-shell-actions";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
+import { imageModelQueryKey, mediaModelQueryScope, videoModelQueryKey } from "@/react-app/domains/connections/media-model-queries";
 import { useSessionControlActions } from "@/react-app/domains/session/control/session-control-actions";
 import { legacySessionRoute, mergeWorkspaceRouteSession, workspaceAppsRoute, workspaceChatRoute, workspaceSessionRoute, workspaceSettingsRoute } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
@@ -1562,13 +1564,53 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           part.type === "capability" &&
           (part.kind === "cloud-skill" || part.kind === "cloud-mcp" || part.kind === "extension")
         ));
+        const validateGenerationDraftBeforeSend = () => {
+          if (!draft.imageGeneration && !draft.videoGeneration) return true;
+          if (activeRouteContextRef.current !== routeContext) return false;
+          const mediaScope = mediaModelQueryScope({
+            endpoint: selectedWorkspaceEndpoint?.client.baseUrl ?? "",
+            workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "",
+            workspaceRoot: selectedWorkspaceRoot,
+          });
+          const queryClient = getReactQueryClient();
+          const imageQuery = queryClient.getQueryState(imageModelQueryKey(mediaScope));
+          const videoQuery = queryClient.getQueryState(videoModelQueryKey(mediaScope));
+          return generationDraftAvailable({
+            selection: draft.imageGeneration,
+            models: queryClient.getQueryData<ComposerImageModelOption[]>(imageModelQueryKey(mediaScope)) ?? [],
+            unavailable: !imageQuery || imageQuery.status !== "success" || imageQuery.fetchStatus !== "idle" || imageQuery.isInvalidated,
+            modelKey: imageModelKey,
+          }) && generationDraftAvailable({
+            selection: draft.videoGeneration,
+            models: queryClient.getQueryData<ComposerVideoModelOption[]>(videoModelQueryKey(mediaScope)) ?? [],
+            unavailable: !videoQuery || videoQuery.status !== "success" || videoQuery.fetchStatus !== "idle" || videoQuery.isInvalidated,
+            modelKey: videoModelKey,
+          });
+        };
         return submitWithCloudMcpReadiness({
           // Ordinary coding/chat tasks must not wait for a Connect probe they
           // did not request. Explicit Cloud capabilities keep the strict gate.
           skipGate: !requiresCloudMcpReadiness,
           sessionId: targetSessionId,
           providerModel: targetModel ? { provider: targetModel.providerID, model: targetModel.modelID } : undefined,
+          validateBeforeSend: validateGenerationDraftBeforeSend,
           send: async () => {
+            let preparedParts: Awaited<ReturnType<typeof draftToParts>> | null = null;
+            let preparedSystemContext: string | undefined;
+            if (draft.mode !== "shell" && !isCompactCommand && !draft.command) {
+              preparedParts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+              const envSystemContext = await buildJuggleWorkEnvSystemContext(client, {
+                cacheKey: targetSessionId,
+                runtimeKey: environmentRuntimeKey,
+              });
+              const imageSystemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
+              preparedSystemContext = mergeVideoGenerationSystemContext(draft, imageSystemContext);
+            }
+            // This check is intentionally after every asynchronous preparation
+            // and immediately before task bookkeeping plus promptAsync. A
+            // provider mutation during file/env preparation therefore cancels
+            // and restores a queued generation draft instead of sending it.
+            if (!validateGenerationDraftBeforeSend()) return false;
             captureAnalyticsEvent("task_message_sent", {
               mode: draft.mode ?? "prompt",
               delivery: submission.delivery ?? "start",
@@ -1622,20 +1664,13 @@ export function SessionRoute(props: SessionRouteProps = {}) {
               return;
             }
 
-            const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
-            const envSystemContext = await buildJuggleWorkEnvSystemContext(client, {
-              cacheKey: targetSessionId,
-              runtimeKey: environmentRuntimeKey,
-            });
-            const imageSystemContext = mergeImageGenerationSystemContext(draft, envSystemContext);
-            const systemContext = mergeVideoGenerationSystemContext(draft, imageSystemContext);
             const result = await opencodeClient.session.promptAsync({
               sessionID: targetSessionId,
-              parts,
+              parts: preparedParts ?? [],
               model: targetModel ?? undefined,
               agent: readSessionAgentChoice(selectedWorkspaceId, targetSessionId) ?? undefined,
               ...(targetVariant ? { variant: targetVariant } : {}),
-              ...(systemContext ? { system: systemContext } : {}),
+              ...(preparedSystemContext ? { system: preparedSystemContext } : {}),
               ...(submission.delivery === "steer" ? {
                 juggleworkDelivery: "steer" as const,
                 juggleworkAdmissionId: submission.admissionId,
@@ -2703,7 +2738,7 @@ export function SessionRoute(props: SessionRouteProps = {}) {
           return result;
         },
         onSubmitOAuth: sessionProviderAuthStore.completeProviderAuthOAuth,
-        onRefreshProviders: sessionProviderAuthStore.refreshProviders,
+        onRefreshProviders: sessionProviderAuthStore.refreshProvidersForConnectionTransition,
         onClose: () => sessionProviderAuthStore.closeProviderAuthModal(),
       } : null}
       settingsSlot={

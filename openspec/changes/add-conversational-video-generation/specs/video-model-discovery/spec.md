@@ -138,6 +138,11 @@ The system SHALL consider a video model automatically selectable only when its p
 - **WHEN** a model advertises video capability but its credentials are missing or no compatible adapter is registered
 - **THEN** the system excludes it from automatic selection and makes a non-secret diagnostic reason available to settings surfaces
 
+#### Scenario: Provider is disabled with different casing
+- **WHEN** the effective merged `disabled_providers` list contains a configured provider ID with different letter casing
+- **THEN** image and video discovery exclude that provider from status, listing, and new generation submissions
+- **AND** video adapters remain resolvable for reconciliation of jobs submitted before the provider was disabled
+
 ### Requirement: Filter discovery by generation mode
 The system SHALL allow callers to request models compatible with text-to-video or image-to-video and SHALL exclude models that cannot execute the requested mode.
 

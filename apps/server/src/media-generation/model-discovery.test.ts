@@ -22,6 +22,7 @@ const catalog = {
 
 const options = {
   catalog,
+  disabledProviders: [],
   supportsAdapter: (ref: { providerID: string }) => ref.providerID !== "unsupported",
   credentialReady: (ref: { providerID: string }) => ref.providerID !== "missing",
 };
@@ -39,6 +40,20 @@ describe("video model discovery", () => {
   test("filters ready models by requested mode", async () => {
     expect((await listReadyVideoModels({ ...options, mode: "text-to-video" })).map((model) => model.ref.modelID)).toEqual(["t2v"]);
     expect((await listReadyVideoModels({ ...options, mode: "image-to-video" })).map((model) => model.ref.modelID)).toEqual(["i2v"]);
+  });
+
+  test("excludes effective disabled providers case-insensitively before readiness checks", async () => {
+    const checked: string[] = [];
+    const models = await discoverVideoModels({
+      ...options,
+      disabledProviders: ["ReAdY"],
+      credentialReady: (ref) => {
+        checked.push(ref.providerID);
+        return true;
+      },
+    });
+    expect(models.some((model) => model.ref.providerID === "ready")).toBe(false);
+    expect(checked).not.toContain("ready");
   });
 
   test("returns a stable no-model result and calls out an unused image", () => {
