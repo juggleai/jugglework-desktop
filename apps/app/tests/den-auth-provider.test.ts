@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { DenApiError } from "../src/app/lib/den";
 import {
+  DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
   DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS,
   hasRetainedDenSession,
   resolveDenAuthFailureStatus,
   shouldRetryDenAuthOnSignal,
+  shouldValidateSignedInSession,
 } from "../src/react-app/domains/cloud/den-auth-provider";
 
 describe("resolveDenAuthFailureStatus", () => {
@@ -81,5 +83,43 @@ describe("shouldRetryDenAuthOnSignal", () => {
         lastAttemptAt: 1_000,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldValidateSignedInSession", () => {
+  test("periodically validates a healthy retained session", () => {
+    expect(shouldValidateSignedInSession({
+      status: "signed_in",
+      online: true,
+      now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
+      lastValidationAt: 0,
+      validationInFlight: false,
+    })).toBe(true);
+  });
+
+  test("does not validate too early, offline, signed-out, or concurrently", () => {
+    const baseline = {
+      status: "signed_in" as const,
+      online: true,
+      now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS - 1,
+      lastValidationAt: 0,
+      validationInFlight: false,
+    };
+    expect(shouldValidateSignedInSession(baseline)).toBe(false);
+    expect(shouldValidateSignedInSession({
+      ...baseline,
+      now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
+      online: false,
+    })).toBe(false);
+    expect(shouldValidateSignedInSession({
+      ...baseline,
+      now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
+      status: "signed_out",
+    })).toBe(false);
+    expect(shouldValidateSignedInSession({
+      ...baseline,
+      now: DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
+      validationInFlight: true,
+    })).toBe(false);
   });
 });

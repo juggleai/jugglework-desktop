@@ -13,6 +13,7 @@ import {
 import {
   clearDenSession,
   createDenClient,
+  denCredentialFingerprint,
   ensureDenActiveOrganization,
   denOriginComparisonKey,
   isDenSessionRevokedError,
@@ -35,9 +36,11 @@ import { reconcileDenAccountIdentity } from "./den-account-switch";
 import { requireOrganizationCleanup } from "../connections/provider-auth/cloud-provider-cleanup";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import {
+  denSessionRevokedEvent,
   denSessionUpdatedEvent,
   denSettingsChangedEvent,
   dispatchDenSessionUpdated,
+  type DenSessionRevokedDetail,
 } from "../../../app/lib/den-session-events";
 import {
   deepLinkBridgeEvent,
@@ -64,6 +67,7 @@ export type DenAuthStatus =
 
 export const DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS = 5_000;
 export const DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS = 30_000;
+export const DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS = 60_000;
 export const DEN_ACCOUNT_REFRESH_TTL_MS = 60_000;
 
 export function resolveDenAuthFailureStatus(
@@ -85,6 +89,19 @@ export function shouldRetryDenAuthOnSignal(input: {
   if (input.status !== "unavailable" || !input.online) return false;
   if (input.lastAttemptAt === null || input.now < input.lastAttemptAt) return true;
   return input.now - input.lastAttemptAt >= DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS;
+}
+
+export function shouldValidateSignedInSession(input: {
+  status: DenAuthStatus;
+  online: boolean;
+  now: number;
+  lastValidationAt: number;
+  validationInFlight: boolean;
+}): boolean {
+  return input.status === "signed_in"
+    && input.online
+    && !input.validationInFlight
+    && input.now - input.lastValidationAt >= DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS;
 }
 
 export type DenAuthStore = {
@@ -173,6 +190,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const statusRef = useRef<DenAuthStatus>("checking");
   const lastSignalRetryAtRef = useRef<number | null>(null);
   const signalRetryInFlightRef = useRef(false);
+  const lastSessionValidationAtRef = useRef(0);
   const handledGrantsRef = useRef<Set<string>>(new Set());
   const [pendingServerSwitch, setPendingServerSwitch] = useState<PendingServerSwitch | null>(null);
 
@@ -323,6 +341,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
   const refresh = useCallback(async () => {
     const currentRun = ++refreshTokenRef.current;
+    lastSessionValidationAtRef.current = Date.now();
     const settings = readDenSettings();
     const token = settings.authToken?.trim() ?? "";
 
@@ -394,6 +413,46 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   }, [clearAccountState, updateStatus]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleSessionRevoked = (event: Event) => {
+      const detail = event instanceof CustomEvent
+        ? event.detail as DenSessionRevokedDetail | undefined
+        : undefined;
+      const currentSettings = readDenSettings();
+      const currentToken = currentSettings.authToken?.trim() ?? "";
+      if (
+        !detail?.authFingerprint ||
+        !currentToken ||
+        denCredentialFingerprint(currentToken) !== detail.authFingerprint
+      ) {
+        return;
+      }
+
+      // Fence any in-flight refresh that used the revoked credential before
+      // clearing it. The sign-in gate reacts to signed_out in the same render,
+      // while the fingerprint comparison prevents a late 401 from an older
+      // account from signing out a newly authenticated session.
+      refreshTokenRef.current += 1;
+      clearDenSession();
+      clearAccountState();
+      setAccountBusy(false);
+      setUser(null);
+      setError(detail.message || t("den.signed_out"));
+      lastSignalRetryAtRef.current = null;
+      updateStatus("signed_out");
+      dispatchDenSessionUpdated({
+        status: "signed_out",
+        baseUrl: currentSettings.baseUrl,
+        message: detail.message,
+      });
+    };
+
+    window.addEventListener(denSessionRevokedEvent, handleSessionRevoked);
+    return () => window.removeEventListener(denSessionRevokedEvent, handleSessionRevoked);
+  }, [clearAccountState, updateStatus]);
+
+  useEffect(() => {
     void refresh();
 
     if (typeof window === "undefined") return;
@@ -405,6 +464,42 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     window.addEventListener(denSessionUpdatedEvent, handleSessionUpdated);
     return () => {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+
+    const validateSignedInSession = () => {
+      if (!shouldValidateSignedInSession({
+        status: statusRef.current,
+        online: window.navigator.onLine !== false,
+        now: Date.now(),
+        lastValidationAt: lastSessionValidationAtRef.current,
+        validationInFlight: signalRetryInFlightRef.current,
+      })) {
+        return;
+      }
+
+      signalRetryInFlightRef.current = true;
+      void refresh().finally(() => {
+        signalRetryInFlightRef.current = false;
+      });
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") validateSignedInSession();
+    };
+    window.addEventListener("focus", validateSignedInSession);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    const validationInterval = window.setInterval(
+      validateSignedInSession,
+      DEN_AUTH_SIGNED_IN_REFRESH_INTERVAL_MS,
+    );
+    return () => {
+      window.removeEventListener("focus", validateSignedInSession);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.clearInterval(validationInterval);
     };
   }, [refresh]);
 

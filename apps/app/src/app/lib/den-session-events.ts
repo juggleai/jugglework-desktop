@@ -2,6 +2,7 @@ import type { DenIMLoginBootstrap, DenSettings, DenUser } from "./den-types";
 
 export const denSessionUpdatedEvent = "jugglework-den-session-updated";
 export const denSettingsChangedEvent = "jugglework-den-settings-changed";
+export const denSessionRevokedEvent = "jugglework-den-session-revoked";
 
 export type DenSessionUpdatedDetail = {
   status?: "success" | "error" | "signed_out";
@@ -20,6 +21,26 @@ export function dispatchDenSessionUpdated(detail: DenSessionUpdatedDetail) {
 
   window.dispatchEvent(
     new CustomEvent<DenSessionUpdatedDetail>(denSessionUpdatedEvent, {
+      detail,
+    }),
+  );
+}
+
+export type DenSessionRevokedDetail = {
+  /** Non-secret fingerprint used to ignore a late 401 from an older session. */
+  authFingerprint: string;
+  status: 401;
+  code: string;
+  message: string;
+};
+
+export function dispatchDenSessionRevoked(detail: DenSessionRevokedDetail) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<DenSessionRevokedDetail>(denSessionRevokedEvent, {
       detail,
     }),
   );
