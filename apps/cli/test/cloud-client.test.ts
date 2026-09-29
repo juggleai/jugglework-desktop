@@ -27,6 +27,13 @@ test("organization inventory sends bearer and both organization headers", async 
   assert.equal(headers!.get("x-jugglework-legacy-org-id"), "org_123");
 });
 
+test("tenant account parses the organization point balance", async () => {
+  const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async () => Response.json({
+    points: { available: "888", reserved: "12" },
+  })) as typeof fetch);
+  assert.deepEqual(await client.tenantAccount("session-secret", "org_123"), { availablePoints: 888, reservedPoints: 12 });
+});
+
 test("organization state preserves the Cloud active choice and switching uses the Desktop endpoint", async () => {
   const requests: Array<{ url: string; method: string; authorization: string | null; body: string | null }> = [];
   const client = new CloudClient(normalizeCloudUrl("https://cloud.example"), (async (input, init) => {

@@ -159,7 +159,7 @@ With no prompt, the interactive REPL is available only when both stdin and stdou
 | `/resume <id>` | Select an existing session. |
 | `/status` | Show workspace, session, active-run, and Server status. |
 | `/model [provider/model [reasoning-effort]]` | Browse connected chat models and their available reasoning variants with Up/Down and Enter, or specify a model explicitly; show the active provider, model, reasoning effort, and source. |
-| `/org [id-or-slug]` | List Cloud organizations or switch the account's active organization. |
+| `/org [name-or-slug]` | Select the active Cloud organization by name, with a keyboard picker when omitted. |
 | `/permissions [request-approval\|full-access]` | Show or change the selected session's Server-authoritative mode. Full access requires typed acknowledgement and remains policy-gated. |
 | `/plan` | Show runtime-reported task items for the selected session. |
 | `/workspace` | List workspaces and show the supported top-level mutation commands. |
@@ -249,7 +249,7 @@ In a terminal, `/logout` and `jugglework logout` return to the sign-in menu afte
 
 When a task starts after a saved Cloud login, the CLI synchronizes the selected organization's enabled provider publications into that workspace's runtime. It removes stale Cloud imports after an organization switch, verifies provider visibility, and selects the first connected organization model when no model was explicitly selected or configured. A CLI `--model`, `JUGGLEWORK_MODEL`, or configured workspace model remains authoritative unless it refers to a Cloud publication no longer in the selected organization. If eligible organization providers publish models but none can be used, task startup fails instead of silently falling back to the online OpenCode default. `/model` shows the resulting model beneath the interactive input. Signing out cleans imported providers from the CLI-owned runtime when available; an explicitly connected Server is left unchanged.
 
-A typical first run is `jugglework login`, optionally `jugglework org use <id-or-slug>`, then `jugglework`. Provider import is automatic at task startup; the manual `provider import` command remains available for repair. An existing Server requires host authority for synchronization (`--host-token` or `JUGGLEWORK_HOST_TOKEN`), while the owned runtime supplies that authority itself. Login and inventory commands remain Cloud-only.
+A typical first run is `jugglework login`, optionally `jugglework org use <name-or-slug>`, then `jugglework`. Running `jugglework org use` in a terminal opens a name-only picker controlled with Up, Down, and Enter. Provider import is automatic at task startup; the manual `provider import` command remains available for repair. An existing Server requires host authority for synchronization (`--host-token` or `JUGGLEWORK_HOST_TOKEN`), while the owned runtime supplies that authority itself. Login and inventory commands remain Cloud-only.
 
 Credential-shaped fields and occurrences of the actual bearer or host token in rendered messages are redacted. Avoid passing tokens directly on a shared machine's command line because process-list and shell-history exposure happens before the CLI can redact output; prefer environment variables or a user-readable config file.
 

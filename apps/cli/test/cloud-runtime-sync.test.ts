@@ -27,6 +27,7 @@ function harness() {
     token: "secret-cloud-token", user: { id: "user_1" }, organizationId: "org_one",
   };
   let authenticated = true;
+  let availablePoints = 100_000;
   const status = (providerId: string): RuntimeProviderStatus => ({
     providerId, published: null, imported: Boolean(imports[providerId]), loaded: Boolean(imports[providerId]),
     authenticated: Boolean(imports[providerId]) && authenticated, enabled: imports[providerId] ? true : null,
@@ -40,6 +41,7 @@ function harness() {
       { id: "org_two", name: "Two", slug: "two" },
     ], activeOrgId: organization, activeOrgSlug: null }),
     providers: async () => cloudProviders,
+    tenantAccount: async () => ({ availablePoints, reservedPoints: 0 }),
     providerConnection: async (_token: string, _organizationId: string, id: string) => ({
       ...cloudProviders.find((item) => item.id === id)!, apiKey: "secret-provider-key", apiKeys: { [`${id}_KEY`]: "secret-provider-key" },
     } satisfies CloudProviderConnection),
@@ -94,6 +96,7 @@ function harness() {
     setConfiguredModel: (value: string | null) => { configuredModel = value; },
     setSignedOut: () => { profile = null; },
     setAuthenticated: (value: boolean) => { authenticated = value; },
+    setAvailablePoints: (value: number) => { availablePoints = value; },
   };
 }
 
@@ -102,6 +105,7 @@ test("login startup imports enabled organization providers and chooses its first
   const result = await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
   assert.equal(result.organizationId, "org_one");
   assert.equal(result.autoModel, "lpr_first/model-b");
+  assert.ok(state.output.includes("Organization default model: First/model-b."));
   assert.deepEqual(result.imported, ["lpr_first", "lpr_second"]);
   assert.deepEqual(state.calls.filter((call) => call === "reload"), ["reload", "reload"]);
   assert.equal(state.imports.lpr_first?.modelIds.length, 2);
@@ -141,6 +145,24 @@ test("same cloud row is reimported when organization ownership changes", async (
   assert.deepEqual(result.imported, ["lpr_first", "lpr_second"]);
   assert.equal(state.imports.lpr_first?.organizationId, "org_two");
   assert.equal(state.calls.filter((call) => call === "remove-mirror").length, 2);
+});
+
+test("managed organization balance replaces an unaffordable workspace default", async () => {
+  const state = harness();
+  const managed: CloudProvider = {
+    id: "lpr_router", providerId: "JuggleRouter", name: "JuggleRouter", source: "juggle_router",
+    providerConfig: { env: ["JUGGLEWORK_GATEWAY_KEY_V2_TEST"] },
+    models: [
+      { id: "expensive", name: "Expensive", config: { limit: { context: 1_000_000, output: 100_000 }, cost_metadata: { source_currency: "CNY", source_cost: { input: 8, output: 2 } } } },
+      { id: "affordable", name: "Affordable", config: { limit: { context: 1_000_000, output: 100_000 }, cost_metadata: { source_currency: "CNY", source_cost: { input: 1, output: 1 } } } },
+    ],
+  };
+  state.setProviders([managed]);
+  state.setConfiguredModel("lpr_router/expensive");
+  state.setAvailablePoints(700);
+  const result = await synchronizeCloudRuntime({ ...state, workspace: { id: "ws" } });
+  assert.equal(result.autoModel, "lpr_router/affordable");
+  assert.ok(state.output.some((line) => line.includes("requires at least 820 points") && line.includes("has 700")));
 });
 
 test("a configured non-Cloud model is preserved, while stale managed defaults are overridden for the CLI session", async () => {

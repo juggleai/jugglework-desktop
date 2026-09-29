@@ -161,8 +161,9 @@ test("successful grant login persists atomically while environment tokens remain
     assert.match(profileText, /"organizationId": "org_first"/);
     assert.equal(switches.length, 1);
     assert.doesNotMatch(result.stdout, /persisted-session|valid_grant_12345/);
-    const switched = await run(["--cloud-url", cloud.url, "--config", config, "org", "use", "second"]);
+    const switched = await run(["--cloud-url", cloud.url, "--config", config, "org", "use", "Second"]);
     assert.equal(switched.code, 0, switched.stdout);
+    assert.match(await readFile(join(root, "cloud-profiles.json"), "utf8"), /"organizationId": "org_second"/);
     const loggedOut = await run(["--cloud-url", cloud.url, "--config", config, "logout"]);
     assert.equal(loggedOut.code, 0, loggedOut.stdout);
     const again = await run(["--cloud-url", cloud.url, "--config", config, "--grant-stdin", "login"], {}, "valid_grant_12345\n");

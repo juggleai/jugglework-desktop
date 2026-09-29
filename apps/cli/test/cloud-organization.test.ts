@@ -4,7 +4,7 @@ import { resolveCloudOrganization } from "../src/cloud-organization.js";
 import type { CloudOrganizations } from "../src/cloud-client.js";
 
 const items = [
-  { id: "org-first", slug: "first", name: "First" },
+  { id: "org-first", slug: "first", name: "First Organization" },
   { id: "org-last", slug: "last", name: "Last" },
 ];
 
@@ -14,6 +14,7 @@ test("organization selection prefers Cloud account state, then remembered choice
   assert.equal(resolveCloudOrganization({ ...state, activeOrgId: null }, { remembered: "org-last" })?.id, "org-last");
   assert.equal(resolveCloudOrganization({ ...state, activeOrgId: "removed" })?.id, "org-first");
   assert.equal(resolveCloudOrganization({ ...state, activeOrgId: null }, { explicit: "first" })?.id, "org-first");
+  assert.equal(resolveCloudOrganization({ ...state, activeOrgId: null }, { explicit: "First Organization" })?.id, "org-first");
   assert.equal(resolveCloudOrganization(state, { explicit: "missing" }), null);
   assert.equal(resolveCloudOrganization({ items: [], activeOrgId: null, activeOrgSlug: null }), null);
 });

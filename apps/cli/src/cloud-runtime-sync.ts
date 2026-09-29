@@ -12,6 +12,7 @@ import { CloudClient } from "./cloud-client.js";
 import { resolveCloudOrganization } from "./cloud-organization.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
+import { managedModelReservationPoints, modelFitsAvailablePoints, modelReservationPoints } from "./managed-points.js";
 import { availableModels } from "./model-catalog.js";
 import { importProvider, removeProvider } from "./provider-command.js";
 import type { CliRenderer } from "./render.js";
@@ -22,7 +23,7 @@ type SyncApi = Pick<JuggleWorkApiClient,
   "patchCloudProviderConfig" | "reloadEngine" | "getCloudProviderImport" | "setCloudProviderImport" | "removeCloudProviderImport"
 >;
 
-type SyncCloud = Pick<CloudClient, "organizationState" | "providers" | "providerConnection" | "catalog">;
+type SyncCloud = Pick<CloudClient, "organizationState" | "providers" | "providerConnection" | "catalog" | "tenantAccount">;
 type SyncStore = Pick<CloudProfileStore, "get" | "rememberedOrganization" | "selectOrganization">;
 type SyncRenderer = Pick<CliRenderer, "info" | "warn" | "registerSecretValues">;
 
@@ -50,14 +51,15 @@ export function importedCloudProviders(config: { jugglework?: Record<string, unk
   }));
 }
 
-function recommendedModel(providers: CloudProvider[], statuses: Map<string, RuntimeProviderStatus>, selectable: Set<string>): string | null {
+function recommendedModel(providers: CloudProvider[], statuses: Map<string, RuntimeProviderStatus>, selectable: Set<string>, availablePoints: number | null): string | null {
   for (const provider of providers) {
     const providerId = getCloudManagedProviderId(provider);
     const status = statuses.get(providerId);
     if (!status?.loaded || !status.authenticated || status.enabled === false) continue;
     for (const model of provider.models) {
       const id = `${providerId}/${model.id}`;
-      if (selectable.has(id) && status.models.some((item) => item.id === model.id && item.enabled)) return id;
+      if (selectable.has(id) && status.models.some((item) => item.id === model.id && item.enabled) &&
+        modelFitsAvailablePoints(provider, model, availablePoints)) return id;
     }
   }
   return null;
@@ -97,6 +99,8 @@ export async function synchronizeCloudRuntime(input: {
   if (profile.organizationId !== organization.id) await store.selectOrganization(urls.origin, organization.id);
 
   const providers = filterImportableCloudOrgProviders(await cloud.providers(profile.token, organization.id));
+  const hasManagedModels = providers.some((provider) => provider.source?.trim().toLowerCase() === "juggle_router" && provider.models.length > 0);
+  const availablePoints = hasManagedModels ? (await cloud.tenantAccount(profile.token, organization.id)).availablePoints : null;
   const config = await api.workspaceConfig(workspace.id);
   const previous = importedCloudProviders(config);
   if (providers.length || Object.keys(previous).length) {
@@ -140,8 +144,19 @@ export async function synchronizeCloudRuntime(input: {
   const selectable = providers.length
     ? new Set(availableModels(await api.providerList(workspace.id)).map((model) => model.id))
     : new Set<string>();
-  const preferred = recommendedModel(providers, statuses, selectable);
+  const preferred = recommendedModel(providers, statuses, selectable, availablePoints);
+  const preferredProvider = providers.find((provider) => getCloudManagedProviderId(provider) === preferred?.split("/")[0]);
+  const preferredLabel = preferred && preferredProvider
+    ? `${preferredProvider.name}/${preferred.slice(preferred.indexOf("/") + 1)}`
+    : preferred;
   if (providers.some((provider) => provider.models.length > 0) && !preferred) {
+    const managedRequirements = providers.flatMap((provider) => provider.models.flatMap((model) => {
+      const required = managedModelReservationPoints(provider, model);
+      return required === null ? [] : [required];
+    }));
+    if (availablePoints !== null && managedRequirements.length) {
+      throw new Error(`Organization ${organization.name} has ${availablePoints} available points, but its least expensive managed model requires ${Math.min(...managedRequirements)} points for a safe request reservation.`);
+    }
     throw new Error(`Organization ${organization.name} has published models, but none are connected and usable in this workspace. Run 'jugglework doctor'.`);
   }
 
@@ -151,16 +166,19 @@ export async function synchronizeCloudRuntime(input: {
   const publishedModels = new Set(providers.flatMap((provider) => provider.models.map((model) => `${getCloudManagedProviderId(provider)}/${model.id}`)));
   const explicitStale = Boolean(options.model && isCloudManagedProviderKey(selectedProvider) && !publishedModels.has(options.model));
   const configuredStale = Boolean(configured && isCloudManagedProviderKey(configuredProvider) && !publishedModels.has(configured));
+  const configuredRequiredPoints = configured ? modelReservationPoints(providers, configured) : null;
+  const configuredUnaffordable = availablePoints !== null && configuredRequiredPoints !== null && configuredRequiredPoints > availablePoints;
   if ((explicitStale || configuredStale) && !preferred) {
     throw new Error(`The selected Cloud model no longer belongs to organization ${organization.name}, and no usable organization model is available. Choose an explicit model or use 'jugglework org list'.`);
   }
-  if (explicitStale) renderer.warn(`The selected model belongs to a different organization; using ${preferred ?? "the runtime default"} instead.`);
-  if (configuredStale) renderer.warn(`The workspace default model belongs to a different organization; using ${preferred ?? "the runtime default"} for this CLI session.`);
+  if (explicitStale) renderer.warn(`The selected model belongs to a different organization; using ${preferredLabel ?? "the runtime default"} instead.`);
+  if (configuredStale) renderer.warn(`The workspace default model belongs to a different organization; using ${preferredLabel ?? "the runtime default"} for this CLI session.`);
+  if (configuredUnaffordable) renderer.warn(`The workspace default model requires at least ${configuredRequiredPoints} points, but organization ${organization.name} has ${availablePoints}; using ${preferredLabel ?? "the runtime default"} for this CLI session.`);
   if (explicitStale) options.model = null;
-  const autoModel = (!options.model && (!configured || configuredStale || explicitStale)) ? preferred : null;
+  const autoModel = (!options.model && (!configured || configuredStale || configuredUnaffordable || explicitStale)) ? preferred : null;
 
   if (imported.length || removed.length) renderer.info(`Organization ${organization.name}: ${imported.length} provider(s) synchronized, ${removed.length} stale provider(s) removed.`);
-  if (autoModel) renderer.info(`Organization default model: ${autoModel}.`);
+  if (autoModel) renderer.info(`Organization default model: ${preferredLabel}.`);
   else if (!providers.length) renderer.warn(`Organization ${organization.name} has no enabled model providers; the CLI will use its existing model configuration.`);
   return { organizationId: organization.id, autoModel, imported, removed };
 }

@@ -9,7 +9,7 @@ import {
   type SessionRun,
   type SessionSnapshot,
 } from "../src/api.js";
-import { chooseWorkspace, SessionController, STDIN_CONTEXT_END, STDIN_CONTEXT_START } from "../src/controller.js";
+import { chooseWorkspace, SessionController, STDIN_CONTEXT_END, STDIN_CONTEXT_START, terminalProviderRetry } from "../src/controller.js";
 import type { CliRenderer } from "../src/render.js";
 
 const run: SessionRun = {
@@ -67,6 +67,11 @@ function baseApi(overrides: Record<string, unknown> = {}): JuggleWorkApiClient {
     ...overrides,
   } as unknown as JuggleWorkApiClient;
 }
+
+test("insufficient organization points are terminal instead of retried", () => {
+  assert.match(terminalProviderRetry("The organization does not have enough available points for this managed model request.")!, /\/model.*\/org/);
+  assert.equal(terminalProviderRetry("temporary upstream failure"), null);
+});
 
 test("workspace selection matches the requested path and refuses ambiguous connected Servers", async () => {
   const api = baseApi({ listWorkspaces: async () => ({ activeId: "ws_first", items: [

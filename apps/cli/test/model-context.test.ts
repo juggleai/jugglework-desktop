@@ -31,3 +31,13 @@ test("model display uses the connected runtime default when workspace has no exp
   const context = await resolveModelContext(api, { id: "ws" }, { model: null, reasoningEffort: null });
   assert.equal(modelContextLabel(context), "openai/gpt-5 · default reasoning");
 });
+
+test("organization model display resolves the provider name without changing its routing ID or source", async () => {
+  const api = {
+    providerList: async () => ({ all: [{ id: "lpr_org", name: "组织模型服务" }], connected: ["lpr_org"] }),
+  } as unknown as JuggleWorkApiClient;
+  const context = await resolveModelContext(api, { id: "ws" }, { model: "lpr_org/chat", reasoningEffort: "high" }, "organization");
+  assert.equal(context.provider, "lpr_org");
+  assert.equal(context.source, "organization");
+  assert.equal(modelContextLabel(context), "组织模型服务/chat · high reasoning");
+});

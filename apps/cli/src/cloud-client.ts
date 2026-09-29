@@ -6,6 +6,7 @@ export type { CloudProvider, CloudProviderModel } from "@jugglework/cloud-provid
 export type CloudUser = { id: string; name?: string; email?: string };
 export type CloudOrganization = { id: string; name: string; slug: string; role?: string };
 export type CloudOrganizations = { items: CloudOrganization[]; activeOrgId: string | null; activeOrgSlug: string | null };
+export type CloudTenantAccount = { availablePoints: number; reservedPoints: number };
 export class CloudHttpError extends Error {
   constructor(
     message: string,
@@ -138,6 +139,21 @@ export class CloudClient {
 
   async providers(token: string, organizationId: string): Promise<CloudProvider[]> {
     return parseProvidersPayload(await this.request("/v1/llm-providers", { token, organizationId }));
+  }
+
+  async tenantAccount(token: string, organizationId: string): Promise<CloudTenantAccount> {
+    const payload = record(await this.request("/v1/tenant-account", { token, organizationId }));
+    const points = record(payload?.points);
+    const parsePoints = (value: unknown) => {
+      const parsed = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+      return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+    };
+    const availablePoints = parsePoints(points?.available);
+    const reservedPoints = parsePoints(points?.reserved);
+    if (availablePoints === null || reservedPoints === null) {
+      throw new CloudHttpError("Cloud tenant account response did not include a valid points balance.", 500, "invalid_tenant_account_payload");
+    }
+    return { availablePoints, reservedPoints };
   }
 
   async providerConnection(token: string, organizationId: string, providerId: string): Promise<CloudProviderConnection> {

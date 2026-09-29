@@ -29,6 +29,15 @@ export type PromptInput = {
 export const STDIN_CONTEXT_START = "--- BEGIN PIPED STDIN CONTEXT ---";
 export const STDIN_CONTEXT_END = "--- END PIPED STDIN CONTEXT ---";
 
+export function terminalProviderRetry(message: string | null | undefined): string | null {
+  const text = message?.trim();
+  if (!text) return null;
+  if (text.toLowerCase().includes("does not have enough available points")) {
+    return `${text} Choose a lower-cost model with /model or switch to an organization with more points using /org.`;
+  }
+  return null;
+}
+
 const delay = (ms: number) => new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms));
 
 function modelSelection(model: string | null): { providerID: string; modelID: string } | undefined {
@@ -478,6 +487,8 @@ export class SessionController {
         const isIdle = snapshot.item.status.type === "idle";
         const isRetry = snapshot.item.status.type === "retry" || snapshot.item.status.type === "retrying";
         if (isRetry) {
+          const terminalRetry = terminalProviderRetry(snapshot.item.status.message);
+          if (terminalRetry) throw new Error(terminalRetry);
           const attempt = snapshot.item.status.attempt ?? 0;
           if (attempt !== lastRetryAttempt) {
             lastRetryAttempt = attempt;

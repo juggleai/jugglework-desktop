@@ -11,7 +11,7 @@
 - [x] 2.2 Implement a browser-neutral Cloud HTTP client for handoff exchange, current user, organizations, provider inventory, provider connection details, public catalog metadata, and logout with normalized redacted errors.
 - [x] 2.3 Implement protected, atomic, deployment-keyed Cloud profile storage with malformed-file recovery, per-profile organization selection, and non-persistent environment token override.
 - [x] 2.4 Implement `login`, `login status`, and `logout`, accepting raw one-time grants and CLI handoff links without logging them and documenting browser-and-paste behavior for local and remote terminals.
-- [x] 2.5 Implement `org list` and `org use` with exact ID/slug matching, interactive disambiguation, stale-membership handling, and deterministic non-interactive errors.
+- [x] 2.5 Implement `org list` and `org use` with exact name/slug matching, interactive disambiguation, stale-membership handling, and deterministic non-interactive errors.
 - [x] 2.6 Add tests for expired/replayed/malformed grants, profile permissions, atomic replacement, multi-deployment isolation, login-status exit codes, secret redaction, and organization headers.
 - [x] 2.7 Add a pre-runtime, unauthenticated interactive sign-in selector with browser/paste/continue paths and non-echoing handoff input, while bypassing onboarding for scripted and connected commands.
 
@@ -54,6 +54,9 @@
 - [x] 6.8 Make the interactive slash menu keyboard-selectable, browse connected runtime models and reasoning variants through `/model`, and keep the active model/effort directly below the composer.
 - [x] 6.9 Return `/logout` and terminal `jugglework logout` to the sign-in menu, isolate subsequent work in a new session, and keep scripted logout non-interactive.
 - [x] 6.10 Restore terminal input mode and pause the composer input stream during shutdown so `/exit` terminates on Linux; enforce EOF in the interactive regression test.
+- [x] 6.11 Hide built-in OpenCode models from the picker and use provider display names throughout interactive model UI while preserving routing IDs.
+- [x] 6.12 Make `/org` a keyboard-selectable organization-name picker, hide internal organization IDs from human output, and apply the confirmed organization before refreshing providers and models.
+- [x] 6.13 Read the selected organization's point balance, avoid managed models whose conservative gateway reservation exceeds it, and stop insufficient-point provider failures without repeated retries.
 
 ## 7. Diagnostics, Documentation, and Release
 

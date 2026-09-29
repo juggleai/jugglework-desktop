@@ -3,6 +3,7 @@ import type { JuggleWorkApiClient, RuntimeProviderList, WorkspaceInfo } from "./
 export type AvailableModel = {
   id: string;
   provider: string;
+  providerName: string;
   model: string;
   label: string;
   variants: string[];
@@ -11,13 +12,14 @@ export type AvailableModel = {
 export function availableModels(payload: RuntimeProviderList): AvailableModel[] {
   const connected = new Set(payload.connected ?? []);
   return (payload.all ?? [])
-    .filter((provider) => connected.has(provider.id))
+    .filter((provider) => connected.has(provider.id) && provider.id.trim().toLowerCase() !== "opencode")
     .flatMap((provider) => Object.entries(provider.models ?? {}).flatMap(([modelId, model]) => {
       const output = model.capabilities?.output;
       if (output && output.text !== true && (output.image === true || output.video === true)) return [];
       return [{
         id: `${provider.id}/${modelId}`,
         provider: provider.id,
+        providerName: provider.name?.trim() || provider.id,
         model: modelId,
         label: model.name || modelId,
         variants: Object.keys(model.variants ?? {}),

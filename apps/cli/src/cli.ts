@@ -166,7 +166,7 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
     }
     if (!input.startsWith("/")) {
       if (cloudSyncError) {
-        renderer.error(`Organization models are not ready: ${cloudSyncError}. Retry with /org <id-or-slug> or run /logout.`);
+        renderer.error(`Organization models are not ready: ${cloudSyncError}. Retry with /org <name-or-slug> or run /logout.`);
         continue;
       }
       renderer.submittedPrompt(input);
@@ -210,7 +210,7 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
             if (!/^[^\s/]+\/.+$/.test(rest[0]!) || rest.length > 2) throw new Error("Usage: /model [provider/model [reasoning-effort]]");
             options.model = rest[0]!;
             options.reasoningEffort = rest[1] ?? null;
-            modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+            modelContext = await resolveModelContext(controller.api, controller.workspace, options);
             managedModel = null;
           } else {
             const models = await loadAvailableModels(controller.api, controller.workspace);
@@ -219,38 +219,39 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
               break;
             }
             const selectedModel = await chooseComposerItem(renderer, modelContextLabel(modelContext), "Models · ↑↓ select · Enter choose · Esc cancel",
-              models.map((model) => ({ value: model.id, label: model.id, detail: model.label === model.model ? "" : model.label })),
+              models.map((model) => ({ value: model.id, label: `${model.providerName}/${model.model}`, detail: model.label === model.model ? "" : model.label })),
               modelContext.provider && modelContext.model ? `${modelContext.provider}/${modelContext.model}` : undefined);
             if (!selectedModel) break;
             const model = models.find((item) => item.id === selectedModel)!;
             const effortChoices = [{ value: "", label: "Default", detail: "Use the model default" }, ...model.variants.map((variant) => ({ value: variant, label: variant, detail: "" }))];
             const effort = model.variants.length
-              ? await chooseComposerItem(renderer, `${model.id} · reasoning effort`, "Reasoning effort · ↑↓ select · Enter choose · Esc cancel", effortChoices,
+              ? await chooseComposerItem(renderer, `${model.providerName}/${model.model} · reasoning effort`, "Reasoning effort · ↑↓ select · Enter choose · Esc cancel", effortChoices,
                 model.id === `${modelContext.provider}/${modelContext.model}` ? modelContext.reasoningEffort ?? "" : "")
               : "";
             if (effort === null) break;
             options.model = model.id;
             options.reasoningEffort = effort || null;
-            modelContext = parseModelContext(options.model, options.reasoningEffort, "cli");
+            modelContext = parseModelContext(options.model, options.reasoningEffort, "cli", model.providerName);
             managedModel = null;
           }
-          renderer.info(`Provider: ${modelContext.provider ?? "runtime default (not reported)"}`);
+          renderer.info(`Provider: ${modelContext.providerName || modelContext.provider || "runtime default (not reported)"}`);
           renderer.info(`Model: ${modelContext.model ?? "runtime default (not reported)"}`);
           renderer.info(`Reasoning effort: ${modelContext.reasoningEffort ?? "runtime default"}`);
           renderer.info(`Source: ${modelContext.source === "cli" ? "CLI selection" : modelContext.source === "organization" ? "organization default" : modelContext.source === "workspace" ? "workspace configuration" : "runtime default"}`);
           break;
         case "org":
-          await executeCloudCommand({ ...options, command: rest.length ? { group: "org", action: "use", target: rest[0]! } : { group: "org", action: "list", target: null } }, renderer);
-          if (rest.length) {
-            options.cloudOrg = rest[0]!;
-            if (managedModel && options.model === managedModel) options.model = null;
+          await executeCloudCommand({ ...options, command: { group: "org", action: "use", target: rest.length ? rest.join(" ") : null } }, renderer);
+          {
+            options.cloudOrg = rest.length ? rest.join(" ") : null;
+            if (options.model && isCloudManagedProviderKey(options.model.split("/")[0] ?? "")) {
+              options.model = null;
+              options.reasoningEffort = null;
+            }
             try {
               const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
               if (synced.autoModel) options.model = synced.autoModel;
               managedModel = synced.autoModel;
-              modelContext = synced.autoModel
-                ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
-                : await resolveModelContext(controller.api, controller.workspace, options);
+              modelContext = await resolveModelContext(controller.api, controller.workspace, options, synced.autoModel ? "organization" : "cli");
               cloudSyncError = null;
             } catch (error) {
               cloudSyncError = error instanceof Error ? error.message : String(error);
@@ -319,9 +320,7 @@ async function repl(controller: SessionController, renderer: CliRenderer, option
               const synced = await synchronizeCloudRuntime({ options, api: controller.api, workspace: controller.workspace, renderer, ownedRuntime });
               if (synced.autoModel) options.model = synced.autoModel;
               managedModel = synced.autoModel;
-              modelContext = synced.autoModel
-                ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
-                : await resolveModelContext(controller.api, controller.workspace, options);
+              modelContext = await resolveModelContext(controller.api, controller.workspace, options, synced.autoModel ? "organization" : "cli");
             } catch (error) {
               cloudSyncError = error instanceof Error ? error.message : String(error);
               renderer.error(cloudSyncError);
@@ -430,9 +429,7 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
       : options.command.group === "session" && options.command.action === "resume";
     const synced = needsTaskModel ? await synchronizeCloudRuntime({ options, api, workspace, renderer, ownedRuntime: runtime.owned }) : null;
     if (synced?.autoModel) options.model = synced.autoModel;
-    const modelContext = synced?.autoModel
-      ? parseModelContext(synced.autoModel, options.reasoningEffort, "organization")
-      : await resolveModelContext(api, workspace, options);
+    const modelContext = await resolveModelContext(api, workspace, options, synced?.autoModel ? "organization" : "cli");
     if (interactive && !options.prompt && options.command.group === "runtime" && options.command.action !== "status" && options.command.action !== "sessions") {
       renderer.welcome({
         workspace,

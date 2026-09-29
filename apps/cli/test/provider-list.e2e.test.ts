@@ -13,9 +13,12 @@ test("CLI startup and model picker read providers through the real Server worksp
   const root = await mkdtemp(join(tmpdir(), "jugglework-cli-provider-route-"));
   const providerRequests: Array<string | undefined> = [];
   const catalog = {
-    connected: ["lpr_example"],
+    connected: ["lpr_example", "opencode"],
     default: { lpr_example: "model-a" },
-    all: [{ id: "lpr_example", models: { "model-a": { name: "Model A", variants: { high: {} } } } }],
+    all: [
+      { id: "lpr_example", name: "Organization Provider", models: { "model-a": { name: "Model A", variants: { high: {} } } } },
+      { id: "opencode", name: "OpenCode", models: { "big-pickle": { name: "Big Pickle" } } },
+    ],
   };
   const engine = createServer((request, response) => {
     if (new URL(request.url ?? "/", "http://localhost").pathname === "/provider") {
@@ -41,10 +44,10 @@ test("CLI startup and model picker read providers through the real Server worksp
     const api = new JuggleWorkApiClient(`http://127.0.0.1:${server.port}`, "cli-test-token", "cli-test-host");
     assert.deepEqual(await api.providerList("ws_test"), catalog);
     assert.deepEqual(await loadAvailableModels(api, { id: "ws_test" }), [{
-      id: "lpr_example/model-a", provider: "lpr_example", model: "model-a", label: "Model A", variants: ["high"],
+      id: "lpr_example/model-a", provider: "lpr_example", providerName: "Organization Provider", model: "model-a", label: "Model A", variants: ["high"],
     }]);
     assert.deepEqual(await resolveModelContext(api, { id: "ws_test" }, { model: null, reasoningEffort: "high" }), {
-      provider: "lpr_example", model: "model-a", reasoningEffort: "high", source: "runtime",
+      provider: "lpr_example", providerName: "Organization Provider", model: "model-a", reasoningEffort: "high", source: "runtime",
     });
     assert.equal(providerRequests.length, 3);
     assert.ok(providerRequests.every((directory) => directory === root));

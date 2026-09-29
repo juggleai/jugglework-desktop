@@ -36,6 +36,7 @@ test("parses explicit resume and rejects unknown flags", () => {
 test("parses hierarchical Cloud commands without consuming positional prompts", () => {
   assert.deepEqual(parseCliArgs(["login", "status"]).command, { group: "account", action: "login-status" });
   assert.deepEqual(parseCliArgs(["org", "use", "engineering"]).command, { group: "org", action: "use", target: "engineering" });
+  assert.deepEqual(parseCliArgs(["org", "use", "Engineering", "Team"]).command, { group: "org", action: "use", target: "Engineering Team" });
   assert.deepEqual(parseCliArgs(["provider", "list"]).command, { group: "provider", action: "list", target: null });
   assert.deepEqual(parseCliArgs(["provider", "import", "pub_1"]).command, { group: "provider", action: "import", target: "pub_1" });
   assert.deepEqual(parseCliArgs(["provider", "remove", "pub_1"]).command, { group: "provider", action: "remove", target: "pub_1" });

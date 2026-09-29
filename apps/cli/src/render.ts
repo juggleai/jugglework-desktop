@@ -266,13 +266,13 @@ export class CliRenderer {
     if (!items.length) return this.info("No organizations found.");
     for (const item of items) {
       const selected = item.id === selectedId || item.slug === selectedId ? "*" : " ";
-      process.stdout.write(`${selected} ${this.style(item.slug, ANSI.cyan)}  ${this.redactText(item.name)}  ${this.style(item.id, ANSI.dim)}\n`);
+      process.stdout.write(`${selected} ${this.style(this.redactText(item.name), ANSI.cyan)}\n`);
     }
   }
 
   organizationSelected(organization: CloudOrganization, ephemeral: boolean): void {
     if (this.options.json) return this.event("organization_selected", { organization, persisted: !ephemeral });
-    this.info(`Using organization ${organization.name} (${organization.slug})${ephemeral ? " for this environment-token session" : ""}.`);
+    this.info(`Using organization ${organization.name}${ephemeral ? " for this environment-token session" : ""}.`);
   }
 
   inventory(label: string, kind: string, items: Array<Record<string, unknown>>, organization?: CloudOrganization): void {

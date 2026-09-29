@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 import { stdin, stdout } from "node:process";
 import { emitKeypressEvents } from "node:readline";
-import { createInterface } from "node:readline/promises";
 import { filterImportableCloudOrgProviders, getCloudManagedProviderId } from "@jugglework/cloud-provider";
 import type { CliOptions } from "./args.js";
 import { CloudClient, CloudHttpError, type CloudOrganization } from "./cloud-client.js";
 import { CloudProfileStore, cloudProfilePath } from "./cloud-profiles.js";
 import { resolveCloudOrganization } from "./cloud-organization.js";
 import { normalizeCloudUrl } from "./cloud-url.js";
+import { chooseComposerItem } from "./composer.js";
 import type { CliRenderer } from "./render.js";
 
 export function isCloudOnlyCommand(command: CliOptions["command"]): boolean {
@@ -88,17 +88,17 @@ async function promptHidden(): Promise<string> {
   });
 }
 
-async function chooseOrganization(organizations: CloudOrganization[]): Promise<CloudOrganization> {
-  stdout.write(`${organizations.map((organization, index) => `${index + 1}. ${organization.name} (${organization.slug})`).join("\n")}\n`);
-  const rl = createInterface({ input: stdin, output: stdout, terminal: true });
-  try {
-    const answer = Number((await rl.question("Choose an organization: ")).trim());
-    const selected = organizations[answer - 1];
-    if (!selected) throw new Error("No organization was selected.");
-    return selected;
-  } finally {
-    rl.close();
-  }
+async function chooseOrganization(organizations: CloudOrganization[], renderer: CliRenderer, selectedId?: string | null): Promise<CloudOrganization> {
+  const selected = await chooseComposerItem(
+    renderer,
+    "Cloud organization",
+    "Organizations · ↑↓ select · Enter choose · Esc cancel",
+    organizations.map((organization) => ({ value: organization.id, label: organization.name })),
+    selectedId ?? undefined,
+  );
+  const organization = organizations.find((item) => item.id === selected);
+  if (!organization) throw new Error("Organization selection was cancelled.");
+  return organization;
 }
 
 function catalogItems(payload: unknown): Array<{ id: string; name: string; provider?: string }> {
@@ -194,11 +194,13 @@ export async function executeCloudCommand(options: CliOptions, renderer: CliRend
   const organizations = state.items;
   if (options.command.group === "org" && options.command.action === "use") {
     const target = options.command.target;
-    const matches = target ? organizations.filter((organization) => organization.id === target || organization.slug === target) : organizations;
+    const matches = target ? organizations.filter((organization) =>
+      organization.id === target || organization.slug === target || organization.name === target) : organizations;
     let selected: CloudOrganization;
     if (matches.length === 1) selected = matches[0]!;
-    else if (stdin.isTTY && stdout.isTTY && !options.json && matches.length > 0) selected = await chooseOrganization(matches);
-    else if (!target) throw new Error("org use requires an organization ID or slug in non-interactive mode.");
+    else if (stdin.isTTY && stdout.isTTY && !options.json && matches.length > 0) {
+      selected = await chooseOrganization(matches, renderer, state.activeOrgId ?? persisted?.organizationId);
+    } else if (!target) throw new Error("org use requires an organization name or slug in non-interactive mode.");
     else if (matches.length === 0) throw new Error(`No organization exactly matches '${target}'.`);
     else throw new Error(`Organization '${target}' is ambiguous.`);
     await client.setActiveOrganization(token, selected.id);
@@ -223,7 +225,7 @@ export async function executeCloudCommand(options: CliOptions, renderer: CliRend
   }
 
   const organization = selected;
-  if (!organization) throw new Error("No organization is selected. Run 'jugglework org use <id-or-slug>'.");
+  if (!organization) throw new Error("No organization is selected. Run 'jugglework org use <name-or-slug>'.");
   const providers = filterImportableCloudOrgProviders(await client.providers(token, organization.id));
   if (options.command.group === "provider") {
     renderer.inventory("Organization providers", "providers", providers.map((provider) => ({

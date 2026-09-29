@@ -66,6 +66,30 @@ test("renderer registration redacts reflected secrets in human output", () => {
   assert.match(writes.join(""), /\[REDACTED\]/);
 });
 
+test("human organization output shows names without internal identifiers", () => {
+  const writes: string[] = [];
+  const original = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const renderer = new CliRenderer({ json: false, color: false });
+    renderer.organizations([
+      { id: "org_internal_engineering", slug: "engineering-internal", name: "Engineering" },
+      { id: "org_internal_research", slug: "research-internal", name: "Research" },
+    ], "org_internal_engineering");
+    renderer.organizationSelected({ id: "org_internal_research", slug: "research-internal", name: "Research" }, false);
+  } finally {
+    process.stdout.write = original;
+  }
+  const output = writes.join("");
+  assert.match(output, /\* Engineering/);
+  assert.match(output, /  Research/);
+  assert.match(output, /Using organization Research\./);
+  assert.doesNotMatch(output, /org_internal_|engineering-internal|research-internal/);
+});
+
 test("interactive welcome fits a narrow terminal and redacts secrets", () => {
   const writes: string[] = [];
   const original = process.stdout.write;

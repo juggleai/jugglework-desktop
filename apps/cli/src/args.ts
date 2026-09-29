@@ -316,8 +316,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     command = { group: "account", action: "logout" };
   } else if (positionals[0] === "org") {
     if (positionals[1] === "list" && positionals.length === 2) command = { group: "org", action: "list", target: null };
-    else if (positionals[1] === "use" && positionals.length <= 3) command = { group: "org", action: "use", target: positionals[2] ?? null };
-    else throw new CliArgumentError("org requires 'list' or 'use [id-or-slug]'");
+    else if (positionals[1] === "use") command = { group: "org", action: "use", target: positionals.slice(2).join(" ").trim() || null };
+    else throw new CliArgumentError("org requires 'list' or 'use [name-or-slug]'");
   } else if (positionals[0] === "workspace") {
     const action = positionals[1];
     if (action === "list" && positionals.length === 2) command = { group: "workspace", action, target: null };

@@ -68,8 +68,8 @@ async function startMockServer(scenario: Scenario = "complete") {
       all: [{ id: "openai", name: "OpenAI", models: {
         "gpt-5": { name: "GPT-5", variants: { low: {}, high: {} } },
         "gpt-6": { name: "GPT-6", variants: { low: {}, high: {} } },
-      } }],
-      connected: ["openai"],
+      } }, { id: "opencode", name: "OpenCode", models: { "big-pickle": { name: "Big Pickle" } } }],
+      connected: ["openai", "opencode"],
       default: { openai: "gpt-5" },
     });
     if (request.method === "GET" && url.pathname === "/workspaces") {
@@ -509,7 +509,7 @@ set server $env(JUGGLEWORK_TEST_SERVER)
 set bun $env(JUGGLEWORK_TEST_BUN)
 spawn $bun src/cli.ts --server $server --token test-token --workspace-id ws_1
 require "Type a task or /help"
-require "openai/gpt-5 · default reasoning"
+require "OpenAI/gpt-5 · default reasoning"
 send "/"
 require "Commands"
 send "\\033\\[B\\033\\[B\\033\\[B\\r"
@@ -520,7 +520,7 @@ send "\\033\\[B\\r"
 require "Reasoning effort"
 send "\\033\\[B\\033\\[B\\r"
 require "Reasoning effort: high"
-require "openai/gpt-6 · high reasoning"
+require "OpenAI/gpt-6 · high reasoning"
 send "/exit\\r"
 expect {
   eof {}
@@ -535,7 +535,8 @@ expect {
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /Timed out|Unexpected EOF/);
     assert.match(result.stdout, /Active runs: 0/);
-    assert.match(result.stdout, /openai\/gpt-6 · high reasoning/);
+    assert.match(result.stdout, /OpenAI\/gpt-6 · high reasoning/);
+    assert.doesNotMatch(result.stdout, /big-pickle/);
   } finally {
     await mock.close();
   }
@@ -576,7 +577,7 @@ require "Type a task or /help"
 send "/logout\\r"
 require "Welcome to JuggleWork"
 send "3\\r"
-require "openai/gpt-5 · default reasoning"
+require "OpenAI/gpt-5 · default reasoning"
 send "/exit\\r"
 expect { eof {} timeout { puts stderr "Timed out waiting for CLI exit"; exit 2 } }
 `;
@@ -613,7 +614,7 @@ expect {
 }
 send "valid_grant_12345\\r"
 expect {
-  -exact "openai/gpt-5 · default reasoning" {}
+  -exact "OpenAI/gpt-5 · default reasoning" {}
   timeout { puts stderr "Task input was not restored after login"; exit 2 }
   eof { puts stderr "Unexpected EOF after login"; exit 2 }
 }

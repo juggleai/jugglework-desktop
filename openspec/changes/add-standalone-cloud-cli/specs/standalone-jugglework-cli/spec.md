@@ -71,7 +71,7 @@ The CLI SHALL keep Cloud credentials separate from runtime Server tokens, SHALL 
 
 ### Requirement: The CLI selects an account-scoped default organization
 
-After login, the CLI SHALL select a valid organization using the account's Cloud active choice, then the account's remembered local choice, then the first organization returned by Cloud. The CLI SHALL list available organizations, allow explicit selection by an unambiguous identifier or slug, and synchronize explicit changes with Cloud so Desktop and CLI see the same active organization. Local organization history SHALL be scoped by confirmed user and retained across logout without retaining credentials.
+After login, the CLI SHALL select a valid organization using the account's Cloud active choice, then the account's remembered local choice, then the first organization returned by Cloud. The CLI SHALL list available organizations, allow explicit selection by an unambiguous name or slug, and synchronize explicit changes with Cloud so Desktop and CLI see the same active organization. Human-facing organization lists and confirmations SHALL display organization names without exposing internal organization IDs. Local organization history SHALL be scoped by confirmed user and retained across logout without retaining credentials.
 
 #### Scenario: First login
 - **WHEN** a user logs in and neither Cloud nor that account's local history identifies a valid organization
@@ -82,14 +82,26 @@ After login, the CLI SHALL select a valid organization using the account's Cloud
 - **THEN** the CLI selects that organization even when a different account used the same deployment previously
 
 #### Scenario: Select organization
-- **WHEN** the user runs `jugglework org use <id-or-slug>` with one unambiguous match
+- **WHEN** the user runs `jugglework org use <name-or-slug>` with one unambiguous match
 - **THEN** subsequent provider and model commands use that organization
 - **AND** the selected organization is updated through Cloud's active-organization API
+
+#### Scenario: Select organization interactively
+- **WHEN** the user runs `jugglework org use` or enters `/org` in an interactive terminal
+- **THEN** the CLI lists organization names without displaying internal organization IDs
+- **AND** the user can move the selection with the Up and Down keys and confirm it with Enter
+- **AND** the confirmed organization becomes the active organization for subsequent tasks
 
 #### Scenario: Selected membership was removed
 - **WHEN** the persisted organization is no longer present in the current user's memberships
 - **THEN** the CLI clears or ignores that selection
 - **AND** falls back to the first available organization unless an explicit invalid override was requested
+
+#### Scenario: Switched organization cannot afford the previous managed model
+- **WHEN** the user switches to an organization whose available points are below the managed gateway's conservative reservation for the previous workspace model
+- **THEN** the CLI selects the first connected published model whose reservation fits the organization's available points
+- **AND** explains the replacement without exposing organization IDs or credentials
+- **AND** if no published managed model is affordable, task startup fails before entering provider retry loops
 
 ### Requirement: Organization provider and model inventory is truthful
 
@@ -191,6 +203,8 @@ Bare `jugglework` SHALL open the interactive experience, `jugglework [prompt]` S
 #### Scenario: Model selection
 - **WHEN** the user runs `/model` without arguments in the interactive prompt
 - **THEN** the CLI lists connected chat-capable models from the active workspace runtime
+- **AND** hides models supplied by the built-in `opencode` provider
+- **AND** displays provider names while retaining provider IDs for model selection and requests
 - **AND** the user can select a model and one of its reported reasoning variants with Up/Down and Enter
 - **AND** cancelling either picker leaves the current model unchanged
 
@@ -198,6 +212,7 @@ Bare `jugglework` SHALL open the interactive experience, `jugglework [prompt]` S
 - **WHEN** the CLI enters an interactive workspace with a configured model
 - **THEN** it shows the provider, model, and requested reasoning effort from CLI selection or workspace configuration
 - **AND** the active model and reasoning effort remain directly below the input cursor while composing
+- **AND** the welcome screen, current model footer, reasoning picker, and organization model messages use the provider's reported name rather than its internal ID when available
 - **AND** labels values not reported by the Server as runtime defaults rather than inventing them
 
 #### Scenario: Interactive task in progress

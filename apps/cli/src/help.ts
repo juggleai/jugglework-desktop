@@ -45,9 +45,9 @@ const HELP_TREE: Record<string, CommandHelp> = {
   },
   login: { summary: "Authenticate to JuggleWork Cloud.", usage: "jugglework login [--grant-stdin]\n  jugglework login status", commands: { status: "Validate the selected Cloud login" }, options: ["    --grant-stdin            Read a one-time login grant from stdin"] },
   logout: { summary: "Sign out of JuggleWork Cloud and return to login in an interactive terminal.", usage: "jugglework logout [--json]" },
-  org: { summary: "Manage the selected Cloud organization.", usage: "jugglework org <command>", commands: { list: "List account organizations", use: "Select an organization by exact ID or slug" } },
+  org: { summary: "Manage the selected Cloud organization.", usage: "jugglework org <command>", commands: { list: "List account organizations", use: "Select an organization by exact name or slug" } },
   "org list": { summary: "List organizations available to the signed-in account.", usage: "jugglework org list [--json]" },
-  "org use": { summary: "Select the organization used by inventory commands.", usage: "jugglework org use <id-or-slug> [--json]" },
+  "org use": { summary: "Select the organization used by inventory commands.", usage: "jugglework org use [name-or-slug] [--json]" },
   exec: { summary: "Run one deterministic non-interactive task.", usage: "jugglework exec [options] [prompt]" },
   session: {
     summary: "Manage persisted runtime sessions.",

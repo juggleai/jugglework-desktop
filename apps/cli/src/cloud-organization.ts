@@ -7,7 +7,11 @@ export function resolveCloudOrganization(
 ): CloudOrganization | null {
   const find = (value: string | null | undefined) => {
     const key = value?.trim();
-    return key ? state.items.find((item) => item.id === key || item.slug === key) ?? null : null;
+    if (!key) return null;
+    const stableMatch = state.items.find((item) => item.id === key || item.slug === key);
+    if (stableMatch) return stableMatch;
+    const nameMatches = state.items.filter((item) => item.name === key);
+    return nameMatches.length === 1 ? nameMatches[0]! : null;
   };
   if (input.explicit) return find(input.explicit);
   return find(state.activeOrgId)
