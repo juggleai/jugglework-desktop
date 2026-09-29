@@ -219,6 +219,13 @@ export class CliRenderer {
     this.drawWorkingLine();
   }
 
+  sessionExit(sessionId: string): void {
+    if (this.options.json) return this.event("session_exit", { sessionId });
+    this.ensureLine();
+    const stream = this.options.exec ? process.stderr : process.stdout;
+    stream.write(`${this.style("Session ID:", ANSI.dim)} ${this.redactText(sessionId)}\n`);
+  }
+
   sessions(items: SessionInfo[]): void {
     if (this.options.json) return this.event("sessions", { items });
     if (!items.length) {

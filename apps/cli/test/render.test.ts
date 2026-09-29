@@ -90,6 +90,39 @@ test("human organization output shows names without internal identifiers", () =>
   assert.doesNotMatch(output, /org_internal_|engineering-internal|research-internal/);
 });
 
+test("SIGINT exit summary prints the resumable session ID", () => {
+  const output: string[] = [];
+  const original = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    new CliRenderer({ json: false, color: false }).sessionExit("ses_resume_me");
+  } finally {
+    process.stdout.write = original;
+  }
+  assert.equal(output.join(""), "Session ID: ses_resume_me\n");
+});
+
+test("JSON SIGINT exit summary is a structured session event", () => {
+  const output: string[] = [];
+  const original = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    new CliRenderer({ json: true, color: false }).sessionExit("ses_resume_me");
+  } finally {
+    process.stdout.write = original;
+  }
+  assert.deepEqual(JSON.parse(output.join("")), {
+    type: "session_exit",
+    sessionId: "ses_resume_me",
+  });
+});
+
 test("interactive welcome fits a narrow terminal and redacts secrets", () => {
   const writes: string[] = [];
   const original = process.stdout.write;

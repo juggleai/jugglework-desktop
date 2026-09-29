@@ -57,6 +57,7 @@
 - [x] 6.11 Hide built-in OpenCode models from the picker and use provider display names throughout interactive model UI while preserving routing IDs.
 - [x] 6.12 Make `/org` a keyboard-selectable organization-name picker, hide internal organization IDs from human output, and apply the confirmed organization before refreshing providers and models.
 - [x] 6.13 Read the selected organization's point balance, avoid managed models whose conservative gateway reservation exceeds it, and stop insufficient-point provider failures without repeated retries.
+- [x] 6.14 Print the current resumable session ID after Ctrl+C shutdown and expose it as a structured event in JSON mode.
 
 ## 7. Diagnostics, Documentation, and Release
 

@@ -12,6 +12,7 @@ import {
   parseCliArgs,
   validateCliConfig,
   validateHealthPayload,
+  type CliSignal,
   type CliConfigFile,
   type CliOptions,
 } from "./args.js";
@@ -349,6 +350,7 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
   const closeQuestion = () => rl?.close();
   let controller: SessionController | null = null;
   let taskKeyCapture = false;
+  let receivedSignal: CliSignal | null = null;
   let resolveShutdown!: (exitCode: number) => void;
   const shutdown = new Promise<number>((resolvePromise) => { resolveShutdown = resolvePromise; });
   const signalController = createSignalController({
@@ -372,9 +374,9 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
     reportError: (error) => renderer.error(error instanceof Error ? error.message : String(error)),
   });
   const signalHandlers = {
-    SIGINT: () => signalController.handle("SIGINT"),
-    SIGTERM: () => signalController.handle("SIGTERM"),
-    SIGHUP: () => signalController.handle("SIGHUP"),
+    SIGINT: () => { receivedSignal = "SIGINT"; signalController.handle("SIGINT"); },
+    SIGTERM: () => { receivedSignal = "SIGTERM"; signalController.handle("SIGTERM"); },
+    SIGHUP: () => { receivedSignal = "SIGHUP"; signalController.handle("SIGHUP"); },
   };
   process.on("SIGINT", signalHandlers.SIGINT);
   process.on("SIGTERM", signalHandlers.SIGTERM);
@@ -513,6 +515,9 @@ async function execute(options: CliOptions, renderer: CliRenderer): Promise<numb
     }
     if (runtime && !await settleWithin(runtime.stop(), CLEANUP_TIMEOUT_MS)) {
       renderer.warn(`Runtime cleanup exceeded ${CLEANUP_TIMEOUT_MS / 1000} seconds; exiting.`);
+    }
+    if (receivedSignal === "SIGINT" && controller?.currentSession) {
+      renderer.sessionExit(controller.currentSession.id);
     }
   }
 }

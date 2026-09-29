@@ -431,6 +431,7 @@ test("SIGINT during an active run requests abort and returns 130", async () => {
     assert.equal(result.code, 130, JSON.stringify({ result, state: mock.state }));
     assert.equal(mock.state.aborted, true);
     assert.ok(records(result).some((record) => record.type === "warning"));
+    assert.equal(records(result).find((record) => record.type === "session_exit")?.sessionId, "ses_new");
   } finally {
     await mock.close();
   }

@@ -223,6 +223,11 @@ Bare `jugglework` SHALL open the interactive experience, `jugglework [prompt]` S
 - **AND** the prompt returns only after the task finishes or stops, so no inactive input field is presented as usable
 - **AND** tool status and assistant text appear as distinct terminal-readable output
 
+#### Scenario: Interrupt exits a resumable session
+- **WHEN** the user presses Ctrl+C while the CLI has a selected session
+- **THEN** the CLI completes bounded shutdown and prints the current session ID
+- **AND** JSON mode emits the same value as a structured `session_exit` event
+
 #### Scenario: Explicit execution mode
 - **WHEN** the user runs `jugglework exec "run focused tests"`
 - **THEN** the command runs one task without entering a prompt loop

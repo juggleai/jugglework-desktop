@@ -267,6 +267,7 @@ Signals are contextual:
 
 - `SIGINT` during an active run requests authenticated abort, starts bounded shutdown after that request settles, and leaves the session resumable.
 - `SIGINT` while idle exits interactive mode.
+- When `SIGINT` exits a CLI that has a selected session, the CLI prints that session ID after cleanup so it can be resumed later.
 - `SIGTERM` and `SIGHUP` request active-run abort when possible and start bounded cleanup.
 - A second signal once shutdown has started forces process exit.
 - Owned Server/OpenCode cleanup is bounded; external Servers are never stopped.
@@ -294,6 +295,7 @@ Current event types are:
 | --- | --- |
 | `ready` | Server/workspace selection completed. Includes workspace identity, Server URL, and ownership. |
 | `session` | A session was created or selected. |
+| `session_exit` | The resumable session ID emitted when `SIGINT` exits a CLI with a selected session. |
 | `sessions` | A session-list command result. |
 | `run_started` | A task was accepted; includes session and run IDs when available. |
 | `delta` | Newly appended assistant text with optional message/part IDs. |
