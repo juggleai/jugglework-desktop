@@ -26,6 +26,22 @@
    user-select: none;
 }
 
+.jw-list-panel-header.has-inset-divider {
+  position: relative;
+  border-bottom: 0;
+}
+
+.jw-list-panel-header.has-inset-divider::after {
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 1px;
+  background: var(--jw-list-header-border);
+  content: "";
+  pointer-events: none;
+}
+
 [data-theme="dark"] .jw-list-panel-header,
 :host([data-theme="dark"]) .jw-list-panel-header {
   --jw-list-header-border: #34363a;

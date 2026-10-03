@@ -55,7 +55,7 @@ import { accountDisplayName, membershipTierLabel, membershipUpgradeContext, orga
 
 export { APP_PRIMARY_RAIL_ORDER } from "./app-navigation-order";
 
-export const APP_NAVIGATION_RAIL_WIDTH = 72;
+export const APP_NAVIGATION_RAIL_WIDTH = 48;
 
 type AppNavigationRailProps = {
   /** Home surface is the visible one — its rail button reflects the task scope. */
@@ -110,11 +110,13 @@ function RailButton({
       disabled={disabled}
       onClick={onClick}
       data-testid={testId}
+      data-app-rail-button
       className={cn(
-        "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.8]",
-        "hover:border-dls-border hover:bg-background hover:text-dls-text",
-        active && "border-dls-border bg-background text-dls-text shadow-sm",
-        disabled && "cursor-default opacity-45 hover:border-transparent hover:bg-transparent hover:text-dls-secondary",
+        "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.85]",
+        "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+        active && "bg-dls-active text-dls-text",
+        disabled && "cursor-default opacity-40 hover:bg-transparent hover:text-dls-secondary active:scale-100",
       )}
     >
       {children}
@@ -122,7 +124,7 @@ function RailButton({
         <span
           className={cn(
             "absolute flex items-center justify-center",
-            statusIndicator === "running" ? "right-0 top-0 size-4" : "right-0.5 top-0.5 size-2.5",
+            statusIndicator === "running" ? "-right-0.5 -top-0.5 size-4" : "right-0 top-0 size-2.5",
           )}
           title={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
           aria-label={statusIndicator === "running" ? t("workspace_list.session_streaming") : t("workspace_list.session_completed_unseen")}
@@ -136,12 +138,12 @@ function RailButton({
       ) : null}
       {badge > 0 ? badgeVariant === "dot" ? (
         <span
-          className="absolute right-0.5 top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
+          className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9"
           aria-hidden="true"
           data-rail-unread-dot
         />
       ) : (
-        <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-dls-sidebar bg-red-9 px-1 text-[10px] font-semibold leading-none text-white" aria-hidden="true">
           {badge > 99 ? "99+" : badge}
         </span>
       ) : null}
@@ -239,9 +241,10 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
   return (
     <aside
       aria-label={t("navigation.primary")}
-      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-dls-border bg-dls-sidebar px-2 pb-3 pt-3 mac:titlebar-drag mac:pt-11"
+      data-app-navigation-rail
+      className="flex h-full w-12 shrink-0 flex-col items-center bg-dls-sidebar px-1 pb-2.5 pt-2 mac:titlebar-drag mac:pt-10"
     >
-      <nav className="flex flex-col items-center gap-3" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
+      <nav className="flex flex-col items-center gap-2" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
         {props.onOpenTaskSearch ? (
           <RailButton
             label={t("workspace_list.search_sessions")}
@@ -260,11 +263,13 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                   aria-label={t("workspace.create_workspace")}
                   title={t("workspace.create_workspace")}
                   data-testid="app-rail-create-workspace"
+                  data-app-rail-button
                   className={cn(
-                    "relative flex size-11 items-center justify-center rounded-2xl border border-transparent text-dls-secondary transition-colors mac:titlebar-no-drag",
-                    "hover:border-dls-border hover:bg-background hover:text-dls-text",
-                    "data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:text-dls-text data-popup-open:shadow-sm",
-                    "[&>svg]:size-5 [&>svg]:stroke-[1.8]",
+                    "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
+                    "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                    "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
+                    "[&>svg]:size-5 [&>svg]:stroke-[1.85]",
                   )}
                 >
                   <Plus />
@@ -361,7 +366,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
         ) : null}
       </nav>
 
-      <div className="relative mt-auto flex h-11 w-full items-center justify-center mac:titlebar-no-drag">
+      <div className="relative mt-auto flex h-9 w-full items-center justify-center mac:titlebar-no-drag">
         <DropdownMenu open={accountMenuOpen} onOpenChange={(open) => { setAccountMenuOpen(open); if (open) void refreshAccount(); }}>
           <DropdownMenuTrigger
             render={(
@@ -370,17 +375,19 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
                 aria-label={t("account_menu.open")}
                 title={identity}
                 data-testid="app-rail-account-menu"
+                data-app-rail-button
                 className={cn(
-                  "relative flex size-11 items-center justify-center rounded-2xl border border-transparent transition-colors",
-                  "hover:border-dls-border hover:bg-background data-popup-open:border-dls-border data-popup-open:bg-background data-popup-open:shadow-sm",
-                  props.settingsActive && "border-dls-accent/30 bg-background",
+                  "relative flex size-9 items-center justify-center rounded-xl transition-[background-color,transform] duration-150",
+                  "hover:bg-dls-hover active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
+                  "data-popup-open:bg-dls-active",
+                  props.settingsActive && "bg-dls-active",
                 )}
               >
-                <Avatar size="lg" className="size-9 bg-background">
+                <Avatar size="lg" className="size-7 bg-background ring-1 ring-dls-border/70">
                   {user?.avatar ? <AvatarImage src={user.avatar} alt={identity} /> : null}
                   <AvatarFallback className="bg-dls-hover font-semibold text-dls-text">{initial}</AvatarFallback>
                   {notificationUnreadCount > 0 ? (
-                    <span className="absolute right-0 top-0 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
+                    <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-dls-sidebar bg-red-9" aria-hidden="true" data-rail-unread-dot />
                   ) : null}
                 </Avatar>
               </button>

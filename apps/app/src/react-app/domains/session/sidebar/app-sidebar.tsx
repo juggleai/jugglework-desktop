@@ -1021,10 +1021,13 @@ export function AppSidebar(props: AppSidebarProps) {
             onOpenSettings={props.onOpenSettings}
           />
 
-          <div className="flex min-w-0 flex-1 flex-col bg-sidebar">
+          <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col bg-background md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            data-session-list-surface
+          >
             <ListPanelHeader
               title={taskScope === "remote" ? t("navigation.cloud_workspace") : t("navigation.local_workspace")}
-              titleEnd={<SidebarTrigger className="titlebar-no-drag" />}
+              insetDivider
               searchValue={sessionQuery}
               searchPlaceholder={t("workspace_list.search_sessions")}
               onSearchChange={setSessionQuery}

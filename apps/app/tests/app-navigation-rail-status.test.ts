@@ -30,6 +30,27 @@ describe("Code Review navigation", () => {
   });
 });
 
+describe("navigation rail visual proportions", () => {
+  test("uses a compact rail with larger, consistent icons and quiet selected states", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain("APP_NAVIGATION_RAIL_WIDTH = 48");
+    expect(source).toContain('data-app-navigation-rail');
+    expect(source).toContain('w-12');
+    expect(source).toContain('size-9');
+    expect(source).toContain('[&>svg]:size-5');
+    expect(source).toContain('rounded-xl');
+    expect(source).toContain('active && "bg-dls-active text-dls-text"');
+    expect(source).not.toContain('active && "border-dls-border bg-background text-dls-text shadow-sm"');
+  });
+
+  test("keeps the account trigger visually lighter than the primary actions", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const trigger = source.slice(source.indexOf('data-testid="app-rail-account-menu"'), source.indexOf("</button>", source.indexOf('data-testid="app-rail-account-menu"')));
+    expect(trigger).toContain('size-9');
+    expect(trigger).toContain('className="size-7 bg-background ring-1 ring-dls-border/70"');
+  });
+});
+
 describe("chat unread reminder", () => {
   test("uses a small red dot instead of the unread count", () => {
     const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
@@ -66,7 +87,8 @@ describe("account menu", () => {
     expect(source).toContain('data-testid="app-rail-account-menu"');
     expect(source).toContain('data-testid="account-menu-settings"');
     expect(source).toMatch(/data-rail-unread-dot/);
-    expect(source).toMatch(/right-0\.5 top-0\.5 size-2\.5[^\"]+bg-red-9/);
+    expect(source).toMatch(/right-0 top-0 size-2\.5[^\"]+bg-red-9/);
+    expect(source).toMatch(/-right-0\.5 -top-0\.5 size-2\.5[^\"]+bg-red-9/);
     expect(source).toMatch(/badgeVariant === "dot"[\s\S]+aria-hidden="true"/);
   });
 

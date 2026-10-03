@@ -317,22 +317,11 @@ export const desktopBridge = new Proxy(electronBridge, {
 }) as unknown as DesktopBridge;
 
 // ---------------------------------------------------------------------------
-// desktopFetch — proxies non-loopback requests through the Electron main
-// process. Loopback hosts (the local opencode/jugglework server) use the
-// renderer's own fetch, which works against same-machine services. Cross-origin
-// requests that need CORS headers the target does not send (e.g. the Den API on
-// a different control plane) should instead use `desktopFetchViaMain` directly.
+// desktopFetch — proxies requests through the Electron main process. In recent
+// Electron versions renderer fetch can stall on a loopback HTTP server hosted
+// by the same app, so main selects Node fetch for loopback URLs and Electron's
+// network stack for external traffic.
 // ---------------------------------------------------------------------------
-
-function isLoopbackUrl(input: RequestInfo | URL): boolean {
-  const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-  try {
-    const url = new URL(raw);
-    return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
-  } catch {
-    return false;
-  }
-}
 
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
@@ -396,9 +385,6 @@ async function desktopFetchThroughMain(
 }
 
 export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
-  if (isLoopbackUrl(input)) {
-    return globalThis.fetch(input, init);
-  }
   return desktopFetchThroughMain(input, init);
 };
 
@@ -411,9 +397,6 @@ export async function desktopFetchAgentContextDiagnostics(
   init: RequestInit,
   deadlineAtMs: number,
 ): Promise<Response> {
-  if (isLoopbackUrl(input)) {
-    return globalThis.fetch(input, init);
-  }
   return desktopFetchThroughMain(input, init, {
     agentContextDiagnosticsDeadlineAtMs: deadlineAtMs,
   });
