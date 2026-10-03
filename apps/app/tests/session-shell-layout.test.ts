@@ -6,6 +6,8 @@ const appSidebar = readFileSync(new URL("../src/react-app/domains/session/sideba
 const listPanelHeader = readFileSync(new URL("../src/react-app/shell/list-panel-header.tsx", import.meta.url), "utf8");
 const listPanelHeaderCss = readFileSync(new URL("../src/react-app/shell/list-panel-header.css", import.meta.url), "utf8");
 const appStyles = readFileSync(new URL("../src/app/index.css", import.meta.url), "utf8");
+const sessionSurface = readFileSync(new URL("../src/react-app/domains/session/surface/session-surface.tsx", import.meta.url), "utf8");
+const quickNavigation = readFileSync(new URL("../src/react-app/domains/session/surface/session-quick-navigation.tsx", import.meta.url), "utf8");
 
 describe("desktop session shell layout", () => {
   test("uses one tinted chrome around an inset rounded work surface", () => {
@@ -97,15 +99,36 @@ describe("desktop session shell layout", () => {
     expect(sessionPage).toContain('suppressPreviewMenuTooltips');
     expect(sessionPage).toContain('setTimeout(() =>');
     expect(sessionPage).toContain('}, 120)');
+    expect(sessionPage).toContain('sidebarPreviewPointerInsideRef');
+    expect(sessionPage).toContain('if (sidebarPreviewPointerInsideRef.current)');
+    expect(sessionPage).toContain('sidebarPreviewPointerInsideRef.current = true');
+    expect(sessionPage).toContain('sidebarPreviewPointerInsideRef.current = false');
     expect(appSidebar).toContain('data-session-list-preview={props.railPreviewActive ? "true" : undefined}');
+    expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none"');
+    expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-auto"');
+    expect(appSidebar).toContain('data-session-preview-title-hover-guard');
+    expect(appSidebar).toContain('left-[53px] right-0 top-[45px] z-10 h-10');
+    expect(appSidebar).toContain('props.railPreviewActive ? <div className="w-12 shrink-0"');
     expect(appSidebar).toContain('onMouseEnter={props.onRailPreviewEnter}');
     expect(appSidebar).toContain('onMouseLeave={props.onRailPreviewLeave}');
     expect(appSidebar).toContain('md:rounded-r-[18px]');
-    expect(appSidebar).toContain('props.railPreviewActive && "w-[348px]!"');
+    expect(appSidebar).toContain('props.railPreviewActive && "pointer-events-none w-[348px]!"');
     expect(appSidebar).toContain('const taskScope = props.previewTaskScope ?? storedTaskScope');
-    expect(appSidebar).toContain('suppressPreviewMenuTooltips={props.railPreviewActive}');
+    expect(appSidebar).not.toContain('suppressPreviewMenuTooltips={props.railPreviewActive}');
     expect(sidebarPrimitive).toContain('has-[[data-session-list-preview=true]]:left-0');
     expect(sidebarPrimitive).toContain('has-[[data-session-list-preview=true]]:z-50');
+    expect(listPanelHeaderCss).toContain('[data-session-list-preview="true"] .jw-list-panel-header');
+    expect(listPanelHeaderCss).toContain('[data-session-list-preview="true"] .jw-list-panel-title-row');
+    expect(listPanelHeaderCss).toContain('[data-session-list-preview="true"] .jw-list-panel-title');
+    expect(listPanelHeaderCss).toContain('-webkit-app-region: no-drag');
+  });
+
+  test("keeps quick navigation outside the Rail when the sidebar is collapsed", () => {
+    expect(sessionPage).toContain('quickNavigationLeftOffset={sidebarOpen ? 8 : 56}');
+    expect(sessionSurface).toContain('quickNavigationLeftOffset?: number');
+    expect(sessionSurface).toContain('leftOffset={props.quickNavigationLeftOffset}');
+    expect(quickNavigation).toContain('leftOffset = 8');
+    expect(quickNavigation).toContain('style={{ left: `${leftOffset}px` }}');
   });
 
   test("places side-panel actions horizontally in the top bar", () => {

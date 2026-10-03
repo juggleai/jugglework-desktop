@@ -28,6 +28,10 @@
 - [x] 1.26 Suppress tooltips when a collapsed Rail icon opens its menu preview
 - [x] 1.27 Remove native title tooltips from collapsed Rail menu triggers
 - [x] 1.28 Constrain Files fullscreen mode to the rounded work surface
+- [x] 1.29 Keep collapsed menu previews interactive without covering top controls or quick navigation
+- [x] 1.30 Keep the preview open while the pointer remains anywhere inside its menu bounds
+- [x] 1.31 Disable Electron titlebar dragging inside the transient preview header
+- [x] 1.32 Guard the full rectangular preview title strip across rounded corners
 
 ## 2. Utility Actions
 

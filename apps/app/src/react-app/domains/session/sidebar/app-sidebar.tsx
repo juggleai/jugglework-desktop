@@ -1015,33 +1015,47 @@ export function AppSidebar(props: AppSidebarProps) {
         collapsible="offcanvas"
         className={cn(
           "border-e-0! mac:**:data-[sidebar=sidebar]:bg-transparent",
-          props.railPreviewActive && "w-[348px]!",
+          props.railPreviewActive && "pointer-events-none w-[348px]!",
         )}
       >
         <div
-          className="flex h-full min-h-0 w-full"
-          onMouseEnter={props.onRailPreviewEnter}
-          onMouseLeave={props.onRailPreviewLeave}
+          className={cn(
+            "relative flex h-full min-h-0 w-full",
+            props.railPreviewActive && "pointer-events-none",
+          )}
         >
-          <AppNavigationRail
-            homeActive
-            onOpenTaskSearch={props.onOpenTaskSearch}
-            onOpenCreateWorkspace={props.onOpenCreateWorkspace}
-            onOpenAccount={props.onOpenAccount}
-            onOpenHome={props.onOpenHome}
-            onOpenApps={props.onOpenApps}
-            onOpenChat={props.onOpenChat}
-            onOpenReviews={props.onOpenReviews}
-            onOpenSettings={props.onOpenSettings}
-            onPreviewMenuChange={props.onRailPreviewMenuChange}
-            suppressPreviewMenuTooltips={props.railPreviewActive}
-          />
+          {props.railPreviewActive ? (
+            <div
+              aria-hidden="true"
+              className="pointer-events-auto absolute left-[53px] right-0 top-[45px] z-10 h-10 mac:titlebar-no-drag"
+              onMouseEnter={props.onRailPreviewEnter}
+              onMouseLeave={props.onRailPreviewLeave}
+              data-session-preview-title-hover-guard
+            />
+          ) : null}
+          {props.railPreviewActive ? <div className="w-12 shrink-0" aria-hidden="true" /> : (
+            <AppNavigationRail
+              homeActive
+              onOpenTaskSearch={props.onOpenTaskSearch}
+              onOpenCreateWorkspace={props.onOpenCreateWorkspace}
+              onOpenAccount={props.onOpenAccount}
+              onOpenHome={props.onOpenHome}
+              onOpenApps={props.onOpenApps}
+              onOpenChat={props.onOpenChat}
+              onOpenReviews={props.onOpenReviews}
+              onOpenSettings={props.onOpenSettings}
+              onPreviewMenuChange={props.onRailPreviewMenuChange}
+            />
+          )}
 
           <div
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col bg-background md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
               props.railPreviewActive && "md:rounded-r-[18px] md:border-r md:shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:md:shadow-[0_18px_48px_rgba(0,0,0,0.42)]",
+              props.railPreviewActive && "pointer-events-auto",
             )}
+            onMouseEnter={props.onRailPreviewEnter}
+            onMouseLeave={props.onRailPreviewLeave}
             data-session-list-surface
             data-session-list-preview={props.railPreviewActive ? "true" : undefined}
           >

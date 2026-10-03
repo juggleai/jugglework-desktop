@@ -473,6 +473,7 @@ export function SessionPage(props: SessionPageProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sidebarPreviewScope, setSidebarPreviewScope] = useState<TaskScope | null>(null);
   const sidebarPreviewCloseTimerRef = useRef<number | null>(null);
+  const sidebarPreviewPointerInsideRef = useRef(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
   const juggleWorkbenchTab = useWorkbenchStore((state) => state.openTab);
@@ -546,6 +547,10 @@ export function SessionPage(props: SessionPageProps) {
   const scheduleSidebarPreviewClose = useCallback(() => {
     cancelSidebarPreviewClose();
     sidebarPreviewCloseTimerRef.current = window.setTimeout(() => {
+      if (sidebarPreviewPointerInsideRef.current) {
+        sidebarPreviewCloseTimerRef.current = null;
+        return;
+      }
       setSidebarPreviewScope(null);
       sidebarPreviewCloseTimerRef.current = null;
     }, 120);
@@ -1410,9 +1415,13 @@ export function SessionPage(props: SessionPageProps) {
           previewTaskScope={sidebarPreviewScope ?? undefined}
           onRailPreviewMenuChange={handleSidebarPreviewMenuChange}
           onRailPreviewEnter={() => {
+            sidebarPreviewPointerInsideRef.current = true;
             cancelSidebarPreviewClose();
           }}
-          onRailPreviewLeave={scheduleSidebarPreviewClose}
+          onRailPreviewLeave={() => {
+            sidebarPreviewPointerInsideRef.current = false;
+            scheduleSidebarPreviewClose();
+          }}
         />
         {shellConfig.sidebar && !sidebarOpen ? (
           <div
@@ -1666,6 +1675,7 @@ export function SessionPage(props: SessionPageProps) {
                         respondQuestion={props.respondQuestion}
                         safeStringify={props.safeStringify}
                         onOpenTarget={openTarget}
+                        quickNavigationLeftOffset={sidebarOpen ? 8 : 56}
                       />
                     </div>
                     {canRenderSplitSurface ? (
@@ -1688,6 +1698,7 @@ export function SessionPage(props: SessionPageProps) {
                           opencodeBaseUrl={reactSessionBaseUrl}
                           juggleworkToken={reactSessionToken}
                           onOpenTarget={openTarget}
+                          quickNavigationLeftOffset={sidebarOpen ? 8 : 56}
                         />
                       </div>
                     ) : null}

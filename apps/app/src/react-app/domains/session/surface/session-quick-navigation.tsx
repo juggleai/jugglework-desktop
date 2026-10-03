@@ -104,6 +104,7 @@ type SessionQuickNavigationProps = {
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
   onNavigate: (messageId: string, behavior?: ScrollBehavior) => void;
+  leftOffset?: number;
 };
 
 export function SessionQuickNavigation({
@@ -111,6 +112,7 @@ export function SessionQuickNavigation({
   containerRef,
   contentRef,
   onNavigate,
+  leftOffset = 8,
 }: SessionQuickNavigationProps) {
   const entries = useMemo(() => buildSessionQuickNavigationEntries(messages), [messages]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -192,7 +194,8 @@ export function SessionQuickNavigation({
   return (
     <nav
       aria-label={navigationLabel}
-      className="pointer-events-none absolute inset-y-5 left-2 z-20 flex w-11 items-center py-1"
+      className="pointer-events-none absolute inset-y-5 z-20 flex w-11 items-center py-1"
+      style={{ left: `${leftOffset}px` }}
       data-testid="session-quick-navigation"
     >
       <div

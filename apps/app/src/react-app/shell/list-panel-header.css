@@ -83,6 +83,16 @@
   white-space: nowrap;
   -webkit-app-region: drag;
 }
+
+/* A collapsed-sidebar preview is a transient interactive popover, not window
+   chrome. Electron drag regions do not dispatch reliable pointer-enter events,
+   so the full title strip must become no-drag while the preview is open. */
+[data-session-list-preview="true"] .jw-list-panel-header,
+[data-session-list-preview="true"] .jw-list-panel-title-row,
+[data-session-list-preview="true"] .jw-list-panel-title {
+  -webkit-app-region: no-drag;
+}
+
 .jw-list-panel-search-row{
   -webkit-app-region: no-drag;
 }
