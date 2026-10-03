@@ -55,11 +55,11 @@
 }
 
 .jw-list-panel-header.is-mac {
-  height: 96px;
-  min-height: 96px;
-  flex-basis: 96px;
+  height: 82px;
+  min-height: 82px;
+  flex-basis: 82px;
   justify-content: flex-end;
-  padding-top: 22px;
+  padding-top: 10px;
 }
 
 .jw-list-panel-title-row,

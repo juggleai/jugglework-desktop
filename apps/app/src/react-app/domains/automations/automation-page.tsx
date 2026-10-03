@@ -60,6 +60,7 @@ import { isDesktopModelBlocked, type DesktopProviderSource } from "@/app/cloud/d
 import { useCheckDesktopRestriction, useDesktopAllowedModels } from "@/react-app/domains/cloud/desktop-config-provider";
 import { LexicalPromptEditor, type LexicalPromptEditorHandle } from "@/react-app/domains/session/surface/composer/editor";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
+import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
@@ -161,7 +162,7 @@ export function AutomationPage(props: AutomationPageProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
       <AppNavigationRail
         onOpenAccount={() => navigateAfterDiscard(props.onOpenAccount)}
         onOpenHome={() => navigateAfterDiscard(() => navigate(props.sessionPath))}
@@ -172,10 +173,9 @@ export function AutomationPage(props: AutomationPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      <main className={cn(
-        "min-h-0 min-w-0 flex-1 bg-dls-surface/40",
+      <AppInsetSurface className={cn(
         templatesVisible ? "overflow-auto" : "overflow-hidden",
-      )}>
+      )} testId="automation-inset-surface">
         {templatesVisible ? (
           <TemplateGallery
             onBack={() => navigate("/automations")}
@@ -206,7 +206,7 @@ export function AutomationPage(props: AutomationPageProps) {
             onReconnect={reconnectLocalServer}
           />
         )}
-      </main>
+      </AppInsetSurface>
       <ConfirmModal
         open={discardConfirmOpen}
         title={t("automation.cancel")}
@@ -325,7 +325,7 @@ function AutomationDashboard(props: {
             {(!props.history && tasks.length > 0) || (props.history && runs.length > 0) ? (
               <label className="relative hidden sm:block">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-dls-secondary" />
-                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-9 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-sm outline-none" />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("automation.search")} className="h-9 w-72 rounded-xl bg-dls-hover pl-9 pr-3 text-[13px] outline-none" />
               </label>
             ) : null}
             {/* TIPS:有任务之后模板画廊从列表底部挪到「从模版添加」入口后面，列表页只留任务本身。 */}
@@ -335,19 +335,19 @@ function AutomationDashboard(props: {
                   type="button"
                   onClick={() => { setSelecting((value) => !value); setSelectedIds(new Set()); }}
                   className={cn(
-                    "inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover",
+                    "inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-[13px] font-medium transition-colors hover:bg-dls-hover",
                     selecting && "border-dls-text bg-dls-hover",
                   )}
                 >
                   <ListChecks className="size-4" />{selecting ? t("automation.batch_exit") : t("automation.batch_manage")}
                 </button>
-                <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-sm font-medium transition-colors hover:bg-dls-hover">
+                <button type="button" onClick={() => navigate("/automations/templates")} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-dls-border px-3 text-[13px] font-medium transition-colors hover:bg-dls-hover">
                   <Newspaper className="size-4" />{t("automation.from_template")}
                 </button>
               </>
             ) : null}
             {!props.history && tasks.length > 0 ? (
-              <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-sm font-medium text-background hover:opacity-90">
+              <button type="button" onClick={() => navigate("/automations/new")} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-dls-text px-3 text-[13px] font-medium text-background hover:opacity-90">
                 <Plus className="size-4" />{t("automation.add")}
               </button>
             ) : null}
@@ -440,8 +440,8 @@ function SegmentedTabs({ history }: { history: boolean }) {
   const switchTab = (nextHistory: boolean) => navigate(nextHistory ? "/automations/runs" : "/automations");
   return (
     <div className="inline-flex h-9 rounded-xl bg-dls-hover p-0.5" role="tablist" aria-label="自动化视图" onKeyDown={(event) => { if (event.key === "ArrowLeft") switchTab(false); if (event.key === "ArrowRight") switchTab(true); }}>
-      <button type="button" role="tab" tabIndex={history ? -1 : 0} aria-selected={!history} onClick={() => switchTab(false)} className={cn("h-8 rounded-lg px-3 text-sm font-medium", !history && "bg-background shadow-sm")}>{t("automation.tabs.tasks")}</button>
-      <button type="button" role="tab" tabIndex={history ? 0 : -1} aria-selected={history} onClick={() => switchTab(true)} className={cn("h-8 rounded-lg px-3 text-sm font-medium", history && "bg-background shadow-sm")}>{t("automation.tabs.runs")}</button>
+      <button type="button" role="tab" tabIndex={history ? -1 : 0} aria-selected={!history} onClick={() => switchTab(false)} className={cn("h-8 rounded-lg px-3 text-[13px] font-medium", !history && "bg-background shadow-sm")}>{t("automation.tabs.tasks")}</button>
+      <button type="button" role="tab" tabIndex={history ? 0 : -1} aria-selected={history} onClick={() => switchTab(true)} className={cn("h-8 rounded-lg px-3 text-[13px] font-medium", history && "bg-background shadow-sm")}>{t("automation.tabs.runs")}</button>
     </div>
   );
 }
@@ -450,8 +450,8 @@ function FirstAutomation({ onCreate }: { onCreate: () => void }) {
   return (
     <section className="flex min-h-[364px] flex-col items-center justify-center text-center">
       <AlarmClock className="mb-7 size-20 stroke-[1.25] text-dls-border" aria-hidden="true" />
-      <h1 className="text-xl font-medium">{t("automation.empty_tasks")}</h1>
-      <button type="button" onClick={onCreate} className="mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-dls-text px-6 font-medium text-background"><Plus className="size-4" />{t("automation.add")}</button>
+      <h1 className="text-base font-medium">{t("automation.empty_tasks")}</h1>
+      <button type="button" onClick={onCreate} className="mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-dls-text px-6 text-[13px] font-medium text-background"><Plus className="size-4" />{t("automation.add")}</button>
     </section>
   );
 }
@@ -525,7 +525,7 @@ function TaskList(props: {
       <div className="mt-10 space-y-8">
         {Object.entries(groups).map(([label, tasks]) => tasks.length ? (
           <section key={label}>
-            <h2 className="mb-3 text-sm text-dls-secondary">{label}</h2>
+            <h2 className="mb-3 text-[13px] text-dls-secondary">{label}</h2>
             <div className="space-y-1">
               {tasks.map((record) => (
                 <TaskRow
@@ -623,12 +623,12 @@ function TaskRow({ record, client, busy, selecting, selected, onToggleSelected, 
         </button>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center truncate">
-        <button type="button" onClick={selecting ? onToggleSelected : onOpen} className="min-w-0 truncate text-left">
+        <button type="button" onClick={selecting ? onToggleSelected : onOpen} className="min-w-0 truncate text-left text-[13px]">
           <span className="font-medium">{task.name}</span>
-          <span className="ml-3 text-sm text-dls-secondary">{task.workspace.name}</span>
-          <span className="ml-3 text-sm text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span>
+          <span className="ml-3 text-xs text-dls-secondary">{task.workspace.name}</span>
+          <span className="ml-3 text-xs text-dls-secondary">{triggerSummaryLabel(task.trigger)}</span>
           {task.activeRange ? (
-            <span className="ml-3 text-sm text-dls-secondary">
+            <span className="ml-3 text-xs text-dls-secondary">
               {t("automation.active_range_prefix")} {displayDate(task.activeRange.startDate)} – {displayDate(task.activeRange.endDate)}
             </span>
           ) : null}
@@ -649,7 +649,7 @@ function TaskRow({ record, client, busy, selecting, selected, onToggleSelected, 
           否则悬浮时行内元素宽度突变，整行会跟着抖动。 */}
       <div className="relative h-9 w-[168px] shrink-0">
         <span className={cn(
-          "absolute inset-0 flex items-center justify-end truncate text-sm text-dls-secondary transition-opacity",
+          "absolute inset-0 flex items-center justify-end truncate text-xs text-dls-secondary transition-opacity",
           menuOpen ? "opacity-0" : "group-hover:opacity-0",
         )}>
           {taskTimingLabel(record, now)}
@@ -815,8 +815,8 @@ function TemplateGallery({ onBack, onSelect }: { onBack: () => void; onSelect: (
             <button key={template.id} type="button" onClick={() => onSelect(template)} className="group flex min-h-28 items-center gap-5 rounded-3xl border border-transparent bg-background px-7 py-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-dls-border hover:shadow-md focus-visible:outline-2 focus-visible:outline-dls-accent">
               <Icon className="size-8 shrink-0 stroke-[1.7]" />
               <span className="min-w-0">
-                <span className="block text-lg font-semibold">{localized.title}</span>
-                <span className="mt-1 line-clamp-2 block text-sm leading-6 text-dls-secondary">{localized.description}</span>
+                <span className="block text-sm font-medium">{localized.title}</span>
+                <span className="mt-1 line-clamp-2 block text-xs leading-5 text-dls-secondary">{localized.description}</span>
               </span>
             </button>
           );
@@ -833,7 +833,7 @@ function TemplateGallery({ onBack, onSelect }: { onBack: () => void; onSelect: (
  */
 function AutomationBreadcrumb({ onBack, current }: { onBack: () => void; current: string }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 text-sm">
+    <div className="flex min-w-0 items-center gap-2 text-[13px]">
       <AlarmClock className="size-4 shrink-0" />
       <button type="button" onClick={onBack} className="text-dls-secondary underline-offset-4 transition-colors hover:text-dls-text hover:underline">
         {t("automation.breadcrumb_root")}
@@ -852,7 +852,7 @@ function RunHistory({ runs }: { runs: AutomationRun[] }) {
   const navigate = useNavigate();
   if (!runs.length) return (
     <section className="flex min-h-[620px] flex-col items-center justify-center text-center text-dls-secondary">
-      <Clock3 className="mb-5 size-16 stroke-[1.25]" /><h1 className="text-lg font-medium text-dls-text">{t("automation.empty_runs")}</h1><p className="mt-2 text-sm">{t("automation.empty_runs_hint")}</p>
+      <Clock3 className="mb-5 size-16 stroke-[1.25]" /><h1 className="text-base font-medium text-dls-text">{t("automation.empty_runs")}</h1><p className="mt-2 text-[13px]">{t("automation.empty_runs_hint")}</p>
     </section>
   );
   return (
@@ -909,14 +909,14 @@ function RunHistory({ runs }: { runs: AutomationRun[] }) {
 function TemplateCatalog({ onSelect }: { onSelect: (template: AutomationTemplate) => void }) {
   return (
     <section className="mt-auto pt-14">
-      <h2 className="mb-7 text-2xl font-semibold">{t("automation.templates")}</h2>
+      <h2 className="mb-7 text-lg font-medium">{t("automation.templates")}</h2>
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {AUTOMATION_TEMPLATES.map((template) => {
           const Icon = templateIcon(template.icon);
           return (
             <button key={template.id} type="button" onClick={() => onSelect(template)} className="group flex min-h-32 items-center gap-5 rounded-3xl border border-transparent bg-background px-7 py-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-dls-border hover:shadow-md focus-visible:outline-2 focus-visible:outline-dls-accent">
               <Icon className="size-8 shrink-0 stroke-[1.7]" />
-              <span className="min-w-0"><span className="block text-lg font-semibold">{template.localized[currentLocale() === "zh" ? "zh-CN" : "en-US"].title}</span><span className="mt-1 line-clamp-2 block text-sm leading-6 text-dls-secondary">{template.localized[currentLocale() === "zh" ? "zh-CN" : "en-US"].description}</span></span>
+              <span className="min-w-0"><span className="block text-sm font-medium">{template.localized[currentLocale() === "zh" ? "zh-CN" : "en-US"].title}</span><span className="mt-1 line-clamp-2 block text-xs leading-5 text-dls-secondary">{template.localized[currentLocale() === "zh" ? "zh-CN" : "en-US"].description}</span></span>
             </button>
           );
         })}

@@ -175,11 +175,11 @@
   color-scheme: light;
   /* TIPS 统一页面背景色 token（唯一来源，改色只改这里）：
      - --app-page-bg 页面级背景：工作区会话页、通讯录/消息页、自动化任务页（#ffffff）
-     - --app-list-bg  列表级背景：工作区列表、左侧导航栏等侧栏（#fcfcfc）
+     - --app-list-bg  列表级背景：工作区列表、左侧导航栏等侧栏（#f7f7f8）
      下方所有 dls-* / background / sidebar token 统一引用这两个语义 token，
      暗色主题在 [data-theme="dark"] / .dark 块中重新映射，不影响亮色。 */
   --app-page-bg: #ffffff;
-  --app-list-bg: #fcfcfc;
+  --app-list-bg: #f7f7f8;
   /* TIPS 已发送消息气泡背景 token（唯一来源，改色只改这里）：
      工作区会话内容、消息页（jugglechat）发送出的消息气泡统一引用。 */
   --app-msg-sent-bg: #f3f3f4;

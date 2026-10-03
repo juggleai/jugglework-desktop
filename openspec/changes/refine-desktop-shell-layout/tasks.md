@@ -5,6 +5,29 @@
 - [x] 1.3 Extend the inset surface around the left conversation list while preserving the application navigation Rail as outer chrome
 - [x] 1.4 Tighten the top inset and application Rail proportions to match the compact reference
 - [x] 1.5 Keep the sidebar toggle stable in top chrome and inset internal dividers from rounded edges
+- [x] 1.6 Extend the list/content divider to the work-surface edges while keeping the top-chrome divider inset
+- [x] 1.7 Move global session search beside the top sidebar toggle and remove the Rail create button
+- [x] 1.8 Right-align the compact top sidebar controls to the list/content divider
+- [x] 1.9 Keep collapsed session title content clear of the fixed top controls
+- [x] 1.10 Move collapsed sidebar controls left and preserve Electron click hit-testing
+- [x] 1.11 Render collapsed controls inside the actual no-drag session header
+- [x] 1.12 Lower primary Rail actions below the rounded work-surface top edge
+- [x] 1.13 Add hover labels to non-local primary Rail destinations
+- [x] 1.14 Add the local tooltip, swap Automation/Review order, and preserve a collapsed window drag region
+- [x] 1.15 Match Rail hover labels to the reference pill style and lower the navigation stack
+- [x] 1.16 Remove the Rail tooltip arrow and tighten its typography and spacing
+- [x] 1.17 Use a theme-aware home icon for the local workspace Rail action
+- [x] 1.18 Fill selected Rail icons black in light mode and white in dark mode
+- [x] 1.19 Preserve a doorway cutout in the selected filled home icon
+- [x] 1.20 Increase light outer-chrome contrast while preserving Rail top spacing
+- [x] 1.21 Reduce the macOS session-list title top distance by roughly two thirds
+- [x] 1.22 Apply the inset rounded shell to Automation, Reviews, Chat, Contacts, and Settings
+- [x] 1.23 Scale down Automation dashboard typography without changing its layout
+- [x] 1.24 Preview the collapsed session list from Rail hover without changing layout
+- [x] 1.25 Widen and route Rail hover previews only to matching available menus
+- [x] 1.26 Suppress tooltips when a collapsed Rail icon opens its menu preview
+- [x] 1.27 Remove native title tooltips from collapsed Rail menu triggers
+- [x] 1.28 Constrain Files fullscreen mode to the rounded work surface
 
 ## 2. Utility Actions
 

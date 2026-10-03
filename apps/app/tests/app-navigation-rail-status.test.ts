@@ -39,8 +39,35 @@ describe("navigation rail visual proportions", () => {
     expect(source).toContain('size-9');
     expect(source).toContain('[&>svg]:size-5');
     expect(source).toContain('rounded-xl');
-    expect(source).toContain('active && "bg-dls-active text-dls-text"');
+    expect(source).toContain('active && "bg-dls-active [&>svg]:fill-current"');
     expect(source).not.toContain('active && "border-dls-border bg-background text-dls-text shadow-sm"');
+  });
+
+  test("uses a theme-token home icon for the local workspace", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const localWorkspace = source.slice(source.indexOf('testId="app-rail-home"'), source.indexOf('</RailButton>', source.indexOf('testId="app-rail-home"')));
+    expect(localWorkspace).toContain('<LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />');
+    expect(localWorkspace).not.toContain('<FolderOpen');
+  });
+
+  test("keeps a background-colored doorway in the filled home icon", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const icon = source.slice(source.indexOf('function LocalWorkspaceIcon'), source.indexOf('function RailButton'));
+    expect(icon).toContain('data-local-workspace-icon="filled"');
+    expect(icon).toContain('fill="currentColor"');
+    expect(icon).toContain('data-local-workspace-doorway');
+    expect(icon).toContain('fill="var(--dls-active)"');
+  });
+
+  test("fills the selected Rail icon black in light mode and white in dark mode", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("../src/styles/custom.css", import.meta.url), "utf8");
+    expect(source).toContain('data-active={active ? "true" : undefined}');
+    expect(source).toContain('[&>svg]:fill-current');
+    expect(styles).toContain('[data-app-rail-button][data-active="true"]');
+    expect(styles).toContain('color: #000');
+    expect(styles).toContain('[data-theme="dark"] [data-app-rail-button][data-active="true"]');
+    expect(styles).toContain('color: #fff');
   });
 
   test("keeps the account trigger visually lighter than the primary actions", () => {
@@ -48,6 +75,47 @@ describe("navigation rail visual proportions", () => {
     const trigger = source.slice(source.indexOf('data-testid="app-rail-account-menu"'), source.indexOf("</button>", source.indexOf('data-testid="app-rail-account-menu"')));
     expect(trigger).toContain('size-9');
     expect(trigger).toContain('className="size-7 bg-background ring-1 ring-dls-border/70"');
+  });
+
+  test("shows hover tooltips for every Rail destination", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source).toContain('showTooltip?: boolean');
+    expect(source).toContain('data-app-rail-tooltip');
+    expect(source).toContain('sideOffset={6}');
+    expect(source).toContain('hideArrow');
+    expect(source).toContain('rounded-xl border border-dls-border bg-dls-active');
+    expect(source).toContain('px-2.5 py-1.5 text-xs font-normal text-dls-text');
+    expect(source).toContain('{tooltipLabel ?? label}');
+    for (const testId of ["app-rail-home", "app-rail-cloud-tasks", "app-rail-reviews", "app-rail-automations", "app-rail-chat", "app-rail-contacts"]) {
+      const button = source.slice(source.indexOf(`testId="${testId}"`) - 220, source.indexOf(`testId="${testId}"`) + 220);
+      expect(button).not.toContain('showTooltip={false}');
+    }
+  });
+
+  test("places Automation before Code Review", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    expect(source.indexOf('testId="app-rail-automations"')).toBeLessThan(source.indexOf('testId="app-rail-reviews"'));
+  });
+
+  test("labels the Automation hover tooltip as scheduled tasks", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const automation = source.slice(source.indexOf('label={t("navigation.automations")}'), source.indexOf('<AlarmClock />'));
+    expect(automation).toContain('tooltipLabel={t("automation.tabs.tasks")}');
+  });
+
+  test("routes hover previews only for Rail destinations with workspace menus", () => {
+    const source = readFileSync(new URL("../src/react-app/shell/app-navigation-rail.tsx", import.meta.url), "utf8");
+    const local = source.slice(source.indexOf('testId="app-rail-home"') - 360, source.indexOf('testId="app-rail-home"') + 360);
+    const cloud = source.slice(source.indexOf('testId="app-rail-cloud-tasks"') - 360, source.indexOf('testId="app-rail-cloud-tasks"') + 360);
+    const automation = source.slice(source.indexOf('testId="app-rail-automations"') - 360, source.indexOf('testId="app-rail-automations"') + 360);
+    expect(local).toContain('previewScope="local"');
+    expect(local).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
+    expect(cloud).toContain('previewScope="remote"');
+    expect(cloud).toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
+    expect(automation).not.toContain('previewScope=');
+    expect(automation).not.toContain('showTooltip={!props.suppressPreviewMenuTooltips}');
+    expect(source).toContain('onMouseEnter={() => onPreviewMenuChange?.(previewScope ?? null)}');
+    expect(source).toContain('title={showTooltip ? label : undefined}');
   });
 });
 

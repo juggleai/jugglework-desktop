@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Settings2, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cloud, Columns2, Folders, GitBranch, Globe, Mic2, Search, Settings2, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -39,8 +39,9 @@ import { resolveJuggleWorkConnectStatus } from "../../connections/jugglework-con
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
-import { APP_NAVIGATION_RAIL_WIDTH } from "../../../shell/app-navigation-rail";
+import { APP_NAVIGATION_RAIL_WIDTH, AppNavigationRail } from "../../../shell/app-navigation-rail";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
+import type { TaskScope } from "../sidebar/task-scope-store";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -470,6 +471,8 @@ export function SessionPage(props: SessionPageProps) {
   const [renameBusy, setRenameBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [sidebarPreviewScope, setSidebarPreviewScope] = useState<TaskScope | null>(null);
+  const sidebarPreviewCloseTimerRef = useRef<number | null>(null);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
   const syncWorkbench = useWorkbenchStore((state) => state.sync);
   const juggleWorkbenchTab = useWorkbenchStore((state) => state.openTab);
@@ -534,6 +537,28 @@ export function SessionPage(props: SessionPageProps) {
     "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px`,
     "--session-shell-top-inset": "44px",
   };
+  const sidebarRailPreviewOpen = shellConfig.sidebar && !sidebarOpen && sidebarPreviewScope !== null;
+  const cancelSidebarPreviewClose = useCallback(() => {
+    if (sidebarPreviewCloseTimerRef.current === null) return;
+    window.clearTimeout(sidebarPreviewCloseTimerRef.current);
+    sidebarPreviewCloseTimerRef.current = null;
+  }, []);
+  const scheduleSidebarPreviewClose = useCallback(() => {
+    cancelSidebarPreviewClose();
+    sidebarPreviewCloseTimerRef.current = window.setTimeout(() => {
+      setSidebarPreviewScope(null);
+      sidebarPreviewCloseTimerRef.current = null;
+    }, 120);
+  }, [cancelSidebarPreviewClose]);
+  const handleSidebarPreviewMenuChange = useCallback((scope: TaskScope | null) => {
+    if (scope) {
+      cancelSidebarPreviewClose();
+      setSidebarPreviewScope(scope);
+      return;
+    }
+    scheduleSidebarPreviewClose();
+  }, [cancelSidebarPreviewClose, scheduleSidebarPreviewClose]);
+  useEffect(() => () => cancelSidebarPreviewClose(), [cancelSidebarPreviewClose]);
   useEffect(() => {
     if (sidePanelOpen) return;
     setBrowserPanelDefaultWidth(browserPanelWidth);
@@ -1125,12 +1150,47 @@ export function SessionPage(props: SessionPageProps) {
 
   const sessionTopBar = (
     <header
-      className="z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag"
+      className={cn(
+        "z-10 flex h-[var(--session-shell-top-inset)] min-h-[var(--session-shell-top-inset)] shrink-0 items-center justify-between border-b border-dls-border/70 bg-dls-sidebar px-4 md:px-6 mac:titlebar-drag",
+        shellConfig.sidebar && !sidebarOpen && "mac:pl-[76px]",
+      )}
       data-session-shell-topbar
-    >
-      <div className="flex min-w-0 items-center gap-3">
+      >
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <span
+            aria-hidden="true"
+            className="absolute left-0 top-0 h-[var(--session-shell-top-inset)] w-[76px] mac:titlebar-drag"
+            style={{ WebkitAppRegion: "drag" } as CSSProperties}
+            data-session-collapsed-drag-region
+          />
+        ) : null}
+        <div className="flex min-w-0 items-center gap-3">
         {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
-        {shellConfig.sidebar && !sidebarOpen ? <span className="hidden size-8 shrink-0 mac:block" aria-hidden="true" /> : null}
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <div
+            className="hidden shrink-0 items-center gap-0 mac:flex mac:titlebar-no-drag"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+            data-session-collapsed-sidebar-controls
+          >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              onClick={props.sidebar.onOpenTaskSearch}
+              title={t("workspace_list.search_sessions")}
+              aria-label={t("workspace_list.search_sessions")}
+              data-session-collapsed-task-search
+            >
+              <Search size={17} />
+            </Button>
+            <SidebarTrigger
+              className="pointer-events-auto mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              data-session-collapsed-sidebar-toggle
+            />
+          </div>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={(
@@ -1297,12 +1357,6 @@ export function SessionPage(props: SessionPageProps) {
         )}
         style={sidebarProviderStyle}
       >
-        {shellConfig.sidebar ? (
-          <SidebarTrigger
-            className="absolute left-28 top-1.5 z-30 hidden mac:flex mac:titlebar-no-drag"
-            data-session-sidebar-toggle
-          />
-        ) : null}
         <AppSidebar
           workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
@@ -1352,18 +1406,85 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSettings={props.onOpenSettings}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
+          railPreviewActive={sidebarRailPreviewOpen}
+          previewTaskScope={sidebarPreviewScope ?? undefined}
+          onRailPreviewMenuChange={handleSidebarPreviewMenuChange}
+          onRailPreviewEnter={() => {
+            cancelSidebarPreviewClose();
+          }}
+          onRailPreviewLeave={scheduleSidebarPreviewClose}
         />
-        <SidebarInset className="min-h-0 overflow-hidden bg-dls-sidebar mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-28 mac:max-md:[&_header]:pl-28">
+        {shellConfig.sidebar && !sidebarOpen ? (
+          <div
+            className="absolute inset-y-0 left-0 z-40 w-12 overflow-hidden mac:titlebar-no-drag"
+            data-session-rail-preview-trigger
+          >
+            <AppNavigationRail
+              homeActive
+              onOpenTaskSearch={props.sidebar.onOpenTaskSearch}
+              onOpenCreateWorkspace={props.sidebar.onOpenCreateWorkspace}
+              onOpenAccount={props.sidebar.onOpenAccount}
+              onOpenHome={props.sidebar.onOpenHome}
+              onOpenApps={props.sidebar.onOpenApps}
+              onOpenChat={props.sidebar.onOpenChat}
+              onOpenReviews={props.sidebar.onOpenReviews}
+              onOpenSettings={props.onOpenSettings}
+              onPreviewMenuChange={handleSidebarPreviewMenuChange}
+              suppressPreviewMenuTooltips
+            />
+          </div>
+        ) : null}
+        {shellConfig.sidebar && sidebarOpen ? (
+          <>
+            <span
+              aria-hidden="true"
+              className="absolute left-12 top-0 z-20 hidden h-[var(--session-shell-top-inset)] w-[calc(var(--sidebar-width)-7rem)] mac:block mac:titlebar-drag"
+              style={{ WebkitAppRegion: "drag" } as CSSProperties}
+              data-session-expanded-drag-region
+            />
+            <div
+              className="pointer-events-auto absolute left-[calc(var(--sidebar-width)-4rem)] top-1.5 z-30 hidden items-center gap-0 mac:flex mac:titlebar-no-drag"
+              style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+              data-session-sidebar-controls
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="pointer-events-auto rounded-xl text-dls-secondary hover:bg-dls-hover hover:text-dls-text mac:titlebar-no-drag"
+                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+                onClick={props.sidebar.onOpenTaskSearch}
+                title={t("workspace_list.search_sessions")}
+                aria-label={t("workspace_list.search_sessions")}
+                data-session-task-search
+              >
+                <Search size={17} />
+              </Button>
+              <SidebarTrigger
+                className="pointer-events-auto mac:titlebar-no-drag"
+                style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+                data-session-sidebar-toggle
+              />
+            </div>
+          </>
+        ) : null}
+        <SidebarInset className="min-h-0 overflow-hidden bg-dls-sidebar md:peer-data-[state=expanded]:before:absolute md:peer-data-[state=expanded]:before:left-0 md:peer-data-[state=expanded]:before:top-2 md:peer-data-[state=expanded]:before:z-20 md:peer-data-[state=expanded]:before:h-7 md:peer-data-[state=expanded]:before:w-px md:peer-data-[state=expanded]:before:bg-dls-border md:peer-data-[state=expanded]:before:content-['']">
           {sessionTopBar}
           <div
             className={cn(
-              "mb-1.5 mr-1.5 flex min-h-0 flex-1 overflow-hidden border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+              "relative mb-1.5 mr-1.5 flex min-h-0 flex-1 overflow-hidden border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
               shellConfig.sidebar && sidebarOpen
-                ? "relative ml-1.5 rounded-[18px] md:ml-0 md:rounded-l-none md:rounded-r-[18px] md:border-l-0 md:before:absolute md:before:bottom-3 md:before:left-0 md:before:top-3 md:before:z-20 md:before:w-px md:before:bg-dls-border md:before:content-['']"
+                ? "ml-1.5 rounded-[18px] md:ml-0 md:rounded-l-none md:rounded-r-[18px] md:border-l-0"
                 : "ml-1.5 rounded-[18px]",
             )}
             data-session-work-surface
           >
+          {shellConfig.sidebar && sidebarOpen ? (
+            <span
+              aria-hidden="true"
+              className="absolute -inset-y-px left-0 z-30 hidden w-px bg-dls-border md:block"
+              data-session-content-divider
+            />
+          ) : null}
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
@@ -1801,13 +1922,14 @@ export function SessionPage(props: SessionPageProps) {
           </div>
         </SidebarInset>
         {filesPanelExpanded && actionSessionId ? (
-          // TIPS: 全屏是覆盖层而不是真窗口全屏 —— 左侧应用导航栏保持可见，
-          // 其余（工作区标题、会话列表、会话页头）全部盖住并延伸到右边缘。
+          // TIPS: 全屏是圆角工作区内的覆盖层而不是真窗口全屏 —— 左侧应用导航栏
+          // 与四周外围 chrome 保持可见，Files 只覆盖中间的 18px 圆角区域。
           // macOS 顶部是 hiddenInset 系统标题栏：面板头部本身就是拖拽区，
-          // 头部里的按钮单独标 titlebar-no-drag，这样顶上不用留空白也点得动。
+          // 头部里的按钮单独标 titlebar-no-drag，仍可正常点击。
           <div
-            className="absolute bottom-0 right-0 top-0 z-40 flex flex-col overflow-hidden border-l border-border bg-background mac:titlebar-no-drag"
-            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH}px` }}
+            className="absolute bottom-1.5 right-1.5 top-11 z-40 flex flex-col overflow-hidden rounded-[18px] border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:titlebar-no-drag"
+            style={{ left: `${APP_NAVIGATION_RAIL_WIDTH + 4}px` }}
+            data-files-fullscreen-surface
           >
             <div className="flex min-h-0 flex-1 flex-col">
             <FilesPanel

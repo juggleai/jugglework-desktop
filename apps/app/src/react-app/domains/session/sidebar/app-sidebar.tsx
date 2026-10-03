@@ -125,7 +125,7 @@ import {
 } from "./session-management-store";
 import { useSessionCompletionStore, useUnseenCompletedSessionIds } from "./session-completion-store";
 import { useWorkspaceIndicatorStore } from "./workspace-indicator-store";
-import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope } from "./task-scope-store";
+import { setTaskScope, useTaskScope, useTaskScopeStore, workspaceTaskScope, type TaskScope } from "./task-scope-store";
 import { cn } from "@/lib/utils";
 import { WorkspaceIcon } from "../../../design-system/workspace-icon";
 import { getSessionActivityStatusLabel, type SessionActivityStatus } from "../status/session-activity-store";
@@ -725,6 +725,11 @@ export type AppSidebarProps = {
   onOpenChat: () => void;
   onOpenReviews: () => void;
   onOpenSettings: () => void;
+  railPreviewActive?: boolean;
+  previewTaskScope?: TaskScope;
+  onRailPreviewMenuChange?: (scope: TaskScope | null) => void;
+  onRailPreviewEnter?: React.MouseEventHandler<HTMLElement>;
+  onRailPreviewLeave?: React.MouseEventHandler<HTMLElement>;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
 };
@@ -744,7 +749,8 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
-  const taskScope = useTaskScope();
+  const storedTaskScope = useTaskScope();
+  const taskScope = props.previewTaskScope ?? storedTaskScope;
   const lastWorkspaceByScope = useTaskScopeStore((state) => state.lastWorkspaceByScope);
   const rememberWorkspace = useTaskScopeStore((state) => state.rememberWorkspace);
   const [sessionQuery, setSessionQuery] = React.useState("");
@@ -830,6 +836,7 @@ export function AppSidebar(props: AppSidebarProps) {
   // that workspace's scope, while switching scope on the rail focuses the
   // first workspace the new list contains.
   React.useEffect(() => {
+    if (props.previewTaskScope) return;
     const workspaceId = props.selectedWorkspaceId.trim();
     const selected = props.workspaceSessionGroups.find(
       (group) => group.workspace.id === workspaceId,
@@ -864,7 +871,7 @@ export function AppSidebar(props: AppSidebarProps) {
     if (!target) return;
     syncedWorkspaceIdRef.current = target.id;
     void props.onSelectWorkspace(target.id);
-  }, [props.onSelectWorkspace, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
+  }, [props.onSelectWorkspace, props.previewTaskScope, props.selectedWorkspaceId, props.workspaceSessionGroups, taskScope, lastWorkspaceByScope, rememberWorkspace]);
 
   const previewCount = (workspaceId: string) =>
     previewCountByWorkspaceId[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -1006,9 +1013,16 @@ export function AppSidebar(props: AppSidebarProps) {
     <SidebarContext.Provider value={contextValue}>
       <Sidebar
         collapsible="offcanvas"
-        className="mac:**:data-[sidebar=sidebar]:bg-transparent"
+        className={cn(
+          "border-e-0! mac:**:data-[sidebar=sidebar]:bg-transparent",
+          props.railPreviewActive && "w-[348px]!",
+        )}
       >
-        <div className="flex h-full min-h-0 w-full">
+        <div
+          className="flex h-full min-h-0 w-full"
+          onMouseEnter={props.onRailPreviewEnter}
+          onMouseLeave={props.onRailPreviewLeave}
+        >
           <AppNavigationRail
             homeActive
             onOpenTaskSearch={props.onOpenTaskSearch}
@@ -1019,11 +1033,17 @@ export function AppSidebar(props: AppSidebarProps) {
             onOpenChat={props.onOpenChat}
             onOpenReviews={props.onOpenReviews}
             onOpenSettings={props.onOpenSettings}
+            onPreviewMenuChange={props.onRailPreviewMenuChange}
+            suppressPreviewMenuTooltips={props.railPreviewActive}
           />
 
           <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col bg-background md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col bg-background md:-mr-px md:mb-1.5 md:ml-1 md:mt-[var(--session-shell-top-inset)] md:overflow-hidden md:rounded-l-[18px] md:border md:border-r-0 md:border-dls-border md:shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+              props.railPreviewActive && "md:rounded-r-[18px] md:border-r md:shadow-[0_18px_48px_rgba(15,23,42,0.18)] dark:md:shadow-[0_18px_48px_rgba(0,0,0,0.42)]",
+            )}
             data-session-list-surface
+            data-session-list-preview={props.railPreviewActive ? "true" : undefined}
           >
             <ListPanelHeader
               title={taskScope === "remote" ? t("navigation.cloud_workspace") : t("navigation.local_workspace")}

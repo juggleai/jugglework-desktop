@@ -29,7 +29,20 @@ describe("Desktop automation catalog and routes", () => {
   });
 
   test("places automation immediately below cloud workspace in the primary rail", () => {
-    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "reviews", "automations", "chat", "contacts"]);
+    expect(APP_PRIMARY_RAIL_ORDER).toEqual(["local-workspace", "cloud-workspace", "automations", "reviews", "chat", "contacts"]);
+  });
+
+  test("uses compact dashboard typography without changing its layout primitives", () => {
+    const page = readFileSync(new URL("../src/react-app/domains/automations/automation-page.tsx", import.meta.url), "utf8");
+    const firstAutomation = page.slice(page.indexOf("function FirstAutomation"), page.indexOf("function TaskList"));
+    const catalog = page.slice(page.indexOf("function TemplateCatalog"), page.indexOf("function AutomationEditor"));
+    expect(firstAutomation).toContain('text-base font-medium');
+    expect(firstAutomation).toContain('text-[13px] font-medium');
+    expect(catalog).toContain('text-lg font-medium');
+    expect(catalog).toContain('block text-sm font-medium');
+    expect(catalog).toContain('block text-xs leading-5 text-dls-secondary');
+    expect(catalog).toContain('grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3');
+    expect(catalog).toContain('min-h-32');
   });
 
   test("automation prompt reuses the session editor without a run-task action", () => {

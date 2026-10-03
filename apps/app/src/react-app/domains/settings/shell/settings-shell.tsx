@@ -128,10 +128,10 @@ export function SettingsShell(props: SettingsShellProps) {
   }
 
   return (
-    <div className="flex h-dvh min-h-screen w-full overflow-hidden">
+    <div className="flex h-dvh min-h-screen w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag">
       <SidebarProvider
         open={true}
-        className="relative min-h-0 flex-1"
+        className="relative min-h-0 flex-1 bg-dls-sidebar"
         style={{ "--sidebar-width": `${leftSidebarWidth + APP_NAVIGATION_RAIL_WIDTH}px` } as React.CSSProperties}
       >
         <SettingsSidebar
@@ -153,7 +153,7 @@ export function SettingsShell(props: SettingsShellProps) {
           onOpenCreateWorkspace={props.onOpenCreateWorkspace}
           onStartResize={startLeftSidebarResize}
         />
-        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
+        <SidebarInset className="mb-1.5 mr-1.5 mt-11 min-h-0 overflow-hidden rounded-r-[18px] border border-dls-border bg-background shadow-[0_1px_2px_rgba(0,0,0,0.04)] mac:bg-background mac:titlebar-no-drag mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6" data-settings-content-surface>
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <header className="flex h-[var(--app-topbar-height)] shrink-0 items-center justify-between border-b border-dls-border bg-background px-4 md:px-6 mac:titlebar-drag">
               <div className="flex min-w-0 items-center gap-3">

@@ -8,16 +8,13 @@ import {
   Cloud,
   Coins,
   ContactRound,
-  FolderOpen,
-  FolderPlus,
   Globe,
   HelpCircle,
+  House,
   LogOut,
   MessageSquare,
-  Plus,
   GitPullRequestArrow,
   RefreshCw,
-  Search,
   Settings,
   Sparkles,
 } from "lucide-react";
@@ -33,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { currentLocale, t } from "@/i18n";
@@ -43,7 +41,7 @@ import { useJuggleChatStore } from "@/react-app/domains/jugglechat/store";
 import { useUpdateCheckRequestStore } from "@/react-app/domains/settings/state/update-check-request";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { setTaskScope, useTaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
+import { setTaskScope, useTaskScope, type TaskScope } from "@/react-app/domains/session/sidebar/task-scope-store";
 import { useLocalWorkspaceIndicator } from "@/react-app/domains/session/sidebar/workspace-indicator-store";
 import { SessionCircularProgress } from "@/react-app/domains/session/sidebar/session-circular-progress";
 import type { WorkspaceSessionIndicator } from "@/react-app/domains/session/sidebar/utils";
@@ -74,6 +72,8 @@ type AppNavigationRailProps = {
   onOpenTaskSearch?: () => void;
   /** Opens the requested workspace creation flow when the session shell owns it. */
   onOpenCreateWorkspace?: OpenCreateWorkspace;
+  onPreviewMenuChange?: (scope: TaskScope | null) => void;
+  suppressPreviewMenuTooltips?: boolean;
 };
 
 type RailButtonProps = {
@@ -87,7 +87,35 @@ type RailButtonProps = {
   badgeLabel?: string;
   badgeVariant?: "count" | "dot";
   statusIndicator?: WorkspaceSessionIndicator;
+  showTooltip?: boolean;
+  tooltipLabel?: string;
+  previewScope?: TaskScope;
+  onPreviewMenuChange?: (scope: TaskScope | null) => void;
 };
+
+function LocalWorkspaceIcon({ active }: { active: boolean }) {
+  if (!active) {
+    return <House className="size-5 text-current" strokeWidth={1.85} data-local-workspace-icon="outline" />;
+  }
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="size-5 text-current"
+      data-local-workspace-icon="filled"
+    >
+      <path
+        d="M3.35 10.05c0-.58.25-1.13.69-1.51l6.67-5.72a2 2 0 0 1 2.58 0l6.67 5.72c.44.38.69.93.69 1.51V19a2 2 0 0 1-2 2H5.35a2 2 0 0 1-2-2v-8.95Z"
+        fill="currentColor"
+      />
+      <path
+        d="M9.75 21v-5.8c0-.66.54-1.2 1.2-1.2h2.1c.66 0 1.2.54 1.2 1.2V21h-4.5Z"
+        fill="var(--dls-active)"
+        data-local-workspace-doorway
+      />
+    </svg>
+  );
+}
 
 function RailButton({
   label,
@@ -100,22 +128,29 @@ function RailButton({
   badgeLabel,
   badgeVariant = "count",
   statusIndicator = null,
+  showTooltip = true,
+  tooltipLabel,
+  previewScope,
+  onPreviewMenuChange,
 }: RailButtonProps) {
   const resolvedBadgeLabel = badgeLabel ?? t("chat.unread_count", { count: badge });
-  return (
+  const button = (
     <button
       type="button"
       aria-label={badge > 0 ? `${label}, ${resolvedBadgeLabel}` : label}
-      title={label}
+      title={showTooltip ? label : undefined}
       disabled={disabled}
       onClick={onClick}
+      onMouseEnter={() => onPreviewMenuChange?.(previewScope ?? null)}
+      onMouseLeave={() => onPreviewMenuChange?.(null)}
       data-testid={testId}
       data-app-rail-button
+      data-active={active ? "true" : undefined}
       className={cn(
         "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag [&>svg]:size-5 [&>svg]:stroke-[1.85]",
         "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
-        active && "bg-dls-active text-dls-text",
+        active && "bg-dls-active [&>svg]:fill-current",
         disabled && "cursor-default opacity-40 hover:bg-transparent hover:text-dls-secondary active:scale-100",
       )}
     >
@@ -148,6 +183,21 @@ function RailButton({
         </span>
       ) : null}
     </button>
+  );
+  if (!showTooltip) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent
+        side="right"
+        sideOffset={6}
+        hideArrow
+        className="rounded-xl border border-dls-border bg-dls-active px-2.5 py-1.5 text-xs font-normal text-dls-text shadow-[0_6px_18px_rgba(0,0,0,0.24)]"
+        data-app-rail-tooltip
+      >
+        {tooltipLabel ?? label}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -242,73 +292,20 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
     <aside
       aria-label={t("navigation.primary")}
       data-app-navigation-rail
-      className="flex h-full w-12 shrink-0 flex-col items-center bg-dls-sidebar px-1 pb-2.5 pt-2 mac:titlebar-drag mac:pt-10"
+      className="flex h-full w-12 shrink-0 flex-col items-center bg-dls-sidebar px-1 pb-2.5 pt-2 mac:titlebar-drag mac:pt-[52px]"
     >
       <nav className="flex flex-col items-center gap-2" data-rail-order={APP_PRIMARY_RAIL_ORDER.join(",")}>
-        {props.onOpenTaskSearch ? (
-          <RailButton
-            label={t("workspace_list.search_sessions")}
-            onClick={props.onOpenTaskSearch}
-            testId="app-rail-task-search"
-          >
-            <Search />
-          </RailButton>
-        ) : null}
-        {props.onOpenCreateWorkspace ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={(
-                <button
-                  type="button"
-                  aria-label={t("workspace.create_workspace")}
-                  title={t("workspace.create_workspace")}
-                  data-testid="app-rail-create-workspace"
-                  data-app-rail-button
-                  className={cn(
-                    "relative flex size-9 items-center justify-center rounded-xl text-dls-secondary/80 transition-[background-color,color,transform] duration-150 mac:titlebar-no-drag",
-                    "hover:bg-dls-hover hover:text-dls-text active:scale-[0.96]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dls-accent/35 focus-visible:ring-offset-1 focus-visible:ring-offset-dls-sidebar",
-                    "data-popup-open:bg-dls-active data-popup-open:text-dls-text",
-                    "[&>svg]:size-5 [&>svg]:stroke-[1.85]",
-                  )}
-                >
-                  <Plus />
-                </button>
-              )}
-            />
-            <DropdownMenuContent
-              side="right"
-              align="start"
-              sideOffset={8}
-              className="workspace-create-menu w-[184px] rounded-2xl bg-popover/95 p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.16)] ring-1 ring-foreground/10 backdrop-blur-xl"
-            >
-              <DropdownMenuItem
-                onClick={() => props.onOpenCreateWorkspace?.("local")}
-                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
-                data-testid="app-rail-create-local-workspace"
-              >
-                <FolderPlus className="size-[18px] stroke-[1.7] text-dls-secondary" />
-                {t("navigation.local_workspace")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => props.onOpenCreateWorkspace?.("remote")}
-                className="min-h-10 gap-2.5 rounded-[10px] px-2.5 py-2 text-[14px] font-normal leading-5"
-                data-testid="app-rail-create-cloud-workspace"
-              >
-                <Globe className="size-[18px] stroke-[1.7] text-dls-secondary" />
-                {t("navigation.cloud_workspace")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
         <RailButton
           label={t("navigation.local_workspace")}
           active={props.homeActive && taskScope === "local"}
           onClick={() => openTaskScope("local")}
           testId="app-rail-home"
           statusIndicator={visibleLocalWorkspaceIndicator(localWorkspaceIndicator, props.homeActive, taskScope)}
+          previewScope="local"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+          showTooltip={!props.suppressPreviewMenuTooltips}
         >
-          <FolderOpen className="size-5" strokeWidth={1.8} />
+          <LocalWorkspaceIcon active={Boolean(props.homeActive && taskScope === "local")} />
         </RailButton>
         {/* <RailButton
           label={t("mcp.apps_title")}
@@ -323,25 +320,31 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
           active={props.homeActive && taskScope === "remote"}
           onClick={() => openTaskScope("remote")}
           testId="app-rail-cloud-tasks"
+          previewScope="remote"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+          showTooltip={!props.suppressPreviewMenuTooltips}
         >
           <Cloud className="size-5" strokeWidth={1.8} />
         </RailButton>
+        {LOCAL_AUTOMATION_ENABLED ? <RailButton
+          label={t("navigation.automations")}
+          tooltipLabel={t("automation.tabs.tasks")}
+          active={location.pathname.startsWith("/automations")}
+          onClick={() => navigate("/automations")}
+          testId="app-rail-automations"
+          onPreviewMenuChange={props.onPreviewMenuChange}
+        >
+          <AlarmClock />
+        </RailButton> : null}
         <RailButton
           label={t("navigation.reviews")}
           active={props.reviewsActive}
           onClick={props.onOpenReviews}
           testId="app-rail-reviews"
+          onPreviewMenuChange={props.onPreviewMenuChange}
         >
           <GitPullRequestArrow />
         </RailButton>
-        {LOCAL_AUTOMATION_ENABLED ? <RailButton
-          label={t("navigation.automations")}
-          active={location.pathname.startsWith("/automations")}
-          onClick={() => navigate("/automations")}
-          testId="app-rail-automations"
-        >
-          <AlarmClock />
-        </RailButton> : null}
         {imNavigationVisible ? (
           <>
             <RailButton
@@ -349,6 +352,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               active={props.chatActive && chatView !== "contacts"}
               onClick={() => openChatView("conversations")}
               testId="app-rail-chat"
+              onPreviewMenuChange={props.onPreviewMenuChange}
               badge={totalUnreadCount}
               badgeVariant="dot"
             >
@@ -359,6 +363,7 @@ export function AppNavigationRail(props: AppNavigationRailProps) {
               active={props.chatActive && chatView === "contacts"}
               onClick={() => openChatView("contacts")}
               testId="app-rail-contacts"
+              onPreviewMenuChange={props.onPreviewMenuChange}
             >
               <ContactRound />
             </RailButton>

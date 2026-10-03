@@ -1,2 +1,2 @@
-/** 固定主导航顺序；自动化必须紧跟云端工作区。 */
-export const APP_PRIMARY_RAIL_ORDER = ["local-workspace", "cloud-workspace", "reviews", "automations", "chat", "contacts"] as const;
+/** 固定主导航顺序；自动化位于代码审查之前。 */
+export const APP_PRIMARY_RAIL_ORDER = ["local-workspace", "cloud-workspace", "automations", "reviews", "chat", "contacts"] as const;

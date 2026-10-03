@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { currentLocale } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AppNavigationRail } from "@/react-app/shell/app-navigation-rail";
+import { AppInsetSurface } from "@/react-app/shell/app-inset-surface";
 import type { OpenCreateWorkspace } from "@/react-app/domains/workspace/types";
 import type { ReviewConnectionStatus, ReviewRelationship as WireReviewRelationship } from "@jugglework/types/reviews";
 
@@ -400,7 +401,7 @@ export function ReviewPage(props: ReviewPageProps) {
 
   return (
     <div
-      className="flex h-full min-h-0 w-full overflow-hidden bg-background"
+      className="flex h-full min-h-0 w-full overflow-hidden bg-dls-sidebar mac:titlebar-drag"
       data-testid="review-page"
       data-workspace-id={props.workspaceId}
     >
@@ -415,8 +416,9 @@ export function ReviewPage(props: ReviewPageProps) {
         onOpenTaskSearch={props.onOpenTaskSearch}
         onOpenCreateWorkspace={props.onOpenCreateWorkspace}
       />
-      {workspace.loading || connection.isLoading ? <ConnectedState loading /> : connection.data?.state !== "ready" ? <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={props.onOpenConnect} onRetry={() => void connection.refetch()} /> : (
-        <ReviewWorkbench
+      <AppInsetSurface testId="review-inset-surface">
+        {workspace.loading || connection.isLoading ? <ConnectedState loading /> : connection.data?.state !== "ready" ? <ConnectedState connection={connection.data} error={workspace.error ?? (connection.error instanceof Error ? connection.error.message : null)} onConnect={props.onOpenConnect} onRetry={() => void connection.refetch()} /> : (
+          <ReviewWorkbench
           reviews={reviews}
           reviewId={props.reviewId}
           query={query}
@@ -443,8 +445,9 @@ export function ReviewPage(props: ReviewPageProps) {
           onQueryChange={setQuery}
           onRelationshipChange={setRelationship}
           onSelectReview={props.onSelectReview}
-        />
-      )}
+          />
+        )}
+      </AppInsetSurface>
     </div>
   );
 }
